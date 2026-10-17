@@ -32,7 +32,8 @@
   background: var(--color-warning);
   flex-shrink: 0;
   /* Subtle pulse animation — reduced-motion guard */
-  animation: update-badge-pulse 2s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, update-badge-pulse) 2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -201,7 +202,8 @@
   border-radius: var(--radius-full);
   border: 2px solid var(--color-border);
   border-top-color: var(--color-accent);
-  animation: update-badge-spin 0.7s linear infinite;
+  animation: var(--dc-motion-ambient-name, update-badge-spin) 0.7s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
   flex-shrink: 0;
 }
 

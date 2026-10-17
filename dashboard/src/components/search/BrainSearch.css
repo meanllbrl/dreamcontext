@@ -80,7 +80,8 @@
   border-radius: 50%;
   border: 2px solid var(--color-accent-soft);
   border-top-color: var(--color-accent);
-  animation: bsearchSpin 0.7s linear infinite;
+  animation: var(--dc-motion-ambient-name, bsearchSpin) 0.7s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
   flex-shrink: 0;
 }
 
@@ -108,8 +109,21 @@
   color: var(--color-accent-text);
   border-color: transparent;
   background: var(--gradient-brand-strong);
-  box-shadow: 0 4px 18px -8px rgba(123, 104, 238, 0.7);
-  animation: bsearchGlow 2.6s ease-in-out infinite;
+  box-shadow: 0 4px 18px -8px rgba(123, 104, 238, 0.6);
+  position: relative;
+}
+/* The glow's peak rides a pseudo-element whose opacity breathes, so the compositor runs it
+   instead of repainting the shadow every frame. */
+.bsearch-intel--on::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  box-shadow: 0 0 0 3px rgba(123, 104, 238, 0.16), 0 6px 22px -8px rgba(123, 104, 238, 0.85);
+  opacity: 0;
+  pointer-events: none;
+  animation: var(--dc-motion-ambient-name, bsearchGlow) 2.6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 .bsearch-intel-dot {
@@ -122,7 +136,8 @@
 .bsearch-intel--on .bsearch-intel-dot {
   background: #fff;
   box-shadow: 0 0 8px 1px rgba(255, 255, 255, 0.8);
-  animation: bsearchPulse 1.5s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, bsearchPulse) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* ── Body layout ─────────────────────────────────────────────────────── */
@@ -320,15 +335,25 @@
 .bsearch-thinking-spark {
   display: inline-flex;
   color: var(--color-accent);
-  animation: bsearchPulse 1.4s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, bsearchPulse) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .bsearch-skel { display: flex; flex-direction: column; gap: 8px; }
 .bsearch-skel > i {
   height: 10px;
   border-radius: var(--radius-full);
-  background: linear-gradient(100deg, var(--color-bg-tertiary) 30%, var(--color-accent-soft) 50%, var(--color-bg-tertiary) 70%);
-  background-size: 220% 100%;
-  animation: bsearchShimmer 1.3s ease-in-out infinite;
+  position: relative;
+  overflow: hidden;
+  background: var(--color-bg-tertiary);
+}
+.bsearch-skel > i::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, var(--color-accent-soft) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: var(--dc-motion-ambient-name, bsearchShimmer) 1.3s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .bsearch-skel > i:nth-child(1) { width: 90%; }
 .bsearch-skel > i:nth-child(2) { width: 72%; }
@@ -355,12 +380,12 @@
 
 @keyframes bsearchSpin { to { transform: rotate(360deg); } }
 @keyframes bsearchGlow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(123, 104, 238, 0), 0 4px 18px -8px rgba(123, 104, 238, 0.6); }
-  50% { box-shadow: 0 0 0 3px rgba(123, 104, 238, 0.16), 0 6px 22px -8px rgba(123, 104, 238, 0.85); }
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
 @keyframes bsearchPulse { 0%, 100% { opacity: 0.55; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
 @keyframes bsearchRowIn { from { transform: translateY(5px); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes bsearchShimmer { 0% { background-position: 180% 0; } 100% { background-position: -80% 0; } }
+@keyframes bsearchShimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
 
 /* CSS @media cannot use custom properties in this Vite setup, so 1024 is a
    documented literal representing the "tablet" breakpoint. */

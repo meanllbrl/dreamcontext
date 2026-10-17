@@ -41,14 +41,15 @@
   margin: 0;
   list-style: none;
   /* Both tracks slide together; -50% of the combined (2×) width = one list. */
-  animation: marquee-scroll var(--marquee-duration) linear infinite;
+  animation: var(--dc-motion-ambient-name, marquee-scroll) var(--marquee-duration) linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
   will-change: transform;
 }
 
 /* Pause when the user hovers or tabs into the marquee. */
 .marquee-viewport:hover .marquee-track,
 .marquee-viewport:focus-within .marquee-track {
-  animation-play-state: paused;
+  --dc-motion-play: paused;
 }
 
 @keyframes marquee-scroll {
@@ -130,21 +131,32 @@
 .marquee-card--skeleton {
   width: 280px;
   height: 150px;
+  position: relative;
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+}
+/* The highlight is a pseudo-element slid with `transform`, not a moving background, so the
+   compositor carries it. */
+.marquee-card--skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
   background: linear-gradient(
     100deg,
-    var(--color-bg-secondary),
+    transparent,
     var(--color-bg-tertiary),
-    var(--color-bg-secondary)
+    transparent
   );
-  background-size: 200% 100%;
-  animation: marquee-shimmer 1.4s ease-in-out infinite;
+  transform: translateX(-100%);
+  animation: var(--dc-motion-ambient-name, marquee-shimmer) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes marquee-shimmer {
   from {
-    background-position: 200% 0;
+    transform: translateX(-100%);
   }
   to {
-    background-position: -200% 0;
+    transform: translateX(100%);
   }
 }
 

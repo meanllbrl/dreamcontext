@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { resolve as resolvePath } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
 import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir, sandboxDirFor } from './claude-accounts.js';
 
@@ -61,9 +62,19 @@ export const CLAUDE_LOGIN_COMMAND = 'claude auth login';
 /** Fallback for a CLI without it: the TUI, where `/login` is typed by hand. */
 export const CLAUDE_LOGIN_FALLBACK = 'claude';
 
-/** How long a probe result is reused before re-running the CLI. Short enough that
- *  the user's "I just signed in — retry" click re-probes for real. */
-const CACHE_MS = 5_000;
+/**
+ * How long a DEFINITE probe answer (signed in, signed out, no `auth` command) is reused while
+ * the account mirror (`<configDir>/.claude.json`'s identity fields, {@link mirrorFingerprint})
+ * is unchanged. `/api/agent/capabilities` polls every 30 s per window and each probe is a CLI
+ * spawn measured at up to ~4.8 s cold, so the answer is held until the mirror names another
+ * account — a sign-in, a sign-out or a switch rewrites it, so the user's "I just signed in —
+ * retry" click still re-probes for real — with this ceiling as the backstop. The account
+ * watcher (claude-auth-watch.ts) also drops the cache the moment the fingerprint moves.
+ */
+const CACHE_MS = 15 * 60_000;
+/** A probe that could not answer (`loggedIn: null` on a CLI that has the command — timed out,
+ *  failed to spawn) is retried sooner: there is nothing worth holding on to. */
+const FAILED_CACHE_MS = 60_000;
 /** The CLI answers in well under a second; anything past this is a hung spawn. Exported so a
  *  caller that escalates TO this probe can subtract it from its own budget instead of stacking. */
 export const PROBE_TIMEOUT_MS = 10_000;
@@ -135,13 +146,18 @@ function extractJson(out: string): Record<string, unknown> | null {
  * slot would hand account B's probe result to a caller asking about account A — the two are
  * separate credential stores, so one cached answer cannot stand for both.
  */
-const cached = new Map<string, { at: number; value: ClaudeAuthStatus }>();
+const cached = new Map<string, { at: number; value: ClaudeAuthStatus; mirror: string }>();
 const inFlight = new Map<string, Promise<ClaudeAuthStatus>>();
+/** Bumped by every reset, so a probe already running when the cache was dropped is neither
+ *  stored nor shared — it may have read the credentials of the account just signed out of. */
+let generation = 0;
 /** Drop the memoized results (after a sign-in run, or for a test). One dir, or all of them. */
 export function resetClaudeAuthCache(configDir?: string): void {
+  generation += 1;
   if (configDir === undefined) {
     cached.clear();
     inFlight.clear();
+    mirrors.clear();
     return;
   }
   const key = resolvePath(configDir);
@@ -149,10 +165,77 @@ export function resetClaudeAuthCache(configDir?: string): void {
   inFlight.delete(key);
 }
 
+// ─── The account mirror ─────────────────────────────────────────────────────────
+
+/** No `oauthAccount` at all — signed out, or a machine that authenticates some other way. */
+export const MIRROR_ABSENT = 'absent';
+
+function trimmed(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
 /**
- * Run the probe (memoized for {@link CACHE_MS} per config dir, with concurrent callers on the
- * same dir sharing one run). Never throws — a failed probe is a `loggedIn: null` status, which
- * every consumer treats as "unknown", never as "signed out".
+ * The identity fingerprint of a parsed `~/.claude.json` blob. `absent` when the blob has no
+ * `oauthAccount` (signed out, or never signed in) — which is itself a fingerprint, so a
+ * logout is detected exactly like a switch. Only `accountUuid`, `emailAddress` and
+ * `organizationUuid` are read: the rest of the blob (`profileFetchedAt`, `numStartups`, usage
+ * caches) moves constantly and must not read as a change. Re-exported by claude-auth-watch.ts,
+ * whose header explains the allowlist; it lives HERE so the probe's cache can key on it
+ * without an import cycle.
+ *
+ * Exported pure: the shapes this must survive (a switch, a logout, a heartbeat that only
+ * moved `profileFetchedAt`, garbage) are pinned by tests rather than by a live CLI.
+ */
+export function mirrorFingerprint(blob: unknown): string {
+  const b = blob && typeof blob === 'object' ? blob as Record<string, unknown> : null;
+  const oa = b?.oauthAccount && typeof b.oauthAccount === 'object'
+    ? b.oauthAccount as Record<string, unknown>
+    : null;
+  if (!oa) return MIRROR_ABSENT;
+  const accountUuid = trimmed(oa.accountUuid);
+  const emailAddress = trimmed(oa.emailAddress);
+  const organizationUuid = trimmed(oa.organizationUuid);
+  // An `oauthAccount` with none of the three identifying fields is indistinguishable from
+  // no account at all, and must not read as "a different account" every time it is seen.
+  if (!accountUuid && !emailAddress && !organizationUuid) return MIRROR_ABSENT;
+  return `${accountUuid}|${emailAddress}|${organizationUuid}`;
+}
+
+/** Per config dir: the mirror's fingerprint as of its last mtime, so an unchanged file costs
+ *  one async `stat` and a moved one (it churns: every CLI start rewrites it) one parse. */
+const mirrors = new Map<string, { mtimeMs: number; size: number; fingerprint: string }>();
+
+/** The account `<dir>/.claude.json` names right now (the real HOME's is `~/.claude.json`, a
+ *  sandbox's lives inside it — `CLAUDE_CONFIG_DIR` moves both). Never throws. */
+async function currentMirror(dir: string): Promise<string> {
+  const file = join(dir, '.claude.json');
+  let st: { mtimeMs: number; size: number };
+  try { st = await stat(file); } catch { mirrors.delete(dir); return MIRROR_ABSENT; }
+  const known = mirrors.get(dir);
+  if (known && known.mtimeMs === st.mtimeMs && known.size === st.size) return known.fingerprint;
+  let fingerprint: string;
+  try { fingerprint = mirrorFingerprint(JSON.parse(await readFile(file, 'utf-8'))); }
+  catch { fingerprint = MIRROR_ABSENT; }
+  mirrors.set(dir, { mtimeMs: st.mtimeMs, size: st.size, fingerprint });
+  return fingerprint;
+}
+
+/** The probe itself, swappable so tests count spawns without a real CLI. */
+let probeImpl: (dir: string, timeoutMs?: number) => Promise<ClaudeAuthStatus> = (dir, t) => runProbe(dir, t);
+/** Tests only: replace the CLI spawn (`null` restores it). */
+export function setClaudeAuthProbeForTests(fn: ((dir: string, timeoutMs?: number) => Promise<ClaudeAuthStatus>) | null): void {
+  probeImpl = fn ?? ((dir, t) => runProbe(dir, t));
+}
+
+function cacheMsFor(s: ClaudeAuthStatus): number {
+  return s.loggedIn === null && s.supported ? FAILED_CACHE_MS : CACHE_MS;
+}
+
+/**
+ * Run the probe (memoized per config dir while that dir's account mirror is unchanged, up to
+ * {@link CACHE_MS}; concurrent callers on the same dir share one run). Never throws — a failed
+ * probe is a `loggedIn: null` status, which every consumer treats as "unknown", never as
+ * "signed out".
  *
  * `configDir` names WHICH credential store the spawned `claude` reads. It is optional, and
  * omitting it keeps today's behaviour exactly: the real HOME, with no `CLAUDE_CONFIG_DIR` set.
@@ -166,15 +249,20 @@ export function resetClaudeAuthCache(configDir?: string): void {
 export function claudeAuthStatus(configDir?: string, timeoutMs?: number): Promise<ClaudeAuthStatus> {
   const dir = configDir === undefined ? homedir() : assertConfinedConfigDir(configDir);
   const key = resolvePath(dir);
-  const hit = cached.get(key);
-  if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(hit.value);
   const running = inFlight.get(key);
   if (running) return running;
-  const promise = runProbe(dir, timeoutMs).then((value) => {
-    cached.set(key, { at: Date.now(), value });
-    inFlight.delete(key);
+  const gen = generation;
+  const promise: Promise<ClaudeAuthStatus> = (async () => {
+    const mirror = await currentMirror(key);
+    const hit = cached.get(key);
+    if (hit && hit.mirror === mirror && Date.now() - hit.at < cacheMsFor(hit.value)) return hit.value;
+    const value = await probeImpl(dir, timeoutMs);
+    // A reset while this ran (a sign-in finished, the watcher saw a switch) means the answer
+    // may describe the account that was just left: hand it to the callers waiting on it, but
+    // do not keep it.
+    if (gen === generation) cached.set(key, { at: Date.now(), value, mirror });
     return value;
-  });
+  })().finally(() => { if (inFlight.get(key) === promise) inFlight.delete(key); });
   inFlight.set(key, promise);
   return promise;
 }

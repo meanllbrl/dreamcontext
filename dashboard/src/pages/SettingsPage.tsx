@@ -27,14 +27,17 @@ import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brai
 import { isDesktop } from '../lib/desktop';
 import {
   initAgentSettingsFromServer,
-  writeAgentSettings,
-  AGENT_SETTINGS_EVENT,
+  patchAgentSettings,
+  isAgentSettingsHydrated,
+  retryAgentSettingsNow,
+  onAgentSettings,
   accelFromKeyEvent as accelFromAgentKey,
   loneModifierToken,
   formatHotkey,
   DOUBLE_TAP_MS,
   type AgentSettings,
 } from '../lib/agentSettings';
+import { useLightMode } from '../lib/lightMode';
 import './SettingsPage.css';
 
 // ─── Platform options (duplicated client-side — can't import from src/lib) ────
@@ -214,21 +217,36 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   // right-click menu writes `autoTitle`; without this listener the checkbox below would sit
   // stale, and worse, the next whole-object `updateAgentCfg` write would spread that stale
   // snapshot back over the change the user just made in the menu.
+  //
+  // Until a settings fetch has succeeded in this window the controls keep working (each change
+  // is held and written once over the real settings, never defaults over them — owner decision
+  // 6, 2026-10-17) and a "Couldn't load settings — Retry" banner sits above them.
+  const [agentLoadFailed, setAgentLoadFailed] = useState(false);
   useEffect(() => {
     if (!desktopSurfaces) return;
     let cancelled = false;
-    void initAgentSettingsFromServer().then((s) => { if (!cancelled) setAgentCfg(s); });
-    const onChange = (e: Event) => {
-      const detail = (e as CustomEvent<AgentSettings>).detail;
-      if (detail) setAgentCfg(detail);
-    };
-    window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
-    return () => { cancelled = true; window.removeEventListener(AGENT_SETTINGS_EVENT, onChange); };
+    void initAgentSettingsFromServer().then((s) => {
+      if (cancelled) return;
+      setAgentCfg(s);
+      setAgentLoadFailed(!isAgentSettingsHydrated());
+    });
+    // This window's writes AND every other window's (the `storage` event); a later successful
+    // fetch arrives the same way and clears the banner.
+    const off = onAgentSettings((cfg) => {
+      setAgentCfg(cfg);
+      if (isAgentSettingsHydrated()) setAgentLoadFailed(false);
+    });
+    return () => { cancelled = true; off(); };
   }, [desktopSurfaces]);
-  const updateAgentCfg = (next: AgentSettings) => {
-    setAgentCfg(next);
-    writeAgentSettings(next);
+  /** One control, one field: only the fields named travel (see patchAgentSettings). */
+  const updateAgentCfg = (patch: Partial<AgentSettings>) => {
+    setAgentCfg((prev) => (prev ? { ...prev, ...patch } : prev));
+    void patchAgentSettings(patch);
   };
+  const retryAgentLoad = () => {
+    void retryAgentSettingsNow().then(() => setAgentLoadFailed(!isAgentSettingsHydrated()));
+  };
+  const light = useLightMode();
 
   // Sidebar deep-link: the rail's cloud-sync CTA jumps straight to the GitHub
   // section. `nonce` bumps on every navigate() so re-clicking the rail item
@@ -348,6 +366,14 @@ export function SettingsPage({ focus }: SettingsPageProps) {
             <p className="settings-field-hint">{t('common.loading')}</p>
           ) : (
             <>
+              {agentLoadFailed && (
+                <p className="settings-field-hint settings-field-hint--warn settings-load-failed" role="alert">
+                  <span>{t('settings.agents.load_failed')}</span>
+                  <button type="button" className="btn btn--secondary btn--sm" onClick={retryAgentLoad}>
+                    {t('settings.agents.load_retry')}
+                  </button>
+                </p>
+              )}
               <SettingGroup title={t('settings.agents.surface.title')}>
                 {/* Master on/off — hides the FAB/dock and collapses any open overlay. */}
                 <SettingRow
@@ -358,7 +384,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                     <Toggle
                       label={t('settings.agents.enable')}
                       checked={agentCfg.enabled}
-                      onChange={(next) => updateAgentCfg({ ...agentCfg, enabled: next })}
+                      onChange={(next) => updateAgentCfg({ enabled: next })}
                     />
                   }
                 />
@@ -380,7 +406,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                           className="settings-text-input"
                           aria-label={t('settings.agents.screen')}
                           value={agentCfg.chatView ? 'chat' : 'terminal'}
-                          onChange={(e) => updateAgentCfg({ ...agentCfg, chatView: e.target.value === 'chat' })}
+                          onChange={(e) => updateAgentCfg({ chatView: e.target.value === 'chat' })}
                         >
                           <option value="chat">{t('settings.agents.screen.chat')}</option>
                           <option value="terminal">{t('settings.agents.screen.terminal')}</option>
@@ -405,7 +431,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                             e.preventDefault();
                             // Backspace/Delete clears the binding (no quick-toggle key).
                             if (e.key === 'Backspace' || e.key === 'Delete') {
-                              updateAgentCfg({ ...agentCfg, hotkey: '' });
+                              updateAgentCfg({ hotkey: '' });
                               lastModTapRef.current = null;
                               setCapturingAgentHotkey(false);
                               e.currentTarget.blur();
@@ -420,7 +446,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                               const last = lastModTapRef.current;
                               if (last && last.token === lone && now - last.ts <= DOUBLE_TAP_MS) {
                                 lastModTapRef.current = null;
-                                updateAgentCfg({ ...agentCfg, hotkey: `${lone}+${lone}` });
+                                updateAgentCfg({ hotkey: `${lone}+${lone}` });
                                 setCapturingAgentHotkey(false);
                                 e.currentTarget.blur();
                               } else {
@@ -432,7 +458,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                             lastModTapRef.current = null;
                             const accel = accelFromAgentKey(e);
                             if (accel) {
-                              updateAgentCfg({ ...agentCfg, hotkey: accel });
+                              updateAgentCfg({ hotkey: accel });
                               setCapturingAgentHotkey(false);
                               e.currentTarget.blur();
                             }
@@ -455,7 +481,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                       <Toggle
                         label={t('settings.agents.restore_tabs')}
                         checked={agentCfg.restoreTabs}
-                        onChange={(next) => updateAgentCfg({ ...agentCfg, restoreTabs: next })}
+                        onChange={(next) => updateAgentCfg({ restoreTabs: next })}
                       />
                     }
                   />
@@ -469,7 +495,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                       <Toggle
                         label={t('settings.agents.auto_title')}
                         checked={agentCfg.autoTitle}
-                        onChange={(next) => updateAgentCfg({ ...agentCfg, autoTitle: next })}
+                        onChange={(next) => updateAgentCfg({ autoTitle: next })}
                       />
                     }
                   />
@@ -483,7 +509,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                         className="settings-text-input"
                         aria-label={t('settings.agents.default_agent')}
                         value={agentCfg.defaultAgent}
-                        onChange={(e) => updateAgentCfg({ ...agentCfg, defaultAgent: e.target.value as AgentSettings['defaultAgent'] })}
+                        onChange={(e) => updateAgentCfg({ defaultAgent: e.target.value as AgentSettings['defaultAgent'] })}
                       >
                         <option value="claude">{t('settings.agents.agent.claude')}</option>
                       </select>
@@ -501,10 +527,34 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                         className="settings-text-input"
                         aria-label={t('settings.agents.renderer')}
                         value={agentCfg.renderer}
-                        onChange={(e) => updateAgentCfg({ ...agentCfg, renderer: e.target.value as AgentSettings['renderer'] })}
+                        onChange={(e) => updateAgentCfg({ renderer: e.target.value as AgentSettings['renderer'] })}
                       >
                         <option value="webgl">{t('settings.agents.renderer.webgl')}</option>
                         <option value="dom">{t('settings.agents.renderer.dom')}</option>
+                      </select>
+                    }
+                  />
+
+                  {/* Light mode: Auto / On / Off. Auto turns it on for ≤ 8 GB of memory or on
+                      battery, and the row says which (lib/lightMode.ts). */}
+                  <SettingRow
+                    title={t('settings.performance.light')}
+                    hint={t('settings.performance.light_hint')}
+                    status={agentCfg.lightMode === 'auto' && light.on && light.reason !== 'setting' ? (
+                      <span className="settings-field-hint settings-light-reason">
+                        {t(light.reason === 'battery' ? 'settings.performance.light_active_battery' : 'settings.performance.light_active_ram')}
+                      </span>
+                    ) : null}
+                    control={
+                      <select
+                        className="settings-text-input"
+                        aria-label={t('settings.performance.light')}
+                        value={agentCfg.lightMode}
+                        onChange={(e) => updateAgentCfg({ lightMode: e.target.value as AgentSettings['lightMode'] })}
+                      >
+                        <option value="auto">{t('settings.performance.light_auto')}</option>
+                        <option value="on">{t('settings.performance.light_on')}</option>
+                        <option value="off">{t('settings.performance.light_off')}</option>
                       </select>
                     }
                   />

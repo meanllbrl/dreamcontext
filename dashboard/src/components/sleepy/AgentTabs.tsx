@@ -5,25 +5,26 @@ import { AgentAvatar } from '../agents/AgentAvatar';
 import { useAutomations } from '../../hooks/useAutomations';
 import type { SessionStatusInfo } from './agentStatus';
 import type { SessionKind } from './agentSession';
+import {
+  armTabDrag, createTabGhost, measureDragGeometry, useTabDrag,
+  type TabDragStore, type TabDropTarget,
+} from './tabDrag';
 
 /**
  * The expanded overlay's TOP-BAR tab strip — the agent surface's primary session
  * navigator (it replaced the old left rail). Every session is a tab; tabs are grouped
  * per PANE so a side-by-side split reads as two adjacent tab clusters in one strip. A
  * tab shows `[status dot] [title] [⚡?] [↻][✕]`; clicking focuses it, double-click (or
- * right-click → Rename) renames inline, and dragging it carries the session id under
- * {@link AGENT_TAB_MIME} for the pane drop-zones (split/combine) and tab-to-tab reorder.
- * Presentational apart from its own right-click menu — every action arrives as a prop.
+ * right-click → Rename) renames inline, and dragging it (a POINTER gesture, see tabDrag.ts —
+ * tabs are not `draggable`) drops it onto another tab (reorder), a pane's tab group
+ * (combine) or a pane's left / centre / right third (split / add as tab). The tab or group
+ * under the pointer carries `data-over="true"`. Presentational apart from its own
+ * right-click menu and the drag gesture — every action arrives as a prop.
  *
  * The groups render INSIDE the overlay header (`.agent-overlay-tabs`), not above their
  * pane: the header IS the tab bar, so the surface spends one 44px row on chrome instead
  * of two. Every glyph here is monochrome/mono — no emoji in the strip.
  */
-
-/** The DnD payload type for an internal agent-tab drag (NOT `text/plain`, so it never
- *  collides with the Kanban/Eisenhower board DnD, and carries no files so the image-drop
- *  handler ignores it). The session id is stored under this key. */
-export const AGENT_TAB_MIME = 'application/x-agent-tab';
 
 /** Crisp icons for the per-tab actions (clearer than Unicode glyphs at small sizes). */
 function MinimizeIcon() {
@@ -105,7 +106,7 @@ export function AgentTabs({
   pane, isActivePane, renamingId,
   onSelect, onClose, onMinimize,
   onStartRename, onCommitRename, onCancelRename,
-  onTabDragStart, onTabDragEnd, onReorderHover, onGroupHover,
+  drag, onTabDrop,
   chatConvertEnabled = false, onOpenInChat = () => {},
   autoTitle = false, onToggleAutoTitle = () => {},
 }: {
@@ -119,14 +120,11 @@ export function AgentTabs({
   onStartRename: (sid: string) => void;
   onCommitRename: (sid: string, value: string) => void;
   onCancelRename: () => void;
-  onTabDragStart: (sid: string) => void;
-  onTabDragEnd: () => void;
-  /** Hovering a tab during a drag → record "move the dragged session into that tab's pane,
-   *  before this tab" as the pending drop target (executed on dragend, not drop —
-   *  WKWebView's `drop` event is unreliable for these elements). */
-  onReorderHover: (targetPaneId: string, beforeSid: string) => void;
-  /** Hovering a pane's tab-group padding → record "combine the dragged session into it". */
-  onGroupHover: (targetPaneId: string) => void;
+  /** The surface's tab-drag store (one per surface): the strip marks the dragged tab and the
+   *  reorder / combine target from it. */
+  drag: TabDragStore;
+  /** A drag released over a target — the surface runs the split / combine / reorder. */
+  onTabDrop: (sid: string, target: TabDropTarget) => void;
   /** Gate for the per-tab "Open in Chat" action (Settings → Agents on the Chat screen
    *  and the Claude CLI present) — optional/defaulted so a caller written before this
    *  prop existed keeps compiling and simply never shows the action. */
@@ -243,11 +241,26 @@ export function AgentTabs({
     m.style.visibility = 'visible';
     if (menu.kbd) m.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
   }, [menu]);
-  const allowTabDrop = (e: React.DragEvent): boolean => {
-    if (!e.dataTransfer.types.includes(AGENT_TAB_MIME)) return false;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    return true;
+  // The drag in flight on this surface, if any: which tab is lifted, and what is under the
+  // pointer. Changes only when the TARGET changes (tabDrag.ts), not per pointer move.
+  const dragState = useTabDrag(drag);
+  const target = dragState?.target ?? null;
+  const groupOver = target?.kind === 'group' && target.paneId === pane.id;
+
+  /** A press on a tab ARMS a drag; it starts after a 4 px move (a release before that is the
+   *  plain click, which selects). Not from the tab's own buttons or its rename field, not a
+   *  secondary or ⌃ click (that is the context menu). */
+  const onTabPointerDown = (e: React.PointerEvent<HTMLDivElement>, sid: string) => {
+    if (e.button !== 0 || e.ctrlKey || renamingId === sid) return;
+    if ((e.target as Element).closest('button, input')) return;
+    const el = e.currentTarget;
+    armTabDrag({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY }, el, sid, {
+      store: drag,
+      onDrop: onTabDrop,
+      measure: () => measureDragGeometry(el.closest('.agent-surface') ?? document),
+      ghost: () => createTabGhost(el),
+      win: window,
+    });
   };
 
   return (
@@ -255,13 +268,8 @@ export function AgentTabs({
       className={'agent-pane-tabbar' + (isActivePane ? ' active' : '')}
       role="tablist"
       aria-label="Agent sessions"
-      onDragOver={(e) => { if (allowTabDrop(e)) onGroupHover(pane.id); }}
-      onDrop={(e) => {
-        // Reliability lives in dragend; this just pins the exact release target and
-        // preventDefaults. WKWebView may not deliver this `drop` at all — that's fine.
-        if (!e.dataTransfer.types.includes(AGENT_TAB_MIME)) return;
-        e.preventDefault(); e.stopPropagation(); onGroupHover(pane.id);
-      }}
+      data-pane-id={pane.id}
+      data-over={groupOver ? 'true' : undefined}
     >
       {pane.tabs.map((tab) => {
             const active = tab.id === pane.active;
@@ -280,8 +288,11 @@ export function AgentTabs({
                 role="tab"
                 aria-selected={active}
                 tabIndex={0}
-                draggable={!renaming}
+                data-sid={tab.id}
+                data-over={target?.kind === 'reorder' && target.paneId === pane.id && target.beforeSid === tab.id ? 'true' : undefined}
+                data-dragging={dragState?.sid === tab.id ? 'true' : undefined}
                 title={`${tab.title} — ${tab.info.label}`}
+                onPointerDown={(e) => onTabPointerDown(e, tab.id)}
                 onClick={() => onSelect(pane.id, tab.id)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(pane.id, tab.id); } }}
                 onDoubleClick={(e) => { e.stopPropagation(); onStartRename(tab.id); }}
@@ -289,21 +300,6 @@ export function AgentTabs({
                    strip): the menu names the tab it was raised on, so switching panes to
                    rename one would be a side effect nobody asked for. */
                 onContextMenu={(e) => openMenu(e, tab)}
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(AGENT_TAB_MIME, tab.id);
-                  e.dataTransfer.effectAllowed = 'move';
-                  onTabDragStart(tab.id);
-                }}
-                onDragEnd={onTabDragEnd}
-                onDragOver={(e) => {
-                  // stopPropagation so the parent tabgroup's dragover doesn't overwrite
-                  // this more-specific reorder target with a plain "combine".
-                  if (allowTabDrop(e)) { e.stopPropagation(); onReorderHover(pane.id, tab.id); }
-                }}
-                onDrop={(e) => {
-                  if (!e.dataTransfer.types.includes(AGENT_TAB_MIME)) return;
-                  e.preventDefault(); e.stopPropagation(); onReorderHover(pane.id, tab.id);
-                }}
               >
                 <span className="agent-tab-dot" data-kind={tab.info.kind} aria-hidden />
                 <span
@@ -347,7 +343,6 @@ export function AgentTabs({
                     spellCheck={false}
                     onClick={stop}
                     onMouseDown={stop}
-                    onDragStart={(e) => e.preventDefault()}
                     onFocus={(e) => e.currentTarget.select()}
                     onBlur={(e) => onCommitRename(tab.id, e.currentTarget.value)}
                     onKeyDown={(e) => {

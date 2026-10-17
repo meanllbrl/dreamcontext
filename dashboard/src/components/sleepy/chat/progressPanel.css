@@ -34,7 +34,7 @@
 /* Liveness is spent ONLY on the track, and only while the turn is actually running. The fill
    already animates its width when the percent moves; this is what distinguishes "working, no
    criterion ticked yet" from "stopped" during the minutes between ticks. */
-.pin-row.is-live .pin-track-fill { animation: pin-live-pulse 1.8s ease-in-out infinite; }
+.pin-row.is-live .pin-track-fill { animation: var(--dc-motion-status-name, pin-live-pulse) 1.8s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
 @keyframes pin-live-pulse {
   0%, 100% { opacity: 1; }

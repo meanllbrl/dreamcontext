@@ -77,10 +77,14 @@ describe('the gear reaches the surfaces that draw a chat', () => {
     expect(jarvis).toMatch(/smascot-mic/);
     expect(jarvis).toMatch(/smascot-vu-bar/);
     // Every loop runs off ONE clock per mode, so the hand and what it produces cannot drift.
-    expect(css.match(/animation: smascot-write 3\.8s[^;]*;/)).toBeTruthy();
-    expect(css.match(/animation: smascot-ink 3\.8s[^;]*;/)).toBeTruthy();
-    expect((css.match(/smascot-(weld|hammer|weldspark\d?|hitspark\d?|flame) 3\.4s/g) ?? []).length).toBeGreaterThanOrEqual(8);
-    expect((css.match(/smascot-(vu|mic|say\d) 3\.2s/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    // The keyframes name rides the motion contract's variable (styles/global.css), so the
+    // duration follows `var(--dc-motion-ambient-name, <name>)` rather than the bare name.
+    const loop = (names: string, secs: string) =>
+      new RegExp(`animation: var\\(--dc-motion-ambient-name, smascot-(${names})\\) ${secs.replace('.', '\\.')}s[^;]*;`, 'g');
+    expect(css.match(loop('write', '3.8'))).toBeTruthy();
+    expect(css.match(loop('ink', '3.8'))).toBeTruthy();
+    expect((css.match(loop('weld|hammer|weldspark\\d?|hitspark\\d?|flame', '3.4')) ?? []).length).toBeGreaterThanOrEqual(8);
+    expect((css.match(loop('vu|mic|say\\d', '3.2')) ?? []).length).toBeGreaterThanOrEqual(4);
   });
 
   it('J.A.R.V.I.S\'s loop is a CONVERSATION — it listens, then it answers', () => {

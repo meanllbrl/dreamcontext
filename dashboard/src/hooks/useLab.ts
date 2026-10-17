@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { pollMs } from '../lib/windowActivity';
 import type { FunnelCacheEntry, FunnelPrev } from '../components/lab/funnel/funnelModel';
 import type { MatrixCacheEntry, MatrixSnapshot } from '../components/lab/matrixModel';
 import type { AppCacheEntry, DatasetCacheEntry } from '../components/lab/appModel';
@@ -243,7 +244,7 @@ export function useLabSyncJob() {
     queryFn: () => api.get<{ job: LabSyncJob | null }>('/lab/sync-jobs/current'),
     select: (d) => d.job,
     // Poll fast while a job runs so the counter is live; idle otherwise.
-    refetchInterval: (query) => (query.state.data?.job?.status === 'running' ? 800 : false),
+    refetchInterval: (query) => (query.state.data?.job?.status === 'running' ? pollMs(800) : false),
     refetchOnWindowFocus: true,
     retry: 0,
   });
@@ -268,7 +269,7 @@ export function useLabSyncSlots() {
     select: (d): LabSyncSlots => ({ running: d.running ?? d.job ?? null, pending: d.pending ?? null }),
     refetchInterval: (query) => {
       const d = query.state.data;
-      return d?.job?.status === 'running' || d?.pending ? 800 : false;
+      return d?.job?.status === 'running' || d?.pending ? pollMs(800) : false;
     },
     refetchOnWindowFocus: true,
     retry: 0,

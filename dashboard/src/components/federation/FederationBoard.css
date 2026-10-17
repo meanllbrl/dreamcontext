@@ -688,12 +688,18 @@
 
 .lgraph-guide-flow {
   stroke-dasharray: 5 6;
-  animation: lgraph-current 0.9s linear infinite;
+  animation: var(--dc-motion-ambient-name, lgraph-current) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
+/* The dashed current pulses rather than marching: a dash offset repaints the path every
+   frame, opacity is composited (task: the desktop app stays light on an 8GB MacBook Air). */
 @keyframes lgraph-current {
-  to {
-    stroke-dashoffset: -22;
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
   }
 }
 

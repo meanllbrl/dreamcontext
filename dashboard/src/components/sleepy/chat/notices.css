@@ -187,8 +187,11 @@
   width: 30%;
   border-radius: 5px;
   background: linear-gradient(90deg, transparent, var(--color-accent), transparent);
-  animation: chat-notice-sweep 1.4s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, chat-notice-sweep) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
+/* Light mode removes the sweep: a dim full span (as under reduced motion), not a 30 % one parked at the left edge. */
+:root[data-light='true'] .chat-notice-ctx-bar[data-pending]::after { width: 100%; opacity: 0.5; }
 @keyframes chat-notice-sweep {
   from { transform: translateX(-100%); }
   to { transform: translateX(340%); }
@@ -253,7 +256,19 @@
 .chat-notice-step[data-state='run'] .chat-notice-step-dot {
   background: var(--color-accent-soft);
   box-shadow: 0 0 0 3px var(--color-accent-soft);
-  animation: chat-notice-pulse 1.4s ease-in-out infinite;
+  position: relative;
+}
+/* The outer half of the ring breathes on a pseudo-element (opacity only, composited). */
+.chat-notice-step[data-state='run'] .chat-notice-step-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 6px var(--color-accent-soft);
+  opacity: 0;
+  pointer-events: none;
+  animation: var(--dc-motion-status-name, chat-notice-pulse) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .chat-notice-step[data-state='run'] .chat-notice-step-dot::before {
   content: '';
@@ -265,22 +280,22 @@
 .chat-notice-step[data-state='fail'] { color: var(--color-error-ink); }
 .chat-notice-step[data-state='fail'] .chat-notice-step-dot { background: var(--color-error); }
 @keyframes chat-notice-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px var(--color-accent-soft); }
-  50% { box-shadow: 0 0 0 6px var(--color-accent-soft); }
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
 
-/* The headline of a running operation shimmers — "this is happening now". */
+/* The headline of a running operation breathes — "this is happening now". Opacity, not a
+   moving text gradient, so the compositor runs it (task: the desktop app stays light on an
+   8GB MacBook Air); at rest it is plain body text. */
 .chat-notice-live {
-  background: linear-gradient(90deg, var(--color-text) 0%, var(--color-accent) 50%, var(--color-text) 100%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: chat-notice-shimmer 2.4s linear infinite;
+  color: var(--color-text);
+  animation: var(--dc-motion-status-name, chat-notice-shimmer) 2.4s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
+/* 0.72 at the low point, not lower: body ink on the card stays above AA 4.5:1 in the light theme. */
 @keyframes chat-notice-shimmer {
-  from { background-position: 100% 0; }
-  to { background-position: -100% 0; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
 }
 
 /* ── accounts ──────────────────────────────────────────── */
@@ -327,7 +342,8 @@
   position: relative;
   background: repeating-linear-gradient(90deg, var(--color-accent) 0 6px, transparent 6px 10px);
   background-size: 20px 2px;
-  animation: chat-notice-flow 0.9s linear infinite;
+  animation: var(--dc-motion-ambient-name, chat-notice-flow) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .chat-notice-wire::after {
   content: '';
@@ -338,7 +354,8 @@
   border-left: 7px solid var(--color-accent);
   border-right: 0;
 }
-@keyframes chat-notice-flow { from { background-position: 0 0; } to { background-position: 20px 0; } }
+/* The wire pulses rather than marching its dashes: a moving background repaints every frame. */
+@keyframes chat-notice-flow { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
 .chat-notice-meters { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 4px; }
 .chat-notice-meter {
@@ -373,9 +390,9 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-notice-live,
   .chat-notice-wire,
-  .chat-notice-step[data-state='run'] .chat-notice-step-dot,
+  .chat-notice-step[data-state='run'] .chat-notice-step-dot::after,
   .chat-notice-ctx-bar[data-pending]::after { animation: none; }
-  .chat-notice-live { color: var(--color-text); background: none; }
+  .chat-notice-ctx-bar[data-pending]::after { width: 100%; opacity: 0.5; }
 }
 
 /* An account chip that signs that account back in: the chip, then its call to action. */
@@ -436,7 +453,6 @@ button.chat-notice-chip:hover { filter: brightness(0.97); }
     margin: 0 0 4px 15px; /* centred under a 32px avatar */
     background: repeating-linear-gradient(180deg, var(--color-accent) 0 4px, transparent 4px 7px);
     background-size: 2px 7px;
-    animation-name: chat-notice-flow-down;
   }
   .chat-notice-wire::after {
     right: auto;
@@ -448,7 +464,6 @@ button.chat-notice-chip:hover { filter: brightness(0.97); }
     border-bottom: 0;
   }
 }
-@keyframes chat-notice-flow-down { from { background-position: 0 0; } to { background-position: 0 7px; } }
 
 /* Very narrow: the 40px indent that lines rows up under the title is a sixth of the card, so
    the rows take the full width instead. */

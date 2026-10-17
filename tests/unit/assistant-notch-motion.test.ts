@@ -7,6 +7,8 @@
  * first on open, CSS first on fold), last-request-wins, and reduced motion.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import postcss from 'postcss';
 import {
   NOTCH_GROW_MS, drawsOpen, islandClip, planMotion, type MotionPhase,
 } from '../../dashboard/src/components/assistant/notchMotion';
@@ -132,5 +134,71 @@ describe('islandClip', () => {
   it('half pixels survive, long fractions do not', () => {
     expect(islandClip({ width: 461, height: 100.123 }, '1rem'))
       .toBe('inset(0px calc(50% - 230.5px) calc(100% - 100.12px) calc(50% - 230.5px) round 0px 0px 1rem 1rem)');
+  });
+});
+
+// ─── notch.css follows the motion contract (styles/global.css) ─────────────────────────
+// Task: the desktop app stays light on an 8GB MacBook Air (AC7, plan lane P4). Every endless
+// animation in the notch moves only transform/opacity (composited: no repaint per frame), names
+// its keyframes through the status/ambient variable and takes its play-state from
+// `--dc-motion-play`, so a hidden window pauses it and Light mode removes it.
+describe('notch.css: endless animations follow the motion contract', () => {
+  const css = readFileSync(new URL('../../dashboard/src/components/assistant/notch.css', import.meta.url), 'utf-8');
+  const root = postcss.parse(css);
+  const keyframes = new Map<string, Set<string>>();
+  root.walkAtRules('keyframes', (at) => {
+    const props = new Set<string>();
+    at.walkDecls((d) => { props.add(d.prop); });
+    keyframes.set(at.params.trim(), props);
+  });
+  const endless: Array<{ selector: string; anim: string; play: string | null; playAfter: boolean; reduced: boolean }> = [];
+  root.walkRules((rule) => {
+    const inKeyframes = rule.parent?.type === 'atrule' && (rule.parent as { name?: string }).name === 'keyframes';
+    if (inKeyframes) return;
+    const decls = rule.nodes.filter((n) => n.type === 'decl') as Array<{ prop: string; value: string }>;
+    const anim = decls.findIndex((d) => d.prop === 'animation' && /\binfinite\b/.test(d.value));
+    if (anim < 0) return;
+    const play = decls.findIndex((d) => d.prop === 'animation-play-state');
+    const reduced = rule.parent?.type === 'atrule' && /prefers-reduced-motion/.test((rule.parent as { params?: string }).params ?? '');
+    endless.push({
+      selector: rule.selector, anim: decls[anim].value, play: play < 0 ? null : decls[play].value,
+      playAfter: play > anim, reduced,
+    });
+  });
+
+  it('finds the notch\'s endless animations', () => {
+    expect(endless.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('each is named through a motion variable, plays by --dc-motion-play, set AFTER the shorthand', () => {
+    for (const e of endless) {
+      expect(e.anim, e.selector).toMatch(/^var\(--dc-motion-(status|ambient)-name, [\w-]+\)/);
+      expect(e.play, e.selector).toBe('var(--dc-motion-play, running)');
+      expect(e.playAfter, e.selector).toBe(true);
+    }
+  });
+
+  it('busy and attention are status; their keyframes move only transform/opacity', () => {
+    const named = (sel: RegExp) => endless.filter((e) => sel.test(e.selector));
+    for (const e of [...named(/dc-notch--attention/), ...named(/dc-notch--busy/), ...named(/dc-notch__glow/)]) {
+      expect(e.anim, e.selector).toMatch(/^var\(--dc-motion-status-name,/);
+    }
+    expect(named(/dc-notch--attention/).length).toBeGreaterThan(0);
+    expect(named(/dc-notch--busy/).length).toBeGreaterThan(0);
+    for (const e of endless) {
+      const name = /^var\(--dc-motion-(?:status|ambient)-name, ([\w-]+)\)/.exec(e.anim)![1];
+      const props = keyframes.get(name);
+      expect(props, `@keyframes ${name}`).toBeDefined();
+      for (const p of props!) expect(['transform', 'opacity', 'offset', 'animation-timing-function'], `${name}: ${p}`).toContain(p);
+    }
+  });
+
+  it('no literal play-state anywhere in the file', () => {
+    root.walkDecls('animation-play-state', (d) => {
+      expect(d.value, d.parent && 'selector' in d.parent ? String(d.parent.selector) : '').toMatch(/^var\(--dc-motion-play/);
+    });
+    root.walkDecls('animation', (d) => {
+      expect(d.value).not.toMatch(/\b(paused|running)\b/);
+    });
   });
 });

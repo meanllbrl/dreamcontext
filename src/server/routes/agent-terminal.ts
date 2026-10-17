@@ -6,15 +6,17 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile, type Stats } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cutProcessGroups, pathUnderAny } from '../../lib/automations/runner.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
+import { foldJsonl } from '../../lib/jsonl-fold.js';
+import { tabSessionEnv } from '../../lib/session-origin.js';
 import { phoneTranscriptRefused } from '../phone-origin.js';
 
-/** {@link readTranscriptFor}'s answer when a phone may not read that conversation. */
+/** {@link transcriptFoldFor}'s answer when a phone may not read that conversation. */
 const REFUSED = Symbol('refused');
 import { contextTokensFromUsage } from '../../lib/context-watch.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
@@ -850,17 +852,23 @@ export async function handleAgentModelConfig(req: IncomingMessage, res: ServerRe
   sendJson(res, 200, await buildModelConfig());
 }
 
-/** The transcript of conversation `id`, as text, or null. */
-async function readTranscriptFor(contextRoot: string | null, id: string, req?: IncomingMessage): Promise<string | null | typeof REFUSED> {
+/**
+ * The transcript of conversation `id`, FOLDED (src/lib/jsonl-fold.ts), or null. session-stats
+ * and session-model are polled every few seconds per live pane against transcripts of tens of
+ * MB; both read this one incremental fold, so an unchanged file costs a stat and a 1-byte read,
+ * and an appended turn costs only its own bytes.
+ */
+async function transcriptFoldFor(contextRoot: string | null, id: string, req?: IncomingMessage): Promise<TranscriptFold | null | typeof REFUSED> {
   const path = liveTranscriptPath(contextRoot, id);
   if (!path) return null;
   // AC16: a phone reads only the chosen projects' conversations.
   if (req && phoneTranscriptRefused(req, contextRoot, path)) return REFUSED;
-  try { return readFileSync(path, 'utf-8'); } catch { return null; }
+  try { return await foldJsonl(path, 'transcript', newTranscriptFold, foldTranscriptRow); } catch { return null; }
 }
 
-/** The most recent `message.model` recorded in a transcript, as an alias, or null. */
-function latestTranscriptModel(raw: string): string | null {
+/** The most recent `message.model` recorded in a transcript, as an alias, or null. The
+ *  whole-text form — the parity oracle for {@link foldTranscriptRow}'s `latestModel`. */
+export function latestTranscriptModel(raw: string): string | null {
   const lines = raw.split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     const s = lines[i].trim();
@@ -896,9 +904,10 @@ export async function handleAgentSessionModel(
   // transcript on disk yet (Claude Code ≥2.1.x flushes only on exit/rotation) — fall
   // back to the model the PTY was spawned with so an explicit picker choice shows up
   // immediately instead of reading as the CLI default until the first flush.
-  const raw = await readTranscriptFor(contextRoot, id, req);
-  if (raw === REFUSED) { sendJson(res, 200, { model: null }); return; }
-  sendJson(res, 200, { model: (raw !== null ? latestTranscriptModel(raw) : null) ?? liveSpawnModels.get(id) ?? null });
+  const folded = await transcriptFoldFor(contextRoot, id, req);
+  if (folded === REFUSED) { sendJson(res, 200, { model: null }); return; }
+  const fromTranscript = folded !== null && folded.latestModel !== null ? modelAlias(folded.latestModel) : null;
+  sendJson(res, 200, { model: fromTranscript ?? liveSpawnModels.get(id) ?? null });
 }
 
 // ─── Per-session context-window + cost (read from the transcript's token usage) ───────
@@ -980,7 +989,9 @@ export function computeSessionStats(jsonlPath: string): SessionStats {
   return sessionStatsFromText(raw);
 }
 
-function sessionStatsFromText(raw: string): SessionStats {
+/** The whole-text form of the stats — what {@link computeSessionStats} runs, and the parity
+ *  oracle for the incremental {@link foldTranscriptRow} the poll route uses. */
+export function sessionStatsFromText(raw: string): SessionStats {
   interface TurnUsage { inp: number; out: number; cw: number; cr: number; model: string }
   const turns = new Map<string, TurnUsage>();
   let unkeyed = 0;
@@ -1018,6 +1029,73 @@ function sessionStatsFromText(raw: string): SessionStats {
   return { contextTokens, contextLimit: contextLimitFor(contextTokens, lastModel), costUsd };
 }
 
+/**
+ * The running fold of one transcript: {@link sessionStatsFromText}'s accumulators, kept between
+ * polls, plus the raw latest model {@link latestTranscriptModel} would find. Same rules, applied
+ * one row at a time in file order — the parity tests hold the two forms together.
+ */
+interface TranscriptFold {
+  turns: Map<string, { inp: number; out: number; cw: number; cr: number; model: string }>;
+  unkeyed: number;
+  contextTokens: number | null;
+  /** The model of the last main-chain turn with usage (the stats' running model). */
+  lastModel: string;
+  /** The last `message.model` on any line, `<synthetic>` skipped, not yet aliased. */
+  latestModel: string | null;
+}
+
+function newTranscriptFold(): TranscriptFold {
+  return { turns: new Map(), unkeyed: 0, contextTokens: null, lastModel: '', latestModel: null };
+}
+
+function foldTranscriptRow(s: TranscriptFold, row: unknown): void {
+  const obj = row as { isSidechain?: unknown; message?: { id?: unknown; usage?: Record<string, unknown>; model?: unknown } } | null;
+  const m = obj?.message;
+  const seen = m?.model;
+  if (typeof seen === 'string' && seen && seen !== '<synthetic>') s.latestModel = seen;
+  const u = m?.usage;
+  if (!u || typeof u !== 'object') return;
+  const model = typeof m?.model === 'string' && m.model ? m.model : s.lastModel;
+  const id = typeof m?.id === 'string' && m.id ? m.id : `line-${s.unkeyed++}`;
+  s.turns.set(id, {
+    inp: num(u.input_tokens),
+    out: num(u.output_tokens),
+    cw: num(u.cache_creation_input_tokens),
+    cr: num(u.cache_read_input_tokens),
+    model,
+  });
+  if (obj?.isSidechain !== true) {
+    s.lastModel = model || s.lastModel;
+    s.contextTokens = contextTokensFromUsage(u);
+  }
+}
+
+function statsOfFold(s: TranscriptFold): SessionStats {
+  if (s.contextTokens === null) return EMPTY_STATS;
+  let costUsd = 0;
+  for (const t of s.turns.values()) {
+    const p = priceForModel(t.model);
+    costUsd += (t.inp * p.in + t.cw * p.cacheWrite + t.cr * p.cacheRead + t.out * p.out) / 1_000_000;
+  }
+  return { contextTokens: s.contextTokens, contextLimit: contextLimitFor(s.contextTokens, s.lastModel), costUsd };
+}
+
+/** The stats of the transcript at `path` through the incremental fold. Exported for tests;
+ *  EMPTY_STATS when the file cannot be read. */
+export async function foldedSessionStats(path: string): Promise<SessionStats> {
+  try { return statsOfFold(await foldJsonl(path, 'transcript', newTranscriptFold, foldTranscriptRow)); }
+  catch { return EMPTY_STATS; }
+}
+
+/** The latest model of the transcript at `path` through the incremental fold, aliased. Exported
+ *  for tests. */
+export async function foldedTranscriptModel(path: string): Promise<string | null> {
+  try {
+    const s = await foldJsonl(path, 'transcript', newTranscriptFold, foldTranscriptRow);
+    return s.latestModel !== null ? modelAlias(s.latestModel) : null;
+  } catch { return null; }
+}
+
 /** GET /api/agent/session-stats?claudeId=<uuid> — the session's live context-window
  *  footprint + cumulative API-rate cost estimate, from its transcript. Nulls if unknown.
  *  contextRoot comes from the router's vault-header resolution (see session-model).
@@ -1035,8 +1113,8 @@ export async function handleAgentSessionStats(
   const id = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!id) { sendJson(res, 200, EMPTY_STATS); return; }
   // Live-id resolution: after a `/clear` the header stats must track what's on screen.
-  const raw = await readTranscriptFor(contextRoot, id, req);
-  sendJson(res, 200, raw !== null && raw !== REFUSED ? sessionStatsFromText(raw) : EMPTY_STATS);
+  const folded = await transcriptFoldFor(contextRoot, id, req);
+  sendJson(res, 200, folded !== null && folded !== REFUSED ? statsOfFold(folded) : EMPTY_STATS);
 }
 
 /** Conversation ids currently attached to a live agent PTY in THIS server. A Claude
@@ -1232,9 +1310,7 @@ export function startPtySession(
   // tab's process boundary for the hook's nested-claude walk: ancestors ABOVE this
   // server (e.g. a dev server itself launched from a Claude Code session) are outside
   // the tab and must not count as "nested".
-  const tabEnv = kind === 'agent' && pinId && idArg
-    ? { DREAMCONTEXT_TAB_SESSION: pinId, DREAMCONTEXT_SERVER_PID: String(process.pid) }
-    : {};
+  const tabEnv = kind === 'agent' && pinId && idArg ? tabSessionEnv(pinId) : {};
   let term: PtyLike;
   try {
     term = pty.spawn(shell, shellArgs, {
@@ -1334,6 +1410,56 @@ const GOAL_LIVE_FILE_RE = /^\.goal-skill-live(?:\..+)?\.json$/;
  *  legacy single file do not match: they name no pane. */
 const GOAL_LIVE_NAMED_RE = /^\.goal-skill-live\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json$/;
 
+// The goal and council panels poll every 2 s per pane. The live files change a few times a
+// minute at most, so the tmp listing is kept per directory mtime and each file's parse per
+// (inode, size, mtime); the 3 h age check still runs on every call.
+const LIVE_CACHE_MAX = 256;
+const liveDirNames = new Map<string, { mtimeMs: number; names: string[] }>();
+const liveFiles = new Map<string, { ino: number; size: number; mtimeMs: number; value: unknown; bad: boolean }>();
+
+/** The goal-live file names in `dir` (throws when there is no dir). */
+function goalLiveNames(dir: string): string[] {
+  const st = statSync(dir);
+  const hit = liveDirNames.get(dir);
+  if (hit && hit.mtimeMs === st.mtimeMs) return hit.names;
+  const names = readdirSync(dir).filter((n) => GOAL_LIVE_FILE_RE.test(n));
+  if (liveDirNames.size >= LIVE_CACHE_MAX) liveDirNames.clear();
+  liveDirNames.set(dir, { mtimeMs: st.mtimeMs, names });
+  return names;
+}
+
+/** A live file's parsed JSON, re-parsed only when its stat moved. Throws on a malformed file
+ *  (cached as malformed too, until it is rewritten). The value is shared: never mutate it. */
+function parsedLiveFile(path: string, st: Stats): unknown {
+  const hit = liveFiles.get(path);
+  if (hit && hit.ino === st.ino && hit.size === st.size && hit.mtimeMs === st.mtimeMs) {
+    if (hit.bad) throw new Error('malformed live file');
+    return hit.value;
+  }
+  let value: unknown = null;
+  let bad = false;
+  liveParses += 1;
+  try { value = JSON.parse(readFileSync(path, 'utf-8')); } catch { bad = true; }
+  if (liveFiles.size >= LIVE_CACHE_MAX) liveFiles.clear();
+  liveFiles.set(path, { ino: st.ino, size: st.size, mtimeMs: st.mtimeMs, value, bad });
+  if (bad) throw new Error('malformed live file');
+  return value;
+}
+
+let liveParses = 0;
+
+/** Tests only: forget the live-file caches. */
+export function resetLiveRunCachesForTests(): void {
+  liveDirNames.clear();
+  liveFiles.clear();
+  liveParses = 0;
+}
+
+/** Tests only: how many times a live file was actually read and parsed. */
+export function liveFileParses(): number {
+  return liveParses;
+}
+
 /** GET /api/agent/goal-live?claudeId=<uuid> — the vault's goal-skill live run state
  *  (`_dream_context/tmp/.goal-skill-live*.json`) for the in-app panel above the composer.
  *
@@ -1365,12 +1491,13 @@ export function goalLiveRunFor(contextRoot: string, claudeId: string): Record<st
   const runs: Array<{ state: Record<string, unknown>; stamp: string; upd: number }> = [];
   try {
     const dir = join(contextRoot, 'tmp');
-    for (const name of readdirSync(dir)) {
-      if (!GOAL_LIVE_FILE_RE.test(name)) continue;
+    for (const name of goalLiveNames(dir)) {
       try {
         const path = join(dir, name);
-        if (!lstatSync(path).isFile()) continue; // a symlink or anything else is not vault content
-        const state = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
+        const st = lstatSync(path);
+        if (!st.isFile()) continue; // a symlink or anything else is not vault content
+        const state = parsedLiveFile(path, st) as Record<string, unknown>;
+        // The age check runs on every call, never cached: a run goes stale with no write.
         const upd = Date.parse(String(state?.updated ?? state?.started ?? ''));
         if (!upd || Date.now() - upd > GOAL_LIVE_MAX_AGE_MS) continue; // abandoned run
         // A body with no `session` stamp still names its session in the file name: the writer
@@ -1421,7 +1548,8 @@ export async function handleAgentCouncilLive(
 
   let state: Record<string, unknown>;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(join(contextRoot, 'tmp', '.council-live.json'), 'utf-8'));
+    const path = join(contextRoot, 'tmp', '.council-live.json');
+    const parsed: unknown = parsedLiveFile(path, statSync(path));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       sendJson(res, 200, COUNCIL_LIVE_INACTIVE);
       return;

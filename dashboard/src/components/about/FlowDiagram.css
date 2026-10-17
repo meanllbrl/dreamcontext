@@ -67,7 +67,8 @@
 .fd-comet-dot {
   offset-distance: 0%;
   offset-rotate: 0deg;
-  animation: fd-comet-move 2.6s linear infinite;
+  animation: var(--dc-motion-ambient-name, fd-comet-move) 2.6s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
   will-change: offset-distance;
 }
 
@@ -126,7 +127,8 @@
      nodes pulsing at once. transform-box keeps the origin at the rect centre. */
   transform-box: fill-box;
   transform-origin: center;
-  animation: fd-breathe 4s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, fd-breathe) 4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes fd-breathe {

@@ -241,7 +241,7 @@ function ChatLiveRail({ session, taskSlug, quest, lineage, team }: {
   const live = session.status === 'open';
   // The same query `GoalLivePanel` runs (shared key, so still one poll): read here only to
   // know whether the goal-skill map has the rail.
-  const goalData = useAgentGoalLive(session.claudeId, live).data;
+  const goalData = useAgentGoalLive(session.claudeId, live, live && session.busy).data;
   const goalActive = !!goalData?.active;
   const goalWon = goalActive && normalizeGoalLive(goalData?.state)?.phase === 'done';
   const board = teamBoardState(team.parties, team.runsOf);
@@ -281,7 +281,7 @@ function ChatLiveRail({ session, taskSlug, quest, lineage, team }: {
           teamInView={team.inView}
         />
       )}
-      <CouncilLivePanel claudeId={session.claudeId} enabled={live} />
+      <CouncilLivePanel claudeId={session.claudeId} enabled={live} busy={live && session.busy} />
     </div>
   );
 }

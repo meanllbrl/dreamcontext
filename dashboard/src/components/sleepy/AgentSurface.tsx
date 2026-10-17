@@ -24,6 +24,7 @@ import { deriveSessionStatus, rollupProject, type ProjectRollup, type SessionRow
 import { PaneFragment, type PaneActions } from './PaneFragment';
 import { usePaneFocusGlide } from './usePaneFocusGlide';
 import { AgentTabs, type PaneVM } from './AgentTabs';
+import { createTabDragStore, type TabDropTarget } from './tabDrag';
 import { MobileSessionDrawer } from './MobileSessionDrawer';
 import { PhoneChatStack } from './PhoneChatStack';
 import { PhoneChatList } from './PhoneChatList';
@@ -217,13 +218,6 @@ const DEFAULT_TAB_TITLE_RE = /^(?:Agent|Chat) \d+$/;
  *  bar the state flush), so it never fires on the healthy path, and short enough that a real
  *  orphan is reported while the user still remembers what they just did. */
 const ORPHAN_GRACE_MS = 1500;
-
-/** Where a tab will land when the drag ends, recorded during dragover (the `drop` event
- *  is unreliable in WKWebView, so we act on the source tab's reliable `dragend`). */
-type DropTarget =
-  | { kind: 'zone'; paneId: string; zone: 'left' | 'center' | 'right' }
-  | { kind: 'group'; paneId: string }
-  | { kind: 'reorder'; paneId: string; beforeSid: string };
 
 /**
  * The persisted shape of one roster entry (server `/api/agent/sessions`). Metadata only —
@@ -476,8 +470,9 @@ export function AgentSurface() {
     // Capture + on the window: a child that stops propagation, or a release that happens
     // outside the host (a selection dragged out of the pane), must still commit the switch.
     const onUp = () => release(false);
-    // A native drag (tab DnD, a dragged selection) swallows the `mouseup` and has no click
-    // to protect — take the switch immediately rather than leaving it armed for later.
+    // A native drag (a dragged selection) swallows the `mouseup` and has no click to protect —
+    // take the switch immediately rather than leaving it armed for later. A TAB drag is a
+    // pointer gesture (tabDrag.ts) and never comes through here.
     const onDragStart = () => release(true);
     window.addEventListener('mouseup', onUp, true);
     window.addEventListener('dragstart', onDragStart, true);
@@ -490,8 +485,10 @@ export function AgentSurface() {
   // while the overlay stays open — they live on as live progress chips in the corner dock,
   // restorable with a click. Kept alive in the garage exactly like any backgrounded tab.
   const [minimizedIds, setMinimizedIds] = useState<string[]>([]);
-  // A tab drag is in flight → render the per-pane split/combine drop overlays.
-  const [draggingTab, setDraggingTab] = useState(false);
+  // The tab drag in flight (tabDrag.ts) — one store per surface, read by the tab strip and the
+  // panes' drop overlays. Never React state here: a drag re-renders only what its target
+  // touches, never this 4k-line surface.
+  const [tabDrag] = useState(createTabDragStore);
   const [, bumpStatus] = useReducer((x: number) => x + 1, 0);
   // The session whose title is being edited inline (double-click on its tab), or ''.
   const [renamingId, setRenamingId] = useState('');
@@ -624,14 +621,6 @@ export function AgentSurface() {
   });
   const garageRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
-  // The session id of the tab currently being dragged. The DnD payload is ALSO written to
-  // `dataTransfer` (for the `types`-based drop gating), but WKWebView returns '' from
-  // `getData()` of a CUSTOM mime on the drop event — so the actual id must travel through
-  // this ref, set on dragstart, or the drop silently no-ops in the packaged app.
-  const draggedSidRef = useRef('');
-  // Where the dragged tab will land, updated on every dragover. We execute on `dragend`
-  // (reliable on the source) rather than `drop` (unreliable in WKWebView for these zones).
-  const dropTargetRef = useRef<DropTarget | null>(null);
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
@@ -2933,23 +2922,21 @@ export function AgentSurface() {
     focusTermSoon(sid);
   }, [panes, combineIntoPane, focusTermSoon]);
 
-  // ── Drag-to-split, executed on `dragend` ─────────────────────────────────────────
-  // WKWebView does not reliably deliver the HTML5 `drop` event to these nested,
-  // conditionally-mounted drop zones — but `dragover` fires fine (the highlight proves
-  // it) and `dragend` always fires on the source tab. So every dragover records the
-  // hovered target in `dropTargetRef`, and the tab's `dragend` performs the action. The
-  // dragged session id + target both travel through refs, never `dataTransfer`.
-  const setZoneTarget = useCallback((paneId: string, zone: 'left' | 'center' | 'right' | null) => {
-    if (zone) dropTargetRef.current = { kind: 'zone', paneId, zone };
-    // Only clear if WE own the current target (leaving pane A mustn't wipe pane B's set).
-    else if (dropTargetRef.current?.kind === 'zone' && dropTargetRef.current.paneId === paneId) dropTargetRef.current = null;
-  }, []);
-  const setReorderTarget = useCallback((paneId: string, beforeSid: string) => {
-    dropTargetRef.current = { kind: 'reorder', paneId, beforeSid };
-  }, []);
-  const setGroupTarget = useCallback((paneId: string) => {
-    dropTargetRef.current = { kind: 'group', paneId };
-  }, []);
+  // ── Drag-to-split, executed on the tab's pointer RELEASE (tabDrag.ts) ─────────────
+  // The gesture hit-tests the measured rects and hands over the last target; the executors
+  // above do the layout. Read through a ref so the strip's handler keeps one identity while
+  // `dropToZone` (which closes over `panes`) is rebuilt.
+  const executeTabDrop = (sid: string, t: TabDropTarget) => {
+    // The layout moved under the drag (a pane closed): the measured target is stale.
+    if (!panes.some((p) => p.id === t.paneId) || !panes.some((p) => p.tabs.includes(sid))) return;
+    if (t.kind === 'zone') dropToZone(t.paneId, t.zone, sid);
+    else if (t.kind === 'group') combineIntoPane(sid, t.paneId);
+    else moveTab(sid, t.paneId, t.beforeSid);
+  };
+  const executeTabDropRef = useRef(executeTabDrop);
+  useEffect(() => { executeTabDropRef.current = executeTabDrop; });
+  const handleTabDrop = useCallback((sid: string, t: TabDropTarget) => executeTabDropRef.current(sid, t), []);
+
   // ── Stable dispatchers for the memoized children (PaneFragment, ChatPaneHost) ──────
   //
   // `bumpStatus` re-renders this whole component on ANY session's busy/asking/status/
@@ -2965,7 +2952,6 @@ export function AgentSurface() {
   // Actions are only ever invoked from event handlers — which run long after the effect that
   // published them — so the ref can never be read stale.
   const paneActionsImpl: PaneActions = {
-    setZoneTarget,
     // Called from a mousedown-capture, so it ARMS the switch — see `armPane` above.
     activate: (paneId) => armPane(paneId),
     resume: (sid) => resumeSession(sid),
@@ -2974,7 +2960,6 @@ export function AgentSurface() {
   const paneActionsRef = useRef(paneActionsImpl);
   useEffect(() => { paneActionsRef.current = paneActionsImpl; });
   const paneActions = useMemo<PaneActions>(() => ({
-    setZoneTarget: (paneId, zone) => paneActionsRef.current.setZoneTarget(paneId, zone),
     activate: (paneId) => paneActionsRef.current.activate(paneId),
     resume: (sid) => paneActionsRef.current.resume(sid),
     close: (sid) => paneActionsRef.current.close(sid),
@@ -3008,23 +2993,6 @@ export function AgentSurface() {
     openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),
     signIn: (cs) => chatActionsRef.current.signIn(cs),
   }), []);
-
-  const handleTabDragStart = useCallback((sid: string) => {
-    draggedSidRef.current = sid;
-    dropTargetRef.current = null;
-    setDraggingTab(true);
-  }, []);
-  const handleTabDragEnd = useCallback(() => {
-    const sid = draggedSidRef.current;
-    const t = dropTargetRef.current;
-    draggedSidRef.current = '';
-    dropTargetRef.current = null;
-    setDraggingTab(false);
-    if (!sid || !t) return; // released over empty space → no-op
-    if (t.kind === 'zone') dropToZone(t.paneId, t.zone, sid);
-    else if (t.kind === 'group') combineIntoPane(sid, t.paneId);
-    else moveTab(sid, t.paneId, t.beforeSid);
-  }, [dropToZone, combineIntoPane, moveTab]);
 
   const commitRename = useCallback((id: string, raw: string) => {
     const title = raw.trim();
@@ -3255,6 +3223,11 @@ export function AgentSurface() {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // A tab drag in flight owns Esc: tabDrag.ts cancels it there. Its own listener is added
+      // when the drag starts, AFTER this one (registered when the overlay expanded), so its
+      // stopPropagation cannot reach us — capture listeners on one node run in registration
+      // order. Without this check one Escape cancelled the drag AND folded the whole surface.
+      if (tabDrag.get()) return;
       if (document.querySelector('.agent-new-menu')) return;  // the "＋ New" menu owns Esc
       // A tab's right-click menu owns Esc too. Tested by presence rather than by focus: it
       // portals to <body> and never takes focus, so the `activeElement` checks below (which
@@ -3290,7 +3263,7 @@ export function AgentSurface() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [expanded]);
+  }, [expanded, tabDrag]);
 
   // ── Quick-toggle hotkey (Settings → Agents; default ⌃A) ──────────────────────────
   // Opens the Agents overlay from anywhere in the app, and closes it again. Two flavours:
@@ -3362,25 +3335,18 @@ export function AgentSurface() {
     return () => { delete document.body.dataset.mobileChat; };
   }, [isMobile, expanded]);
 
-  // ── Drop-overlay leak guard (the "terminal unreachable after a split" fix) ───────
-  // While a tab is dragged, each pane mounts a full-bleed `.agent-pane-droplayer`
-  // (z-index 6) for the split/combine zones. It's normally torn down by the tab's
-  // `onDragEnd`. But a drop that SPLITS/MOVES the dragged tab reconciles its source
-  // <div> out of the DOM before the browser fires `dragend` on it — so `onDragEnd`
-  // never runs, the overlay stays mounted over every terminal, and all clicks/focus
-  // (and ⌘D, which needs host focus) are swallowed until an app restart. A
-  // window-level capture listener fires for EVERY drop and dragend regardless of the
-  // handlers' stopPropagation (capture precedes bubble) or a vanished source node, so
-  // the flag always clears the instant the drag ends.
+  // ── The dragged tab vanished mid-drag ───────────────────────────────────────────
+  // Its session closed or its pane went away while the pointer was still down: end the
+  // drag without acting, so no drop layer outlives the tab it was for (the gesture tears
+  // itself down when the store ends — see `armTabDrag`). Any other pane change moved the
+  // rects the drag hit-tests against: have it measure again.
   useEffect(() => {
-    if (!draggingTab) return;
-    // BUBBLE phase (not capture) so this runs AFTER the dragged tab's own `dragend`
-    // executor — it's pure insurance that the overlay never stays stuck if that handler
-    // somehow doesn't fire. It clears state only; it never performs the drop action.
-    const clear = () => { setDraggingTab(false); draggedSidRef.current = ''; dropTargetRef.current = null; };
-    window.addEventListener('dragend', clear);
-    return () => window.removeEventListener('dragend', clear);
-  }, [draggingTab]);
+    const s = tabDrag.get();
+    if (!s) return;
+    const t = s.target;
+    if (!panes.some((p) => p.tabs.includes(s.sid)) || (t && !panes.some((p) => p.id === t.paneId))) tabDrag.end();
+    else tabDrag.layoutChanged();
+  }, [panes, tabDrag]);
 
   // ── Auto-collapse on navigation ──────────────────────────────────────────────
   // When the user clicks a sidebar item (or jumps via the ⌘K palette) while the agent
@@ -3818,7 +3784,7 @@ export function AgentSurface() {
                 actions={paneActions}
                 active={isActive}
                 dormant={activeMeta?.dormant}
-                dragging={draggingTab}
+                drag={tabDrag}
                 composer={!activeMeta?.dormant && transportKind(activeMeta) !== 'chat' && (
                   <PaneComposer
                     claudeId={activeMeta?.claudeId}
@@ -4015,10 +3981,8 @@ export function AgentSurface() {
                 onStartRename={setRenamingId}
                 onCommitRename={commitRename}
                 onCancelRename={() => setRenamingId('')}
-                onTabDragStart={handleTabDragStart}
-                onTabDragEnd={handleTabDragEnd}
-                onReorderHover={setReorderTarget}
-                onGroupHover={setGroupTarget}
+                drag={tabDrag}
+                onTabDrop={handleTabDrop}
                 chatConvertEnabled={!!agentSettings.chatView && !!caps?.claudeCli}
                 onOpenInChat={openAgentInChat}
                 autoTitle={agentSettings.autoTitle}

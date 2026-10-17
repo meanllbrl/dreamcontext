@@ -266,13 +266,14 @@
   padding: var(--space-1);
   margin-inline: auto; /* ← Rule 2 (see above) */
   border-radius: var(--radius-full);
-  background: color-mix(in oklab, var(--color-text) 6%, transparent);
+  /* Opaque, not frosted: the strip is on screen for the window's whole life, and a
+     `backdrop-filter` there re-blurs whatever moves behind it on every frame (task: the desktop
+     app stays light on an 8GB MacBook Air). The same 6% tint, mixed into the page colour. */
+  background: color-mix(in oklab, var(--color-bg) 94%, var(--color-text));
   border: 1px solid color-mix(in oklab, var(--color-text) 8%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in oklab, var(--color-bg) 65%, transparent),
     0 1px 2px color-mix(in oklab, var(--color-text) 8%, transparent);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  backdrop-filter: blur(24px) saturate(180%);
   transform-origin: center center;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast),
     background var(--transition-fast), border-color var(--transition-fast);
@@ -612,18 +613,14 @@
  * across against the old 8px dot, and it TURNS: an 8px dot changing opacity reads as flicker,
  * a mark travelling around a circle reads as progress.
  *
- * The angle is animated through a registered custom property, because a plain `rotate` would
- * spin the stadium's SHAPE rather than run a mark around its edge. Where `@property` is not
- * supported the gradient simply holds still at its initial angle — which is the same picture
- * the reduced-motion rule below asks for, so the fallback is a state we already wanted rather
- * than a broken one.
+ * The ring itself never moves: it is a static mask, so the stadium's SHAPE stays put. What
+ * turns is the gradient behind it — a square of conic gradient (the `::before`), centred on
+ * the bubble and larger than it, rotated with `transform`. A conic gradient rotated about its
+ * centre IS the same gradient started at that angle, so the picture is the one the old
+ * animated `from` angle drew, but the compositor turns it: no style recalc or repaint per frame
+ * (task: the desktop app stays light on an 8GB MacBook Air). At rest — reduced motion, Light
+ * mode — the arc simply holds still.
  */
-@property --tab-ring-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-
 .project-tab-bubble-ring {
   position: absolute;
   /* Kept under half the row's spare height (28px chip, 16px bubble) so the ring never touches
@@ -631,20 +628,33 @@
   inset: -4px;
   border-radius: var(--radius-full);
   padding: 2px;
-  background: conic-gradient(
-    from var(--tab-ring-angle),
-    var(--color-success) 0turn 0.62turn,
-    transparent 0.62turn 1turn
-  );
+  overflow: hidden;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: projectTabRing 1s linear infinite;
+}
+
+.project-tab-bubble-ring::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  /* Twice the stadium's width, square: covers its whole box at every angle. */
+  width: 200%;
+  aspect-ratio: 1;
+  background: conic-gradient(
+    var(--color-success) 0turn 0.62turn,
+    transparent 0.62turn 1turn
+  );
+  transform: translate(-50%, -50%);
+  animation: var(--dc-motion-status-name, projectTabRing) 1s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes projectTabRing {
-  to { --tab-ring-angle: 360deg; }
+  from { transform: translate(-50%, -50%) rotate(0turn); }
+  to { transform: translate(-50%, -50%) rotate(1turn); }
 }
 
 /*
@@ -668,7 +678,8 @@
   border-radius: var(--radius-full);
   background: var(--mood-waiting);
   box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
-  animation: projectTabFlagPulse 1.5s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, projectTabFlagPulse) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes projectTabFlagPulse {
@@ -764,7 +775,8 @@
  *     become.
  */
 .project-tab[data-asking='true'] {
-  animation: projectTabDockBounce 1.6s infinite;
+  animation: var(--dc-motion-status-name, projectTabDockBounce) 1.6s infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* Pointing at it means it has been seen — the same courtesy the dock anchor extends, and it
@@ -882,7 +894,7 @@
      only ever an amplifier. */
   .project-tab[data-bouncing='true'],
   .project-tab[data-asking='true'],
-  .project-tab-bubble-ring,
+  .project-tab-bubble-ring::before,
   .project-tab-flag {
     animation: none;
   }

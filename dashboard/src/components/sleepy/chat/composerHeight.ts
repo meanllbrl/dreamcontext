@@ -79,29 +79,53 @@ export function composerBodyHeight(i: ComposerHeightInput): number {
   return Math.min(ceiling, Math.max(grown, floor));
 }
 
+/** Did `next` come from `prev` by inserting text and deleting none? Only then can the field
+ *  skip its collapse measure: an insertion never takes a line away, while a paste over a
+ *  selection or a prefill can be LONGER and still span fewer lines. */
+export function draftOnlyGrew(prev: string, next: string): boolean {
+  if (next.length <= prev.length) return false;
+  let p = 0;
+  while (p < prev.length && prev.charCodeAt(p) === next.charCodeAt(p)) p++;
+  let q = 0;
+  while (q < prev.length - p && prev.charCodeAt(prev.length - 1 - q) === next.charCodeAt(next.length - 1 - q)) q++;
+  return p + q === prev.length;
+}
+
 // ── DOM measurement (the impure half — everything above is pure and unit-tested) ──────
+//
+// The keystroke path is the hot one (task: the desktop app stays light on an 8GB MacBook Air —
+// a `getComputedStyle` per key forced a whole-document style resolve, ~25–50 ms a key with long
+// panes mounted). So the field's metrics are read ONCE and cached by the caller (refreshed on
+// mount, a field width change, theme, zoom and font load — never per key), and the content
+// measure only collapses the field when the draft got shorter.
+
+/** The field's line metrics; `border` is kept apart so the content measure needs no style read. */
+export interface FieldMetrics { lineHeight: number; fieldChrome: number; border: number }
 
 /** Line metrics read off the live field, so the bounds follow the design tokens rather than
- *  a constant that has to be remembered when a token moves. */
-export function readFieldMetrics(ta: HTMLTextAreaElement): { lineHeight: number; fieldChrome: number } {
+ *  a constant that has to be remembered when a token moves. Cache the result: this is the one
+ *  `getComputedStyle` of the composer. */
+export function readFieldMetrics(ta: HTMLTextAreaElement): FieldMetrics {
   const cs = getComputedStyle(ta);
   const px = (v: string) => parseFloat(v) || 0;
   // `line-height: normal` computes to the keyword in some engines — fall back to the ratio
   // the stylesheet actually sets rather than to a hardcoded pixel count.
   const lineHeight = px(cs.lineHeight) || px(cs.fontSize) * 1.45 || 20;
   const border = px(cs.borderTopWidth) + px(cs.borderBottomWidth);
-  return { lineHeight, fieldChrome: px(cs.paddingTop) + px(cs.paddingBottom) + border };
+  return { lineHeight, fieldChrome: px(cs.paddingTop) + px(cs.paddingBottom) + border, border };
 }
+
+/** The part of a textarea the content measure touches (a plain object in tests). */
+export type MeasurableField = Pick<HTMLTextAreaElement, 'scrollHeight' | 'clientHeight'> & { style: { height: string } };
 
 /**
  * How tall the draft WANTS to be. The field is `height: 100%` of its row, so its
  * `scrollHeight` is normally just the row's height — it has to be collapsed first for the
  * measurement to be about the content. Both writes happen inside one synchronous block, so
- * the browser never lays the collapsed field out for paint.
+ * the browser never lays the collapsed field out for paint. `border` comes from the cached
+ * {@link FieldMetrics}.
  */
-export function measureFieldContent(ta: HTMLTextAreaElement): number {
-  const cs = getComputedStyle(ta);
-  const border = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+export function measureFieldContent(ta: MeasurableField, border: number): number {
   const prev = ta.style.height;
   ta.style.height = '0px';
   const content = ta.scrollHeight; // includes the field's padding, excludes its border
@@ -110,11 +134,27 @@ export function measureFieldContent(ta: HTMLTextAreaElement): number {
 }
 
 /**
+ * The content height for this pass, collapsing the field only when it has to.
+ *
+ * `full` (the draft got shorter or was replaced, the width changed, nothing measured yet)
+ * takes the collapse-to-0 measure — the only way to see content SHRINK. A draft that only
+ * GREW can only need more room: if the field now overflows, its `scrollHeight` already is
+ * the content height; if it does not, the box it has is still enough and the last figure
+ * stands (the applied height cannot change either way — see `composerBodyHeight`).
+ */
+export function fieldContentHeight(ta: MeasurableField, border: number, last: number | null, full: boolean): number {
+  if (full || last == null) return measureFieldContent(ta, border);
+  if (ta.scrollHeight > ta.clientHeight) return ta.scrollHeight + border;
+  return last;
+}
+
+/**
  * The body box minus the field: its own vertical padding, the chip rows currently rendered,
  * and the gaps between them. Measured from the chips THEMSELVES (`offsetHeight`) rather than
  * derived from the body's current height — the chips never shrink (`flex: 0 0 auto`), so
  * when they briefly overflow a too-short box the derived figure would under-report and the
- * height would need a second frame to converge.
+ * height would need a second frame to converge. Called only when a chip row changes or the
+ * pane resizes; the keystroke path reuses the last figure.
  */
 export function measureBodyChrome(body: HTMLElement, fieldRow: HTMLElement): number {
   const cs = getComputedStyle(body);

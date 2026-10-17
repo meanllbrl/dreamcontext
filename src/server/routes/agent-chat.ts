@@ -41,6 +41,7 @@ import {
 } from '../checkout-directive.js';
 import { clearSessionEdits, recordSessionEdit } from '../../lib/session-edits.js';
 import { forgetSessionFacts, readSessionFacts } from '../../lib/session-facts.js';
+import { tabSessionEnv } from '../../lib/session-origin.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import { claudeAuthStatus } from '../../lib/claude-auth.js';
@@ -1679,9 +1680,7 @@ export function startChatSession(
   // hooks (which inherit this env through `claude`) record roster id → live conversation
   // id on every rotation — the SAME map the embedded terminal writes/reads (AC7: chat and
   // terminal resume interop through one registry). Only when actually pinned/resumed.
-  const tabEnv = pinId && idArg.length
-    ? { DREAMCONTEXT_TAB_SESSION: pinId, DREAMCONTEXT_SERVER_PID: String(process.pid) }
-    : {};
+  const tabEnv = pinId && idArg.length ? tabSessionEnv(pinId) : {};
 
   // ── Seed this pane's context-handoff toggle BEFORE the child starts ─────────
   //

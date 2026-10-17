@@ -56,7 +56,8 @@
   border-radius: 50%;
   border: 2px solid var(--color-border);
   border-top-color: var(--color-accent);
-  animation: chpSpin 700ms linear infinite;
+  animation: var(--dc-motion-ambient-name, chpSpin) 700ms linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chpSpin { to { transform: rotate(360deg); } }
 

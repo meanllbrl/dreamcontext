@@ -465,6 +465,9 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/releases': allow(PROJECT_WRITE),
   'PATCH /api/releases/:version': allow(PROJECT_WRITE),
   'DELETE /api/releases/:version': allow(PROJECT_WRITE),
+  // Light mode's Auto reads THIS Mac's memory and power source for its own windows; the
+  // phone's light mode is the phone's business (its request is refused locally, Auto stays off).
+  'GET /api/app/machine': deny('laptop-only: this Mac\'s memory and power source, for its own windows\' Light mode'),
 };
 
 /** The row for a matched route (`method` as registered, `path` the registered pattern), or

@@ -114,7 +114,8 @@
 
 .wb-agent-tab-dot--working {
   background: var(--color-success);
-  animation: wb-agent-dot-pulse 1.4s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, wb-agent-dot-pulse) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 .wb-agent-tab-dot--needs-you {

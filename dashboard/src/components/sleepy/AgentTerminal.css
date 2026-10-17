@@ -318,9 +318,10 @@
   flex: 0 0 auto;
   padding: 4px 9px;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-bg-secondary) 80%, transparent);
+  /* Opaque, not blurred: a live backdrop blur over a streaming terminal re-rasterises every
+     frame the terminal paints (task: the desktop app stays light on an 8GB MacBook Air). */
+  background: color-mix(in srgb, var(--color-bg-secondary) 80%, var(--color-bg));
   border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
-  backdrop-filter: blur(8px);
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--color-text-tertiary);
@@ -408,7 +409,10 @@
   box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
 }
 .agent-rail-dot[data-kind="working"],
-.agent-rail-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+.agent-rail-dot[data-kind="starting"] {
+  animation: var(--dc-motion-status-name, agentDotPulse) 1.2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
 
 .agent-rail-mascot {
   flex: 0 0 auto;
@@ -447,7 +451,8 @@
   border-radius: 50%;
   background: var(--mood-waiting);
   box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
-  animation: agentBadgePulse 1.5s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentBadgePulse) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .agent-rail-close {
   flex: 0 0 auto;
@@ -587,7 +592,10 @@
   box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
 }
 .agent-pane-status[data-kind="working"] .dot,
-.agent-pane-status[data-kind="starting"] .dot { animation: agentDotPulse 1.2s ease-in-out infinite; }
+.agent-pane-status[data-kind="starting"] .dot {
+  animation: var(--dc-motion-status-name, agentDotPulse) 1.2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
 
 /* Each action reads as a real button: a visible resting chip (surface + border) so
    it's obviously clickable, a 28px target, and a legible glyph. */
@@ -631,8 +639,8 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: color-mix(in srgb, var(--color-bg) 78%, transparent);
-  backdrop-filter: blur(3px);
+  /* An opaque scrim where a blur used to soften the frozen output behind the card. */
+  background: color-mix(in srgb, var(--color-bg) 94%, transparent);
   animation: agentFadeIn var(--transition-fast);
 }
 .agent-pane-ended-card {
@@ -841,6 +849,11 @@
 }
 
 .agent-tab {
+  /* A tab is dragged by a captured pointer (tabDrag.ts), not native DnD: a press that could
+     anchor a text selection would extend it across every transcript the drag passes over
+     (measured: 206k characters selected and 130 ms WebKit frames across five panes). */
+  -webkit-user-select: none;
+  user-select: none;
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -861,6 +874,11 @@
   user-select: none;
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
+/* Nor may an image in it (an automation's avatar) start a native image drag: the browser
+   would cancel the captured pointer mid-gesture. Not inherited, so on the image itself. */
+.agent-tab img {
+  -webkit-user-drag: none;
+}
 .agent-tab:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 .agent-tab.active {
   background: var(--color-accent-soft);
@@ -877,7 +895,10 @@
   box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
 }
 .agent-tab-dot[data-kind="working"],
-.agent-tab-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+.agent-tab-dot[data-kind="starting"] {
+  animation: var(--dc-motion-status-name, agentDotPulse) 1.2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
 
 /* Session-type glyph: ◇ = Claude agent, ◆ = Claude chat, >_ = plain shell. A quiet
    monospace mark (never an emoji) so a pane holding several kinds reads at a glance. */
@@ -952,7 +973,8 @@
   border-radius: 50%;
   background: var(--mood-waiting);
   box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
-  animation: agentBadgePulse 1.5s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentBadgePulse) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 /* Per-tab minimize + close — each is a clearly-bordered icon button (not a bare glyph)
    so the two actions read distinctly. Revealed on hover/active so resting tabs stay clean. */
@@ -1205,6 +1227,9 @@
   inset: 0;
   z-index: 6;
   display: flex;
+  /* Visual only: the drag is a captured pointer gesture hit-tested from measured rects
+     (tabDrag.ts), so the layer must never catch a click on its way out. */
+  pointer-events: none;
 }
 .agent-pane-zone {
   flex: 1;
@@ -1234,6 +1259,34 @@
   border-color: var(--color-accent);
   color: var(--color-text);
 }
+
+/* Tab drag in the strip (tabDrag.ts): the lifted tab stays in place, faded; the tab it would
+   land before carries an accent bar on its leading edge; a tab group it would join is
+   tinted. The ghost follows the pointer by `transform` only — fixed over the page, never
+   hit-tested, never laid out again after it is placed. */
+.agent-tab[data-dragging="true"] { opacity: 0.45; }
+.agent-tab[data-over="true"] {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.agent-pane-tabbar[data-over="true"] {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+.agent-tab-ghost {
+  position: fixed;
+  z-index: 10000;
+  margin: 0;
+  pointer-events: none;
+  opacity: 0.92;
+  box-shadow: var(--shadow-lg);
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  background: var(--color-bg-elevated);
+  cursor: grabbing;
+  transition: none;
+  will-change: transform;
+}
+.agent-tab-ghost .agent-tab-btn { visibility: hidden; }
 
 @media (prefers-reduced-motion: reduce) {
   .agent-tab-dot,
@@ -1360,7 +1413,8 @@
 .agent-dock-chip[data-kind="asking"] {
   border-color: color-mix(in srgb, var(--mood-waiting) 60%, transparent);
   box-shadow: var(--shadow-lg), 0 0 16px -3px color-mix(in srgb, var(--mood-waiting) 70%, transparent);
-  animation: agentChipNudge 2.4s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentChipNudge) 2.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .agent-dock-chip[data-kind="asking"]:hover { animation: none; }
 @keyframes agentChipNudge {
@@ -1409,7 +1463,8 @@
 .agent-dock-chip-glyph i {
   width: 4px; height: 9px;
   background: currentColor;
-  animation: agentCursorBlink 1.1s steps(1) infinite;
+  animation: var(--dc-motion-ambient-name, agentCursorBlink) 1.1s steps(1) infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes agentCursorBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
 
@@ -1428,7 +1483,10 @@
   font-weight: 800;
   line-height: 1;
   box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 80%, transparent);
-  animation: agentQPop 0.28s ease-out backwards, agentBadgePulse 1.5s ease-in-out 0.3s infinite;
+  /* A one-shot entrance and the endless pulse in ONE list: only the endless position
+     carries the motion variables, so the pop always reaches its end state (W1.6). */
+  animation: agentQPop 0.28s ease-out backwards, var(--dc-motion-status-name, agentBadgePulse) 1.5s ease-in-out 0.3s infinite;
+  animation-play-state: running, var(--dc-motion-play, running);
 }
 @keyframes agentQPop {
   from { transform: scale(0.2); opacity: 0; }
@@ -1464,14 +1522,18 @@
   line-height: 1;
   color: var(--kind-color, var(--color-text-tertiary));
 }
-.agent-dock-chip-state[data-kind="asking"] { animation: agentBadgePulse 1.5s ease-in-out infinite; }
+.agent-dock-chip-state[data-kind="asking"] {
+  animation: var(--dc-motion-status-name, agentBadgePulse) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
 /* Live "typing" dots after working/starting — the state line breathes while it runs. */
 .agent-dock-chip-dots { display: inline-flex; gap: 2px; }
 .agent-dock-chip-dots i {
   width: 3px; height: 3px;
   border-radius: 50%;
   background: currentColor;
-  animation: agentDotWave 1.2s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentDotWave) 1.2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .agent-dock-chip-dots i:nth-child(2) { animation-delay: 0.15s; }
 .agent-dock-chip-dots i:nth-child(3) { animation-delay: 0.3s; }
@@ -1487,7 +1549,8 @@
   border-radius: 50%;
   background: var(--mood-waiting);
   box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
-  animation: agentBadgePulse 1.5s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentBadgePulse) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes agentBadgePulse {
   0%, 100% { transform: scale(1); opacity: 1; }
@@ -1536,7 +1599,8 @@
 .agent-dock-anchor:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
 .agent-dock-anchor[data-asking] {
   box-shadow: var(--shadow-lg), 0 0 18px -3px color-mix(in srgb, var(--mood-waiting) 75%, transparent);
-  animation: agentChipNudge 2.4s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentChipNudge) 2.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .agent-dock-anchor[data-asking]:hover { animation: none; }
 .agent-dock-anchor .agent-dock-chip-figure { width: 24px; height: 24px; }
@@ -1552,7 +1616,8 @@
   border-radius: 50%;
   background: var(--mood-waiting);
   box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
-  animation: agentBadgePulse 1.5s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentBadgePulse) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .agent-dock-anchor-chevron {
   color: var(--color-text-tertiary);
@@ -1574,8 +1639,8 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: color-mix(in srgb, var(--color-bg) 55%, rgba(0, 0, 0, 0.55));
-  backdrop-filter: blur(4px);
+  /* Denser instead of blurred — the sheet still reads as the only thing that matters. */
+  background: color-mix(in srgb, var(--color-bg) 45%, rgba(0, 0, 0, 0.78));
   animation: agentFadeIn 0.14s ease;
 }
 .agent-confirm {

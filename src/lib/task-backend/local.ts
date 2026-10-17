@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
 import { loadStatuses, loadTaskOverride } from '../overrides.js';
@@ -285,6 +285,59 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
   };
 }
 
+// ─── Read memo ───────────────────────────────────────────────────────────────
+//
+// `GET /api/tasks` (polled every 15 s per window) runs `list()` and then `get()` per task, and
+// `/api/tasks/members` does both again — a few hundred task files re-read and re-parsed per
+// call, each `get()` reading its file nine times (frontmatter, section list, seven sections).
+// Task: the desktop app stays light on an 8GB MacBook Air. The two READ paths go through this
+// module-scoped memo (module-scoped and keyed by absolute path, because the route builds a
+// backend per request): a file is re-read only when its (inode, size, mtime, ctime), taken
+// from a stat BEFORE the read, moved — so a write from outside this process (the CLI, a git
+// pull, a sync) is still seen — and every write path below forgets its file explicitly.
+// Callers get `structuredClone`s, so nothing they do reaches the cached value. Write paths
+// (read-modify-write under the lock) read fresh, never through here.
+
+const READ_MEMO_MAX = 4096;
+const readMemo = new Map<string, { sig: string; value: unknown }>();
+
+function fileSig(path: string): string {
+  const st = statSync(path);
+  return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+}
+
+function memoRead<T>(kind: 'fm' | 'task', path: string, read: () => T): T {
+  const abs = resolve(path);
+  const key = `${kind}\0${abs}`;
+  const sig = fileSig(abs);
+  const hit = readMemo.get(key);
+  readMemo.delete(key);
+  if (hit && hit.sig === sig) {
+    readMemo.set(key, hit);
+    return structuredClone(hit.value) as T;
+  }
+  const value = read();
+  readMemo.set(key, { sig, value });
+  while (readMemo.size > READ_MEMO_MAX) {
+    const oldest = readMemo.keys().next();
+    if (oldest.done) break;
+    readMemo.delete(oldest.value);
+  }
+  return structuredClone(value);
+}
+
+/** Drop the memoized reads of one task file (after this process wrote it). */
+export function forgetTaskRead(path: string): void {
+  const abs = resolve(path);
+  readMemo.delete(`fm\0${abs}`);
+  readMemo.delete(`task\0${abs}`);
+}
+
+/** Tests only: forget every memoized task read. */
+export function resetTaskReadMemo(): void {
+  readMemo.clear();
+}
+
 /**
  * The current file-based task store, behind the TaskBackend interface.
  * Every byte it writes is pinned by tests/unit/task-backend-golden.test.ts —
@@ -361,7 +414,7 @@ export class LocalTaskBackend implements TaskBackend {
     const all: TaskSummary[] = [];
     for (const file of this.taskFiles()) {
       try {
-        const { data } = readFrontmatter<Record<string, unknown>>(file);
+        const { data } = memoRead('fm', file, () => readFrontmatter<Record<string, unknown>>(file));
         all.push(toTaskRecord(data, basename(file, '.md'), file));
       } catch { /* skip unreadable */ }
     }
@@ -372,7 +425,8 @@ export class LocalTaskBackend implements TaskBackend {
     if (!isSafeTaskSlug(slug)) return null;
     const path = this.taskPath(slug);
     if (!existsSync(path)) return null;
-    return readTaskFile(path, this.statusDefs());
+    const statuses = this.statusDefs();
+    return memoRead('task', path, () => readTaskFile(path, statuses));
   }
 
   async create(input: CreateTaskInput): Promise<TaskData> {
@@ -519,6 +573,7 @@ ${input.why || '(To be defined)'}
       }
     }
 
+    forgetTaskRead(filePath);
     return readTaskFile(filePath, this.statusDefs());
   }
 
@@ -542,6 +597,7 @@ ${input.why || '(To be defined)'}
       } else {
         updateFrontmatterFields(path, fields);
       }
+      forgetTaskRead(path);
       return readTaskFile(path, this.statusDefs());
     });
   }
@@ -553,8 +609,12 @@ ${input.why || '(To be defined)'}
     opts: InsertSectionOptions,
   ): Promise<void> {
     const path = this.requirePath(slug);
-    withTaskFileLock(this.brainRoot(), slug, () =>
-      insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false));
+    try {
+      withTaskFileLock(this.brainRoot(), slug, () =>
+        insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false));
+    } finally {
+      forgetTaskRead(path);
+    }
   }
 
   async addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void> {
@@ -563,16 +623,20 @@ ${input.why || '(To be defined)'}
     // foreground logs progress while a background cycle reconciles the board —
     // and it is a read-modify-write of the same section, so it is exactly where
     // an interleave drops an entry.
-    withTaskFileLock(this.brainRoot(), slug, () => {
-      try {
-        insertToSection(path, 'Changelog', entry, 'top');
-      } catch (err) {
-        if (!opts?.fallbackAppend) throw err;
-        // No Changelog section: append at EOF (pre-refactor CLI fallback).
-        const existing = readFileSync(path, 'utf-8');
-        writeFileSync(path, existing.trimEnd() + '\n\n' + entry + '\n', 'utf-8');
-      }
-    });
+    try {
+      withTaskFileLock(this.brainRoot(), slug, () => {
+        try {
+          insertToSection(path, 'Changelog', entry, 'top');
+        } catch (err) {
+          if (!opts?.fallbackAppend) throw err;
+          // No Changelog section: append at EOF (pre-refactor CLI fallback).
+          const existing = readFileSync(path, 'utf-8');
+          writeFileSync(path, existing.trimEnd() + '\n\n' + entry + '\n', 'utf-8');
+        }
+      });
+    } finally {
+      forgetTaskRead(path);
+    }
   }
 
   async complete(slug: string, summary?: string): Promise<TaskData> {
@@ -596,6 +660,7 @@ ${input.why || '(To be defined)'}
     // traceable through a remote backend's mapping.
     const doomed = await this.get(slug).catch(() => null);
     withTaskFileLock(this.brainRoot(), slug, () => rmSync(path));
+    forgetTaskRead(path);
     // A deleted FILE proves nothing later; this marker does. Without it a sleep
     // cycle re-files a chore somebody deliberately consolidated away.
     appendTombstone(this.brainRoot(), {
@@ -650,6 +715,8 @@ ${input.why || '(To be defined)'}
     // is layered on by the remote backends' override.
     await this.updateFields(slug, { name: trimmed, updated_at: today() });
     withTaskFileLock(this.brainRoot(), slug, () => renameSync(path, this.taskPath(newSlug)));
+    forgetTaskRead(path);
+    forgetTaskRead(this.taskPath(newSlug));
     // A rename retires the OLD slug just as surely as a delete does: anything
     // that remembers it (a sleep cycle's fixed-slug lookup, a wikilink) must be
     // pointed at where the work went rather than concluding it never existed.

@@ -33,7 +33,8 @@
     radial-gradient(56% 64% at 82% 86%, var(--color-electric-blue), transparent 60%);
   filter: blur(56px);
   opacity: 0.26;
-  animation: arch-breathe 9s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, arch-breathe) 9s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* ── The stack: a tilted plate of strata ────────────────────────────────── */

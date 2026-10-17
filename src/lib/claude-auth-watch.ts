@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { claudeAuthStatus, resetClaudeAuthCache, type ClaudeAuthStatus } from './claude-auth.js';
+import { claudeAuthStatus, MIRROR_ABSENT, mirrorFingerprint, resetClaudeAuthCache, type ClaudeAuthStatus } from './claude-auth.js';
 
 /**
  * Notice when the user signs into a DIFFERENT Claude account, while the app is running.
@@ -45,45 +45,9 @@ import { claudeAuthStatus, resetClaudeAuthCache, type ClaudeAuthStatus } from '.
  * comparison gets wrong at exactly the moment it matters (a tab opened mid-switch).
  */
 
-/** How the account is identified. Everything else in `~/.claude.json` is noise — see the
- *  allowlist note above. */
-interface MirrorIdentity {
-  accountUuid: string;
-  emailAddress: string;
-  organizationUuid: string;
-}
-
-/** No `oauthAccount` at all — signed out, or a machine that authenticates some other way. */
-export const MIRROR_ABSENT = 'absent';
-
-function str(v: unknown): string {
-  return typeof v === 'string' ? v.trim() : '';
-}
-
-/**
- * The identity fingerprint of a parsed `~/.claude.json` blob. `absent` when the blob has no
- * `oauthAccount` (signed out, or never signed in) — which is itself a fingerprint, so a
- * logout is detected exactly like a switch.
- *
- * Exported pure: the shapes this must survive (a switch, a logout, a heartbeat that only
- * moved `profileFetchedAt`, garbage) are pinned by tests rather than by a live CLI.
- */
-export function mirrorFingerprint(blob: unknown): string {
-  const b = blob && typeof blob === 'object' ? blob as Record<string, unknown> : null;
-  const oa = b?.oauthAccount && typeof b.oauthAccount === 'object'
-    ? b.oauthAccount as Record<string, unknown>
-    : null;
-  if (!oa) return MIRROR_ABSENT;
-  const id: MirrorIdentity = {
-    accountUuid: str(oa.accountUuid),
-    emailAddress: str(oa.emailAddress),
-    organizationUuid: str(oa.organizationUuid),
-  };
-  // An `oauthAccount` with none of the three identifying fields is indistinguishable from
-  // no account at all, and must not read as "a different account" every time it is seen.
-  if (!id.accountUuid && !id.emailAddress && !id.organizationUuid) return MIRROR_ABSENT;
-  return `${id.accountUuid}|${id.emailAddress}|${id.organizationUuid}`;
-}
+// The identity fingerprint of a parsed `~/.claude.json` (the allowlist above) lives in
+// claude-auth.ts, whose probe cache keys on it too; re-exported here for this module's callers.
+export { MIRROR_ABSENT, mirrorFingerprint };
 
 /**
  * The identity fingerprint of an authoritative probe result.
@@ -166,8 +130,8 @@ export interface AuthWatcherDeps {
   home?: string;
   /** The authoritative probe. Injected for tests; production uses the real CLI spawn. */
   probe?: () => Promise<ClaudeAuthStatus>;
-  /** Drop claude-auth.ts's 5s memo so `/api/agent/capabilities` reports the new account on
-   *  its very next poll instead of up to 5s of the old one. */
+  /** Drop claude-auth.ts's memo so `/api/agent/capabilities` reports the new account on its
+   *  very next poll instead of the old one's cached answer. */
   invalidate?: () => void;
   /** Poll cadence. One `statSync` per tick — the JSON is re-parsed only when the mtime
    *  actually moved, and the CLI probe runs only when the fingerprint actually changed. */
@@ -265,7 +229,7 @@ export function createClaudeAuthWatcher(deps: AuthWatcherDeps = {}): ClaudeAuthW
         knownMirror = mirror;
         // The mirror moved. Now find out what actually happened, authoritatively.
         // Invalidating first is what makes the probe a fresh one rather than claude-auth.ts's
-        // 5s memo, and also what makes `/api/agent/capabilities` report the new account on
+        // memo, and also what makes `/api/agent/capabilities` report the new account on
         // its next poll.
         invalidate();
         applyStatus(await probe());

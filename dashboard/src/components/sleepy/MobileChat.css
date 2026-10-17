@@ -312,7 +312,7 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
 .mchat-dot[data-kind="ready"]    { --kind-color: var(--color-accent); }
 .mchat-dot[data-kind="ended"]    { --kind-color: var(--color-error); }
 .mchat-dot[data-kind="working"],
-.mchat-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+.mchat-dot[data-kind="starting"] { animation: var(--dc-motion-status-name, agentDotPulse) 1.2s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 @media (prefers-reduced-motion: reduce) {
   .mchat-dot { animation: none !important; }
 }

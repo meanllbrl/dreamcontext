@@ -318,16 +318,16 @@
 }
 
 .chat-m-thinking[data-streaming] .chat-m-thinking-label {
-  background: linear-gradient(90deg, var(--color-text-tertiary) 0%, var(--color-text) 50%, var(--color-text-tertiary) 100%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: chat-m-shimmer 1.6s linear infinite;
+  /* Breathes between the two inks the old text gradient swept through — opacity, not a moving
+     background, so the compositor runs it (task: the desktop app stays light on an 8GB
+     MacBook Air). At rest it is plain body text. */
+  color: var(--color-text);
+  animation: var(--dc-motion-status-name, chat-m-shimmer) 1.6s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-m-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-m-thinking-label { animation: none !important; }

@@ -64,10 +64,13 @@ import { findTranscriptBySessionId, isSafeSessionId } from './transcript-locate.
  */
 export const TAIL_STEPS_BYTES = [64 * 1024, 1024 * 1024, 8 * 1024 * 1024];
 
-/** How long a resolved directory is reused for one raw `cwd` string. Mirrors
- *  `SESSION_FACTS_TTL_MS`'s reasoning: shorter than the shelf's 15s poll, so it can never mask
- *  a real change, and its job is the concurrent case (several panes, one tick). */
-const RESOLVE_TTL_MS = 12_000;
+/** How long a resolved directory is reused for one raw `cwd` string. The answer — the checkout
+ *  ROOT a directory sits in, and whether its repository is governed — does not depend on the
+ *  branch, so no branch switch can be masked by it; a new `cwd` (the session moved) is a new
+ *  key and resolves at once. Longer than the shelf's 15 s poll (task: the desktop app stays
+ *  light on an 8GB MacBook Air): a 12 s memo under a 15 s poll forked git on every poll. A
+ *  removed worktree is noticed within this window. */
+const RESOLVE_TTL_MS = 60_000;
 
 /** Bounded because it is keyed by any directory a transcript names, not by the handful of
  *  project roots this server serves. Oldest-first eviction; a dropped entry costs one fork. */

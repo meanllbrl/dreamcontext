@@ -16,7 +16,7 @@ function phonePaneRefused(req: IncomingMessage, contextRoot: string, claudeId: s
 import { parseTranscriptHistory } from '../../lib/transcript-history.js';
 import { TEAMMATE_SESSION_RE } from '../../lib/goal-live.js';
 import {
-  readTeammateTranscript, summarizeTeammateTranscript, teammatesAlive, type TeammateSummary,
+  readTeammateTranscript, summarizeTeammateFile, teammatesAlive, type TeammateSummary,
 } from '../../lib/headless-teammate.js';
 
 /**
@@ -185,15 +185,16 @@ export async function computeTeammates(contextRoot: string, q: Record<string, st
     const who = reg?.actor
       ? { actor: reg.actor, role: reg.role, kind: reg.kind, ...(reg.name ? { name: reg.name } : {}), ...(reg.from ? { from: reg.from } : {}), ...(reg.at ? { registeredAt: reg.at } : {}), ...(reg.wave ? { wave: reg.wave } : {}), ...(reg.round ? { round: reg.round } : {}) }
       : {};
-    const file = readTeammateTranscript(sid);
-    if (!file) {
+    // Read asynchronously, and only when the transcript changed since the last poll.
+    const summary = await summarizeTeammateFile(sid, now, alive.get(sid) ?? null);
+    if (!summary) {
       // Registered but nothing on disk yet: starting, or it never did.
       const at = reg?.at ? Date.parse(reg.at) : NaN;
       const starting = alive.get(sid) === true || (Number.isFinite(at) && now - at < START_GRACE_MS);
       teammates.push({ session: sid, status: starting ? 'running' : 'failed', missing: true, steps: [], toolUses: 0, ...who });
       continue;
     }
-    teammates.push({ ...summarizeTeammateTranscript(sid, file.raw, file.mtimeMs, now, alive.get(sid) ?? null), ...who });
+    teammates.push({ ...summary, ...who });
   }
   return { teammates };
 }

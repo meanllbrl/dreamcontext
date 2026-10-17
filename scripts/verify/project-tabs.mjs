@@ -65,6 +65,9 @@ const seedVault = (name) => {
 const vaults = [seedVault('scratch-a'), seedVault('scratch-b')];
 mkdirSync(join(home, '.dreamcontext'), { recursive: true });
 writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ version: 1, vaults }, null, 2));
+// Light mode pinned OFF: Auto turns it on on battery and removes every endless animation, so
+// the ring check (B4) would measure the power cable instead of the ring.
+writeFileSync(join(home, '.dreamcontext', 'agent-ui.json'), JSON.stringify({ lightMode: 'off' }, null, 2));
 
 const server = spawn(process.execPath, ['dist/index.js', 'dashboard', '--no-open', '--port', PORT], {
   env: { ...process.env, HOME: home, DREAMCONTEXT_DESKTOP: '1' },
@@ -329,7 +332,7 @@ try {
     // B2 — the stylesheet actually resolves three DISTINCT bubble fills. A typo'd selector or
     // a dropped token leaves the rule unmatched, and three identical transparent bubbles look
     // fine in a screenshot while carrying no information whatsoever.
-    const bubbleStyles = await page.evaluate(() => {
+    const bubbleStyles = await page.evaluate(async () => {
       const host = document.createElement('div');
       host.className = 'project-tab';
       host.innerHTML = ['asking', 'working', 'idle'].map((s) =>
@@ -343,14 +346,18 @@ try {
         return { bg: cs.backgroundColor, h: el.getBoundingClientRect().height };
       };
       const ring = host.querySelector('.project-tab-bubble-ring');
-      const ringCs = getComputedStyle(ring);
+      // The ring is a static mask; what turns is its `::before`, a conic gradient rotated by
+      // `transform` (compositor-only — task: the desktop app stays light on an 8GB MacBook Air).
+      const turn = () => getComputedStyle(ring, '::before').transform;
+      const t0 = turn();
+      await new Promise((r) => setTimeout(r, 300));
       const out = {
         asking: read('asking'), working: read('working'), idle: read('idle'),
         ringBox: ring.getBoundingClientRect().width,
-        ringAnim: ringCs.animationName,
-        // '' when @property never registered — the angle would then never interpolate and the
-        // ring would sit frozen at its initial position.
-        ringAngle: ringCs.getPropertyValue('--tab-ring-angle').trim(),
+        ringAnim: getComputedStyle(ring, '::before').animationName,
+        // The same transform twice means the gradient sits still — a static arc, the exact
+        // failure mode the ring replaced.
+        ringTurns: t0 !== 'none' && t0 !== turn(),
       };
       host.remove();
       return out;
@@ -367,15 +374,13 @@ try {
     check('B3 every bubble is the same height regardless of state or digit count',
       heights.every((h) => h > 0 && Math.abs(h - heights[0]) < 0.5), JSON.stringify(heights));
 
-    // B4 — the loading ring exists as a real box, is animated, and its angle is a registered
-    // custom property so the gradient genuinely turns. Without the registration the keyframe
-    // is a no-op and the ring silently becomes a static arc — the exact failure mode the ring
-    // replaced. NOTE: proven in Chromium here; the shipped app runs WKWebView, where the
-    // registration needs Safari 16.4+. That is stated, not claimed as tested.
-    check('B4 the working bubble carries a sized, animated ring with a registered angle',
-      bubbleStyles.ringBox > 0 && bubbleStyles.ringAnim === 'projectTabRing'
-        && bubbleStyles.ringAngle !== '',
-      `box=${bubbleStyles.ringBox} anim=${bubbleStyles.ringAnim} angle="${bubbleStyles.ringAngle}"`);
+    // B4 — the loading ring exists as a real box and genuinely turns: its gradient (the
+    // `::before`) runs `projectTabRing` and its transform moves between two reads 300 ms
+    // apart. A rotation by `transform` needs no `@property` registration, so it turns in
+    // every engine the app ships in (the old registered-angle ring needed Safari 16.4+).
+    check('B4 the working bubble carries a sized ring whose gradient turns',
+      bubbleStyles.ringBox > 0 && bubbleStyles.ringAnim === 'projectTabRing' && bubbleStyles.ringTurns,
+      `box=${bubbleStyles.ringBox} anim=${bubbleStyles.ringAnim} turns=${bubbleStyles.ringTurns}`);
 
     /* B5 — THE JUMP FITS IN THE REAL BAR.
        A project holding a blocked agent bounces like a Dock icon, and the amplitude is bounded

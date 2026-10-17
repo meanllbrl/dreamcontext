@@ -122,7 +122,7 @@
 .ob-glyph--todo { color: var(--color-text-tertiary); }
 .ob-glyph--blocked { color: var(--color-text-tertiary); }
 .ob-glyph--blocked .ob-glyph-ring { stroke-dasharray: 2 3; }
-.ob-glyph--working { color: var(--color-accent); animation: ob-spin var(--motion-breath) linear infinite; transform-origin: center; }
+.ob-glyph--working { color: var(--color-accent); animation: var(--dc-motion-status-name, ob-spin) var(--motion-breath) linear infinite; animation-play-state: var(--dc-motion-play, running); transform-origin: center; }
 .ob-glyph--working .ob-glyph-track { stroke: var(--color-border); }
 .ob-glyph--done { color: var(--color-success); }
 .ob-glyph--done .ob-glyph-ring { fill: var(--color-success-subtle); stroke: var(--color-success); }
@@ -138,7 +138,8 @@
   stroke: none;
   transform-box: fill-box;
   transform-origin: center;
-  animation: ob-breath var(--motion-breath) var(--ease-out) infinite alternate;
+  animation: var(--dc-motion-status-name, ob-breath) var(--motion-breath) var(--ease-out) infinite alternate;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .ob-glyph--failed { color: var(--color-error-ink); }
 .ob-glyph--failed .ob-glyph-bang { stroke-width: 2; }
@@ -152,7 +153,8 @@
   background: var(--mood-waiting);
   margin-right: var(--space-2);
   vertical-align: middle;
-  animation: ob-breath var(--motion-breath) var(--ease-out) infinite alternate;
+  animation: var(--dc-motion-status-name, ob-breath) var(--motion-breath) var(--ease-out) infinite alternate;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* ─── Progress rail ───────────────────────────────────────────────────────── */
@@ -183,8 +185,11 @@
 .ob-rail--indeterminate .ob-rail-fill {
   right: auto;
   width: 30%;
-  animation: ob-slide var(--motion-breath) var(--ease-out) infinite;
+  animation: var(--dc-motion-status-name, ob-slide) var(--motion-breath) var(--ease-out) infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
+/* Light mode removes the slide: rest as a dim full rail, never as "30 % done". */
+:root[data-light='true'] .ob-rail--indeterminate .ob-rail-fill { width: 100%; opacity: 0.4; }
 .ob-rail-label { display: block; font-size: var(--font-size-xs); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 
 /* ─── Waiting card ────────────────────────────────────────────────────────── */

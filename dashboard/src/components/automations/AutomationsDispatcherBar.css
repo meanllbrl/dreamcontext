@@ -199,7 +199,8 @@
 .auto-dispatch-pill:disabled { cursor: progress; opacity: 1; }
 
 .auto-dispatch-pill:disabled .auto-dispatch-dot {
-  animation: agentDotPulse var(--motion-breath) ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentDotPulse) var(--motion-breath) ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @media (prefers-reduced-motion: reduce) {

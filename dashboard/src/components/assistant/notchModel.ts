@@ -489,3 +489,28 @@ export const FRESH_AFTER_IDLE_MS = 2 * 60 * 60 * 1000;
 export function startsFresh(lastActiveAt: number | null | undefined, now: number): boolean {
   return typeof lastActiveAt === 'number' && Number.isFinite(lastActiveAt) && now - lastActiveAt >= FRESH_AFTER_IDLE_MS;
 }
+
+/**
+ * The notch polls the glance every 3 s and the inbox every 4 s. Each answer used to land in
+ * state as fresh objects, so every tick re-rendered the notch even when nothing had changed.
+ * The gate remembers each poll's RAW answer text: an identical answer is skipped before it is
+ * parsed into state. `forget` makes the next answer land whatever it is (a local edit — a row
+ * the owner just answered — must be put right by the server's next word, as before).
+ */
+export interface RawGate {
+  /** True when `text` differs from the last answer recorded under `key` (and records it). */
+  changed(key: string, text: string): boolean;
+  forget(key: string): void;
+}
+
+export function createRawGate(): RawGate {
+  const last = new Map<string, string>();
+  return {
+    changed(key, text) {
+      if (last.get(key) === text) return false;
+      last.set(key, text);
+      return true;
+    },
+    forget(key) { last.delete(key); },
+  };
+}

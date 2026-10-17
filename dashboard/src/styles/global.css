@@ -189,6 +189,46 @@ select {
   }
 }
 
+/* ─── Motion contract (task: the desktop app stays light on an 8GB MacBook Air) ───
+   Every ENDLESS animation in the dashboard names its keyframes through a variable and takes
+   its play-state from one (tests/unit/css-motion-guard.test.ts enforces it):
+     animation-name: var(--dc-motion-status-name, <keyframes>)    a status indicator
+     animation-name: var(--dc-motion-ambient-name, <keyframes>)   decoration
+     animation-play-state: var(--dc-motion-play, running)
+   (or positionally in the `animation` shorthand; in a list only the endless positions carry
+   the variables, so a one-shot entrance is never removed or paused).
+   A paused animation freezes on its CURRENT frame, so a visible state REMOVES the animation
+   (name `none`: the element shows its un-animated base style, which must be its resting look)
+   and only a hidden window pauses. Set on <html> by lib/windowActivity.ts and lib/lightMode.ts.
+     visible, unfocused  status keeps moving, decoration rests
+     hidden              everything endless pauses
+     Light mode          nothing endless runs, no backdrop blur anywhere
+   STATUS = it says work is happening right now, or the app is waiting on the reader, for as
+   long as that lasts: working / running / live / thinking / waiting-for-sign-in dots, rings,
+   spinners and indeterminate bars. These are on screen exactly while the reader is in another
+   window (owner decision 5, 2026-10-17). AMBIENT = everything else: decoration (mascot, aura,
+   marquee, shimmers, glows) and loading spinners of a request that lands in a moment; also a
+   background shell's spinner, which can run for hours. */
+:root[data-window-active='false'] {
+  --dc-motion-ambient-name: none;
+}
+
+:root[data-window-hidden='true'] {
+  --dc-motion-play: paused;
+}
+
+:root[data-light='true'] {
+  --dc-motion-ambient-name: none;
+  --dc-motion-status-name: none;
+}
+
+:root[data-light='true'] *,
+:root[data-light='true'] *::before,
+:root[data-light='true'] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 /* ─── Mermaid semantic classDef overrides — ClickUp palette ─── */
 /* User content may bake colors into classDef (e.g. fill:#86efac for "done").
    These rules override the inline fills with our token-based ClickUp swatches,

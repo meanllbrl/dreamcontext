@@ -27,8 +27,8 @@ import './CouncilLivePanel.css';
  * Session-scoped by the SERVER: this component only ever receives an active state
  * for the pane whose conversation is running the council orchestrator.
  */
-export function CouncilLivePanel({ claudeId, enabled }: { claudeId?: string; enabled: boolean }) {
-  const { data } = useAgentCouncilLive(claudeId, enabled);
+export function CouncilLivePanel({ claudeId, enabled, busy = false }: { claudeId?: string; enabled: boolean; busy?: boolean }) {
+  const { data } = useAgentCouncilLive(claudeId, enabled, busy);
   const [open, setOpen] = useState(false);
   const active = !!data?.active && !!data.state;
 

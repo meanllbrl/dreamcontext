@@ -172,7 +172,7 @@
 /* Only the visible (near) panel's diagram animates; the rest are paused (free). */
 .feat-panel:not(.feat-panel--near) .fd-comet-dot,
 .feat-panel:not(.feat-panel--near) .fd-node--breathe rect {
-  animation-play-state: paused;
+  --dc-motion-play: paused;
 }
 
 .feat-stage-head {

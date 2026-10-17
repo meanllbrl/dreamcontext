@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { pollMs } from '../lib/windowActivity';
 
 /**
  * useAutoSleep — this machine's background-consolidation switch and its job.
@@ -46,7 +47,7 @@ export function useAutoSleep() {
   return useQuery({
     queryKey: ['sleep-auto'],
     queryFn: () => api.get<AutoSleepState>('/sleep/auto'),
-    refetchInterval: (query) => (query.state.data?.jobLive ? POLL_MS : false),
+    refetchInterval: (query) => (query.state.data?.jobLive ? pollMs(POLL_MS) : false),
   });
 }
 

@@ -70,7 +70,8 @@
   border-radius: var(--radius-full);
   border: 2px solid var(--color-border);
   border-top-color: var(--color-accent);
-  animation: gh-login-spin 0.7s linear infinite;
+  animation: var(--dc-motion-status-name, gh-login-spin) 0.7s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
   flex-shrink: 0;
 }
 

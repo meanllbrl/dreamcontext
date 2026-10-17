@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { pollMs } from '../lib/windowActivity';
 
 /** Mirrors the cloud-recall types in src/lib/recall-cloud-config.ts. */
 export type CloudTier = 'cloud-index' | 'cloud';
@@ -82,7 +83,7 @@ export function useCloudIndexStatus(enabled: boolean) {
     queryFn: () => api.get<CloudIndexStatus>('/recall/cloud/index/status'),
     enabled,
     retry: false,
-    refetchInterval: (query) => (query.state.data?.state === 'building' ? 1_500 : false),
+    refetchInterval: (query) => (query.state.data?.state === 'building' ? pollMs(1_500) : false),
   });
 }
 

@@ -11,9 +11,7 @@ export { currentZoom };
 import { copyPreservingUnicode } from '../../lib/clipboard';
 import { nextLineShadow } from '../../lib/lineShadow';
 import { raiseAskAttention } from '../../lib/attention';
-import {
-  readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings, type AgentRenderer,
-} from '../../lib/agentSettings';
+import { webglBudget, type WebglHandle } from './webglBudget';
 
 /**
  * The imperative session engine behind {@link AgentSurface} — one `node-pty` ↔
@@ -209,37 +207,37 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
   const { term, fit, fontFamily, primaryMono, stopThemeSync } = createStyledTerm();
 
   // ── Renderer (GPU vs native text) ────────────────────────────────────────────
-  // Default is the WebGL addon: Claude's Ink TUI redraws most of the viewport every
-  // frame while streaming, which the DOM renderer (real text nodes, layout + GC per
-  // frame) cannot hold at frame rate in WKWebView — the residual stutter after the
-  // transport fixes. 'dom' remains the opt-in comfort path (native macOS font
-  // smoothing; the 2026-07-01 preference). Swappable LIVE via Settings → Agents:
-  // loading the addon upgrades an open terminal in place, disposing it drops xterm
-  // back to the DOM renderer. On WebGL context loss (WKWebView reclaims contexts
-  // under pressure) we dispose and fall back to DOM instead of showing a dead canvas.
+  // The WebGL addon is the smoothness path: Claude's Ink TUI redraws most of the viewport
+  // every frame while streaming, which the DOM renderer (real text nodes, layout + GC per
+  // frame) cannot hold at frame rate in WKWebView. 'dom' is the comfort path (native macOS
+  // font smoothing; the 2026-07-01 preference). WHO gets a context is not decided here: the
+  // WebGL budget (webglBudget.ts) holds the rule — the setting, Light mode, on-screen panes,
+  // at most two at once — and flips this switch. Loading the addon upgrades an open terminal
+  // in place; disposing it drops xterm back to the DOM renderer. On context loss (WKWebView
+  // reclaims contexts under pressure) we dispose, fall back to DOM instead of showing a dead
+  // canvas, and tell the budget, which keeps this terminal on DOM for the rest of its life.
   let webgl: WebglAddon | null = null;
-  function applyRenderer(mode: AgentRenderer) {
-    if (!session.opened) return; // ensureOpen applies the current setting on open
-    if (mode === 'webgl' && !webgl) {
+  let budget: WebglHandle | null = null;
+  let visibility: IntersectionObserver | null = null;
+  function setWebgl(on: boolean): boolean {
+    if (!session.opened || disposed) return false;
+    if (on && !webgl) {
       try {
         const addon = new WebglAddon();
         addon.onContextLoss(() => {
           try { addon.dispose(); } catch { /* already down */ }
           if (webgl === addon) webgl = null;
+          budget?.markLost();
         });
         term.loadAddon(addon);
         webgl = addon;
       } catch { webgl = null; /* GPU unavailable → DOM renderer stays */ }
-    } else if (mode === 'dom' && webgl) {
+    } else if (!on && webgl) {
       try { webgl.dispose(); } catch { /* mid-init */ }
       webgl = null;
     }
+    return !!webgl;
   }
-  const onSettingsChange = (e: Event) => {
-    const cfg = (e as CustomEvent<AgentSettings>).detail;
-    if (cfg?.renderer) applyRenderer(cfg.renderer);
-  };
-  window.addEventListener(AGENT_SETTINGS_EVENT, onSettingsChange);
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const theme = currentTermTheme();
@@ -620,9 +618,17 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
       if (session.opened || !container.isConnected || container.offsetParent === null) return;
       term.open(container);
       session.opened = true;
-      // The renderer preference applies only to an OPENED terminal (the WebGL addon
-      // needs the DOM/canvas in place), so this is its single entry point.
-      applyRenderer(readAgentSettings().renderer);
+      // The renderer applies only to an OPENED terminal (the WebGL addon needs the
+      // DOM/canvas in place): from here the budget decides, and it hears whether the pane
+      // is on screen (parked in the hidden garage = not intersecting).
+      budget = webglBudget().register({ id, setWebgl }, true);
+      if (typeof IntersectionObserver !== 'undefined') {
+        visibility = new IntersectionObserver((entries) => {
+          const last = entries[entries.length - 1];
+          if (last) budget?.setVisible(last.isIntersecting);
+        });
+        visibility.observe(container);
+      }
       fitAndResize();
       // One more recompute next frame: the first paint can latch a stale (fallback-font)
       // cell width, making text look thin/stretched. Re-applying the font + refit forces
@@ -652,7 +658,10 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
     // atlas still initialising — can throw `_isDisposed` deep in addon teardown; an
     // un-caught throw here would abort the caller (closeSessionById) before it removes
     // the row, leaving a zombie "ended" tab. Swallow per-step so cleanup always finishes.
-    try { window.removeEventListener(AGENT_SETTINGS_EVENT, onSettingsChange); } catch { /* gone */ }
+    try { visibility?.disconnect(); } catch { /* gone */ }
+    visibility = null;
+    try { budget?.unregister(); } catch { /* gone */ }
+    budget = null;
     try { webgl?.dispose(); } catch { /* atlas mid-init */ }
     webgl = null;
     stopThemeSync();

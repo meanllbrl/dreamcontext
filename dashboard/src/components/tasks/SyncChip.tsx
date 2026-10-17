@@ -91,7 +91,7 @@ export function SyncChip({ cs, chipStyle }: { cs: CloudSync; chipStyle: CSSPrope
       onClick={() => runSync(false)} onKeyDown={chipKey(() => runSync(false))}
       title={syncing ? `Syncing in the background — keeps running if you navigate away${syncJob?.attempt && syncJob.attempt > 1 ? ` (pass ${syncJob.attempt})` : ''}` : `Sync tasks with ${syncStatus?.backend}${syncStatus?.pendingPush ? ` · ${syncStatus.pendingPush} pending` : ''}`}
       style={{ ...chipStyle, cursor: syncing ? 'progress' : 'pointer', opacity: syncing ? 0.7 : 1 }}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto', animation: syncing ? 'bd_spin .8s linear infinite' : undefined }}><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.7-3M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.7 3" /><path d="M21 3v6h-6M3 21v-6h6" /></svg>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={syncing ? 'bd-sync-spin' : undefined} style={{ flex: '0 0 auto' }}><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.7-3M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.7 3" /><path d="M21 3v6h-6M3 21v-6h6" /></svg>
       <span>{label}</span>
       {/* live determinate progress — mirrors the server job's per-task ticks */}
       {syncing && !!syncJob && syncJob.total > 0 && (

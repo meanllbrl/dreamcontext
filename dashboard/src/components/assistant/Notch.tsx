@@ -20,8 +20,9 @@ import {
   EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
   PEEK_TTL_MS, offScreenAsks, peekTtlMs, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
   type ActivityItem, type GlanceChat, type Handoff, type Inbox, type Rollup,
-  startsFresh,
+  createRawGate, startsFresh,
 } from './notchModel';
+import { createSessionStarter } from './sessionStarter';
 import { readingTimeMs } from '../../lib/notchCue';
 import { playNotchTick } from '../../lib/chime';
 import { emitExternalPushToTalk, summonTakeDue } from '../../lib/voice/externalPushToTalk';
@@ -454,6 +455,8 @@ export function Notch() {
   const [inbox, setInbox] = useState<Inbox>(EMPTY_INBOX);
   /** Rows the owner just acted on, hidden until the server stops listing them (id → when). */
   const [gone, setGone] = useState<Map<string, number>>(() => new Map());
+  const goneRef = useRef(gone);
+  goneRef.current = gone;
   /** The peek an inbox event or a progress line asked for (see `PeekReason`). */
   const [eventPeek, setEventPeek] = useState<PeekItem | null>(null);
   /** The open panel's two faces: what is happening everywhere, and the conversation. */
@@ -516,11 +519,13 @@ export function Notch() {
     setSession(cs);
   }, []);
 
-  /** Who am I, and resume my conversation. With no assistant the notch is notifications only:
-   *  no session, and the wizard's wake (`assistant://enabled`) asks again. */
+  /** Who am I. The conversation itself is NOT started here: `ensureSession` starts it on first
+   *  use (hover, open, hotkey, a file drop), so a launch costs no `claude` child. With no
+   *  assistant the notch is notifications only, and the wizard's wake (`assistant://enabled`)
+   *  asks again. */
   const loadStatus = useCallback(async (alive: () => boolean = () => true) => {
     // The remembered chat defaults live server-side; a fresh notch window has an empty
-    // localStorage until this lands, and the session below reads them.
+    // localStorage until this lands, and the session started on first use reads them.
     await initAgentSettingsFromServer();
     const res = await fetch('/api/assistant/status');
     const st = await res.json() as AssistantStatus;
@@ -531,14 +536,34 @@ export function Notch() {
       model: st.config?.model || ASSISTANT_MODEL,
       effort: st.config?.effort || ASSISTANT_EFFORT,
     };
-    if (st.exists && st.config && !sessionRef.current) {
-      // A conversation idle for hours is not resumed: the launch opens a fresh one (notchModel
-      // `FRESH_AFTER_IDLE_MS`); the old one stays in the Conversations menu.
-      const fresh = startsFresh(st.lastActiveAt, Date.now());
-      lastActiveRef.current = fresh ? Date.now() : (st.lastActiveAt ?? Date.now());
-      startSession(fresh ? null : st.config.conversationId);
-    }
-  }, [startSession]);
+  }, []);
+
+  /**
+   * The live conversation, started on first use (sessionStarter.ts). Fresh-vs-resume is decided
+   * when it starts, not at launch: a conversation idle for hours by then opens a fresh one
+   * (notchModel `FRESH_AFTER_IDLE_MS`); the old one stays in the Conversations menu. A hover and
+   * an open in the same moment share one start. The model and effort are `profileRef`'s at that
+   * moment, so a pick made before it applies.
+   */
+  const starter = useMemo(() => createSessionStarter<ChatSession>({
+    current: () => sessionRef.current,
+    readStatus: async () => (await fetch('/api/assistant/status')).json(),
+    start: (conversationId, lastActiveAt) => {
+      lastActiveRef.current = lastActiveAt;
+      // Committed at once: a hotkey take that waits on this start needs its composer mounted.
+      flushSync(() => startSession(conversationId));
+      return sessionRef.current!;
+    },
+  }), [startSession]);
+  const ensureSession = useCallback(
+    (): Promise<ChatSession | null> => starter.ensure().catch(() => null),
+    [starter],
+  );
+  // Opened before the status read landed (a hotkey at launch: no assistant known yet, so the
+  // open started nothing): start once it is known. Never at boot — the panel is closed then.
+  useEffect(() => {
+    if (hasAssistant && expanded && !session) void ensureSession();
+  }, [hasAssistant, expanded, session, ensureSession]);
 
   // Boot.
   useEffect(() => {
@@ -568,30 +593,41 @@ export function Notch() {
     if (session && host && session.container.parentElement !== host) host.appendChild(session.container);
   }, [session]);
 
+  // An answer identical to the last one is skipped before it reaches state (notchModel
+  // `createRawGate`): an unchanged tick re-renders nothing.
+  const rawGate = useMemo(() => createRawGate(), []);
   // The pill's glance: counts every few seconds, proposals when any wait.
   useEffect(() => {
     let alive = true;
     const tick = async () => {
       try {
-        const r = readRollup(await (await fetch('/api/assistant/rollup')).json());
+        const rollupText = await (await fetch('/api/assistant/rollup')).text();
         if (!alive) return;
-        setRollup(r);
+        const r = readRollup(JSON.parse(rollupText));
+        if (rawGate.changed('rollup', rollupText)) setRollup(r);
         if (r.proposals > 0 || expandedRef.current) {
-          const p = await (await fetch('/api/assistant/proposals')).json() as { proposals: Proposal[] };
-          if (alive) setProposals(p.proposals ?? []);
+          const text = await (await fetch('/api/assistant/proposals')).text();
+          if (alive && rawGate.changed('proposals', text)) {
+            setProposals((JSON.parse(text) as { proposals?: Proposal[] }).proposals ?? []);
+          }
         } else {
-          setProposals([]);
+          rawGate.forget('proposals');
+          setProposals((ps) => (ps.length ? [] : ps));
         }
         // The rows and the hand-offs, every tick: the collapsed pill and its peek speak from
         // them too (who asks, which hand-off just finished), not only the open panel.
-        const raw = await (await fetch('/api/assistant/glance')).json();
-        if (alive) { setGlance(readGlance(raw)); setHandoffs(readHandoffs(raw)); }
+        const text = await (await fetch('/api/assistant/glance')).text();
+        if (alive && rawGate.changed('glance', text)) {
+          const raw = JSON.parse(text);
+          setGlance(readGlance(raw));
+          setHandoffs(readHandoffs(raw));
+        }
       } catch { /* transient */ }
     };
     void tick();
     const t = setInterval(tick, 3000);
     return () => { alive = false; clearInterval(t); };
-  }, []);
+  }, [rawGate]);
 
   useEffect(() => onAssistantNotify((_text, level) => { if (level === 'attention') setAttention(true); }), []);
 
@@ -601,14 +637,16 @@ export function Notch() {
     let alive = true;
     const tick = async () => {
       try {
-        const raw = await (await fetch('/api/assistant/inbox')).json();
-        if (alive) setInbox(readInbox(raw));
+        const text = await (await fetch('/api/assistant/inbox')).text();
+        // While rows the owner acted on are hidden, every answer lands: the clean-up below runs
+        // on it (a hidden row is let go once it is unlisted or half a minute old).
+        if (alive && (rawGate.changed('inbox', text) || goneRef.current.size > 0)) setInbox(readInbox(JSON.parse(text)));
       } catch { /* transient */ }
     };
     void tick();
     const t = setInterval(tick, 4000);
     return () => { alive = false; clearInterval(t); };
-  }, []);
+  }, [rawGate]);
 
   /** Hide a row the owner acted on at once; the server's next answer confirms it. */
   const hide = useCallback((id: string) => {
@@ -646,14 +684,17 @@ export function Notch() {
     return () => window.clearTimeout(t);
   }, [busyCount]);
   const mood = notchMood(rollup, justFinished);
+  // A row changed here is put right by the server's next answer, even an unchanged one.
   const dropRow = useCallback((sessionId: string) => {
+    rawGate.forget('glance');
     setGlance((g) => g.filter((c) => c.sessionId !== sessionId));
     setHandoffs((hs) => hs.map((h) => (h.sessionId === sessionId ? { ...h, ask: null, activity: 'working' } : h)));
-  }, []);
+  }, [rawGate]);
   const clearHandoff = useCallback((sessionId: string) => {
     dismissHandoff(sessionId);
+    rawGate.forget('glance');
     setHandoffs((hs) => hs.filter((h) => h.sessionId !== sessionId));
-  }, []);
+  }, [rawGate]);
   // Only what needs an ANSWER opens on "Now"; notifications are counted on its tab instead (a
   // finished-chat notice can wait for hours, and a click usually means "let me talk").
   waitingRef.current = glance.some((c) => !!c.ask) || proposals.length > 0;
@@ -782,10 +823,12 @@ export function Notch() {
   const hoverTimer = useRef<number | null>(null);
   const onHoverIn = useCallback(() => {
     hoverRef.current = true;
+    // Resting on the notch is the first sign of use: warm the conversation for the open.
+    if (hasAssistantRef.current) void ensureSession();
     if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
     if (!canPeekRef.current) return;
     hoverTimer.current = window.setTimeout(() => setPeek((p) => p ?? 'hover'), HOVER_IN_MS);
-  }, []);
+  }, [ensureSession]);
   const onHoverOut = useCallback(() => {
     hoverRef.current = false;
     if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
@@ -873,13 +916,13 @@ export function Notch() {
       if (p) {
         e.preventDefault();
         void decide(p.id, key === 'y' ? 'approve' : 'reject').then((ok) => {
-          if (ok) setProposals((ps) => ps.filter((x) => x.id !== p.id));
+          if (ok) { rawGate.forget('proposals'); setProposals((ps) => ps.filter((x) => x.id !== p.id)); }
         });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [expanded, glance, proposals, dropRow]);
+  }, [expanded, glance, proposals, dropRow, rawGate]);
 
   // ── THE ISLAND GROWS AND FOLDS (notchMotion.ts) ──────────────────────────────────────────
   // The window is transparent, so a growing window frame was never what the owner saw. In the
@@ -987,8 +1030,10 @@ export function Notch() {
     setAttention(false);
     autoOpenRef.current = null;
     const seated = seatRef.current === 'window' ? seatWindow(geo, frameRef.current) : runMotion('open', { focus: true, from });
-    return seated.then(() => sessionRef.current?.focus());
-  }, [geo, runMotion]);
+    // The conversation starts with the open (first use), not at launch.
+    const ready = hasAssistantRef.current ? ensureSession() : Promise.resolve(null);
+    return Promise.all([seated, ready]).then(() => sessionRef.current?.focus());
+  }, [geo, runMotion, ensureSession]);
   // Popped out, "collapse" hides the window (still mounted, still connected) instead of
   // shrinking it to a pill; the next summon brings the window back.
   const collapse = useCallback(() => {
@@ -1348,7 +1393,7 @@ export function Notch() {
       void (async () => {
         for (const file of files) {
           const path = await uploadAgentFile(ASSISTANT_VAULT, file, file.name);
-          const s = sessionRef.current;
+          const s = await ensureSession();
           if (path && s) { s.sendText(quotePath(path) + ' '); s.focus(); }
         }
       })();
@@ -1364,19 +1409,19 @@ export function Notch() {
       el.removeEventListener('dragleave', onLeave);
       el.removeEventListener('drop', onDrop);
     };
-  }, [expand]);
+  }, [expand, ensureSession]);
 
   // The seat guard (seatGuard.ts): a resize or move the notch did not ask for is undone at once,
-  // and a slow check catches a frame that changed without telling anyone (a Space switch). A
-  // frame macOS keeps refusing is given up on for a while instead of fought every second
-  // (`guardHeal`: the next seat change, or a cooldown, re-arms it).
+  // and a slow check (every 5 s: two IPCs a tick) catches a frame that changed without telling
+  // anyone (a Space switch). A frame macOS keeps refusing is given up on for a while instead of
+  // fought on every check (`guardHeal`: the next seat change, or a cooldown, re-arms it).
   useEffect(() => {
     if (!isDesktop()) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const check = () => { void guardHeal(); };
     const soon = () => { if (timer) clearTimeout(timer); timer = setTimeout(check, 150); };
-    const tick = setInterval(check, 1000);
+    const tick = setInterval(check, 5000);
     const unlisteners: Array<() => void> = [];
     void (async () => {
       try {
@@ -1541,9 +1586,11 @@ export function Notch() {
         aria-expanded={expanded}
       >
         <span className="dc-notch__ear dc-notch__ear--left">
-          {status?.avatar
-            ? <img className="dc-notch__avatar" src={status.avatar} alt="" />
-            : <span className="dc-notch__avatar dc-notch__avatar--initial">{name.slice(0, 1)}</span>}
+          <span className="dc-notch__face">
+            {status?.avatar
+              ? <img className="dc-notch__avatar" src={status.avatar} alt="" />
+              : <span className="dc-notch__avatar dc-notch__avatar--initial">{name.slice(0, 1)}</span>}
+          </span>
           <span className="dc-notch__name">{pillText}</span>
         </span>
         {/* Always drawn: it is the grid's middle column (0 wide without a camera housing), so
@@ -1607,7 +1654,7 @@ export function Notch() {
               Now{nowCount > 0 && <span className="dc-notch__count">{nowCount}</span>}
             </button>
             {hasAssistant && (
-              <button type="button" role="tab" aria-selected={tab === 'chat'} className="dc-notch__tab" onClick={() => { setTab('chat'); window.setTimeout(() => sessionRef.current?.focus(), 0); }}>
+              <button type="button" role="tab" aria-selected={tab === 'chat'} className="dc-notch__tab" onClick={() => { setTab('chat'); void ensureSession().then(() => window.setTimeout(() => sessionRef.current?.focus(), 0)); }}>
                 Chat
               </button>
             )}
@@ -1640,7 +1687,7 @@ export function Notch() {
             <ProposalList
               proposals={proposals}
               keyed={!glance.some((c) => c.ask?.kind === 'permission')}
-              onDecided={(id) => setProposals((p) => p.filter((x) => x.id !== id))}
+              onDecided={(id) => { rawGate.forget('proposals'); setProposals((p) => p.filter((x) => x.id !== id)); }}
             />
           )}
           <InboxList

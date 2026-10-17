@@ -176,6 +176,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/automations/dispatcher/uninstall',
   'GET /api/automations/:slug/telegram',
   'POST /api/automations/:slug/telegram',
+  'GET /api/app/machine',
 ];
 
 /** A registered pattern as a matcher (the router's own rule). */

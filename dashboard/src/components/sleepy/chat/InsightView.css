@@ -63,19 +63,25 @@
 .chat-insightcard-skeleton {
   height: 76px;
   border-radius: var(--radius-md);
-  background: linear-gradient(
-    90deg,
-    var(--color-bg-tertiary) 25%,
-    var(--color-bg-elevated) 37%,
-    var(--color-bg-tertiary) 63%
-  );
-  background-size: 400% 100%;
-  animation: chat-insight-shimmer 1.4s ease infinite;
+  position: relative;
+  overflow: hidden;
+  background: var(--color-bg-tertiary);
+}
+
+/* The highlight slides on a pseudo-element (transform), not a moving background. */
+.chat-insightcard-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 25%, var(--color-bg-elevated) 37%, transparent 63%);
+  transform: translateX(-100%);
+  animation: var(--dc-motion-ambient-name, chat-insight-shimmer) 1.4s ease infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes chat-insight-shimmer {
-  0% { background-position: 100% 50%; }
-  100% { background-position: 0 50%; }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 @media (prefers-reduced-motion: reduce) {

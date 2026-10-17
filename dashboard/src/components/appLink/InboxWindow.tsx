@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
 import { startTitleBarDrag } from '../../lib/desktop';
 import { routeAppLink } from '../../lib/appLink';
+import { pollMs } from '../../lib/windowActivity';
 import { normalizeNotifications, relativeTime, type InboxNotification } from './inboxModel';
 import './ViewerWindow.css';
 
@@ -27,7 +28,7 @@ export function InboxWindow() {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['notifications', INBOX_LIMIT],
     queryFn: fetchNotifications,
-    refetchInterval: INBOX_POLL_MS,
+    refetchInterval: () => pollMs(INBOX_POLL_MS),
   });
   const [expanded, setExpanded] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());

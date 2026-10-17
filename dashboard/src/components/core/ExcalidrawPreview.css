@@ -45,7 +45,8 @@
   border-radius: 50%;
   border: 2.5px solid var(--color-border);
   border-top-color: var(--color-accent);
-  animation: excalidraw-spin 0.7s linear infinite;
+  animation: var(--dc-motion-ambient-name, excalidraw-spin) 0.7s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes excalidraw-spin {

@@ -11,6 +11,7 @@
  */
 import { isDesktop } from './desktop';
 import { thisWindowLabel } from './windowRegistry';
+import { getWindowActivity, onWindowActivity } from './windowActivity';
 
 export const PRESENCE_HEARTBEAT_MS = 20_000;
 
@@ -27,63 +28,32 @@ async function send(vault: string | null): Promise<void> {
 }
 
 /**
- * Is this window the one in front of the owner? `nativeFocused` is the shell's own answer
- * (the NSWindow is key), kept by `trackPresence`; `document.hasFocus()` is only the fallback
- * until it arrives. The page's answer alone was wrong in the desktop app: a window brought
- * forward from the notch could be key while its page believed it was unfocused, so it never
- * reported at all (see desktop/src-tauri/src/page_focus.rs).
- */
-function inFront(nativeFocused: boolean | null): boolean {
-  try {
-    return document.visibilityState === 'visible' && (nativeFocused ?? document.hasFocus());
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Keep the server told about this window while it lives. `current()` answers which project
  * the window shows right now (null for none). Returns the disposer; the caller calls `poke()`
  * whenever the visible project changes.
+ *
+ * "In front" is windowActivity's `focused`: visible AND the shell's own focus (the NSWindow is
+ * key) once it has answered, the page's `hasFocus()` only until then. The page's answer alone
+ * was wrong in the desktop app: a window brought forward from the notch could be key while its
+ * page believed it was unfocused, so it never reported at all (see
+ * desktop/src-tauri/src/page_focus.rs).
  */
 export function trackPresence(current: () => string | null): { poke: () => void; dispose: () => void } {
   if (!isDesktop()) return { poke: () => {}, dispose: () => {} };
   let last: string | null | undefined;
-  let nativeFocused: boolean | null = null;
-  let gone = false;
-  let offNative: (() => void) | null = null;
   const report = (force = false) => {
-    const now = inFront(nativeFocused) ? current() : null;
+    const now = getWindowActivity().focused ? current() : null;
     if (!force && now === last) return;
     last = now;
     void send(now);
   };
-  const onFocus = () => report();
-  const onBlur = () => report();
-  window.addEventListener('focus', onFocus);
-  window.addEventListener('blur', onBlur);
-  document.addEventListener('visibilitychange', onFocus);
+  const off = onWindowActivity(() => report());
   const beat = window.setInterval(() => { if (last) report(true); }, PRESENCE_HEARTBEAT_MS);
   report(true);
-  void (async () => {
-    try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      const win = getCurrentWindow();
-      const off = await win.onFocusChanged(({ payload }) => { nativeFocused = payload; report(); });
-      if (gone) { off(); return; }
-      offNative = off;
-      nativeFocused = await win.isFocused();
-      report();
-    } catch { /* an older shell or no ACL: the page's own focus answers */ }
-  })();
   return {
     poke: () => report(),
     dispose: () => {
-      gone = true;
-      offNative?.();
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener('blur', onBlur);
-      document.removeEventListener('visibilitychange', onFocus);
+      off();
       window.clearInterval(beat);
       if (last) void send(null);
     },

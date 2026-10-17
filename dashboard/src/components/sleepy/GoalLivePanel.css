@@ -264,7 +264,7 @@ button.goal-live-bar:hover .goal-live-expand { color: var(--goal-live-run); }
   background: var(--goal-live-idle);
 }
 .goal-live-dock-forks b[data-s='done'] { background: var(--goal-live-done); }
-.goal-live-dock-forks b[data-s='run'] { background: var(--goal-live-run); animation: goal-live-pulse 1.4s ease-in-out infinite; }
+.goal-live-dock-forks b[data-s='run'] { background: var(--goal-live-run); animation: var(--dc-motion-status-name, goal-live-pulse) 1.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 .goal-live-dock-forks b[data-s='fail'] { background: var(--goal-live-fail); }
 
 @keyframes goal-live-pulse {

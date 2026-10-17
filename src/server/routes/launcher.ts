@@ -943,6 +943,9 @@ interface AgentUiSettings {
   /** Remembered default EFFORT level for a new Chat session, same menu, same empty-string
    *  = inherit-the-CLI contract as chatDefaultModel. Mirrors dashboard/src/lib/agentSettings. */
   chatDefaultEffort: string;
+  /** Light mode (Settings → Performance): 'auto' (on for ≤ 8 GB or on battery), 'on', 'off'.
+   *  Mirrors dashboard/src/lib/agentSettings (the effective value is computed client-side). */
+  lightMode: 'auto' | 'on' | 'off';
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -957,6 +960,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   chatPermissionMode: 'auto',
   chatDefaultModel: '',
   chatDefaultEffort: '',
+  lightMode: 'auto',
 };
 
 function agentSettingsPath(): string {
@@ -1006,7 +1010,35 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     // which is not a failure state but the documented "inherit the CLI's own default".
     chatDefaultModel: sanitizeModel(typeof raw.chatDefaultModel === 'string' ? raw.chatDefaultModel : null),
     chatDefaultEffort: sanitizeEffort(typeof raw.chatDefaultEffort === 'string' ? raw.chatDefaultEffort : null),
+    // Only an explicit 'on' / 'off' pins Light mode; anything else is Auto.
+    lightMode: raw.lightMode === 'on' || raw.lightMode === 'off' ? raw.lightMode : 'auto',
   };
+}
+
+/** The persisted blob as it is on disk right now, coerced (defaults if absent or unreadable). */
+function readAgentUiSettings(): AgentUiSettings {
+  try {
+    const p = agentSettingsPath();
+    if (existsSync(p)) return coerceAgentSettings(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>);
+  } catch {
+    /* fall back to defaults */
+  }
+  return { ...AGENT_UI_DEFAULTS };
+}
+
+/**
+ * A FIELD merge (`{ merge: true, patch }`): the patch's fields over the file as it is NOW,
+ * through the same strict coercer. This is what a window writes once it has hydrated, and the
+ * one write a window makes for the picks it held while the saved settings could not be read
+ * (owner decision 6, 2026-10-17): untouched fields keep the file's values, and two windows
+ * catching up together cannot overwrite each other's fields. Exported for the unit test.
+ */
+export function mergeAgentSettings(current: AgentUiSettings, patch: Record<string, unknown>): AgentUiSettings {
+  const picked: Record<string, unknown> = {};
+  for (const k of Object.keys(AGENT_UI_DEFAULTS)) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) picked[k] = patch[k];
+  }
+  return coerceAgentSettings({ ...current, ...picked });
 }
 
 /** GET /api/launcher/agent-settings — persisted Agents-surface prefs (defaults if absent). */
@@ -1016,19 +1048,11 @@ export async function handleAgentSettingsGet(
   _params: Record<string, string>,
   _contextRoot: string | null,
 ): Promise<void> {
-  let settings = { ...AGENT_UI_DEFAULTS };
-  try {
-    const p = agentSettingsPath();
-    if (existsSync(p)) {
-      settings = coerceAgentSettings(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>);
-    }
-  } catch {
-    /* fall back to defaults */
-  }
-  sendJson(res, 200, settings);
+  sendJson(res, 200, readAgentUiSettings());
 }
 
-/** POST /api/launcher/agent-settings — persist Agents-surface prefs. STRICT-PICK. */
+/** POST /api/launcher/agent-settings — persist Agents-surface prefs. STRICT-PICK. A body of
+ *  `{ merge: true, patch }` merges the patch's fields over the file (see mergeAgentSettings). */
 export async function handleAgentSettingsSet(
   req: IncomingMessage,
   res: ServerResponse,
@@ -1040,7 +1064,10 @@ export async function handleAgentSettingsSet(
     sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
     return;
   }
-  const settings = coerceAgentSettings(body as Record<string, unknown>);
+  const b = body as Record<string, unknown>;
+  const settings = b.merge === true
+    ? mergeAgentSettings(readAgentUiSettings(), b.patch && typeof b.patch === 'object' && !Array.isArray(b.patch) ? b.patch as Record<string, unknown> : {})
+    : coerceAgentSettings(b);
   try {
     mkdirSync(join(homedir(), '.dreamcontext'), { recursive: true });
     writeFileSync(agentSettingsPath(), JSON.stringify(settings, null, 2) + '\n', 'utf-8');

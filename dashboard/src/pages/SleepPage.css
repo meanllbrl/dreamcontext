@@ -65,7 +65,8 @@
   inset: 0;
   border-radius: 50%;
   background: radial-gradient(circle, var(--sleep-glow, rgba(123, 104, 238, 0.34)), transparent 68%);
-  animation: sleep-hero-aura 6s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, sleep-hero-aura) 6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 .sleep-hero-body {

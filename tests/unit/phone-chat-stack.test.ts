@@ -120,7 +120,8 @@ describe('the stack is wired on the phone (AC19-AC20)', () => {
 
   it('polls the Mac only while the phone chat is on screen; rows are labelled with the state words', () => {
     expect(surface).toMatch(/polling=\{onScreenChatId !== ''\}/);
-    expect(stack).toMatch(/enabled: polling,\s*refetchInterval: polling \? 3_000 : false/);
+    // 3 s base cadence through pollMs (slower when unfocused, none while hidden), only while polling.
+    expect(stack).toMatch(/enabled: polling,\s*refetchInterval: polling \? \(\) => pollMs\(3_000\) : false/);
     expect(stack).toContain("t('handsfree.mac.stack')");
   });
 

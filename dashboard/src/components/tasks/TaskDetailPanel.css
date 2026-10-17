@@ -720,9 +720,9 @@
   right: 12px;
   display: flex;
   gap: 4px;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  /* An opaque elevated surface, not frosted glass: the controls sit on every diagram for as
+     long as it is open, and a backdrop blur there repaints under each pan and zoom. */
+  background: var(--color-bg-elevated);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   padding: 4px;

@@ -15,6 +15,7 @@
 import { api } from '../api/client';
 import { SCOPE_PREFIX } from './scopedStorage';
 import { emitInstance } from '../context/VaultContext';
+import { getWindowActivity, onWindowActivity } from './windowActivity';
 
 /** localStorage key (versioned so a shape change can invalidate cleanly). */
 const CONFIG_KEY = 'agent:settings:v1';
@@ -37,6 +38,11 @@ export type DefaultAgent = 'claude';
  *  `dom` = real text nodes with native macOS font smoothing: the softest glyph
  *  edges, but the renderer can stutter when output redraws fast. */
 export type AgentRenderer = 'webgl' | 'dom';
+
+/** Light mode (Settings → Performance): `auto` turns it on for a Mac with ≤ 8 GB of memory or
+ *  one running on battery; `on` / `off` pin it. When on: no endless animation, terminals on
+ *  DOM, no backdrop blur, every poll at half the rate (lib/lightMode.ts). */
+export type LightModeSetting = 'auto' | 'on' | 'off';
 
 
 export interface AgentSettings {
@@ -87,6 +93,8 @@ export interface AgentSettings {
    *  not evidence anybody turned it off. Until this is present `autoTitle` is forced TRUE;
    *  from then on a deliberate switch-off sticks. */
   titleMigrated: boolean;
+  /** Light mode: Auto / On / Off. Default `auto`; anything but `on` / `off` reads as `auto`. */
+  lightMode: LightModeSetting;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -101,6 +109,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   titleMigrated: true,
   chatDefaultModel: '',
   chatDefaultEffort: '',
+  lightMode: 'auto',
 };
 
 /** MIRRORED from `sanitizeModel` in `src/server/routes/agent-spawn-shared.ts`. The dashboard
@@ -146,6 +155,7 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
       ? r.chatDefaultModel : '',
     chatDefaultEffort: typeof r.chatDefaultEffort === 'string' && CHAT_DEFAULT_EFFORT_LEVELS.includes(r.chatDefaultEffort)
       ? r.chatDefaultEffort : '',
+    lightMode: r.lightMode === 'on' || r.lightMode === 'off' ? r.lightMode : 'auto',
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };
@@ -165,14 +175,7 @@ function writeLocal(cfg: AgentSettings): void {
   try { localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)); } catch { /* best-effort */ }
 }
 
-/**
- * Persist the settings: localStorage (live this launch) + server-side
- * (~/.dreamcontext/agent-ui.json, survives the per-launch origin change) + a
- * window event so the mounted AgentSurface re-applies them without a reload.
- */
-export function writeAgentSettings(cfg: AgentSettings): void {
-  writeLocal(cfg);
-  void api.post('/launcher/agent-settings', cfg).catch(() => {});
+function dispatchLocal(cfg: AgentSettings): void {
   try { window.dispatchEvent(new CustomEvent<AgentSettings>(AGENT_SETTINGS_EVENT, { detail: cfg })); } catch { /* SSR/none */ }
 }
 
@@ -200,38 +203,294 @@ export function onAgentSettings(fn: (cfg: AgentSettings) => void): () => void {
   };
 }
 
+// ─── Hydration + the write guard ────────────────────────────────────────────────
+//
+// Each launch starts on a fresh origin with empty localStorage, so until this window has READ
+// `~/.dreamcontext/agent-ui.json` the only settings it holds are the defaults. A write made in
+// that state used to POST the whole default blob over the real file (owner decision 6,
+// 2026-10-17). Every writer goes through ONE choke point instead:
+//   - not hydrated yet: the write applies locally (the UI reflects it at once), is recorded as
+//     a FIELD-LEVEL pending patch, makes no POST, and kicks the shared re-fetch;
+//   - the first successful fetch sends that patch ONCE as a field merge
+//     (`{ merge: true, patch }`, merged over the file server-side), so untouched fields keep
+//     the server's values and two windows catching up together cannot overwrite each other;
+//   - hydrated: every write is a field merge too.
+// A failed fetch or POST keeps the patch and retries with a capped backoff while the window is
+// visible.
+
+/** What a write resolves to: `ok` once it landed on disk, `false` when this attempt gave up
+ *  (the patch is kept and retried). Never rejects. */
+export interface AgentSettingsWrite { ok: boolean }
+
+type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void };
+function deferred<T>(): Deferred<T> {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+const RETRY_BASE_MS = 2_000;
+const RETRY_CAP_MS = 60_000;
+
+let boot = deferred<AgentSettings>();
+let bootSettled = false;
 /**
- * Change SOME settings, leaving the rest exactly as they are on disk right now.
- *
- * Use this, not `writeAgentSettings({ ...snapshot, one: value })`, whenever a control owns a
- * single field. The whole-object form silently rewrites every OTHER field from whatever the
- * caller's React render captured — and a component that rendered before
- * `initAgentSettingsFromServer` resolved is holding DEFAULTS, so flipping one toggle can
- * quietly revert unrelated ones (observed: changing the chat permission mode reset
- * `chatView` to its default `false`, which silently moved every new session back to the
- * terminal surface). Merging against the freshest persisted value at write time removes the
- * whole class of bug.
+ * The boot fetch. ALWAYS resolves: to the server's settings, or — when the fetch fails — to
+ * this window's local copy (on a fresh launch origin, the defaults). Light mode and the WebGL
+ * budget wait on it, so a saved On/Off survives a relaunch.
  */
-export function patchAgentSettings(patch: Partial<AgentSettings>): AgentSettings {
-  const next = coerceAgentSettings({ ...readAgentSettings(), ...patch });
-  writeAgentSettings(next);
-  return next;
+export let agentSettingsReady: Promise<AgentSettings> = boot.promise;
+
+let hydrated = false;
+let inflight: Promise<AgentSettings> | null = null;
+/** Field-level pending patch: merged per field, later wins. */
+let pending: Partial<AgentSettings> | null = null;
+/** Writers waiting on the attempt that carries their fields. */
+let waiters: Array<(w: AgentSettingsWrite) => void> = [];
+let posting: Promise<void> | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryDelay = RETRY_BASE_MS;
+let wired = false;
+
+/** Has a settings fetch succeeded in this window? Until it has, Settings shows a Retry banner. */
+export function isAgentSettingsHydrated(): boolean {
+  return hydrated;
+}
+
+function settleBoot(cfg: AgentSettings): void {
+  if (bootSettled) return;
+  bootSettled = true;
+  boot.resolve(cfg);
+}
+
+function settleWaiters(ok: boolean): void {
+  const ws = waiters;
+  waiters = [];
+  for (const w of ws) w({ ok });
+}
+
+function windowVisible(): boolean {
+  return !getWindowActivity().hidden;
+}
+
+function clearRetry(): void {
+  if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+}
+
+function needsWork(): boolean {
+  return !hydrated || (pending !== null && Object.keys(pending).length > 0);
+}
+
+function scheduleRetry(): void {
+  clearRetry();
+  if (!needsWork() || !windowVisible()) return;
+  const delay = retryDelay;
+  retryDelay = Math.min(retryDelay * 2, RETRY_CAP_MS);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (!windowVisible()) return;
+    if (!hydrated) void fetchServer();
+    else void flushPending();
+  }, delay);
+}
+
+/** Restart the loop now (hidden → visible, refocus, a Retry click). */
+function kick(): void {
+  clearRetry();
+  retryDelay = RETRY_BASE_MS;
+  if (!needsWork()) return;
+  if (!hydrated) void fetchServer();
+  else void flushPending();
+}
+
+/** Wire the loop to the window once: pause on hide, restart on show/refocus, stop on unload,
+ *  and — while a patch is pending — follow another window's hydration (a `storage` event). */
+function wire(): void {
+  if (wired) return;
+  wired = true;
+  onWindowActivity((next, prev) => {
+    if (next.hidden) { clearRetry(); return; }
+    if ((prev.hidden && !next.hidden) || (!prev.focused && next.focused)) kick();
+  });
+  try {
+    window.addEventListener('pagehide', clearRetry);
+    window.addEventListener('beforeunload', clearRetry);
+    window.addEventListener('storage', (e: StorageEvent) => {
+      if (e.key !== CONFIG_KEY || hydrated || !pending) return;
+      // Another window hydrated: fetch now, and keep showing this window's picks on top.
+      const shown = coerceAgentSettings({ ...readAgentSettings(), ...pending });
+      if (JSON.stringify(shown) !== JSON.stringify(readAgentSettings())) {
+        writeLocal(shown);
+        dispatchLocal(shown);
+      }
+      kick();
+    });
+  } catch { /* no window (Node) */ }
+}
+
+/** The shared fetch: one in flight per window, however many callers. */
+function fetchServer(): Promise<AgentSettings> {
+  if (inflight) return inflight;
+  wire();
+  inflight = (async () => {
+    try {
+      const raw = await api.get<Partial<AgentSettings>>('/launcher/agent-settings');
+      const server = coerceAgentSettings(raw);
+      hydrated = true;
+      clearRetry();
+      retryDelay = RETRY_BASE_MS;
+      const shown = pending ? coerceAgentSettings({ ...server, ...pending }) : server;
+      writeLocal(shown);
+      dispatchLocal(shown);
+      settleBoot(shown);
+      if (pending && Object.keys(pending).length) void flushPending();
+      return shown;
+    } catch {
+      const local = readAgentSettings();
+      settleBoot(local);
+      settleWaiters(false);
+      scheduleRetry();
+      return local;
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
+}
+
+/** Send the pending patch as ONE field merge. Clears only the fields that landed on a 200. */
+function flushPending(): Promise<void> {
+  if (posting) return posting;
+  if (!hydrated || !pending || !Object.keys(pending).length) {
+    pending = null;
+    settleWaiters(true);
+    return Promise.resolve();
+  }
+  const sent = pending;
+  const sentWaiters = waiters;
+  waiters = [];
+  /** The pending fields NOT carried by `sent` (written again while it was in flight). */
+  const unsent = (): Partial<AgentSettings> | null => {
+    const rest: Partial<AgentSettings> = {};
+    for (const [k, v] of Object.entries(pending ?? {})) {
+      if ((sent as Record<string, unknown>)[k] !== v) (rest as Record<string, unknown>)[k] = v;
+    }
+    return Object.keys(rest).length ? rest : null;
+  };
+  posting = (async () => {
+    let landed = false;
+    try {
+      await api.post('/launcher/agent-settings', { merge: true, patch: sent });
+      landed = true;
+      pending = unsent();
+      retryDelay = RETRY_BASE_MS;
+      for (const w of sentWaiters) w({ ok: true });
+      // Writers that joined during the flight with values that just landed are done too.
+      if (!pending) settleWaiters(true);
+    } catch (err) {
+      for (const w of sentWaiters) w({ ok: false });
+      const status = (err as { status?: unknown }).status;
+      if (typeof status === 'number' && status >= 400 && status < 500) {
+        // Refused, not failed (the phone may not write Settings): retrying cannot change it.
+        pending = unsent();
+        if (!pending) settleWaiters(false);
+      } else {
+        // The backoff (only while visible) and the hidden → visible / refocus kick retry it.
+        scheduleRetry();
+      }
+    } finally {
+      posting = null;
+    }
+    // Only a write that LANDED chains straight into the next one; a failure waits its turn.
+    if (landed && pending) void flushPending();
+  })();
+  return posting;
 }
 
 /**
- * Load the persisted settings from the server and seed localStorage (each launch
- * starts on a fresh origin with empty localStorage). Falls back to local/defaults
- * if the server is unreachable. Call once on AgentSurface mount.
+ * Change SOME settings, leaving the rest exactly as they are on disk.
+ *
+ * The ONE writer for every control (Settings, the composer's "Set as default", the tab menu's
+ * auto-title). A whole-object write silently rewrites every OTHER field from whatever the
+ * caller's render captured — and a component that rendered before hydration holds DEFAULTS
+ * (observed: changing the chat permission mode reset `chatView` to its default `false`). Here
+ * only the fields named travel, locally at once and to the server as a field merge.
+ *
+ * Resolves `{ ok: true }` when the write landed, `{ ok: false }` when this attempt gave up
+ * (it stays pending and is retried). Never rejects, so a caller that does not await it can
+ * never raise an unhandled rejection.
  */
-export async function initAgentSettingsFromServer(): Promise<AgentSettings> {
-  try {
-    const raw = await api.get<Partial<AgentSettings>>('/launcher/agent-settings');
-    const cfg = coerceAgentSettings(raw);
-    writeLocal(cfg);
-    return cfg;
-  } catch {
-    return readAgentSettings();
+export function patchAgentSettings(patch: Partial<AgentSettings>): Promise<AgentSettingsWrite> {
+  const next = coerceAgentSettings({ ...readAgentSettings(), ...patch });
+  writeLocal(next);
+  dispatchLocal(next);
+  const fields: Partial<AgentSettings> = {};
+  for (const k of Object.keys(patch) as Array<keyof AgentSettings>) {
+    (fields as Record<string, unknown>)[k] = next[k];
   }
+  pending = { ...(pending ?? {}), ...fields };
+  const done = new Promise<AgentSettingsWrite>((resolve) => { waiters.push(resolve); });
+  if (!hydrated) {
+    wire();
+    void fetchServer();
+  } else {
+    void flushPending();
+  }
+  return done;
+}
+
+/**
+ * Persist a whole settings object — as the patch of the fields that DIFFER from this window's
+ * copy, so a stale or default-filled snapshot can never travel as if it were a choice.
+ */
+export function writeAgentSettings(cfg: AgentSettings): Promise<AgentSettingsWrite> {
+  const current = readAgentSettings();
+  const next = coerceAgentSettings(cfg);
+  const patch: Partial<AgentSettings> = {};
+  for (const k of Object.keys(next) as Array<keyof AgentSettings>) {
+    if (next[k] !== current[k]) (patch as Record<string, unknown>)[k] = next[k];
+  }
+  if (!Object.keys(patch).length) {
+    dispatchLocal(next);
+    return Promise.resolve({ ok: true });
+  }
+  return patchAgentSettings(patch);
+}
+
+/**
+ * The persisted settings for this window. The first call is the boot fetch (it resolves
+ * {@link agentSettingsReady}); once a fetch has succeeded, every later call resolves to this
+ * window's local copy (localStorage is then the freshest: this window's writes and every other
+ * window's `storage` events keep it current), so no caller ever receives — or writes back — a
+ * boot-time snapshot. Until a fetch has succeeded, each call re-fetches through one shared
+ * in-flight promise; a success writes localStorage and dispatches {@link AGENT_SETTINGS_EVENT}
+ * so every listener moves to the real values.
+ */
+export function initAgentSettingsFromServer(): Promise<AgentSettings> {
+  if (hydrated) return Promise.resolve(readAgentSettings());
+  return fetchServer();
+}
+
+/** Settings' Retry button: fetch now, outside the backoff. */
+export function retryAgentSettingsNow(): Promise<AgentSettings> {
+  retryDelay = RETRY_BASE_MS;
+  clearRetry();
+  return initAgentSettingsFromServer();
+}
+
+/** Tests only: forget hydration, the pending patch, the loop and the boot promise. */
+export function resetAgentSettingsForTests(): void {
+  clearRetry();
+  boot = deferred<AgentSettings>();
+  bootSettled = false;
+  agentSettingsReady = boot.promise;
+  hydrated = false;
+  inflight = null;
+  pending = null;
+  waiters = [];
+  posting = null;
+  retryDelay = RETRY_BASE_MS;
+  wired = false;
 }
 
 // ─── Chat permission mode — PER VAULT, split out of the global blob ─────────────

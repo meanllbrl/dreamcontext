@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import { phoneAllows } from '../lib/phoneSurface';
+import { pollMs } from '../lib/windowActivity';
 import type { ScheduleSlot } from '../../../src/lib/automations/types.js';
 
 /**
@@ -419,7 +420,7 @@ export function useAutomationRunJob() {
   return useQuery({
     queryKey: ['automations-run-job'],
     queryFn: () => api.get<{ job: AutomationRunJob | null }>('/automations/runs').then((r) => r.job),
-    refetchInterval: (query) => (query.state.data?.status === 'running' ? 800 : false),
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? pollMs(800) : false),
     refetchOnWindowFocus: true,
   });
 }
@@ -486,7 +487,7 @@ export function useAutomationDispatcher() {
     queryFn: () => api.get<{ dispatcher: AutomationDispatcher }>('/automations/dispatcher').then((r) => r.dispatcher),
     // `launchctl print` is a subprocess per call — poll on the minute, not the
     // second. Focus refetch covers "I just installed it from the CLI".
-    refetchInterval: 60_000,
+    refetchInterval: () => pollMs(60_000),
     refetchOnWindowFocus: true,
     retry: 0,
   });
@@ -769,7 +770,7 @@ export function useAutomationQuestions() {
   return useQuery({
     queryKey: ['automations-questions'],
     queryFn: () => api.get<{ questions: AutomationQuestion[] }>('/automations/questions').then((r) => r.questions),
-    refetchInterval: 5000,
+    refetchInterval: () => pollMs(5000),
     refetchOnWindowFocus: true,
     retry: 0,
   });
@@ -1026,7 +1027,7 @@ export function useAgentFeed(
     enabled: phoneAllows('GET', '/api/automations/threads'),
     // Fast while a run is in flight — one this window started, or one the feed
     // itself reports holding a slot — so its answer lands as it is written.
-    refetchInterval: (query) => (
+    refetchInterval: (query) => pollMs(
       live
       || Object.keys(query.state.data?.runSlots ?? {}).length > 0
       || Object.keys(query.state.data?.working ?? {}).length > 0
@@ -1068,7 +1069,7 @@ export function useAgentThread(slug: string | null, runId: string | null) {
       ),
     enabled: !!slug && !!runId,
     // Fast while the agent works, so its posts and the end of the turn land as they happen.
-    refetchInterval: (query) => (query.state.data?.working ? 2_000 : 15_000),
+    refetchInterval: (query) => pollMs(query.state.data?.working ? 2_000 : 15_000),
     retry: 0,
   });
 }

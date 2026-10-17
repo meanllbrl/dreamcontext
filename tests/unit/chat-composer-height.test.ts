@@ -10,10 +10,11 @@
  * FLOOR rather than as a rival owner of the same number.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
-  composerBodyHeight, composerHeightBounds,
+  composerBodyHeight, composerHeightBounds, draftOnlyGrew, fieldContentHeight, measureFieldContent,
   COMPOSER_MIN_LINES, COMPOSER_MAX_LINES, COMPOSER_PANE_FRACTION,
-  type ComposerHeightInput,
+  type ComposerHeightInput, type MeasurableField,
 } from '../../dashboard/src/components/sleepy/chat/composerHeight.js';
 
 // Realistic metrics for the shipped tokens: 14px text at line-height 1.45 → 20.3px a line,
@@ -187,5 +188,134 @@ describe('composerBodyHeight — after a send', () => {
 
   it('returns to the DRAGGED size for someone who set one — an explicit choice is not leftovers', () => {
     expect(composerBodyHeight(base({ contentHeight: contentFor(0), draggedHeight: 240 }))).toBe(240);
+  });
+});
+
+// ── The keystroke path (task: the desktop app stays light on an 8GB MacBook Air) ──────
+//
+// A fake textarea: its content is `lines` rendered lines; its box is `box` px tall unless the
+// measure collapses it (`style.height = '0px'`), when `scrollHeight` reports the content.
+// Every collapse is counted — the collapse is the forced layout the keystroke path avoids.
+function fakeField(lines: number, box: number) {
+  const f = {
+    lines,
+    box,
+    collapses: 0,
+    style: {
+      _h: '',
+      get height() { return this._h; },
+      set height(v: string) { if (v === '0px') f.collapses += 1; this._h = v; },
+    },
+    get content() { return Math.round(LINE * f.lines + FIELD_CHROME); },
+    get clientHeight() { return f.box; },
+    get scrollHeight() { return f.style.height === '0px' ? f.content : Math.max(f.box, f.content); },
+  };
+  return f as typeof f & MeasurableField;
+}
+const BORDER = 2;
+
+describe('measureFieldContent — no style read', () => {
+  it('collapses, reads, restores, and adds the cached border', () => {
+    const f = fakeField(3, 120);
+    f.style.height = '120px';
+    expect(measureFieldContent(f, BORDER)).toBe(f.content + BORDER);
+    expect(f.style.height).toBe('120px');
+    expect(f.collapses).toBe(1);
+  });
+});
+
+describe('fieldContentHeight — collapse only when the draft got shorter', () => {
+  it('collapses on the first measure (nothing known yet)', () => {
+    const f = fakeField(1, 60);
+    expect(fieldContentHeight(f, BORDER, null, false)).toBe(f.content + BORDER);
+    expect(f.collapses).toBe(1);
+  });
+
+  it('a draft that GREW and still fits keeps the last figure, with no collapse', () => {
+    const f = fakeField(1, 60);
+    const last = fieldContentHeight(f, BORDER, null, true);
+    f.lines = 2; // still inside the 60px box
+    expect(fieldContentHeight(f, BORDER, last, false)).toBe(last);
+    expect(f.collapses).toBe(1);
+  });
+
+  it('a draft that GREW past the box reads scrollHeight, with no collapse', () => {
+    const f = fakeField(2, 50);
+    const last = fieldContentHeight(f, BORDER, null, true);
+    f.lines = 4;
+    expect(fieldContentHeight(f, BORDER, last, false)).toBe(f.content + BORDER);
+    expect(f.collapses).toBe(1);
+  });
+
+  it('a draft that got SHORTER collapses and sees the smaller content', () => {
+    const f = fakeField(6, 140);
+    const last = fieldContentHeight(f, BORDER, null, true);
+    f.lines = 2;
+    const shrunk = fieldContentHeight(f, BORDER, last, true);
+    expect(shrunk).toBe(f.content + BORDER);
+    expect(shrunk).toBeLessThan(last);
+    expect(f.collapses).toBe(2);
+  });
+
+  it('growth without the collapse lands on the same applied height as a full measure', () => {
+    // The skipped measure must never change the answer: the box only ever needs MORE room.
+    for (const [from, to] of [[1, 2], [2, 3], [3, 9], [9, 14]] as const) {
+      const f = fakeField(from, 0);
+      const firstContent = fieldContentHeight(f, BORDER, null, true);
+      const applied = composerBodyHeight(base({ contentHeight: firstContent }));
+      f.box = applied - BODY_CHROME - BORDER; // the field fills its row inside the body
+      f.lines = to;
+      const cheap = composerBodyHeight(base({ contentHeight: fieldContentHeight(f, BORDER, firstContent, false) }));
+      const full = composerBodyHeight(base({ contentHeight: measureFieldContent(f, BORDER) }));
+      expect(cheap).toBe(full);
+    }
+  });
+
+  it('60 grown keystrokes after the first take no collapse at all', () => {
+    const f = fakeField(1, 60);
+    let last: number | null = null;
+    last = fieldContentHeight(f, BORDER, last, true);
+    for (let i = 0; i < 60; i++) last = fieldContentHeight(f, BORDER, last, false);
+    expect(f.collapses).toBe(1);
+  });
+});
+
+// The caller (Composer.tsx) skips the collapse only when this says the draft grew by insertion.
+// Length alone is not enough: a select-all paste of one long line over a six-line draft is
+// LONGER and spans fewer lines, and the box kept its six rows (end review, 2026-10-18).
+describe('draftOnlyGrew — the collapse may be skipped only after a pure insertion', () => {
+  it('typing at the end, in the middle and at the start is growth', () => {
+    expect(draftOnlyGrew('hello', 'hello!')).toBe(true);
+    expect(draftOnlyGrew('helo', 'hello')).toBe(true);
+    expect(draftOnlyGrew('ello', 'hello')).toBe(true);
+    expect(draftOnlyGrew('', 'a')).toBe(true);
+    expect(draftOnlyGrew('a\nb', 'a\nxyz\nb')).toBe(true);
+  });
+
+  it('a longer replacement with fewer lines is NOT growth', () => {
+    const six = 'one\ntwo\nthree\nfour\nfive\nsix';
+    expect(draftOnlyGrew(six, 'x'.repeat(six.length + 20))).toBe(false);
+    // a paste over a selection: the newlines it replaced are gone
+    expect(draftOnlyGrew('a\nb\nc', 'a long single line instead')).toBe(false);
+    expect(draftOnlyGrew('abc\ndef', 'abXXXXXXXXc def')).toBe(false);
+  });
+
+  it('equal or shorter is never growth', () => {
+    expect(draftOnlyGrew('same', 'same')).toBe(false);
+    expect(draftOnlyGrew('abcd', 'abc')).toBe(false);
+    expect(draftOnlyGrew('abcd', 'wxyz')).toBe(false);
+  });
+
+  it('a repeated character inserted next to its twin is still one insertion', () => {
+    expect(draftOnlyGrew('aaa', 'aaaa')).toBe(true);
+    expect(draftOnlyGrew('abab', 'ababab')).toBe(true);
+  });
+});
+
+describe('Composer.tsx skips the collapse only through draftOnlyGrew (source scan)', () => {
+  it('a length check alone would bring the six-row box back', () => {
+    const src = readFileSync(new URL('../../dashboard/src/components/sleepy/chat/Composer.tsx', import.meta.url), 'utf8');
+    expect(src).toMatch(/if \(draft !== prev\.draft && !draftOnlyGrew\(prev\.draft, draft\)\) needFullRef\.current = true;/);
+    expect(src).not.toMatch(/draft\.length <=? prev\.draft\.length/);
   });
 });
