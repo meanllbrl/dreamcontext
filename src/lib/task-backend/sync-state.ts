@@ -45,6 +45,18 @@ export interface TaskSyncEntry {
   posted_journal_ids?: string[];
   /** Remote comment id → journal entry id, so a re-pull never re-imports a comment. */
   comment_entry_ids?: Record<string, string>;
+  /**
+   * The parent task (slug) the remote last carried for this task: what the last
+   * push linked or the last pull applied. Absent = never recorded (no link).
+   */
+  remote_parent?: string | null;
+  /**
+   * A parent link (or detach) the remote would not take: the local parent it
+   * was for (`null` = a detach) and how many syncs tried. At
+   * {@link PARENT_LINK_MAX_TRIES} the push stops retrying until the local parent
+   * changes. Absent = no failure outstanding.
+   */
+  parent_link_stuck?: { target: string | null; tries: number };
 }
 
 export interface SyncStateFile {

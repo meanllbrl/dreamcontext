@@ -66,6 +66,7 @@ import {
   uninstallTaskSyncHooks,
   TaskBackendError,
   type TaskBackend,
+  type TaskData,
 } from '../../lib/task-backend/index.js';
 import { planDedup, applyDedup, type DedupPlan } from '../../lib/task-backend/dedup.js';
 import { ProgressBar } from '../../lib/progress.js';
@@ -84,6 +85,8 @@ import {
   validateRef,
 } from '../../lib/task-evidence.js';
 import { refuseSelfApproval } from './agents.js';
+import { registerTaskFamilyCommands } from './tasks-family.js';
+import { checkParentLink, loadFamily, parentCloseBlock, parseChildDecision, rollupOf, type ChildDecision } from '../../lib/task-parent.js';
 import { cardIssuesOfFile } from '../../lib/task-doctor.js';
 import { foldCardChangelog } from '../../lib/task-card.js';
 import { withTaskFileLock } from '../../lib/task-file-lock.js';
@@ -580,10 +583,60 @@ async function resolveTaskSlug(backend: TaskBackend, name: string): Promise<stri
   return null;
 }
 
+/** A parent never closes (done-kind) while a sub-task is open. Returns true when BLOCKED. */
+function blockOnOpenChildren(slug: string, newStatus: string, defs: StatusDef[]): boolean {
+  const block = parentCloseBlock(loadFamily(getStateDir()), defs, slug, newStatus);
+  if (!block) return false;
+  error(block);
+  process.exitCode = 1;
+  return true;
+}
+
+/**
+ * Cancelling a parent needs a decision for EVERY open sub-task: cancel it,
+ * detach it (it becomes top-level), or move it under another parent. Returns
+ * the decisions, or null after printing what is missing.
+ */
+function childDecisions(
+  slug: string,
+  open: Array<{ slug: string; status: string }>,
+  perChild: string[],
+  all: string | undefined,
+): Map<string, ChildDecision> | null {
+  const out = new Map<string, ChildDecision>();
+  const fallback = all !== undefined ? parseChildDecision(all) : null;
+  if (all !== undefined && !fallback) {
+    error(`--children must be cancel, detach or move:<parent>, got "${all}".`);
+    process.exitCode = 1;
+    return null;
+  }
+  for (const pair of perChild) {
+    const eq = pair.indexOf('=');
+    const decision = eq > 0 ? parseChildDecision(pair.slice(eq + 1)) : null;
+    if (!decision) {
+      error(`--child expects <sub-task>=cancel|detach|move:<parent>, got "${pair}".`);
+      process.exitCode = 1;
+      return null;
+    }
+    out.set(pair.slice(0, eq).trim(), decision);
+  }
+  const missing = open.filter((c) => !out.has(c.slug) && !fallback);
+  if (missing.length > 0) {
+    error(`${slug} has ${open.length} open sub-task(s); cancelling a parent needs a decision for each:`);
+    for (const c of missing) console.log(`  - ${c.slug} [${c.status}]`);
+    info(`Decide each: --child <sub-task>=cancel|detach|move:<other-parent>, or all at once: --children cancel|detach|move:<other-parent>`);
+    process.exitCode = 1;
+    return null;
+  }
+  for (const c of open) if (!out.has(c.slug) && fallback) out.set(c.slug, fallback);
+  return out;
+}
+
 export function registerTasksCommand(program: Command): void {
   const tasks = program
     .command('tasks')
     .description('Create tasks, log progress, insert into sections, and mark complete');
+  registerTaskFamilyCommands(tasks);
 
   // List tasks
   tasks
@@ -728,12 +781,13 @@ export function registerTasksCommand(program: Command): void {
     .option('--due <date>', 'Due/end date (YYYY-MM-DD)')
     .option('--objectives <slugs>', 'Comma-separated roadmap objective slugs this task serves (many-to-many)')
     .option('--feature <name>', 'Feature PRD this task belongs to (sets related_feature + the feature\'s related_tasks)')
+    .option('--parent <task>', 'Create it as a sub-task of this parent (two levels only; inherits objectives, feature and cycle)')
     .option('--field <key=value...>', 'Set a declared custom field (repeatable): --field team=platform --field story_points=8')
     .option('--allow-missing-required', 'Create even when required custom fields are unset (intentional draft)')
     .option('--by <actor>', 'Who is filing: human | sleep. During a sleep cycle a task filed as anything but `human` must clear the filing bar')
     .option('--neighbor-checked <slug>', 'The nearest existing task you looked at and judged a separate concern (lifts a review-band filing-bar refusal)')
     .option('--declined-checked <key>', 'The declined idea you read and judged different from this task (lifts a semantic declined-match refusal)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean; by?: string; neighborChecked?: string; declinedChecked?: string }) => {
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; parent?: string; field?: string[]; allowMissingRequired?: boolean; by?: string; neighborChecked?: string; declinedChecked?: string }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -886,6 +940,24 @@ export function registerTasksCommand(program: Command): void {
         feature = { slug: resolved.slug };
       }
 
+      // --parent: the two-level rule, checked before anything is written. The
+      // child inherits what binds it to the parent's deliverable.
+      let parent: TaskData | null = null;
+      if (opts.parent !== undefined) {
+        const parentSlug = await resolveTaskSlug(backend, opts.parent);
+        if (!parentSlug) { process.exitCode = 1; return; }
+        const check = checkParentLink(loadFamily(getStateDir()), statusSet(), slug, parentSlug);
+        if (!check.ok) { error(check.reason); process.exitCode = 1; return; }
+        parent = await backend.get(check.parent);
+        if (!parent) { error(`Task not found: ${check.parent}`); process.exitCode = 1; return; }
+        if (!objectives && parent.objectives.length > 0) objectives = [...parent.objectives];
+        if (!feature && opts.feature === undefined && parent.related_feature) {
+          const inherited = resolveFeature(ensureContextRoot(), parent.related_feature);
+          if (inherited.ok) feature = { slug: inherited.slug };
+        }
+      }
+      const parentCycle = parent && typeof parent.raw.cycle === 'string' && parent.raw.cycle.trim() ? parent.raw.cycle.trim() : null;
+
       // --field key=value pairs → custom_fields, validated against the override.
       let customFields: Record<string, string | number> | undefined;
       if (opts.field && opts.field.length > 0) {
@@ -927,6 +999,8 @@ export function registerTasksCommand(program: Command): void {
           due_date: opts.due ?? null,
           ...(objectives ? { objectives } : {}),
           ...(customFields ? { custom_fields: customFields } : {}),
+          ...(parent ? { parent_task: parent.slug } : {}),
+          ...(parentCycle ? { cycle: parentCycle } : {}),
           variant: 'cli',
         });
       } catch (err) {
@@ -966,6 +1040,14 @@ export function registerTasksCommand(program: Command): void {
         });
       }
       success(`Task created: ${slug}.md`);
+      if (parent) {
+        const inherited = [
+          ...(opts.objectives === undefined && parent.objectives.length > 0 ? ['objectives'] : []),
+          ...(opts.feature === undefined && feature ? ['feature'] : []),
+          ...(parentCycle ? ['cycle'] : []),
+        ];
+        console.log(chalk.dim(`  sub-task of: ${parent.slug}${inherited.length > 0 ? ` (inherited: ${inherited.join(', ')})` : ''}`));
+      }
       printBarNotices();
       if (feature) {
         console.log(chalk.dim(`  feature: ${feature.slug} (related_tasks updated)`));
@@ -1090,7 +1172,16 @@ export function registerTasksCommand(program: Command): void {
         }
       }
 
-      await backend.delete(slug, { ...(absorbedBy ? { absorbedBy } : {}), ...(opts.reason ? { reason: opts.reason } : {}) });
+      try {
+        await backend.delete(slug, { ...(absorbedBy ? { absorbedBy } : {}), ...(opts.reason ? { reason: opts.reason } : {}) });
+      } catch (err) {
+        if (err instanceof TaskBackendError) {
+          error(err.message);
+          process.exitCode = 1;
+          return;
+        }
+        throw err;
+      }
       success(`Task deleted: ${slug}${backend.name !== 'local' ? ' (remote deletion on next sync)' : ''}`);
       if (absorbedBy) info(`Recorded as absorbed by ${absorbedBy} — sleep will log there instead of re-filing this.`);
     });
@@ -1602,6 +1693,7 @@ export function registerTasksCommand(program: Command): void {
       const current = await backend.get(slug);
       if (blockOnMissingRequired('complete', slug, current?.custom_fields, ensureContextRoot(),
           (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
+      if (blockOnOpenChildren(slug, 'completed', statusSet())) return;
       if (await blockOnEvidence(backend, slug, 'completed', statusSet(), opts)) return;
 
       await backend.complete(slug, summary);
@@ -1621,7 +1713,9 @@ export function registerTasksCommand(program: Command): void {
     .description('Change a task\'s status (logs the change; review/done are evidence-gated; stamps start_date on the first active-kind status if unset, due_date on completed)')
     .option('--force', 'Pass the evidence gate (needs --reason; refused from an agent environment; journaled)')
     .option('--reason <why>', 'Why the evidence gate does not apply (with --force)')
-    .action(async (name: string, newStatus: string, reasonParts: string[], opts: { force?: boolean; reason?: string }) => {
+    .option('--child <sub-task=decision>', 'Cancelling a parent: what happens to one open sub-task (cancel | detach | move:<other-parent>); repeatable', collectOption, [])
+    .option('--children <decision>', 'Cancelling a parent: one decision for every open sub-task (cancel | detach | move:<other-parent>)')
+    .action(async (name: string, newStatus: string, reasonParts: string[], opts: { force?: boolean; reason?: string; child?: string[]; children?: string }) => {
       const defs = statusSet();
       const validStatuses = statusKeys(defs);
       if (!validStatuses.includes(newStatus)) {
@@ -1632,6 +1726,27 @@ export function registerTasksCommand(program: Command): void {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
+
+      if (blockOnOpenChildren(slug, newStatus, defs)) return;
+      // Cancelling a parent: every open sub-task gets its decision before anything moves.
+      let decisions: Map<string, ChildDecision> | null = null;
+      if (isCancelled(defs, newStatus)) {
+        const family = loadFamily(getStateDir());
+        const open = rollupOf(family.children.get(slug) ?? [], defs).open;
+        if (open.length > 0) {
+          decisions = childDecisions(slug, open, opts.child ?? [], opts.children);
+          if (!decisions) return;
+          for (const [child, d] of decisions) {
+            if (d.kind !== 'move') continue;
+            const check = checkParentLink(family, defs, child, d.to);
+            if (!check.ok || check.parent === slug) {
+              error(`Cannot move ${child} under ${d.to}: ${check.ok ? 'that is the parent being cancelled.' : check.reason}`);
+              process.exitCode = 1;
+              return;
+            }
+          }
+        }
+      }
 
       // Hard gate: can't move a task to a ready/done state (done- or review-kind)
       // with required fields empty. A cancelled-kind status is neither — abandoned
@@ -1644,6 +1759,23 @@ export function registerTasksCommand(program: Command): void {
       }
 
       const reason = reasonParts.join(' ').trim();
+      if (decisions) {
+        for (const [child, d] of decisions) {
+          if (d.kind === 'cancel') {
+            await backend.addJournal(child, { kind: 'status', label: 'Cancelled', actor: actorOf(), body: `- its parent ${slug} was cancelled${reason ? `: ${reason}` : ''}` });
+            await backend.updateFields(child, { status: newStatus, updated_at: today() });
+          } else {
+            const to = d.kind === 'move' ? checkParentLink(loadFamily(getStateDir()), defs, child, d.to) : null;
+            const target = to && to.ok ? to.parent : null;
+            await backend.addJournal(child, {
+              kind: 'log', actor: actorOf(),
+              body: target ? `- moved under ${target}: its parent ${slug} was cancelled` : `- detached: its parent ${slug} was cancelled`,
+            });
+            await backend.updateFields(child, { parent_task: target, updated_at: today() });
+          }
+          console.log(chalk.dim(`  ${child}: ${d.kind === 'move' ? `moved under ${d.to}` : d.kind === 'cancel' ? 'cancelled' : 'detached'}`));
+        }
+      }
       const headerLabel = isDone(defs, newStatus) ? 'Completed'
         : isCancelled(defs, newStatus) ? 'Cancelled'
         : `Status → ${newStatus}`;
@@ -1770,6 +1902,7 @@ export function registerTasksCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
+      if (blockOnOpenChildren(slug, DONE_KEY, defs)) return;
       const note = opts.note?.trim();
       await backend.addJournal(slug, { kind: 'approval', actor: actorOf(), body: `- approved${note ? `: ${note}` : ''}` });
       const now = today();

@@ -293,6 +293,7 @@ export function buildGraph(contextRoot: string): Graph {
     }
   }
 
+  const taskByPath = new Map(nodes.filter((n) => n.group === 'task').map((n) => [n.path, n]));
   // Task → Feature (related_feature holds the feature's relative SLUG — the
   // canonical form the link engine writes — but legacy data may carry the
   // frontmatter id, so both resolve), Task → Parent Task
@@ -311,8 +312,10 @@ export function buildGraph(contextRoot: string): Graph {
       }
     }
     if (refs.parentTask) {
-      const parent = byId.get(refs.parentTask);
-      if (parent) {
+      // parent_task holds the parent's FILE slug (canonical); a legacy card holds its id.
+      // (`bySlug` is keyed by a task's name, so the file path is the slug's address.)
+      const parent = taskByPath.get(`state/${refs.parentTask}.md`) ?? byId.get(refs.parentTask);
+      if (parent && parent.group === 'task' && parent.id !== taskId) {
         links.push({ source: taskId, target: parent.id, kind: 'parent_task' });
       }
     }

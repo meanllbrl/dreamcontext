@@ -24,6 +24,7 @@ import {
 import { CARD_CEILING, foldCardChangelog } from '../task-card.js';
 import { dateUpdatesForStatus } from '../task-dates.js';
 import { filterTasks, toTaskRecord, type TaskFilter } from '../task-query.js';
+import { liveChildren, loadFamily, loadTaskBriefs, normalizeParentRef, rolledUpStatus } from '../task-parent.js';
 import {
   TaskBackendError,
   type AddChangelogOptions,
@@ -195,6 +196,11 @@ function renderTaskTemplate(
     .replaceAll('{{VERSION}}', input.version ? `"${input.version}"` : 'null');
 }
 
+function safeParentRef(raw: unknown): string | null {
+  const ref = normalizeParentRef(raw);
+  return ref && isSafeTaskSlug(ref) ? ref : null;
+}
+
 function readSectionSafe(filePath: string, sectionName: string): string {
   try {
     return readSection(filePath, sectionName) ?? '';
@@ -257,7 +263,8 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
     created_at: (data.created_at as string) ?? '',
     updated_at: (data.updated_at as string) ?? '',
     tags: Array.isArray(data.tags) ? data.tags as string[] : [],
-    parent_task: (data.parent_task as string) ?? null,
+    // A slug (or a legacy id) that is safe to build a path from; anything else reads as none.
+    parent_task: safeParentRef(data.parent_task),
     related_feature: (data.related_feature as string) ?? null,
     version: (data.version as string) ?? null,
     rice: normalizeRice(data.rice),
@@ -392,7 +399,9 @@ export class LocalTaskBackend implements TaskBackend {
     if (existsSync(filePath)) {
       throw new TaskBackendError('already_exists', `Task already exists: ${slug}`);
     }
-    return withTaskFileLock(this.brainRoot(), slug, () => this.writeNewTaskSync(slug, filePath, input));
+    const created = withTaskFileLock(this.brainRoot(), slug, () => this.writeNewTaskSync(slug, filePath, input));
+    if (created.parent_task) await this.syncParentStatus(created.parent_task);
+    return created;
   }
 
   /** The scaffold write itself — always called under {@link withTaskFileLock}. */
@@ -502,6 +511,13 @@ ${input.why || '(To be defined)'}
     if (input.objectives && input.objectives.length > 0) {
       updateFrontmatterFields(filePath, { objectives: input.objectives });
     }
+    // Parent and cycle: additive the same way (absent → template bytes unchanged).
+    if (input.parent_task) {
+      updateFrontmatterFields(filePath, { parent_task: input.parent_task });
+    }
+    if (input.cycle) {
+      updateFrontmatterFields(filePath, { cycle: input.cycle });
+    }
 
     // Seed override-declared custom fields (additive — only when the project
     // ships an override, so no-override creation stays byte-identical). Declared
@@ -528,9 +544,14 @@ ${input.why || '(To be defined)'}
     opts?: UpdateFieldsOptions,
   ): Promise<TaskData> {
     const path = this.requirePath(slug);
+    // A status or parent change moves the family's roll-up: remember the parent
+    // before the write so a child leaving one parent updates both.
+    const familyMove = fields.status !== undefined || fields.parent_task !== undefined;
+    let parentBefore: string | null = null;
     // The whole read-modify-write is inside the lock: two writers that both
     // READ before either WRITES silently lose one side's fields.
-    return withTaskFileLock(this.brainRoot(), slug, () => {
+    const task = withTaskFileLock(this.brainRoot(), slug, () => {
+      if (familyMove) parentBefore = safeParentRef(readFrontmatter<Record<string, unknown>>(path).data.parent_task);
       if (fields.tags !== undefined || fields.due_date !== undefined || fields.start_date !== undefined) {
         const { data: prev } = readFrontmatter<Record<string, unknown>>(path);
         fields = normalizeBacklogFields(prev, fields);
@@ -547,6 +568,55 @@ ${input.why || '(To be defined)'}
       foldCardChangelog(path);
       return readTaskFile(path, this.statusDefs());
     });
+    if (familyMove) {
+      for (const parent of new Set([parentBefore, task.parent_task])) {
+        if (parent && parent !== slug) await this.syncParentStatus(parent);
+      }
+    }
+    return task;
+  }
+
+  /**
+   * Recompute a parent's status from its children and store it (journaled), so
+   * the board, the snapshot and the remote all read a real value. A no-op for
+   * a task without live children, a closed parent, or one already in step.
+   * Returns the new status when it moved.
+   */
+  /**
+   * Recompute every parent once. A pull writes children's statuses through the
+   * mirror, not through {@link updateFields}, so it calls this after its batch:
+   * otherwise a parent whose children all closed remotely never moves.
+   */
+  async syncAllParentStatuses(report?: { errors: string[] }): Promise<void> {
+    for (const parent of new Set(loadFamily(this.stateDir).parentOf.values())) {
+      try {
+        await this.syncParentStatus(parent);
+      } catch (err) {
+        report?.errors.push(`parent roll-up ${parent}: ${(err as Error).message ?? err}`);
+      }
+    }
+  }
+
+  async syncParentStatus(parentSlug: string): Promise<string | null> {
+    if (!isSafeTaskSlug(parentSlug)) return null;
+    const family = loadFamily(this.stateDir);
+    const resolved = family.bySlug.has(parentSlug)
+      ? parentSlug
+      : [...family.bySlug.values()].find((b) => b.id === parentSlug)?.slug;
+    if (!resolved) return null;
+    const parent = await this.get(resolved);
+    if (!parent) return null;
+    const next = rolledUpStatus(this.statusDefs(), parent.status, parent.rawBody, family.children.get(resolved) ?? []);
+    if (!next) return null;
+    const now = today();
+    await this.addJournal(resolved, {
+      kind: 'status',
+      label: `Status → ${next}`,
+      body: `- computed from its sub-tasks (was ${parent.status})`,
+    });
+    const dates = dateUpdatesForStatus(next, parent, now, this.statusDefs());
+    await this.updateFields(resolved, { status: next, updated_at: now, ...dates });
+    return next;
   }
 
   async insertSection(
@@ -625,6 +695,21 @@ ${input.why || '(To be defined)'}
 
   async delete(slug: string, opts: { absorbedBy?: string; reason?: string } = {}): Promise<void> {
     const path = this.requirePath(slug);
+    // A parent with live sub-tasks is never deleted: its children would lose
+    // the context they exist to carry. Closed children are detached first.
+    const family = loadFamily(this.stateDir);
+    const live = liveChildren(family, this.statusDefs(), slug);
+    if (live.length > 0) {
+      throw new TaskBackendError(
+        'invalid_input',
+        `${slug} has ${live.length} live sub-task(s): ${live.map((c) => c.slug).join(', ')}. ` +
+          'Close, move (`tasks parent <child> <other-parent>`) or detach (`tasks parent <child> clear`) them first.',
+      );
+    }
+    for (const child of family.children.get(slug) ?? []) {
+      await this.updateFields(child.slug, { parent_task: null });
+      await this.addJournal(child.slug, { kind: 'log', body: `- detached: its parent ${slug} was deleted` });
+    }
     // Read the id BEFORE unlinking — a tombstone that can name the task id stays
     // traceable through a remote backend's mapping.
     const doomed = await this.get(slug).catch(() => null);
@@ -646,6 +731,8 @@ ${input.why || '(To be defined)'}
     });
     // Referential integrity: no feature may keep listing a task that is gone.
     this.healFeatureLinks(() => healTaskRemoved(this.brainRoot(), slug));
+    // A deleted child moves its parent's roll-up.
+    if (doomed?.parent_task) await this.syncParentStatus(doomed.parent_task);
   }
 
   /** The brain root (`_dream_context/`) — stateDir is always `<root>/state`. */
@@ -703,6 +790,13 @@ ${input.why || '(To be defined)'}
     });
     // Referential integrity: features listing the old slug follow the rename.
     this.healFeatureLinks(() => healTaskRename(this.brainRoot(), slug, newSlug));
+    // ...and so do the sub-tasks pointing at it (the old slug, or a legacy id).
+    const renamedId = readFrontmatter<{ id?: string }>(this.taskPath(newSlug)).data.id ?? null;
+    for (const child of loadTaskBriefs(this.stateDir)) {
+      if (child.slug !== newSlug && (child.parent === slug || (renamedId && child.parent === renamedId))) {
+        await this.updateFields(child.slug, { parent_task: newSlug });
+      }
+    }
     return newSlug;
   }
 

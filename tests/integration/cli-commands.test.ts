@@ -889,10 +889,11 @@ parent_task: null
 
       // Existing settings preserved
       expect(settings.permissions.allow).toContain('Bash(npm test:*)');
-      // Existing PostToolUse hook preserved + our new one added
-      expect(settings.hooks.PostToolUse).toHaveLength(2);
+      // Existing PostToolUse hook preserved + ours added (Edit|Write, then the Read guard)
+      expect(settings.hooks.PostToolUse).toHaveLength(3);
       expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe('echo done');
       expect(settings.hooks.PostToolUse[1].hooks[0].command).toBe('npx dreamcontext hook post-tool-use');
+      expect(settings.hooks.PostToolUse[2].matcher).toBe('Read');
       // Hooks added (session-start snapshot + ensure-dashboard auto-open)
       expect(settings.hooks.SessionStart).toHaveLength(2);
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('npx dreamcontext hook session-start');
@@ -952,18 +953,21 @@ parent_task: null
       // Two SessionStart groups (snapshot + ensure-dashboard), each deduped to one.
       expect(settings.hooks.SessionStart).toHaveLength(2);
       expect(settings.hooks.Stop).toHaveLength(1);
-      expect(settings.hooks.PostToolUse).toHaveLength(1);
+      expect(settings.hooks.PostToolUse).toHaveLength(2); // Edit|Write + the Read guard
       expect(settings.hooks.PreCompact).toHaveLength(1);
+      expect(settings.hooks.SessionEnd).toHaveLength(1);
     });
 
     it('installs PostToolUse and PreCompact hooks', () => {
       run('install-skill', tmpDir);
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
       expect(settings.hooks.PostToolUse).toBeDefined();
-      expect(settings.hooks.PostToolUse).toHaveLength(1);
+      expect(settings.hooks.PostToolUse).toHaveLength(2);
       expect(settings.hooks.PostToolUse[0].matcher).toBe('Edit|Write');
       expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe('npx dreamcontext hook post-tool-use');
       expect(settings.hooks.PostToolUse[0].hooks[0].timeout).toBe(30);
+      expect(settings.hooks.PostToolUse[1].matcher).toBe('Read');
+      expect(settings.hooks.PostToolUse[1].hooks[0].command).toBe('node "$CLAUDE_PROJECT_DIR/.claude/hooks/read-task-guard.cjs"');
 
       expect(settings.hooks.PreCompact).toBeDefined();
       expect(settings.hooks.PreCompact).toHaveLength(1);

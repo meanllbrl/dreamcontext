@@ -112,7 +112,7 @@ describe('expandBoardRefs', () => {
     const board = seedBoard('Hints', [insight, task, page, web]);
     const r = expandBoardRefs(contextRoot, [insight, task, page, web].map((e) => tok(board, e.id)).join(' '), NONCE);
     expect(r.block).toContain('Read more: dreamcontext lab show weekly-active');
-    expect(r.block).toContain('Read more: Read _dream_context/state/fix-login.md');
+    expect(r.block).toContain('Read more: dreamcontext tasks show fix-login');
     expect(r.block).toContain('Read more: Read docs/plan.md');
     expect(r.block).toContain('Read more: WebFetch https://example.com/a');
   });

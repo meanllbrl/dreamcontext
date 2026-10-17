@@ -135,6 +135,9 @@ repo: tell the owner once that there is no net, and keep your own list of change
 
 ## 1. The wave map is your order of work
 
+Read the task as one packet: \`dreamcontext tasks show "$S"\` prints its parent task first (Why,
+decisions, siblings), then its card and newest journal entries. The parent's decisions bind it.
+
 The plan decides how the run goes, and a map from Plan mode is used unchanged. Its first line
 is \`EXECUTION: lead\` (or there is none): this recipe, its lanes built one after another.
 \`EXECUTION: fan-out\`: section 5. No map in the task: write one before any code, lead unless
@@ -320,7 +323,8 @@ Never start anything with the Bash tool's run_in_background.
 
 ## 1. The wave map (before any code changes)
 
-Read the task. If it has no wave map, write one into it:
+Read the task: \`dreamcontext tasks show "$S"\` (its parent task first, then its card and newest
+journal entries). If it has no wave map, write one into it:
 
   dreamcontext tasks insert "$S" technical_details -- "WAVE MAP: W1 lanes A (owns a.ts, b.ts: AC1, AC2), B (owns c.ts: AC3) | W2 ... | also run: <tests>"
 
@@ -568,13 +572,13 @@ Every account capped: stop and tell the owner.
 
 ## 5. Briefs
 
-BASE: "Read _dream_context/state/<slug>.md, then read in full the files the lanes will change
+BASE: "Run \`dreamcontext tasks show <slug>\` (its parent task first), then read in full the files the lanes will change
 or call: <files by name, never whole directories>. Do not edit, run or test anything. Reply
 'BASE READY' and, in at most ten lines, the contracts the lanes share."
 
 BUILDER: "Your lane: <criteria>. You own ONLY: <files>. <What you consume from an earlier
 wave or produce for a later one: exact names and shapes>. Build exactly that.
-<A spawned builder, not a fork, also gets: Read _dream_context/state/<slug>.md first.>
+<A spawned builder, not a fork, also gets: run \`dreamcontext tasks show <slug>\` first.>
 Never call dreamcontext goal-live.
 ${NO_CHECK_BUILDER_RULES}
 Your final message starts with the exact heading '## wN-L report', then a line 'files changed:'

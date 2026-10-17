@@ -47,7 +47,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, 'assistant'>, string> = {
-  basic: '1.0', plan: '1.1', develop: '1.3', train: '0.1',
+  basic: '1.0', plan: '1.1', develop: '1.4', train: '0.1',
 };
 
 /**
@@ -227,7 +227,7 @@ const DEVELOP_BRIEFING = `# Mode: Develop
 
 You are building to a task's acceptance criteria. You LEAD the run, and you write the code.
 
-- **Put the run on the shelf FIRST** — right after you read the task:
+- **Put the run on the shelf FIRST**, after \`dreamcontext tasks show <slug>\`:
 
 \`\`\`dream-view
 {"type":"progress","task":"<the-slug>"}

@@ -87,6 +87,7 @@ describe('the prompt frames the task as data', () => {
 
   it('a forged end marker in the task name stays inside the data block', async () => {
     createAgent(contextRoot, { slug: 'scout', title: 'Scout', prompt: 'Scout the market.' }, { approve: { now: NOW, home } });
+    writeTask('fix-login', 'Fix login', 'in_progress');
     const spawn = capturingSpawn(CLAUDE_JSON_OK);
     const outcome = await runAutomation(contextRoot, 'scout', {
       home, spawnImpl: spawn.impl, now: () => NOW, fireAt: NOW, target: 'agent',
@@ -109,6 +110,11 @@ describe('the prompt frames the task as data', () => {
     expect(nameAt).toBeGreaterThan(start);
     expect(nameAt).toBeLessThan(end);
     expect(prompt).toContain('dreamcontext tasks log fix-login');
+    // The task arrives as its context packet (C2), fenced under its own nonce, not as a bare path.
+    const ctx = /--- TASK CONTEXT ([0-9a-f]+) ---/.exec(prompt);
+    expect(ctx).not.toBeNull();
+    expect(prompt).toContain(`--- END OF TASK CONTEXT ${ctx![1]} ---`);
+    expect(prompt).toContain('dreamcontext tasks show fix-login');
 
     // The owner's note: its own fresh, non-empty nonce, LAST, in the task wording.
     const note = /--- THE OWNER'S NOTE ON THE TASK ASSIGNED TO YOU ([0-9a-f]+) ---/.exec(prompt);

@@ -50,6 +50,8 @@ import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { readJournal, type JournalEntry, type NewJournalEntry } from '../task-journal.js';
 import { cardHasChangelog, foldCardChangelog } from '../task-card.js';
 import { withTaskFileLock } from '../task-file-lock.js';
+import { loadFamily } from '../task-parent.js';
+import { applyRemoteParentLink, holdOpenParent, noteParentLinkFailure, parentLinkSettled } from './parent-sync.js';
 import {
   applyRemoteComments,
   commentBodyFor,
@@ -760,7 +762,19 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       if (!entry?.localHash || entry.localHash !== hash) candidates.add(slug);
     }
 
-    const sorted = [...candidates].sort();
+    // Parents first: a subtask is created under its parent's remote id.
+    const family = loadFamily(this.stateDir);
+    // A parent link the remote does not carry yet is a push, even when the card's
+    // bytes are already "synced" (a pull of the same task may have absorbed the edit).
+    for (const [child, parent] of family.parentOf) {
+      // A link-only push waits until the parent has a remote id (the sync after
+      // its own push lands): no child push is spent while the parent cannot land.
+      if (!parentLinkSettled(state.tasks[child], parent) && this.ledger.remoteIdFor(parent)) candidates.add(child);
+    }
+    for (const [slug, e] of Object.entries(state.tasks)) {
+      if (e.remote_parent && !family.parentOf.has(slug) && !parentLinkSettled(e, null) && existsSync(this.taskPath(slug))) candidates.add(slug);
+    }
+    const sorted = [...candidates].sort().sort((a, b) => Number(family.parentOf.has(a)) - Number(family.parentOf.has(b)));
     // Bulk first sync (connecting a backend to a mature brain): with this many
     // never-synced tasks, pushTask switches to its low-request-count shape —
     // fields inline on the create, pre-existing changelog history kept local.
@@ -920,6 +934,29 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // fallback loop below must then skip them (they're already on the task).
     let fieldsInlined = false;
 
+    // The parent link rides the create/update itself (`parent: <remote id>`).
+    const recordedParent = entry?.remote_parent ?? null;
+    const desiredParent = loadFamily(this.stateDir).parentOf.get(slug) ?? null;
+    const parentRemoteId = desiredParent ? this.ledger.remoteIdFor(desiredParent) : null;
+    let remoteParent: string | null = recordedParent;
+    let linkStuck: { target: string | null; tries: number } | undefined;
+    if (desiredParent !== recordedParent) {
+      if (desiredParent && parentRemoteId) {
+        remoteParent = desiredParent;
+      } else if (desiredParent) {
+        // Not a failure (ClickUp was never asked): the candidate scan links it once
+        // the parent is pushed, without counting toward giving up.
+        report.warnings.push(`push ${slug}: its parent ${desiredParent} is not on ClickUp yet; the subtask link follows once it is.`);
+      } else {
+        // ClickUp cannot turn a subtask back into a task through the API: the
+        // remote keeps the old parent (remote_parent stays what ClickUp has), and
+        // the detach is marked stuck so neither the push retries it nor a pull
+        // of the unchanged remote parent undoes it.
+        linkStuck = noteParentLinkFailure(entry, null, true, report, slug, 'ClickUp');
+      }
+    }
+    const parentBody = remoteParent && remoteParent !== recordedParent && parentRemoteId ? { parent: parentRemoteId } : {};
+
     if (!remoteId) {
       // CREATE: one POST carries everything — fields + tags + assignees + the
       // bound custom-field values inline (`custom_fields: [{id, value}]`, which
@@ -931,6 +968,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         .filter((f) => f.value !== null && f.value !== undefined);
       const createBody = {
         ...fields,
+        ...parentBody,
         // person: tags stay local — the remote has real assignees.
         // dcproject: stamps the row so a shared-list pull can tell it apart (#177).
         tags: this.withProjectStamp(tagsToClickUp(stripPersonTags(task.tags), task.version, task.status, this.statusDefs())),
@@ -979,7 +1017,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
       // UPDATE: ONE field-level PUT per task (rate-limit friendly by design).
       const updated = await adapter.request<ClickUpTask>('PUT', `/task/${remoteId}`, {
-        body: { ...fields, ...assigneePatch },
+        body: { ...fields, ...assigneePatch, ...parentBody },
       });
       serverTime = serverTimeMs(updated.date_updated);
       report.pushed++;
@@ -1151,6 +1189,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       base_snapshot: { hash: hashContent(newBase), body: newBase },
       localHash: hashContent(raw),
       pendingPush: tagOpsFailed,
+      remote_parent: remoteParent,
+      parent_link_stuck: linkStuck,
       ...journalSyncPatch(journal),
     });
     // NOTE: the push must NOT advance the global pull watermark (#185). The
@@ -1199,7 +1239,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         {
           query: {
             page,
-            include_closed: true,
+            include_closed: true, subtasks: true,
             ...(watermark !== null ? { date_updated_gt: watermark } : {}),
           },
         },
@@ -1251,6 +1291,26 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // to pull it back down — do that once, at the end of the batch.
     this.ledger.enforceUnappliedFloor();
 
+    // Subtasks name their parent (`parent: <remote id>`); apply each link.
+    for (const remote of remoteTasks) {
+      if (!remote.parent) continue;
+      const childSlug = this.ledger.slugForRemoteId(remote.id);
+      const parentSlug = this.ledger.slugForRemoteId(String(remote.parent));
+      if (!childSlug || !parentSlug) continue;
+      await applyRemoteParentLink({
+        stateDir: this.stateDir,
+        ledger: this.ledger,
+        childSlug,
+        remoteParentSlug: parentSlug,
+        report,
+        write: async (fields) => {
+          this.applyingRemote = true;
+          try { await super.updateFields(childSlug, fields); } finally { this.applyingRemote = false; }
+        },
+      });
+    }
+    await this.syncAllParentStatuses(report);
+
     // ── Remote-deletion reconciliation ──────────────────────────────────────
     // A deleted remote task produces NO delta event — it just vanishes from
     // the list. Diff the id-map against the FULL remote id set; any mapped
@@ -1285,7 +1345,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
           const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
             'GET',
             `/list/${listId}/task`,
-            { query: { page, include_closed: true } },
+            { query: { page, include_closed: true, subtasks: true } },
           );
           const batch = res.tasks ?? [];
           for (const t of batch) remoteIds.add(t.id);
@@ -1640,6 +1700,13 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       mergeScalar(baseV, localV, remoteV, localChanged ? localChangedAt : null, remoteTime);
 
     const statusM = scalar(baseFm?.status as string | undefined, local.status, remoteStatus);
+    // A remote close of a parent whose subtasks are open does not close it here.
+    const heldOpen = holdOpenParent(this.stateDir, this.statusDefs(), slug, local.status, statusM.value);
+    if (heldOpen) {
+      report.warnings.push(`pull ${slug}: closed on ClickUp while ${heldOpen.open} subtask(s) are open; kept ${heldOpen.keep} here.`);
+      statusM.value = heldOpen.keep;
+      statusM.winner = 'local';
+    }
     const priorityM = scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
     const nameM = scalar(baseFm?.name as string | undefined, local.name, remote.name);
     const tagsM = scalar(baseTagInfo?.tags, stripPersonTags(local.tags), remoteTags);
@@ -1819,6 +1886,13 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     this.ledger.advanceWatermark(remoteTime);
     report.pulled++;
+    if (heldOpen) {
+      await this.addJournal(slug, {
+        kind: 'status',
+        label: 'held open',
+        body: `- closed on ClickUp while ${heldOpen.open} subtask(s) are open: kept ${heldOpen.keep}; the next push reopens it`,
+      });
+    }
 
     // Journal what the REMOTE changed (winners only) into the sleep ledger —
     // consolidation has to see outside edits exactly like dashboard edits.
@@ -1902,7 +1976,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
         'GET',
         `/list/${listId}/task`,
-        { query: { page, include_closed: true } }, // closed tasks drift too
+        { query: { page, include_closed: true, subtasks: true } }, // closed tasks drift too
       );
       const batch = res.tasks ?? [];
       all.push(...batch);

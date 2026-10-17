@@ -145,6 +145,10 @@ export interface CreateTaskInput {
   objectives?: string[];
   /** Seed user-defined custom-field values at creation (override-declared). */
   custom_fields?: Record<string, string | number | null>;
+  /** The parent task's slug (two levels only; validated by the caller via task-parent.ts). */
+  parent_task?: string | null;
+  /** The cycle this task is planned into (inherited from its parent). */
+  cycle?: string | null;
   /**
    * Which historical template produced the file. The CLI and the dashboard
    * have always written different task skeletons (full template with Workflow

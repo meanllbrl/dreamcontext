@@ -119,7 +119,7 @@ export async function preparePrompt(vault: string | null, prompt: string): Promi
 export function developKickoffPrompt(taskSlug: string): string {
   return [
     `You are picking up the task \`${taskSlug}\` from the planning session that just created it.`,
-    `First read its document at \`_dream_context/state/${taskSlug}.md\` end to end.`,
+    `First run \`dreamcontext tasks show ${taskSlug}\` and read it end to end: it prints its parent task (the goal and decisions that bind it) first, then its own card and newest journal entries.`,
     'Then, before you write any code, restate the plan back to me in your own words — the goal,',
     'the waves, and what each acceptance criterion will actually take.',
     'Then implement it wave by wave, strictly against those acceptance criteria: build what they',

@@ -1,5 +1,5 @@
 import type { Task } from '../hooks/useTasks';
-import { buildDelegatePrompt, taskContextBlock, taskSourcePath } from './delegateAgent';
+import { buildDelegatePrompt, taskContextBlock, taskShowLead } from './delegateAgent';
 
 /**
  * The four things you actually want from a task you're handing to Claude.
@@ -17,9 +17,9 @@ import { buildDelegatePrompt, taskContextBlock, taskSourcePath } from './delegat
  *   • where the session opens     — {@link DelegateMode.reveal} for the modes you must watch
  *   • the tab title prefix        — so four chips for one task stay tellable apart
  *
- * Every mode hands over the SAME task body ({@link taskContextBlock}) and points at the same
- * source-of-truth file, so switching modes never changes what the agent is looking at — only
- * what it is being asked to do with it.
+ * Every mode hands over the SAME task body ({@link taskContextBlock}) and opens with the same
+ * {@link taskShowLead} (the context packet: parent, card, newest journal), so switching modes
+ * never changes what the agent is looking at — only what it is being asked to do with it.
  */
 
 export type DelegateModeId = 'autonomous' | 'discuss' | 'verify' | 'summarize';
@@ -76,8 +76,7 @@ const DISCUSS: DelegateMode = {
     "Let's think this dreamcontext task through together before anything gets built. Do NOT edit "
     + 'files and do NOT implement it — this is a conversation, and I am here to answer.',
     taskContextBlock(task, title),
-    `Read \`${taskSourcePath(task.slug)}\` for the complete spec (technical details, constraints, `
-    + 'prior decisions), then read enough of the code it touches that your view is grounded in what '
+    `${taskShowLead(task.slug)} Then read enough of the code it touches that your view is grounded in what `
     + 'the repo ACTUALLY does, not in what the task claims it does. Then come back with: (1) how you '
     + 'would approach it, (2) the decisions I have to make, each with your recommendation and the '
     + 'trade-off you are weighing, (3) anything risky, missing, or already wrong in the task as '
@@ -102,7 +101,7 @@ const VERIFY: DelegateMode = {
     + 'run whatever proves it (the test suite, a build, the CLI), but do not implement the missing '
     + 'parts — report them.',
     taskContextBlock(task, title),
-    `Read \`${taskSourcePath(task.slug)}\` for the complete spec, then go through the acceptance `
+    `${taskShowLead(task.slug)} Then go through the acceptance `
     + 'criteria ONE BY ONE and give each its own verdict: DONE (name the file/line or paste the '
     + 'command output that proves it), PARTIAL (say exactly what is missing), or NOT DONE. Judge by '
     + "the code and the commands you ran — never by the task's own status field, its ticked "
@@ -125,8 +124,8 @@ const SUMMARIZE: DelegateMode = {
   build: (task, title) => [
     'Summarize this dreamcontext task for me. Read-only — do NOT edit files and do NOT write code.',
     taskContextBlock(task, title),
-    `Read \`${taskSourcePath(task.slug)}\` in full — including its Constraints & Decisions and its `
-    + 'session log — and skim whatever code it points at. Then reply with a SHORT Markdown brief: '
+    `${taskShowLead(task.slug)} Read the parent's and the card's Constraints & Decisions closely, `
+    + 'and skim whatever code it points at. Then reply with a SHORT Markdown brief: '
     + 'what this task is and why it exists, where it stands right now, the decisions already made '
     + '(including anything explicitly REJECTED and the reason), and the next concrete step. I want '
     + 'to be caught up in under a minute — do not hand the file back to me in longer words.',

@@ -47,6 +47,8 @@ import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { readJournal, type JournalEntry, type NewJournalEntry } from '../task-journal.js';
 import { cardHasChangelog, foldCardChangelog } from '../task-card.js';
 import { withTaskFileLock } from '../task-file-lock.js';
+import { loadFamily } from '../task-parent.js';
+import { applyRemoteParentLink, holdOpenParent, noteParentLinkFailure, parentLinkSettled } from './parent-sync.js';
 import {
   applyRemoteComments,
   commentBodyFor,
@@ -698,7 +700,19 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       if (!entry?.localHash || entry.localHash !== hash) candidates.add(slug);
     }
 
-    const sorted = [...candidates].sort();
+    // Parents first: a sub-issue link needs its parent issue to exist.
+    const family = loadFamily(this.stateDir);
+    // A parent link the remote does not carry yet is a push, even when the card's
+    // bytes are already "synced" (a pull of the same task may have absorbed the edit).
+    for (const [child, parent] of family.parentOf) {
+      // A link-only push waits until the parent has a remote id (the sync after
+      // its own push lands): no child push is spent while the parent cannot land.
+      if (!parentLinkSettled(state.tasks[child], parent) && this.ledger.remoteIdFor(parent)) candidates.add(child);
+    }
+    for (const [slug, e] of Object.entries(state.tasks)) {
+      if (e.remote_parent && !family.parentOf.has(slug) && !parentLinkSettled(e, null) && existsSync(this.taskPath(slug))) candidates.add(slug);
+    }
+    const sorted = [...candidates].sort().sort((a, b) => Number(family.parentOf.has(a)) - Number(family.parentOf.has(b)));
     // Bulk first sync (connecting a repo to a mature brain): with this many
     // never-synced tasks, pushTask keeps pre-existing changelog history local —
     // months of entries as issue comments would flood every subscriber's
@@ -841,6 +855,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // matching rule in the ClickUp adapter).
     const wasMapped = remoteId !== null && remoteId !== undefined;
     let serverTime: number | null = null;
+    let issueId: number | undefined;
 
     if (!remoteId) {
       // CREATE: one POST carries title + body + labels + assignees. A brand-new
@@ -849,6 +864,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         body: { title: task.name, body, labels, assignees },
       });
       remoteId = String(created.number);
+      issueId = created.id;
       this.ledger.recordMapping({ slug, dcId: task.id, backend: this.name, remoteId });
       serverTime = githubTimeMs(created.updated_at);
       report.created++;
@@ -896,6 +912,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         },
       );
       serverTime = githubTimeMs(updated.updated_at) ?? serverTime;
+      issueId = updated.id;
       report.pushed++;
     }
 
@@ -918,12 +935,25 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       journal.posted.add(je.id);
     }
 
+    const desiredParent = loadFamily(this.stateDir).parentOf.get(slug) ?? null;
+    const recordedParent = entry?.remote_parent ?? null;
+    // A link already given up on for this same parent is not tried again on every body edit.
+    const link = desiredParent !== recordedParent && parentLinkSettled(entry, desiredParent)
+      ? { parent: recordedParent, failed: true, permanent: true }
+      : await this.pushParentLink(slug, issueId, adapter, owner, repo, report, recordedParent, desiredParent);
+    const remoteParent = link.parent;
+    const linkStuck = link.failed
+      ? noteParentLinkFailure(entry, desiredParent, link.permanent, report, slug, 'GitHub')
+      : undefined;
+
     const raw = readFileSync(path, 'utf-8');
     this.ledger.updateTaskSync(slug, {
       last_synced_at: serverTime ?? entry?.last_synced_at ?? 0,
       base_snapshot: { hash: hashContent(raw), body: raw },
       localHash: hashContent(raw),
       pendingPush: false,
+      remote_parent: remoteParent,
+      parent_link_stuck: linkStuck,
       ...journalSyncPatch(journal),
     });
     // Same rule as the ClickUp backend (#185): a push must not advance the global
@@ -931,6 +961,97 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // and conflating them silently drops a collaborator's older, unpulled change
     // out of every future delta pull. Echo is absorbed by base_snapshot/localHash.
     this.ledger.dequeueFor(slug, enqueueCutoff);
+    // A link call that failed keeps the task queued for the next sync, until it
+    // has failed PARENT_LINK_MAX_TRIES times for this same parent. A link waiting
+    // on its parent's push is picked up by the candidate scan once that lands.
+    if (link.failed && !parentLinkSettled({ last_synced_at: 0, remote_parent: remoteParent, parent_link_stuck: linkStuck }, desiredParent)) {
+      this.ledger.enqueue({ id: generateId('op'), kind: 'push', slug, ts: enqueueCutoff + 1 });
+    }
+  }
+
+  /**
+   * Make the issue a sub-issue of its parent's issue (or detach it), by the
+   * issue's database id as the sub-issues API requires. Returns the parent the
+   * remote now carries; a failure is a warning, leaves the old value and is
+   * counted (`failed`), so the next sync retries a bounded number of times.
+   * `permanent` = a 404/422 no retry will change. Bodies are never logged.
+   */
+  protected async pushParentLink(
+    slug: string,
+    issueId: number | undefined,
+    adapter: ApiAdapter,
+    owner: string,
+    repo: string,
+    report: SyncReport,
+    recorded: string | null,
+    desired: string | null,
+  ): Promise<{ parent: string | null; failed: boolean; permanent: boolean }> {
+    const kept = (permanent = false) => ({ parent: recorded, failed: true, permanent });
+    // Not tried (nothing to link to yet): not a failure, never counted toward giving up.
+    const waiting = { parent: recorded, failed: false, permanent: false };
+    if (desired === recorded) return { parent: recorded, failed: false, permanent: false };
+    if (issueId === undefined) {
+      report.warnings.push(`push ${slug}: GitHub returned no issue id; its sub-issue link waits for the next sync.`);
+      return waiting;
+    }
+    try {
+      if (desired) {
+        const parentRemote = this.ledger.remoteIdFor(desired);
+        if (!parentRemote) {
+          report.warnings.push(`push ${slug}: its parent ${desired} is not on GitHub yet; the sub-issue link follows once it is.`);
+          return waiting;
+        }
+        await adapter.request('POST', `${this.issuesPath(owner, repo)}/${parentRemote}/sub_issues`, {
+          body: { sub_issue_id: issueId, replace_parent: true },
+        });
+        return { parent: desired, failed: false, permanent: false };
+      }
+      const oldRemote = recorded ? this.ledger.remoteIdFor(recorded) : null;
+      if (oldRemote) {
+        try {
+          await adapter.request('DELETE', `${this.issuesPath(owner, repo)}/${oldRemote}/sub_issue`, { body: { sub_issue_id: issueId } });
+        } catch (err) {
+          if ((err as { kind?: string }).kind !== 'not_found') throw err;
+        }
+      }
+      return { parent: null, failed: false, permanent: false };
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      report.warnings.push(`push ${slug}: sub-issue link (${desired ?? `detach from ${recorded}`}) failed: ${(err as Error).message ?? err}.`);
+      return kept(status === 404 || status === 422);
+    }
+  }
+
+  /** Pull: every pulled issue that has sub-issues names its children's parent. */
+  protected async pullSubIssueLinks(issues: GitHubIssue[], adapter: ApiAdapter, owner: string, repo: string, report: SyncReport): Promise<void> {
+    for (const issue of issues) {
+      if (!((issue.sub_issues_summary?.total ?? 0) > 0)) continue;
+      const parentSlug = this.ledger.slugForRemoteId(String(issue.number));
+      if (!parentSlug) continue;
+      let kids: GitHubIssue[];
+      try {
+        const res = await adapter.request<GitHubIssue[]>('GET', `${this.issuesPath(owner, repo)}/${issue.number}/sub_issues`, { query: { per_page: 100 } });
+        kids = Array.isArray(res) ? res : [];
+      } catch (err) {
+        report.warnings.push(`pull #${issue.number}: could not read its sub-issues: ${(err as Error).message ?? err}`);
+        continue;
+      }
+      for (const kid of kids) {
+        const childSlug = this.ledger.slugForRemoteId(String(kid.number));
+        if (!childSlug) continue;
+        await applyRemoteParentLink({
+          stateDir: this.stateDir,
+          ledger: this.ledger,
+          childSlug,
+          remoteParentSlug: parentSlug,
+          report,
+          write: async (fields) => {
+            this.applyingRemote = true;
+            try { await super.updateFields(childSlug, fields); } finally { this.applyingRemote = false; }
+          },
+        });
+      }
+    }
   }
 
   // ── Image assets (local task images → hosted GitHub URLs) ─────────────────
@@ -1193,6 +1314,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // A failure discovered AFTER a newer issue already advanced the watermark
     // has to pull it back down — do that once, at the end of the batch.
     this.ledger.enforceUnappliedFloor();
+    await this.pullSubIssueLinks(remoteIssues, adapter, owner, repo, report);
+    await this.syncAllParentStatuses(report);
 
     await this.reconcileRemoteDeletions(adapter, owner, repo, pendingDeletes, report, fullSetIds);
   }
@@ -1581,6 +1704,13 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       mergeScalar(baseV, localV, remoteV, localChanged ? localChangedAt : null, remoteTime);
 
     const statusM = scalar(baseFm?.status as string | undefined, local.status, remoteStatus);
+    // A remote close of a parent whose sub-tasks are open does not close it here.
+    const heldOpen = holdOpenParent(this.stateDir, this.statusDefs(), slug, local.status, statusM.value);
+    if (heldOpen) {
+      report.warnings.push(`pull ${slug}: closed on GitHub while ${heldOpen.open} sub-task(s) are open; kept ${heldOpen.keep} here.`);
+      statusM.value = heldOpen.keep;
+      statusM.winner = 'local';
+    }
     const priorityM = scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
     const urgencyM = scalar(
       (baseFm?.urgency as string | undefined),
@@ -1722,6 +1852,13 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
     this.ledger.advanceWatermark(remoteTime);
     report.pulled++;
+    if (heldOpen) {
+      await this.addJournal(slug, {
+        kind: 'status',
+        label: 'held open',
+        body: `- closed on GitHub while ${heldOpen.open} sub-task(s) are open: kept ${heldOpen.keep}; the next push reopens the issue`,
+      });
+    }
 
     try {
       const remoteFieldChanges: FieldChange[] = [];

@@ -4,6 +4,7 @@ import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { today } from './id.js';
 import { loadStatuses } from './overrides.js';
+import { loadFamily } from './task-parent.js';
 import { DEFAULT_STATUSES, isActive, isCancelled, isDone, isReview, type StatusDef } from './task-status.js';
 import {
   listObjectives,
@@ -288,6 +289,7 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
   const warnings: string[] = [];
   const objectives = listObjectives(contextRoot);
   const taskRefs = loadTaskRefs(contextRoot);
+  const family = loadFamily(join(contextRoot, 'state'));
   const knownSlugs = new Set(objectives.map((o) => o.slug));
   const statuses = loadStatuses(contextRoot);
 
@@ -355,9 +357,13 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
   const out: RoadmapObjective[] = [];
   for (const o of sorted) {
     const tasks = (membersOf.get(o.slug) ?? []).sort((a, b) => a.slug.localeCompare(b.slug));
+    // Progress counts LEAVES: a parent whose sub-tasks also serve this objective
+    // is their sum, not one more item (no double count).
+    const memberSlugs = new Set(tasks.map((t) => t.slug));
+    const leaves = tasks.filter((t) => !(family.children.get(t.slug) ?? []).some((c) => memberSlugs.has(c.slug)));
     // Cancelled-kind tasks leave BOTH the numerator and the denominator: abandoned
     // work is neither progress nor remaining work.
-    const counted = tasks.filter((t) => !isCancelled(statuses, t.status));
+    const counted = leaves.filter((t) => !isCancelled(statuses, t.status));
     const done = counted.filter((t) => isDone(statuses, t.status)).length;
     const total = counted.length;
     // A Key Result metric, when present, is the progress source — task counts are still
@@ -366,7 +372,7 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
     const taskPct = total === 0 ? null : Math.round((done / total) * 100);
     const pct = metric ? metricProgressPct(metric) : taskPct;
 
-    const computed = metric ? computeMetricStatus(metric) : computeRollupStatus(tasks, statuses);
+    const computed = metric ? computeMetricStatus(metric) : computeRollupStatus(leaves, statuses);
     const status = o.status ?? computed;
 
     // Forecast. Dependencies contribute their (already-cascaded) forecast_end;

@@ -57,6 +57,7 @@ describe('delegateModes — every mode hands over the same task', () => {
       expect(p).toContain('Users cannot log in.');   // why
       expect(p).toContain('- [ ] It works');         // acceptance criteria
       expect(p).toContain(taskSourcePath('add-auth'));
+      expect(p).toContain('dreamcontext tasks show add-auth'); // the packet, never a bare path
     },
   );
 

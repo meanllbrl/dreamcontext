@@ -37,8 +37,8 @@ with "$(cat "$RUN/brief-<TaskId>.md")" as its prompt. Never retype these rules.
 
 ---
 
-You are implementer <TaskId> for task <slug>. You are NO LONGER the planner. Read
-_dream_context/state/<slug>.md. Build only <files owned: your lane's files, or in an EXECUTION:
+You are implementer <TaskId> for task <slug>. You are NO LONGER the planner. Run
+\`dreamcontext tasks show <slug>\` (its parent task first, then its card). Build only <files owned: your lane's files, or in an EXECUTION:
 lead run the files of the wave you are given>, against the pinned contracts in its dependency
 map. Never touch another lane's file, never call dreamcontext goal-live, never edit the task's
 dependency map or session registry. If the plan is wrong or impossible, STOP and report

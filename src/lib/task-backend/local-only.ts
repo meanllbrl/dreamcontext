@@ -62,6 +62,9 @@ export const REMOTE_MAPPED_TASK_FIELDS: ReadonlySet<string> = new Set([
 export const KNOWN_LOCAL_ONLY_TASK_FIELDS: readonly string[] = [
   'objectives',
   'rice',
+  // Synced since C2, but through its own channel (GitHub sub-issues, ClickUp
+  // subtasks; see parent-sync.ts), never by the merged frontmatter: the merge
+  // must still carry it through untouched.
   'parent_task',
   'related_feature',
   'description',

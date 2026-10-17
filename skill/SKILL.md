@@ -331,8 +331,8 @@ A task is a **card** (`state/<slug>.md`, ≤ 12,000 chars) plus a **journal** (`
 
 ```bash
 dreamcontext tasks create "Readable sentence name" -d "..." -p high -w "Why this matters"
-dreamcontext tasks list --status todo --tag backend  # filter
-dreamcontext tasks insert <name> acceptance_criteria "API returns 200…"  # enrich a section
+dreamcontext tasks show <name>  # read it: parent first (sub-tasks: --parent <p>)
+dreamcontext tasks insert <name> acceptance_criteria "API returns 200…"  # enrich
 dreamcontext tasks log <name> "Implemented pagination"  # journal (MANDATORY)
 dreamcontext tasks check <name> <n> --run "npm test"  # tick WITH evidence
 dreamcontext tasks status <name> in_review "Ready for review"  # gated

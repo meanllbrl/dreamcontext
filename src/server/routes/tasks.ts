@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { today, slugify } from '../../lib/id.js';
 import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
@@ -37,11 +38,13 @@ import {
   STATUS_KINDS,
   isDone,
   isReview,
+  isCancelled,
   normalizeStatusKey,
   statusKeys,
   type StatusKind,
 } from '../../lib/task-status.js';
 import { criteriaOfBody, describeGate, gateStatus, setCriterion } from '../../lib/task-evidence.js';
+import { checkParentLink, loadFamily, parentCloseBlock, rollupOf } from '../../lib/task-parent.js';
 import { newJournalEntryId, type NewJournalEntry } from '../../lib/task-journal.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import {
@@ -810,7 +813,16 @@ export async function handleTasksDelete(
     return;
   }
 
-  await backend.delete(slug);
+  try {
+    await backend.delete(slug);
+  } catch (err) {
+    // A parent with live sub-tasks is refused by the backend.
+    if (err instanceof TaskBackendError && err.code === 'invalid_input') {
+      sendError(res, 409, 'subtasks_open', err.message);
+      return;
+    }
+    throw err;
+  }
 
   // Consolidation must see deletions too — recorded into the sleep state's
   // dashboard-changes ledger like every other dashboard mutation.
@@ -953,7 +965,7 @@ export async function handleTasksUpdate(
       return;
     }
   }
-  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'objectives', 'assignee', 'agent'];
+  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'objectives', 'assignee', 'agent', 'parent_task'];
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       const oldVal = (oldData[field] ?? null) as FieldChange['from'];
@@ -1191,9 +1203,34 @@ export async function handleTasksUpdate(
     }
     newBody = nextBody;
   }
+  if (updates.parent_task !== undefined && updates.parent_task !== existing.parent_task) {
+    if (updates.parent_task !== null) {
+      const check = checkParentLink(loadFamily(join(contextRoot, 'state')), loadStatuses(contextRoot), slug, String(updates.parent_task));
+      if (!check.ok) { sendError(res, 400, 'invalid_parent', check.reason); return; }
+      updates.parent_task = check.parent;
+    }
+    pendingJournal.push({
+      kind: 'log', actor: actor ?? 'owner',
+      body: updates.parent_task ? `- placed under ${updates.parent_task} in the dashboard` : '- detached from its parent in the dashboard',
+    });
+  }
   if (updates.status && updates.status !== existing.status) {
     const statuses = loadStatuses(contextRoot);
     const target = updates.status as string;
+    // A parent closes after its sub-tasks, and is cancelled only with a decision
+    // per open sub-task (the CLI's --child/--children; the board has no form for it yet).
+    const family = loadFamily(join(contextRoot, 'state'));
+    const closeBlock = parentCloseBlock(family, statuses, slug, target);
+    if (closeBlock) { sendError(res, 409, 'subtasks_open', closeBlock); return; }
+    if (isCancelled(statuses, target)) {
+      const open = rollupOf(family.children.get(slug) ?? [], statuses).open;
+      if (open.length > 0) {
+        sendError(res, 409, 'subtasks_decision_required',
+          `${slug} has ${open.length} open sub-task(s); decide each before cancelling the parent: `
+          + `dreamcontext tasks status ${slug} ${target} --child <sub-task>=cancel|detach|move:<parent> (or --children <decision>).`);
+        return;
+      }
+    }
     if (isDone(statuses, target) && isReview(statuses, existing.status)) {
       pendingJournal.push({ kind: 'approval', actor: actor ?? 'owner', body: `- approved in the dashboard (${existing.status} → ${target})` });
     } else if (isDone(statuses, target) || isReview(statuses, target)) {

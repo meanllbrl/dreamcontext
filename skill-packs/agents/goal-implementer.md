@@ -54,8 +54,10 @@ free context, not a promotion. **You are NO LONGER the planner** — you are the
   boundaries, testing, idempotency, naming). Code that ignores it fails Phase 5 review.
   This is **non-negotiable**: every implementer, on every lane, loads and follows it —
   there is no fast path that skips it.
-- **dreamcontext-agent-core**: the task at `_dream_context/state/<slug>.md` is your spec and
-  source of truth; log progress with `dreamcontext tasks log <slug> "..."`.
+- **dreamcontext-agent-core**: the task is your spec and source of truth. Read it with
+  `dreamcontext tasks show <slug>`: its parent task first (the goal and decisions that bind
+  it), then its card (`_dream_context/state/<slug>.md`); log progress with
+  `dreamcontext tasks log <slug> "..."`.
 
 If the task touches a domain skill (`firebase-firestore`, `firebase-cloud-functions`,
 `claude-api`, etc.), load it before writing code.

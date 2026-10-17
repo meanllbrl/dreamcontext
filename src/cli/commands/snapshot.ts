@@ -1,3 +1,4 @@
+import { readBinding } from '../../lib/session-task.js';
 import { Command } from 'commander';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
@@ -29,6 +30,7 @@ import { featuresDir, featureSlug } from '../../lib/features-path.js';
 import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import { listPending } from '../../lib/peer-mail.js';
 import { buildRoadmapModel, type RoadmapObjective } from '../../lib/roadmap-model.js';
+import { loadFamily, rollupOf, type Family } from '../../lib/task-parent.js';
 import { listInsights, readCache } from '../../lib/lab/store.js';
 import { listTheses } from '../../lib/theses/store.js';
 import type { ThesisManifest } from '../../lib/theses/types.js';
@@ -555,7 +557,34 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
     }
   }
 
-  return entries;
+  return foldSubTasks(entries, loadFamily(stateDir), statuses);
+}
+
+/**
+ * Sub-tasks fold into their parent's entry: the parent shows its leaf progress
+ * and its open steps; a child whose parent is not on the board (closed, or
+ * gone) stays its own entry and names its parent. A board with no parents is
+ * returned untouched (byte-identical render).
+ */
+export function foldSubTasks(entries: ActiveTaskEntry[], family: Family, statuses: readonly StatusDef[]): ActiveTaskEntry[] {
+  if (family.children.size === 0) return entries;
+  const onBoard = new Set(entries.map((e) => e.slug));
+  const folded = new Set<string>();
+  for (const e of entries) {
+    const kids = family.children.get(e.slug);
+    if (!kids || kids.length === 0) continue;
+    const r = rollupOf(kids, statuses);
+    const open = kids.filter((k) => !isTerminal(statuses, k.status));
+    e.text += `\n  Sub-tasks: ${r.done}/${r.total} done`;
+    for (const k of open) e.text += `\n    - ${k.name} [${k.status}] -> ${k.slug}`;
+    for (const k of kids) if (onBoard.has(k.slug)) folded.add(k.slug);
+  }
+  for (const e of entries) {
+    const parent = family.parentOf.get(e.slug);
+    if (!parent || folded.has(e.slug)) continue;
+    e.text += `\n  Parent: ${family.bySlug.get(parent)?.name ?? parent} -> ${parent}`;
+  }
+  return entries.filter((e) => !folded.has(e.slug));
 }
 
 /**
@@ -581,6 +610,13 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
 function resolveActiveTaskPath(root: string): string | null {
   const stateDir = join(root, 'state');
   if (!existsSync(stateDir)) return null;
+
+  // 0. A session bound to its task (C2) needs no guess.
+  const bound = readBinding(root, process.env.CLAUDE_CODE_SESSION_ID);
+  if (bound) {
+    const taskPath = join(stateDir, `${bound.task}.md`);
+    if (existsSync(taskPath)) return taskPath;
+  }
 
   // 1. Explicit override
   const overridePath = join(stateDir, '.active-task');

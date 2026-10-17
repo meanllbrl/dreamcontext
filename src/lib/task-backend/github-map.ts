@@ -39,6 +39,10 @@ export { splitChangelogEntries, normalizeEntry };
 /** GitHub Issue (REST v3) shape — the subset we read/write. */
 export interface GitHubIssue {
   number: number;
+  /** The issue's database id (sub-issue calls take this, never the number). */
+  id?: number;
+  /** Present when the issue has sub-issues (GitHub sub-issues API). */
+  sub_issues_summary?: { total?: number; completed?: number } | null;
   title: string;
   body?: string | null;
   state: 'open' | 'closed';

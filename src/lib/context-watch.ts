@@ -760,11 +760,14 @@ export function selectHandoffForSessionStart(
 }
 
 /** The SessionStart banner. Printed BEFORE the snapshot so it is the first thing read. */
-export function renderHandoffBanner(record: HandoffRecord): string {
+export function renderHandoffBanner(record: HandoffRecord, packet?: string | null): string {
   const size = record.contextTokens ? ` that reached ${k(record.contextTokens)} tokens` : '';
   return [
     `>> HANDOFF: continuing task ${record.title} (${record.task}) from a session${size}.`,
-    `Read _dream_context/state/${record.task}.md and the newest entry of _dream_context/state/journal/${record.task}.md — that entry is the handoff — before anything else.`,
+    packet
+      ? `The task's context packet follows (its parent task first). The newest journal entry in it is the handoff: read it before anything else. Re-read the packet any time with \`dreamcontext tasks show ${record.task}\`.`
+      : `Run \`dreamcontext tasks show ${record.task}\` (its parent task, its card, its newest journal entries) before anything else: the newest journal entry is the handoff.`,
+    ...(packet ? [packet.trimEnd()] : []),
   ].join('\n');
 }
 

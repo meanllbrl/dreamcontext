@@ -1509,8 +1509,18 @@
       "args": []
     },
     {
+      "path": "hook read-task",
+      "desc": "Add the parent task card when a sub-task card is read (called by the Read-hook guard script)",
+      "args": []
+    },
+    {
       "path": "hook refresh-asset-drift",
       "desc": "Recompute whether `dreamcontext update` would change any asset this project uses (detached cache refresh)",
+      "args": []
+    },
+    {
+      "path": "hook session-end",
+      "desc": "End this session's task binding (called by Claude Code SessionEnd hook)",
       "args": []
     },
     {
@@ -2950,6 +2960,13 @@
       ]
     },
     {
+      "path": "tasks bind",
+      "desc": "Bind this Claude session to a task: after a compaction its context packet is delivered again (needs CLAUDE_CODE_SESSION_ID)",
+      "args": [
+        "<task>"
+      ]
+    },
+    {
       "path": "tasks check",
       "desc": "Tick a criterion with evidence: --run a command (recorded in the journal, ticked as cmd:<id>), or --evidence commit:<sha> | shot:<path>",
       "args": [
@@ -3004,6 +3021,7 @@
         "--due",
         "--objectives",
         "--feature",
+        "--parent",
         "--field",
         "--by",
         "--neighbor-checked",
@@ -3149,6 +3167,14 @@
       ]
     },
     {
+      "path": "tasks parent",
+      "desc": "Make a task a sub-task of a parent (two levels only; inherits objectives and feature when it has none), or clear it",
+      "args": [
+        "<task>",
+        "<parent>"
+      ]
+    },
+    {
       "path": "tasks priority",
       "desc": "Print or set a task's priority (logs \"priority: old -> new\" to the task changelog)",
       "args": [
@@ -3190,6 +3216,17 @@
       ]
     },
     {
+      "path": "tasks show",
+      "desc": "Print the task's context packet: its parent's card and siblings first, then its card, then its latest journal entries (what an agent reads before working it)",
+      "args": [
+        "<task>"
+      ],
+      "valueFlags": [
+        "--cap",
+        "--entries"
+      ]
+    },
+    {
       "path": "tasks start",
       "desc": "Set or clear a task planned start date (the range start)",
       "args": [
@@ -3206,7 +3243,9 @@
         "[reason...]"
       ],
       "valueFlags": [
-        "--reason"
+        "--reason",
+        "--child",
+        "--children"
       ]
     },
     {
@@ -3244,6 +3283,11 @@
     {
       "path": "tasks tombstones",
       "desc": "List retired task slugs and what absorbed them (why sleep will not re-file them)",
+      "args": []
+    },
+    {
+      "path": "tasks unbind",
+      "desc": "Clear this Claude session's task binding",
       "args": []
     },
     {

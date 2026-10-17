@@ -66,13 +66,24 @@ export interface DelegateAgentDetail {
 }
 
 /**
- * Where a task's markdown actually lives, relative to the vault root — the path an agent can
- * open to read the complete, CURRENT spec. This is the one true pointer to a task: there is no
- * `dreamcontext tasks show`, and the CLI's own docs describe tasks as `state/<slug>.md`.
- * Shared so the delegate and curate prompts can't drift to different (or invented) answers.
+ * Where a task's card lives, relative to the vault root. An agent is handed the task through
+ * `dreamcontext tasks show <slug>` (parent first, then the card, then the newest journal
+ * entries); this path is for prompts that need to name the file itself. Shared so the
+ * delegate and curate prompts can't drift to different answers.
  */
 export function taskSourcePath(slug: string): string {
   return `_dream_context/state/${slug}.md`;
+}
+
+/**
+ * The sentence every delegate mode opens its instructions with: run the task's context packet,
+ * not read its file. One helper so no mode can fall back to handing over a bare card path (a
+ * sub-task's card alone has neither the parent's goal and decisions nor the newest journal).
+ */
+export function taskShowLead(slug: string): string {
+  return `Run \`dreamcontext tasks show ${slug}\` first and read it end to end: it prints the task's parent `
+    + '(the goal and decisions that bind it), then the full card (technical details, constraints, notes) '
+    + `and its newest journal entries. Its card is \`${taskSourcePath(slug)}\`.`;
 }
 
 /**
@@ -80,14 +91,9 @@ export function taskSourcePath(slug: string): string {
  * draft for the user to review/edit in the composer; the SERVER collapses newlines to
  * spaces before it reaches Claude's readline (see `sanitizePrompt` in agent-terminal.ts),
  * so the structure here is purely for the human reviewing it — Claude receives one message.
- * We point the agent at the source-of-truth task FILE so it can always re-read the complete
- * spec, and tell it to log progress against the same slug.
- *
- * The pointer is a file path, not a CLI command, ON PURPOSE: there is no
- * `dreamcontext tasks show`. This prompt used to name one, which meant every delegated agent
- * was told to run a command that exits with `unknown command 'show'` — a dead recovery path,
- * and the exact instruction the old truncation design leaned on. {@link taskSourcePath} is
- * where a task actually lives; `dreamcontext tasks list --json` is the CLI-shaped alternative.
+ * We point the agent at `dreamcontext tasks show <slug>`: the task's context packet, its parent
+ * task first. A bare file path is how a sub-task used to reach an agent without the parent's
+ * goal and decisions; the packet is how "read the parent" is kept by code, not by hope.
  *
  * The result is NOT truncated: an oversized prompt now rides a POSTed token rather than the
  * WebSocket upgrade URL (see lib/agentPrompt.ts), so what the composer SHOWS is exactly what
@@ -100,8 +106,7 @@ export function buildDelegatePrompt(task: Task, title: string): string {
   return [
     'Work on this dreamcontext task and drive it to completion, fully autonomously — do NOT ask me questions (I am away). Think hard.',
     taskContextBlock(task, title),
-    `The full task lives at \`${taskSourcePath(task.slug)}\` — read that file `
-    + 'for the complete spec (technical details, constraints, notes). Log progress with '
+    `${taskShowLead(task.slug)} Log progress with `
     + `\`dreamcontext tasks log ${task.slug} "<note>"\` and tick acceptance criteria as you satisfy them. `
     + 'When everything is done and verified, reply with a SHORT Markdown summary of what you changed.',
   ].join('\n\n');

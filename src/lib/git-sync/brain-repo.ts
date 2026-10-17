@@ -199,6 +199,8 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     // since `bookmark add` reads it as an implicit `--task`: a synced one would
     // file a teammate's bookmarks against whatever task someone else had open.
     'state/.active-task',
+    // Which task each live session is bound to (one file per session id, C2).
+    'state/.session-task/',
     'state/.sleep.json',
     'state/.sleep-history.json',
     'state/.agent-sessions.json',

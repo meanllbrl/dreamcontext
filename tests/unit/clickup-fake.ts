@@ -21,6 +21,8 @@ export interface FakeTask {
    * list-scoping tests pass for the wrong reason (#184/#185 review).
    */
   listId: string;
+  /** Set on a subtask (real ClickUp lists subtasks only with `subtasks=true`). */
+  parent?: string | null;
   name: string;
   description: string;
   status: { status: string };
@@ -167,6 +169,7 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         const task: FakeTask = {
           id,
           listId: m[1],
+          ...(body.parent ? { parent: String(body.parent) } : {}),
           name: body.name ?? '',
           description: body.description ?? '',
           status: { status: body.status ?? 'to do' },
@@ -206,8 +209,9 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         // Real ClickUp treats date_updated_gt as >= (observed live) — the
         // fake mirrors that so the backend's client-side strictly-greater
         // watermark guard stays under test.
+        const withSubtasks = u.searchParams.get('subtasks') === 'true';
         const all = [...tasks.values()].filter(
-          (t) => t.listId === m![1] && (gt === null || Number(t.date_updated) >= Number(gt)),
+          (t) => t.listId === m![1] && (gt === null || Number(t.date_updated) >= Number(gt)) && (withSubtasks || !t.parent),
         );
         // single-page fake (last_page signals no more)
         return jsonResponse(200, { tasks: page === 0 ? all : [], last_page: true });
@@ -228,6 +232,7 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         if (method === 'PUT') {
           serverTime += 1000;
           if (body.name !== undefined) task.name = body.name;
+          if (body.parent !== undefined && body.parent !== null) task.parent = String(body.parent);
           if (body.description !== undefined) task.description = body.description;
           if (body.status !== undefined) task.status = { status: body.status };
           if (body.priority !== undefined) task.priority = { id: String(body.priority) };

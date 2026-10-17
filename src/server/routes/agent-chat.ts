@@ -2457,7 +2457,7 @@ export function startChatSession(
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/clear' }] } });
 
             const continuePrompt = `Handoff: continue task ${pending.title} (${pending.task}). `
-              + `Read _dream_context/state/${pending.task}.md first, then carry on from the newest entry of _dream_context/state/journal/${pending.task}.md.`;
+              + `Run \`dreamcontext tasks show ${pending.task}\` first (its parent task, its card and its newest journal entries), then carry on from the newest journal entry: that is the handoff.`;
             openTurn();
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: continuePrompt }] } });
 
