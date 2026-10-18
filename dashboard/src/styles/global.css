@@ -202,7 +202,14 @@ select {
    and only a hidden window pauses. Set on <html> by lib/windowActivity.ts and lib/lightMode.ts.
      visible, unfocused  status keeps moving, decoration rests
      hidden              everything endless pauses
-     Light mode          nothing endless runs, no backdrop blur anywhere
+     Light mode          status keeps moving (on the clock), decoration rests, no backdrop blur
+   Whatever runs, runs at 30 frames a second, never on the display link: lib/motionClock.ts
+   pauses every endless animation as it starts and steps it from one interval (task: durum
+   animasyonları WindowServer'ı yormaz). Any animation left on the display link makes macOS
+   recomposite the window every frame, ~44 % of WindowServer on an M1 Pro, one animation as
+   much as all of them; stepped, the same indicators cost what nothing moving costs.
+   A removed animation shows its base style, so an indicator's base style is its RESTING look:
+   a spinner rests as a closed ring, never as an arc stopped mid-turn (projectTabRing).
    STATUS = it says work is happening right now, or the app is waiting on the reader, for as
    long as that lasts: working / running / live / thinking / waiting-for-sign-in dots, rings,
    spinners and indeterminate bars. These are on screen exactly while the reader is in another
@@ -217,9 +224,10 @@ select {
   --dc-motion-play: paused;
 }
 
+/* Light mode keeps STATUS moving: on the 30 fps clock it costs little, and a still ring read as
+   stuck (owner, 2026-10-18). Decoration and blur stay off. */
 :root[data-light='true'] {
   --dc-motion-ambient-name: none;
-  --dc-motion-status-name: none;
 }
 
 :root[data-light='true'] *,

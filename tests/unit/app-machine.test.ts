@@ -3,7 +3,7 @@
  * readers: macOS on battery / on AC, a failing `pmset`, a non-macOS host, and the minute memo.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { readMachineFacts, resetMachineFactsForTests, type MachineDeps } from '../../src/server/routes/machine.js';
+import { readMachineFacts, resetMachineFactsForTests, parseLowPowerMode, type MachineDeps } from '../../src/server/routes/machine.js';
 
 const GB = 1024 ** 3;
 function deps(over: Partial<MachineDeps> = {}): MachineDeps & { reads: { n: number } } {
@@ -13,6 +13,7 @@ function deps(over: Partial<MachineDeps> = {}): MachineDeps & { reads: { n: numb
     platform: 'darwin',
     totalMem: () => 8 * GB,
     battery: async () => { reads.n += 1; return { percent: 50, charging: false }; },
+    lowPowerMode: async () => false,
     now: () => t,
     ...over,
     reads,
@@ -25,12 +26,12 @@ beforeEach(() => resetMachineFactsForTests());
 
 describe('readMachineFacts', () => {
   it('reports memory in GB and the battery state', async () => {
-    expect(await readMachineFacts(deps())).toEqual({ totalMemGb: 8, onBattery: true });
+    expect(await readMachineFacts(deps())).toEqual({ totalMemGb: 8, onBattery: true, batteryPercent: 50, lowPowerMode: false });
   });
 
   it('on AC power → onBattery false', async () => {
     expect(await readMachineFacts(deps({ totalMem: () => 16 * GB, battery: async () => ({ percent: 100, charging: true }) })))
-      .toEqual({ totalMemGb: 16, onBattery: false });
+      .toEqual({ totalMemGb: 16, onBattery: false, batteryPercent: 100, lowPowerMode: false });
   });
 
   it('a failing pmset → onBattery null (Auto then uses memory alone)', async () => {
@@ -41,6 +42,18 @@ describe('readMachineFacts', () => {
     const d = deps({ platform: 'linux' });
     expect((await readMachineFacts(d)).onBattery).toBeNull();
     expect(d.reads.n).toBe(0);
+  });
+
+  it('reports Low Power Mode, and null when its read fails', async () => {
+    expect((await readMachineFacts(deps({ lowPowerMode: async () => true }))).lowPowerMode).toBe(true);
+    resetMachineFactsForTests();
+    expect((await readMachineFacts(deps({ lowPowerMode: async () => { throw new Error('no pmset'); } }))).lowPowerMode).toBeNull();
+  });
+
+  it('parses lowpowermode from pmset -g', () => {
+    expect(parseLowPowerMode('Currently in use:\n standby              1\n lowpowermode         1\n')).toBe(true);
+    expect(parseLowPowerMode(' lowpowermode         0\n')).toBe(false);
+    expect(parseLowPowerMode('nothing here')).toBeNull();
   });
 
   it('memoizes the battery read for a minute', async () => {

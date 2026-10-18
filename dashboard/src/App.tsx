@@ -4,6 +4,7 @@ import { createInstanceQueryClient, registerInstanceClient } from './lib/instanc
 import { initWindowActivity } from './lib/windowActivity';
 import { initAgentSettingsFromServer, readAgentSettings } from './lib/agentSettings';
 import { initLightMode } from './lib/lightMode';
+import { initMotionClock } from './lib/motionClock';
 import { LauncherPage } from './pages/LauncherPage';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
@@ -21,10 +22,12 @@ import './styles/global.css';
 
 /*
  * Boot, before the first QueryClient polls: the window's focus/visibility (every poll and every
- * endless animation follows it), the saved settings (Light mode and the terminal renderer need
- * the real values, not the launch origin's empty localStorage), then Light mode itself.
+ * endless animation follows it), the clock that steps every endless animation at 12 fps instead
+ * of on every display frame, the saved settings (Light mode and the terminal renderer need the
+ * real values, not the launch origin's empty localStorage), then Light mode itself.
  */
 initWindowActivity();
+initMotionClock();
 if (new URLSearchParams(window.location.search).has('checklist')) {
   // The pinned checklist window makes zero API calls (plan §1.9): it follows the setting this
   // origin already holds and knows nothing about the machine (Auto stays off there).

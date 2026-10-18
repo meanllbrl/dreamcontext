@@ -14,7 +14,9 @@
  *   (iv)  no literal `animation-play-state` (and no `paused`/`running` inside an `animation`
  *         shorthand) outside `@media (prefers-reduced-motion)`; in a rule that sets the
  *         shorthand, `animation-play-state` comes after it (the shorthand resets it);
- *   (v)   no endless animation set from TS/TSX (inline styles cannot be rested or paused).
+ *   (v)   no endless animation set from TS/TSX (inline styles cannot be rested or paused);
+ *   (vi)  every window starts lib/motionClock.ts at boot, so whatever runs is stepped at 24-30 fps
+ *         and never left on the display link (task: durum animasyonları WindowServer'ı yormaz).
  * And `global.css` carries the root rules that drive the variables.
  *
  * Runs over every file, so it is green only once every lane's CSS follows the contract.
@@ -156,7 +158,9 @@ describe('CSS motion contract', () => {
     const g = readFileSync(join(SRC, 'styles/global.css'), 'utf8').replace(/\s+/g, ' ');
     expect(g).toContain(":root[data-window-active='false'] { --dc-motion-ambient-name: none; }");
     expect(g).toContain(":root[data-window-hidden='true'] { --dc-motion-play: paused; }");
-    expect(g).toContain(":root[data-light='true'] { --dc-motion-ambient-name: none; --dc-motion-status-name: none; }");
+    // Light mode rests decoration only; status keeps moving on the clock (owner, 2026-10-18).
+    expect(g).toContain(":root[data-light='true'] { --dc-motion-ambient-name: none; }");
+    expect(g).not.toMatch(/:root\[data-light='true'\] \{[^}]*--dc-motion-status-name/);
     expect(g).toMatch(/:root\[data-light='true'\] \*,[^{]*\{ backdrop-filter: none !important; -webkit-backdrop-filter: none !important; \}/);
   });
 
@@ -283,6 +287,24 @@ describe('CSS motion contract', () => {
     expect(endlessText('pulse 1s ease 9999')).toBe(true);
     expect(endlessText('pulse 1s cubic-bezier(.2, 80, .2, 1) 2')).toBe(false);
     expect(endlessText('pop 200ms ease-out both')).toBe(false);
+  });
+
+  it('(vi) every window steps its endless animations at 24-30 fps, never on the display link', () => {
+    // The contract's variables decide WHETHER an animation runs; lib/motionClock.ts decides how
+    // often it moves (task: durum animasyonları WindowServer'ı yormaz, AC4). Every window boots
+    // through main.tsx -> App.tsx, so the clock is started there, at module scope, unconditionally.
+    const main = readFileSync(join(SRC, 'main.tsx'), 'utf8');
+    expect(main).toMatch(/import \{ App \} from '\.\/App';/);
+    const app = readFileSync(join(SRC, 'App.tsx'), 'utf8');
+    expect(app).toMatch(/^import \{ initMotionClock \} from '\.\/lib\/motionClock';$/m);
+    expect(app).toMatch(/^initMotionClock\(\);$/m);
+    const clock = readFileSync(join(SRC, 'lib', 'motionClock.ts'), 'utf8');
+    const fps = Number(/export const MOTION_FPS = (\d+);/.exec(clock)?.[1]);
+    expect(fps).toBeGreaterThanOrEqual(24);
+    expect(fps).toBeLessThanOrEqual(30);
+    // It holds what the contract runs: endless by the same line this guard uses.
+    expect(clock).toMatch(new RegExp(`export const ENDLESS_COUNT = ${ENDLESS_COUNT};`));
+    expect(readFileSync(join(SRC, 'styles', 'global.css'), 'utf8')).toMatch(/lib\/motionClock\.ts/);
   });
 
   it('every allowlisted TS file still exists and says why', () => {

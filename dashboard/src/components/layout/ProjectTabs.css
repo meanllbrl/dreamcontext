@@ -618,8 +618,14 @@
  * the bubble and larger than it, rotated with `transform`. A conic gradient rotated about its
  * centre IS the same gradient started at that angle, so the picture is the one the old
  * animated `from` angle drew, but the compositor turns it: no style recalc or repaint per frame
- * (task: the desktop app stays light on an 8GB MacBook Air). At rest — reduced motion, Light
- * mode — the arc simply holds still.
+ * (task: the desktop app stays light on an 8GB MacBook Air).
+ *
+ * AT REST — reduced motion, Light mode — the ring is CLOSED, not an arc stopped mid-turn: a
+ * three-quarter arc that does not move reads as "stuck", not "working" (owner, 2026-10-18).
+ * Both layers are the un-animated base style the motion contract asks for: the arc (`::before`)
+ * is invisible until its keyframes show it, the full ring (`::after`) is visible until its own
+ * keyframes hide it. Remove the animation and the closed ring is what is left, with nothing in
+ * any component knowing why the motion stopped.
  */
 .project-tab-bubble-ring {
   position: absolute;
@@ -648,13 +654,27 @@
     transparent 0.62turn 1turn
   );
   transform: translate(-50%, -50%);
+  opacity: 0;
   animation: var(--dc-motion-status-name, projectTabRing) 1s linear infinite;
   animation-play-state: var(--dc-motion-play, running);
 }
 
+.project-tab-bubble-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--color-success);
+  animation: var(--dc-motion-status-name, projectTabRingClosed) 1s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+
 @keyframes projectTabRing {
-  from { transform: translate(-50%, -50%) rotate(0turn); }
-  to { transform: translate(-50%, -50%) rotate(1turn); }
+  from { transform: translate(-50%, -50%) rotate(0turn); opacity: 1; }
+  to { transform: translate(-50%, -50%) rotate(1turn); opacity: 1; }
+}
+
+@keyframes projectTabRingClosed {
+  from, to { opacity: 0; }
 }
 
 /*
@@ -895,6 +915,7 @@
   .project-tab[data-bouncing='true'],
   .project-tab[data-asking='true'],
   .project-tab-bubble-ring::before,
+  .project-tab-bubble-ring::after,
   .project-tab-flag {
     animation: none;
   }

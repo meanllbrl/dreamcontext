@@ -1190,7 +1190,9 @@ video.chat-msg-user-media-el { cursor: default; }
   animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .chat-subagents-spinner { animation: none; } }
+/* At rest (Light mode, reduced motion) the ring closes: still running, not a stopped arc. */
+:root[data-light='true'] .chat-subagents-spinner { border-color: var(--color-accent); }
+@media (prefers-reduced-motion: reduce) { .chat-subagents-spinner { animation: none; border-color: var(--color-accent); } }
 
 .chat-subagents-rows { display: flex; flex-direction: column; }
 .chat-subagents-row {
@@ -1892,7 +1894,10 @@ video.chat-msg-user-media-el { cursor: default; }
   animation: var(--dc-motion-ambient-name, chat-spin) 800ms linear infinite;
   animation-play-state: var(--dc-motion-play, running);
 }
-@media (prefers-reduced-motion: reduce) { .chat-bgshells-spinner { animation: none; } }
+/* Ambient, so it rests whenever the window is not in front: a closed ring then, not a frozen arc. */
+:root[data-window-active='false'] .chat-bgshells-spinner,
+:root[data-light='true'] .chat-bgshells-spinner { border-color: var(--color-accent); }
+@media (prefers-reduced-motion: reduce) { .chat-bgshells-spinner { animation: none; border-color: var(--color-accent); } }
 
 /* ── The rows — the card's body ────────────────────────────────────────────────────────
    The list SCROLLS INSIDE ITS OWN BOX rather than growing the tray. Docked furniture takes

@@ -27,7 +27,8 @@
  *              a refocus and a window hidden → visible, split into explicit-interval endpoints
  *              (kept by design) and everything else (must be 0)
  *   d  motion  `document.getAnimations()` running endless animations, names, focused /
- *              unfocused / hidden / Light mode, plus computed backdrop-filter in Light mode
+ *              unfocused / hidden / Light mode, plus computed backdrop-filter in Light mode;
+ *              how often a clock-held endless animation moves per second (lib/motionClock.ts)
  *   e  trace   Chromium devtools.timeline 10 s idle at 4× CPU throttle: style recalcs/s,
  *              layouts/s
  *   f  composer type 60 chars into a pane's composer with five long panes (vault `five`): getComputedStyle
@@ -404,14 +405,34 @@ async function sectionsOnMain(server, browser) {
     if (process.env.DIAG === '1') console.log('      DIAG vars:', JSON.stringify(await page.evaluate(() => { const f = document.querySelector('.sleep-tracker-face .smascot-face'); const cs = f ? getComputedStyle(f) : null; const rs = getComputedStyle(document.documentElement); return { ds: { ...document.documentElement.dataset }, rootAmbient: rs.getPropertyValue('--dc-motion-ambient-name'), rootPlay: rs.getPropertyValue('--dc-motion-play'), faceAmbient: cs?.getPropertyValue('--dc-motion-ambient-name'), faceName: cs?.animationName, faceAnim: cs?.animation }; })));
     if (process.env.DIAG === '1') console.log('      DIAG smascot:', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('.smascot, [class*="about-"]')].slice(0, 8).map((el) => { const cs = getComputedStyle(el); return [String(el.className).slice(0, 50), el.closest('[class]')?.parentElement?.className?.slice?.(0, 40), cs.animationName, cs.animationPlayState, el.getClientRects().length]; }))));
     const focused = await runningEndless(page);
+    // The 12 fps clock (lib/motionClock.ts, task: durum animasyonları WindowServer'ı yormaz): an
+    // endless animation is PAUSED and stepped, never left on the display link. Proof it still
+    // moves, and how often: the distinct currentTime values of a held one over 1 s of frames.
+    const stepped = await page.evaluate(async () => {
+      const held = document.getAnimations().filter((a) => a.playState === 'paused' && a.effect?.getTiming().iterations === Infinity);
+      if (!held.length) return { held: 0, movesPerSec: null, frames: 0 };
+      const a = held[0];
+      const seen = new Set();
+      let frames = 0;
+      const t0 = performance.now();
+      await new Promise((done) => {
+        const f = () => { frames += 1; seen.add(String(a.currentTime)); if (performance.now() - t0 < 1000) requestAnimationFrame(f); else done(); };
+        requestAnimationFrame(f);
+      });
+      return { held: held.length, movesPerSec: seen.size, frames };
+    });
     await setUnfocused(page); await page.waitForTimeout(500);
     const unfocused = await runningEndless(page);
     await setHidden(page, true); await page.waitForTimeout(500);
     const hidden = await runningEndless(page);
     await setHidden(page, false); await setFocused(page); await page.waitForTimeout(500);
-    numbers.motion = { windowActiveAtFocused: await page.evaluate(() => document.documentElement.dataset.windowActive ?? null), focused: focused.length, unfocused: unfocused.length, hidden: hidden.length, focusedNames: [...new Set(focused)], unfocusedNames: [...new Set(unfocused)] };
+    numbers.motion = { windowActiveAtFocused: await page.evaluate(() => document.documentElement.dataset.windowActive ?? null), focused: focused.length, unfocused: unfocused.length, hidden: hidden.length, focusedNames: [...new Set(focused)], unfocusedNames: [...new Set(unfocused)], stepped };
     console.log(`      motion: ${JSON.stringify(numbers.motion)}`);
     check('AC7 hidden -> 0 running endless animations', hidden.length === 0, `${hidden.length}`);
+    if (AFTER) {
+      check('AC4 focused + unfocused -> 0 endless animations on the display link', focused.length === 0 && unfocused.length === 0, `${focused.length} / ${unfocused.length}`);
+      check('AC4 a held endless animation still moves, 20-34 times a second', stepped.held > 0 && stepped.movesPerSec >= 20 && stepped.movesPerSec <= 34, JSON.stringify(stepped));
+    }
   }
 
   if (SECTIONS.has('e')) {
@@ -554,7 +575,7 @@ async function sectionsOnMain(server, browser) {
     }).length);
     numbers.motion = { ...(numbers.motion || {}), light: light.length, lightNames: [...new Set(light)], lightBackdropElements: blur, dataLight: await page.evaluate(() => document.documentElement.dataset.light ?? null) };
     console.log(`      light: ${JSON.stringify({ light: light.length, blur, dataLight: numbers.motion.dataLight })}`);
-    check('AC12 Light mode on -> 0 running endless animations', light.length === 0, JSON.stringify(numbers.motion.lightNames));
+    check('AC12 Light mode on -> 0 endless animations on the display link (status held by the clock)', light.length === 0, JSON.stringify(numbers.motion.lightNames));
     numbers.motion.lightEntrances = entrances.length;
     check('AC7 entrance animations in Light mode reach their end (none paused)', stuck.length === 0 && entrances.length > 0, `${entrances.length} entrances, ${stuck.length} stuck`);
     check('AC12 Light mode on -> computed backdrop-filter none everywhere', blur === 0, `${blur} elements`);

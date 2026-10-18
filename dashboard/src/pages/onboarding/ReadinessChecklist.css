@@ -190,6 +190,8 @@
 }
 /* Light mode removes the slide: rest as a dim full rail, never as "30 % done". */
 :root[data-light='true'] .ob-rail--indeterminate .ob-rail-fill { width: 100%; opacity: 0.4; }
+/* And the working glyph closes its ring instead of holding a quarter arc still. */
+:root[data-light='true'] .ob-glyph--working .ob-glyph-track { stroke: currentColor; }
 .ob-rail-label { display: block; font-size: var(--font-size-xs); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 
 /* ─── Waiting card ────────────────────────────────────────────────────────── */
@@ -323,4 +325,5 @@
   }
   .ob-glyph--animate .ob-glyph-check { stroke-dashoffset: 0; }
   .ob-rail--indeterminate .ob-rail-fill { width: 100%; opacity: 0.4; }
+  .ob-glyph--working .ob-glyph-track { stroke: currentColor; }
 }
