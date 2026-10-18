@@ -400,12 +400,14 @@ const EXPLORER_PLUS = 'acme-explorer-plus';
 const APP = 'acme-onboarding-app';
 const EXPLORER_FIXTURE = join(REPO, 'scripts', 'verify', 'fixtures', 'funnel-explorer-demo.mjs');
 /**
- * The snapshot-fed explorer insight (`lab create --preset funnel-explorer` + `lab data write`):
+ * The snapshot-fed explorer insight (`lab create --preset funnel-explorer`, its script swapped for the
+ * pre-v2.0 snapshot reader since there is no KB here, + the deprecated `lab data write` fallback):
  * the only fixture with payment, access, a ladder, notes and k/n paths, so the ranking,
  * payment and access blocks and the new options draw real data on the catalog board.
  */
 const EXPLORER_SNAP = 'acme-explorer-snapshot';
 const SNAPSHOT_FIXTURE = join(REPO, 'scripts', 'verify', 'fixtures', 'acme-funnel-snapshot.mjs');
+const LEGACY_SCRIPT = join(REPO, 'scripts', 'verify', 'fixtures', 'legacy-snapshot-script.mjs');
 const APP_FIXTURE = join(REPO, 'scripts', 'verify', 'fixtures', 'acme-onboarding-app.mjs');
 /**
  * The dashboard's own generated frameOps (TypeScript, bundled here on the fly):
@@ -2591,6 +2593,8 @@ async function main() {
       make(EXPLORER_PLUS, 'Acme explorer plus', 'funnel', PLUS_SCRIPT);
       // The snapshot-fed explorer: scaffolded by the preset, its data written through the snapshot gate.
       dc(['lab', 'create', EXPLORER_SNAP, '--title', 'Acme explorer snapshot', '--preset', 'funnel-explorer', '--no-board']);
+      const { legacySnapshotScript } = await import(pathToFileURL(LEGACY_SCRIPT).href);
+      writeFileSync(join(LAB, 'scripts', `${EXPLORER_SNAP}.mjs`), legacySnapshotScript(EXPLORER_SNAP), 'utf-8');
       const snapFile = join(SCRATCH, `${EXPLORER_SNAP}.snapshot.json`);
       writeFileSync(snapFile, JSON.stringify((await import(pathToFileURL(SNAPSHOT_FIXTURE).href)).snapshot('full')));
       const wrote = dc(['lab', 'data', 'write', EXPLORER_SNAP, '--file', snapFile], { allowFail: true });

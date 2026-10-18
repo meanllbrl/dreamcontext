@@ -9,7 +9,13 @@ import { LabError, type FunnelSet } from './types.js';
 /**
  * The snapshot store: `lab/data/<slug>.json`, shaped `{source, data}`.
  *
- * A snapshot-fed insight (the funnel explorer) never touches the network. An
+ * DEPRECATED fallback (neonbi-data-api v2.0): a NeonBI insight's script now
+ * pulls live through the KB MCP with the member's `KB_MCP_KEY`
+ * (`lab create --preset funnel-explorer` scaffolds it). This store stays for
+ * insights whose script still reads a snapshot (offline work, or no script key
+ * yet), never for a new one.
+ *
+ * A snapshot-fed insight never touches the network. An
  * agent pulls the numbers through the KB MCP, builds the snapshot, and writes it
  * with `lab data write`, which goes through `writeLabSnapshot` here. That is the
  * guarantee a refresh needs: a snapshot is validated BEFORE it replaces the old

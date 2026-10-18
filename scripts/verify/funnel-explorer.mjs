@@ -15,13 +15,17 @@
  * CLI call through dist/index.js, WebKit (the engine the desktop app ships).
  *
  * Fixture mode (default) builds two insights from the synthetic snapshot fixture
- * (scripts/verify/fixtures/acme-funnel-snapshot.mjs) exactly as an agent would:
- * `lab create --preset funnel-explorer`, then `lab data write`. Sections:
+ * (scripts/verify/fixtures/acme-funnel-snapshot.mjs): `lab create --preset
+ * funnel-explorer` (a live KB MCP script), then, since there is no KB here, the
+ * deprecated snapshot fallback an old vault still runs: the pre-v2.0
+ * snapshot-reading script (fixtures/legacy-snapshot-script.mjs) and
+ * `lab data write`. Sections:
  *
- *   1. CLI SCAFFOLD AND GATE: the preset writes the manifest and the snapshot
- *      reading script, never lab/data; a sync before the snapshot fails loudly;
- *      a refused snapshot leaves the file absent or byte-identical; a valid one
- *      is written and synced; `lab data check` reports it.
+ *   1. CLI SCAFFOLD AND GATE: the preset writes the manifest, the live script
+ *      (./lib-kb-mcp.mjs, never lab/data) and lib-kb-mcp.mjs; an unfilled script
+ *      fails loudly; on the legacy script a sync before the snapshot fails
+ *      loudly, a refused snapshot leaves the file absent or byte-identical, a
+ *      valid one is written and synced, and `lab data check` reports it.
  *   2. DERIVED BOARD + CLI: the category board derives the 12x18 explorer card,
  *      and `lab board show --select --json` prints the fixture's own numbers
  *      (steps, worst drop, ladder order, payment, notes order; `--funnel`).
@@ -94,6 +98,7 @@ const CLI = join(REPO, 'dist', 'index.js');
 const DC = join(PROJ, '_dream_context');
 const LAB = join(DC, 'lab');
 const FIXTURE = join(REPO, 'scripts', 'verify', 'fixtures', 'acme-funnel-snapshot.mjs');
+const LEGACY_SCRIPT = join(REPO, 'scripts', 'verify', 'fixtures', 'legacy-snapshot-script.mjs');
 
 /** The two fixture insights and the boards their categories derive. */
 const FULL = 'acme-funnel-snapshot';
@@ -166,7 +171,7 @@ function run(args, { cwd = PROJ } = {}) {
   const r = spawnSync('node', [CLI, ...args], {
     cwd, env: { ...process.env, HOME, NO_COLOR: '1', FORCE_COLOR: '0' }, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024,
   });
-  return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}`, stdout: r.stdout ?? '' };
 }
 function dc(args, opts) {
   const r = run(args, opts);
@@ -332,6 +337,9 @@ function paintInPage(root) {
 async function main() {
   setupScratch();
   const fixture = await import(pathToFileURL(FIXTURE).href);
+  const { legacySnapshotScript } = await import(pathToFileURL(LEGACY_SCRIPT).href);
+  /** No KB here: feed a preset insight through the deprecated snapshot fallback (an old vault's script). */
+  const useLegacyScript = (slug) => writeFileSync(join(LAB, 'scripts', `${slug}.mjs`), legacySnapshotScript(slug), 'utf-8');
   const full = fixture.snapshot('full');
   const bare = fixture.snapshot('bare');
   const fx = full.data;
@@ -356,10 +364,14 @@ async function main() {
       ok('the preset manifest carries the Meaning skeleton (source, window, steps, traps, refresh)',
         /## Meaning/.test(manifest.content) && /Reading traps/i.test(manifest.content) && /Refresh/i.test(manifest.content), manifest.content.slice(0, 600));
       const script = readFileSync(join(LAB, 'scripts', `${FULL}.mjs`), 'utf-8');
-      ok('the template script reads only lab/data/<slug>.json: no fetch, no credentials',
-        script.includes(`../data/${FULL}.json`) && !/\bfetch\s*\(/.test(script) && !/credentials/.test(script.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')),
+      ok('the template script pulls live through ./lib-kb-mcp.mjs and never reads lab/data',
+        script.includes("from './lib-kb-mcp.mjs'") && !script.includes('../data/') && !script.includes('lab/data'),
         script.slice(0, 800));
+      ok('lab create writes lab/scripts/lib-kb-mcp.mjs', existsSync(join(LAB, 'scripts', 'lib-kb-mcp.mjs')));
       ok('lab create never writes lab/data', !existsSync(join(LAB, 'data', `${FULL}.json`)));
+      const unfilled = run(['lab', 'sync', FULL, '--force']);
+      ok('a sync of the unfilled live script fails loudly ("fill QUERIES/build() first", non-zero exit)', unfilled.code !== 0 && /fill QUERIES\/build\(\) first/.test(unfilled.out), `${unfilled.code} ${unfilled.out.slice(0, 400)}`);
+      useLegacyScript(FULL);
       ok('a derived vault places the explorer without writing a board', !existsSync(join(LAB, 'boards')) || readdirSync(join(LAB, 'boards')).length === 0);
 
       const early = run(['lab', 'sync', FULL, '--force']);
@@ -390,7 +402,8 @@ async function main() {
 
       const check = run(['lab', 'data', 'check', FULL, '--json']);
       let parsed = null;
-      try { parsed = JSON.parse(check.out); } catch { /* reported below */ }
+      // stdout only: `lab data` prints its deprecation notice on stderr.
+      try { parsed = JSON.parse(check.stdout); } catch { /* reported below */ }
       ok('lab data check: ok, 3 funnels, the window, stored bytes under 400 000, no notice',
         check.code === 0 && parsed?.ok === true && parsed.summary?.funnels === 3 && parsed.summary?.window?.from === fx.window.from
           && parsed.summary?.storedBytes < 400_000 && parsed.notices.length === 0, check.out.slice(0, 600));
@@ -402,6 +415,7 @@ async function main() {
       const trCreated = run(['lab', 'create', FULL_TR, '--title', 'Acme mağaza hunileri', '--category', 'Acme Funnels', '--preset', 'funnel-explorer', '--locale', 'tr']);
       const trFm = matter(readFileSync(join(LAB, 'insights', `${FULL_TR}.md`), 'utf-8')).data;
       ok('lab create --preset funnel-explorer --locale tr writes locale: tr into the manifest', trCreated.code === 0 && trFm.locale === 'tr', `${trCreated.out.slice(0, 300)} ${JSON.stringify(trFm.locale)}`);
+      useLegacyScript(FULL_TR);
       const trFile = join(SCRATCH, 'full-tr.json');
       writeFileSync(trFile, JSON.stringify(full));
       const wroteTr = run(['lab', 'data', 'write', FULL_TR, '--file', trFile]);
@@ -409,6 +423,7 @@ async function main() {
 
       // The bare insight, for the empty states and the hidden Access tab.
       dc(['lab', 'create', BARE, '--title', 'Acme bare funnels', '--category', 'Acme Bare', '--preset', 'funnel-explorer']);
+      useLegacyScript(BARE);
       const bareFile = join(SCRATCH, 'bare.json');
       writeFileSync(bareFile, JSON.stringify(bare));
       const wroteBare = run(['lab', 'data', 'write', BARE, '--file', bareFile]);
