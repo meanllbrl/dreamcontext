@@ -2633,6 +2633,36 @@
       "group": true
     },
     {
+      "path": "patterns corrections",
+      "desc": "The owner's corrections kept across sleeps; --recurring groups the ones said in 2+ sessions, --backfill <days> reads the last days once",
+      "args": [],
+      "valueFlags": [
+        "--backfill"
+      ]
+    },
+    {
+      "path": "patterns learn",
+      "desc": "Write a rule learned from ONE recurring group of the owner's corrections into a pattern (quotes and dates kept; the old file archived first)",
+      "args": [
+        "<pattern>"
+      ],
+      "valueFlags": [
+        "--from",
+        "--title",
+        "--rule",
+        "--replaces",
+        "--edits"
+      ]
+    },
+    {
+      "path": "patterns learned",
+      "desc": "Rules sleep learned from the owner's corrections, and the task-filing rule changes it made",
+      "args": [],
+      "valueFlags": [
+        "--since"
+      ]
+    },
+    {
       "path": "patterns list",
       "desc": "List every pattern with its \"/\" name and derived triggers",
       "args": []
@@ -2642,6 +2672,13 @@
       "desc": "Show which patterns a prompt would trigger, and why",
       "args": [
         "<prompt...>"
+      ]
+    },
+    {
+      "path": "patterns revert",
+      "desc": "Undo a learned change (owner only; the Inbox does the same)",
+      "args": [
+        "<id>"
       ]
     },
     {
