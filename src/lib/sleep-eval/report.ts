@@ -15,6 +15,7 @@ import {
   type Similarity,
 } from './score.js';
 import { DEFAULT_SCORING, sleepEvalRoot, type SleepEvalScoring } from './types.js';
+import { exemptionFor } from './exemptions.js';
 
 /**
  * Scores on disk, the one-page report, and the close gate.
@@ -259,6 +260,11 @@ export interface CloseGate {
 export function checkCloseGate(contextRoot: string, child: string, parent: string | null): CloseGate {
   const baseline = readBaseline(contextRoot);
   if (!baseline || !parent || !baseline.parents.includes(parent)) return { applies: false, ok: true, message: '' };
+  // An owner's reasoned exemption (journaled and audited, see exemptions.ts). No refusal
+  // below names the exempt command: a session that reads a refusal must not be one shell
+  // line away from exempting its own task.
+  const ex = exemptionFor(contextRoot, child);
+  if (ex) return { applies: true, ok: true, message: `Sleep eval gate: exempt (${ex.reason}), recorded ${ex.at} by ${ex.by}.` };
   const runs = listRunsFor(contextRoot, child);
   const run = runs[runs.length - 1];
   const how = `run \`dreamcontext sleep eval run --for ${child}\`, then \`dreamcontext sleep eval score\``;

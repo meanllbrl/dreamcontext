@@ -464,6 +464,7 @@ The key lives in `~/.dreamcontext/recall-cloud.json` (0600); `DREAMCONTEXT_RECAL
 | `sleep done <summary...>` | Mark consolidation complete, write history, reset debt. |
 | `sleep debt` | Output the debt number (programmatic). |
 | `sleep history` | Consolidation history log. `-n/--limit`. |
+| `sleep eval exempt <child> --reason <text>` | **Owner only** (refused from a Claude session or an agent run). Lets a sub-task of a gated parent close without an eval run, for the stated reason: journaled on the sub-task, recorded in the task audit, listed by `sleep eval status` (`--json`: `exemptions`). The gate honours it only while the journal entry and the audit record both match. |
 
 See [sleep.md](sleep.md) for the full flow.
 

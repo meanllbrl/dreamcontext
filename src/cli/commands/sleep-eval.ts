@@ -19,6 +19,18 @@ import {
   writeReport,
 } from '../../lib/sleep-eval/report.js';
 import { FEEDBACK_REASONS, LABEL_CATEGORIES, sleepEvalRoot, type LabelCategory } from '../../lib/sleep-eval/types.js';
+import {
+  EXEMPT_JOURNAL_LABEL,
+  exemptJournalBody,
+  normalizeExemptReason,
+  readExemptions,
+  removeExemption,
+  writeExemption,
+} from '../../lib/sleep-eval/exemptions.js';
+import { getTaskBackend } from '../../lib/task-backend/index.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
+import { recordAudit } from '../../lib/task-audit.js';
+import { refuseSelfApproval } from './agents.js';
 
 /**
  * `dreamcontext sleep eval …` — measure how sleep files tasks on a fixed set of this brain's
@@ -143,14 +155,63 @@ export function registerSleepEvalCommand(sleep: Command): void {
       const q = labelQueue(root);
       const runs = listRuns(root).map((r) => ({ id: r.id, for: r.for, label: r.label, rounds: r.rounds.length, finished: !!r.finishedAt, composite: readStoredScore(root, r.id)?.score.composite ?? null }));
       const baseline = readBaseline(root);
+      const exemptions = readExemptions(root);
       if (opts.json) {
-        console.log(JSON.stringify({ set, labels: { total: q.total, labelled: q.labelled }, runs, baseline }, null, 2));
+        console.log(JSON.stringify({ set, labels: { total: q.total, labelled: q.labelled }, runs, baseline, exemptions }, null, 2));
         return;
       }
-      if (!set) { info('No test set yet: `dreamcontext sleep eval build`.'); return; }
-      info(`Set: ${set.rounds.length} rounds (frozen ${set.createdAt.slice(0, 10)})`);
-      info(`Labels: ${q.labelled}/${q.total}`);
-      for (const r of runs) info(`${r.id}${r.id === baseline?.runId ? ' [baseline]' : ''}${r.for ? ` for ${r.for}` : ''}: ${r.rounds} rounds${r.finished ? '' : ' (unfinished)'}, composite ${r.composite === null ? '—' : `${Math.round(r.composite * 100)}%`}`);
+      if (!set) { info('No test set yet: `dreamcontext sleep eval build`.'); }
+      else {
+        info(`Set: ${set.rounds.length} rounds (frozen ${set.createdAt.slice(0, 10)})`);
+        info(`Labels: ${q.labelled}/${q.total}`);
+        for (const r of runs) info(`${r.id}${r.id === baseline?.runId ? ' [baseline]' : ''}${r.for ? ` for ${r.for}` : ''}: ${r.rounds} rounds${r.finished ? '' : ' (unfinished)'}, composite ${r.composite === null ? '—' : `${Math.round(r.composite * 100)}%`}`);
+      }
+      if (exemptions.length > 0) {
+        info('Exempt:');
+        for (const e of exemptions) info(`  ${e.child} (under ${e.parent}): ${e.reason} (by ${e.by}, ${e.at.slice(0, 10)})`);
+      }
+    });
+
+  ev.command('exempt <child>')
+    .description('Owner only: let a sub-task close without an eval run, for a stated reason (journaled on the task, listed here and on the Inbox)')
+    .requiredOption('--reason <text>', 'Why this sub-task does not change what sleep files or learns')
+    .action(async (child: string, opts: { reason: string }) => {
+      if (refuseSelfApproval(process.env)) { process.exitCode = 1; return; }
+      const reason = normalizeExemptReason(opts.reason ?? '');
+      if (!reason) { error('An exemption needs a reason: --reason "<why the eval does not apply>".'); process.exitCode = 1; return; }
+      const root = ensureContextRoot();
+      const backend = getTaskBackend(root);
+      const res = await backend.resolveSlug(child);
+      if (res.kind !== 'match') {
+        error(res.kind === 'ambiguous' ? `Ambiguous task name "${child}": ${res.candidates.join(', ')}` : `Task not found: ${child}`);
+        process.exitCode = 1;
+        return;
+      }
+      const slug = res.slug;
+      const task = await backend.get(slug);
+      const parent = task?.parent_task ?? null;
+      if (!parent) { error(`${slug} has no parent task; the sleep-eval gate only covers sub-tasks.`); process.exitCode = 1; return; }
+      const baseline = readBaseline(root);
+      if (!baseline || !baseline.parents.includes(parent)) {
+        error(`${slug} is not gated (its parent ${parent} has no sleep-eval baseline); nothing to exempt.`);
+        process.exitCode = 1;
+        return;
+      }
+      let by = 'owner';
+      try { by = resolveActivePerson(root).slug ?? 'owner'; } catch { /* the owner default stands */ }
+      const je = await backend.addJournal(slug, { kind: 'status', label: EXEMPT_JOURNAL_LABEL, actor: by, body: exemptJournalBody(reason) });
+      const at = new Date().toISOString();
+      try {
+        writeExemption(root, { child: slug, parent, reason, by, at, journalId: je.id });
+        recordAudit(root, { kind: 'exempt', slug, actor: by, via: 'cli', note: reason, journalId: je.id });
+      } catch (e) {
+        // Without both, the journal entry grants nothing (exemptionFor checks all three).
+        try { removeExemption(root, slug); } catch { /* reported below */ }
+        error(`Could not record the exemption for ${slug}: ${(e as Error).message}`);
+        process.exitCode = 1;
+        return;
+      }
+      success(`${slug} is exempt from the sleep-eval gate: ${reason}`);
     });
 
   ev.command('label <id> <answer>')

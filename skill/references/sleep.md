@@ -147,6 +147,8 @@ dreamcontext sleep history [-n N]      # consolidation history
 dreamcontext reflect [--write]         # cross-session term candidates
 ```
 
+**The sleep eval and its close gate.** A sub-task of a parent gated by an eval baseline closes only after `sleep eval run --for <sub-task>` scores no lower than the baseline. The eval runs for the sub-tasks that change what sleep files or learns; the others close through an owner's reasoned exemption, written to the sub-task's journal and the task audit (shown on the Inbox) and listed by `sleep eval status`. An agent cannot record one.
+
 ## Detail behind the SKILL.md summaries
 
 SKILL.md keeps one line per capability and one home per rule. This is the fuller text those lines summarize, kept here so nothing an agent needs is lost.
