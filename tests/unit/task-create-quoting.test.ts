@@ -6,7 +6,7 @@
  * a JSON string (a valid YAML double-quoted scalar); plain and Turkish names keep their bytes.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import matter from 'gray-matter';
@@ -15,12 +15,17 @@ import { addProposal, acceptProposal, readProposals } from '../../src/lib/task-p
 import { DEFAULT_STATUSES } from '../../src/lib/task-status.js';
 import { fillQuotedToken } from '../../src/lib/template-fill.js';
 import { slugify } from '../../src/lib/id.js';
+import { Command } from 'commander';
+import { registerFeaturesCommand } from '../../src/cli/commands/features.js';
 
 const NASTY = 'Export "CSV" as C:\\exports\\ödeme — İğdır şubesi';
 const DESCRIPTION = 'Say "hi" \\ and \\n stay literal; Gölge İşleri';
 let projectRoot: string;
 let ctx: string;
 let stateDir: string;
+let prevCwd: string;
+const origLog = console.log;
+const origErr = console.error;
 
 beforeEach(() => {
   const raw = join(tmpdir(), `dc-quote-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -30,8 +35,17 @@ beforeEach(() => {
   stateDir = join(ctx, 'state');
   mkdirSync(stateDir, { recursive: true });
   resetTaskReadMemo();
+  prevCwd = process.cwd();
+  process.chdir(projectRoot);
+  console.log = () => {};
+  console.error = () => {};
 });
-afterEach(() => rmSync(projectRoot, { recursive: true, force: true }));
+afterEach(() => {
+  console.log = origLog;
+  console.error = origErr;
+  process.chdir(prevCwd);
+  rmSync(projectRoot, { recursive: true, force: true });
+});
 
 const card = (slug: string) => readFileSync(join(stateDir, `${slug}.md`), 'utf-8');
 const parse = (slug: string) => matter(card(slug)).data as Record<string, unknown>;
@@ -81,5 +95,62 @@ describe('a proposal accept with such a name', () => {
     expect(parse(slug).name).toBe(name);
     expect(parse(slug).description).toBe(name);
     expect(readProposals(ctx).proposals.find((x) => x.id === p.id)?.status).not.toBe('pending');
+  });
+});
+
+/**
+ * End review, finding 2: a replacement STRING expands `$&`, `$'`, `` $` `` and `$$`. "Fix $'
+ * rounding" pasted the rest of the template into the card; "Save $$" was stored as "Save $".
+ * Every create path now inserts values literally, in one pass.
+ */
+const DOLLAR_NAME = "Fix $' rounding, $` too, $& and $$ cash";
+const DOLLAR_WHY = "Because $' and $` and $& and $$ must stay as typed; {{NAME}} too.";
+
+describe('a $ in a name or a Why reaches the card as typed', () => {
+  for (const variant of ['cli', 'dashboard'] as const) {
+    it(`${variant === 'cli' ? 'tasks create' : 'the dashboard create'}: name, description and Why are byte-exact`, async () => {
+      const backend = new LocalTaskBackend(stateDir);
+      const created = await backend.create({ name: DOLLAR_NAME, description: DOLLAR_NAME, why: DOLLAR_WHY, variant });
+      const text = card(created.slug);
+      expect(text.match(/^---$/gm)).toHaveLength(2);
+      const parsed = matter(text);
+      expect(parsed.data.name).toBe(DOLLAR_NAME);
+      expect(parsed.data.description).toBe(DOLLAR_NAME);
+      expect(parsed.content).toContain(DOLLAR_WHY);
+    });
+  }
+
+  it('features create: name, description and Why are byte-exact', async () => {
+    mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
+    const program = new Command();
+    program.exitOverride();
+    registerFeaturesCommand(program);
+    await program.parseAsync(['node', 'dreamcontext', 'features', 'create', DOLLAR_NAME, '-w', DOLLAR_WHY, '-d', DOLLAR_NAME]);
+    const dir = join(ctx, 'knowledge', 'features');
+    const file = readdirSync(dir).find((f) => f.endsWith('.md'));
+    expect(file, 'the feature file was written').toBeTruthy();
+    const text = readFileSync(join(dir, file!), 'utf-8');
+    expect(text.match(/^---$/gm)).toHaveLength(2);
+    const parsed = matter(text);
+    expect(parsed.data.name).toBe(DOLLAR_NAME);
+    expect(parsed.data.description).toBe(DOLLAR_NAME);
+    expect(parsed.content).toContain(DOLLAR_WHY);
+  });
+
+  it('a proposal accept: the card carries the name and the Why as proposed', async () => {
+    const p = addProposal(ctx, { name: DOLLAR_NAME, why: DOLLAR_WHY, quote: 'can we fix the rounding', basis: 'ask' });
+    await acceptProposal(ctx, new LocalTaskBackend(stateDir), DEFAULT_STATUSES, p.id, {}, 'dashboard');
+    const slug = slugify(DOLLAR_NAME);
+    expect(existsSync(join(stateDir, `${slug}.md`))).toBe(true);
+    const parsed = matter(card(slug));
+    expect(parsed.data.name).toBe(DOLLAR_NAME);
+    expect(parsed.content).toContain(DOLLAR_WHY);
+  });
+
+  it('fillTemplate fills in one pass: a token inside a value is not expanded', async () => {
+    const { fillTemplate } = await import('../../src/lib/template-fill.js');
+    expect(fillTemplate('name: "{{NAME}}"\nwhy: {{WHY}}', { NAME: '{{WHY}} $&', WHY: '$$' }, ['NAME'])).toBe('name: "{{WHY}} $&"\nwhy: $$');
+    // Adjacent quoted tokens each keep their own quotes.
+    expect(fillTemplate('"{{NAME}}""{{DESCRIPTION}}"', { NAME: 'a"', DESCRIPTION: 'b' }, ['NAME', 'DESCRIPTION'])).toBe('"a\\"""b"');
   });
 });

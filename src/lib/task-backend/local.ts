@@ -6,7 +6,7 @@ import { DEFAULT_STATUSES, normalizeStatusKey, statusKeys, type StatusDef } from
 import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../frontmatter.js';
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
-import { fillQuotedToken } from '../template-fill.js';
+import { fillTemplate } from '../template-fill.js';
 import { normalizeRice } from '../rice.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
@@ -184,16 +184,20 @@ function renderTaskTemplate(
   input: CreateTaskInput,
   opts: { name: string; status: string; description: string },
 ): string {
-  const quoted = fillQuotedToken(fillQuotedToken(template, '{{NAME}}', opts.name), '{{DESCRIPTION}}', opts.description);
-  return quoted
-    .replaceAll('{{ID}}', generateId('task'))
-    .replaceAll('{{PRIORITY}}', input.priority ?? 'medium')
-    .replaceAll('{{URGENCY}}', input.urgency ?? 'medium')
-    .replaceAll('{{STATUS}}', opts.status)
-    .replaceAll('{{TAGS}}', JSON.stringify(input.tags ?? []))
-    .replaceAll('{{DATE}}', today())
-    .replaceAll('{{WHY}}', input.why || '(To be defined)')
-    .replaceAll('{{VERSION}}', input.version ? JSON.stringify(input.version) : 'null');
+  // One pass, every value literal (lib/template-fill.ts): a `$&`, `$'`, `` $` `` or `$$` in a
+  // name or a Why reaches the card as typed. The id is drawn once, as before (golden).
+  return fillTemplate(template, {
+    ID: generateId('task'),
+    NAME: opts.name,
+    DESCRIPTION: opts.description,
+    PRIORITY: input.priority ?? 'medium',
+    URGENCY: input.urgency ?? 'medium',
+    STATUS: opts.status,
+    TAGS: JSON.stringify(input.tags ?? []),
+    DATE: today(),
+    WHY: input.why || '(To be defined)',
+    VERSION: input.version ? JSON.stringify(input.version) : 'null',
+  }, ['NAME', 'DESCRIPTION']);
 }
 
 /**
