@@ -6,7 +6,8 @@ import { claudeAwarePath, findClaudeBin } from './claude-path.js';
 import { accountEnvFor, assertConfinedConfigDir, isRealHomeConfigDir, listClaudeAccounts } from './claude-accounts.js';
 import { ensureSandbox } from './claude-account-sandbox.js';
 import { claudeAuthStatus, PROBE_TIMEOUT_MS, resetClaudeAuthCache } from './claude-auth.js';
-import { readUsageLimits, usageReadingIsCurrent, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
+import { endRefusalOnReading } from './claude-limit-rejections.js';
+import { configDirSignedInAs, readUsageLimits, usageReadingIsCurrent, USAGE_CACHE_WRITE_THROTTLE_MS, type UsageLimitsResponse } from './claude-usage.js';
 import { parseUsageReport, withLockedReasons } from './claude-usage-report.js';
 
 /**
@@ -287,7 +288,11 @@ export async function probeAccountUsage(
 
   // ── 1. The live report: what the child just printed, stamped now.
   const live = parseUsageReport(reportText(run.stdout), now);
-  if (live) return { status: 'ok', limits: withLockedReasons(live, cached, now) };
+  if (live) {
+    const limits = withLockedReasons(live, cached, now);
+    endRefusalOnReport(dir, limits, home);
+    return { status: 'ok', limits };
+  }
 
   // ── 2. The cache. It counts when it MOVED (the CLI fetched and wrote), or when it is inside
   //      the write throttle — in which case the throttle is the ONLY reason it did not move,
@@ -338,12 +343,27 @@ export async function probeAccountUsage(
   };
 }
 
+/** The registered account that owns `dir`, or undefined. */
+function accountForDir(dir: string, home: string) {
+  return listClaudeAccounts(home).find((a) => (a.configDir ?? home) === dir || a.configDir === dir);
+}
+
 /** The `accountUuid` the register holds for whichever account owns `dir`, or null. */
 function expectedAccountUuid(dir: string, home: string): string | null {
-  const account = listClaudeAccounts(home).find(
-    (a) => (a.configDir ?? home) === dir || a.configDir === dir,
-  );
+  const account = accountForDir(dir, home);
   return account?.accountUuid ? account.accountUuid : null;
+}
+
+/**
+ * A live report may end a remembered refusal (`endRefusalOnReading`). It needs this hook because
+ * it is the one reading the cache may not hold yet — the CLI throttles that write to once per
+ * five minutes — while `readAccountRejections` already judges every refusal against the cache.
+ * Only for a directory signed in as the account the register names: a report carries no
+ * identity of its own (see `accountEnvFor`).
+ */
+function endRefusalOnReport(dir: string, reading: UsageLimitsResponse, home: string): void {
+  const account = accountForDir(dir, home);
+  if (account && configDirSignedInAs(account, home)) endRefusalOnReading(account.id, reading, home);
 }
 
 /** How long a decision probe's good answer is lent to the next pane that asks. */

@@ -217,7 +217,78 @@ export function readUsageLimits(home: string = homedir()): UsageLimitsResponse {
 
 /** The CLI's own cache alone — what `readUsageLimits` was before the per-turn meter joined it. */
 export function readCliUsageCache(home: string = homedir()): UsageLimitsResponse {
-  const blob = readJsonSafe(join(assertConfinedConfigDir(home), '.claude.json'));
+  return usageFromBlob(readJsonSafe(join(assertConfinedConfigDir(home), '.claude.json')));
+}
+
+/** Who a registered account is, as far as proving a directory holds it goes. */
+export interface AccountIdentity {
+  accountUuid: string;
+  email: string;
+  organizationUuid: string;
+  /** `null` = the real HOME (account #0). */
+  configDir: string | null;
+}
+
+function trimmedString(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/**
+ * Is `blob` (a parsed `<configDir>/.claude.json`) signed in as `account`?
+ *
+ * The register's `accountUuid` is empty on machines that connected their accounts before it was
+ * recorded (all four on the owner's machine, 2026-10-18), so the email decides when the uuid
+ * cannot. The organization is checked whenever both sides carry one: one email can hold seats
+ * in two organizations, and each seat is its own quota pool.
+ */
+function signedInAs(blob: Record<string, unknown> | null, account: AccountIdentity): boolean {
+  const oauth = asRecord(blob?.oauthAccount);
+  const uuid = trimmedString(oauth?.accountUuid);
+  if (!uuid) return false;
+  if (account.accountUuid) {
+    if (account.accountUuid !== uuid) return false;
+  } else {
+    const email = trimmedString(oauth?.emailAddress).toLowerCase();
+    if (!email || !account.email || email !== account.email.trim().toLowerCase()) return false;
+  }
+  const org = trimmedString(oauth?.organizationUuid);
+  return !account.organizationUuid || !org || account.organizationUuid === org;
+}
+
+/** Is `account`'s own directory signed in as that account right now? Never throws. */
+export function configDirSignedInAs(account: AccountIdentity, home: string = homedir()): boolean {
+  try {
+    const dir = assertConfinedConfigDir(account.configDir ?? home, home);
+    return signedInAs(readJsonSafe(join(dir, '.claude.json')), account);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The CLI's cache for ONE registered account — or null unless it provably measured THAT account.
+ *
+ * Two checks, both on the raw blob, neither reaching the wire: the directory is signed in as the
+ * account the register names ({@link signedInAs}), and the cache was written for that same
+ * credential (`cachedUsageUtilization.accountUuid`). A cache that names no account is not
+ * vouched for. This is the reading a remembered refusal may be ended on
+ * (`claude-limit-rejections.ts`), so "probably this account" is not enough.
+ */
+export function readAccountUsageCache(account: AccountIdentity, home: string = homedir()): UsageLimitsResponse | null {
+  let blob: Record<string, unknown> | null;
+  try {
+    blob = readJsonSafe(join(assertConfinedConfigDir(account.configDir ?? home, home), '.claude.json'));
+  } catch {
+    return null;
+  }
+  if (!signedInAs(blob, account)) return null;
+  const measured = trimmedString(asRecord(blob?.cachedUsageUtilization)?.accountUuid);
+  if (!measured || measured !== trimmedString(asRecord(blob?.oauthAccount)?.accountUuid)) return null;
+  return usageFromBlob(blob);
+}
+
+/** `cachedUsageUtilization` out of a parsed `.claude.json`, as wire bars. */
+function usageFromBlob(blob: Record<string, unknown> | null): UsageLimitsResponse {
   const cached = asRecord(blob?.cachedUsageUtilization);
   if (!cached) return { limits: [], fetchedAtMs: null };
 

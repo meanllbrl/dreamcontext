@@ -322,7 +322,9 @@ function windows(limits: UsageLimitsResponse, now: number): {
  *
  * ── OBSERVATION BEATS FORECAST ────────────────────────────────────────────────────────
  * `opts.rejectedUntil` is consulted FIRST, before any percentage. An account the API has
- * actually refused stays out until its window reopens even if its own cache reports 0%.
+ * actually refused stays out until its window reopens, whatever a forecast percent says. A
+ * window that reopens EARLY is proven by a later, identity-checked reading of that same window
+ * and ends the refusal before it reaches this list (`readAccountRejections`).
  *
  * ── LAST RESORT: signed in, but unmeasurable ──────────────────────────────────────────
  * Some accounts publish no usage numbers at all. Measured 2026-09-05 on a Max account:
