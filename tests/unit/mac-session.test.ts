@@ -199,9 +199,44 @@ describe('start (AC3) and Return (AC10)', () => {
     expect(notes.some(([t]) => /new address/.test(t))).toBe(true);
     await s.stop();
   });
+
+  it('Return lands the phone\'s tabs of the exposed projects AFTER the devices are signed out, before the tunnel stops', async () => {
+    const landed: Array<[readonly string[], number]> = [];
+    let validAtLanding: boolean | null = null;
+    let id = '';
+    const s = new MacSession(deps({
+      landPhoneTabs: async (vaults, o) => { validAtLanding = auth.store.isValidDevice(id); landed.push([vaults, o.waitMs]); events.push('land'); return 2; },
+    }));
+    await s.start({ vaults: ['proj', 'other'] });
+    id = auth.store.createDevice('iPhone');
+    events = [];
+    await s.stop();
+    expect(landed).toEqual([[['proj', 'other'], 2_000]]);
+    expect(validAtLanding).toBe(false);
+    expect(events.indexOf('release')).toBeLessThan(events.indexOf('land'));
+    expect(events.indexOf('land')).toBeLessThan(events.indexOf('tunnel:stop'));
+  });
+
+  it('quitting the app with Mac mode on lands them on a short lock wait; a landing that throws never blocks the Return', async () => {
+    const waits: number[] = [];
+    const s = new MacSession(deps({ landPhoneTabs: async (_v, o) => { waits.push(o.waitMs); throw new Error('the desktop roster is locked'); } }));
+    await s.start({ vaults: ['proj'] });
+    await s.stop({ shutdown: true });
+    expect(waits).toEqual([200]);
+    expect(s.status().phase).toBe('off');
+    expect(existsSync(statePathOf(home))).toBe(false);
+  });
 });
 
 describe('crash recovery (AC12)', () => {
+  it('boot recovery lands a crashed run\'s phone tabs for the projects it had exposed', async () => {
+    writeFileSync(statePathOf(home), JSON.stringify({ on: true, serverPid: 99999, tunnelPid: null, tunnelBin: null, startedAt: 'x', priorLpm: null, sleepDisabledByUs: false, url: null, mode: 'quick', exposedVaults: ['proj'] }), { mode: 0o600 });
+    const landed: Array<readonly string[]> = [];
+    const s = new MacSession(deps({ landPhoneTabs: async (vaults) => { landed.push(vaults); return 1; } }));
+    expect(await s.recoverOnBoot()).toBe(true);
+    expect(landed).toEqual([['proj']]);
+  });
+
   function plantState(tunnelPid: number) {
     writeFileSync(statePathOf(home), JSON.stringify({ on: true, serverPid: 99999, tunnelPid, tunnelBin: 'x', startedAt: 'x', priorLpm: { battery: 1, ac: 0 }, sleepDisabledByUs: true, url: 'https://a.trycloudflare.com', mode: 'quick' }), { mode: 0o600 });
   }

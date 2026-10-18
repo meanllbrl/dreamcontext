@@ -4,7 +4,8 @@
  *   start  = preflight (setup done, `sudo -n` works)
  *            → phone listener → cloudflared (pinned) → reachability probe → power → state
  *   stop   = (Return) phone sessions let go (4401, children detach) → every Mac device revoked
- *            → tunnel + watchdog stop → phone listener stop → power restored → state cleared
+ *            → the phone's tabs land on the desktop → tunnel + watchdog stop → phone listener
+ *            stop → power restored → state cleared
  *
  * Nothing transfers and nothing locks: the work never leaves this laptop. The tunnel never
  * closes on its own (owner decision); only Return closes it. `state.json` lets the next boot
@@ -38,7 +39,8 @@ export interface MacState {
   sleepDisabledByUs: boolean;
   url: string | null;
   mode: 'quick' | 'fixed';
-  /** The chosen projects, for REPORTING only (`status`). Never restored: a crash ends Mac mode. */
+  /** The chosen projects, for REPORTING (`status`) and for boot recovery to land their phone
+   *  tabs on the desktop. Never re-exposed: a crash ends Mac mode. */
   exposedVaults?: string[];
   /** The thermal governor's ledger: a crash leaves it here and boot recovery releases it. */
   clamped?: thermal.LedgerEntry[];
@@ -78,6 +80,9 @@ export interface MacSessionDeps {
   setExposedVaults?: (names: readonly string[]) => void;
   /** Return semantics on the chat registry: phone-held sessions let go, nothing cut. */
   releasePhoneSessions: () => number;
+  /** Return semantics on the rosters: the phone's tabs of each exposed project move into the
+   *  desktop's tab list (agent-sessions.ts `landPhoneRosterOnDesktop`). How many landed. */
+  landPhoneTabs?: (vaults: readonly string[], o: { waitMs: number }) => Promise<number>;
   notify: (title: string, body: string) => void;
   powerRun?: power.PowerRunner;
   /** Battery poll interval; defaults to MAC_BATTERY_POLL_MS (the verify seam shortens it). */
@@ -334,6 +339,8 @@ export class MacSession {
       // Planned: phone-held chats let go FIRST (4401, detach), so the revocation cuts nothing.
       try { this.d.releasePhoneSessions(); } catch { /* best-effort */ }
       try { this.d.auth().clearLoginToken(); this.d.auth().store.revokeAllLocal(); } catch { /* best-effort */ }
+      // Signed out, so no phone save can race it: what the phone had open lands on the desktop.
+      try { await this.d.landPhoneTabs?.(this.vaults, { waitMs: o.shutdown ? 200 : 2_000 }); } catch { /* best-effort */ }
       await this.teardown(this.state?.priorLpm ?? null, this.state?.sleepDisabledByUs ?? false, releaseDeadlineAt);
     })().finally(() => { this.stopping = null; });
     return this.stopping;
@@ -385,6 +392,8 @@ export class MacSession {
       try { (this.d.kill ?? ((p, sig) => process.kill(p, sig)))(s.tunnelPid, 'SIGTERM'); } catch { /* gone */ }
     }
     try { this.d.auth().store.revokeAllLocal(); } catch { /* best-effort */ }
+    // The crashed run's phone tabs land too: the next launch resumes them on the desktop.
+    try { await this.d.landPhoneTabs?.(s.exposedVaults ?? [], { waitMs: 2_000 }); } catch { /* best-effort */ }
     if (s.sleepDisabledByUs || s.priorLpm) {
       try { await power.restorePower(s.priorLpm, this.d.powerRun); } catch { /* reported by status */ }
     }
