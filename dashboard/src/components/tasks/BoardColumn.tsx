@@ -120,7 +120,7 @@ export function BoardColumn({
                 <div role="button" tabIndex={0} aria-expanded={!sub.collapsed} onClick={sub.onToggleCollapse} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sub.onToggleCollapse?.(); } }} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 6px 8px', cursor: 'pointer' }}>
                   <span style={{ fontSize: 9, color: 'var(--color-text-tertiary)', transition: 'transform .15s', transform: sub.collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>▸</span>
                   <span style={{ width: 7, height: 7, borderRadius: '50%', background: sub.color, flex: '0 0 auto' }} />
-                  <span style={{ fontFamily: 'var(--font-family-text)', fontWeight: 600, fontSize: 11.5, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-secondary)' }}>{sub.label}</span>
+                  <span lang="und" style={{ fontFamily: 'var(--font-family-text)', fontWeight: 600, fontSize: 11.5, letterSpacing: '0.04em', color: 'var(--color-text-secondary)' }}>{sub.label}</span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{sub.count}</span>
                   <div style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
                 </div>

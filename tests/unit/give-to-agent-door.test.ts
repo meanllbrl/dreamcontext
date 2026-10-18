@@ -90,3 +90,34 @@ describe('task surfaces reduce to the one door', () => {
     expect(code(read('dashboard/src/ProjectInstance.tsx')).match(/<GiveToAgentDialog \/>/g)).toHaveLength(1);
   });
 });
+
+/**
+ * End review, finding 4: the door is a modal a keyboard can use. Focus goes in on open and back
+ * to the trigger on close, Tab wraps inside it, and Escape closes it on the chooser and on the
+ * Develop panel, standing aside only while a composer (which handles its own Escape) is shown.
+ */
+describe('the door works from the keyboard', () => {
+  const dialog = code(read('dashboard/src/components/agent-door/GiveToAgentDialog.tsx'));
+
+  it('remembers the trigger on open and returns focus to it on close', () => {
+    expect(dialog).toMatch(/returnFocus\.current = active/);
+    expect(dialog).toMatch(/const close = \(\) => \{[\s\S]*?returnFocus\.current[\s\S]*?back\.focus\(\)/);
+  });
+
+  it('moves focus into the dialog when it opens or its panel changes', () => {
+    expect(dialog).toMatch(/useEffect\(\(\) => \{\s*if \(!open \|\| composerOwnsKeyboard\) return;\s*const root = dialogRef\.current;[\s\S]*?first\?\.focus\(\)/);
+    expect(dialog).toContain('ref={dialogRef}');
+  });
+
+  it('traps Tab and Shift+Tab inside the dialog', () => {
+    expect(dialog).toContain('onKeyDown={trapTab}');
+    expect(dialog).toMatch(/e\.shiftKey && \(active === first[\s\S]*?last\.focus\(\)/);
+    expect(dialog).toMatch(/!e\.shiftKey && \(active === last[\s\S]*?first\.focus\(\)/);
+  });
+
+  it('Escape closes the chooser and the Develop panel, and skips only the composers', () => {
+    expect(dialog).toContain("COMPOSER_CHOICES: readonly GiveToAgentPreset[] = ['agent', 'custom', 'author']");
+    expect(dialog).toMatch(/if \(!open \|\| composerOwnsKeyboard\) return;\s*const onKey/);
+    expect(dialog).not.toMatch(/if \(!open \|\| choice\) return/);
+  });
+});

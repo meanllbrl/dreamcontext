@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useTask, useTaskReadiness } from '../../hooks/useTasks';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
@@ -13,6 +13,11 @@ import { taskName } from '../tasks/boardModel';
 import './GiveToAgentDialog.css';
 
 const CHOICES: GiveToAgentPreset[] = ['develop', 'agent', 'custom', 'author'];
+
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** The choices that hand over to a composer, which then owns the keyboard (its own Escape). */
+const COMPOSER_CHOICES: readonly GiveToAgentPreset[] = ['agent', 'custom', 'author'];
 
 /** Whether the in-app agent can start sessions here (desktop, prerequisites, surface on). */
 function useAgentReady(): boolean {
@@ -47,7 +52,14 @@ export function GiveToAgentDialog() {
   const [choice, setChoice] = useState<GiveToAgentPreset | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Where focus was when the door opened (the button that opened it), so closing returns it.
+  const returnFocus = useRef<HTMLElement | null>(null);
+
   useInstanceEvent<GiveToAgentDetail | undefined>(GIVE_TO_AGENT_EVENT, (detail) => {
+    const active = document.activeElement;
+    // A second open while the door is up keeps the original trigger as the place to return to.
+    if (active instanceof HTMLElement && !dialogRef.current?.contains(active)) returnFocus.current = active;
     setOpen(detail ?? {});
     setChoice(detail?.preset ?? (detail?.slug ? null : 'author'));
     setError(null);
@@ -56,14 +68,49 @@ export function GiveToAgentDialog() {
   const slug = open?.slug ?? '';
   const { data: task, isLoading } = useTask(slug);
   const readiness = useTaskReadiness(slug, !!open && choice === 'develop');
-  const close = () => { setOpen(null); setChoice(null); setError(null); };
+  const close = () => {
+    setOpen(null);
+    setChoice(null);
+    setError(null);
+    const back = returnFocus.current;
+    returnFocus.current = null;
+    // After React has removed the dialog, so focus lands on the trigger, not on nothing.
+    if (back && back.isConnected) requestAnimationFrame(() => back.focus());
+  };
+  const composerOwnsKeyboard = choice !== null && COMPOSER_CHOICES.includes(choice);
 
+  // Escape closes the door on the chooser and on the Develop panel. An embedded composer
+  // handles its own Escape, so the door stays out of its way.
   useEffect(() => {
-    if (!open || choice) return;
+    if (!open || composerOwnsKeyboard) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, choice]);
+  }, [open, composerOwnsKeyboard]);
+
+  // Focus moves into the dialog when it opens and when its panel changes (chooser ↔ Develop).
+  useEffect(() => {
+    if (!open || composerOwnsKeyboard) return;
+    const root = dialogRef.current;
+    if (!root) return;
+    const first = root.querySelector<HTMLElement>('[data-give-choice]:not([disabled]), .gta-btn--primary:not([disabled])')
+      ?? root.querySelector<HTMLElement>(FOCUSABLE);
+    first?.focus();
+  }, [open, choice, composerOwnsKeyboard, !!task, readiness.data?.ready]);
+
+  /** Tab and Shift+Tab wrap inside the dialog: focus never leaves it for the page behind. */
+  const trapTab = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const root = dialogRef.current;
+    if (!root) return;
+    const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    if (items.length === 0) { e.preventDefault(); return; }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !root.contains(active))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (active === last || !root.contains(active))) { e.preventDefault(); first.focus(); }
+  };
 
   if (!open) return null;
 
@@ -93,6 +140,9 @@ export function GiveToAgentDialog() {
         aria-labelledby="gta-title"
         data-give-to-agent={slug || 'new'}
         data-give-ready={!slug || task ? 'true' : undefined}
+        ref={dialogRef}
+        tabIndex={-1}
+        onKeyDown={trapTab}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="gta-head">

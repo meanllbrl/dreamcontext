@@ -197,6 +197,11 @@ export function useUpdateTask() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.slug] });
+      // A status or body change can move a task into or out of the Inbox's reviews (and its
+      // rail badge): an approval from the board, a criterion ticked on the page.
+      if (variables.updates.status !== undefined || variables.updates.body !== undefined) {
+        queryClient.invalidateQueries({ queryKey: ['inbox'] });
+      }
       // A task's `objectives` link feeds the roadmap rollup (progress, member tasks,
       // forecast) — refresh it so the roadmap reflects the change immediately.
       if (variables.updates.objectives !== undefined) {

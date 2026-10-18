@@ -133,3 +133,17 @@ describe('task screens: no bare JSX text in the new files', () => {
     });
   }
 });
+
+/**
+ * End review, finding 7: a board sub-group label is often data (an assignee, a version, a custom
+ * status). CSS `uppercase` turns a Turkish `i` into `I` (not `İ`) under an English document, so
+ * the label keeps its case and is marked `lang="und"`, like every other task-authored name.
+ */
+describe('board sub-group labels keep the case they were written in', () => {
+  it('BoardColumn renders sub.label without text-transform, in a lang="und" span', () => {
+    const src = code(read('components/tasks/BoardColumn.tsx'));
+    const label = /<span lang="und" style=\{\{[^}]*\}\}>\{sub\.label\}<\/span>/.exec(src)?.[0] ?? '';
+    expect(label, 'the sub-group label span').not.toBe('');
+    expect(label).not.toMatch(/textTransform/);
+  });
+});

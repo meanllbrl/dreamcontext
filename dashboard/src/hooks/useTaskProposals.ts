@@ -114,6 +114,8 @@ function useInvalidate() {
   return () => Promise.all([
     queryClient.invalidateQueries({ queryKey: KEY }),
     queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+    // The Inbox and its rail badge count these same cards (`['inbox']` covers `['inbox', 'count']`).
+    queryClient.invalidateQueries({ queryKey: ['inbox'] }),
   ]);
 }
 

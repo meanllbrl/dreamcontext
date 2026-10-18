@@ -63,10 +63,34 @@ describe('the task screens have no raw HTML sink', () => {
     expect(src).toMatch(/import DOMPurify from 'dompurify'/);
     const fn = /export function renderMarkdown\(text: string\): string \{[\s\S]*?\n\}/.exec(src)?.[0] ?? '';
     expect(fn).toMatch(/const html = marked\.parse\(/);
-    expect(fn).toMatch(/return DOMPurify\.sanitize\(html\);/);
+    expect(fn).toMatch(/return purify\.sanitize\(html, SANITIZE_CONFIG\);/);
     // Nothing returns unsanitized HTML on another path.
     expect(fn.match(/return /g)).toHaveLength(2); // the empty-text early return and the sanitized one
     expect(fn).toMatch(/if \(!text\) return '';/);
+  });
+
+  // End review, finding 6: no form controls, and no image that loads from another origin.
+  it('the sanitizer forbids form controls and drops a remote image src, on its own instance', () => {
+    const src = code(read(join(SRC, 'components/tasks/page/taskMarkdown.ts')));
+    expect(src).toMatch(/const SANITIZE_CONFIG = \{ FORBID_TAGS: \['form', 'input', 'button', 'iframe'\] \};/);
+    // A private instance: the hook must not change the other DOMPurify callers.
+    expect(src).toMatch(/const purify = DOMPurify\(\);/);
+    expect(src).not.toMatch(/DOMPurify\.addHook/);
+    const hook = /purify\.addHook\('afterSanitizeAttributes', \(node\) => \{[\s\S]*?\n\}\);/.exec(src)?.[0] ?? '';
+    expect(hook).toMatch(/node\.nodeName !== 'IMG'/);
+    expect(hook).toMatch(/removeAttribute\('srcset'\)/);
+    expect(hook).toMatch(/!imageSourceAllowed\(src, window\.location\.href\)\) el\.removeAttribute\('src'\)/);
+  });
+
+  it('imageSourceAllowed keeps data: and same-origin images and drops the rest', async () => {
+    const { imageSourceAllowed } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
+    const base = 'http://localhost:4173/tasks/fix-login';
+    expect(imageSourceAllowed('data:image/png;base64,AAAA', base)).toBe(true);
+    expect(imageSourceAllowed('/api/files/shot.png', base)).toBe(true);
+    expect(imageSourceAllowed('http://localhost:4173/a.png', base)).toBe(true);
+    expect(imageSourceAllowed('https://tracker.example/p.gif?u=1', base)).toBe(false);
+    expect(imageSourceAllowed('//tracker.example/p.gif', base)).toBe(false);
+    expect(imageSourceAllowed('http://localhost:9999/a.png', base)).toBe(false);
   });
 
   it('mermaid is reached only through lib/mermaidRender (securityLevel strict)', () => {
