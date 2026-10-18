@@ -33,7 +33,7 @@ export function InsightBlock({ summary, cache, full, options, appPage, onAppPage
   // when the cache arrives or the render changes.
   const [ref, box] = useBlockSize();
   const entry = summary ? chartEntry(summary.render) : null;
-  const fill = !!entry && !cache?.app && !cache?.html && entry.fit === 'fill';
+  const fillsCell = !!entry && !cache?.app && !cache?.html && entry.fit === 'fill';
   const nav = !!cache?.app && options.nav === true;
   const frameFill = useContext(LabFrameFill) && !full && (!!cache?.app || !!cache?.html);
   const page = appPage ?? (typeof options.page === 'string' && options.page ? options.page : null);
@@ -41,8 +41,8 @@ export function InsightBlock({ summary, cache, full, options, appPage, onAppPage
   return (
     <div
       ref={ref}
-      className={fill || nav || frameFill ? 'lab-block-insight lab-block-insight--fill' : 'lab-block-scroll lab-block-insight lab-block-insight--scroll'}
-      data-insight-fit={fill || nav || frameFill ? 'fill' : 'scroll'}
+      className={fillsCell || nav || frameFill ? 'lab-block-insight lab-block-insight--fill' : 'lab-block-scroll lab-block-insight lab-block-insight--scroll'}
+      data-insight-fit={fillsCell || nav || frameFill ? 'fill' : 'scroll'}
     >
       {!summary || !entry ? (
         <div className="lab-block-empty">{t('lab.blocks.insight.missing')}</div>
@@ -51,7 +51,7 @@ export function InsightBlock({ summary, cache, full, options, appPage, onAppPage
           <InsightBody summary={summary} cache={cache ?? null} full={full} fill={false} height={Math.floor(box.height)} app={app} />
         </div>
       ) : (
-        <InsightBody summary={summary} cache={cache ?? null} full={full} fill={fill} height={Math.floor(box.height)} app={app} />
+        <InsightBody summary={summary} cache={cache ?? null} full={full} fill={fillsCell} height={Math.floor(box.height)} app={app} />
       )}
     </div>
   );

@@ -115,7 +115,7 @@ export function BoardViewTabs(p: BoardViewTabsProps) {
       {openView && menuPos && createPortal(
         <>
           <div aria-hidden="true" data-backdrop onClick={closeMenu} style={{ position: 'fixed', inset: 0, zIndex: 110 }} />
-          <div className="bd-pop" style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, width: 156, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', borderRadius: 9, boxShadow: 'var(--shadow-lg)', padding: 5, zIndex: 120 }}>
+          <div className="bd-pop bd-viewtab-menu" style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, width: 156, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', borderRadius: 9, boxShadow: 'var(--shadow-lg)', padding: 5, zIndex: 120 }}>
             <button type="button" className="bd-row" onClick={() => { setMenuPos(null); startRename(openView); }} style={{ ...rowBtn, ...menuItem() }}><span style={menuGlyph}>✎</span>{t('board.view.rename')}</button>
             <button type="button" className="bd-row" onClick={() => { p.onDuplicate(openView.id); closeMenu(); }} style={{ ...rowBtn, ...menuItem() }}><span style={menuGlyph}>⧉</span>{t('board.view.duplicate')}</button>
             {openView.removable ? (

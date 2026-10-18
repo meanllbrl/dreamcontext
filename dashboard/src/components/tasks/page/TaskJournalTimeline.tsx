@@ -22,8 +22,9 @@ function JournalPage({ slug, before, shownBefore, isLast, onOlder }: {
   const { t } = useI18n();
   const { data, isLoading, isError } = useTaskJournal(slug, before);
   if (isLoading) return <li className="tkp-meta">{t('taskPage.loading')}</li>;
-  // A failed read is not an empty history: say so, before the empty and the list.
-  if (isError) return <li className="tkp-error" role="alert">{t('taskPage.journal.loadFailed')}</li>;
+  // A failed read is not an empty history: say so, before the empty and the list. A failed
+  // background refetch keeps the entries already shown.
+  if (isError && !data) return <li className="tkp-error" role="alert">{t('taskPage.journal.loadFailed')}</li>;
   const entries = data?.entries ?? [];
   if (before === null && entries.length === 0) return <li className="tkp-empty">{t('tasks.history_empty')}</li>;
   const older = data ? data.total - shownBefore - entries.length : 0;

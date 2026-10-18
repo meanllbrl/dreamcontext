@@ -15,7 +15,6 @@ import '../MetricTable.css';
 import './dataBlocks.css';
 import './segments.css';
 import '../explorer/explorer.css';
-import { fill } from '../../../lib/fill';
 
 /** The column keys a segments table sorts by: the dim value, users, or a metric key. */
 export const VALUE_COL = '__value';

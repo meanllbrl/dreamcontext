@@ -237,7 +237,7 @@ function ClaudeVersionRow({ caps }: { caps: Capabilities }) {
   const { install, running, error } = useSystemInstall();
   const row = claudeUpdateRow(caps.claudeUpdate);
   if (!row) return null;
-  const fill = (key: string) => fill(t(key), { installed: row.vars.installed, latest: row.vars.latest });
+  const versionText = (key: string) => fill(t(key), { installed: row.vars.installed, latest: row.vars.latest });
   const updating = running === 'claude-update';
 
   return (
@@ -248,7 +248,7 @@ function ClaudeVersionRow({ caps }: { caps: Capabilities }) {
       />
       <span className="sysdep-name">{t('system.update.title')}</span>
       <span className={`sysdep-status${row.tone === 'ok' ? ' sysdep-status--ok' : row.tone === 'warn' ? ' sysdep-status--missing' : ''}`}>
-        {updating ? fill('system.update.updating') : fill(row.statusKey)}
+        {updating ? versionText('system.update.updating') : versionText(row.statusKey)}
       </span>
       {row.offerUpdate && (
         caps.desktop ? (

@@ -42,6 +42,8 @@ const CASES: [string, string][] = [
   ['components/tasks/Board.css', '.bd-toolbar button'],
   ['components/tasks/Board.css', '.bd-toolbar .bd-seg-btn'],
   ['components/tasks/Board.css', '.bd-viewtabs button'],
+  // Third pass: the view tab's options menu is portalled to <body>, outside .bd-viewtabs.
+  ['components/tasks/Board.css', '.bd-viewtab-menu button'],
 ];
 
 describe('task-screen touch targets are 44px at a phone width', () => {
@@ -69,6 +71,10 @@ describe('task-screen touch targets are 44px at a phone width', () => {
       expect(block, selector).toMatch(/min-height: var\(--space-11\)/);
       expect(block, selector).toMatch(/width: 100%/);
     }
+  });
+
+  it('the view options menu carries the class the phone rule targets', () => {
+    expect(read('components/tasks/BoardViewTabs.tsx')).toContain('<div className="bd-pop bd-viewtab-menu" style=');
   });
 
   it('the column "+" keeps its 24px desktop square, which the phone min-width overrides', () => {

@@ -205,12 +205,14 @@
 .bd-toolbar .bd-seg-btn { min-height: 0; }
 
 /* At a phone's width every toolbar and view-tab control is a 44px target: chips, the
-   include / exclude toggles, Back, the view "⋯" and "+ New view". min-* wins over the inline
+   include / exclude toggles, Back, the view "⋯", "+ New view", and the rows of the view's
+   options menu (portalled to <body>, so outside .bd-viewtabs). min-* wins over the inline
    desktop sizes. */
 @media (max-width: 640px) {
   .bd-toolbar button,
   .bd-toolbar .bd-seg-btn,
-  .bd-viewtabs button {
+  .bd-viewtabs button,
+  .bd-viewtab-menu button {
     min-height: var(--space-11);
     min-width: var(--space-11);
   }

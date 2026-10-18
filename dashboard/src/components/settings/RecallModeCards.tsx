@@ -18,6 +18,7 @@ import { SettingChoice } from './SettingRow';
 import { EmbeddingModelCard } from './EmbeddingModelCard';
 import { CloudRecallCard } from './CloudRecallCard';
 import './RecallModeCards.css';
+import { fill } from '../../lib/fill';
 
 /**
  * Settings → Recall: every way of fetching memory back, side by side, with the same facts for each
@@ -55,10 +56,6 @@ function isPlainMode(id: RecallOptionId): id is 'haiku' | 'raw' | 'off' {
 
 function numberLocale(locale: string): string {
   return locale === 'tr' ? 'tr-TR' : 'en-US';
-}
-
-function fill(template: string, values: Record<string, string | number>): string {
-  return Object.entries(values).reduce((out, [k, v]) => out.split(`{${k}}`).join(String(v)), template);
 }
 
 function usd(n: number): string {

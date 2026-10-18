@@ -13,7 +13,8 @@ const read = (p: string): string => readFileSync(join(SRC, p), 'utf-8');
 describe('a failed read says so', () => {
   it('the journal timeline: an error is an alert, checked before the empty history', () => {
     const src = read('components/tasks/page/TaskJournalTimeline.tsx');
-    const err = src.indexOf("if (isError) return <li className=\"tkp-error\" role=\"alert\">{t('taskPage.journal.loadFailed')}</li>;");
+    // Only when nothing was loaded: a failed background refetch keeps the entries on screen.
+    const err = src.indexOf("if (isError && !data) return <li className=\"tkp-error\" role=\"alert\">{t('taskPage.journal.loadFailed')}</li>;");
     const empty = src.indexOf("t('tasks.history_empty')");
     expect(err).toBeGreaterThan(0);
     expect(err).toBeLessThan(empty);
@@ -23,7 +24,7 @@ describe('a failed read says so', () => {
     const src = read('pages/ReleasesPage.tsx');
     expect(src).toContain('const ready = (!!releases.data || releases.isError) && (!!unreleased.data || unreleased.isError);');
     expect(src).toContain("const failed = <p className=\"rel-empty\" role=\"alert\">{t('releases.loadFailed')}</p>;");
-    expect(src).toContain('{unreleased.isError ? failed : unreleased.data');
-    expect(src).toContain('{releases.isError ? failed : releases.data');
+    expect(src).toContain('{unreleased.isError && !unreleased.data ? failed : unreleased.data');
+    expect(src).toContain('{releases.isError && !releases.data ? failed : releases.data');
   });
 });

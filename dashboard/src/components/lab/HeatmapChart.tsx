@@ -117,14 +117,14 @@ export function heatColor(values: readonly number[], scale: HeatScale, colorInde
     return { color: s.color, ink: s.ink, steps, min, max: hi, mid: null };
   }
   const stepOf = (t: number) => HUE_RAMP[Math.round(Math.min(1, Math.max(0, t)) * (HUE_RAMP.length - 1))];
-  const fill = (st: (typeof HUE_RAMP)[number]) => (st.mix === 100
+  const stepColor = (st: (typeof HUE_RAMP)[number]) => (st.mix === 100
     ? `var(--viz-cat-${slot})`
     : `color-mix(in srgb, var(--viz-cat-${slot}) ${st.mix}%, ${st.toward === 'surface' ? 'var(--viz-surface)' : 'var(--lab-heat-far)'})`);
   const inkOf = (st: (typeof HUE_RAMP)[number]) => (st.ink === 'text' ? 'var(--color-text)' : st.ink === 'hue' ? `var(--lab-cat-ink-${slot})` : 'var(--lab-heat-far-ink)');
   return {
-    color: (v) => fill(stepOf(s.t(v))),
+    color: (v) => stepColor(stepOf(s.t(v))),
     ink: (v) => inkOf(stepOf(s.t(v))),
-    steps: HUE_RAMP.map(fill),
+    steps: HUE_RAMP.map(stepColor),
     min,
     max: hi,
     mid: null,
