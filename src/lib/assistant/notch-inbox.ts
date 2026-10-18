@@ -5,6 +5,8 @@ import { listClaudeAccounts } from '../claude-accounts.js';
 import { readAccountRejections } from '../claude-limit-rejections.js';
 import { getChat, onChatChange, type ChatChange, type ChatEntry } from './chat-registry.js';
 import { isDelegatedSession } from './delegations.js';
+import { isSuperChild } from '../super/store.js';
+import { isSuperEventTurn } from '../super/inbox.js';
 
 /**
  * The notch's INBOX: the things that happened while the owner was looking somewhere else.
@@ -146,16 +148,24 @@ function onChange({ entry, from }: ChatChange): void {
   // idle: a turn ended. Only a turn that was running is a finish (not a restored tab settling).
   if (entry.status !== 'idle' || from !== 'working') return;
   if (entry.origin === 'assistant' || isDelegatedSession(id)) return;
+  // Handed over (plan-r7 D16): a child's turn ends reach the Super Agent, and a turn the
+  // Super Agent's inbox opened is its own bookkeeping, not news for the owner.
+  if (superQuiet(id)) return;
   clearFinishTimer(id);
   const t = setTimeout(() => {
     finishTimers.delete(id);
     const now = getChat(id);
-    if (!now || now.status !== 'idle' || isDelegatedSession(id)) return;
+    if (!now || now.status !== 'idle' || isDelegatedSession(id) || superQuiet(id)) return;
     if (lookingAt() === now.vault) return;
     recordFinished(now);
   }, FINISH_DEBOUNCE_MS);
   t.unref?.();
   finishTimers.set(id, t);
+}
+
+/** A super child while handed over, or a super chat turn its inbox opened (D16). */
+function superQuiet(sessionId: string): boolean {
+  return isSuperChild(sessionId) || isSuperEventTurn(sessionId);
 }
 
 /** Exported for tests: a finished turn, recorded as if its debounce had already stood. */

@@ -52,6 +52,7 @@ const deny = (why: string, scope?: RouteScope): RoutePolicy => ({ allow: false, 
 const MAC_ADMIN = 'laptop-only: Mac mode administration (setup, start/stop, password, devices, tunnel) is driven from the laptop';
 const SERVER_ADMIN = 'laptop-only: shuts the dashboard server down';
 const WINDOW = 'laptop-only: drives the desktop app\'s own windows';
+const SUPER = 'laptop-only: the Super Agent hand-over drives this Mac\'s Chat screen and the project\'s chats';
 const ASSISTANT = 'laptop-only: the dreamcontext Assistant belongs to this Mac\'s desktop session (it drives every project and the screen)';
 const INSTALL = 'laptop-only: installs, updates or downloads software on this Mac';
 const SECRET = 'laptop-only: writes or reveals a secret, key or token';
@@ -257,6 +258,13 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/assistant/ui/:verb': deny(ASSISTANT),
   'POST /api/assistant/look': deny(ASSISTANT),
   'POST /api/window/:verb': deny(WINDOW),
+  'POST /api/super/v/:verb': deny(SUPER),
+  'GET /api/super/state': deny(SUPER),
+  'POST /api/super/enable': deny(SUPER),
+  'POST /api/super/disable': deny(SUPER),
+  'POST /api/super/layout': deny(SUPER),
+  'POST /api/super/activity': deny(SUPER),
+  'POST /api/super/recap': deny(SUPER),
 
   // The chat's mascot
   'GET /api/sleepy/video': agnostic('read: the mascot clip (mp4 from a fixed set); side-effect free', 'media'),

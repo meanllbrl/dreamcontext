@@ -64,6 +64,16 @@ function chatSpawnSites(src: string): Array<{ name: string; index: number; befor
     const index = m.index ?? 0;
     const head = src.slice(0, index);
     const declAt = head.lastIndexOf('= useCallback(');
+    // A handler assigned to a ref (`superCommandRef.current = async (…) => {`, the Super Agent's
+    // command executor) is its own enclosing function: without this cut its spawn would be
+    // credited to the useCallback above it, and that callback's neighbours' code (a `.dispose()`
+    // of an unrelated lease) would pass for this site's own.
+    const refAt = Math.max(-1, ...[...head.matchAll(/(\w+Ref)\.current = (?:async )?\(/g)].map((r) => r.index ?? -1));
+    if (refAt > declAt) {
+      const ref = /(\w+Ref)\.current/.exec(head.slice(refAt))?.[1] ?? 'ref';
+      out.push({ name: ref, index, before: head.slice(refAt) });
+      continue;
+    }
     const nameAt = head.lastIndexOf('const ', declAt);
     out.push({
       name: head.slice(nameAt + 6, head.indexOf(' ', nameAt + 6)),

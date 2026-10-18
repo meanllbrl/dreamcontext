@@ -36,12 +36,14 @@ const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 
 describe('chat modes — client menu <-> server allowlist mirror', () => {
   it('the menu offers exactly the modes the server accepts, in the same order', () => {
-    // PICKER_MODES, not CHAT_MODES: `assistant` is bound to the hidden vault and never offered.
+    // PICKER_MODES, not CHAT_MODES: `assistant` is bound to the hidden vault and `super` is
+    // started only by the hand-over button; neither is ever offered.
     expect(CHAT_MODE_ROWS.map((r) => r.id)).toEqual([...PICKER_MODES]);
     // Basic leads the list; Train Me is last.
     expect(CHAT_MODE_ROWS.map((r) => r.id)).toEqual(['basic', 'plan', 'develop', 'train']);
-    expect([...CHAT_MODES]).toEqual(['basic', 'plan', 'develop', 'train', 'assistant']);
+    expect([...CHAT_MODES]).toEqual(['basic', 'plan', 'develop', 'train', 'assistant', 'super']);
     expect([...CHAT_MODES]).toContain('assistant');
+    expect(CHAT_MODE_ROWS.map((r) => r.id as string)).not.toContain('super');
   });
 
   it('both sides default to the same mode', () => {

@@ -72,11 +72,16 @@ import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '..
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
+import { clearSuperNote, peekSuperNote, superIndex, superRootOfChild } from '../../lib/super/store.js';
+import { SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
+import {
+  attachSuperInbox, markSuperEventTurn, stashHeldOwnerTexts, superSocketAttached, superTurnEnded, takeHeldOwnerTexts,
+} from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
-import { deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
+import { deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import {
   CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, liveChatsSnapshot, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
@@ -308,6 +313,33 @@ export function assistantAllowedTools(autonomy: Autonomy): string[] {
   if (autonomy === 'auto') return ['--allowedTools', 'Bash(dreamcontext assistant:*)'];
   if (autonomy === 'ask') return ['--allowedTools', ASSISTANT_READ_TOOLS.join(',')];
   return [];
+}
+
+/**
+ * Who may open a chat in `super` mode (plan-r7 D3): exactly the vault's ONE recorded super
+ * session (`POST /api/super/enable` mints it), by pin or resume id — a same-id respawn passes,
+ * any other id is a second super agent (409), and so is a vault with no session yet. Never from
+ * the phone (403: the hand-over is the desktop's). Read from the in-memory index (no disk on the
+ * upgrade path).
+ */
+export function superUpgradeRefusal(o: {
+  mode: string; phone: boolean; contextRoot: string; resumeId: string; sessionId: string;
+}): 403 | 409 | null {
+  if (o.mode !== 'super') return null;
+  if (o.phone) return 403;
+  const recorded = superIndex(o.contextRoot).session;
+  const asked = o.resumeId || o.sessionId;
+  return recorded && asked === recorded ? null : 409;
+}
+
+/**
+ * The Super Agent follows the vault's permission switch like any chat (plan-r7 D15, owner
+ * decision 14: no envelope, no gate). In an `auto` vault its OWN verbs are pre-approved so a
+ * classifier ask never stalls the queue; ADDITIVE, exactly the Assistant's precedent above.
+ * Bypass needs nothing. Never on any other spawn.
+ */
+export function superAllowedTools(isSuper: boolean, bypass: boolean): string[] {
+  return isSuper && !bypass ? ['--allowedTools', 'Bash(dreamcontext super:*)'] : [];
 }
 
 /**
@@ -942,6 +974,12 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // Selects a system-prompt append, not an argv element — an unknown value degrades to
     // plain Claude Code rather than to a half-applied mode. See sanitizeChatMode.
     const mode = sanitizeChatMode(url.searchParams.get('mode'), vault);
+    // The project's Super Agent (plan-r7 D3): exactly ONE super session per vault, the one the
+    // hand-over recorded (`POST /api/super/enable` mints it). A different id is a second super
+    // agent and is refused; a same-id respawn (account switch, Resume, reattach) passes. The
+    // phone never runs the hand-over (D4), and no session recorded yet means no super chat.
+    const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: join(projectRoot, '_dream_context'), resumeId, sessionId });
+    if (superRefused) { rejectUpgrade(socket, superRefused); return; }
     // Which Claude ACCOUNT this session runs on. '' = none requested, which resolves to the
     // preferred account (and, with no preferred account, to account #0 — the real HOME, i.e.
     // exactly today's behaviour). An id that is not in the register is REFUSED below rather
@@ -1316,6 +1354,9 @@ export function startChatSession(
 
   const contextRoot = join(projectRoot, '_dream_context');
   const isAssistant = mode === 'assistant';
+  /** The project's Super Agent (task chat-gets-a-super-agent-mode…): its inbox, the owner-frame
+   *  hold (D8) and its own verbs' pre-approval under `auto` (D15). */
+  const isSuper = mode === 'super';
   const assistantConfig = isAssistant ? (readAssistantConfig() ?? DEFAULT_ASSISTANT_CONFIG) : null;
 
   // Which Claude account this process is about to inherit. Captured BEFORE the spawn (it is
@@ -1662,6 +1703,7 @@ export function startChatSession(
     ...(spawnModel ? ['--model', spawnModel] : []),
     ...(spawnEffort ? ['--effort', spawnEffort] : []),
     ...(assistantConfig ? assistantAllowedTools(assistantConfig.autonomy) : []),
+    ...superAllowedTools(isSuper, bypass),
     // Variadic, but every later element is a `--` flag, so it swallows nothing.
     ...chatDeniedToolArgs(scopedCard),
     ...assistantSettingArgs(isAssistant),
@@ -1710,12 +1752,19 @@ export function startChatSession(
   // Window control (`dreamcontext window …`): a project chat drives the surface it is drawn in,
   // through a token that names THIS chat's socket only (lib/window-control.ts). Not the
   // Assistant (it has its own relay) and not a whiteboard card (a scoped identity).
+  // The token carries WHO it is (vault, pin id, mode) for the Super Agent's checks (plan-r7 D4);
+  // the registry entry below is keyed by the same id.
+  const chatRegistryId = pinId || randomUUID();
   const windowControl = !isAssistant && !card
     ? mintWindowToken({
       send: (frame) => {
         if (ws.readyState !== ws.OPEN) return false;
         try { ws.send(JSON.stringify({ type: '_meta', ...frame })); return true; } catch { return false; }
       },
+      vault: opts.vault ?? basename(projectRoot),
+      contextRoot,
+      sessionId: chatRegistryId,
+      mode,
     })
     : null;
   const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
@@ -1744,7 +1793,7 @@ export function startChatSession(
     } catch { seed = {}; }
   }
   const registry: ChatHandle | null = isAssistant || card ? null : registerChat({
-    sessionId: pinId || randomUUID(),
+    sessionId: chatRegistryId,
     conversationId: heldConversation || null,
     vault: opts.vault ?? basename(projectRoot),
     mode,
@@ -1815,6 +1864,12 @@ export function startChatSession(
    * idle child emits no `init`, so that rule cannot open a turn that is not running.
    */
   let turnsInFlight = 0;
+  /** The Super Agent only (D8): a turn its inbox opened is running. Owner frames that arrive
+   *  meanwhile are held and written after that turn's `result`, as their own turn. */
+  let superEventTurnOpen = false;
+  const heldOwnerFrames: Array<Buffer | string> = [];
+  /** Set while a held frame is handed to `onWsMessage`, so it is not held a second time. */
+  let releasingHeld = false;
   /** The request id of the interrupt last written, so ITS `control_response` can be told apart
    *  from a model or mode switch's. */
   let interruptRequestId: string | null = null;
@@ -1972,6 +2027,13 @@ export function startChatSession(
     // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
     reannounceSwitch();
     armDetachReap();
+    // The Super Agent's event turn is over: what the owner typed during it goes now, ONE
+    // message per turn, in order (D8); the next waits for this one's turn to close.
+    if (superEventTurnOpen) superEventTurnOpen = false;
+    if (isSuper && heldOwnerFrames.length > 0) setImmediate(releaseOneHeldOwnerFrame);
+    // The queue's next item may go now (D7): queued AFTER the held owner frames, so an owner
+    // message the event turn held still runs first and the pump then finds the chat busy.
+    if (isSuper) setImmediate(() => superTurnEnded(chatRegistryId));
   };
   /**
    * The CLI acked an interrupt and no `result` followed: nothing was running, or what was
@@ -2018,10 +2080,10 @@ export function startChatSession(
 
   /** Write one NDJSON line to claude's stdin, guarded by `alive` + a try/catch — a write
    *  raced against child exit must never throw and crash the upgrade handler. */
-  const writeStdin = (obj: unknown): void => {
-    if (!alive) return;
-    try { child.stdin.write(JSON.stringify(obj) + '\n'); }
-    catch { /* stream torn down between the alive check and the write — best-effort */ }
+  const writeStdin = (obj: unknown): boolean => {
+    if (!alive) return false;
+    try { child.stdin.write(JSON.stringify(obj) + '\n'); return true; }
+    catch { return false; /* stream torn down between the alive check and the write — best-effort */ }
   };
 
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
@@ -2039,7 +2101,19 @@ export function startChatSession(
       const live = assistantLiveContext();
       if (live) content.push({ type: 'text', text: live });
     }
-    writeStdin({ type: 'user', message: { role: 'user', content } });
+    // The Super Agent hand-over / take-back note (plan-r7 D17) rides on a CHILD's next owner
+    // message, the same way: a second, fixed, server-written block starting with `<`, so the
+    // replay drops it and the owner's bubble and `userSent` keep his text. Read from memory
+    // only; a slash command waits for the next real message; cleared only after a write that
+    // happened (the note it delivered, nothing written meanwhile).
+    const note = registry && !isSuper && !text.startsWith('/') ? peekSuperNote(chatRegistryId) : null;
+    if (note) content.push({ type: 'text', text: SUPER_NOTE_TEXT[note] });
+    // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
+    if (isSuper) markSuperEventTurn(chatRegistryId, false);
+    const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
+    if (note && wrote) {
+      void clearSuperNote(superRootOfChild(chatRegistryId) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
+    }
   };
 
   const sendMeta = (frame: Record<string, unknown>): void => {
@@ -2135,6 +2209,8 @@ export function startChatSession(
   const teardown = (): void => {
     if (!alive) return;
     alive = false;
+    // Owner messages held for the Super Agent outlive this process (M2).
+    stashHeldOwnerFrames();
     deviceSessions.delete(deviceSession);
     // A gone child cannot be mid-turn. `armAccountSwitch` checks `exited` too, but leaving a
     // stale count here would be a lie about the one thing only this side can report.
@@ -2288,6 +2364,8 @@ export function startChatSession(
     detached = false;
     clearDetachTimers();
     bindSocket();
+    // The Super Agent's window gets its state again on every reattach (never polled).
+    if (isSuper) superSocketAttached(chatRegistryId);
     // Tells the client it got the SAME process back and whether a turn is still running —
     // what it missed meanwhile it replays from chat-history.
     sendMeta({ subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 });
@@ -3142,6 +3220,66 @@ export function startChatSession(
     });
   }
 
+  // The Super Agent's inbox (lib/super/inbox.ts): ONE injected event per turn, down the same
+  // chain as an owner message (account switch evaluated first), only while nothing else runs.
+  // The pump decides WHEN (D7); this only writes, and says so with a `super_event` frame first
+  // so the window draws the injected turn as an event chip.
+  if (isSuper && pinId) {
+    // What a previous process of this super session held when it died: written here first, one
+    // per turn, before any event (M2).
+    for (const text of takeHeldOwnerTexts(chatRegistryId)) heldOwnerFrames.push(JSON.stringify({ type: 'user', text }));
+    if (heldOwnerFrames.length > 0) setImmediate(releaseOneHeldOwnerFrame);
+    detachInbox = attachSuperInbox({
+      id: randomUUID(),
+      sessionId: chatRegistryId,
+      attached: () => alive && !detached && ws.readyState === ws.OPEN,
+      idle: () => turnsInFlight === 0 && !superEventTurnOpen && heldOwnerFrames.length === 0 && !stdinEnding(),
+      deliver: (text, kind, childId, cancelled) => new Promise<boolean>((resolve) => {
+        // `cancelled`: the inbox gave up waiting (a slow account switch); the item is still
+        // pending there, so this turn must never be written late.
+        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || heldOwnerFrames.length > 0 || stdinEnding() || !!cancelled?.();
+        if (blocked()) return resolve(false);
+        switchGate = switchGate.then(() => maybeSwitchAccount(text, { resubmit: false })
+          .catch(() => false)
+          .then((held) => {
+            // An owner message that went first in the chain wins: this event waits for idle.
+            if (held || blocked()) return resolve(false);
+            sendMeta({ subtype: SUPER_FRAME_EVENT, kind, child: childId });
+            openTurn();
+            lastSentText = null;
+            superEventTurnOpen = true;
+            registry?.userSent('');
+            const wrote = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+            if (!wrote) superEventTurnOpen = false;
+            resolve(wrote);
+          }));
+      }),
+    });
+  }
+
+  /** The oldest owner frame held for the Super Agent, written now as its own turn (D8). A dead
+   *  process never drops them: they go to its successor (M2). */
+  function releaseOneHeldOwnerFrame(): void {
+    if (!alive) { stashHeldOwnerFrames(); return; }
+    if (superEventTurnOpen || turnsInFlight > 0 || heldOwnerFrames.length === 0) return;
+    const raw = heldOwnerFrames.shift() as Buffer | string;
+    releasingHeld = true;
+    try { onWsMessage(raw); } finally { releasingHeld = false; }
+  }
+
+  /** Hand every held owner text to the next process of this super session (exactly once). */
+  function stashHeldOwnerFrames(): void {
+    if (!isSuper || heldOwnerFrames.length === 0) return;
+    const texts: string[] = [];
+    for (const raw of heldOwnerFrames.splice(0)) {
+      try {
+        const m = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf-8')) as { text?: unknown };
+        if (typeof m.text === 'string' && m.text) texts.push(m.text);
+      } catch { /* not a user frame */ }
+    }
+    stashHeldOwnerTexts(chatRegistryId, texts);
+  }
+
   // ── Autonomy changed under a live Assistant → respawn in place with --resume ─────────
   //
   // Permission mode and `--allowedTools` are argv, so the only way a running Assistant stops
@@ -3258,6 +3396,10 @@ export function startChatSession(
       // is for the successor — it must not run under the old permissions. (Only user frames:
       // an answer or an interrupt belongs to the turn in flight.)
       if (respawnTo !== null) { holdForSuccessor(raw); return; }
+      // The Super Agent is answering an injected event: the owner's message waits for that
+      // turn's end and then runs as its own turn (D8), never folded into the event's.
+      // Held too while earlier held messages wait their turn, so the owner's order is kept.
+      if (isSuper && !releasingHeld && (superEventTurnOpen || heldOwnerFrames.length > 0)) { heldOwnerFrames.push(raw); return; }
       // Auto-switch evaluates BEFORE the turn goes to the CLI — the whole point is that the
       // message does not have to fail first. `maybeSwitchAccount` either sends the turn on
       // this account (the overwhelmingly common answer, and the answer whenever anything is
@@ -3439,6 +3581,15 @@ export function startChatSession(
     if (windowControl && msg.type === 'window_command_result') {
       const r = msg as unknown as { id?: unknown; ok?: unknown; result?: unknown; error?: unknown };
       deliverWindowResult(windowControl.token, r.id, r.ok === true
+        ? { ok: true, result: r.result ?? null }
+        : { ok: false, error: typeof r.error === 'string' ? r.error.slice(0, 300) : 'failed' });
+      return;
+    }
+    // A Super Agent verb the window ran (`delegate`, `answer`): settles only a `super_command`
+    // this same chat's token sent (lib/window-control.ts).
+    if (windowControl && msg.type === 'super_command_result') {
+      const r = msg as unknown as { id?: unknown; ok?: unknown; result?: unknown; error?: unknown };
+      deliverSuperResult(windowControl.token, r.id, r.ok === true
         ? { ok: true, result: r.result ?? null }
         : { ok: false, error: typeof r.error === 'string' ? r.error.slice(0, 300) : 'failed' });
       return;

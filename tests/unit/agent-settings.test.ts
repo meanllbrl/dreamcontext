@@ -83,6 +83,23 @@ describe('lightMode (Settings → Performance → Light mode)', () => {
   });
 });
 
+describe('superAgent (Settings → Chat → Super Agent)', () => {
+  it('is OFF by default on both sides, and for an old blob without the key', () => {
+    expect(DEFAULT_AGENT_SETTINGS.superAgent).toBe(false);
+    expect(coerceAgentSettings({}).superAgent).toBe(false);
+    expect(coerceAgentSettings(null).superAgent).toBe(false);
+    expect(coerceServerAgentSettings({}).superAgent).toBe(false);
+  });
+
+  it('runs one input table through BOTH coercers (lockstep): only an explicit true turns it on', () => {
+    const table: Array<[unknown, boolean]> = [[true, true], [false, false], ['true', false], [1, false], [null, false], [undefined, false], ['', false]];
+    for (const [input, want] of table) {
+      expect(coerceAgentSettings({ superAgent: input as never }).superAgent).toBe(want);
+      expect(coerceServerAgentSettings({ superAgent: input }).superAgent).toBe(want);
+    }
+  });
+});
+
 describe('coerceAgentSettings renderer', () => {
   it('defaults to webgl when the key is absent (old persisted blob)', () => {
     expect(coerceAgentSettings({}).renderer).toBe('webgl');

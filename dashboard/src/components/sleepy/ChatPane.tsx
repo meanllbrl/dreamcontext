@@ -64,6 +64,9 @@ import {
 import { Composer } from './chat/Composer';
 import { readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
 import { shouldInterruptChat } from './chat/interruptKey';
+import { useI18n } from '../../context/I18nContext';
+import { superEventOf } from './super/superHandover';
+import './super/SuperSurface.css';
 import './chat/cards.css';
 import './chat/overlays.css';
 import type {
@@ -526,6 +529,38 @@ function AutomationQuestionComposerLock() {
   );
 }
 
+/**
+ * Replaces the composer of a handed-over Super Agent's child (plan-r7 owner decision 3: the
+ * owner looks and enlarges, and writes only to the Super Agent). The Super Agent's own copy
+ * goes through `t()`, unlike this directory's older English-only components: the hand-over
+ * ships TR + EN from day one.
+ */
+function SuperReadOnlyLine() {
+  const { t } = useI18n();
+  return (
+    <div className="chat-hitlcard-lock super-readonly-line" role="status" data-testid="super-readonly">
+      {t('super.child.readOnly')}
+    </div>
+  );
+}
+
+/** A turn the Super Agent's inbox opened: a small chip naming what happened, never a bubble
+ *  the owner seems to have typed. Only the kind word is shown; the child's id stays out. */
+function SuperEventChip({ text }: { text: string }) {
+  const { t } = useI18n();
+  const ev = superEventOf(text);
+  const kind = ev?.prefix === '[super recap]' ? 'recap'
+    : ev?.prefix === '[super handover]' ? 'handover'
+      : (ev?.rest.split(/\s+/)[0] ?? '');
+  const key = `super.event.${['question', 'idle', 'gone', 'recap', 'handover'].includes(kind) ? kind : 'other'}`;
+  return (
+    <div className="super-event-chip" role="note" data-testid="super-event-chip" data-kind={kind || 'other'}>
+      <span className="super-event-chip-mark" aria-hidden>◆</span>
+      <span>{t(key)}</span>
+    </div>
+  );
+}
+
 // ─── View-only state for the two overlay surfaces (state 3/9's slide-over, state 4's
 //    lightbox). Every OTHER piece of state this pane renders from lives in
 //    `session.getModel()` — or, for the composer's quote (state 11), in `composerScratch`
@@ -555,7 +590,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, idlePlaceholder,
+  canSignInInApp, signInCommand, bare = false, idlePlaceholder, readOnly = false,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -631,6 +666,9 @@ export function ChatPane({
   bare?: boolean;
   /** The composer's idle placeholder, when the host names who is listening. */
   idlePlaceholder?: string;
+  /** A child of the handed-over Super Agent (plan-r7 D10, owner decision 3): the owner looks,
+   *  and writes only to the Super Agent, so the composer is replaced by one line saying so. */
+  readOnly?: boolean;
 }) {
   const [, force] = useReducer((n: number) => n + 1, 0);
   useEffect(() => session.subscribe(() => force()), [session]);
@@ -1630,6 +1668,11 @@ export function ChatPane({
   type Stretch = { stretch: 'lead' | 'follow'; running: boolean } | undefined;
 
   const itemNode = (item: ChatItem, stretch: Stretch): React.ReactNode => {
+    // A turn the Super Agent's inbox injected — live (`superEvent`) or replayed from the
+    // transcript (its `[super …]` prefix) — is a small event chip, not an owner's bubble.
+    if (item.kind === 'user' && (item.superEvent || superEventOf(item.text))) {
+      return <SuperEventChip key={item.id} text={item.text} />;
+    }
     const shape = shapeOf(item);
     switch (shape.draw) {
       case 'nothing': return null;
@@ -2178,6 +2221,8 @@ export function ChatPane({
         // there is no bypass to close and "Resume" is still the right offer. This branch
         // only fires while the resumed run is actually live.
         <AutomationQuestionComposerLock />
+      ) : readOnly ? (
+        <SuperReadOnlyLine />
       ) : (
         <Composer
           session={session}
@@ -2216,9 +2261,11 @@ export function ChatPane({
           projectPermissionMode={permissionMode}
           onPermissionModeChange={bare ? undefined : onPermissionModeChange}
           mode={mode}
-          onModeChange={bare ? undefined : onModeChange}
+          // The Super Agent's own chat has no mode menu and no agent picker: only the owner's
+          // Take it back leaves the mode (plan-r7 D4b), and it is always Claude in the cape.
+          onModeChange={bare || mode === 'super' ? undefined : onModeChange}
           agent={session.agent}
-          onAgentPick={bare ? undefined : onAgentPick}
+          onAgentPick={bare || mode === 'super' ? undefined : onAgentPick}
           showModel={!bare}
           idlePlaceholder={idlePlaceholder}
           // One object, not two cards: whenever the shelf grows a bordered shell above the

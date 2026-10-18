@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { totalmem } from 'node:os';
 import { sendJson } from '../middleware.js';
 import { readBattery, type BatteryReading } from '../../lib/handsfree/mac/power.js';
+import { readCapacityFacts } from '../../lib/super/capacity.js';
 
 /**
  * GET /api/app/machine — the two facts Light mode's Auto needs about THIS Mac: how much
@@ -62,11 +63,16 @@ export function resetMachineFactsForTests(): void {
   memo = null;
 }
 
+/**
+ * The route adds the Super Agent's capacity facts (plan-r7 D11: `availMemGb` from `vm_stat` on
+ * macOS, `diskFreeGb` where worktrees go, `load1`), each memoized for a minute.
+ */
 export async function handleAppMachine(
   _req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   _contextRoot: string | null,
 ): Promise<void> {
-  sendJson(res, 200, await readMachineFacts());
+  const [facts, capacity] = await Promise.all([readMachineFacts(), readCapacityFacts()]);
+  sendJson(res, 200, { ...facts, ...capacity });
 }

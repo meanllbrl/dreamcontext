@@ -1,0 +1,642 @@
+/* The Super Agent's hand-over screen (plan-r7 D18, plan-r8 F4-F12).
+   Tokens only; no backdrop blur. The only endless motion is the asking/working dot, a STATUS
+   animation through the motion contract (styles/global.css), opacity and scale only, so its
+   resting look (Light mode, a hidden window) is the dot itself. The glow is a state: two
+   layers, each a one-shot opacity transition, never a loop. */
+
+/* ── The header button (Chat header) ────────────────────────────────────── */
+.super-handover-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px 0 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg));
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.super-handover-btn:hover { background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg)); border-color: var(--color-accent); }
+.super-handover-btn[data-state='handed-over'] { background: var(--color-accent-soft); }
+.super-handover-btn-dot {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting);
+  box-shadow: 0 0 0 2px var(--color-bg);
+}
+.super-cape-glyph { flex: none; }
+.super-cape-glyph-cloth { fill: color-mix(in srgb, var(--color-text) 30%, transparent); stroke: var(--color-text); stroke-width: 1.2; stroke-linejoin: round; }
+.super-cape-glyph-gem-top { fill: color-mix(in srgb, var(--color-accent) 62%, var(--color-bg)); stroke: var(--color-accent); stroke-width: 0.8; }
+.super-cape-glyph-gem { fill: var(--color-accent); stroke: var(--color-accent); stroke-width: 0.8; stroke-linejoin: round; }
+
+/* Handed over, the panes row stays mounted (take-back returns to it) but is not on screen. */
+.agent-panes[hidden] { display: none !important; }
+
+/* ── The stage (plan-r8 F4) ─────────────────────────────────────────────────
+   Everything is placed absolutely from `planStage`; nothing here sizes a card. */
+.super-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+.super-stage-under,
+.super-stage-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.super-stage-under { z-index: 1; }
+.super-stage-layer { z-index: 60; }
+
+/* ── The centre: Claude in the cape (O1). A FRAME (glows, background) around a CLIP. ── */
+.super-centre {
+  position: absolute;
+  z-index: 5;
+  isolation: isolate;
+  transform-origin: 0 0;
+}
+.super-centre-bg {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-xl);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+.super-centre-clip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+.super-centre--pending,
+.super-card-frame--pending { opacity: 0; }
+.super-centre-head,
+.super-card-large-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--color-border);
+  flex: none;
+  min-width: 0;
+}
+.super-centre-name { font-weight: 700; color: var(--color-text); }
+.super-centre-sub,
+.super-card-large-note { font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.super-card-large-title { font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
+.super-card-large-note { flex: 1 1 auto; }
+.super-slot {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.super-slot > .agent-pane-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+/* While the centre's frame glides as a stand-in behind it, the real frame hides ONLY its
+   background, border and glows; the content never fades (FE3). */
+.super-centre[data-gliding] .super-centre-bg,
+.super-centre[data-gliding]::before,
+.super-centre[data-gliding]::after { opacity: 0 !important; transition: none; }
+
+/* O11: a card held over the centre. An overlay: no layout shift, never in the pointer's way. */
+.super-ask-target {
+  position: absolute;
+  inset: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  border: 2px dashed color-mix(in srgb, var(--color-accent) 70%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  color: var(--color-accent);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* ── The glow (O1, F5, §0 FE5): a state, not a loop. Two layers, each fading its own
+   opacity: working rises over 700 ms, idle fades over 1400 ms, asking crossfades to the
+   waiting colour. Behind the clip (z -1 inside the frame's own stacking context). ── */
+.super-centre::before,
+.super-centre::after,
+.super-card-frame::before,
+.super-card-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-xl);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1400ms ease-out;
+}
+.super-card-frame::before,
+.super-card-frame::after { border-radius: var(--radius-lg); }
+.super-centre::before,
+.super-card-frame::before {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 70%, transparent),
+    0 0 28px 4px color-mix(in srgb, var(--color-accent) 38%, transparent);
+}
+.super-centre::after,
+.super-card-frame::after {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--mood-waiting) 75%, transparent),
+    0 0 28px 4px color-mix(in srgb, var(--mood-waiting) 40%, transparent);
+}
+:is(.super-centre, .super-card-frame)[data-status='working']::before,
+:is(.super-centre, .super-card-frame)[data-status='asking']::after {
+  opacity: 1;
+  transition-duration: 700ms;
+}
+
+/* ── Cards (O2, F6, F11) ─────────────────────────────────────────────────── */
+.super-card-frame {
+  position: absolute;
+  isolation: isolate;
+  transform-origin: 0 0;
+  border-radius: var(--radius-lg);
+  outline: none;
+}
+.super-card-frame[data-where='float'] { cursor: grab; touch-action: none; }
+.super-card-frame[data-lifted] { z-index: 1000 !important; cursor: grabbing; }
+.super-card-frame[data-where='sheet'] { z-index: 70 !important; }
+.super-card-frame:focus-visible .super-card-clip { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+/* The lift: a shadow layer whose opacity follows the hand (F6). */
+.super-card-lift {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  box-shadow: var(--shadow-xl);
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+  pointer-events: none;
+}
+.super-card-frame[data-lifted] .super-card-lift { opacity: 1; }
+.super-card-frame[data-where='sheet'] .super-card-lift { opacity: 1; transition: none; }
+.super-card-clip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: inherit;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.super-card-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* A floating card is one grab handle: its body is inert except the web Load button (FE1). */
+.super-card-frame[data-where='float'] .super-card-body { pointer-events: none; user-select: none; }
+.super-card-frame[data-where='float'] .super-web-load { pointer-events: auto; }
+/* While a card is dragged, no frame or board preview on the stage can swallow the pointer. */
+.super-surface[data-dragging] iframe,
+.super-surface[data-dragging] .super-card-view--board,
+.super-surface[data-dragging] .super-card-view--web { pointer-events: none; }
+
+.super-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  flex: none;
+  min-width: 0;
+}
+.super-card-glyph { flex: none; color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+.super-card-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text); }
+.super-card-view { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.super-card-large { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.super-card-large-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+
+/* The hover / focus buttons: the keyboard path (side by side, to Others, ask, close). */
+.super-card-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.super-card-frame:hover .super-card-actions,
+.super-card-frame:focus-within .super-card-actions,
+.super-card-frame:not([data-where='float']) .super-card-actions { opacity: 1; pointer-events: auto; }
+.super-card-frame[data-lifted] .super-card-actions { opacity: 0; pointer-events: none; }
+.super-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+.super-icon-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.super-icon-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+/* The agent card: the child at a glance (O10). */
+.super-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; min-width: 0; min-height: 0; flex: 1 1 auto; }
+.super-card-top { display: flex; align-items: center; gap: 8px; min-width: 0; padding-right: 4px; }
+.super-card-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--color-text); }
+.super-card-line { font-size: var(--font-size-sm); color: var(--color-text-secondary); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+.super-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: var(--font-size-xs); color: var(--color-text-tertiary); min-width: 0; }
+.super-card-state { color: var(--color-text-secondary); }
+.super-card-bg {
+  padding: 0 6px;
+  height: 18px;
+  line-height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.super-card-tags { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.super-card-branch { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.super-card-asks {
+  flex: none;
+  padding: 0 8px;
+  height: 20px;
+  line-height: 20px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--mood-waiting) 18%, transparent);
+  color: var(--mood-waiting);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+.super-card-lines {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+  min-height: 0;
+  overflow: hidden;
+}
+.super-card-lines-row { font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; word-break: break-word; }
+.super-card-dot,
+.super-terminal-chip,
+.super-others-dot { --kind-color: var(--color-text-tertiary); }
+:is(.super-card-dot, .super-terminal-chip)[data-kind='starting'] { --kind-color: var(--color-warning); }
+:is(.super-card-dot, .super-terminal-chip)[data-kind='working'] { --kind-color: var(--color-success); }
+:is(.super-card-dot, .super-terminal-chip)[data-kind='asking'] { --kind-color: var(--mood-waiting); }
+:is(.super-card-dot, .super-terminal-chip)[data-kind='ready'] { --kind-color: var(--color-accent); }
+:is(.super-card-dot, .super-terminal-chip)[data-kind='ended'] { --kind-color: var(--color-error); }
+.super-card-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--kind-color);
+}
+/* A child working or asking breathes; at rest (Light mode, a hidden window) it is the dot. */
+.super-card-dot[data-kind='working'],
+.super-card-dot[data-kind='asking'] {
+  animation: var(--dc-motion-status-name, super-dot-breathe) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+.super-card-dot[data-kind='asking'] { animation-duration: 0.9s; }
+
+.super-web-placeholder { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; }
+.super-web-title { font-size: var(--font-size-sm); color: var(--color-text-secondary); word-break: break-all; }
+
+/* ── Others (O4-O6): a small stack in the bottom-right corner, a fan list above it ── */
+.super-others { position: absolute; z-index: 40; }
+.super-others-stack {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 0 12px 0 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.super-others-stack:hover { border-color: var(--color-border-hover); }
+.super-others-stack:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-others-sheets { position: relative; flex: none; width: 22px; height: 18px; }
+.super-others-sheets > span {
+  position: absolute;
+  width: 16px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--color-border-hover);
+  background: var(--color-bg-secondary);
+}
+.super-others-sheets > span:nth-child(1) { left: 6px; top: 0; }
+.super-others-sheets > span:nth-child(2) { left: 3px; top: 3px; }
+.super-others-sheets > span:nth-child(3) { left: 0; top: 6px; background: var(--color-bg-elevated); }
+.super-others-name { flex: 1 1 auto; min-width: 0; text-align: left; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-others-count {
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+.super-others-stack[data-asking] .super-others-count { background: color-mix(in srgb, var(--mood-waiting) 20%, transparent); color: var(--mood-waiting); }
+.super-others-fan {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 260px;
+  max-height: min(60vh, 420px);
+  overflow: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+  transform-origin: 100% 100%;
+  animation: super-fan-in 160ms ease-out;
+}
+.super-others-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  touch-action: none;
+}
+.super-others-item:hover,
+.super-others-item:focus-visible { background: var(--color-bg-tertiary); outline: none; }
+.super-others-glyph { flex: none; color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+.super-others-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-others-dot { flex: none; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--kind-color); }
+.super-others-dot[data-status='working'] { --kind-color: var(--color-success); }
+.super-others-dot[data-status='asking'] { --kind-color: var(--mood-waiting); }
+/* The corner a dragged card is dropped into (lit while the pointer is over it). */
+.super-others-zone {
+  position: absolute;
+  z-index: 30;
+  border-top-left-radius: var(--radius-2xl);
+  border: 2px dashed color-mix(in srgb, var(--color-accent) 35%, transparent);
+  border-right: 0;
+  border-bottom: 0;
+  background: color-mix(in srgb, var(--color-accent) 4%, transparent);
+  pointer-events: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.super-others-zone[data-lit] { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+
+/* ── The queue pill (F7): centred in the top band, grows downward as an overlay ── */
+.super-queue-strip {
+  position: absolute;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 2px;
+  pointer-events: none;
+}
+.super-queue-strip[data-empty='true'] { display: none; }
+.super-queue-quiet { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+/* Always one row inside the top band, so it never half-covers the centre's header. The who
+   and the question give way (each to a floor); a button never does, since an answer you cannot
+   undo is never a cut label. Options that do not all fit leave the row (Reply only, decided in
+   QueueStrip by `optionsFit`, never on hover). A cut question opens whole BELOW the row as an
+   overlay on pointer or focus (plan-r8 C-minors), so nothing in the row moves. */
+.super-queue-head {
+  position: relative;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px 12px;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 4px 6px 4px 14px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--queue-tone, var(--color-accent)) 45%, var(--color-border));
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+  pointer-events: auto;
+  animation: super-pill-in 200ms ease-out;
+}
+.super-queue-head[data-kind='permission'] { --queue-tone: var(--mood-waiting); }
+.super-queue-who { flex: 0 1 auto; min-width: 6ch; max-width: 24ch; font-weight: 700; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-queue-text { flex: 1 1 0; min-width: 10ch; color: var(--color-text-secondary); font-size: var(--font-size-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-queue-tool { color: var(--color-text); margin-right: 8px; }
+.super-queue-input { font-family: var(--font-mono); font-size: var(--font-size-xs); }
+.super-queue-actions { flex: none; display: flex; flex-wrap: nowrap; gap: 6px; }
+.super-queue-more { flex: none; font-size: var(--font-size-xs); color: var(--color-text-tertiary); padding-right: 8px; white-space: nowrap; }
+.super-queue-full {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  padding-top: 6px;
+}
+.super-queue-head:hover .super-queue-full,
+.super-queue-head:focus-within .super-queue-full { display: block; }
+.super-queue-full-box {
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--queue-tone, var(--color-accent)) 45%, var(--color-border));
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+.super-queue-btn {
+  flex: none;
+  white-space: nowrap;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.super-queue-btn:hover { border-color: var(--color-border-hover); }
+.super-queue-btn--option { max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+.super-queue-btn--allow { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-text); }
+
+.super-empty-hint {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+/* ── The terminals dock (F12): small pills in the bottom band's left side ── */
+.super-terminals-row {
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.super-terminals-label { flex: none; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.super-terminal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  max-width: 200px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.super-terminal-chip::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--kind-color); }
+.super-terminal-chip:hover { border-color: var(--color-border-hover); color: var(--color-text); }
+.super-terminal-glyph { font-family: var(--font-mono); }
+.super-terminal-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── The hand-over flights (D18) ────────────────────────────────────────── */
+.super-flight-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  overflow: hidden;
+}
+.super-standin {
+  position: absolute;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  transform-origin: 0 0;
+}
+.super-standin[data-role='strip'] { border-radius: var(--radius-md); background: var(--color-bg-secondary); }
+.super-standin[data-role='centre'] { border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border)); }
+.super-standin--card { border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.super-standin--frame {
+  border-radius: var(--radius-xl);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+  box-shadow: var(--shadow-md);
+}
+.super-drag-ghost {
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  padding: 12px 14px;
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  overflow: hidden;
+  z-index: 1;
+}
+
+/* ── Chat pieces (ChatPane) ─────────────────────────────────────────────── */
+.super-readonly-line { text-align: center; }
+.super-event-chip {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px auto;
+  padding: 0 12px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  width: fit-content;
+}
+.super-event-chip-mark { color: var(--color-accent); }
+
+@keyframes super-dot-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+
+@keyframes super-fan-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes super-pill-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Light mode: the pill and the fan appear without moving (a crossfade-only surface). */
+:root[data-light='true'] .super-others-fan,
+:root[data-light='true'] .super-queue-head { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .super-card-dot { animation: none !important; }
+  .super-others-fan,
+  .super-queue-head { animation: none; }
+  .super-centre::before,
+  .super-centre::after,
+  .super-card-frame::before,
+  .super-card-frame::after,
+  .super-card-lift,
+  .super-card-actions { transition: none; }
+}

@@ -69,19 +69,26 @@ export function requireLocalDesktop(req: IncomingMessage, res: ServerResponse): 
  * trigger it. `Sec-Fetch-Site: cross-site` and any non-loopback `Origin` are refused.
  */
 export function requireLocalRead(req: IncomingMessage, res: ServerResponse): boolean {
+  if (isLoopback(req) && isLoopbackHostHeader(req) && !isCrossSiteRequest(req)) return true;
+  sendError(res, 403, 'forbidden', 'This is only available on this computer.');
+  return false;
+}
+
+/** A request another site sent: `Sec-Fetch-Site: cross-site`, or an `Origin` that is not one
+ *  of the three loopback spellings. A request with no Origin at all is not cross-site. */
+export function isCrossSiteRequest(req: Pick<IncomingMessage, 'headers'>): boolean {
   const site = req.headers['sec-fetch-site'];
   const origin = req.headers.origin;
   const crossSite = typeof site === 'string' && site.trim().toLowerCase() === 'cross-site';
   const foreignOrigin = typeof origin === 'string' && origin !== '' && !LOOPBACK_ORIGIN_RE.test(origin.trim());
-  if (isLoopback(req) && isLoopbackHostHeader(req) && !crossSite && !foreignOrigin) return true;
-  sendError(res, 403, 'forbidden', 'This is only available on this computer.');
-  return false;
+  return crossSite || foreignOrigin;
 }
 
 const UPGRADE_REJECT_TEXT: Record<number, string> = {
   400: 'Bad Request',
   401: 'Unauthorized',
   403: 'Forbidden',
+  409: 'Conflict',
   501: 'Not Implemented',
 };
 

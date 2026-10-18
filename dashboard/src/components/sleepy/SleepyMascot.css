@@ -348,6 +348,46 @@
 .smascot-say--1 { animation: var(--dc-motion-ambient-name, smascot-say1) 3.2s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
 .smascot-say--2 { animation: var(--dc-motion-ambient-name, smascot-say2) 3.2s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
+/* ── SUPER AGENT · the cape (owner decision 11) ─────────────────────────
+   Put on ONCE on the hand-over (a one-shot entrance from the clasp, 400 ms, D18), then the two
+   flaps flutter on one 3.2s clock — an AMBIENT loop, so it stops when the window is unfocused
+   and in Light mode, and the resting look is the cape hanging still. The cloth is ink like
+   every other gear; the gem clasp is the brand accent, the one warm spot. The smile stays:
+   nothing is worked on under the chin, only fastened. */
+.smascot-wears-super .smascot-smile { visibility: visible; }
+.smascot-wears-super .smascot-eyes { transform: translateY(-1px); }
+.smascot-cape {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+}
+/* The entrance plays only where the hand-over asks for it (`capeOn`: the centre's face,
+   mounted with the choreography's first frame, so the 400 ms end inside its ≥ 440 ms). No
+   fill: it ends on identity, the cape's own resting look, so nothing is held. */
+.smascot-cape-entering .smascot-cape {
+  animation: smascot-cape-on 400ms cubic-bezier(0.2, 0, 0, 1);
+}
+/* Light mode is a crossfade only (D18): no entrance, no transform — the cape is simply on. */
+:root[data-light='true'] .smascot-cape-entering .smascot-cape { animation: none; }
+.smascot-cape-cloth { transform-box: fill-box; }
+.smascot-cape-cloth--l {
+  transform-origin: 100% 0%;
+  animation: var(--dc-motion-ambient-name, smascot-cape-flutter-l) 3.2s ease-in-out 400ms infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+.smascot-cape-cloth--r {
+  transform-origin: 0% 0%;
+  animation: var(--dc-motion-ambient-name, smascot-cape-flutter-r) 3.2s ease-in-out 400ms infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+.smascot-gem-crown {
+  fill: color-mix(in srgb, var(--color-accent) 62%, var(--color-bg));
+  stroke: var(--color-accent);
+}
+.smascot-gem-pavilion {
+  fill: var(--color-accent);
+  stroke: var(--color-accent);
+}
+
 /* The gear rides with the eyes when a mood changes their height. */
 .smascot-asking .smascot-gear { top: -34px; }
 .smascot-sleeps .smascot-gear { top: -30px; opacity: 0.85; }
@@ -556,6 +596,8 @@
   .smascot-vu-bar,
   .smascot-mic,
   .smascot-say,
+  .smascot-cape,
+  .smascot-cape-cloth,
   .smascot-q span,
   .smascot-zzz span { animation: none !important; }
 }
@@ -599,4 +641,30 @@
   68%      { opacity: 0.7; transform: scale(1); }
   90%      { opacity: 0.18; transform: scale(1.15); }
   97%, 100% { opacity: 0; transform: scale(1.15); }
+}
+
+/* ── Super Agent keyframes ──────────────────────────────────────────────── */
+
+/* The cape goes on once: it unfolds downward from the clasp. A one-shot entrance, so it is
+   not on the motion contract's variables — it plays once and ends on identity, the cape at rest. */
+@keyframes smascot-cape-on {
+  0%   { opacity: 0; transform: translateY(-3px) scale(0.35, 0.2); }
+  60%  { opacity: 1; transform: translateY(0) scale(1.04, 1.06); }
+  100% { opacity: 1; transform: translateY(0) scale(1, 1); }
+}
+
+/* The flutter: each flap swings out from the clasp and settles, the right one half a beat
+   behind the left, so the cape reads as cloth in a breeze rather than as two wings flapping.
+   Both start and end at identity — the still cape the rest of the time. */
+@keyframes smascot-cape-flutter-l {
+  0%, 100% { transform: rotate(0deg) scale(1, 1); }
+  30%      { transform: rotate(5deg) scale(1.04, 0.97); }
+  55%      { transform: rotate(-2deg) scale(0.99, 1.02); }
+  75%      { transform: rotate(1deg) scale(1, 1); }
+}
+@keyframes smascot-cape-flutter-r {
+  0%, 100% { transform: rotate(0deg) scale(1, 1); }
+  20%      { transform: rotate(1deg) scale(1, 1); }
+  45%      { transform: rotate(-5deg) scale(1.04, 0.97); }
+  70%      { transform: rotate(2deg) scale(0.99, 1.02); }
 }

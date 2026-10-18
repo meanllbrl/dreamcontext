@@ -495,3 +495,37 @@ describe('delegations — the Assistant is woken by the sessions it delegated', 
     });
   });
 });
+
+const { eventText } = await import('../../src/lib/assistant/delegations.js');
+const { getChat: registryEntry } = await import('../../src/lib/assistant/chat-registry.js');
+
+describe('eventText — the Super Agent passes its own header and last line (plan-r7 D6)', () => {
+  const entry = () => {
+    _resetChatRegistry();
+    const h = chat();
+    h.observe(ask('req-1'));
+    return h;
+  };
+
+  it('without options it is the Assistant\'s text, byte for byte', () => {
+    entry();
+    const e = registryEntry(S1);
+    expect(eventText(S1, 'acme-app', 'asking', e)).toBe([
+      `[delegated-session event] session=${S1} vault=acme-app status=asking kind=question question=req-1`,
+      '<untrusted-project-output vault="acme-app">Question: Which database?</untrusted-project-output>',
+      '<untrusted-project-output vault="acme-app">Options: Postgres | SQLite</untrusted-project-output>',
+      'Relay this question and its options to the owner in the notch; answer only with their choice.',
+    ].join('\n'));
+    expect(eventText(S1, 'acme-app', 'asking', e, {})).toBe(eventText(S1, 'acme-app', 'asking', e));
+  });
+
+  it('with them, only the first and last lines change; the fenced middle is the same', () => {
+    entry();
+    const e = registryEntry(S1);
+    const plain = eventText(S1, 'acme-app', 'asking', e).split('\n');
+    const ours = eventText(S1, 'acme-app', 'asking', e, { header: '[super event] item=q-1 child=c1 status=asking', lastLine: 'END' }).split('\n');
+    expect(ours[0]).toBe('[super event] item=q-1 child=c1 status=asking kind=question question=req-1');
+    expect(ours[ours.length - 1]).toBe('END');
+    expect(ours.slice(1, -1)).toEqual(plain.slice(1, -1));
+  });
+});

@@ -132,10 +132,15 @@ function sweep(now = Date.now()): void {
   ended = ended.filter((x) => now - x.endedAt <= ENDED_TTL_MS);
 }
 
-/** The event text. Line 1 and the last line are the server's; everything between is fenced. */
-export function eventText(sessionId: string, vault: string, status: EventStatus, e: ChatEntry | null): string {
+/** The event text. Line 1 and the last line are the server's; everything between is fenced.
+ *  The Super Agent's inbox (super/inbox.ts) passes its own server-authored `header` and
+ *  `lastLine`; without them the text is the Assistant's, byte for byte. */
+export function eventText(
+  sessionId: string, vault: string, status: EventStatus, e: ChatEntry | null,
+  opts: { header?: string; lastLine?: string } = {},
+): string {
   const pq = status === 'asking' ? e?.pendingQuestion ?? null : null;
-  let header = `[delegated-session event] session=${sessionId} vault=${safeVault(vault)} status=${status}`;
+  let header = opts.header ?? `[delegated-session event] session=${sessionId} vault=${safeVault(vault)} status=${status}`;
   if (pq) {
     header += ` kind=${pq.isPermission ? 'permission' : 'question'}`;
     if (REQUEST_ID_RE.test(pq.requestId)) header += ` question=${pq.requestId}`;
@@ -147,7 +152,7 @@ export function eventText(sessionId: string, vault: string, status: EventStatus,
   }
   const last = e?.lastAssistantText[e.lastAssistantText.length - 1];
   if (last) lines.push(wrapUntrusted(vault, `Last reply: ${last.length > LAST_TEXT_CAP ? `${last.slice(0, LAST_TEXT_CAP)}…` : last}`));
-  lines.push(LAST_LINE[status]);
+  lines.push(opts.lastLine ?? LAST_LINE[status]);
   return lines.join('\n');
 }
 
