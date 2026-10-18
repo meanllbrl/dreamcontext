@@ -275,19 +275,23 @@ export async function handleFiledTaskReject(
       field: 'status',
       summary: `Rejected a task sleep opened (${reasonLabel(input.reason)})`,
     });
-    sendJson(res, 200, { slug: f.slug, outcome: f.outcome });
+    sendJson(res, 200, { slug: f.slug, outcome: f.outcome, ...(f.warning ? { warning: f.warning } : {}) });
   } catch (err) {
     fail(res, err);
   }
 }
 
-/** POST /api/task-proposals/filed/:slug/keep */
+/**
+ * POST /api/task-proposals/filed/:slug/keep. Owner-only, like accept: the CLI's `tasks keep`
+ * refuses an agent environment, so the route needs the browser's Origin.
+ */
 export async function handleFiledTaskKeep(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (!requireBrowserOrigin(req, res)) return;
   const { slug } = params;
   if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid', `Invalid task slug: ${slug}`); return; }
   try {
@@ -366,13 +370,14 @@ export async function handleTaskChangeApply(
   sendJson(res, 200, { slug: target.slug, outcome: rec.outcome, into: rec.into ?? null, ...(warnings.length > 0 ? { auditWarning: warnings[0], warnings } : {}) });
 }
 
-/** The owner keeps the task as it is: the suggestion is answered, the card is untouched. */
+/** The owner keeps the task as it is: the suggestion is answered, the card is untouched. Owner-only. */
 export async function handleTaskChangeKeep(
   req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (!requireBrowserOrigin(req, res)) return;
   const target = suggestionTarget(params, (await parseJsonBody(req)) ?? {}, res);
   if (!target) return;
   try {

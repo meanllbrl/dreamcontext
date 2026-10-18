@@ -123,7 +123,7 @@ import { registerTaskPlanCommands } from './tasks-plan.js';
 import { checkParentLink, loadFamily, parentCloseBlock, parseChildDecision, rollupOf, type ChildDecision } from '../../lib/task-parent.js';
 import { cardIssuesOfFile } from '../../lib/task-doctor.js';
 import { foldCardChangelog } from '../../lib/task-card.js';
-import { withTaskFileLock } from '../../lib/task-file-lock.js';
+import { TaskFileBusyError, withTaskFileLock } from '../../lib/task-file-lock.js';
 import type { SyncOptions } from '../../lib/task-backend/types.js';
 import {
   GROUP_BY_FIELDS,
@@ -612,13 +612,24 @@ async function blockOnEvidence(
       process.exitCode = 1;
       return true;
     }
-    await backend.addJournal(slug, {
-      id: journalId,
-      kind: 'status',
-      label: `forced → ${newStatus}`,
-      actor: actorOf(),
-      body: `- forced past the evidence gate: ${force.reason.trim()}\n- unproven: ${open}`,
-    });
+    try {
+      await backend.addJournal(slug, {
+        id: journalId,
+        kind: 'status',
+        label: `forced → ${newStatus}`,
+        actor: actorOf(),
+        body: `- forced past the evidence gate: ${force.reason.trim()}\n- unproven: ${open}`,
+      });
+    } catch (err) {
+      // Nothing on the card changed: the status write comes after this. The audit lists the
+      // attempt (it is written first, so no force can pass unaudited).
+      const why = err instanceof TaskFileBusyError
+        ? `the task is busy (another writer holds it); try again in a moment`
+        : `its journal entry could not be written (${err instanceof Error ? err.message : String(err)})`;
+      error(`--force was not applied: ${why}. The status of "${slug}" is unchanged; the task audit lists this attempt.`);
+      process.exitCode = 1;
+      return true;
+    }
     return false;
   }
   error(describeGate(slug, newStatus, gate));
@@ -1670,6 +1681,7 @@ export function registerTasksCommand(program: Command): void {
         } else {
           const f = await rejectFiled(root, getTaskBackend(), statusSet(), item, { reason: opts.reason, note: opts.note });
           success(`Rejected ${f.slug} (${reasonLabel(opts.reason)}): cancelled, and sleep will not file it again.`);
+          if (f.warning) warn(f.warning);
         }
       } catch (err) {
         if (err instanceof ProposalError) { error(err.message); process.exitCode = 1; return; }

@@ -217,3 +217,32 @@ describe('no refusal names the exempt command', () => {
     expect(body).not.toMatch(/`[^`]*sleep eval exempt[^`]*`/);
   });
 });
+
+/**
+ * Second-pass review, owner question (b): `exemptionFor` compares the journal body byte for
+ * byte, so a reason that the journal write redacted, capped or reflowed would never open the
+ * gate. These are the three reasons the owner gave for C2, C3 and C5, run through
+ * `sleep eval exempt` exactly as written.
+ */
+describe('sleep eval exempt: the three owner reasons open the gate as written', () => {
+  const REASONS: Array<[string, string]> = [
+    ['subtasks-child', 'Owner decision 2026-10-18 (scope card, item 3): the sleep eval runs only for C4 and C7, which change what sleep files or learns; C2 (sub-tasks, context packet) does not change sleep\'s output.'],
+    ['cycles-child', 'Owner decision 2026-10-18 (scope card, item 3): the sleep eval runs only for C4 and C7; C3 (cycles, queue, releases) does not change what sleep files or learns, and sleep never places anything in a cycle.'],
+    ['ui-child', 'Owner decision 2026-10-18 (scope card, item 3): the sleep eval runs only for C4 and C7; C5 (the task UI) does not change what sleep files or learns.'],
+  ];
+
+  for (const [child, reason] of REASONS) {
+    it(`${child}: exempt → exemptionFor matches, and the gate opens`, async () => {
+      if (!existsSync(join(stateDir, `${child}.md`))) {
+        writeFileSync(join(stateDir, `${child}.md`), cardOf(child, 'in_review', ['parent_task: gated-parent']));
+      }
+      expect(gate(child).ok).toBe(false);
+      expect(await cli('sleep', 'eval', 'exempt', child, '--reason', reason)).toBe(0);
+      const ex = exemptionFor(contextRoot, child);
+      expect(ex?.reason).toBe(reason);
+      const entry = readJournal(stateDir, child).find((j) => j.id === ex?.journalId);
+      expect(entry?.body).toBe(exemptJournalBody(reason));
+      expect(gate(child).ok).toBe(true);
+    });
+  }
+});

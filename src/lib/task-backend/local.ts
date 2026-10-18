@@ -197,7 +197,7 @@ function renderTaskTemplate(
     DATE: today(),
     WHY: input.why || '(To be defined)',
     VERSION: input.version ? JSON.stringify(input.version) : 'null',
-  }, ['NAME', 'DESCRIPTION']);
+  }, ['NAME', 'DESCRIPTION', 'STATUS']);
 }
 
 /**

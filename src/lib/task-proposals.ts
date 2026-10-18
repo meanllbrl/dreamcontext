@@ -403,7 +403,14 @@ export async function acceptProposal(
   edits: AcceptEdits,
   variant: 'cli' | 'dashboard',
 ): Promise<AcceptResult> {
-  const seen = assertProposalOpen(storeForAction(contextRoot).proposals.find((x) => x.id === id), id);
+  const stored = storeForAction(contextRoot).proposals.find((x) => x.id === id);
+  // An earlier accept that created the task and then could not mark the proposal (its store was
+  // busy, or the process died) left its claim behind. The task is on the board: finish that
+  // accept instead of refusing it as `exists` (and leaving reject as the only way out).
+  if (stored?.status === 'pending' && stored.claim && (await backend.get(stored.claim.slug)) !== null) {
+    return finishLeftoverAccept(contextRoot, backend, id, stored.claim.slug);
+  }
+  const seen = assertProposalOpen(stored, id);
 
   const name = (edits.name ?? seen.name).trim();
   const why = (edits.why ?? seen.why).trim();
@@ -469,32 +476,68 @@ export async function acceptProposal(
   if (name !== p.name) diff.name = { from: p.name, to: name };
   if (why !== p.why) diff.why = { from: p.why, to: why };
 
-  // After the create, a busy store must not read as a refused accept (the route would say
-  // "nothing was changed" over a task that exists): it becomes the result's warning.
+  // After the create, nothing here refuses: the task exists, so a busy store or a proposal that
+  // changed meanwhile is the result's warning (the route still records the change and the
+  // audit), never an error that says "nothing was changed" over a task on the board.
+  const add = (text: string) => { warning = `${warning ? `${warning} ` : ''}${text}`; };
   try {
-    mutateProposals(contextRoot, (s) => {
+    const outcome = mutateProposals(contextRoot, (s) => {
       const live = s.proposals.find((x) => x.id === id);
-      if (!live || live.status !== 'pending' || live.claim?.slug !== slug) {
-        throw new ProposalError('resolved', `Proposal ${id} changed while it was being accepted; the task "${slug}" was created.`);
-      }
-      delete live.claim;
-      Object.assign(live, { status: 'accepted', resolvedAt: new Date().toISOString(), slug });
-      appendFeedback(contextRoot, {
-        id: p.id,
-        source: 'proposal',
-        verdict: 'keep',
-        outcome: 'new-task',
-        proposal: { name: p.name, why: p.why, parent: p.parent },
-        basis: p.basis,
-        quote: storableQuote(p.quote, contextRoot),
-        diff: Object.keys(diff).length > 0 ? diff : null,
-      });
+      if (live?.status === 'accepted' && live.slug === slug) return 'done';
+      if (!live || live.status !== 'pending' || live.claim?.slug !== slug) return live ? live.status : 'gone';
+      markAccepted(contextRoot, live, slug, Object.keys(diff).length > 0 ? diff : null);
+      return 'done';
     });
+    if (outcome !== 'done') {
+      add(`The task "${slug}" was created, but proposal ${id} changed while it was being accepted (it is now ${outcome}).`);
+    }
   } catch (err) {
     if (!(err instanceof TaskFileBusyError)) throw err;
-    warning = `${warning ? `${warning} ` : ''}The task "${slug}" was created, but the proposal could not be marked accepted (its store is busy).`;
+    add(`The task "${slug}" was created, but the proposal could not be marked accepted (its store is busy); accept it again to finish.`);
   }
   return { slug, parent, ...(parentDropped ? { parentDropped } : {}), ...(warning ? { warning } : {}) };
+}
+
+/** Mark a claimed proposal accepted as `slug` and record the keep. The caller holds the store lock. */
+function markAccepted(
+  contextRoot: string,
+  live: TaskProposal,
+  slug: string,
+  diff: { name?: { from: string; to: string }; why?: { from: string; to: string } } | null,
+): void {
+  delete live.claim;
+  Object.assign(live, { status: 'accepted', resolvedAt: new Date().toISOString(), slug });
+  appendFeedback(contextRoot, {
+    id: live.id,
+    source: 'proposal',
+    verdict: 'keep',
+    outcome: 'new-task',
+    proposal: { name: live.name, why: live.why, parent: live.parent },
+    basis: live.basis,
+    quote: storableQuote(live.quote, contextRoot),
+    diff,
+  });
+}
+
+/**
+ * Finish an accept that created its task but never marked the proposal: accepted, with the keep
+ * feedback, and a warning that says so. A busy store refuses (nothing was written by this call).
+ */
+async function finishLeftoverAccept(contextRoot: string, backend: TaskBackend, id: string, slug: string): Promise<AcceptResult> {
+  const task = await backend.get(slug);
+  mutateProposals(contextRoot, (store) => {
+    const live = store.proposals.find((x) => x.id === id);
+    if (live?.status === 'accepted' && live.slug === slug) return;
+    if (!live || live.status !== 'pending' || live.claim?.slug !== slug) {
+      throw new ProposalError('resolved', `Proposal ${id} changed while its accept was being finished.`);
+    }
+    markAccepted(contextRoot, live, slug, null);
+  });
+  return {
+    slug,
+    parent: task?.parent_task ?? null,
+    warning: `The task "${slug}" was already created by an earlier accept that did not finish; the proposal is now marked accepted.`,
+  };
 }
 
 export interface RejectInput {
@@ -518,6 +561,11 @@ function declineFor(contextRoot: string, name: string, input: RejectInput, sessi
 export function rejectProposal(contextRoot: string, id: string, input: RejectInput): TaskProposal {
   return mutateProposals(contextRoot, (store) => {
     const p = assertProposalOpen(store.proposals.find((x) => x.id === id), id);
+    // A leftover accept claim whose task is on the board: the owner already kept this one. A
+    // reject would record a "no" (and a declined entry) for a task they have.
+    if (p.claim && taskOnBoard(contextRoot)(p.claim.slug)) {
+      throw new ProposalError('exists', `The task "${p.claim.slug}" was already created from proposal ${id}; accept it to finish, or delete the task.`);
+    }
     p.status = 'rejected';
     p.resolvedAt = new Date().toISOString();
     appendFeedback(contextRoot, {
@@ -540,6 +588,10 @@ export function rejectProposal(contextRoot: string, id: string, input: RejectInp
  * Reject a task sleep filed: it moves to the project's cancelled-kind status
  * (refused when none is declared, like `cycle close`), the journal says why, and
  * it is recorded as feedback + declined + a rejected item for the brake.
+ *
+ * The status write is the commit point (as `applyVerdict`'s): a busy card refuses before it
+ * with nothing written; the journal note and the store's record follow it, and a failure
+ * there is the result's `warning`, never a refusal of a reject that happened.
  */
 export async function rejectFiled(
   contextRoot: string,
@@ -547,7 +599,7 @@ export async function rejectFiled(
   defs: readonly StatusDef[],
   slug: string,
   input: RejectInput,
-): Promise<FiledRecord> {
+): Promise<FiledRecord & { warning?: string }> {
   assertFiledOpen(filedRecord(storeForAction(contextRoot), slug), slug);
   const cancelKey = defs.find((d) => d.kind === 'cancelled')?.key ?? null;
   if (!cancelKey) {
@@ -561,14 +613,11 @@ export async function rejectFiled(
     live.claim = { at: new Date().toISOString() };
     return live.claim.at;
   });
+  let onBoard = false;
   try {
     if (await backend.get(slug)) {
-      await backend.addJournal(slug, {
-        kind: 'status',
-        label: cancelKey,
-        body: `- rejected by the owner (sleep filed it): ${reasonLabel(input.reason)}${input.note?.trim() ? ` — ${input.note.trim()}` : ''}`,
-      });
       await backend.updateFields(slug, { status: cancelKey, updated_at: today() });
+      onBoard = true;
     }
   } catch (err) {
     mutateProposals(contextRoot, (store) => {
@@ -577,6 +626,33 @@ export async function rejectFiled(
     });
     throw err;
   }
+  const warnings: string[] = [];
+  if (onBoard) {
+    try {
+      await backend.addJournal(slug, {
+        kind: 'status',
+        label: cancelKey,
+        body: `- rejected by the owner (sleep filed it): ${reasonLabel(input.reason)}${input.note?.trim() ? ` — ${input.note.trim()}` : ''}`,
+      });
+    } catch (err) {
+      console.error(`[task-proposals] ${slug}: rejected, but the journal note was not written (${err instanceof Error ? err.message : String(err)}).`);
+      warnings.push(`"${slug}" was cancelled, but its journal note was not written.`);
+    }
+  }
+  let record: FiledRecord | null = null;
+  try {
+    record = recordFiledReject(contextRoot, slug, claimedAt, input);
+  } catch (err) {
+    if (!(err instanceof TaskFileBusyError) && !(err instanceof ProposalError && err.code === 'resolved')) throw err;
+    console.error(`[task-proposals] ${slug}: rejected, but not recorded as rejected (${err.message}).`);
+    warnings.push(`"${slug}" was cancelled, but the reject was not recorded for sleep (${err.message}).`);
+  }
+  const base: FiledRecord = record ?? { ...filedRecord(readProposals(contextRoot), slug)!, outcome: 'rejected' };
+  return { ...base, ...(warnings.length > 0 ? { warning: warnings.join(' ') } : {}) };
+}
+
+/** The store half of {@link rejectFiled}: rejected, with the feedback and the declined entry. */
+function recordFiledReject(contextRoot: string, slug: string, claimedAt: string, input: RejectInput): FiledRecord {
   return mutateProposals(contextRoot, (store) => {
     const live = filedRecord(store, slug);
     if (!live || live.outcome !== 'open' || live.claim?.at !== claimedAt) {

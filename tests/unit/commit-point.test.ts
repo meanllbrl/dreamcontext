@@ -8,13 +8,18 @@
  * A held lock is a lock file a live process (this one) owns; the writer gives up after
  * LOCK_WAIT_MS (3 s), so the busy cases take that long.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { handleTaskVerdict, handleTasksUpdate } from '../../src/server/routes/tasks.js';
-import { handleTaskChangeApply, handleTaskProposalAccept } from '../../src/server/routes/task-proposals.js';
-import { addProposal, readProposals } from '../../src/lib/task-proposals.js';
+import {
+  handleFiledTaskKeep, handleTaskChangeApply, handleTaskChangeKeep, handleTaskProposalAccept, handleTaskProposalReject,
+} from '../../src/server/routes/task-proposals.js';
+import { addProposal, mutateProposals, readProposals, recordFiled } from '../../src/lib/task-proposals.js';
+import { readFeedback } from '../../src/lib/task-feedback.js';
+import { readDeclined } from '../../src/lib/task-declined.js';
+import { readSleepState } from '../../src/cli/commands/sleep.js';
 import { runBacklogStep, suggestChange } from '../../src/lib/backlog-migration.js';
 import { LocalTaskBackend, resetTaskReadMemo } from '../../src/lib/task-backend/local.js';
 import { listAudit } from '../../src/lib/task-audit.js';
@@ -63,6 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   console.error = origErr;
   console.log = origLog;
   process.chdir(prevCwd);
@@ -178,4 +184,106 @@ describe('a change apply', () => {
     expect(snapshot('park-me')).toEqual(before);
     expect(listAudit(ctx)).toEqual([]);
   }, 20_000);
+});
+
+/**
+ * Second-pass review, Major 1: an accept whose final store write found the store busy left the
+ * proposal pending with its claim, over a task that exists. Past the claim's TTL it was listed
+ * and counted again; accept answered `exists` and reject recorded a "no" for a kept task. An
+ * accept now finishes it; a reject refuses; a proposal that changed meanwhile is a warning.
+ */
+describe('an accept that created its task but could not mark the proposal', () => {
+  const NAME = 'Add a CSV export';
+  const SLUG = 'add-a-csv-export';
+  const CLAIM_TTL_MS = 5 * 60_000;
+  const propose = () => addProposal(ctx, { name: NAME, why: 'The owner asked for it.', quote: 'can we export this as csv', basis: 'ask' });
+
+  /** Run `after` right after the task file is written, inside the accept. */
+  function afterCreate(after: () => void): void {
+    const create = LocalTaskBackend.prototype.create;
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend["create"]>[0]) {
+      const task = await create.call(this, input);
+      after();
+      return task;
+    });
+  }
+
+  /** Leave the proposal pending with a claim on a task that exists, as a busy final write does. */
+  async function leftover(): Promise<string> {
+    const p = propose();
+    let release = () => {};
+    afterCreate(() => { release = hold('.task-proposals'); });
+    const first = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
+    release();
+    vi.restoreAllMocks();
+    expect(first.code).toBe(200);
+    expect(String(first.body.warning)).toMatch(/could not be marked accepted/);
+    expect(existsSync(join(stateDir, `${SLUG}.md`))).toBe(true);
+    const live = readProposals(ctx).proposals.find((x) => x.id === p.id)!;
+    expect(live.status).toBe('pending');
+    expect(live.claim?.slug).toBe(SLUG);
+    return p.id;
+  }
+
+  it('past the claim TTL, accepting again finishes it: 200 accepted, keep feedback, nothing declined', async () => {
+    const id = await leftover();
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + CLAIM_TTL_MS + 60_000);
+    const again = await call(handleTaskProposalAccept, ctx, { id }, { body: {} });
+    expect(again.code).toBe(200);
+    expect(again.body.slug).toBe(SLUG);
+    expect(String(again.body.warning)).toMatch(/earlier accept/);
+    const live = readProposals(ctx).proposals.find((x) => x.id === id)!;
+    expect(live).toMatchObject({ status: 'accepted', slug: SLUG });
+    expect(live.claim).toBeUndefined();
+    const feedback = readFeedback(ctx).filter((e) => e.id === id);
+    expect(feedback.map((e) => e.verdict)).toEqual(['keep']);
+    expect(readDeclined(ctx)).toEqual([]);
+  }, 20_000);
+
+  it('a reject of that proposal is refused: accept it to finish', async () => {
+    const id = await leftover();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + CLAIM_TTL_MS + 60_000);
+    const r = await call(handleTaskProposalReject, ctx, { id }, { body: { reason: 'not-work' } });
+    expect(r.code).toBe(409);
+    expect(String(r.body.message)).toMatch(/accept it to finish/);
+    expect(readProposals(ctx).proposals.find((x) => x.id === id)!.status).toBe('pending');
+    expect(readFeedback(ctx).filter((e) => e.verdict === 'reject')).toEqual([]);
+    expect(readDeclined(ctx)).toEqual([]);
+  }, 20_000);
+
+  it('a proposal that changed during the create: 200 with a warning, and the change and the audit are recorded', async () => {
+    const p = propose();
+    // Someone else's write took the claim away while the task was being created.
+    afterCreate(() => mutateProposals(ctx, (store) => { delete store.proposals.find((x) => x.id === p.id)!.claim; }));
+    const r = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
+    expect(r.code).toBe(200);
+    expect(r.body.slug).toBe(SLUG);
+    expect(String(r.body.warning)).toMatch(/changed while it was being accepted/);
+    expect(existsSync(join(stateDir, `${SLUG}.md`))).toBe(true);
+    expect((readSleepState(ctx).dashboard_changes ?? []).some((c) => c.target === SLUG && c.action === 'create')).toBe(true);
+    expect(listAudit(ctx).filter((e) => e.kind === 'accept' && e.slug === SLUG)).toHaveLength(1);
+  });
+});
+
+/** Second-pass review, Minor 10: the two keep routes are owner-only, like accept and apply. */
+describe('the keep routes need the browser Origin', () => {
+  it('filed keep: 403 without an Origin, nothing kept', async () => {
+    seed('filed-two', 'todo');
+    recordFiled(ctx, { slug: 'filed-two', name: 'Filed two', why: 'Because.', quote: 'q q q q', basis: 'ask', parent: null });
+    const r = await call(handleFiledTaskKeep, ctx, { slug: 'filed-two' }, { origin: null });
+    expect(r.code).toBe(403);
+    expect(readProposals(ctx).filed.find((f) => f.slug === 'filed-two')!.outcome).toBe('open');
+    expect((await call(handleFiledTaskKeep, ctx, { slug: 'filed-two' })).code).toBe(200);
+  });
+
+  it('change keep: 403 without an Origin, the suggestion still waiting', async () => {
+    seed('park-me', 'todo', ['- [ ] Something']);
+    runBacklogStep(ctx);
+    const rec = await suggestChange(ctx, new LocalTaskBackend(stateDir), 'park-me', { change: 'later', why: 'Not now.', by: 'agent' });
+    const id = rec.suggestion!.id;
+    const r = await call(handleTaskChangeKeep, ctx, { slug: 'park-me' }, { origin: null, body: { id } });
+    expect(r.code).toBe(403);
+    expect((await call(handleTaskChangeKeep, ctx, { slug: 'park-me' }, { body: { id } })).code).toBe(200);
+  });
 });
