@@ -181,7 +181,7 @@ describe('a funnel-explorer insight derives as the explorer card', () => {
     createInsight(root, { slug: SLUG, title: 'Acme storefront funnels', category: 'Acme Funnel', preset: 'funnel-explorer' });
     createInsight(root, { slug: 'acme-signups', title: 'Signups', category: 'Acme Funnel' });
     const before = deriveBoards(root)[0].spec.cards.find((c) => c.id === `c-${SLUG}`)!;
-    expect(before.blocks![1].tabs!.map((t) => t.label)).toEqual(['Daily', 'Benchmark', 'Ranking', 'Flow', 'Steps', 'Compare', 'Payment', 'Access']);
+    expect(before.blocks![1].tabs!.map((t) => t.label)).toEqual(['Daily', 'Benchmark', 'Ranking', 'Flow', 'Steps', 'Compare', 'Payment', 'Access', 'Table']);
     writeCache(root, SLUG, cacheOf(explorerSet()));
     const after = deriveBoards(root)[0].spec.cards;
     const card = after.find((c) => c.id === `c-${SLUG}`)!;

@@ -215,7 +215,7 @@ describe('lab board show over the derived explorer card', () => {
     expect(card.blocks![1].tabs!.map((t) => t.labelKey)).toEqual([
       'lab.explorer.tab.daily', 'lab.explorer.tab.benchmark', 'lab.explorer.tab.ranking', 'lab.explorer.tab.flow',
       'lab.explorer.tab.steps', 'lab.explorer.tab.compare', 'lab.explorer.tab.payment', 'lab.explorer.tab.access',
-      'lab.explorer.tab.dim.platform', 'lab.explorer.tab.dim.country',
+      'lab.explorer.tab.dim.platform', 'lab.explorer.tab.dim.country', 'lab.explorer.tab.table',
     ]);
   });
 

@@ -430,7 +430,11 @@ export function buildExplorerResponse(contextRoot: string, insight: string, loca
   };
 }
 
-/** GET /api/lab/explorer/:slug[?locale=en|tr] — the insight's funnel-explorer card (see buildExplorerResponse). */
+/**
+ * GET /api/lab/explorer/:slug[?locale=en|tr] — the insight's funnel-explorer card (see
+ * buildExplorerResponse). No `locale` = the insight's own (`locale:` in its manifest), the
+ * language its board card speaks.
+ */
 export async function handleLabExplorer(
   req: IncomingMessage,
   res: ServerResponse,
@@ -441,11 +445,13 @@ export async function handleLabExplorer(
   if (!slug) return;
   const lang = new URL(req.url || '/', 'http://localhost').searchParams.get('locale');
   try {
-    if (!getInsight(contextRoot, slug)) {
+    const manifest = getInsight(contextRoot, slug);
+    if (!manifest) {
       sendError(res, 404, 'not-found', `Insight not found: ${slug}`);
       return;
     }
-    const out = buildExplorerResponse(contextRoot, slug, lang === 'tr' ? 'tr' : 'en');
+    const locale = (lang ?? manifest.locale) === 'tr' ? 'tr' : 'en';
+    const out = buildExplorerResponse(contextRoot, slug, locale);
     if (!out) {
       sendError(res, 422, 'no-funnel', `${slug} has no funnel data: sync it, or it is not a funnel insight.`);
       return;

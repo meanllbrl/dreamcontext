@@ -55,6 +55,9 @@ function toPublicManifest(m: InsightManifest) {
     adapter: source ? source.adapter : null,
     method: source && source.adapter === 'http' ? source.method : null,
     tweaks: toPublicTweaks(m),
+    // The detail page draws a preset insight as its preset card, in the card's language.
+    preset: m.preset ?? null,
+    locale: m.locale ?? null,
   };
 }
 

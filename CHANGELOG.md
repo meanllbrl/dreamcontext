@@ -4,6 +4,30 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+### A funnel explorer's own page is the explorer, not the old table (2026-10-12)
+
+An insight made with `lab create --preset funnel-explorer` had two faces that disagreed. Its board
+card was the explorer (picker, header with window, source and reading traps, Daily to Access and
+the axis tabs), but clicking through to `/lab/<slug>` drew the pre-explorer comparison table with
+**Last 7/28/30/90 days** buttons. Those buttons fetched nothing new: a preset reads its window from
+the snapshot. The page was misleading, and every explorer page was missing from it.
+
+The cause was one field: the server's public manifest never sent `preset`, so the detail route
+could not tell a preset insight from any other funnel.
+
+- **`/lab/<slug>` and `/lab/<slug>/f/<funnelId>` draw the explorer card, full page.** The card
+  comes from the same preset blocks the board derives from (`GET /api/lab/explorer/:slug`), in
+  the insight's own `locale`, so the two cannot drift. The view rides the same `v.<cardId>` param
+  as the board, so a link moves between them; `/f/<id>` opens on that funnel and follows the
+  picker.
+- **No range control on a preset insight.** The window is the snapshot's, named in the header.
+- **The old table lives on as the explorer's last tab, Table.** Every funnel is one row, with
+  column choice, search and Copy MD, and no range. A row click picks that funnel for the whole
+  card. It sits after the axis tabs, so the tab indexes in links people already shared still
+  open the same pages. Under the hood it is a funnel block's new `layout: table`.
+- **A funnel insight without the preset is unchanged:** comparison table, range control and the
+  `/f/` lane page, as before.
+
 ### A permission switch changes one conversation, and your pane layout comes back (2026-09-20)
 
 Flipping **Auto → Bypass** in one chat composer stopped and respawned **every open chat in the

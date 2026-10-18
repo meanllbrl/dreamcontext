@@ -84,3 +84,18 @@
 .lab-block-insight--scroll > .lab-table-wrap {
   min-height: 0;
 }
+
+/* A funnel block's `table` layout (the explorer's Table tab): toolbar, then the table scrolling in the cell. */
+.lab-block-funnel-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  min-height: 0;
+}
+
+.lab-block-funnel-table .funnel-ovw-tablewrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}

@@ -1049,7 +1049,8 @@
           "type": "enum",
           "enum": [
             "bars",
-            "flow"
+            "flow",
+            "table"
           ],
           "default": "bars",
           "labelKey": "lab.block.opt.layout",
@@ -2133,6 +2134,10 @@
       "flow": {
         "en": "Flow",
         "tr": "Akış"
+      },
+      "table": {
+        "en": "Table of funnels",
+        "tr": "Huni tablosu"
       }
     },
     "tone": {

@@ -110,15 +110,15 @@ describe('the preset card equals the CLI preset', () => {
     // The breakdown carries the funnel picker (and user counts): the card's blocks follow the picked funnel.
     expect(breakdown).toEqual({ type: 'breakdown', data: SLUG, options: { picker: true, counts: true, locale: 'en' } });
     expect(tabs.tabs!.map((t) => t.label)).toEqual([
-      'Daily', 'Benchmark', 'Ranking', 'Flow', 'Steps', 'Compare', 'Payment', 'Access', 'Platform', 'Language', 'Country', 'Device',
+      'Daily', 'Benchmark', 'Ranking', 'Flow', 'Steps', 'Compare', 'Payment', 'Access', 'Platform', 'Language', 'Country', 'Device', 'Table',
     ]);
     expect(tabs.tabs![3].blocks[0]).toEqual({ type: 'funnel', data: SLUG, options: { layout: 'flow', markWorst: true, compare: 'off' } });
   });
 
   it('an unknown locale writes English labels, tr writes Turkish', () => {
     const labels = (locale: string) => cardFromPreset(board(), SLUG, TITLE, [], locale).blocks![1].tabs!.map((t) => t.label);
-    expect(labels('de')).toEqual(['Daily', 'Benchmark', 'Ranking', 'Flow', 'Steps', 'Compare', 'Payment', 'Access']);
-    expect(labels('tr')).toEqual(['Günlük', 'Benchmark', 'Sıralama', 'Akış', 'Adımlar', 'Karşılaştır', 'Ödeme', 'Erişim']);
+    expect(labels('de')).toEqual(['Daily', 'Benchmark', 'Ranking', 'Flow', 'Steps', 'Compare', 'Payment', 'Access', 'Table']);
+    expect(labels('tr')).toEqual(['Günlük', 'Benchmark', 'Sıralama', 'Akış', 'Adımlar', 'Karşılaştır', 'Ödeme', 'Erişim', 'Tablo']);
   });
 });
 

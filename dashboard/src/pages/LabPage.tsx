@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BoardPage } from '../components/lab/board/BoardPage';
-import { FunnelDetailPage } from '../components/lab/funnel/FunnelDetailPage';
 import { LabAppPage } from '../components/lab/LabAppPage';
 import { LabRoutedInsight } from '../components/lab/LabRoutedInsight';
 import {
@@ -28,8 +27,9 @@ interface LabPageProps {
  * address and saves it. Multi-page insights (`render: funnel` and `render: app`) route to
  * `/lab/<slug>` and a render-specific sub-segment (`/f/<funnelId>` for
  * funnel, `/p/<pageId>` for app) with real history entries, so back/forward
- * and deep links work. A bare `/lab/<slug>` dispatches by the insight's
- * actual render (`LabRoutedInsight`) rather than assuming funnel. Strictly
+ * and deep links work. `/lab/<slug>` (and its `/f/`) dispatches by the insight's
+ * actual shape (`LabRoutedInsight`: a funnel-explorer preset is its explorer
+ * card, full page) rather than assuming funnel. Strictly
  * self-contained; no reach into Roadmap.
  */
 export function LabPage({ focus }: LabPageProps = {}) {
@@ -74,17 +74,7 @@ export function LabPage({ focus }: LabPageProps = {}) {
   });
 
   let content;
-  if (route.slug && route.funnelId) {
-    content = (
-      <FunnelDetailPage
-        slug={route.slug}
-        funnelId={route.funnelId}
-        onBack={() => pushLabPath(route.slug, null, bus)}
-        onBackToBoard={() => pushLabPath(null, null, bus)}
-        onToast={setToast}
-      />
-    );
-  } else if (route.slug && route.pageId) {
+  if (route.slug && route.pageId) {
     content = (
       <LabAppPage
         key={route.slug}
@@ -95,10 +85,14 @@ export function LabPage({ focus }: LabPageProps = {}) {
       />
     );
   } else if (route.slug) {
+    // `/lab/<slug>` and `/lab/<slug>/f/<funnelId>` share one element, so a funnel-explorer page
+    // that re-addresses its pick keeps its state.
     content = (
       <LabRoutedInsight
         slug={route.slug}
+        funnelId={route.funnelId}
         onBack={() => pushLabPath(null, null, bus)}
+        onBackToInsight={() => pushLabPath(route.slug, null, bus)}
         onToast={setToast}
       />
     );

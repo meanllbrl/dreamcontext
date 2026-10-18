@@ -176,6 +176,14 @@ export function pushLabPath(slug: string | null, funnelId: string | null, bus?: 
 }
 
 /**
+ * Re-address the current lab page without a history step: a funnel-explorer page keeps
+ * `/f/<funnelId>` in step with its picker, which is a view edit, not a navigation.
+ */
+export function replaceLabPath(slug: string | null, funnelId: string | null, bus?: EventTarget): void {
+  commit(labPath(slug, funnelId) + splitTarget(currentTarget(bus)).search, 'replace', bus);
+}
+
+/**
  * Show a board. `replace` for a board the page settled on by itself (the saved
  * or first board), `push` for a tab the user clicked, so Back walks boards.
  */

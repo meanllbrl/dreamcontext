@@ -291,13 +291,16 @@ export function boardFromWire(r: BoardResponse & { frameAliases?: Record<string,
  * One insight's funnel-explorer card as a one-card, read-only board
  * (`GET /api/lab/explorer/:slug`): the blocks `--preset funnel-explorer` writes, resolved by the
  * board engine, for a surface outside Lab. Under `['lab', …]`, so a sync or a tweak refetches it.
- * A 422 (no funnel data yet) is an error the caller words.
+ * A 422 (no funnel data yet) is an error the caller words. `locale` null = the insight's own
+ * language (its board card's), which the insight detail page draws in.
  */
-export function useLabExplorer(slug: string | null, locale: 'en' | 'tr') {
+export function useLabExplorer(slug: string | null, locale: 'en' | 'tr' | null) {
   const api = useApi();
   return useQuery({
-    queryKey: ['lab', 'explorer', slug ?? '', locale] as const,
-    queryFn: () => api.get<BoardResponse>(`/lab/explorer/${encodeURIComponent(slug as string)}?locale=${locale}`).then(boardFromWire),
+    queryKey: ['lab', 'explorer', slug ?? '', locale ?? 'insight'] as const,
+    queryFn: () => api.get<BoardResponse>(
+      `/lab/explorer/${encodeURIComponent(slug as string)}${locale ? `?locale=${locale}` : ''}`,
+    ).then(boardFromWire),
     enabled: !!slug,
     retry: 0,
     placeholderData: (prev) => prev,

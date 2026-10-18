@@ -9,10 +9,23 @@
   -->
   <key>com.apple.security.app-sandbox</key>
   <false/>
-  <!-- Node's JIT needs executable+writable memory. -->
+  <!--
+    The release is signed with Developer ID under the HARDENED RUNTIME (notarization
+    requires it). The runtime denies what is not entitled here, so every capability
+    the app uses is listed. The Node child is a separate executable with its own
+    signature: none of this applies to it, and it needs nothing from it.
+  -->
+  <!-- JIT + unsigned executable memory: kept from the pre-runtime signature; harmless. -->
   <key>com.apple.security.cs.allow-jit</key>
   <true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!-- J.A.R.V.I.S push-to-talk: cpal (src/mic.rs) and WKWebView getUserMedia. Without
+       it the runtime denies the microphone even after the user allows it. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <!-- Pausing the music player while an answer is read aloud (NSAppleEventsUsageDescription). -->
+  <key>com.apple.security.automation.apple-events</key>
   <true/>
 </dict>
 </plist>

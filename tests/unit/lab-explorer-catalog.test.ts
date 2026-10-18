@@ -91,7 +91,7 @@ describe('explorer blocks in the catalog', () => {
     expect(opt('benchmark', 'sources').default).toBe(true);
     expect(opt('segments', 'bands').default).toBe(true);
     expect(opt('segments', 'density').default).toBe('compact');
-    expect(opt('funnel', 'layout')).toMatchObject({ type: 'enum', enum: ['bars', 'flow'], default: 'bars' });
+    expect(opt('funnel', 'layout')).toMatchObject({ type: 'enum', enum: ['bars', 'flow', 'table'], default: 'bars' });
     expect(opt('funnel', 'markWorst').default).toBe(false);
     expect(opt('insight', 'nav').default).toBe(false);
     // The bar keeps its own comparePrev default; the label is shared.

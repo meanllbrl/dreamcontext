@@ -1,26 +1,30 @@
 name: desktop-release
 
-# Faz 1 of the continuous app-update epic. Builds the dreamcontext-beta Tauri
-# .app, DEEP-signs it with the project's one self-signed release certificate
-# (with entitlements — NOT Apple Developer ID / notarization), packages it as <name>.app.tar.gz + a mandatory .sha256, and
-# publishes both to a GitHub Release. The already-shipped `dreamcontext app
-# install|update` + `maybeTriggerAppUpdate` client code then works end-to-end:
-# it pulls the arch-matching .app.tar.gz from /releases/latest, verifies the
-# .sha256, and installs via ditto (no com.apple.quarantine → no Gatekeeper
-# notarization prompt; a valid signature satisfies Apple Silicon).
+# Builds the dreamcontext-beta Tauri app and publishes it to a GitHub Release, signed with
+# the project's Apple DEVELOPER ID under the hardened runtime and NOTARIZED by Apple:
 #
-# Why a fixed certificate and not ad-hoc: an ad-hoc signature's designated
-# requirement is the bundle's cdhash, so every release is a new app to TCC and
-# users are asked for file / microphone / automation access after every update.
-# Signed with one certificate, the requirement is `identifier + certificate leaf`
-# and the grants survive. The certificate comes from scripts/release-signing-cert.sh
-# (secrets MACOS_SIGNING_P12 + MACOS_SIGNING_P12_PASSWORD, variable
-# MACOS_SIGNING_CERT_SHA1, all in the tag-only `release` environment). ROTATING IT costs every user one more round of grants.
+#   dreamcontext-beta_aarch64.dmg                  the one installer; a browser download opens
+#                                                  without a Gatekeeper warning (stapled ticket).
+#                                                  Version-less name, so
+#                                                  /releases/latest/download/<name> is a fixed link.
+#   dreamcontext-beta_<ver>_aarch64.app.tar.gz     the update payload, shared by both updaters:
+#     + .sha256                                    the CLI's `app update` (checksum mandatory)
+#     + .sig                                       the in-app updater (minisign, pubkey in tauri.conf.json)
+#   latest.json                                    what the in-app updater polls
 #
-# Why no notarization: the whole delivery path is curl/ditto (never a browser
-# download), so the quarantine bit is never set and Gatekeeper's notarization
-# check never fires. This is macOS-only and holds only while the install path
-# stays CLI-driven.
+# Why Developer ID and not the earlier self-signed certificate: the designated requirement
+# becomes `anchor apple generic` + the team, which macOS evaluates the same way on every
+# machine, so file / microphone / automation grants survive every update; Gatekeeper accepts
+# a browser-downloaded copy; and the app can update itself without the CLI. Moving from the
+# self-signed certificate to Developer ID changes the identity ONCE: every user re-grants once.
+#
+# Secrets (all in the tag-only `release` environment; the repo is public, so no branch
+# workflow or fork PR may read them):
+#   APPLE_CERTIFICATE           base64 of the Developer ID Application .p12 (key + cert)
+#   APPLE_CERTIFICATE_PASSWORD  its export password
+#   APPLE_ID, APPLE_PASSWORD    the Apple ID + app-specific password notarytool signs in with
+#   TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)  the updater's minisign key
+# Variables: APPLE_SIGNING_IDENTITY (the identity's SHA-1), APPLE_TEAM_ID.
 
 on:
   push:
@@ -89,72 +93,118 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Build the Tauri .app
-        working-directory: desktop
-        run: npm run tauri build -- --bundles app
-
-      - name: Sign with the release certificate (with entitlements)
-        # tauri build leaves the Mach-O only *linker-signed*; deep-sign the whole
-        # bundle so `codesign --verify --deep` passes and entitlements (non-sandbox
-        # + no hardened runtime, so the Node child has FS rights + JIT) are applied.
-        # No fallback to ad-hoc: an ad-hoc release would silently cost every user
-        # their permissions again, so a missing secret fails the release.
+      - name: Import the Developer ID certificate into a temporary keychain
+        # One keychain for the whole job: tauri signs the .app from it, and the DMG is signed
+        # from it afterwards. Fails rather than falls back: an unsigned or ad-hoc release would
+        # cost every user their permissions and meet Gatekeeper on download.
         env:
-          P12_B64: ${{ secrets.MACOS_SIGNING_P12 }}
-          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
-          CERT_SHA1: ${{ vars.MACOS_SIGNING_CERT_SHA1 }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
         run: |
-          if [ -z "$P12_B64" ] || [ -z "$P12_PASSWORD" ] || [ -z "$CERT_SHA1" ]; then
-            echo "::error::Release signing secrets missing — run scripts/release-signing-cert.sh once."
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_CERTIFICATE_PASSWORD" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::error::Developer ID secrets missing (APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, vars.APPLE_SIGNING_IDENTITY)."
             exit 1
           fi
-          APP="desktop/src-tauri/target/release/bundle/macos/dreamcontext-beta.app"
           KC="$RUNNER_TEMP/release-signing.keychain-db"
           KC_PASS="$(openssl rand -hex 16)"
-          echo "$P12_B64" | base64 --decode > "$RUNNER_TEMP/release.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/devid.p12"
           security create-keychain -p "$KC_PASS" "$KC"
           security set-keychain-settings -lut 3600 "$KC"
           security unlock-keychain -p "$KC_PASS" "$KC"
-          security import "$RUNNER_TEMP/release.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security import "$RUNNER_TEMP/devid.p12" -k "$KC" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/devid.p12"
+          # The intermediate, in case the runner image lacks it: codesign needs the full chain.
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KC" || true
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PASS" "$KC" >/dev/null
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
-          # codesign refuses an untrusted identity; trust this one for code signing on the runner.
-          security find-certificate -c "dreamcontext Release Signing" -p "$KC" > "$RUNNER_TEMP/release.cert.pem"
-          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
-            -k /Library/Keychains/System.keychain "$RUNNER_TEMP/release.cert.pem"
-          rm -f "$RUNNER_TEMP/release.p12"
-          codesign --deep --force --sign "$(echo "$CERT_SHA1" | tr a-f A-F)" --keychain "$KC" \
-            --entitlements desktop/src-tauri/entitlements.plist \
-            "$APP"
-          codesign --verify --deep --strict "$APP"
-          # The point of the step: the requirement names the pinned certificate, never a cdhash.
+          security find-identity -v -p codesigning "$KC" | grep -q "$APPLE_SIGNING_IDENTITY" \
+            || { echo "::error::$APPLE_SIGNING_IDENTITY is not a valid identity in the imported .p12"; exit 1; }
+
+      - name: Build, sign, notarize and staple the Tauri .app (+ updater payload + DMG)
+        # tauri signs with --options runtime and entitlements.plist, submits the .app to
+        # notarytool, staples the ticket, then builds the DMG and the signed .app.tar.gz from
+        # that stapled bundle. createUpdaterArtifacts is switched on HERE only, so a local
+        # `tauri build` never needs the updater key. DREAMCONTEXT_UPDATER=1 is read at compile
+        # time by src/updater.rs: only this build updates itself.
+        working-directory: desktop
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          DREAMCONTEXT_UPDATER: '1'
+        run: |
+          for v in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY; do
+            if [ -z "${!v}" ]; then echo "::error::$v is missing"; exit 1; fi
+          done
+          npm run tauri build -- --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'
+
+      - name: Verify the app is Developer ID signed, notarized and stapled
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          APP="desktop/src-tauri/target/release/bundle/macos/dreamcontext-beta.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
           DR="$(codesign -d -r- "$APP" 2>&1 | grep '^designated')"
           echo "$DR"
+          echo "$DR" | grep -q 'anchor apple generic'
           echo "$DR" | grep -q 'identifier "com.dreamcontext.beta"'
-          echo "$DR" | grep -qi "certificate leaf = H\"$CERT_SHA1\""
-          echo "✓ signed with the release certificate, designated requirement is stable"
+          echo "$DR" | grep -q "certificate leaf\[subject.OU\] = \"\?$APPLE_TEAM_ID\"\?"
+          codesign -d --verbose=2 "$APP" 2>&1 | grep -q 'flags=0x10000(runtime)'
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=4 "$APP" 2>&1 | tee /dev/stderr | grep -q 'source=Notarized Developer ID'
+          echo "✓ Developer ID, hardened runtime, notarized, stapled"
 
-      - name: Remove the signing keychain
-        if: always()
-        run: security delete-keychain "$RUNNER_TEMP/release-signing.keychain-db" || true
+      - name: Sign, notarize and staple the DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          DMG="$(ls desktop/src-tauri/target/release/bundle/dmg/*.dmg | head -1)"
+          test -f "$DMG"
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$DMG"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --timeout 30m
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+          echo "dmg=$DMG" >> "$GITHUB_ENV"
 
-      - name: Package .app.tar.gz + .sha256
+      - name: Package the release assets
         id: pkg
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
+          TAG="${{ steps.ver.outputs.tag }}"
           BUNDLE_DIR="desktop/src-tauri/target/release/bundle/macos"
           ASSET="dreamcontext-beta_${VERSION}_${ARCH}.app.tar.gz"
+          DMG_ASSET="dreamcontext-beta_${ARCH}.dmg"
           OUT="$PWD/dist-release"
           mkdir -p "$OUT"
-          # Top-level .app inside the tarball so the client's materializeAppBundle
-          # (tar -xzf → find *.app) resolves it.
-          tar -czf "$OUT/$ASSET" -C "$BUNDLE_DIR" dreamcontext-beta.app
+          # tauri's updater payload IS a tarball with the .app at the top level, which is
+          # also what the CLI's materializeAppBundle expects: one file serves both updaters.
+          cp "$BUNDLE_DIR/dreamcontext-beta.app.tar.gz" "$OUT/$ASSET"
+          cp "$BUNDLE_DIR/dreamcontext-beta.app.tar.gz.sig" "$OUT/$ASSET.sig"
           ( cd "$OUT" && shasum -a 256 "$ASSET" > "$ASSET.sha256" )
+          cp "$dmg" "$OUT/$DMG_ASSET"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+          SIG="$(cat "$OUT/$ASSET.sig")"
+          jq -n --arg v "$VERSION" --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg s "$SIG" --arg u "$URL" \
+            '{version: $v, notes: "", pub_date: $d, platforms: {"darwin-aarch64": {signature: $s, url: $u}}}' \
+            > "$OUT/latest.json"
+          cat "$OUT/latest.json"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "dmg=$DMG_ASSET" >> "$GITHUB_OUTPUT"
           echo "out=$OUT" >> "$GITHUB_OUTPUT"
           ls -la "$OUT"
 
-      - name: Verify the packaged artifact (extract + checksum + launchable bundle)
+      - name: Verify the packaged artifact (extract + checksum + Developer ID bundle)
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
           OUT="${{ steps.pkg.outputs.out }}"
           ASSET="${{ steps.pkg.outputs.asset }}"
@@ -163,19 +213,29 @@ jobs:
           tar -xzf "$OUT/$ASSET" -C "$TMP"
           test -x "$TMP/dreamcontext-beta.app/Contents/MacOS/dreamcontext-desktop"
           codesign --verify --deep --strict "$TMP/dreamcontext-beta.app"
-          codesign -d -r- "$TMP/dreamcontext-beta.app" 2>&1 | grep -qi 'certificate leaf = H"${{ vars.MACOS_SIGNING_CERT_SHA1 }}"'
-          echo "✓ artifact extracts, checksum matches, bundle is signed with the release certificate"
+          codesign -d --verbose=2 "$TMP/dreamcontext-beta.app" 2>&1 | grep -q "^TeamIdentifier=$APPLE_TEAM_ID$"
+          xcrun stapler validate "$TMP/dreamcontext-beta.app"
+          echo "✓ the update payload is the notarized Developer ID bundle"
+
+      - name: Remove the signing keychain
+        # Before the third-party release action runs, so it never shares a machine state
+        # with an unlocked signing key.
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/release-signing.keychain-db" || true
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: dreamcontext-beta ${{ steps.ver.outputs.version }}
-          # Must be a non-draft, non-prerelease so the client's /releases/latest
-          # lookup (downloadLatestArtifact) finds it.
+          # Must be a non-draft, non-prerelease so /releases/latest (the CLI's
+          # downloadLatestArtifact, the in-app updater's latest.json, the DMG link) finds it.
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
           files: |
             ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.asset }}
             ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.asset }}.sha256
+            ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.asset }}.sig
+            ${{ steps.pkg.outputs.out }}/latest.json
+            ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.dmg }}

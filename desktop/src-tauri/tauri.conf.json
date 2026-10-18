@@ -1,6 +1,6 @@
 {
   "productName": "dreamcontext-beta",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "identifier": "com.dreamcontext.beta",
   "build": {
     "frontendDist": "./frontend-placeholder"
@@ -34,7 +34,29 @@
     },
     "macOS": {
       "entitlements": "entitlements.plist",
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "12.0",
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 480
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 180
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 180
+        }
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJEN0IxNjJERTc1N0VGQkQKUldTOTcxZm5MUlo3TGNnaHlvRlQ1RDNnNUl0cVR5WVVVTmVodEk1bW1PYW54VlF3YVNLTWd4YkcK",
+      "endpoints": [
+        "https://github.com/meanllbrl/dreamcontext/releases/latest/download/latest.json"
+      ]
     }
   }
 }

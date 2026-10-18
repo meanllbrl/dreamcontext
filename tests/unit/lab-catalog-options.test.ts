@@ -92,7 +92,8 @@ const LEGACY_VALUES: Partial<Record<BlockType, Record<string, Partial<BlockOptio
   table: { limit: { min: 1, max: 400 } },
   heatmap: { color: { default: 1, min: 1, max: 8 } },
   // markWorst off and layout bars: a funnel block written before the explorer draws exactly as before.
-  funnel: { compact: { default: false }, markWorst: { default: false }, layout: { enum: ['bars', 'flow'], default: 'bars' } },
+  // `table` was added after (the explorer's Table tab); the default stays bars.
+  funnel: { compact: { default: false }, markWorst: { default: false }, layout: { enum: ['bars', 'flow', 'table'], default: 'bars' } },
   insight: { nav: { default: false } },
   callout: { tone: { enum: ['info', 'success', 'warning', 'danger'], default: 'info' } },
 };

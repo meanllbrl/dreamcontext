@@ -32,6 +32,7 @@ mod node_runtime;
 mod node_setup;
 mod page_focus;
 mod splash;
+mod updater;
 
 use std::net::TcpListener;
 use std::path::Path;
@@ -125,8 +126,11 @@ pub fn run() {
         // the dashboard's "Claude is asking" alarm has something to call. Sent from JS
         // via the permitted API (see the capability), so no custom command is needed.
         .plugin(tauri_plugin_notification::init())
+        // In-app updates; active only in a CI release build (src/updater.rs).
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
+            updater::start(&handle);
             // The opening screen plays while the server boots. A Login Item launch that
             // only seats the notch opens no Launcher, so it gets no splash either.
             if !notch_only_launch() {

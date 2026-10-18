@@ -32,6 +32,10 @@ const PAGE = join(
   import.meta.dirname,
   '../../dashboard/src/components/lab/funnel/FunnelOverviewPage.tsx',
 );
+const TABLE = join(
+  import.meta.dirname,
+  '../../dashboard/src/components/lab/funnel/FunnelSetTable.tsx',
+);
 
 /** Three funnels that DISAGREE about their steps — the alignment case: `b` has
  *  no `email_input` and adds `plan_select`; `zero` has an empty top step. */
@@ -312,8 +316,11 @@ describe('FunnelOverviewPage routes through the model (drift guard)', () => {
   });
 
   it('reads every cell (and its Δ) through the shared column math', () => {
-    expect(source).toContain('overviewCellValue(funnel, c)');
-    expect(source).toContain('overviewCellPrev(funnel, c, prev)');
+    // The table is FunnelSetTable, shared with the explorer's Table tab.
+    expect(source).toContain('<FunnelSetTable');
+    const table = readFileSync(TABLE, 'utf-8');
+    expect(table).toContain('overviewCellValue(funnel, c)');
+    expect(table).toContain('overviewCellPrev(funnel, c, prev)');
   });
 
   it('persists a change to BOTH the URL and lab prefs', () => {

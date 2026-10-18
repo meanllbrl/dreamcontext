@@ -12,6 +12,7 @@ import { FunnelLanes, MAX_DRAWN_LANES } from '../funnel/FunnelLanes';
 import { computeStepRows, selectionLabel } from '../funnel/funnelModel';
 import { elementFont, textWidth } from '../textMeasure';
 import { NoteMark, notesByKey } from './BenchmarkBlock';
+import { FunnelTableView } from './FunnelTableView';
 import { BlockEmpty, boolOption, drawableFrame, stringOption, type BlockViewProps } from './blockCommon';
 import './dataBlocks.css';
 import '../funnel/FunnelBars.css';
@@ -84,13 +85,25 @@ export function funnelStepMode(width: number, need: FunnelValueWidths): FunnelSt
  * conversion as a separately labelled marker ("50% of prev. step"), written
  * short (arrow and percent) or left to the tooltip when the block is narrow.
  */
-export function FunnelBlock({ frame, options, selection, lanes }: BlockViewProps) {
+export function FunnelBlock({ block, frame, options, selection, lanes, onFunnel }: BlockViewProps) {
   const { t } = useI18n();
   const [measure, box] = useMeasured<HTMLDivElement>();
   const [el, setEl] = useState<HTMLDivElement | null>(null);
   const ref = useCallback((node: HTMLDivElement | null) => { measure(node); setEl(node); }, [measure]);
   const drawable = drawableFrame(frame, ['funnel'] as const);
   if ('empty' in drawable) return <BlockEmpty reason={drawable.empty} />;
+  if (options.layout === 'table' && typeof block.data === 'string') {
+    const f = drawable.frame;
+    return (
+      <FunnelTableView
+        insight={block.data}
+        picked={funnelSlice(f, stringOption(options, 'funnel'), {}).funnelId || null}
+        onFunnel={onFunnel}
+        selection={selection ?? {}}
+        dims={f.dimensions ?? []}
+      />
+    );
+  }
   const explorer = explorerView(drawable.frame, options, selection ?? {}, lanes ?? []);
   if (explorer) return <FunnelExplorer frame={drawable.frame} view={explorer} measureRef={measure} box={box} />;
   const compact = boolOption(options, 'compact');

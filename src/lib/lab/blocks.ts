@@ -351,7 +351,8 @@ export const BLOCK_CATALOG: Record<BlockType, BlockCatalogEntry> = {
       opt('compact', 'boolean', 'Compact', 'Sıkı', { default: false }),
       opt('showConversion', 'boolean', 'Conversion rates', 'Dönüşüm oranları', { default: true }),
       FUNNEL_PICK,
-      choice('layout', 'Layout', 'Yerleşim', [['bars', 'Bars', 'Çubuklar'], ['flow', 'Flow', 'Akış']], 'bars'),
+      // `table`: every funnel of the set as one row (the pre-explorer comparison table).
+      choice('layout', 'Layout', 'Yerleşim', [['bars', 'Bars', 'Çubuklar'], ['flow', 'Flow', 'Akış'], ['table', 'Table of funnels', 'Huni tablosu']], 'bars'),
       // Off by default so written boards draw exactly as before.
       opt('markWorst', 'boolean', 'Mark the biggest drop', 'En büyük düşüşü işaretle', { default: false }),
       COMPARE,

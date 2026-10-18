@@ -320,6 +320,15 @@
   outline-offset: -2px;
 }
 
+/* The funnel the explorer card shows (its Table tab): marked, never filled. */
+.funnel-ovw-row--picked > td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.funnel-ovw-row--picked .funnel-ovw-name {
+  font-weight: 600;
+}
+
 .funnel-ovw-table td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border);
@@ -474,4 +483,21 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* A funnel-explorer insight's detail page: the breadcrumb, then its explorer card filling the page. */
+.lab-explorer-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: var(--space-4);
+}
+
+.lab-explorer-page > .board-card {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }

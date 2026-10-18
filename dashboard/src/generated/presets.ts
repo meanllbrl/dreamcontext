@@ -55,6 +55,7 @@ export const PRESET_LABELS = {
   compare: { en: 'Compare', tr: 'Karşılaştır' },
   payment: { en: 'Payment', tr: 'Ödeme' },
   access: { en: 'Access', tr: 'Erişim' },
+  table: { en: 'Table', tr: 'Tablo' },
   platform: { en: 'Platform', tr: 'Platform' },
   country: { en: 'Country', tr: 'Ülke' },
   language: { en: 'Language', tr: 'Dil' },
@@ -84,7 +85,7 @@ export function cardPicksFunnels(blocks: readonly { type: string; options?: Reco
   return (blocks ?? []).some((b) => b.type === 'breakdown' && !!b.options && b.options.picker === true);
 }
 
-/** The funnel explorer card's blocks for `insight`: the pages, then one Segments tab per dim (first 4). */
+/** The funnel explorer card's blocks for `insight`: the pages, one Segments tab per dim (first 4), then the Table. */
 export function funnelExplorerBlocks(insight: string, dims: readonly PresetDim[], locale: PresetLocale): PresetBlock[] {
   const lang: PresetLocale = locale === 'tr' ? 'tr' : 'en';
   const page = (id: keyof typeof PRESET_LABELS, type: string, options: Record<string, unknown>): PresetTab => ({
@@ -111,6 +112,9 @@ export function funnelExplorerBlocks(insight: string, dims: readonly PresetDim[]
     if (known) tab.labelKey = presetTabKey(`dim.${dim.key}`);
     tabs.push(tab);
   }
+  // Every funnel side by side, the comparison table the detail page drew before the explorer.
+  // Last, so the tab indexes a shared link carries (`v.<card>`) keep naming the same pages.
+  tabs.push(page('table', 'funnel', { layout: 'table' }));
   return [
     // `locale`: the card speaks its insight's language whatever the dashboard's (the card scopes its own copy).
     { type: 'breakdown', data: insight, options: { picker: true, counts: true, locale: lang } },

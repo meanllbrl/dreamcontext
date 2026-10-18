@@ -496,7 +496,7 @@ describe('funnel explorer preset', () => {
     { key: 'cohort', label: 'Cohort' },
   ];
 
-  it('picker breakdown over Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access, then one segments tab per dim (first 4)', () => {
+  it('picker breakdown over Daily, Benchmark, Ranking, Flow, Steps, Compare, Payment, Access, one segments tab per dim (first 4), then Table', () => {
     const blocks = funnelExplorerBlocks('acme-funnel-explorer', dims.slice(0, 1), 'en');
     const d = 'acme-funnel-explorer';
     expect(blocks).toEqual([
@@ -514,19 +514,22 @@ describe('funnel explorer preset', () => {
           { label: 'Payment', labelKey: 'lab.explorer.tab.payment', blocks: [{ type: 'payment', data: d, options: {} }] },
           { label: 'Access', labelKey: 'lab.explorer.tab.access', blocks: [{ type: 'access', data: d, options: {} }] },
           { label: 'Platform', labelKey: 'lab.explorer.tab.dim.platform', blocks: [{ type: 'segments', data: d, options: { by: 'platform' } }] },
+          { label: 'Table', labelKey: 'lab.explorer.tab.table', blocks: [{ type: 'funnel', data: d, options: { layout: 'table' } }] },
         ],
       },
     ]);
     const many = funnelExplorerBlocks('acme-funnel-explorer', dims, 'en');
-    expect(many[1].tabs!.slice(8).map((t) => t.blocks[0].options.by)).toEqual(['platform', 'language', 'country', 'device']);
+    expect(many[1].tabs!.slice(8, 12).map((t) => t.blocks[0].options.by)).toEqual(['platform', 'language', 'country', 'device']);
     // Only the well-known dims get a labelKey; the rest keep the payload's label.
-    expect(many[1].tabs!.slice(8).map((t) => t.labelKey ?? null)).toEqual(['lab.explorer.tab.dim.platform', 'lab.explorer.tab.dim.language', 'lab.explorer.tab.dim.country', null]);
+    expect(many[1].tabs!.slice(8, 12).map((t) => t.labelKey ?? null)).toEqual(['lab.explorer.tab.dim.platform', 'lab.explorer.tab.dim.language', 'lab.explorer.tab.dim.country', null]);
     expect(many[1].tabs![11].label).toBe('Device');
+    // The Table comes last, so a link's tab index keeps naming the same page.
+    expect(many[1].tabs!.at(-1)).toMatchObject({ label: 'Table', blocks: [{ type: 'funnel', options: { layout: 'table' } }] });
   });
 
   it('Turkish labels at insertion; size 12x18; deterministic', () => {
     const tr = funnelExplorerBlocks('acme-funnel-explorer', [], 'tr');
-    expect(tr[1].tabs!.map((t) => t.label)).toEqual(['Günlük', 'Benchmark', 'Sıralama', 'Akış', 'Adımlar', 'Karşılaştır', 'Ödeme', 'Erişim']);
+    expect(tr[1].tabs!.map((t) => t.label)).toEqual(['Günlük', 'Benchmark', 'Sıralama', 'Akış', 'Adımlar', 'Karşılaştır', 'Ödeme', 'Erişim', 'Tablo']);
     expect(funnelExplorerBlocks('x', [{ key: 'country', label: 'Country' }], 'tr')[1].tabs![8].label).toBe('Ülke');
     expect(PRESET_LABELS['funnel-explorer'].tr).toBe('Huni gezgini');
     expect(FUNNEL_EXPLORER_SIZE).toEqual({ w: 12, h: 18 });

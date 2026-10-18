@@ -1,6 +1,6 @@
 [package]
 name = "dreamcontext-desktop"
-version = "0.31.0"
+version = "0.32.0"
 edition = "2021"
 
 [lib]
@@ -28,6 +28,10 @@ tauri-plugin-clipboard-manager = "2"
 # side calls and delivers the banner through NSUserNotification. Used by the
 # "Claude is asking" alarm (dashboard/src/lib/attention.ts).
 tauri-plugin-notification = "2"
+# In-app updates for the Developer ID release (src/updater.rs): reads latest.json from the
+# GitHub release, checks its minisign signature against the pubkey in tauri.conf.json, and
+# replaces the bundle on disk. Compiled in always, ACTIVE only in a CI release build.
+tauri-plugin-updater = "2"
 # The dreamcontext Assistant's notch (src/assistant.rs). All three PINNED EXACTLY — the
 # removed Sleepy notch floated on `branch = "v2"` and that is not repeated here.
 # - global-shortcut: registered from RUST so both Pressed and Released reach the notch

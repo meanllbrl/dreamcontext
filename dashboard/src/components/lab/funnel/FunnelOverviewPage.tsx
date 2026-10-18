@@ -1,18 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApplyTweaks, useLabInsight, useSyncInsight } from '../../../hooks/useLab';
 import { useLabPrefs } from '../../../hooks/useLabPrefs';
 import { copyPreservingUnicode } from '../../../lib/clipboard';
-import { pushOverlay, popOverlay } from '../../../lib/overlayStack';
 import {
-  benchmarkClass,
   clientFilters,
   defaultColumnKeys,
-  formatDelta,
-  formatMetricValue,
   hasActiveFilters,
-  isLowSample,
-  overviewCellPrev,
-  overviewCellValue,
   overviewColumns,
   overviewRowMarkdown,
   overviewTableMarkdown,
@@ -24,16 +17,14 @@ import {
   type FunnelDef,
   type FunnelDimension,
   type FunnelViewState,
-  type OverviewColumn,
-  type OverviewColumnKind,
 } from './funnelModel';
 import { labPath, pushLabPath, useLabSearchParams } from './labRoute';
 import { useI18n } from '../../../context/I18nContext';
 import { humanizeTweakValue } from '../tweakLabels';
 import { RangeControl, isRelativeRange, writeRangeParams } from '../RangeControl';
-import { FilterPopover } from '../../tasks/FilterPopover';
 import { FunnelFilterBar } from './FunnelFilterBar';
 import { FunnelCompareView } from './FunnelCompareView';
+import { ColumnPicker, FUNNEL_TABLE_EN, FunnelSetTable, nextSort, sortFunnels } from './FunnelSetTable';
 import './FunnelOverviewPage.css';
 
 /**
@@ -213,35 +204,14 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
 
   // ── Rows: search → sort (stable). ──
   const q = search.trim().toLowerCase();
-  let rows = set.funnels.filter((f) => !q || f.id.toLowerCase().includes(q) || f.name.toLowerCase().includes(q));
-  if (view.sort) {
-    const { key, dir } = view.sort;
-    // Sorts on ANY column, derived ones included — one lookup, so a new column
-    // kind never needs a new sort branch. Unknown key (a stale deep link) → null.
-    const col = colByKey.get(key);
-    const value = (f: FunnelDef): number | string | null =>
-      key === 'name' ? f.name : col ? overviewCellValue(f, col) : null;
-    rows = rows
-      .map((f, i) => ({ f, i }))
-      .sort((a, b) => {
-        const va = value(a.f);
-        const vb = value(b.f);
-        let cmp = 0;
-        if (va === null && vb === null) cmp = 0;
-        else if (va === null) cmp = 1; // nulls last regardless of direction
-        else if (vb === null) cmp = -1;
-        else if (typeof va === 'string' || typeof vb === 'string') cmp = String(va).localeCompare(String(vb)) * (dir === 'desc' ? -1 : 1);
-        else cmp = (va - vb) * (dir === 'desc' ? -1 : 1);
-        return cmp !== 0 ? cmp : a.i - b.i; // stable
-      })
-      .map((e) => e.f);
-  }
+  const rows = sortFunnels(
+    set.funnels.filter((f) => !q || f.id.toLowerCase().includes(q) || f.name.toLowerCase().includes(q)),
+    view.sort,
+    colByKey,
+  );
 
   const toggleSort = (key: string) => {
-    const next: FunnelViewState = { ...view };
-    if (view.sort?.key !== key) next.sort = { key, dir: 'desc' };
-    else if (view.sort.dir === 'desc') next.sort = { key, dir: 'asc' };
-    else next.sort = null;
+    const next: FunnelViewState = { ...view, sort: nextSort(view.sort, key) };
     setView(next);
   };
 
@@ -308,6 +278,7 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
           isDefault={visibleKeys.length === defaultKeys.length && visibleKeys.every((k) => defaultKeys.includes(k))}
           onToggle={(key) => applyColumns(visible.has(key) ? visibleKeys.filter((k) => k !== key) : [...visibleKeys, key])}
           onReset={() => applyColumns(defaultKeys)}
+          copy={FUNNEL_TABLE_EN}
         />
         <button className="funnel-ovw-action" onClick={copyTableMarkdown} title="Copy the visible table as Markdown">Copy MD</button>
         <button
@@ -373,102 +344,41 @@ export function FunnelOverviewPage({ slug, onBack, onToast }: {
       {rows.length === 0 ? (
         <div className="funnel-ovw-state">{set.funnels.length === 0 ? 'The funnel set is empty.' : 'No funnels match the search.'}</div>
       ) : (
-        <div className="funnel-ovw-tablewrap">
-          <table className="funnel-ovw-table">
-            <thead>
-              <tr>
-                <th className="funnel-ovw-th-check" scope="col"><span className="sr-only">Select for compare</span></th>
-                <SortableTh label="Funnel" sortKey="name" sort={view.sort} onSort={toggleSort} />
-                {cols.map((c) => <SortableTh key={c.key} label={c.label} sortKey={c.key} sort={view.sort} onSort={toggleSort} numeric />)}
-                <th className="funnel-ovw-th-kebab" scope="col"><span className="sr-only">Row actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((funnel) => {
-                const low = isLowSample(funnel, set);
-                return (
-                  <tr
-                    key={funnel.id}
-                    className={`funnel-ovw-row${low ? ' funnel-ovw-row--low' : ''}`}
-                    tabIndex={0}
-                    onClick={() => openDetail(funnel.id)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') openDetail(funnel.id); }}
-                    aria-label={`Open funnel ${funnel.name}`}
-                  >
-                    <td className="funnel-ovw-td-check" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selected.includes(funnel.id)}
-                        disabled={!selected.includes(funnel.id) && selected.length >= MAX_COMPARE}
-                        onChange={() => toggleSelect(funnel.id)}
-                        onKeyDown={(e) => e.stopPropagation()}
-                        aria-label={`Select ${funnel.name} for compare`}
-                      />
-                    </td>
-                    <td className="funnel-ovw-td-name">
-                      <span className="funnel-ovw-name">{funnel.name}</span>
-                      <span className="funnel-ovw-id">#{funnel.id}</span>
-                      {low && (
-                        <span className="funnel-ovw-lowchip" title={`Below the low-sample threshold — rates on n=${funnel.steps[0]?.users ?? 0} are noise, not signal.`}>
-                          low sample
-                        </span>
-                      )}
-                    </td>
-                    {cols.map((c) => {
-                      const v = overviewCellValue(funnel, c);
-                      const p = overviewCellPrev(funnel, c, prev);
-                      // Benchmarks are declared per PAYLOAD metric key; a derived
-                      // column has no benchmark to be measured against.
-                      const bench = c.kind === 'metric' ? benchmarkClass(v, set.benchmarks?.[c.key]) : null;
-                      // The F4 rule reaches derived rates too — a conversion on a
-                      // tiny cohort is noise no matter who computed it.
-                      const deEmph = low && c.format === 'pct';
-                      return (
-                        <td
-                          key={c.key}
-                          className={[
-                            'funnel-ovw-td-num',
-                            filtersActive ? 'funnel-ovw-cell--unfiltered' : '',
-                            deEmph ? 'funnel-ovw-cell--low' : '',
-                            bench === 'below-floor' ? 'funnel-ovw-cell--floor' : '',
-                            bench === 'at-target' ? 'funnel-ovw-cell--target' : '',
-                          ].filter(Boolean).join(' ')}
-                          title={deEmph ? `n=${funnel.steps[0]?.users ?? 0} — below the sample threshold; treat this rate as noise` : undefined}
-                        >
-                          {formatMetricValue(v, c.format)}
-                          {v !== null && p !== null && (
-                            <DeltaChip current={v} prev={p} format={c.format} />
-                          )}
-                        </td>
-                      );
-                    })}
-                    <td className="funnel-ovw-td-kebab" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        className="funnel-ovw-kebab"
-                        aria-haspopup="menu"
-                        aria-expanded={menuFor === funnel.id}
-                        aria-label={`Actions for ${funnel.name}`}
-                        onClick={() => setMenuFor(menuFor === funnel.id ? null : funnel.id)}
-                      >⋯</button>
-                      {menuFor === funnel.id && (
-                        <div className="funnel-ovw-menu" role="menu">
-                          <button role="menuitem" onClick={() => copyRowLink(funnel.id)}>Copy deep link</button>
-                          <button role="menuitem" onClick={() => copyRowMarkdown(funnel)}>Copy row as Markdown</button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <FunnelSetTable
+          set={set}
+          prev={prev}
+          rows={rows}
+          cols={cols}
+          sort={view.sort}
+          onSort={toggleSort}
+          onOpen={openDetail}
+          copy={FUNNEL_TABLE_EN}
+          unfiltered={filtersActive}
+          select={{ selected, max: MAX_COMPARE, onToggle: toggleSelect }}
+          rowMenu={(funnel) => (
+            <>
+              <button
+                className="funnel-ovw-kebab"
+                aria-haspopup="menu"
+                aria-expanded={menuFor === funnel.id}
+                aria-label={`Actions for ${funnel.name}`}
+                onClick={() => setMenuFor(menuFor === funnel.id ? null : funnel.id)}
+              >⋯</button>
+              {menuFor === funnel.id && (
+                <div className="funnel-ovw-menu" role="menu">
+                  <button role="menuitem" onClick={() => copyRowLink(funnel.id)}>Copy deep link</button>
+                  <button role="menuitem" onClick={() => copyRowMarkdown(funnel)}>Copy row as Markdown</button>
+                </div>
+              )}
+            </>
+          )}
+        />
       )}
     </div>
   );
 }
 
-function Breadcrumb({ onBack, title, crumb, onCrumbBack }: {
+export function Breadcrumb({ onBack, title, crumb, onCrumbBack }: {
   onBack: () => void;
   title: string;
   crumb?: string;
@@ -488,124 +398,5 @@ function Breadcrumb({ onBack, title, crumb, onCrumbBack }: {
         <span className="funnel-crumb-here" aria-current="page">{title}</span>
       )}
     </nav>
-  );
-}
-
-function SortableTh({ label, sortKey, sort, onSort, numeric = false }: {
-  label: string;
-  sortKey: string;
-  sort: FunnelViewState['sort'];
-  onSort: (key: string) => void;
-  numeric?: boolean;
-}) {
-  const active = sort?.key === sortKey;
-  const dir = active ? sort!.dir : null;
-  return (
-    <th
-      scope="col"
-      className={numeric ? 'funnel-ovw-th-num' : undefined}
-      aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-    >
-      <button className={`funnel-ovw-sort${active ? ' funnel-ovw-sort--on' : ''}`} onClick={() => onSort(sortKey)}>
-        {label}
-        <span className="funnel-ovw-sort-arrow" aria-hidden>{dir === 'asc' ? '↑' : dir === 'desc' ? '↓' : ''}</span>
-      </button>
-    </th>
-  );
-}
-
-/** Popover section titles — the picker groups by column kind so a 60-step funnel
- *  stays navigable instead of listing 120 undifferentiated checkboxes. */
-const COLUMN_GROUPS: { kind: OverviewColumnKind; label: string }[] = [
-  { kind: 'metric', label: 'Metrics' },
-  { kind: 'conversion', label: 'Step conversion' },
-  { kind: 'of_top', label: '% of top' },
-];
-
-/**
- * The Columns popover (FilterPopover idiom, same as RangeControl): every
- * available column as a checkbox, grouped and scrolled, plus a Reset to the
- * payload's metric columns. Toggling is instant — the parent owns the selection
- * and mirrors it into the URL + prefs.
- */
-function ColumnPicker({ available, visibleKeys, isDefault, onToggle, onReset }: {
-  available: OverviewColumn[];
-  visibleKeys: string[];
-  isDefault: boolean;
-  onToggle: (key: string) => void;
-  onReset: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const overlayId = `funnel-columns-${useId()}`;
-  const visible = new Set(visibleKeys);
-
-  // While open the popover OWNS Escape (overlayStack) — the same reason
-  // RangeControl registers: Esc must close the picker, not the surface under it.
-  useEffect(() => {
-    if (!open) return;
-    pushOverlay(overlayId);
-    return () => popOverlay(overlayId);
-  }, [open, overlayId]);
-
-  const trigger = (
-    <button
-      type="button"
-      className={`funnel-ovw-action funnel-ovw-colbtn${open ? ' funnel-ovw-colbtn--open' : ''}`}
-      onClick={() => setOpen((v) => !v)}
-      aria-expanded={open}
-      aria-haspopup="dialog"
-      title="Choose which columns the table shows"
-    >
-      Columns <span className="funnel-ovw-colcount">{visibleKeys.length}</span>
-    </button>
-  );
-
-  const content = (
-    <div className="funnel-ovw-colpick">
-      <div className="funnel-ovw-colpick-head">
-        <span>Columns</span>
-        <button type="button" className="funnel-ovw-colpick-reset" onClick={onReset} disabled={isDefault}>
-          Reset
-        </button>
-      </div>
-      <div className="funnel-ovw-colpick-list">
-        {COLUMN_GROUPS.map(({ kind, label }) => {
-          const group = available.filter((c) => c.kind === kind);
-          if (group.length === 0) return null;
-          return (
-            <div key={kind} className="funnel-ovw-colpick-group">
-              <div className="funnel-ovw-colpick-grouphead">{label}</div>
-              {group.map((c) => (
-                <label key={c.key} className="funnel-ovw-colpick-row">
-                  <input type="checkbox" checked={visible.has(c.key)} onChange={() => onToggle(c.key)} />
-                  <span className="funnel-ovw-colpick-label">{c.label}</span>
-                </label>
-              ))}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
-  return (
-    <FilterPopover
-      trigger={trigger}
-      content={content}
-      isOpen={open}
-      onClose={() => setOpen(false)}
-      align="right"
-      width={300}
-    />
-  );
-}
-
-function DeltaChip({ current, prev, format }: { current: number; prev: number; format: Parameters<typeof formatDelta>[2] }) {
-  const delta = formatDelta(current, prev, format);
-  return (
-    <span
-      className={`funnel-delta funnel-delta--${delta.direction}`}
-      title={`${formatMetricValue(current, format)} now vs ${formatMetricValue(prev, format)} previous period`}
-    >{delta.text}</span>
   );
 }

@@ -23,6 +23,9 @@ import {
   APP_BUNDLE_NAME,
   LOCAL_SIGNING_IDENTITY,
   parseSigningIdentity,
+  parseDeveloperIdIdentity,
+  parseDeveloperIdTeam,
+  APP_RELEASE_TEAM_ID,
   type AppManifest,
 } from '../../src/cli/commands/app.js';
 import { createHash } from 'node:crypto';
@@ -44,6 +47,44 @@ describe('parseSigningIdentity', () => {
   it('returns null when only an untrusted copy is listed, or none', () => {
     expect(parseSigningIdentity(`  1) ${sha} "${LOCAL_SIGNING_IDENTITY}" (CSSMERR_TP_NOT_TRUSTED)`)).toBeNull();
     expect(parseSigningIdentity('     0 valid identities found')).toBeNull();
+  });
+});
+
+describe('parseDeveloperIdIdentity', () => {
+  const sha = 'ABCDEF0123456789ABCDEF0123456789ABCDEF01';
+  it('finds the release team\'s Developer ID among other identities', () => {
+    const out = [
+      '  1) 1111111111111111111111111111111111111111 "Apple Development: someone@example.com (ABC1234567)"',
+      `  2) 2222222222222222222222222222222222222222 "${LOCAL_SIGNING_IDENTITY}"`,
+      `  3) ${sha} "Developer ID Application: Example Studio (${APP_RELEASE_TEAM_ID})"`,
+      '     3 valid identities found',
+    ].join('\n');
+    expect(parseDeveloperIdIdentity(out)).toBe(sha);
+  });
+  it('ignores another team\'s Developer ID and untrusted copies', () => {
+    expect(parseDeveloperIdIdentity(`  1) ${sha} "Developer ID Application: Someone Else (ZZZZZZZZZZ)"`)).toBeNull();
+    expect(
+      parseDeveloperIdIdentity(`  1) ${sha} "Developer ID Application: Example Studio (${APP_RELEASE_TEAM_ID})" (CSSMERR_TP_NOT_TRUSTED)`),
+    ).toBeNull();
+  });
+});
+
+describe('parseDeveloperIdTeam', () => {
+  it('reads the team of a Developer ID signature', () => {
+    const details = [
+      'Executable=/Applications/dreamcontext-beta.app/Contents/MacOS/dreamcontext-desktop',
+      'Identifier=com.dreamcontext.beta',
+      `Authority=Developer ID Application: Example Studio (${APP_RELEASE_TEAM_ID})`,
+      'Authority=Developer ID Certification Authority',
+      'Authority=Apple Root CA',
+      `TeamIdentifier=${APP_RELEASE_TEAM_ID}`,
+    ].join('\n');
+    expect(parseDeveloperIdTeam(details)).toBe(APP_RELEASE_TEAM_ID);
+  });
+  it('is null for self-signed, Apple Development and ad-hoc signatures', () => {
+    expect(parseDeveloperIdTeam(`Authority=${LOCAL_SIGNING_IDENTITY}\nTeamIdentifier=not set`)).toBeNull();
+    expect(parseDeveloperIdTeam('Authority=Apple Development: a@b.c (ABC1234567)\nTeamIdentifier=ABC1234567')).toBeNull();
+    expect(parseDeveloperIdTeam('Signature=adhoc\nTeamIdentifier=not set')).toBeNull();
   });
 });
 
@@ -158,6 +199,16 @@ describe('maybeTriggerAppUpdate', () => {
     const out = maybeTriggerAppUpdate({}, { spawner: () => { fired = true; }, manifest: installed });
     expect(out).toBe(true);
     expect(fired).toBe(true);
+  });
+
+  it('leaves a release that updates itself to its own updater', () => {
+    let fired = false;
+    const out = maybeTriggerAppUpdate(
+      {},
+      { spawner: () => { fired = true; }, manifest: { ...installed, source: 'github' }, selfUpdating: () => true },
+    );
+    expect(out).toBe(false);
+    expect(fired).toBe(false);
   });
 });
 

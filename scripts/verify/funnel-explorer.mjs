@@ -35,6 +35,11 @@
  *      set traps, then info.
  *   8. CLI/DOM PARITY on the Steps and Benchmark pages.
  *   9. THEME REPAINT (inside section 3).
+ *  10. DETAIL PAGE: `/lab/<slug>` and `/lab/<slug>/f/<id>` of a preset insight draw the explorer
+ *      card full page (its tabs in its language, no range control, the Table tab with column
+ *      choice, search and Copy MD); a Table row picks the funnel and re-addresses `/f/<id>`; the
+ *      page and the board's fullscreen card read the same; side-by-side shots in light and dark.
+ *      A funnel insight without a preset keeps its comparison table and range control.
  *
  * `--from-vault=<path>` copies `<path>/_dream_context/lab` into the scratch vault
  * (the real brain is never written; credentials are not copied) and runs the
@@ -112,9 +117,10 @@ const TAB_LABELS = {
   'dim.platform': { en: 'Platform', tr: 'Platform' },
   'dim.country': { en: 'Country', tr: 'Ülke' },
   'dim.language': { en: 'Language', tr: 'Dil' },
+  table: { en: 'Table', tr: 'Tablo' },
 };
 /** The tabs of the fixture's explorer card, in order (its dims: platform, country, language). */
-const FULL_TABS = ['daily', 'benchmark', 'ranking', 'flow', 'steps', 'compare', 'payment', 'access', 'dim.platform', 'dim.country', 'dim.language'];
+const FULL_TABS = ['daily', 'benchmark', 'ranking', 'flow', 'steps', 'compare', 'payment', 'access', 'dim.platform', 'dim.country', 'dim.language', 'table'];
 /** "Not measured" and "derived" in each language. */
 const WORDS = { en: { notMeasured: /not measured/i, derived: /derived/i }, tr: { notMeasured: /ölçülmüyor/i, derived: /türetilmiş/i } };
 /** Reference page -> our tab, for the comparison sheet. */
@@ -590,6 +596,7 @@ async function main() {
             else if (key === 'compare') drew = m.lanesDrawn || !!empty;
             else if (key === 'payment') drew = !!m.payment && (m.payment.rate !== null || !!empty);
             else if (key === 'access') drew = m.access.length > 0;
+            else if (key === 'table') drew = await c.locator('[data-lab-funnel-table] [data-funnel-row]').count() > 0;
             else drew = m.segments.length > 0 || !!empty;
             ok(`the ${key} tab draws its page or says what is missing (${loc}, ${theme})`, drew, JSON.stringify({ ...m, bodyText: m.bodyText?.slice(0, 200) }).slice(0, 700));
             if (key === 'steps' && m.steps.length > 0) {
@@ -749,6 +756,132 @@ async function main() {
         await selectChips(ex, {});
         await pickFunnel(ex, fx.funnels[0].id);
         await openTab(ex, 'daily');
+      });
+
+      // ── 10. Detail page: a preset insight's /lab/<slug> is its explorer card ──────
+      await section('ui: detail page is the explorer', async () => {
+        const PLAIN = 'acme-funnel-plain';
+        // A funnel insight with no preset: the full snapshot's manifest without `preset`/`locale`.
+        if (!existsSync(join(LAB, 'insights', `${PLAIN}.md`))) {
+          const src = matter(readFileSync(join(LAB, 'insights', `${FULL}.md`), 'utf-8'));
+          const { preset: _p, locale: _l, ...data } = src.data;
+          writeFileSync(join(LAB, 'insights', `${PLAIN}.md`), matter.stringify(src.content, { ...data, slug: PLAIN, title: 'Acme plain funnels' }));
+          cpSync(join(LAB, 'data', `${FULL}.json`), join(LAB, 'data', `${PLAIN}.json`));
+          const synced = run(['lab', 'sync', PLAIN, '--force']);
+          ok('the preset-less funnel insight syncs', synced.code === 0, synced.out.slice(0, 400));
+        }
+        const gotoDetail = async (path, ready) => {
+          await page.goto(`${BASE}${path}?vault=proj`, { waitUntil: 'domcontentloaded' });
+          if (!(await page.locator(ready).first().waitFor({ timeout: 12000 }).then(() => true, () => false))) {
+            await page.goto(`${BASE}/?vault=proj`, { waitUntil: 'domcontentloaded' });
+            await page.locator('.sidebar-item[title^="Insights"]').first().click();
+            await page.locator('[data-lab-board]').first().waitFor({ timeout: 20000 });
+            await page.evaluate((x) => {
+              window.history.pushState(null, '', `${x}${window.location.search}`);
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }, path);
+            await page.locator(ready).first().waitFor({ timeout: 15000 });
+          }
+          await sleep(900);
+        };
+        const xpage = (slug) => page.locator(`[data-lab-explorer-page="${slug}"]`).first();
+        const tabsOf = (scope) => scope.locator('[data-lab-tab-key]').evaluateAll((els) => els.map((e) => ({ key: e.getAttribute('data-lab-tab-key'), label: e.innerText.trim() })));
+        const comparable = (m) => ({ funnel: m.funnel, header: m.header, window: m.window, source: m.source, steps: m.steps, bench: m.bench });
+
+        for (const [slug, loc] of [[FULL, 'en'], [FULL_TR, 'tr']]) {
+          await gotoDetail(`/lab/${slug}`, `[data-lab-explorer-page="${slug}"]`);
+          const xp = xpage(slug);
+          const tabs = await tabsOf(xp);
+          ok(`detail page: /lab/${slug} draws the explorer card with every tab (${loc})`,
+            JSON.stringify(tabs.map((t) => t.key)) === JSON.stringify(FULL_TABS), JSON.stringify(tabs));
+          const wrong = tabs.filter((t) => TAB_LABELS[t.key] && t.label !== TAB_LABELS[t.key][loc]).map((t) => `${t.key}="${t.label}"`);
+          ok(`detail page: tab labels speak the insight's language (${loc})`, tabs.length > 0 && wrong.length === 0, wrong.join(', '));
+          ok(`detail page: no range control, no legacy table on open (${loc})`,
+            await page.locator('.lab-range, .lab-range-chip').count() === 0 && await page.locator('.funnel-ovw-table').count() === 0
+              && !/Last (7|28|30|90) days/.test(await page.locator('main, body').first().innerText()));
+          const head = await read(xp);
+          ok(`detail page: the card header names the snapshot window (${loc})`, head.header && !!head.windowText, JSON.stringify({ header: head.header, text: head.windowText }));
+
+          // The Table tab: the old comparison table, without a range.
+          await openTab(xp, 'table');
+          const table = xp.locator('[data-lab-funnel-table]');
+          const rows = await table.locator('[data-funnel-row]').evaluateAll((els) => els.map((e) => e.getAttribute('data-funnel-row')));
+          ok(`detail page: the Table tab lists every funnel (${loc})`, JSON.stringify(rows) === JSON.stringify(fx.funnels.map((f) => f.id)), JSON.stringify(rows));
+          ok(`detail page: the Table tab has search, column choice and Copy MD, no range (${loc})`,
+            await table.locator('.funnel-ovw-search').count() === 1 && await table.locator('.funnel-ovw-colbtn').count() === 1
+              && await table.locator('[data-lab-copy-md]').count() === 1 && await page.locator('.lab-range, .lab-range-chip').count() === 0);
+          const before = await table.locator('[data-funnel-row]').count();
+          await table.locator('.funnel-ovw-search').fill(fx.funnels[1].id);
+          await sleep(300);
+          ok(`detail page: the Table search narrows the rows (${loc})`, await table.locator('[data-funnel-row]').count() === 1 && before > 1);
+          await table.locator(`[data-funnel-row="${fx.funnels[1].id}"]`).click();
+          await sleep(600);
+          const picked = (await read(xp)).funnel;
+          ok(`detail page: a Table row picks its funnel and re-addresses /f/<id> (${loc})`,
+            picked === fx.funnels[1].id && new URL(page.url()).pathname === `/lab/${slug}/f/${fx.funnels[1].id}`, `${picked} ${page.url()}`);
+          await table.locator('.funnel-ovw-search').fill('');
+          for (const theme of THEMES) {
+            await setTheme(theme);
+            await saveShot(xp, `detail-${loc}-${theme}-table.png`);
+          }
+          await setTheme('light');
+
+          // /f/<id> loaded cold opens the card on that funnel.
+          await gotoDetail(`/lab/${slug}/f/${fx.funnels[2].id}`, `[data-lab-explorer-page="${slug}"]`);
+          ok(`detail page: /lab/${slug}/f/<id> opens the explorer on that funnel (${loc})`,
+            (await read(xpage(slug))).funnel === fx.funnels[2].id && await page.locator('.lab-range, .lab-range-chip').count() === 0, (await read(xpage(slug))).funnel);
+        }
+
+        // The board's fullscreen card and the detail page read the same, tab by tab; shots side by side.
+        await gotoBoard(FULL_BOARD);
+        await card(cardIdOf(FULL)).locator('[data-lab-card-menu]').first().click();
+        await page.locator('[data-lab-card-fullscreen="open"]').first().click();
+        const ov = page.locator(`[data-lab-fullscreen="${cardIdOf(FULL)}"]`);
+        await ov.waitFor({ timeout: 8000 });
+        await sleep(500);
+        const fsTabs = await tabsOf(ov);
+        const fsRead = {};
+        for (const key of ['steps', 'benchmark']) {
+          await openTab(ov, key);
+          fsRead[key] = comparable(await read(ov));
+          for (const theme of THEMES) {
+            await setTheme(theme);
+            await saveShot(ov, `parity-card-${theme}-${key}.png`);
+          }
+          await setTheme('light');
+        }
+        await gotoDetail(`/lab/${FULL}`, `[data-lab-explorer-page="${FULL}"]`);
+        const xp = xpage(FULL);
+        ok('detail page and fullscreen card: the same tabs', JSON.stringify(await tabsOf(xp)) === JSON.stringify(fsTabs), JSON.stringify({ page: await tabsOf(xp), card: fsTabs }));
+        for (const key of ['steps', 'benchmark']) {
+          await openTab(xp, key);
+          const mine = comparable(await read(xp));
+          ok(`detail page and fullscreen card: the ${key} page reads the same`, JSON.stringify(mine) === JSON.stringify(fsRead[key]),
+            `${JSON.stringify(mine).slice(0, 300)} vs ${JSON.stringify(fsRead[key]).slice(0, 300)}`);
+          for (const theme of THEMES) {
+            await setTheme(theme);
+            await saveShot(xp, `parity-page-${theme}-${key}.png`);
+          }
+          await setTheme('light');
+        }
+        // One sheet per theme: the fullscreen card left, the detail page right.
+        for (const theme of THEMES) {
+          const file = join(SHOTS, `parity-${theme}.html`);
+          const cellOf = (name, cap) => `<figure><img src="${pathToFileURL(join(SHOTS, name)).href}"><figcaption>${cap}</figcaption></figure>`;
+          const rowsHtml = ['steps', 'benchmark'].map((k) => `<h2>${k}</h2><div class="row">${cellOf(`parity-card-${theme}-${k}.png`, 'board card, fullscreen')}${cellOf(`parity-page-${theme}-${k}.png`, `/lab/${FULL}`)}</div>`).join('');
+          writeFileSync(file, `<!doctype html><meta charset="utf-8"><style>body{font:14px system-ui;margin:24px;background:${theme === 'dark' ? '#111' : '#f4f4f5'};color:${theme === 'dark' ? '#eee' : '#111'}}.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}figure{margin:0}img{width:100%;display:block;border-radius:6px}</style><h1>Fullscreen card vs detail page (${theme})</h1>${rowsHtml}`);
+          await page.goto(pathToFileURL(file).href);
+          await sleep(400);
+          await page.screenshot({ path: join(SHOTS, `parity-side-by-side-${theme}.png`), fullPage: true });
+          if (SHOTS_OUT) copyFileSync(join(SHOTS, `parity-side-by-side-${theme}.png`), join(SHOTS_OUT, `parity-side-by-side-${theme}.png`));
+        }
+
+        // A funnel insight without a preset keeps its table page and its range control.
+        await gotoDetail(`/lab/${PLAIN}`, '.funnel-ovw-table');
+        ok('preset-less funnel: /lab/<slug> is still the comparison table with its range control',
+          await page.locator('.funnel-ovw-table').count() === 1 && await page.locator('.lab-range, .lab-range-chip').count() > 0
+            && await page.locator('[data-lab-explorer-page]').count() === 0);
+        await saveShot(page.locator('.funnel-ovw').first(), 'detail-plain-light.png');
       });
     }
 

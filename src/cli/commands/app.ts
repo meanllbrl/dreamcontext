@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { execFileSync, spawn as spawnProcess } from 'node:child_process';
+import { execFileSync, spawnSync, spawn as spawnProcess } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -28,6 +28,15 @@ export const APP_BUNDLE_NAME = 'dreamcontext-beta.app';
  * build shares, and the grants stay.
  */
 export const LOCAL_SIGNING_IDENTITY = 'dreamcontext Local Signing';
+/**
+ * Apple Developer team whose Developer ID signs the published app. A bundle this team signed
+ * is notarized, opens from a browser-downloaded DMG without a Gatekeeper warning, and updates
+ * itself in-app (desktop/src-tauri/src/updater.rs). Its designated requirement is
+ * `anchor apple generic` + this team, the same on every machine and every release, so the
+ * CLI never re-signs it: a local signature would break the notarization and change the app's
+ * identity back.
+ */
+export const APP_RELEASE_TEAM_ID = 'PP8PX5BB5P';
 /** GitHub repo that publishes the desktop releases. */
 export const APP_RELEASE_REPO = 'meanllbrl/dreamcontext';
 
@@ -212,6 +221,57 @@ export function parseSigningIdentity(findIdentityOutput: string, name: string = 
   return null;
 }
 
+/**
+ * PURE: the SHA-1 of a valid "Developer ID Application: … (<team>)" identity in
+ * `security find-identity -v` output, or null.
+ */
+export function parseDeveloperIdIdentity(findIdentityOutput: string, team: string = APP_RELEASE_TEAM_ID): string | null {
+  for (const line of findIdentityOutput.split('\n')) {
+    const m = line.match(/^\s*\d+\)\s+([0-9A-F]{40})\s+"Developer ID Application: .* \(([A-Z0-9]{10})\)"\s*$/);
+    if (m && m[2] === team) return m[1];
+  }
+  return null;
+}
+
+/**
+ * PURE: the team of a Developer ID signature, read from `codesign -dv --verbose=2` output
+ * (which codesign prints on stderr), or null for any other signature.
+ */
+export function parseDeveloperIdTeam(codesignDetails: string): string | null {
+  if (!/^Authority=Developer ID Application: /m.test(codesignDetails)) return null;
+  const m = codesignDetails.match(/^TeamIdentifier=([A-Z0-9]{10})$/m);
+  return m ? m[1] : null;
+}
+
+/** The Developer ID team that signed `appDir`, or null (ad-hoc, self-signed, unreadable). */
+export function developerIdTeam(appDir: string): string | null {
+  try {
+    const r = spawnSync('codesign', ['-dv', '--verbose=2', appDir], { encoding: 'utf-8' });
+    return parseDeveloperIdTeam(`${r.stderr ?? ''}${r.stdout ?? ''}`);
+  } catch {
+    return null;
+  }
+}
+
+/** True when `appDir` carries the release team's Developer ID signature. */
+export function isReleaseSigned(appDir: string): boolean {
+  return developerIdTeam(appDir) === APP_RELEASE_TEAM_ID;
+}
+
+/**
+ * The identity a local install signs with: the release team's Developer ID when this machine
+ * holds it (the owner's), so a local build has the SAME requirement as the published app and
+ * macOS keeps one set of grants for both; else {@link LOCAL_SIGNING_IDENTITY}; else null.
+ */
+export function findInstallSigningIdentity(): string | null {
+  try {
+    const out = runCapture('security', ['find-identity', '-v', '-p', 'codesigning']);
+    return parseDeveloperIdIdentity(out) ?? parseSigningIdentity(out);
+  } catch {
+    return null;
+  }
+}
+
 /** The installed local signing identity's SHA-1, or null when `app sign-setup` has not run. */
 export function findLocalSigningIdentity(): string | null {
   try {
@@ -297,6 +357,8 @@ export interface InstallResult {
   signatureValid: boolean | null;
   /** True when re-signed with the stable local identity; false leaves the build's ad-hoc signature. */
   locallySigned: boolean;
+  /** True when the bundle arrived with the release team's Developer ID signature, kept as is. */
+  releaseSigned: boolean;
 }
 
 /** Verify a bundle's code signature. Returns true/false, or null if codesign errored unexpectedly. */
@@ -390,7 +452,11 @@ export function installAppBundle(
     installDir?: string;
     sourceLabel?: string;
     home?: string;
-    /** Signing identity SHA-1; null keeps the ad-hoc signature. Default: the local identity, if set up. */
+    /**
+     * Signing identity SHA-1; null keeps the build's signature. Default: the release team's
+     * Developer ID if this machine has it, else the local identity, if set up. Ignored for a
+     * bundle that already carries the release signature: that one is never re-signed.
+     */
     signIdentity?: string | null;
   } = {},
 ): InstallResult {
@@ -405,6 +471,7 @@ export function installAppBundle(
   try {
     const appDir = materializeAppBundle(source, workDir);
     validateAppBundle(appDir);
+    const releaseSigned = isReleaseSigned(appDir);
 
     const target = join(installDir, APP_BUNDLE_NAME);
     const staging = join(installDir, `.${APP_BUNDLE_NAME}.new-${process.pid}`);
@@ -428,7 +495,13 @@ export function installAppBundle(
       }
       // Re-sign with the stable identity so TCC keeps this build's grants. A failure keeps the
       // build's own signature: the app still launches, macOS just asks again.
-      const identity = opts.signIdentity !== undefined ? opts.signIdentity : findLocalSigningIdentity();
+      // A notarized release keeps its own signature: re-signing would void the notarization
+      // and give the app a second identity, which is the permission churn this avoids.
+      const identity = releaseSigned
+        ? null
+        : opts.signIdentity !== undefined
+          ? opts.signIdentity
+          : findInstallSigningIdentity();
       if (identity) {
         try {
           signWithIdentity(staging, identity);
@@ -471,7 +544,7 @@ export function installAppBundle(
     );
 
     const signatureValid = verifyCodesign(target);
-    return { version, path: target, replaced, wasRunning, signatureValid, locallySigned };
+    return { version, path: target, replaced, wasRunning, signatureValid, locallySigned, releaseSigned };
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
@@ -585,6 +658,11 @@ export async function downloadLatestArtifact(
 // already installed, kick off a best-effort `dreamcontext app update` in the
 // background. It no-ops gracefully until GitHub releases exist (Faz 1).
 
+/** True when the installed app is a published release that runs its own in-app updater. */
+export function appUpdatesItself(installed: AppManifest): boolean {
+  return installed.source !== 'local' && existsSync(installed.path) && isReleaseSigned(installed.path);
+}
+
 /** App auto-update is on by default; opt out with DREAMCONTEXT_APP_AUTO_UPDATE=0 (or master =0). */
 export function appAutoUpdateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.DREAMCONTEXT_VERSION_CHECK === '0') return false;
@@ -610,13 +688,16 @@ function defaultAppUpdateSpawner(): void {
  */
 export function maybeTriggerAppUpdate(
   env: NodeJS.ProcessEnv = process.env,
-  deps: { spawner?: AppUpdateSpawner; manifest?: AppManifest | null } = {},
+  deps: { spawner?: AppUpdateSpawner; manifest?: AppManifest | null; selfUpdating?: (m: AppManifest) => boolean } = {},
 ): boolean {
   try {
     if (detectPlatform().os !== 'darwin') return false;
     if (!appAutoUpdateEnabled(env)) return false;
     const installed = deps.manifest !== undefined ? deps.manifest : readAppManifest();
     if (!installed) return false;
+    // A published Developer ID release updates itself in-app; a second updater racing it
+    // would only download the same bundle twice. A local build has no in-app updater.
+    if ((deps.selfUpdating ?? appUpdatesItself)(installed)) return false;
     (deps.spawner ?? defaultAppUpdateSpawner)();
     return true;
   } catch {
@@ -711,12 +792,15 @@ async function doUpdate(from: string | undefined, dir: string | undefined): Prom
   }
   // Own the downloaded temp dir for the whole update; always clean it up.
   try {
-    if (compareVersions(installed.version, dl.version) >= 0) {
-      console.log(chalk.green(`Desktop app is up to date (${installed.version}).`));
+    // The bundle's own version, not the manifest's: the in-app updater replaces the bundle
+    // without touching the manifest, and a stale manifest would reinstall the same release.
+    const current = (existsSync(installed.path) && readBundleVersion(installed.path)) || installed.version;
+    if (compareVersions(current, dl.version) >= 0) {
+      console.log(chalk.green(`Desktop app is up to date (${current}).`));
       return;
     }
     const res = installAppBundle(dl.archivePath, { installDir: installDirFor(dir), sourceLabel: 'github' });
-    console.log(chalk.green(`✓ Updated dreamcontext-beta ${installed.version} → ${res.version ?? dl.version}`));
+    console.log(chalk.green(`✓ Updated dreamcontext-beta ${current} → ${res.version ?? dl.version}`));
     if (res.wasRunning) console.log(chalk.yellow('Restart the app to apply the update.'));
   } finally {
     rmSync(dirname(dl.archivePath), { recursive: true, force: true });
@@ -739,6 +823,10 @@ function doSignSetup(): void {
   const installed = readAppManifest();
   if (!installed || !existsSync(installed.path)) {
     console.log(chalk.dim('No installed app to re-sign; the next `dreamcontext app install` signs with it.'));
+    return;
+  }
+  if (isReleaseSigned(installed.path)) {
+    console.log(chalk.green('The installed app carries the Developer ID release signature; macOS already keeps its permissions. Nothing to re-sign.'));
     return;
   }
   const res = installAppBundle(installed.path, {
@@ -768,7 +856,13 @@ function doStatus(): void {
   console.log(`  path:      ${installed.path}${onDisk ? '' : chalk.red('  (missing!)')}`);
   console.log(`  source:    ${installed.source}`);
   console.log(`  running:   ${isAppRunning(installed.path) ? 'yes' : 'no'}`);
-  console.log(`  signing:   ${findLocalSigningIdentity() ? `stable (${LOCAL_SIGNING_IDENTITY})` : 'ad-hoc — run `dreamcontext app sign-setup`'}`);
+  const team = onDisk ? developerIdTeam(installed.path) : null;
+  const signing = team
+    ? `Developer ID (${team})${team === APP_RELEASE_TEAM_ID ? ' — notarized release, updates itself' : ''}`
+    : findLocalSigningIdentity()
+      ? `stable (${LOCAL_SIGNING_IDENTITY})`
+      : 'ad-hoc — run `dreamcontext app sign-setup`';
+  console.log(`  signing:   ${signing}`);
 }
 
 // ─── Registration ────────────────────────────────────────────────────────────
