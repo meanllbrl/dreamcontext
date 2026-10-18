@@ -399,6 +399,7 @@ describe('backfill, redaction, the brief', () => {
         { session_id: 'sid-human', transcript_path: null, stopped_at: '2026-10-18T00:00:00.000Z', task_slugs: [], last_assistant_message: null, change_count: 0, tool_count: 0, score: 0 },
         { session_id: 'sid-builder2', transcript_path: null, stopped_at: '2026-10-18T00:00:00.000Z', task_slugs: [], last_assistant_message: null, change_count: 0, tool_count: 0, score: 0, spawn: { by: 'goal-skill', via: 'goal-live' } },
       ], bookmarks: [], triggers: [], dashboard_changes: [],
+      knowledge_access: {}, compaction_log: [], pendingMigrationNotices: [], cycle_tasks_filed: [],
     } as unknown as SleepState;
     const result = applyConsolidation(state, '2026-10-18T01:00:00.000Z');
     expect(result.processedSpawnedSessionIds).toEqual(['sid-builder2']);

@@ -270,9 +270,27 @@ function appendToSection(content: string, block: string): string {
   return `${trimmed.slice(0, cut).replace(/\s+$/, '')}\n\n${block}\n${trimmed.slice(cut)}\n`;
 }
 
-function newPatternFile(title: string, rule: string, block: string): string {
+/** The frontmatter `description` a learned pattern gets from its rule: the first sentence, capped. */
+function descriptionFor(rule: string): string {
   const firstSentence = oneLine(rule).split(/(?<=[.!?])\s/)[0] ?? oneLine(rule);
-  const description = firstSentence.length <= 160 ? firstSentence : `${firstSentence.slice(0, 159)}…`;
+  return firstSentence.length <= 160 ? firstSentence : `${firstSentence.slice(0, 159)}…`;
+}
+
+/**
+ * A replaced rule must not live on in the frontmatter of a pattern sleep created from
+ * it: when the description is still the one derived from the old rule, it follows the
+ * new rule. A description anyone else wrote is left alone.
+ */
+function refreshDescription(content: string, oldRule: string, newRule: string): string {
+  const oldLine = `\ndescription: ${JSON.stringify(descriptionFor(oldRule))}\n`;
+  const fmEnd = content.indexOf('\n---\n', 4);
+  const at = content.indexOf(oldLine);
+  if (!content.startsWith('---\n') || at < 0 || fmEnd < 0 || at > fmEnd) return content;
+  return content.slice(0, at) + `\ndescription: ${JSON.stringify(descriptionFor(newRule))}\n` + content.slice(at + oldLine.length);
+}
+
+function newPatternFile(title: string, rule: string, block: string): string {
+  const description = descriptionFor(rule);
   return [
     '---',
     `name: ${JSON.stringify(oneLine(title))}`,
@@ -341,20 +359,13 @@ export function learnRule(contextRoot: string, input: LearnInput, now: Date = ne
     const before = exists ? readFileSync(target, 'utf-8') : null;
     const editsText = input.edits?.trim();
 
-    // A rule the file already states is not learned twice (the awake agent may have written it).
-    // The text being edited or replaced is exempt: a contradiction looks like its target.
-    if (before !== null) {
-      const replaced = input.replaces ? findBlock(before, input.replaces)?.text ?? null : null;
-      const exempt = (p: string) => (!!editsText && (editsText.includes(p) || p.includes(editsText)))
-        || (!!replaced && replaced.includes(p));
-      const twin = paragraphs(before).find((p) => !exempt(p) && candidateSimilarity(rule, p) >= TWIN_SIMILARITY);
-      if (twin) throw new LearnError(`${slug} already says this: "${oneLine(twin).slice(0, 160)}". Nothing to learn.`);
-    }
-
     let ruleId = `lr_${generateId('x').slice(2, 8)}`;
     let action: LearnedAction;
     let after: string;
     let block: string;
+    // The text this change edits or replaces (null on create/append). A contradiction looks
+    // like its target, so that text is exempt from the twin check below.
+    let editedText: string | null = null;
     if (input.replaces) {
       if (before === null) throw new LearnError(`${slug} does not exist; --replaces edits a learned block in an existing pattern.`);
       const found = findBlock(before, input.replaces);
@@ -363,9 +374,10 @@ export function learnRule(contextRoot: string, input: LearnInput, now: Date = ne
       if (!last || last.writtenBlock !== found.text) {
         throw new LearnError(`${input.replaces} in ${slug} was edited awake since sleep wrote it; not overwritten.`);
       }
+      editedText = found.text;
       ruleId = input.replaces;
       block = ruleBlock(title, ruleId, rule, quotes);
-      after = before.slice(0, found.start) + block + before.slice(found.end);
+      after = refreshDescription(before.slice(0, found.start) + block + before.slice(found.end), last.rule, rule);
       action = 'replace';
     } else if (editsText !== undefined) {
       if (!editsText) throw new LearnError('--edits needs the exact paragraph to replace.');
@@ -373,6 +385,7 @@ export function learnRule(contextRoot: string, input: LearnInput, now: Date = ne
       const first = before.indexOf(editsText);
       if (first < 0) throw new LearnError(`The paragraph to edit is not in ${slug} verbatim (it may have been edited awake since); not overwritten.`);
       if (before.indexOf(editsText, first + 1) >= 0) throw new LearnError(`The paragraph to edit appears more than once in ${slug}; quote a longer, unique paragraph.`);
+      editedText = editsText;
       block = ruleBlock(title, ruleId, rule, quotes);
       after = before.slice(0, first) + block + before.slice(first + editsText.length);
       action = 'edit';
@@ -380,6 +393,16 @@ export function learnRule(contextRoot: string, input: LearnInput, now: Date = ne
       block = ruleBlock(title, ruleId, rule, quotes);
       after = before === null ? newPatternFile(title, rule, block) : appendToSection(before, block);
       action = before === null ? 'create' : 'append';
+    }
+
+    // A rule the file already states is not learned twice (the awake agent may have written
+    // it). Checked after the edit's own refusals, so a missing or awake-edited target is
+    // reported as that, never as a twin of itself.
+    if (before !== null) {
+      const edited = editedText;
+      const exempt = (p: string) => edited !== null && (edited.includes(p) || p.includes(edited));
+      const twin = paragraphs(before).find((p) => !exempt(p) && candidateSimilarity(rule, p) >= TWIN_SIMILARITY);
+      if (twin) throw new LearnError(`${slug} already says this: "${oneLine(twin).slice(0, 160)}". Nothing to learn.`);
     }
 
     if (after.split('\n').length > PATTERN_MAX_LINES) {
