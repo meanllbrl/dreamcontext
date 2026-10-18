@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
 import { useVoiceCapture } from '../../../lib/voice/useVoiceCapture';
 import { publishVoiceActivity, publishVoiceLevel } from '../../../lib/voice/voiceActivity';
@@ -31,9 +31,11 @@ import { peerLogoUrl } from '../../../api/client';
 import { usePeerMentions } from '../../../hooks/usePeerMentions';
 import { chatModeRow, DEFAULT_CHAT_MODE, type ChatMode } from '../../../lib/chatModes';
 import { patchAgentSettings } from '../../../lib/agentSettings';
+import { savedDefaultReceipt } from './defaultReceipt';
 import { useAgents, findAgent } from '../../../hooks/useAgents';
 import {
-  composerBodyHeight, composerHeightBounds, measureBodyChrome, measureFieldContent, readFieldMetrics,
+  composerBodyHeight, composerHeightBounds, draftOnlyGrew, fieldContentHeight, measureBodyChrome, readFieldMetrics,
+  type FieldMetrics,
 } from './composerHeight';
 import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
@@ -185,6 +187,280 @@ function MicIcon() {
 
 /** Set once the mode menu has been opened; the trigger's first-run ring reads it. */
 const MODE_MENU_SEEN_KEY = 'dreamcontext.chat.modeMenuSeen';
+
+// ── Memoized pieces: a keystroke re-renders the field row, not the whole card ─────────
+//
+// Every key is a `setDraft`, and the composer is ~2k lines of render: the toolbar, the
+// mascot, the usage rings, the chip rows and any open menu used to re-render on every key
+// (task: the desktop app stays light on an 8GB MacBook Air). The parts that do not read the
+// draft live below behind `memo`, fed primitives and {@link useStableHandler}s, so they sit
+// out a keystroke.
+
+/** The latest `fn` behind one stable identity, so a memoized child is not re-rendered by a
+ *  handler the composer rebuilds every render. */
+function useStableHandler<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => ref.current(...args), []);
+}
+
+const MemoModeMenu = memo(ModeMenu);
+const MemoModelMenu = memo(ModelMenu);
+const MemoUsageMenu = memo(UsageMenu);
+
+/** The quote strip and the attachment row. A fragment, so both stay direct children of
+ *  `.chat-cmp-body` — `measureBodyChrome` sums the body's children. */
+const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, onClearQuote }: {
+  quote: string | null;
+  attachments: Attachment[];
+  convId: string;
+  onClearQuote: () => void;
+}) {
+  return (
+    <>
+      {quote && (
+        <div className="chat-cmp-quote">
+          <span className="chat-cmp-quote-bar" aria-hidden />
+          <div className="chat-cmp-quote-body">
+            <span className="chat-cmp-quote-label"><span aria-hidden>↩</span> Replying to Claude</span>
+            <span className="chat-cmp-quote-text">{truncateQuote(quote)}</span>
+          </div>
+          <button type="button" className="chat-cmp-chip-x" aria-label="Cancel reply" onClick={onClearQuote}>✕</button>
+        </div>
+      )}
+
+      {attachments.length > 0 && (
+        <div className="chat-cmp-attachments">
+          {attachments.map((a) => (
+            <div
+              key={a.id}
+              className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}`}
+              data-state={a.uploading ? 'uploading' : a.failed ? 'failed' : 'ready'}
+            >
+              {a.kind === 'image' ? (
+                <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
+              ) : (
+                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : '📄'}</span>
+              )}
+              {/* An attachment says what will happen to it. A picture that can't be sent
+                  must never look like one that can — that is the whole bug this row grew
+                  a state for (a pasted screenshot the agent never received). */}
+              <span className="chat-cmp-attachment-name">
+                {a.name}
+                {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
+                {a.failed && <span className="chat-cmp-attachment-note">couldn't attach — not sent</span>}
+              </span>
+              <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(convId, a.id)}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+});
+
+/** The leading mode + permission trigger (the mascot is the costly part of it). */
+const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto, permissionMode, seen, open, onToggle }: {
+  mode: ChatMode;
+  agent: string;
+  agentName: string;
+  hasPhoto: boolean;
+  permissionMode: 'auto' | 'bypass';
+  seen: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const modeRow = chatModeRow(mode);
+  return (
+    <div className="chat-cmp-perm-wrap">
+      <button
+        type="button"
+        {...{ [MENU_TRIGGER_ATTR]: '' }}
+        className={`chat-cmp-modeltrigger chat-cmp-modetrigger${seen ? '' : ' is-unseen'}`}
+        onClick={onToggle}
+        title={`${agent ? `Agent: ${agentName} · ` : ''}Mode: ${modeRow.name} ${modeRow.version} · Permission: ${permissionMode}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        {/* Who you are talking to comes first: an agent's face and name when the chat is
+            bound to one, otherwise the mode's own face. The mode and the version of its
+            brief follow, the way a model picker names a model; for an agent only when
+            the mode is not the default. */}
+        {agent
+          ? <AgentTriggerName slug={agent} title={agentName} hasPhoto={hasPhoto} />
+          : (
+            <span className="chat-cmp-modetrigger-face" aria-hidden>
+              <SleepyMascot size={20} mood="idle" compact mode={mode} />
+            </span>
+          )}
+        {(!agent || mode !== DEFAULT_CHAT_MODE) && (
+          <>
+            <span className="chat-cmp-modeltrigger-model">{agent ? `· ${modeRow.name}` : modeRow.name}</span>
+            <span className="chat-cmp-modetrigger-version">{modeRow.version}</span>
+          </>
+        )}
+        {/* THIS SESSION's permission, handed down already resolved — see the prop's doc. */}
+        <span className="chat-cmp-modeltrigger-effort">{permissionMode}</span>
+        <span className="chat-cmp-caret" aria-hidden>▾</span>
+      </button>
+    </div>
+  );
+});
+
+/** The Attach `+` and its menu. */
+const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker }: {
+  onPick: (kind: 'files' | 'folders', close: () => void) => void;
+  onOpenTaskPicker?: () => void;
+}) {
+  return (
+    <Popover
+      align="left"
+      trigger={(open, toggle) => (
+        <button type="button" className="chat-cmp-iconbtn" onClick={toggle} title="Attach files, folders or a task" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
+          <PlusIcon />
+        </button>
+      )}
+    >
+      {(close) => (
+        <div className="chat-cmp-menu-list">
+          <button type="button" role="menuitem" onClick={() => { onPick('files', close); }}>Attach files…</button>
+          <button type="button" role="menuitem" onClick={() => { onPick('folders', close); }}>Attach folders…</button>
+          {onOpenTaskPicker && (
+            <button type="button" role="menuitem" onClick={() => { onOpenTaskPicker(); close(); }}>Attach task…</button>
+          )}
+        </div>
+      )}
+    </Popover>
+  );
+});
+
+/** The model + effort trigger. */
+const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disabled, open, onToggle }: {
+  modelLabel: string;
+  effortValue: string;
+  disabled: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="chat-cmp-model-wrap">
+      <button
+        type="button"
+        {...{ [MENU_TRIGGER_ATTR]: '' }}
+        className="chat-cmp-modeltrigger"
+        disabled={disabled}
+        onClick={onToggle}
+        title="Model and reasoning effort — switch applies from the next turn"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <span className="chat-cmp-modeltrigger-model">{modelLabel}</span>
+        <span className="chat-cmp-modeltrigger-effort">{effortLabel(effortValue)}</span>
+        <span className="chat-cmp-caret" aria-hidden>▾</span>
+      </button>
+    </div>
+  );
+});
+
+// Apple Health's activity rings: three CONCENTRIC rings, one per band, each filling its own
+// 0→100% and each carrying its own tone. What makes that shape legible at this size is not
+// the count of rings — it is the thickness and the air between them, plus a track tinted in
+// the ring's OWN colour rather than a neutral grey, so an empty ring still says which band
+// it is. Geometry is derived, not typed: `r` marches inward by exactly stroke + gap, so the
+// spacing can never drift as the numbers are tuned.
+const RING_W = 2.6;
+const RING_GAP = 1.1;
+const RING_R0 = 10.2;          // outer radius; outer edge lands at 11.5 inside a 24 box
+const ringR = (i: number) => RING_R0 - i * (RING_W + RING_GAP);
+
+/** The context meter, demoted to a ring — see the call site. `nudgeAt`/`hardAt` are the
+ *  handoff thresholds when handoff is ON, else null. */
+const UsageRingButton = memo(function UsageRingButton({ ctx, nudgeAt, hardAt, open, onToggle }: {
+  ctx: { used: number; limit: number; pct: number } | null;
+  nudgeAt: number | null;
+  hardAt: number | null;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  // The gauge, as a ring. `ctx.pct` drives an arc over a 6.5px-radius circle; the full
+  // reading stays reachable as the button's title (a hover) and as `aria-valuetext` (a
+  // screen reader) — demoted, never deleted.
+  const bands = ctx ? contextBands(ctx.used, ctx.limit) : [];
+  const isTight = !!ctx && ctx.pct >= CONTEXT_TIGHT_PCT;
+  // The handoff threshold. Same guard as the bar's marker: only when handoff is ON and the
+  // threshold actually falls INSIDE the window, so the notch can never land on the seam at
+  // 12 o'clock where it would read as a rendering artefact. The notch's ANGLE is now a
+  // per-band fraction (computed at the ring below) rather than a fraction of the whole
+  // window — three arcs means "20% of the window" is no longer a single place on the mark.
+  const handoffOn = !!(nudgeAt != null && ctx && nudgeAt > 0 && nudgeAt < ctx.limit);
+  const ctxReading = ctx
+    ? `Context window ${ctx.pct}% — ${fmtTokens(ctx.used)} of ${fmtTokens(ctx.limit)} used, ${fmtTokens(Math.max(0, ctx.limit - ctx.used))} free`
+      + (handoffOn ? ` · ECO asks at ${fmtTokens(nudgeAt!)}, insists at ${fmtTokens(hardAt ?? 0)}` : '')
+    : 'Session usage';
+  return (
+    <button
+      type="button"
+      {...{ [MENU_TRIGGER_ATTR]: '' }}
+      className="chat-cmp-usagebtn"
+      data-tight={isTight}
+      onClick={onToggle}
+      title={ctxReading}
+      aria-label={ctxReading}
+      aria-haspopup="menu"
+      aria-expanded={open}
+    >
+      <svg
+        width="24" height="24" viewBox="0 0 24 24" fill="none"
+        role={ctx ? 'meter' : undefined}
+        aria-valuemin={ctx ? 0 : undefined}
+        aria-valuemax={ctx ? 100 : undefined}
+        aria-valuenow={ctx ? ctx.pct : undefined}
+        aria-valuetext={ctx ? ctxReading : undefined}
+        aria-hidden={ctx ? undefined : true}
+      >
+        {(bands.length ? bands : [null, null, null]).map((band, i) => {
+          const r = ringR(i);
+          const c = 2 * Math.PI * r;
+          // The notch rides whichever ring's band actually CONTAINS the threshold, so
+          // the mark and the arc it qualifies can never drift apart. On the SHIPPED
+          // ladder it therefore draws nothing at all, and that is the correct answer:
+          // the default threshold IS the first band edge, so the seam between ring 1
+          // and ring 2 already marks it and a second tick on top would be noise. The
+          // branch stays live for a vault that has tuned `--nudge-at` off an edge.
+          const notchFrac = band && handoffOn && nudgeAt! > band.from
+            && nudgeAt! < band.to
+            ? (nudgeAt! - band.from) / (band.to - band.from)
+            : null;
+          return (
+            <g key={i} transform="rotate(-90 12 12)">
+              <circle
+                className="chat-cmp-usagering-track"
+                data-band={band?.key}
+                cx="12" cy="12" r={r} strokeWidth={RING_W}
+              />
+              {band && band.frac > 0 && (
+                <circle
+                  className="chat-cmp-usagering-fill"
+                  data-band={band.key}
+                  cx="12" cy="12" r={r} strokeWidth={RING_W} strokeLinecap="round"
+                  strokeDasharray={`${(c * band.frac).toFixed(2)} ${c.toFixed(2)}`}
+                />
+              )}
+              {notchFrac !== null && (
+                <circle
+                  className="chat-cmp-usagering-notch"
+                  cx="12" cy="12" r={r} strokeWidth={RING_W}
+                  strokeDasharray={`1 ${c.toFixed(2)}`}
+                  strokeDashoffset={`${(-c * notchFrac).toFixed(2)}`}
+                />
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </button>
+  );
+});
 
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
@@ -664,11 +940,46 @@ export function Composer({
   const draggedRef = useRef<number | null>(draggedH);
   draggedRef.current = draggedH;
 
+  // ── What the keystroke path reuses instead of re-reading (see composerHeight.ts) ──
+  /** The field's line metrics — read on mount, on a field WIDTH change, on theme, zoom and
+   *  font load; never per key (a `getComputedStyle` forces a whole-document style resolve). */
+  const metricsRef = useRef<FieldMetrics | null>(null);
+  /** The body's non-field height — re-read only when a chip row changes or the pane resizes. */
+  const chromeRef = useRef<number | null>(null);
+  /** The pane's height, kept by the pane's ResizeObserver. */
+  const paneHRef = useRef(0);
+  /** When the pane's observer last re-measured (the field's observer skips a second pass). */
+  const paneResizedAtRef = useRef(-Infinity);
+  /** The last content height, and whether the next pass must collapse the field to see it
+   *  shrink (the draft got shorter or was replaced, the width changed). */
+  const contentRef = useRef<number | null>(null);
+  const needFullRef = useRef(true);
+  const needChromeRef = useRef(true);
+  /** The height last handed to React — an unchanged pass sets no state at all. */
+  const appliedRef = useRef<number | null>(null);
+  /** At most one content measure per animation frame: a second pass inside the same frame is
+   *  folded into one rAF re-run. */
+  const frameRef = useRef<{ busy: boolean; again: boolean }>({ busy: false, again: false });
+
   /** The pane whose half-height is the ceiling. `||`, not `??`: a pane parked in the
    *  surface's detached garage measures 0, which is not a ceiling — it is "unknown yet". */
   const paneHeight = () => {
+    if (paneHRef.current > 0) return paneHRef.current;
     const paneEl = rootRef.current?.closest('.chat-pane') as HTMLElement | null;
-    return (paneEl?.getBoundingClientRect().height || 0) || window.innerHeight;
+    const h = paneEl?.getBoundingClientRect().height || 0;
+    if (h > 0) paneHRef.current = h;
+    return h || window.innerHeight;
+  };
+  const fieldMetrics = (ta: HTMLTextAreaElement): FieldMetrics => {
+    if (!metricsRef.current) metricsRef.current = readFieldMetrics(ta);
+    return metricsRef.current;
+  };
+  const bodyChrome = (body: HTMLElement, row: HTMLElement): number => {
+    if (needChromeRef.current || chromeRef.current == null) {
+      chromeRef.current = measureBodyChrome(body, row);
+      needChromeRef.current = false;
+    }
+    return chromeRef.current;
   };
 
   /** Measure → clamp → apply. Runs in a LAYOUT effect so a sent message never paints the
@@ -676,18 +987,35 @@ export function Composer({
   const resize = useCallback(() => {
     const ta = taRef.current, body = bodyRef.current, row = rowRef.current;
     if (!ta || !body || !row) return;
-    const { lineHeight, fieldChrome } = readFieldMetrics(ta);
-    setBodyHeight(composerBodyHeight({
-      contentHeight: measureFieldContent(ta),
+    const frame = frameRef.current;
+    if (frame.busy) { frame.again = true; return; }
+    if (typeof requestAnimationFrame === 'function') {
+      frame.busy = true;
+      requestAnimationFrame(() => {
+        frame.busy = false;
+        if (frame.again) { frame.again = false; resizeRef.current(); }
+      });
+    }
+    const { lineHeight, fieldChrome, border } = fieldMetrics(ta);
+    const contentHeight = fieldContentHeight(ta, border, contentRef.current, needFullRef.current);
+    contentRef.current = contentHeight;
+    needFullRef.current = false;
+    const next = composerBodyHeight({
+      contentHeight,
       lineHeight,
       fieldChrome,
-      chromeHeight: measureBodyChrome(body, row),
+      chromeHeight: bodyChrome(body, row),
       paneHeight: paneHeight(),
       draggedHeight: draggedRef.current,
-    }));
+    });
+    if (next === appliedRef.current) return;
+    appliedRef.current = next;
+    setBodyHeight(next);
     setInstantH(instantRef.current || dragRef.current != null || firstApplyRef.current);
     firstApplyRef.current = false;
   }, []);
+  const resizeRef = useRef(resize);
+  resizeRef.current = resize;
 
   // Clear the mark the frame AFTER it was used. This render changes only the attribute — the
   // height is unchanged, so re-enabling the transition here can't animate anything; the next
@@ -697,8 +1025,19 @@ export function Composer({
   // Every input that can change how many lines the draft occupies, or how much of the box
   // the chips have taken: typing/paste (`draft`), an external `sendText` or a rewind prefill
   // (also `draft`, via the draftEpoch adoption above), submit (draft → ''), and the quote /
-  // attachment rows appearing or disappearing.
-  useLayoutEffect(() => { resize(); }, [resize, draft, draggedH, quote, attachments]);
+  // attachment rows appearing or disappearing. Only a draft that GREW by insertion skips the
+  // collapse measure; a chip row change is the only thing that re-reads the body's chrome.
+  const prevMeasuredRef = useRef({ draft, quote, attachments });
+  useLayoutEffect(() => {
+    const prev = prevMeasuredRef.current;
+    if (draft !== prev.draft && !draftOnlyGrew(prev.draft, draft)) needFullRef.current = true;
+    if (quote !== prev.quote || attachments !== prev.attachments) {
+      needChromeRef.current = true;
+      needFullRef.current = true;
+    }
+    prevMeasuredRef.current = { draft, quote, attachments };
+    resize();
+  }, [resize, draft, draggedH, quote, attachments]);
 
   // Width changes rewrap the text (so the line COUNT moves without the draft changing) and
   // height changes move the ceiling — neither is a React render. Guarded on the observed box
@@ -712,12 +1051,58 @@ export function Composer({
       const { width: w, height: h } = entry.contentRect;
       if (w === last.w && h === last.h) return;
       last = { w, h };
+      paneHRef.current = (entry.target as HTMLElement).getBoundingClientRect().height;
+      needFullRef.current = true;
+      needChromeRef.current = true;
       instantRef.current = true;
       resize();
       instantRef.current = false;
+      // Stamped AFTER the measure: with long panes the forced layout alone can take 25-50 ms,
+      // and a stamp taken before it would let the field observer below measure a second time.
+      paneResizedAtRef.current = performance.now();
     });
     ro.observe(el);
     return () => ro.disconnect();
+  }, [resize]);
+
+  // The cached field metrics go stale only when the field's own box or the tokens behind it
+  // move: a field WIDTH change (a height change is our own doing), the theme, the zoom (which
+  // scales the font tokens) and a web font finishing its load.
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const refresh = () => {
+      metricsRef.current = null;
+      needFullRef.current = true;
+      needChromeRef.current = true;
+      resize();
+    };
+    let lastW = -1;
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(([entry]) => {
+      const w = entry.contentRect.width;
+      if (w === lastW) return;
+      const first = lastW < 0;
+      lastW = w;
+      if (first) return;
+      // A field that widened with its pane was just re-measured by the pane's observer (same
+      // delivery, created first): drop the cached metrics for the next pass and stop there —
+      // a second full measure here forced two more layouts per composer on every sidebar
+      // toggle and pane switch (verify:chat-smooth, 8 -> 12 layouts).
+      if (performance.now() - paneResizedAtRef.current < 16) { metricsRef.current = null; return; }
+      refresh();
+    });
+    ro?.observe(ta);
+    const mo = typeof MutationObserver === 'undefined' ? null : new MutationObserver(refresh);
+    mo?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+    window.addEventListener('dreamcontext-zoom', refresh);
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    fonts?.addEventListener?.('loadingdone', refresh);
+    return () => {
+      ro?.disconnect();
+      mo?.disconnect();
+      window.removeEventListener('dreamcontext-zoom', refresh);
+      fonts?.removeEventListener?.('loadingdone', refresh);
+    };
   }, [resize]);
 
   const beginResize = (clientY: number, pointerId: number, target: Element) => {
@@ -740,9 +1125,9 @@ export function Composer({
   const onHandleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const ta = taRef.current, body = bodyRef.current, row = rowRef.current;
     if (!ta || !body || !row) return;
-    const { lineHeight, fieldChrome } = readFieldMetrics(ta);
+    const { lineHeight, fieldChrome } = fieldMetrics(ta);
     const { min, ceiling } = composerHeightBounds({
-      lineHeight, fieldChrome, chromeHeight: measureBodyChrome(body, row), paneHeight: paneHeight(),
+      lineHeight, fieldChrome, chromeHeight: bodyChrome(body, row), paneHeight: paneHeight(),
     });
     const step = (d: number) => setDraggedH((h) => Math.min(ceiling, Math.max(min, (h ?? bodyHeight ?? min) + d)));
     if (e.key === 'ArrowUp') { e.preventDefault(); step(16); }
@@ -765,13 +1150,20 @@ export function Composer({
    */
   const canCompose = connected && !unavailable;
 
-  const stats = useAgentSessionStats(session.claudeId, connected).data;
+  // Polled only until the stream has supplied usage of its own (`lastResult`): from then on
+  // the stream is fresher than the transcript, and every 5 s poll was a full transcript read.
+  // A disabled query keeps its last data, so the fallback reading does not blank.
+  const stats = useAgentSessionStats(session.claudeId, connected && !lastResult).data;
   // `used > 0` on the fallback too: a transcript whose only turn was a synthetic notice
   // (e.g. "Please run /login") reports zero tokens, and "0% 0/1.0M" is noise, not a reading.
   const statsLimit = stats?.contextLimit ?? contextLimitFor(stats?.contextTokens ?? 0, conv.model);
-  const ctx = conv.context
-    ?? (stats?.contextTokens ? { used: stats.contextTokens, limit: statsLimit, pct: Math.min(100, Math.round((stats.contextTokens / statsLimit) * 100)) }
-      : null);
+  const statsTokens = stats?.contextTokens ?? 0;
+  // Memoized so the reading keeps one identity between keystrokes (the ring is memoized).
+  const statsCtx = useMemo(
+    () => (statsTokens ? { used: statsTokens, limit: statsLimit, pct: Math.min(100, Math.round((statsTokens / statsLimit) * 100)) } : null),
+    [statsTokens, statsLimit],
+  );
+  const ctx = conv.context ?? statsCtx;
   // `total_cost_usd` off the result frame is already cumulative for the conversation.
   const costUsd = lastResult?.costUsd ?? stats?.costUsd ?? null;
 
@@ -800,7 +1192,14 @@ export function Composer({
     })),
     [accountsRes],
   );
-  const { limits: usageBars, staleAsOf } = usageLimits(ctx, usageRes, Date.now(), contextHandoff);
+  // Re-derived when a reading changes or every 30 s (the staleness check reads the clock),
+  // not on every keystroke — the open usage panel is memoized on these.
+  const staleTick = Math.floor(Date.now() / 30_000);
+  const { limits: usageBars, staleAsOf } = useMemo(
+    () => usageLimits(ctx, usageRes, Date.now(), contextHandoff),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `staleTick` stands in for the clock
+    [ctx, usageRes, contextHandoff, staleTick],
+  );
 
   const runCompact = () => {
     if (!canCompose) return;
@@ -1232,7 +1631,6 @@ export function Composer({
   const disabled = !canCompose;
   const modelLabel = modelLabelFor(modelConfig, model);
   const effortValue = effort || modelConfig.defaultEffort;
-  const modeRow = chatModeRow(mode);
   // The agent this chat speaks as, read live from the agent roster so a rename on the Agents
   // page shows here. Only a bound chat asks for the list; while it loads (or if the agent is
   // gone) the slug stands in.
@@ -1267,11 +1665,18 @@ export function Composer({
   // write needs and the settings module is a plain import; routing it through the pane would
   // add a hop that carries no decision. `onSetModelDefault` stays as an override seam for a
   // caller that needs to do something else with it.
+  //
+  // So the receipt waits for the write to LAND (the settings module holds a write made before
+  // this window could read the saved settings, and sends it once they load), and shows only if
+  // the model and effort are still the ones the click captured — a change in between wins.
   const [savedDefault, setSavedDefault] = useState(false);
+  const pickRef = useRef({ model, effort: effortValue });
+  pickRef.current = { model, effort: effortValue };
   const saveModelDefault = () => {
-    if (onSetModelDefault) onSetModelDefault();
-    else patchAgentSettings({ chatDefaultModel: model, chatDefaultEffort: effortValue });
-    setSavedDefault(true);
+    if (onSetModelDefault) { onSetModelDefault(); setSavedDefault(true); return; }
+    const at = { model, effort: effortValue };
+    const write = patchAgentSettings({ chatDefaultModel: at.model, chatDefaultEffort: at.effort });
+    void savedDefaultReceipt(write, at, () => pickRef.current).then((show) => { if (show) setSavedDefault(true); });
   };
 
   // ── Which controls this surface HAS ──────────────────────────────────────────────
@@ -1289,34 +1694,27 @@ export function Composer({
   // project window has one.
   const showAttach = !!vault;
 
-  // The gauge, as a ring. `ctx.pct` drives an arc over a 6.5px-radius circle; the full
-  // reading stays reachable as the button's title (a hover) and as `aria-valuetext` (a
-  // screen reader) — demoted, never deleted.
-  // Apple Health's activity rings: three CONCENTRIC rings, one per band, each filling its own
-  // 0→100% and each carrying its own tone. What makes that shape legible at this size is not
-  // the count of rings — it is the thickness and the air between them, plus a track tinted in
-  // the ring's OWN colour rather than a neutral grey, so an empty ring still says which band
-  // it is. Geometry is derived, not typed: `r` marches inward by exactly stroke + gap, so the
-  // spacing can never drift as the numbers are tuned.
-  const RING_W = 2.6;
-  const RING_GAP = 1.1;
-  const RING_R0 = 10.2;          // outer radius; outer edge lands at 11.5 inside a 24 box
-  const ringR = (i: number) => RING_R0 - i * (RING_W + RING_GAP);
-  const bands = ctx ? contextBands(ctx.used, ctx.limit) : [];
   const isTight = !!ctx && ctx.pct >= CONTEXT_TIGHT_PCT;
-  // The handoff threshold. Same guard as the bar's marker: only when handoff is ON and the
-  // threshold actually falls INSIDE the window, so the notch can never land on the seam at
-  // 12 o'clock where it would read as a rendering artefact. The notch's ANGLE is now a
-  // per-band fraction (computed at the ring below) rather than a fraction of the whole
-  // window — three arcs means "20% of the window" is no longer a single place on the mark.
-  const handoffOn = !!(contextHandoff?.enabled && ctx && contextHandoff.nudgeAt > 0 && contextHandoff.nudgeAt < ctx.limit);
-  const ctxReading = ctx
-    ? `Context window ${ctx.pct}% — ${fmtTokens(ctx.used)} of ${fmtTokens(ctx.limit)} used, ${fmtTokens(Math.max(0, ctx.limit - ctx.used))} free`
-      + (handoffOn ? ` · ECO asks at ${fmtTokens(contextHandoff!.nudgeAt)}, insists at ${fmtTokens(contextHandoff!.hardAt)}` : '')
-    : 'Session usage';
   // Nothing found on ANY of the three readings means there is nothing behind the button, so
   // it isn't drawn. An empty popover is worse than an absent one.
   const hasUsage = usageBars.length > 0 || costUsd != null;
+
+  // Stable handlers for the memoized pieces above. An optional callback stays `undefined`
+  // when absent — its absence is what drops a menu section or makes rows read-only.
+  const toggleMode = useStableHandler(() => menu.toggle('mode'));
+  const toggleModel = useStableHandler(() => menu.toggle('model'));
+  const toggleUsage = useStableHandler(() => menu.toggle('usage'));
+  const stableModeChange = useStableHandler((m: ChatMode) => onModeChange?.(m));
+  const stablePermissionChange = useStableHandler((m: 'auto' | 'bypass') => onPermissionModeChange?.(m));
+  const stableAgentPick = useStableHandler((a: ChatAgentPick | null) => onAgentPick?.(a));
+  const stableModelChange = useStableHandler((id: string) => { onModelChange(id); setSavedDefault(false); });
+  const stableEffortChange = useStableHandler((lvl: string) => { onEffortChange(lvl); setSavedDefault(false); });
+  const stableSaveDefault = useStableHandler(() => saveModelDefault());
+  const stableAccountChange = useStableHandler((id: string) => { onAccountChange?.(id); menu.close(); });
+  const stableHandoffChange = useStableHandler((enabled: boolean) => onContextHandoffChange?.(enabled));
+  const stableClearQuote = useStableHandler(() => onClearQuote());
+  const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
+  const stableTaskPicker = useStableHandler(() => onOpenTaskPicker?.());
 
   return (
     <div className="chat-cmp" ref={rootRef}>
@@ -1384,27 +1782,27 @@ export function Composer({
           overflow, and these open upward out of it (see useAnchoredMenu.ts). */}
       {menu.open === 'mode' && showMode && (
         <div ref={menu.menuRef}>
-          <ModeMenu
+          <MemoModeMenu
             mode={mode}
-            onModeChange={(m) => onModeChange?.(m)}
+            onModeChange={stableModeChange}
             agent={agent}
-            onAgentPick={onAgentPick}
+            onAgentPick={onAgentPick ? stableAgentPick : undefined}
             permission={permissionMode}
             projectPermission={projectPermissionMode}
-            onPermissionChange={(m) => onPermissionModeChange?.(m)}
+            onPermissionChange={stablePermissionChange}
             close={menu.close}
           />
         </div>
       )}
       {menu.open === 'model' && showModel && (
         <div ref={menu.menuRef}>
-          <ModelMenu
+          <MemoModelMenu
             config={modelConfig}
             model={model}
             effort={effortValue}
-            onModelChange={(id) => { onModelChange(id); setSavedDefault(false); }}
-            onEffortChange={(lvl) => { onEffortChange(lvl); setSavedDefault(false); }}
-            onSetDefault={saveModelDefault}
+            onModelChange={stableModelChange}
+            onEffortChange={stableEffortChange}
+            onSetDefault={stableSaveDefault}
             savedDefault={savedDefault}
             close={menu.close}
           />
@@ -1412,15 +1810,15 @@ export function Composer({
       )}
       {menu.open === 'usage' && (
         <div ref={menu.menuRef}>
-          <UsageMenu
+          <MemoUsageMenu
             limits={usageBars}
             staleAsOf={staleAsOf}
             costUsd={costUsd}
             accounts={accounts}
             activeAccountId={activeAccountId}
-            onAccountChange={onAccountChange && ((id) => { onAccountChange(id); menu.close(); })}
+            onAccountChange={onAccountChange ? stableAccountChange : undefined}
             contextHandoff={contextHandoff}
-            onContextHandoffChange={onContextHandoffChange}
+            onContextHandoffChange={onContextHandoffChange ? stableHandoffChange : undefined}
           />
         </div>
       )}
@@ -1448,43 +1846,7 @@ export function Composer({
           paint) — composer.css's own two-line fallback holds the box until then, rather
           than a JS constant that would drift from the tokens the moment one moved. */}
       <div className="chat-cmp-body" ref={bodyRef} data-instant={instantH ? '1' : undefined} style={bodyHeight == null ? undefined : { ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
-        {quote && (
-          <div className="chat-cmp-quote">
-            <span className="chat-cmp-quote-bar" aria-hidden />
-            <div className="chat-cmp-quote-body">
-              <span className="chat-cmp-quote-label"><span aria-hidden>↩</span> Replying to Claude</span>
-              <span className="chat-cmp-quote-text">{truncateQuote(quote)}</span>
-            </div>
-            <button type="button" className="chat-cmp-chip-x" aria-label="Cancel reply" onClick={onClearQuote}>✕</button>
-          </div>
-        )}
-
-        {attachments.length > 0 && (
-          <div className="chat-cmp-attachments">
-            {attachments.map((a) => (
-              <div
-                key={a.id}
-                className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}`}
-                data-state={a.uploading ? 'uploading' : a.failed ? 'failed' : 'ready'}
-              >
-                {a.kind === 'image' ? (
-                  <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
-                ) : (
-                  <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : '📄'}</span>
-                )}
-                {/* An attachment says what will happen to it. A picture that can't be sent
-                    must never look like one that can — that is the whole bug this row grew
-                    a state for (a pasted screenshot the agent never received). */}
-                <span className="chat-cmp-attachment-name">
-                  {a.name}
-                  {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
-                  {a.failed && <span className="chat-cmp-attachment-note">couldn't attach — not sent</span>}
-                </span>
-                <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(convId, a.id)}>✕</button>
-              </div>
-            ))}
-          </div>
-        )}
+        <ComposerChips quote={quote} attachments={attachments} convId={convId} onClearQuote={stableClearQuote} />
 
         <div className="chat-cmp-row" ref={rowRef}>
           <div className="chat-cmp-field">
@@ -1616,38 +1978,16 @@ export function Composer({
             composing the message; this is about who you are talking to. Absent on a surface
             with no mode and no permission gate to set — see `showMode`. */}
         {showMode && (
-          <div className="chat-cmp-perm-wrap">
-            <button
-              type="button"
-              {...{ [MENU_TRIGGER_ATTR]: '' }}
-              className={`chat-cmp-modeltrigger chat-cmp-modetrigger${modeMenuSeen ? '' : ' is-unseen'}`}
-              onClick={() => menu.toggle('mode')}
-              title={`${agent ? `Agent: ${agentName} · ` : ''}Mode: ${modeRow.name} ${modeRow.version} · Permission: ${permissionMode}`}
-              aria-haspopup="menu"
-              aria-expanded={menu.open === 'mode'}
-            >
-              {/* Who you are talking to comes first: an agent's face and name when the chat is
-                  bound to one, otherwise the mode's own face. The mode and the version of its
-                  brief follow, the way a model picker names a model; for an agent only when
-                  the mode is not the default. */}
-              {agent
-                ? <AgentTriggerName slug={agent} title={agentName} hasPhoto={!!agentSummary?.hasPhoto} />
-                : (
-                  <span className="chat-cmp-modetrigger-face" aria-hidden>
-                    <SleepyMascot size={20} mood="idle" compact mode={mode} />
-                  </span>
-                )}
-              {(!agent || mode !== DEFAULT_CHAT_MODE) && (
-                <>
-                  <span className="chat-cmp-modeltrigger-model">{agent ? `· ${modeRow.name}` : modeRow.name}</span>
-                  <span className="chat-cmp-modetrigger-version">{modeRow.version}</span>
-                </>
-              )}
-              {/* THIS SESSION's permission, handed down already resolved — see the prop's doc. */}
-              <span className="chat-cmp-modeltrigger-effort">{permissionMode}</span>
-              <span className="chat-cmp-caret" aria-hidden>▾</span>
-            </button>
-          </div>
+          <ModeTrigger
+            mode={mode}
+            agent={agent}
+            agentName={agentName}
+            hasPhoto={!!agentSummary?.hasPhoto}
+            permissionMode={permissionMode}
+            seen={modeMenuSeen}
+            open={menu.open === 'mode'}
+            onToggle={toggleMode}
+          />
         )}
 
         {/* One control for every kind of attachment — files, folders and (once a picker
@@ -1658,24 +1998,7 @@ export function Composer({
             Drawn only inside a project (`showAttach`) — every attachment becomes a path, and
             a pasted image's bytes need that project's temp dir. */}
         {showAttach && (
-          <Popover
-            align="left"
-            trigger={(open, toggle) => (
-              <button type="button" className="chat-cmp-iconbtn" onClick={toggle} title="Attach files, folders or a task" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
-                <PlusIcon />
-              </button>
-            )}
-          >
-            {(close) => (
-              <div className="chat-cmp-menu-list">
-                <button type="button" role="menuitem" onClick={() => { void pickPaths('files', close); }}>Attach files…</button>
-                <button type="button" role="menuitem" onClick={() => { void pickPaths('folders', close); }}>Attach folders…</button>
-                {onOpenTaskPicker && (
-                  <button type="button" role="menuitem" onClick={() => { onOpenTaskPicker(); close(); }}>Attach task…</button>
-                )}
-              </div>
-            )}
-          </Popover>
+          <AttachButton onPick={stablePick} onOpenTaskPicker={onOpenTaskPicker ? stableTaskPicker : undefined} />
         )}
 
         <div className="chat-cmp-spacer" />
@@ -1724,67 +2047,13 @@ export function Composer({
             CONTEXT_TIGHT_PCT the ring goes amber and `/compact` appears beside it without
             hover or focus, because at that point the action is the point. */}
         {hasUsage && (
-          <button
-            type="button"
-            {...{ [MENU_TRIGGER_ATTR]: '' }}
-            className="chat-cmp-usagebtn"
-            data-tight={isTight}
-            onClick={() => menu.toggle('usage')}
-            title={ctxReading}
-            aria-label={ctxReading}
-            aria-haspopup="menu"
-            aria-expanded={menu.open === 'usage'}
-          >
-            <svg
-              width="24" height="24" viewBox="0 0 24 24" fill="none"
-              role={ctx ? 'meter' : undefined}
-              aria-valuemin={ctx ? 0 : undefined}
-              aria-valuemax={ctx ? 100 : undefined}
-              aria-valuenow={ctx ? ctx.pct : undefined}
-              aria-valuetext={ctx ? ctxReading : undefined}
-              aria-hidden={ctx ? undefined : true}
-            >
-              {(bands.length ? bands : [null, null, null]).map((band, i) => {
-                const r = ringR(i);
-                const c = 2 * Math.PI * r;
-                // The notch rides whichever ring's band actually CONTAINS the threshold, so
-                // the mark and the arc it qualifies can never drift apart. On the SHIPPED
-                // ladder it therefore draws nothing at all, and that is the correct answer:
-                // the default threshold IS the first band edge, so the seam between ring 1
-                // and ring 2 already marks it and a second tick on top would be noise. The
-                // branch stays live for a vault that has tuned `--nudge-at` off an edge.
-                const notchFrac = band && handoffOn && contextHandoff!.nudgeAt > band.from
-                  && contextHandoff!.nudgeAt < band.to
-                  ? (contextHandoff!.nudgeAt - band.from) / (band.to - band.from)
-                  : null;
-                return (
-                  <g key={i} transform="rotate(-90 12 12)">
-                    <circle
-                      className="chat-cmp-usagering-track"
-                      data-band={band?.key}
-                      cx="12" cy="12" r={r} strokeWidth={RING_W}
-                    />
-                    {band && band.frac > 0 && (
-                      <circle
-                        className="chat-cmp-usagering-fill"
-                        data-band={band.key}
-                        cx="12" cy="12" r={r} strokeWidth={RING_W} strokeLinecap="round"
-                        strokeDasharray={`${(c * band.frac).toFixed(2)} ${c.toFixed(2)}`}
-                      />
-                    )}
-                    {notchFrac !== null && (
-                      <circle
-                        className="chat-cmp-usagering-notch"
-                        cx="12" cy="12" r={r} strokeWidth={RING_W}
-                        strokeDasharray={`1 ${c.toFixed(2)}`}
-                        strokeDashoffset={`${(-c * notchFrac).toFixed(2)}`}
-                      />
-                    )}
-                  </g>
-                );
-              })}
-            </svg>
-          </button>
+          <UsageRingButton
+            ctx={ctx}
+            nudgeAt={contextHandoff?.enabled ? contextHandoff.nudgeAt : null}
+            hardAt={contextHandoff?.enabled ? contextHandoff.hardAt : null}
+            open={menu.open === 'usage'}
+            onToggle={toggleUsage}
+          />
         )}
 
         {isTight && (
@@ -1803,22 +2072,13 @@ export function Composer({
         {/* Model and effort as ONE trigger: they are read together ("Opus, Xhigh") and set
             together, and two adjacent text pills for one decision was half this row's width. */}
         {showModel && (
-        <div className="chat-cmp-model-wrap">
-          <button
-            type="button"
-            {...{ [MENU_TRIGGER_ATTR]: '' }}
-            className="chat-cmp-modeltrigger"
+          <ModelTrigger
+            modelLabel={modelLabel}
+            effortValue={effortValue}
             disabled={!canCompose}
-            onClick={() => menu.toggle('model')}
-            title="Model and reasoning effort — switch applies from the next turn"
-            aria-haspopup="menu"
-            aria-expanded={menu.open === 'model'}
-          >
-            <span className="chat-cmp-modeltrigger-model">{modelLabel}</span>
-            <span className="chat-cmp-modeltrigger-effort">{effortLabel(effortValue)}</span>
-            <span className="chat-cmp-caret" aria-hidden>▾</span>
-          </button>
-        </div>
+            open={menu.open === 'model'}
+            onToggle={toggleModel}
+          />
         )}
 
         {/* Round icon buttons, sized to sit level with the model/effort text beside them —

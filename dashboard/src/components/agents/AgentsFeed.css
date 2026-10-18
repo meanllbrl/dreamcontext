@@ -264,7 +264,8 @@
   height: var(--space-2);
   border-radius: var(--radius-full);
   background: var(--color-text-secondary);
-  animation: agents-breath var(--motion-breath) ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agents-breath) var(--motion-breath) ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes agents-breath {

@@ -312,7 +312,7 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
 .mchat-dot[data-kind="ready"]    { --kind-color: var(--color-accent); }
 .mchat-dot[data-kind="ended"]    { --kind-color: var(--color-error); }
 .mchat-dot[data-kind="working"],
-.mchat-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+.mchat-dot[data-kind="starting"] { animation: var(--dc-motion-status-name, agentDotPulse) 1.2s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 @media (prefers-reduced-motion: reduce) {
   .mchat-dot { animation: none !important; }
 }
@@ -409,24 +409,89 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
   padding-right: var(--space-3);
 }
 
-/* NOTHING may push the column sideways. The transcript itself never scrolls horizontally;
-   the two things that legitimately overflow — code and tables — scroll INSIDE their own box,
-   which is why they are exempted rather than wrapped. A wrapped code line is a lie about
-   what the file says. */
-.agent-surface[data-mobile] .chat-scroll,
-.agent-surface[data-mobile] :is(.chat-msg-user-row, .chat-msg-assistant-row) {
-  overflow-x: hidden;
+/* NOTHING may push the column sideways, and NOTHING inside it scrolls on its own: the
+   transcript is the one scroller, so a thumb that lands on a card still moves the page (owner,
+   2026-10-17: "her bir chat widget kendi içinde kaymamalı"). This replaces the exemption that
+   let code and tables scroll sideways inside their box; a wrapped line reads less like the
+   file, but a box that steals the scroll was worse on a phone.
+   The message rows CLIP rather than hide: `hidden` on one axis turns the other into `auto`, so
+   a row whose hover bar stuck out became a 32px scroller of its own. */
+.agent-surface[data-mobile] .chat-scroll { overflow-x: hidden; }
+.agent-surface[data-mobile] :is(.chat-msg-user-row, .chat-msg-assistant-row) { overflow-x: clip; }
+/* Long content grows the transcript instead of scrolling inside its card. A command's output
+   keeps its own head/tail clamp ("N more lines"), so this never lays out thousands of lines. */
+.agent-surface[data-mobile] .chat-scroll :is(
+  .chat-m-terminal-body, .chat-toolcard-section pre, .chat-permcard-raw, .chat-plancard-plan,
+  .chat-bypasscard-cmd, .chat-m-compact-body
+) {
+  max-height: none;
+  overflow: visible;
 }
-.agent-surface[data-mobile] :is(.chat-msg-assistant-body, .chat-permcard, .chat-viewcard) :is(pre, table),
-.agent-surface[data-mobile] .dc-table-wrap {
+/* Diffs, fenced blocks and tables wrap to the column. The selectors outweigh the chat's own
+   `pre code { overflow-x: auto }` (cards.css) on purpose. */
+.agent-surface[data-mobile] .chat-scroll .chat-m-diff { overflow-x: visible; }
+.agent-surface[data-mobile] .chat-scroll .chat-m-diff-text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body pre,
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body pre code,
+.agent-surface[data-mobile] .chat-scroll :is(.chat-permcard, .chat-viewcard) pre {
   max-width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow-x: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body .md-table-scroll,
+.agent-surface[data-mobile] .chat-scroll .dc-table-wrap { overflow-x: visible; }
+/* A table that fits wraps: a label cell at its spaces (it no longer holds its width), a prose
+   cell anywhere (its own rule). One of four or more columns cannot fit a phone without
+   breaking every word letter by letter (measured: 8 columns at 316px), so each row becomes a
+   block of "header: value" lines; markdownTables.ts writes the labels and the `data-wide` mark. */
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body :is(th, td)[data-fit] {
+  white-space: normal;
+  /* Both, because the prose body's `word-break: break-word` below is inherited and breaks a
+     short word anywhere ("Sta/tus") as surely as `overflow-wrap: anywhere` does. */
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body table[data-wide],
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body table[data-wide] :is(tbody, tr) {
+  display: block;
+}
+/* Out of sight, not out of the accessibility tree: with the roles markdownTables.ts writes, a
+   screen reader still reads a table with its headers. */
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body table[data-wide] thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body table[data-wide] tr {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body table[data-wide] tr + tr { margin-top: var(--space-2); }
+/* A line of text with the label in front, never a grid: a grid makes every run of text and
+   every `code` or bold inside the cell its own item, so a mixed cell lands under the wrong
+   label. */
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body table[data-wide] td {
+  display: block;
+  padding: var(--space-1) 0;
+  border: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.agent-surface[data-mobile] .chat-scroll .md-preview .markdown-body table[data-wide] td::before {
+  content: attr(data-label);
+  margin-inline-end: var(--space-2);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Long unbroken tokens — a URL, a 60-char path, a hash — are the other way a column gets
    pushed out. Break them anywhere rather than letting one word set the width. Scoped to the
-   prose bodies so it never reaches the `pre` blocks exempted above. */
+   prose bodies; a table's label cells opt back out above. */
 .agent-surface[data-mobile] :is(.chat-msg-assistant-body, .chat-msg-user-bubble) {
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -594,11 +659,25 @@ body[data-phone] .agent-dock { display: none; }
   .agent-surface[data-mobile] .agent-panes[data-swap] { animation: none; }
 }
 
+/* The move between Mac mode's two screens: forward, the chat comes in from the right; back, the
+   list comes in from the left. Only the content moves: the list's own background covers the chat
+   at once, so neither screen shows through the other. 220 ms; none under reduced motion. */
+.agent-surface[data-phone-nav="push"] .agent-overlay-head,
+.agent-surface[data-phone-nav="push"] .agent-panes { animation: mnavPush 220ms var(--ease-out, ease-out); }
+.agent-surface[data-phone-nav="pop"] .mlist-screen > * { animation: mnavPop 220ms var(--ease-out, ease-out); }
+@keyframes mnavPush { from { opacity: 0; transform: translateX(32px); } to { opacity: 1; transform: none; } }
+@keyframes mnavPop { from { opacity: 0; transform: translateX(-32px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .agent-surface[data-phone-nav] .agent-overlay-head,
+  .agent-surface[data-phone-nav] .agent-panes,
+  .agent-surface[data-phone-nav] .mlist-screen > * { animation: none; }
+}
+
 /* ── The Sohbetler list: the phone's home on Mac mode (AC21-AC22) ────────────────────────
    Every chat of the project, searchable, filtered Tümü / Açık / Kapalı. It covers the surface
    (header and chat) while it is on screen; a chat opens over it and ‹ comes back. Rows are 56px
    (two lines) in the 4px grid; the chip and the dot are the desktop tab's own, so the list and
-   the chat's stack read as one app. */
+   the desktop read as one app. Two screens, no stack above the chat (owner, 2026-10-17). */
 .mlist-screen {
   position: absolute;
   inset: 0;

@@ -26,7 +26,11 @@ import { agentActivities } from './automation-job.js';
  * Text here is PROJECT-AUTHORED; the route wraps it before it leaves the server.
  */
 
-const RUNNING_TTL_MS = 4_000;
+/** Longer than the notch's 4 s inbox poll on purpose (task: the desktop app stays light on an
+ *  8GB MacBook Air): a TTL equal to the poll missed on nearly every tick, so every poll walked
+ *  every project's run locks. A run starting or ending shows within one TTL; a seen / mute
+ *  write still drops the cache at once. Exported for its test. */
+export const RUNNING_TTL_MS = 9_000;
 const POSTS_TTL_MS = 15_000;
 /** How many of each project's newest feed messages are looked at for unread ones. */
 const FEED_LIMIT = 40;

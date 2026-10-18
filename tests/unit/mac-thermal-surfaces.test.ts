@@ -60,4 +60,18 @@ describe('the strings (AC10)', () => {
     expect(src).toContain("'handsfree.mac.chipWarm': 'Mac cooling down'");
     expect(src).toContain("'handsfree.mac.thermalSlowed': 'Mac got hot · {n} heavy jobs slowed down'");
   });
+
+  it('tr + en carry the bag-mode switch', () => {
+    const src = readFileSync(join(__dirname, '../../dashboard/src/context/I18nContext.tsx'), 'utf8');
+    for (const line of [
+      "'handsfree.mac.bag': 'Bag mode'",
+      "'handsfree.mac.bagHint': 'Heavy jobs slow down when the Mac gets hot; off means full performance.'",
+      "'handsfree.mac.bagOn': 'Bag mode · heavy jobs slow down when the Mac gets hot. Return and start again to change it.'",
+      "'handsfree.mac.bagOff': 'Normal mode · full performance, nothing is slowed. Return and start again to change it.'",
+      "'handsfree.mac.bag': 'Çanta modu'",
+      "'handsfree.mac.bagHint': 'Isınınca ağır işlemler yavaşlar; kapalıyken tam performans'",
+      "'handsfree.mac.bagOn': 'Çanta modu · Mac ısınınca ağır işlemler yavaşlar. Değiştirmek için dönüp yeniden başlat.'",
+      "'handsfree.mac.bagOff': 'Normal mod · tam performans, hiçbir şey yavaşlatılmaz. Değiştirmek için dönüp yeniden başlat.'",
+    ]) expect(src).toContain(line);
+  });
 });

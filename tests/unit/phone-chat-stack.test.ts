@@ -114,13 +114,34 @@ describe('the stack is wired on the phone (AC19-AC20)', () => {
   const css = code('dashboard/src/components/sleepy/MobileChat.css');
   const server = code('src/server/routes/agent-chat.ts');
 
-  it('mounts above the panes only on the phone, switches with selectTab, adopts with adoptLiveChat', () => {
-    expect(surface).toMatch(/\{isMobile && \(\s*<PhoneChatStack[\s\S]*?onSelect=\{selectTab\}\s*onAdopt=\{adoptLiveChat\}[\s\S]*?\/>\s*\)\}\s*<div\s+ref=\{panesRowRef\}/);
+  it('mounts above the panes only on a phone without the list, switches with selectTab, adopts with adoptLiveChat', () => {
+    expect(surface).toMatch(/\{isMobile && !macPhone && \(\s*<PhoneChatStack[\s\S]*?onSelect=\{selectTab\}\s*onAdopt=\{adoptLiveChat\}[\s\S]*?\/>\s*\)\}\s*<div\s+ref=\{panesRowRef\}/);
+  });
+
+  // The owner, 2026-10-17: two screens, the list and one chat; the open chats live on the list.
+  it('Mac mode\'s phone shows a chat alone: no stack there, and the two screens move forward and back', () => {
+    expect(surface).not.toMatch(/\{isMobile && \(\s*<PhoneChatStack/);
+    expect(surface).toMatch(/data-phone-nav=\{macPhone && phoneNav \? phoneNav : undefined\}/);
+    expect(surface).toMatch(/setPhoneNav\(phoneView === 'chat' \? 'push' : 'pop'\)/);
+    expect(css).toMatch(/\[data-phone-nav="push"\] \.agent-panes \{ animation: mnavPush 220ms/);
+    expect(css).toMatch(/\[data-phone-nav="pop"\] \.mlist-screen > \* \{ animation: mnavPop 220ms/);
+    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{\s*\.agent-surface\[data-phone-nav\] \.agent-overlay-head,[\s\S]*?animation: none; \}/);
+  });
+
+  // Review r1 (edge-cases): the pure filter alone left the restore's wiring untested.
+  it('Mac mode\'s phone restores through phoneRestorable over live-chats, and keeps what it could not judge', () => {
+    expect(surface).toMatch(/if \(isMacPhoneSurface\(\)\) \{\s*const ask = \(\) => scopedApi\.get<LiveChatsWire>\('\/agent\/live-chats'\);[\s\S]{0,300}?saved = phoneRestorable\(stored, live\);\s*if \(!live\) unrestored = stored;\s*\}\s*if \(!cancelled\) unrestoredRef\.current = unrestored;/);
+    // An explicit close drops the conversation from the carry.
+    expect(surface).toMatch(/const closeSessionById = useCallback[\s\S]{0,2500}?if \(claudeId\) unrestoredRef\.current = unrestoredRef\.current\.filter\(\(m\) => m\.sessionId !== claudeId\);/);
+    expect(surface).toMatch(/\.\.\.carriedUnrestored\(unrestoredRef\.current, new Set\(sessionList\.map\(\(m\) => m\.claudeId\)\)\)\]/);
+    // A stored automation tab the Mac runs is adopted passively too, never superseded.
+    expect(surface).toMatch(/isMacPhoneSurface\(\)\s*\? spawn\(m\.bypass, m\.sessionId, true, claudeKind, [^)]*'passive'\)\s*: spawn\(m\.bypass, m\.sessionId, true, claudeKind\)/);
   });
 
   it('polls the Mac only while the phone chat is on screen; rows are labelled with the state words', () => {
     expect(surface).toMatch(/polling=\{onScreenChatId !== ''\}/);
-    expect(stack).toMatch(/enabled: polling,\s*refetchInterval: polling \? 3_000 : false/);
+    // 3 s base cadence through pollMs (slower when unfocused, none while hidden), only while polling.
+    expect(stack).toMatch(/enabled: polling,\s*refetchInterval: polling \? \(\) => pollMs\(3_000\) : false/);
     expect(stack).toContain("t('handsfree.mac.stack')");
   });
 

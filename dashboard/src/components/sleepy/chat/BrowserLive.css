@@ -112,7 +112,8 @@
   height: 6px;
   border-radius: 50%;
   background: var(--color-success);
-  animation: chat-browser-breath var(--motion-breath, 1600ms) ease-in-out infinite;
+  animation: var(--dc-motion-status-name, chat-browser-breath) var(--motion-breath, 1600ms) ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .chat-browser-dot[data-idle] {
   background: var(--color-text-tertiary, var(--color-text-secondary));

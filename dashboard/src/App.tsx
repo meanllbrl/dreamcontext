@@ -1,6 +1,9 @@
 import { Component, type ReactNode } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { createInstanceQueryClient } from './lib/instanceQueryClient';
+import { createInstanceQueryClient, registerInstanceClient } from './lib/instanceQueryClient';
+import { initWindowActivity } from './lib/windowActivity';
+import { initAgentSettingsFromServer, readAgentSettings } from './lib/agentSettings';
+import { initLightMode } from './lib/lightMode';
 import { LauncherPage } from './pages/LauncherPage';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
@@ -16,6 +19,21 @@ import type { StartIntent } from './lib/desktop';
 import { isMacPhoneSurface } from './lib/phoneSurface';
 import './styles/global.css';
 
+/*
+ * Boot, before the first QueryClient polls: the window's focus/visibility (every poll and every
+ * endless animation follows it), the saved settings (Light mode and the terminal renderer need
+ * the real values, not the launch origin's empty localStorage), then Light mode itself.
+ */
+initWindowActivity();
+if (new URLSearchParams(window.location.search).has('checklist')) {
+  // The pinned checklist window makes zero API calls (plan §1.9): it follows the setting this
+  // origin already holds and knows nothing about the machine (Auto stays off there).
+  void initLightMode({ ready: Promise.resolve(readAgentSettings()), fetchMachine: () => Promise.reject(new Error('no API')) });
+} else {
+  void initAgentSettingsFromServer();
+  void initLightMode();
+}
+
 /**
  * The window-level query cache: the launcher's project list, the server version handshake,
  * the upgrade banner. All of it is per-SERVER or per-machine, never per-vault, so it is the
@@ -26,6 +44,8 @@ import './styles/global.css';
  * the launcher or a vault window, never both.
  */
 const windowQueryClient = createInstanceQueryClient();
+// The window client is always active: it holds the launcher list and the version handshake.
+registerInstanceClient(windowQueryClient);
 
 interface ErrorBoundaryState {
   error: Error | null;

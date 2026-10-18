@@ -28,7 +28,8 @@
   aspect-ratio: 1;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(123, 104, 238, 0.32), transparent 66%);
-  animation: smascot-halo 5s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-halo) 5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* Eyes + smile, gently bobbing together. */
@@ -37,7 +38,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  animation: smascot-bob 4.6s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-bob) 4.6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 .smascot-eyes {
@@ -64,13 +66,14 @@
 }
 
 /* Awake: blink now and then. */
-.smascot-idle .smascot-eye { animation: smascot-blink 4.4s ease-in-out infinite; }
+.smascot-idle .smascot-eye { animation: var(--dc-motion-ambient-name, smascot-blink) 4.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
 /* Drowsy: lids drop to half, eyes sink, slow heavy blinks; smile flattens. */
 .smascot-sleepy .smascot-eye {
   height: 16px;
   transform: translateY(5px) scaleY(0.78);
-  animation: smascot-blink-heavy 3.8s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-blink-heavy) 3.8s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .smascot-sleepy .smascot-smile { transform: translateY(-2px) scaleY(0.8); }
 .smascot-sleepy .smascot-face { animation-duration: 5.2s; }
@@ -99,7 +102,8 @@
   position: absolute;
   opacity: 0;
   text-shadow: 0 1px 5px rgba(99, 64, 230, 0.55);
-  animation: smascot-zzz 3s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-zzz) 3s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .smascot-zzz span:nth-child(1) { font-size: 11px; animation-delay: 0s; }
 .smascot-zzz span:nth-child(2) { font-size: 14px; right: -7px; animation-delay: 1s; }
@@ -111,9 +115,10 @@
   --eye-top: #ffe0a0;
   --eye-bot: #ffae3b;
   --eye-glow: rgba(255, 174, 59, 0.8);
-  animation: smascot-think-pulse 1.5s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-think-pulse) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
-.smascot-thinking .smascot-eyes { animation: smascot-ponder 2.6s ease-in-out infinite; }
+.smascot-thinking .smascot-eyes { animation: var(--dc-motion-ambient-name, smascot-ponder) 2.6s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 .smascot-thinking .smascot-smile path { stroke: var(--color-warning); }
 .smascot-thinking .smascot-smile { transform: translateY(-1px) scaleY(0.85); }
 .smascot-thinking .smascot-face { animation-duration: 3.4s; }
@@ -135,7 +140,7 @@
   animation-duration: 1.6s;
   background: radial-gradient(circle, rgba(74, 222, 128, 0.32), transparent 66%);
 }
-.smascot-working .smascot-eyes { animation: smascot-scan 1.1s ease-in-out infinite; }
+.smascot-working .smascot-eyes { animation: var(--dc-motion-ambient-name, smascot-scan) 1.1s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
 /* Waving / READY (VIOLET): done and happy — a curled-up smile, a gentle
    whole-body tilt, and a little hand that waves hello. Brand accent, matching
@@ -147,7 +152,7 @@
 }
 .smascot-waving .smascot-smile path { stroke: var(--color-accent); }
 .smascot-waving .smascot-halo { background: radial-gradient(circle, rgba(139, 123, 255, 0.32), transparent 66%); }
-.smascot-waving .smascot-face { animation: smascot-greet 2.4s ease-in-out infinite; }
+.smascot-waving .smascot-face { animation: var(--dc-motion-ambient-name, smascot-greet) 2.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 .smascot-waving .smascot-smile { transform: translateY(1px) scaleY(1.15); }
 .smascot-hand {
   position: absolute;
@@ -159,7 +164,8 @@
   background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 55%, white), var(--color-accent));
   box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 75%, transparent);
   transform-origin: bottom left;
-  animation: smascot-wave 1s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-wave) 1s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* Asking (MAGENTA): blocked on YOUR answer — wide alert eyes glancing at you, a
@@ -171,13 +177,14 @@
   --eye-bot: #ff5fc4;
   --eye-glow: rgba(255, 95, 196, 0.9);
   height: 30px;
-  animation: smascot-alert-pulse 1.2s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-alert-pulse) 1.2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
-.smascot-asking .smascot-eyes { animation: smascot-peek 2.6s ease-in-out infinite; }
+.smascot-asking .smascot-eyes { animation: var(--dc-motion-ambient-name, smascot-peek) 2.6s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 /* Shrink the smile arc into a small curious "o" mouth. */
 .smascot-asking .smascot-smile { transform: translateY(1px) scaleX(0.4) scaleY(0.95); }
 .smascot-asking .smascot-smile path { stroke: var(--mood-waiting); }
-.smascot-asking .smascot-face { animation: smascot-tilt 2.6s ease-in-out infinite; }
+.smascot-asking .smascot-face { animation: var(--dc-motion-ambient-name, smascot-tilt) 2.6s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 .smascot-asking .smascot-halo {
   animation-duration: 1.3s;
   background: radial-gradient(circle, rgba(255, 95, 196, 0.34), transparent 66%);
@@ -198,7 +205,8 @@
 }
 .smascot-q span {
   display: inline-block;
-  animation: smascot-qfloat 1.8s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-qfloat) 1.8s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* ── Mode gear — the chat MODE as an ACTION, on a loop ───────────────────
@@ -253,7 +261,7 @@
    clock, so the line can never run ahead of the hand that is drawing it. Beats: settle
    (0–6%), write the five humps with a wobble (6–56%), hop right (56–62%), press the
    full stop (64%), a proud little pause, then lift off and reset. */
-.smascot-pencil { animation: smascot-write 3.8s ease-in-out infinite; }
+.smascot-pencil { animation: var(--dc-motion-ambient-name, smascot-write) 3.8s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 /* Wood collar: paper-coloured so the pencil reads as a pencil, not a stick. */
 .smascot-pencil-tip {
   fill: color-mix(in srgb, var(--color-bg) 82%, var(--color-text));
@@ -262,15 +270,19 @@
 }
 .smascot-ink {
   stroke: var(--gear-ink);
-  stroke-dasharray: 52;
-  animation: smascot-ink 3.8s ease-in-out infinite;
+  /* The line is revealed by a scaleX from its left end (composited), not a dash offset. */
+  transform-box: fill-box;
+  transform-origin: 0% 50%;
+  animation: var(--dc-motion-ambient-name, smascot-ink) 3.8s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .smascot-ink-dot {
   fill: var(--gear-ink);
   opacity: 0;
   transform-box: fill-box;
   transform-origin: 50% 50%;
-  animation: smascot-dot 3.8s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-dot) 3.8s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* ── DEVELOP · weld, then hammer ────────────────────────────────────────
@@ -279,22 +291,24 @@
    (flash + burst + the anvil dips), 57% a lighter second tap, then everything walks
    back to its mark. Every element below reads the SAME percentages — move one and
    move them all. */
-.smascot-torch { animation: smascot-torch 3.4s ease-in-out infinite; }
-.smascot-anvil { animation: smascot-anvilhit 3.4s ease-in-out infinite; }
-.smascot-weld { fill: var(--color-warning); animation: smascot-weld 3.4s ease-in-out infinite; }
-.smascot-flame { fill: var(--color-warning); opacity: 0; transform-box: fill-box; transform-origin: 0% 0%; animation: smascot-flame 3.4s ease-in-out infinite; }
+.smascot-torch { animation: var(--dc-motion-ambient-name, smascot-torch) 3.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
+.smascot-anvil { animation: var(--dc-motion-ambient-name, smascot-anvilhit) 3.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
+/* The glow swells by scale about its own centre (base r = 4), not by animating `r`. */
+.smascot-weld { fill: var(--color-warning); transform-box: fill-box; transform-origin: 50% 50%; animation: var(--dc-motion-ambient-name, smascot-weld) 3.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
+.smascot-flame { fill: var(--color-warning); opacity: 0; transform-box: fill-box; transform-origin: 0% 0%; animation: var(--dc-motion-ambient-name, smascot-flame) 3.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 .smascot-hammer {
   transform-box: fill-box;
   transform-origin: 100% 50%;
-  animation: smascot-hammer 3.4s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-hammer) 3.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .smascot-spark { fill: var(--color-warning); opacity: 0; transform-box: fill-box; transform-origin: 50% 50%; }
-.smascot-spark--w1 { animation: smascot-weldspark 3.4s ease-out infinite; }
-.smascot-spark--w2 { animation: smascot-weldspark2 3.4s ease-out infinite; }
-.smascot-spark--w3 { animation: smascot-weldspark3 3.4s ease-out infinite; }
-.smascot-spark--h1 { animation: smascot-hitspark 3.4s ease-out infinite; }
-.smascot-spark--h2 { animation: smascot-hitspark2 3.4s ease-out infinite; }
-.smascot-spark--h3 { animation: smascot-hitspark3 3.4s ease-out infinite; }
+.smascot-spark--w1 { animation: var(--dc-motion-ambient-name, smascot-weldspark) 3.4s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
+.smascot-spark--w2 { animation: var(--dc-motion-ambient-name, smascot-weldspark2) 3.4s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
+.smascot-spark--w3 { animation: var(--dc-motion-ambient-name, smascot-weldspark3) 3.4s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
+.smascot-spark--h1 { animation: var(--dc-motion-ambient-name, smascot-hitspark) 3.4s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
+.smascot-spark--h2 { animation: var(--dc-motion-ambient-name, smascot-hitspark2) 3.4s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
+.smascot-spark--h3 { animation: var(--dc-motion-ambient-name, smascot-hitspark3) 3.4s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
 /* ── Assistant · listen, then answer ────────────────────────────────────
    One 3.2s clock, two beats. 0–46% LISTENING: the bars stay low and ripple right-to-left
@@ -311,7 +325,8 @@
   stroke-width: 2;
   transform-box: fill-box;
   transform-origin: 50% 50%;
-  animation: smascot-vu 3.2s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-vu) 3.2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .smascot-vu-bar--1 { animation-delay: -0.00s; }
 .smascot-vu-bar--2 { animation-delay: -0.09s; }
@@ -321,7 +336,8 @@
 .smascot-mic {
   transform-box: fill-box;
   transform-origin: 50% 100%;
-  animation: smascot-mic 3.2s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, smascot-mic) 3.2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .smascot-say {
   stroke: var(--gear-ink);
@@ -329,8 +345,8 @@
   transform-box: fill-box;
   transform-origin: 0% 50%;
 }
-.smascot-say--1 { animation: smascot-say1 3.2s ease-out infinite; }
-.smascot-say--2 { animation: smascot-say2 3.2s ease-out infinite; }
+.smascot-say--1 { animation: var(--dc-motion-ambient-name, smascot-say1) 3.2s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
+.smascot-say--2 { animation: var(--dc-motion-ambient-name, smascot-say2) 3.2s ease-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
 /* The gear rides with the eyes when a mood changes their height. */
 .smascot-asking .smascot-gear { top: -34px; }
@@ -360,9 +376,9 @@
   90%, 100% { transform: translate(46px, -11px); opacity: 0; }
 }
 @keyframes smascot-ink {
-  0%, 6% { stroke-dashoffset: 52; opacity: 1; }
-  56%, 80% { stroke-dashoffset: 0; opacity: 1; }
-  90%, 100% { stroke-dashoffset: 0; opacity: 0; }
+  0%, 6% { transform: scaleX(0); opacity: 1; }
+  56%, 80% { transform: scaleX(1); opacity: 1; }
+  90%, 100% { transform: scaleX(1); opacity: 0; }
 }
 @keyframes smascot-dot {
   0%, 62% { opacity: 0; transform: scale(0.2); }
@@ -384,15 +400,15 @@
 }
 /* The joint runs hot under the torch, cools a touch, then flashes white for each blow. */
 @keyframes smascot-weld {
-  0%, 4% { opacity: 0.3; r: 3.2; }
-  14% { opacity: 0.95; r: 4.4; }
-  22% { opacity: 0.6; r: 3.6; }
-  30% { opacity: 0.9; r: 4.2; }
-  40%, 45% { opacity: 0.4; r: 3.4; }
-  48% { opacity: 1; r: 6; }
-  54% { opacity: 0.55; r: 4; }
-  58% { opacity: 0.9; r: 5; }
-  72%, 100% { opacity: 0.25; r: 3; }
+  0%, 4% { opacity: 0.3; transform: scale(0.8); }
+  14% { opacity: 0.95; transform: scale(1.1); }
+  22% { opacity: 0.6; transform: scale(0.9); }
+  30% { opacity: 0.9; transform: scale(1.05); }
+  40%, 45% { opacity: 0.4; transform: scale(0.85); }
+  48% { opacity: 1; transform: scale(1.5); }
+  54% { opacity: 0.55; transform: scale(1); }
+  58% { opacity: 0.9; transform: scale(1.25); }
+  72%, 100% { opacity: 0.25; transform: scale(0.75); }
 }
 /* The flame flickers while it burns, and burns only while the torch is on the joint. */
 @keyframes smascot-flame {

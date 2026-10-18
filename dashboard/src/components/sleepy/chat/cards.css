@@ -341,7 +341,8 @@ video.chat-msg-user-media-el { cursor: default; }
   margin-left: 2px;
   vertical-align: text-bottom;
   background: var(--color-accent);
-  animation: chat-caret-blink 900ms step-end infinite;
+  animation: var(--dc-motion-ambient-name, chat-caret-blink) 900ms step-end infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-caret-blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .chat-msg-caret { animation: none; } }
@@ -1185,7 +1186,8 @@ video.chat-msg-user-media-el { cursor: default; }
   border-radius: var(--radius-full);
   border: 2px solid var(--color-accent-soft);
   border-top-color: var(--color-accent);
-  animation: chat-spin 800ms linear infinite;
+  animation: var(--dc-motion-status-name, chat-spin) 800ms linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .chat-subagents-spinner { animation: none; } }
@@ -1887,7 +1889,8 @@ video.chat-msg-user-media-el { cursor: default; }
   border-radius: var(--radius-full);
   border: 2px solid var(--color-accent-soft);
   border-top-color: var(--color-accent);
-  animation: chat-spin 800ms linear infinite;
+  animation: var(--dc-motion-ambient-name, chat-spin) 800ms linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @media (prefers-reduced-motion: reduce) { .chat-bgshells-spinner { animation: none; } }
 

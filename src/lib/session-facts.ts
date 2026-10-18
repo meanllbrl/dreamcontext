@@ -1,6 +1,7 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { currentBranch, isGitRepo } from './git-sync/git.js';
 import { worktreeIsolationAllowed } from './worktree-gate.js';
 import type { EditsElsewhere } from './session-edits.js';
@@ -182,6 +183,11 @@ export function readDefaultBranch(cwd: string): string | null {
  *  serves. Oldest-first eviction; a dropped entry just costs one fork to recompute. */
 const commonDirCache = new Map<string, { value: string | null; at: number }>();
 const MAX_COMMON_DIR_CACHE = 128;
+/** How long {@link gitCommonDir}'s answer is reused. Longer than the shelf's 15 s poll on
+ *  purpose (task: the desktop app stays light on an 8GB MacBook Air): the answer names a
+ *  REPOSITORY, which no branch switch changes, and a 12 s memo under a 15 s poll missed every
+ *  time — one sync fork per pane per poll. */
+export const COMMON_DIR_TTL_MS = 60_000;
 
 /**
  * The SHARED git directory for `cwd`, canonicalised — `null` when `cwd` is not a work tree.
@@ -206,7 +212,7 @@ const MAX_COMMON_DIR_CACHE = 128;
  */
 export function gitCommonDir(cwd: string, now: number = Date.now()): string | null {
   const hit = commonDirCache.get(cwd);
-  if (hit && now - hit.at < SESSION_FACTS_TTL_MS) return hit.value;
+  if (hit && now - hit.at < COMMON_DIR_TTL_MS) return hit.value;
 
   const raw = gitLine(cwd, ['rev-parse', '--git-common-dir']);
   const value = raw ? canonical(resolve(cwd, raw)) : null;
@@ -237,14 +243,198 @@ export function forgetSessionFacts(dir: string): void {
   for (const key of cache.keys()) {
     if (key === dir || key.startsWith(`${dir}\0`)) cache.delete(key);
   }
+  // The async reader too — and a read of `dir` already in flight was started before the
+  // change, so it is neither stored nor shared (the generation check in readSessionFactsAsync).
+  asyncCache.delete(dir);
+  asyncInflight.delete(dir);
+  asyncGeneration += 1;
 }
 
-/** TEST SEAM, shared with `session-cwd.ts`'s own reset: the two memos in this module are
+/** TEST SEAM, shared with `session-cwd.ts`'s own reset: the memos in this module are
  *  process-global by design, so a test that creates and destroys real worktrees inside one
  *  TTL window needs a way to ask for a clean read. Production code never calls this. */
 export function resetSessionFactsCaches(): void {
   cache.clear();
   commonDirCache.clear();
+  asyncCache.clear();
+  asyncInflight.clear();
+  asyncGeneration += 1;
+  asyncGitRuns = 0;
+}
+
+// ─── The polled reader: async, and keyed on the checkout's HEAD ─────────────────────────
+//
+// The shelf polls `/api/agent/session-facts` every 15 s per pane, and the sync reader above
+// (12 s memo — it always missed) forked git five or six times per poll on the server's event
+// loop. The polled route uses this reader instead (task: the desktop app stays light on an
+// 8GB MacBook Air): git runs through async `execFile`, and a reading stays valid while the
+// checkout's own HEAD file and the repository's `worktrees/` directory are unchanged — a
+// branch switch rewrites HEAD, a `git worktree add/remove` rewrites `worktrees/` — up to
+// {@link SESSION_FACTS_ASYNC_MAX_AGE_MS}. Both paths are made ABSOLUTE once (`--absolute-git-dir`
+// + `/HEAD`: right in a main checkout and in a linked worktree, on every git version), and
+// their stats are taken BEFORE git reads the branch, so a switch racing the read is seen on
+// the next poll. A path that is missing is stored as such: missing → missing is unchanged, so
+// a repo with no linked worktree still hits. `session-start-branch.ts` and the chat frame
+// handler keep the sync {@link readSessionFacts}.
+
+/** The longest a HEAD-keyed reading is reused (the default branch, read from the remote's
+ *  HEAD ref, is not watched — this bounds how stale it can be). */
+export const SESSION_FACTS_ASYNC_MAX_AGE_MS = 60_000;
+
+/** Everything but `worktreeAllowed` and `elsewhere`, which are never cached. */
+type GitFacts = Omit<SessionFacts, 'worktreeAllowed' | 'elsewhere'>;
+
+interface AsyncEntry {
+  /** null: not a repository (valid by age alone). */
+  facts: GitFacts | null;
+  at: number;
+  headPath: string | null;
+  headSig: string | null;
+  worktreesPath: string | null;
+  worktreesSig: string | null;
+}
+
+const asyncCache = new Map<string, AsyncEntry>();
+const asyncInflight = new Map<string, Promise<AsyncEntry>>();
+let asyncGeneration = 0;
+let asyncGitRuns = 0;
+const MAX_ASYNC_CACHE = 64;
+
+/** Test counter: how many git processes the async reader has started. */
+export function sessionFactsGitRuns(): number {
+  return asyncGitRuns;
+}
+
+function gitLineAsync(cwd: string, args: string[]): Promise<string | null> {
+  asyncGitRuns += 1;
+  return new Promise((resolveLine) => {
+    execFile('git', args, { cwd, encoding: 'utf-8', timeout: 5_000 }, (err, stdout) => {
+      if (err) { resolveLine(null); return; }
+      const line = String(stdout).trim();
+      resolveLine(line || null);
+    });
+  });
+}
+
+/** `mtime:size:ino` of a path, or null when it is missing. */
+async function pathSig(path: string | null): Promise<string | null> {
+  if (!path) return null;
+  try {
+    const st = await stat(path);
+    return `${st.mtimeMs}:${st.size}:${st.ino}`;
+  } catch { return null; }
+}
+
+/** {@link readDefaultBranch}, asynchronously — same rules, same order. */
+async function readDefaultBranchAsync(cwd: string): Promise<string | null> {
+  const remotes = ((await gitLineAsync(cwd, ['remote'])) ?? '').split('\n').map((r) => r.trim()).filter(Boolean);
+  for (const remote of remotes) {
+    const head = await gitLineAsync(cwd, ['symbolic-ref', '--short', `refs/remotes/${remote}/HEAD`]);
+    if (head && head.startsWith(`${remote}/`)) {
+      const branch = head.slice(remote.length + 1);
+      if (branch) return branch;
+    }
+  }
+  for (const name of ['main', 'master']) {
+    if (await gitLineAsync(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`])) return name;
+  }
+  return null;
+}
+
+async function computeAsync(dir: string, now: number): Promise<AsyncEntry> {
+  // One rev-parse answers all three: inside a work tree? this tree's git dir? the shared one?
+  const out = await gitLineAsync(dir, ['rev-parse', '--is-inside-work-tree', '--absolute-git-dir', '--git-common-dir']);
+  const [inside, ownRaw, commonRaw] = (out ?? '').split('\n').map((l) => l.trim());
+  if (inside !== 'true' || !ownRaw || !commonRaw) {
+    return { facts: null, at: now, headPath: null, headSig: null, worktreesPath: null, worktreesSig: null };
+  }
+  const commonDir = canonical(resolve(dir, commonRaw));
+  const headPath = join(ownRaw, 'HEAD');
+  const worktreesPath = join(commonDir, 'worktrees');
+  // Stats BEFORE the branch read: a switch landing during it leaves a newer HEAD behind.
+  const [headSig, worktreesSig] = await Promise.all([pathSig(headPath), pathSig(worktreesPath)]);
+  const symbolic = await gitLineAsync(dir, ['symbolic-ref', '--short', 'HEAD']);
+  const branch = symbolic && symbolic !== 'HEAD' ? symbolic : null;
+  const defaultBranch = await readDefaultBranchAsync(dir);
+  const worktree = commonDir !== canonical(ownRaw);
+  return {
+    facts: {
+      branch,
+      defaultBranch,
+      worktree,
+      mainRoot: worktree ? dirname(commonDir) : null,
+      worktreeName: worktree ? basename(dir) || null : null,
+      isRepo: true,
+    },
+    at: now,
+    headPath,
+    headSig,
+    worktreesPath,
+    worktreesSig,
+  };
+}
+
+async function stillValid(e: AsyncEntry, now: number): Promise<boolean> {
+  if (now - e.at >= SESSION_FACTS_ASYNC_MAX_AGE_MS) return false;
+  if (!e.facts) return true;
+  const [head, wt] = await Promise.all([pathSig(e.headPath), pathSig(e.worktreesPath)]);
+  return head === e.headSig && wt === e.worktreesSig;
+}
+
+function toSessionFacts(e: AsyncEntry, gateRoot: string): SessionFacts {
+  if (!e.facts) return UNKNOWN_SESSION_FACTS;
+  const f = e.facts;
+  // Same key order as the sync reader, so the route's JSON is unchanged.
+  return {
+    branch: f.branch,
+    defaultBranch: f.defaultBranch,
+    worktree: f.worktree,
+    mainRoot: f.mainRoot,
+    worktreeName: f.worktreeName,
+    // Read fresh every call, outside the cache: it is the VAULT's `.config.json`, not git.
+    worktreeAllowed: worktreeIsolationAllowed(gateRoot),
+    isRepo: true,
+    elsewhere: null,
+  };
+}
+
+/**
+ * {@link readSessionFacts} for the POLLED route — never blocks the event loop on git, and
+ * re-reads git only when the checkout's HEAD or the repository's worktree list moved (or the
+ * reading is {@link SESSION_FACTS_ASYNC_MAX_AGE_MS} old). Concurrent callers for one directory
+ * share one read. Never throws. `now` is a TEST SEAM.
+ */
+export async function readSessionFactsAsync(
+  dir: string,
+  now: number = Date.now(),
+  gateRoot: string = dir,
+): Promise<SessionFacts> {
+  const hit = asyncCache.get(dir);
+  if (hit && await stillValid(hit, now)) return toSessionFacts(hit, gateRoot);
+
+  let running = asyncInflight.get(dir);
+  if (!running) {
+    const gen = asyncGeneration;
+    const p: Promise<AsyncEntry> = computeAsync(dir, now)
+      .catch(() => ({ facts: null, at: now, headPath: null, headSig: null, worktreesPath: null, worktreesSig: null }))
+      .then((entry) => {
+        // A `forgetSessionFacts` while this ran: the read may describe the state it left.
+        if (gen === asyncGeneration) {
+          asyncCache.delete(dir);
+          asyncCache.set(dir, entry);
+          while (asyncCache.size > MAX_ASYNC_CACHE) {
+            const oldest = asyncCache.keys().next();
+            if (oldest.done) break;
+            asyncCache.delete(oldest.value);
+          }
+        }
+        return entry;
+      })
+      .finally(() => { if (asyncInflight.get(dir) === p) asyncInflight.delete(dir); });
+    asyncInflight.set(dir, p);
+    running = p;
+  }
+  try { return toSessionFacts(await running, gateRoot); } catch { return UNKNOWN_SESSION_FACTS; }
 }
 
 /**

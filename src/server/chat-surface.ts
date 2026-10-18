@@ -304,12 +304,22 @@ On the user's word only, drive this chat surface from Bash: \`state\`, \`new [--
 [--model] [--prompt]\`, \`split|join|focus\`, \`mode|model|effort <v> [--tab]\`, \`send\`, \`close\`.
 \`--help\` has the rest.`;
 
+/** Where a request goes when Claude Code has a built-in for it (2026-10-17: "planla" in a Basic
+ *  tab opened native plan mode). The spawn denies EnterPlanMode/ExitPlanMode
+ *  (agent-chat.ts chatDeniedToolArgs); this says what to do instead. No line may START with
+ *  `# Mode:` (chat-mode-drift.ts reads line-start headings), so the heading is `##`. */
+const BRIEFING_NATIVE_TOOLS = `## Claude Code's tools vs dreamcontext
+
+No \`dreamcontext window\` (a card, the Assistant): answer a plan request in prose. In a Chat tab with no \`# Mode:\` in force (system prompt or a later mode note): say Plan mode does this and add an \`ask\` button whose text, in the user's language, asks to switch; when they send it, run \`dreamcontext window mode plan\`. Schedules go to \`dreamcontext automations\`, lasting work to \`dreamcontext tasks\`, facts to the brain, never Claude's own memory files.`;
+
 export const CHAT_SURFACE_BRIEFING = `${BRIEFING_HEAD}
 ${BRIEFING_DRAW_HTML}
 ${BRIEFING_ASK}
 ${BRIEFING_REST}
 
 ${BRIEFING_WINDOW}
+
+${BRIEFING_NATIVE_TOOLS}
 `;
 
 

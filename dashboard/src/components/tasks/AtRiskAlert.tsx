@@ -13,7 +13,7 @@ export function AtRiskAlert({ overdue, today, soon, onFocus, onDismiss }: AtRisk
   if (soon) parts.push(`${soon} due this week`);
   return (
     <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 14, padding: '9px 18px', background: 'var(--color-error-subtle)', borderBottom: '1px solid var(--color-border)', animation: 'bd_fade .2s ease' }}>
-      <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-error)', animation: 'bd_pulse 1.4s ease-in-out infinite', flex: '0 0 auto' }} />
+      <span className="bd-atrisk-dot" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-error)', flex: '0 0 auto' }} />
       <span style={{ fontSize: 13, color: 'var(--color-text)', fontWeight: 600 }}>{overdue ? 'Attention needed' : 'Heads up'}</span>
       <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{parts.join(' · ')}</span>
       <div style={{ flex: 1 }} />

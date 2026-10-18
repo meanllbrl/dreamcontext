@@ -4,6 +4,7 @@ import './MobileChat.css';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useChrome } from '../layout/WindowChrome';
+import { pollMs } from '../../lib/windowActivity';
 import type { LiveChatWire, LiveChatsWire } from '../handsfree/macContract';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { PushOptIn } from '../handsfree/phone/PushOptIn';
@@ -91,7 +92,7 @@ export function PhoneChatList({
     queryKey: ['mac-live-chats'],
     queryFn: () => api.get<LiveChatsWire>('/agent/live-chats'),
     enabled: active,
-    refetchInterval: active ? 3_000 : false,
+    refetchInterval: active ? () => pollMs(3_000) : false,
     staleTime: 2_000,
     retry: false,
   });
@@ -101,7 +102,7 @@ export function PhoneChatList({
     enabled: active,
     // A chat closed here lands under Kapalı once its process has exited: re-read while on screen
     // (the Mac's index is memoized, so this is a pass over memory).
-    refetchInterval: active ? 10_000 : false,
+    refetchInterval: active ? () => pollMs(10_000) : false,
     staleTime: 5_000,
     placeholderData: (prev) => prev,
     retry: false,

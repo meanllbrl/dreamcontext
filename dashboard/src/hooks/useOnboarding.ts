@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { initAgentSettingsFromServer, onAgentSettings } from '../lib/agentSettings';
+import { pollMs } from '../lib/windowActivity';
 import {
   checksForScope,
   type AgentSettingsLite,
@@ -77,7 +78,10 @@ export function useReadiness(scope: CheckScope = 'machine') {
     queryFn: () => fetchReadiness(readinessPollPlan(queryClient.getQueryData<ReadinessReport>(READINESS_QUERY_KEY)).fresh),
     refetchOnWindowFocus: true,
     staleTime: 2000,
-    refetchInterval: (q) => readinessPollPlan(q.state.data).intervalMs,
+    refetchInterval: (q) => {
+      const ms = readinessPollPlan(q.state.data).intervalMs;
+      return ms === false ? false : pollMs(ms);
+    },
   });
   const refresh = useCallback(async (): Promise<ReadinessReport> => {
     const report = await fetchReadiness(true);

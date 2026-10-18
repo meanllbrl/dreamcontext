@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import './MobileChat.css';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
+import { pollMs } from '../../lib/windowActivity';
 import type { LiveChatWire, LiveChatsWire } from '../handsfree/macContract';
 import type { ChatSession } from './chatSession';
 import { chatLastLine, stackRows, stackTap, type StackRow, type StackTab } from './phoneStack';
@@ -42,7 +43,7 @@ export function PhoneChatStack({
     queryKey: ['mac-live-chats'],
     queryFn: () => api.get<LiveChatsWire>('/agent/live-chats'),
     enabled: polling,
-    refetchInterval: polling ? 3_000 : false,
+    refetchInterval: polling ? () => pollMs(3_000) : false,
     staleTime: 2_000,
     retry: false,
   });

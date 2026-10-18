@@ -83,8 +83,12 @@ import {
  * to `core/CYCLES.json`) ran it a fourth time — *exactly four removed lines*
  * (the `## Upcoming Versions` block) in every golden, plus the floors
  * fixture's budget-note token count; the fixtures hold no cycle, so no
- * `## Cycle` section appears. `BASE_SHA` still records the last SHA at which
- * leg (a) was non-circular.
+ * `## Cycle` section appears. The code-outside-the-brain rule (2026-10-17: a
+ * never-evict `## Code lives outside the brain` block after the linked-repos
+ * glance) ran it a fifth time — *exactly four added lines* in BOTH goldens,
+ * and in the floor golden the same four plus the budget note's token count
+ * (the block itself; no rung moved). `BASE_SHA` still records the last SHA at
+ * which leg (a) was non-circular.
  *
  * `expected.txt` intentionally has NO trailing newline: `generateSnapshot`
  * returns trimmed text and the golden is that text verbatim. An editor or

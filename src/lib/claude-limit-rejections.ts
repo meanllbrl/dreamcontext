@@ -2,7 +2,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { listClaudeAccounts } from './claude-accounts.js';
+import { SWITCH_THRESHOLD_PERCENT } from './claude-account-switch.js';
 import type { LimitSignal, LimitWindow } from './claude-limit-signal.js';
+import { readAccountUsageCache, type UsageLimitsResponse, type UsageLimitWire } from './claude-usage.js';
+import { REFUSAL_SETTLE_MS } from './claude-usage-meter.js';
 
 /**
  * Which accounts the API has actually REFUSED, and until when.
@@ -33,6 +37,21 @@ import type { LimitSignal, LimitWindow } from './claude-limit-signal.js';
  * `DEFAULT_COOLDOWN_MS` — long enough to move the conversation off a walled account, short
  * enough that a wrong guess costs one delayed return rather than an hour of exile. A real
  * `resetsAt` always wins over the guess.
+ *
+ * ── Why a later reading can end it before its stated reset ────────────────────────────
+ * The stated reset is not a promise that the window stays shut. Observed 2026-10-18: the
+ * preferred account was refused at 15:49 on its weekly limit ("resets Oct 20 at 7am"); by 16:48
+ * its own cache read weekly 0%, session 3%, with the SAME Oct 20 reset — the week had been
+ * reset early. Nothing could see it: a refused account is never chosen, so it never serves the
+ * turn whose meter would have cleared it, and new chats were moved off it until Tuesday.
+ *
+ * So a refusal now also ends when a reading of that account, taken after the refusal settled,
+ * shows the refused window open with room ({@link readingEndsRefusal}). Only an
+ * identity-checked reading counts (`readAccountUsageCache`, or a live probe), and when the
+ * refusal stated its reset the reading must be of that same window. The 2026-09-05 "the cache
+ * read 6% minutes after a refusal" that made this file distrust every reading was a probe
+ * reading ANOTHER account's numbers (`accountEnvFor`, fixed 2026-09-07); its reset time did not
+ * even match the refusal's.
  */
 
 export interface AccountRejection {
@@ -71,7 +90,9 @@ function asWindow(v: unknown): LimitWindow {
 
 /**
  * Every rejection still in force, keyed by account id. Expired entries are dropped on the
- * way out, so a caller can never act on a window that has already reopened.
+ * way out, and so is one the account's own cache proves over ({@link readingEndsRefusal}) —
+ * that one is also cleared on disk — so a caller can never act on a window that has already
+ * reopened, on time or early.
  *
  * Never throws: a missing or corrupt file reads as "nothing is rejected", which degrades to
  * exactly the behaviour that existed before this module.
@@ -80,6 +101,92 @@ export function readAccountRejections(
   home: string = homedir(),
   now: number = Date.now(),
 ): Record<string, AccountRejection> {
+  const stored = readStoredRejections(home, now);
+  const ids = Object.keys(stored);
+  if (ids.length === 0) return stored;
+  const accounts = listClaudeAccounts(home);
+  const over: Record<string, number> = {};
+  for (const id of ids) {
+    const account = accounts.find((a) => a.id === id);
+    const reading = account ? readAccountUsageCache(account, home) : null;
+    if (reading && readingEndsRefusal(stored[id]!, reading, now)) over[id] = stored[id]!.at;
+  }
+  if (Object.keys(over).length === 0) return stored;
+  forgetRejections(over, home, now);
+  for (const id of Object.keys(over)) delete stored[id];
+  return stored;
+}
+
+/** A stated reset and a reading's reset name the same window when this close. The live
+ *  `/usage` report states resets to the minute, and drops the minutes on the hour. */
+const SAME_WINDOW_SLACK_MS = 2 * 60_000;
+
+/**
+ * Does `reading` — the refused account's OWN, identity-checked by the caller — prove `refusal`
+ * is over? Pure. All of these, or the refusal stands:
+ *   • the reading was taken at least {@link REFUSAL_SETTLE_MS} after the refusal: one from
+ *     around the refused turn can predate the wall;
+ *   • the refused window is in it, still open, not locked, and under the switch threshold (an
+ *     account that full would be moved off again at once);
+ *   • when the refusal STATED its reset, the reading's window resets at that same moment: the
+ *     same window, reset early — not another one, such as a per-model cap or another account's;
+ *   • a refusal that never said which window needs room in both, one of them that window.
+ * Weekly refusals included: unlike a meter frame (`meterEndsRefusal`), these readings carry the
+ * binding per-model weekly cap, so a cap that still binds keeps its refusal.
+ */
+export function readingEndsRefusal(
+  refusal: AccountRejection,
+  reading: UsageLimitsResponse,
+  now: number = Date.now(),
+): boolean {
+  if (reading.fetchedAtMs === null || reading.fetchedAtMs < refusal.at + REFUSAL_SETTLE_MS) return false;
+  const stated = refusal.estimated ? null : refusal.until;
+  const roomIn = (key: UsageLimitWire['key']): UsageLimitWire | null => {
+    const w = reading.limits.find((l) => l.key === key);
+    return w && w.resetsAt > now && !w.lockedReason && w.percent < SWITCH_THRESHOLD_PERCENT ? w : null;
+  };
+  const sameWindow = (w: UsageLimitWire): boolean =>
+    stated === null || Math.abs(w.resetsAt - stated) <= SAME_WINDOW_SLACK_MS;
+  if (refusal.window === 'unknown') {
+    const session = roomIn('session');
+    const weekly = roomIn('weekly');
+    return session !== null && weekly !== null && (sameWindow(session) || sameWindow(weekly));
+  }
+  const w = roomIn(refusal.window);
+  return w !== null && sameWindow(w);
+}
+
+/**
+ * End `accountId`'s refusal when `reading` proves it over; true when it did. For a reading the
+ * cache does not hold — a live probe's report, which the CLI may not write back for five
+ * minutes. The caller vouches the reading is that account's.
+ */
+export function endRefusalOnReading(
+  accountId: string,
+  reading: UsageLimitsResponse,
+  home: string = homedir(),
+  now: number = Date.now(),
+): boolean {
+  const refusal = readStoredRejections(home, now)[accountId];
+  if (!refusal || !readingEndsRefusal(refusal, reading, now)) return false;
+  forgetRejections({ [accountId]: refusal.at }, home, now);
+  return true;
+}
+
+/** Forget the refusals JUDGED over, re-read first: one recorded since (another `at`) stays. */
+function forgetRejections(judged: Record<string, number>, home: string, now: number): void {
+  const current = readStoredRejections(home, now);
+  let changed = false;
+  for (const [id, at] of Object.entries(judged)) {
+    if (current[id]?.at !== at) continue;
+    delete current[id];
+    changed = true;
+  }
+  if (changed) writeRejections(current, home);
+}
+
+/** The file as written, expired entries dropped — no reading consulted. */
+function readStoredRejections(home: string, now: number): Record<string, AccountRejection> {
   const filePath = claudeRejectionsFilePath(home);
   if (!existsSync(filePath)) return {};
   let parsed: unknown;
@@ -158,7 +265,7 @@ export function clearAccountRejection(
   home: string = homedir(),
   now: number = Date.now(),
 ): void {
-  const current = readAccountRejections(home, now);
+  const current = readStoredRejections(home, now);
   if (!(accountId in current)) return;
   delete current[accountId];
   writeRejections(current, home);

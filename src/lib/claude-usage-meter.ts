@@ -161,6 +161,14 @@ const UNCHANGED_REWRITE_MS = 30_000;
 const SAME_WINDOW_SLACK_MS = 60_000;
 
 /**
+ * A NEWER reading this many points below the one on file is the window reset early, not a late
+ * writer: a frame trails its turn by seconds, and no account spends a quarter of a window in
+ * seconds. A smaller drop keeps the higher number, which is harmless — far under the switch
+ * threshold, a few points decide nothing.
+ */
+export const EARLY_RESET_DROP_POINTS = 25;
+
+/**
  * Record one per-turn reading. Best-effort: a machine that cannot write still works.
  *
  * Several writers share the file — every chat pane, and one dashboard server per open vault —
@@ -170,15 +178,22 @@ const SAME_WINDOW_SLACK_MS = 60_000;
  * back to back and synchronous, so the remaining race (two processes writing two different
  * accounts in the same instant) can only drop the other account's newest frame, which its next
  * turn writes again.
+ *
+ * ONE EXCEPTION, observed 2026-10-18: the API can reset a window EARLY and keep its reset time —
+ * the preferred account's week read 100% at 16:11 and 0% at 16:48, both "resets Oct 20 07:00".
+ * Keeping the higher number there would write the account full again on its first turn after
+ * the reset, until Tuesday. So a newer reading at least {@link EARLY_RESET_DROP_POINTS} lower wins.
  */
 export function recordUsageMeter(configDir: string, reading: UsageLimitsResponse, home: string = homedir()): void {
   if (reading.limits.length === 0 || reading.fetchedAtMs === null) return;
   const key = resolve(configDir);
   const store = readStore(home);
   const prev = store[key];
+  const newer = prev === undefined || reading.fetchedAtMs > prev.fetchedAtMs;
   const limits = reading.limits.map((l) => {
     const before = prev?.limits.find((p) => p.key === l.key && Math.abs(p.resetsAt - l.resetsAt) <= SAME_WINDOW_SLACK_MS);
-    return before && before.percent > l.percent ? { ...l, percent: before.percent } : l;
+    if (!before || before.percent <= l.percent) return l;
+    return newer && before.percent - l.percent >= EARLY_RESET_DROP_POINTS ? l : { ...l, percent: before.percent };
   });
   if (prev && reading.fetchedAtMs - prev.fetchedAtMs < UNCHANGED_REWRITE_MS
     && JSON.stringify(prev.limits) === JSON.stringify(limits)) return;

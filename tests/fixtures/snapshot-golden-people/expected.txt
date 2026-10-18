@@ -6,6 +6,10 @@ Bare CODE repos this brain governs (no `_dream_context/` of their own). EXTERNAL
 
 - **fixture-web** — https://github.com/fixture-org/fixture-web.git — (missing; `dc link clone fixture-web`)
 
+## Code lives outside the brain
+
+The brain's folder and repo hold NO project code. Code lives in a linked repo above, edited there. A NEW project gets its own folder beside the brain, never inside it: `git init` it, then `dreamcontext link add <name> <path> --url <owner>/<repo>`. Asked to write code in the brain's repo? Push back once (every worktree of it forks `_dream_context/`) and do it only if the user explicitly insists.
+
 ## Soul (Agent Identity, Principles, Rules)
 
 ---

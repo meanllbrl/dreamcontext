@@ -57,7 +57,7 @@ describe('pinch zoom is not blocked (AC17)', () => {
 });
 
 describe('the drawer\'s notification step (AC10)', () => {
-  const base: PushEnv = { phone: true, hostname: 'phone.example.com', standalone: true, pushSupported: true, permission: 'default', subscribed: false };
+  const base: PushEnv = { phone: true, ios: true, hostname: 'phone.example.com', standalone: true, pushSupported: true, permission: 'default', subscribed: false };
 
   it('Safari tab: add to Home Screen; installed: the button; on; blocked', () => {
     expect(pushOptInState({ ...base, standalone: false })).toBe('install');
@@ -67,9 +67,21 @@ describe('the drawer\'s notification step (AC10)', () => {
     expect(pushOptInState({ ...base, permission: 'denied' })).toBe('blocked');
   });
 
-  it('a quick tunnel address says notifications need a fixed address (no button), even installed', () => {
+  it('an iPhone on a quick tunnel address is told it needs a fixed address (no button), even installed', () => {
     expect(pushOptInState({ ...base, hostname: 'quiet-lake-1234.trycloudflare.com' })).toBe('quick');
     expect(pushOptInState({ ...base, hostname: 'quiet-lake-1234.trycloudflare.com', standalone: false })).toBe('quick');
+  });
+
+  // The owner, 2026-10-17, on Android Chrome over a quick tunnel: no notification ever came.
+  it('Android (or any non-iPhone) gets the button from a plain tab, on a quick address too', () => {
+    const android = { ...base, ios: false, standalone: false, hostname: 'quiet-lake-1234.trycloudflare.com' };
+    expect(pushOptInState(android)).toBe('off');
+    expect(pushOptInState({ ...android, permission: 'granted', subscribed: true })).toBe('on');
+    expect(pushOptInState({ ...android, permission: 'denied' })).toBe('blocked');
+    expect(pushOptInState({ ...android, hostname: 'hf.example.com' })).toBe('off');
+    // No web push in this browser at all (an in-app browser): nothing, not the iPhone's advice.
+    expect(pushOptInState({ ...android, pushSupported: false })).toBe('hidden');
+    expect(pushOptInState({ ...android, pushSupported: false, hostname: 'hf.example.com' })).toBe('hidden');
   });
 
   it('nothing off the phone, and nothing for a browser without web push', () => {

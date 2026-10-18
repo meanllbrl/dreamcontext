@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
 import { loadStatuses, loadTaskOverride } from '../overrides.js';
@@ -12,6 +12,7 @@ import { healTaskRemoved, healTaskRename } from '../feature-links.js';
 import { appendTombstone } from '../task-tombstones.js';
 import { withTaskFileLock } from '../task-file-lock.js';
 import {
+  JOURNAL_DIR,
   appendJournalEntry,
   moveJournal,
   readJournal,
@@ -307,6 +308,73 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
   };
 }
 
+// ─── Read memo ───────────────────────────────────────────────────────────────
+//
+// `GET /api/tasks` (polled every 15 s per window) runs `list()` and then `get()` per task, and
+// `/api/tasks/members` does both again — a few hundred task files re-read and re-parsed per
+// call, each `get()` reading its file nine times (frontmatter, section list, seven sections).
+// Task: the desktop app stays light on an 8GB MacBook Air. The two READ paths go through this
+// module-scoped memo (module-scoped and keyed by absolute path, because the route builds a
+// backend per request): a file is re-read only when its (inode, size, mtime, ctime), taken
+// from a stat BEFORE the read, moved — so a write from outside this process (the CLI, a git
+// pull, a sync) is still seen — and every write path below forgets its file explicitly.
+// Callers get `structuredClone`s, so nothing they do reaches the cached value. Write paths
+// (read-modify-write under the lock) read fresh, never through here.
+
+const READ_MEMO_MAX = 4096;
+const readMemo = new Map<string, { sig: string; value: unknown }>();
+
+function fileSig(path: string): string {
+  const st = statSync(path);
+  return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+}
+
+/**
+ * A task read also carries its journal (`changelog` falls back to
+ * `state/journal/<slug>.md`), and a journal append — `tasks log` from another
+ * process, an assignment, a pull — never touches the card's stat. So the `task`
+ * memo is keyed on the journal's stat too; a missing journal reads as `none`.
+ */
+function journalSig(cardPath: string): string {
+  try {
+    return fileSig(join(dirname(cardPath), JOURNAL_DIR, basename(cardPath)));
+  } catch {
+    return 'none';
+  }
+}
+
+function memoRead<T>(kind: 'fm' | 'task', path: string, read: () => T): T {
+  const abs = resolve(path);
+  const key = `${kind}\0${abs}`;
+  const sig = kind === 'task' ? `${fileSig(abs)}|${journalSig(abs)}` : fileSig(abs);
+  const hit = readMemo.get(key);
+  readMemo.delete(key);
+  if (hit && hit.sig === sig) {
+    readMemo.set(key, hit);
+    return structuredClone(hit.value) as T;
+  }
+  const value = read();
+  readMemo.set(key, { sig, value });
+  while (readMemo.size > READ_MEMO_MAX) {
+    const oldest = readMemo.keys().next();
+    if (oldest.done) break;
+    readMemo.delete(oldest.value);
+  }
+  return structuredClone(value);
+}
+
+/** Drop the memoized reads of one task file (after this process wrote it). */
+export function forgetTaskRead(path: string): void {
+  const abs = resolve(path);
+  readMemo.delete(`fm\0${abs}`);
+  readMemo.delete(`task\0${abs}`);
+}
+
+/** Tests only: forget every memoized task read. */
+export function resetTaskReadMemo(): void {
+  readMemo.clear();
+}
+
 /**
  * The current file-based task store, behind the TaskBackend interface.
  * Every byte it writes is pinned by tests/unit/task-backend-golden.test.ts —
@@ -383,7 +451,7 @@ export class LocalTaskBackend implements TaskBackend {
     const all: TaskSummary[] = [];
     for (const file of this.taskFiles()) {
       try {
-        const { data } = readFrontmatter<Record<string, unknown>>(file);
+        const { data } = memoRead('fm', file, () => readFrontmatter<Record<string, unknown>>(file));
         all.push(toTaskRecord(data, basename(file, '.md'), file));
       } catch { /* skip unreadable */ }
     }
@@ -394,7 +462,8 @@ export class LocalTaskBackend implements TaskBackend {
     if (!isSafeTaskSlug(slug)) return null;
     const path = this.taskPath(slug);
     if (!existsSync(path)) return null;
-    return readTaskFile(path, this.statusDefs());
+    const statuses = this.statusDefs();
+    return memoRead('task', path, () => readTaskFile(path, statuses));
   }
 
   async create(input: CreateTaskInput): Promise<TaskData> {
@@ -549,6 +618,7 @@ ${input.why || '(To be defined)'}
     // History starts in the journal, never on the card.
     appendJournalEntry(this.stateDir, slug, { kind: 'created', body: '- Task created.' });
 
+    forgetTaskRead(filePath);
     return readTaskFile(filePath, this.statusDefs());
   }
 
@@ -580,6 +650,7 @@ ${input.why || '(To be defined)'}
       // A body that still carries a `## Changelog` (an old client, a pasted
       // card) is folded into the journal on the way in — never kept, never lost.
       foldCardChangelog(path);
+      forgetTaskRead(path);
       return readTaskFile(path, this.statusDefs());
     });
     if (familyMove) {
@@ -645,23 +716,27 @@ ${input.why || '(To be defined)'}
       await this.addChangelog(slug, content);
       return;
     }
-    withTaskFileLock(this.brainRoot(), slug, () => {
-      foldCardChangelog(path);
-      // The card ceiling. Criteria stay insertable past it, so sleep's first
-      // choice (a criterion in an existing task) still works on a legacy card.
-      if (sectionName.trim().toLowerCase() !== 'acceptance criteria') {
-        const size = readFileSync(path, 'utf-8').length;
-        if (size + content.length > CARD_CEILING) {
-          throw new TaskBackendError(
-            'invalid_input',
-            `Card ceiling: ${slug} would be ${size + content.length} chars (limit ${CARD_CEILING}). ` +
-              'A card holds what the work is and how it is proven; put history in the journal ' +
-              '(`dreamcontext tasks log`) and long material in knowledge (`dreamcontext knowledge create`).',
-          );
+    try {
+      withTaskFileLock(this.brainRoot(), slug, () => {
+        foldCardChangelog(path);
+        // The card ceiling. Criteria stay insertable past it, so sleep's first
+        // choice (a criterion in an existing task) still works on a legacy card.
+        if (sectionName.trim().toLowerCase() !== 'acceptance criteria') {
+          const size = readFileSync(path, 'utf-8').length;
+          if (size + content.length > CARD_CEILING) {
+            throw new TaskBackendError(
+              'invalid_input',
+              `Card ceiling: ${slug} would be ${size + content.length} chars (limit ${CARD_CEILING}). ` +
+                'A card holds what the work is and how it is proven; put history in the journal ' +
+                '(`dreamcontext tasks log`) and long material in knowledge (`dreamcontext knowledge create`).',
+            );
+          }
         }
-      }
-      insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false);
-    });
+        insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false);
+      });
+    } finally {
+      forgetTaskRead(path);
+    }
   }
 
   /**
@@ -685,10 +760,15 @@ ${input.why || '(To be defined)'}
     // `tasks log` is the single most concurrent task write there is — the
     // foreground logs progress while a background cycle reconciles the board —
     // and the journal is a read-modify-write, so it shares the card's lock.
-    return withTaskFileLock(this.brainRoot(), slug, () => {
-      foldCardChangelog(path);
-      return appendJournalEntry(this.stateDir, slug, entry);
-    });
+    // The fold rewrites the card, so the read memo forgets it either way.
+    try {
+      return withTaskFileLock(this.brainRoot(), slug, () => {
+        foldCardChangelog(path);
+        return appendJournalEntry(this.stateDir, slug, entry);
+      });
+    } finally {
+      forgetTaskRead(path);
+    }
   }
 
   async readJournal(slug: string): Promise<JournalEntry[]> {
@@ -734,6 +814,7 @@ ${input.why || '(To be defined)'}
         console.error(`Warning: could not retire the journal of ${slug}: ${err instanceof Error ? err.message : String(err)}`);
       }
     });
+    forgetTaskRead(path);
     // A deleted FILE proves nothing later; this marker does. Without it a sleep
     // cycle re-files a chore somebody deliberately consolidated away.
     appendTombstone(this.brainRoot(), {
@@ -793,6 +874,8 @@ ${input.why || '(To be defined)'}
       renameSync(path, this.taskPath(newSlug));
       moveJournal(this.stateDir, slug, newSlug);
     });
+    forgetTaskRead(path);
+    forgetTaskRead(this.taskPath(newSlug));
     // A rename retires the OLD slug just as surely as a delete does: anything
     // that remembers it (a sleep cycle's fixed-slug lookup, a wikilink) must be
     // pointed at where the work went rather than concluding it never existed.

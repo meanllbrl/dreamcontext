@@ -119,6 +119,7 @@ function freePort() {
 }
 
 let ALPHA_TASK = '';
+const BETA_SESSION = 'beta0001-treadmill';
 
 function setupScratch() {
   rmSync(SCRATCH, { recursive: true, force: true });
@@ -142,6 +143,24 @@ function setupScratch() {
   if (task.status !== 0) throw new Error(`tasks create failed: ${task.stderr || task.stdout}`);
   ALPHA_TASK = readdirSync(join(PROJ('alpha-app'), '_dream_context', 'state')).find((f) => f.endsWith('.md'))?.replace(/\.md$/, '') ?? '';
   if (!ALPHA_TASK) throw new Error('tasks create wrote no task file');
+  // Brains the Assistant reads itself (2026-10-17): beta's only answer is a session digest, its
+  // session's END holds the final pick, and alpha keeps a secrets file nobody may read.
+  const betaCtx = join(PROJ('beta-app'), '_dream_context');
+  mkdirSync(join(betaCtx, 'state', '.session-digests'), { recursive: true });
+  mkdirSync(join(betaCtx, 'knowledge'), { recursive: true });
+  writeFileSync(join(betaCtx, 'state', '.session-digests', `${BETA_SESSION}.md`),
+    `---\ntype: session-digest\nsession_id: ${BETA_SESSION}\ncreated_at: 2026-10-10T10:00:00.000Z\n---\n# Session Digest\n\n## Decisions\n- First treadmill pick: Stridewell T3.\n`);
+  writeFileSync(join(betaCtx, 'knowledge', 'pricing.md'), '---\nname: pricing\ndescription: How beta prices its plans\n---\n\nTwo plans, monthly and yearly.\n');
+  writeFileSync(join(PROJ('alpha-app'), '_dream_context', 'state', '.secrets.json'), '{"key":"sk-verify-secret"}');
+  const tdir = join(HOME, '.claude', 'projects', PROJ('beta-app').replace(/[^A-Za-z0-9]/g, '-'));
+  mkdirSync(tdir, { recursive: true });
+  const row = (o) => JSON.stringify(o);
+  writeFileSync(join(tdir, `${BETA_SESSION}.jsonl`), [
+    row({ type: 'user', uuid: 'u1', timestamp: '2026-10-10T10:00:00Z', message: { role: 'user', content: 'find me a treadmill' } }),
+    row({ type: 'assistant', uuid: 'a1', timestamp: '2026-10-10T10:00:05Z', message: { role: 'assistant', content: [{ type: 'text', text: 'First pick: Stridewell T3.' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'cat .env' } }] } }),
+    row({ type: 'user', uuid: 'u2', timestamp: '2026-10-10T10:00:06Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'API_KEY=sk-tool-output' }] } }),
+    row({ type: 'assistant', uuid: 'a2', timestamp: '2026-10-10T10:05:09Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Final pick: Glidemax G9.' }] } }),
+  ].join('\n'));
   // gamma's folder disappears after registration → broadcast must report it `missing`.
   rmSync(PROJ('gamma-app'), { recursive: true, force: true });
 }
@@ -281,7 +300,8 @@ try {
   ok('mode=basic in the URL is FORCED to the assistant briefing', (a.briefing ?? '').includes('# Mode: dreamcontext Assistant') && a.briefing.includes('**Nova**'));
   ok('autonomy ask → claude permission mode "default"', a.permissionMode === 'default', a.permissionMode);
   ok('the __assistant__ spawn runs --effort medium (its config default)', a.effort === 'medium', String(a.effort));
-  ok('under ask the __assistant__ argv carries NO --allowedTools', a.allowedTools === null, String(a.allowedTools));
+  ok('under ask the __assistant__ argv pre-approves ONLY the three reads', a.allowedTools === 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*)', String(a.allowedTools));
+  ok('the briefing answers from the brains and delegates the work', a.briefing.includes('## You KNOW it yourself; you DELEGATE the work') && a.briefing.includes("dreamcontext assistant recall '<2-4 keywords>'"));
   ok('its hooks recall raw (no embedding model on disk) — never haiku', a.recallMode === 'raw', String(a.recallMode));
   ok('an ordinary project chat carries no --allowedTools and no forced recall mode', alphaReport.allowedTools === null && alphaReport.recallMode === null, JSON.stringify({ allowedTools: alphaReport.allowedTools, recallMode: alphaReport.recallMode }));
   ok('the briefing carries the roster and the untrusted rule', a.briefing.includes('## Projects (3)') && a.briefing.includes('alpha-app') && a.briefing.includes('UNTRUSTED CONTENT'));
@@ -317,6 +337,37 @@ try {
     const t1 = Date.now();
     const gone = await cli(['assistant', 'watch', alphaSid, '--until', 'idle', '--timeout', '60'], env);
     ok('watch resolves IMMEDIATELY with ended:true once the chat is gone', gone.json?.ended === true && gone.json?.session?.status === 'gone' && Date.now() - t1 < 5000, gone.stdout);
+  }
+
+  // ── it reads the brains itself (2026-10-17) ─────────────────────────────────────────
+  console.log('\n── dreamcontext assistant recall | index | read');
+  {
+    const r = await cli(['assistant', 'recall', 'treadmill', 'pick'], env);
+    const beta = (r.json?.groups ?? []).find((g) => g.vault === 'beta-app');
+    ok('recall finds beta\'s session digest, grouped under beta-app', r.code === 0 && beta?.hits?.[0]?.path === `state/.session-digests/${BETA_SESSION}.md`, r.stdout || r.stderr);
+    ok('each hit\'s text is fenced as beta\'s, the path stays plain', (beta?.hits?.[0]?.text ?? '').startsWith('<untrusted-project-output vault="beta-app">'), JSON.stringify(beta?.hits?.[0]));
+    ok('the deleted folder is not searched and nothing is the hidden vault\'s by mistake', !(r.json?.groups ?? []).some((g) => g.vault === 'gamma-app'), r.stdout);
+    const stranger = await cli(['assistant', 'recall', 'treadmill'], { DREAMCONTEXT_ASSISTANT_URL: '', DREAMCONTEXT_ASSISTANT_TOKEN: '' });
+    ok('recall refuses anyone but the Assistant', stranger.code === 1 && stranger.stderr.includes('only the dreamcontext Assistant can drive the app'), stranger.stderr);
+  }
+  {
+    const r = await cli(['assistant', 'index', '--vault', 'beta-app'], env);
+    const idx = r.json?.indexes?.[0];
+    ok('index --vault lists that brain\'s knowledge files with the path read takes', r.code === 0 && idx?.vault === 'beta-app' && idx?.index?.includes('knowledge/pricing.md — pricing: How beta prices its plans'), r.stdout || r.stderr);
+  }
+  {
+    const f = await cli(['assistant', 'read', 'beta-app', 'knowledge/pricing.md'], env);
+    ok('read returns the file, fenced', f.code === 0 && f.json?.text?.includes('Two plans, monthly and yearly.') && f.json.text.startsWith('<untrusted-project-output vault="beta-app">'), f.stdout || f.stderr);
+    const sec = await cli(['assistant', 'read', 'alpha-app', 'state/.secrets.json'], env);
+    ok('read refuses a secrets file and prints none of it', sec.code === 1 && sec.stderr.includes('not_readable') && !(sec.stdout + sec.stderr).includes('sk-verify-secret'), sec.stdout + sec.stderr);
+    const out = await cli(['assistant', 'read', 'beta-app', '../../alpha-app/_dream_context/state/.secrets.json'], env);
+    ok('read refuses a path out of the brain', out.code === 1 && out.stderr.includes('outside_brain'), out.stderr);
+    const s = await cli(['assistant', 'read', 'beta-app', '--session', BETA_SESSION], env);
+    const text = s.json?.text ?? '';
+    ok('read --session returns the session\'s words, ending with the final pick', s.code === 0 && text.includes('OWNER: find me a treadmill') && text.includes('AGENT: Final pick: Glidemax G9.'), s.stdout || s.stderr);
+    ok('read --session never returns a tool call or its output', !text.includes('sk-tool-output') && !text.includes('cat .env'), text);
+    const other = await cli(['assistant', 'read', 'alpha-app', '--session', BETA_SESSION], env);
+    ok('read --session refuses another project\'s session', other.code === 1 && other.stderr.includes('not_found'), other.stderr);
   }
 
   // ── broadcast (under ask → a proposal the owner approves) ─────────────────────────────
@@ -506,7 +557,8 @@ try {
       rmSync(join(HOME, '.dreamcontext', 'models'), { recursive: true, force: true });
     }
 
-    // --allowedTools on the __assistant__ argv follows autonomy: auto only.
+    // --allowedTools on the __assistant__ argv follows autonomy: every verb under auto, only the
+    // three reads under ask (a read is not an action, owner 2026-10-17), nothing under bypass.
     const allowed = {};
     for (const level of ['auto', 'bypass', 'ask']) {
       await post('/api/assistant/profile', { autonomy: level });
@@ -517,7 +569,7 @@ try {
       await sleep(300);
     }
     ok('__assistant__ argv: --allowedTools "Bash(dreamcontext assistant:*)" under auto', allowed.auto === 'Bash(dreamcontext assistant:*)', JSON.stringify(allowed));
-    ok('__assistant__ argv: no --allowedTools under bypass or ask', allowed.bypass === null && allowed.ask === null, JSON.stringify(allowed));
+    ok('__assistant__ argv: no --allowedTools under bypass; under ask only recall, index and read', allowed.bypass === null && allowed.ask === 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*)', JSON.stringify(allowed));
     await post('/api/assistant/profile', { autonomy: 'ask' });
   }
 

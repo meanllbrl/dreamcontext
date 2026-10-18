@@ -18,6 +18,7 @@ import {
   handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
   handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
   handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook,
+  handleAssistantRecall, handleAssistantIndex, handleAssistantRead,
   handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
 import { wireNotchInbox } from '../lib/assistant/notch-inbox.js';
@@ -36,6 +37,7 @@ import {
   handleTaskFilingRuleRevert,
 } from './routes/task-proposals.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksJournal, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleSleepEvalLabelsGet, handleSleepEvalLabelsPost } from './routes/sleep-eval.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
 import {
@@ -213,6 +215,7 @@ import {
 } from './routes/agent-mcp-project.js';
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
+import { handleAppMachine } from './routes/machine.js';
 import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
@@ -359,6 +362,9 @@ export function buildRouter(): Router {
   router.get('/api/sleep/auto', handleSleepAutoGet);
   router.put('/api/sleep/auto', handleSleepAutoPut);
   router.post('/api/sleep/auto/cancel', handleSleepAutoCancel);
+  // The sleep-eval labelling deck on the Tasks screen (tmp/sleep-eval/labels.json).
+  router.get('/api/sleep-eval/labels', handleSleepEvalLabelsGet);
+  router.post('/api/sleep-eval/labels', handleSleepEvalLabelsPost);
   // Embedding-model status + warm-up (backs the Hybrid recall card). The MODEL
   // is vault-agnostic (shared under ~/.dreamcontext/models); the INDEX is
   // per-vault (guarded inside the handler — needs a resolved contextRoot).
@@ -484,6 +490,9 @@ export function buildRouter(): Router {
   router.get('/api/assistant/projects', handleAssistantProjects);
   router.get('/api/assistant/sessions', handleAssistantSessions);
   router.get('/api/assistant/watch', handleAssistantWatch);
+  router.get('/api/assistant/recall', handleAssistantRecall);
+  router.get('/api/assistant/index', handleAssistantIndex);
+  router.get('/api/assistant/read', handleAssistantRead);
   router.post('/api/assistant/broadcast', handleAssistantBroadcast);
   router.post('/api/assistant/ui/:verb', handleAssistantUi);
   // A project chat's agent drives its own window (dreamcontext window …); token-gated per chat.
@@ -556,6 +565,8 @@ export function buildRouter(): Router {
   router.get('/api/agent/mcp/project', handleAgentMcpProjectGet);
   router.post('/api/agent/mcp/project/adopt', handleAgentMcpProjectAdopt);
   router.post('/api/agent/mcp/project/remove', handleAgentMcpProjectRemove);
+  // Light mode's Auto reads the machine (memory, battery). Vault-agnostic: no project state.
+  router.get('/api/app/machine', handleAppMachine);
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.get('/api/agent/chat-history', handleAgentChatHistory);
@@ -903,7 +914,7 @@ export function buildRouter(): Router {
  * chat's socket (lib/window-control.ts). The CLI sends no vault header and the desktop server
  * pins none, so gating it on a vault refused every `dreamcontext window …` with `no_vault`.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

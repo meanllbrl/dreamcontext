@@ -7,7 +7,7 @@ import { projectRootOf, sanitizeUuid } from './agent-spawn-shared.js';
 import { countCheckboxes, firstUnticked, listCheckboxes, readSection } from '../../lib/markdown.js';
 import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
 import { readJournal } from '../../lib/task-journal.js';
-import { readSessionFacts, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts.js';
+import { readSessionFactsAsync, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts.js';
 import { claimedCheckout, sessionCheckout } from '../../lib/session-cwd.js';
 import { editsElsewhere } from '../../lib/session-edits.js';
 import { transcriptCheckout } from '../../lib/session-transcript-cwd.js';
@@ -279,10 +279,11 @@ export async function handleAgentSessionFacts(
   const projectRoot = projectRootOf(contextRoot);
   // The facts are read AT the session's checkout; `worktreeAllowed` alone is asked of the
   // VAULT (third argument), because it is a property of the brain rather than of the folder
-  // the agent happens to be standing in. See readSessionFacts.
+  // the agent happens to be standing in. See readSessionFacts. Polled every 15 s per pane, so
+  // the async reader: git off the event loop, re-read only when the checkout's HEAD moved.
   const dir = resolveSessionDir(session || null, projectRoot);
-  const facts = readSessionFacts(dir, Date.now(), projectRoot);
-  // Composed OUTSIDE the memo: the git reading is stable for 12s, the write counts are not —
+  const facts = await readSessionFactsAsync(dir, Date.now(), projectRoot);
+  // Composed OUTSIDE the memo: the git reading is held while HEAD is unchanged, the write counts are not —
   // they move while a turn runs, and a warning that lags the run by a poll is a warning about
   // a state the user has already left.
   sendJson(res, 200, { ...facts, elsewhere: editsElsewhere(session || null, dir) });

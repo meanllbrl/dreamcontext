@@ -4,6 +4,7 @@ import { MarkdownPreview } from '../core/MarkdownPreview';
 import { useI18n } from '../../context/I18nContext';
 import { useApi } from '../../context/VaultContext';
 import { quitApp } from '../../lib/desktop';
+import { getWindowActivity } from '../../lib/windowActivity';
 import './UpdateBadge.css';
 
 /**
@@ -29,6 +30,7 @@ interface UpgradeStatus {
   output: string;
 }
 
+/** Upgrade-only: this polls while an upgrade job runs, never otherwise. */
 const POLL_MS = 1200;
 
 export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
@@ -67,6 +69,8 @@ export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
   const startPolling = useCallback(() => {
     stopPolling();
     pollRef.current = setInterval(() => {
+      // A hidden window reads the job's end on its next visible tick.
+      if (getWindowActivity().hidden) return;
       api.get<UpgradeStatus>('/launcher/upgrade/status')
         .then(applyStatus)
         .catch(() => { /* transient — keep polling */ });

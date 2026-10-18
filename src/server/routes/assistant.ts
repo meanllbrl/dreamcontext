@@ -38,6 +38,10 @@ import { sayToAgent } from './automations.js';
 import { boardAgents } from '../../lib/whiteboards/agents.js';
 import { listWhiteboards } from '../../lib/whiteboards/store.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
+import { CORPUS_TYPES, type CorpusType } from '../../lib/recall.js';
+import {
+  BrainReadError, indexBrains, readBrainFile, readBrainSession, recallBrains, RECALL_PER_VAULT, type BrainFile,
+} from '../../lib/assistant/brains.js';
 
 /**
  * `/api/assistant/*` — the dreamcontext Assistant's server surface.
@@ -161,6 +165,104 @@ export async function handleAssistantWatch(req: IncomingMessage, res: ServerResp
     ended: !!r.ended,
     timedOut: !!r.timedOut,
     session: r.entry ? viewChat(r.entry, 5) : null,
+  });
+}
+
+// ─── Brain reads (token-gated, free at every autonomy level) ─────────────────────────
+// The Assistant answers a question from the brains itself instead of asking the project's
+// agent (brains.ts). Reads only: nothing here writes, so no proposal. Project text is fenced
+// ONCE per hit / per vault index / per file (a fence per field would double the payload),
+// and serving any of it taints; the Assistant's own memory is not project text.
+
+const fenceUnlessOwn = (own: boolean, vault: string, text: string) => (own ? text : wrapUntrusted(vault, text));
+
+/** `a,b` → a subset of {@link CORPUS_TYPES}; `null` names one that does not exist. */
+function parseTypes(raw: string | null): CorpusType[] | undefined | null {
+  if (!raw) return undefined;
+  const list = raw.split(',').map((t) => t.trim()).filter(Boolean);
+  if (!list.every((t) => (CORPUS_TYPES as readonly string[]).includes(t))) return null;
+  return list as CorpusType[];
+}
+
+/** GET /api/assistant/recall?q=<query>[&vault=<v>…][&top=<n per vault>][&types=a,b] */
+export async function handleAssistantRecall(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!assistantGate(req, res)) return;
+  const p = q(req);
+  const query = (p.get('q') ?? '').trim();
+  if (!query) { sendError(res, 400, 'invalid_query', 'q must be a non-empty search query.'); return; }
+  const types = parseTypes(p.get('types'));
+  if (types === null) { sendError(res, 400, 'invalid_types', `types must be a comma-separated subset of: ${CORPUS_TYPES.join(', ')}`); return; }
+  const top = Number(p.get('top') ?? RECALL_PER_VAULT);
+  const r = recallBrains(query, {
+    vaults: p.getAll('vault').filter(Boolean),
+    perVault: Number.isFinite(top) ? top : RECALL_PER_VAULT,
+    ...(types ? { types } : {}),
+  });
+  if (r.groups.some((g) => !g.own)) markTainted();
+  sendJson(res, 200, {
+    query,
+    groups: r.groups.map((g) => ({
+      vault: g.vault,
+      ...(g.own ? { own: true } : {}),
+      hits: g.hits.map((h) => ({
+        type: h.type,
+        path: h.path,
+        file: h.file,
+        score: h.score,
+        text: fenceUnlessOwn(g.own, g.vault, [h.title, h.description, h.snippet].filter(Boolean).join('\n')),
+      })),
+    })),
+    noMatch: r.noMatch,
+    ...(r.unknown.length ? { unknown: r.unknown } : {}),
+  });
+}
+
+/** GET /api/assistant/index[?vault=<v>…] — every knowledge file: path, name, description, tags. */
+export async function handleAssistantIndex(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!assistantGate(req, res)) return;
+  const r = indexBrains({ vaults: q(req).getAll('vault').filter(Boolean) });
+  if (r.indexes.some((i) => !i.own && i.entries.length > 0)) markTainted();
+  sendJson(res, 200, {
+    indexes: r.indexes.map((i) => ({
+      vault: i.vault,
+      ...(i.own ? { own: true } : {}),
+      count: i.entries.length,
+      index: i.entries.length === 0 ? '' : fenceUnlessOwn(i.own, i.vault, i.entries
+        .map((e) => `- ${e.path} — ${e.name}${e.description ? `: ${e.description}` : ''}${e.tags.length ? ` [${e.tags.join(', ')}]` : ''}`)
+        .join('\n')),
+    })),
+    ...(r.unknown.length ? { unknown: r.unknown } : {}),
+  });
+}
+
+/** GET /api/assistant/read?vault=<v>&(path=<path>|session=<id>)[&offset=<n>][&limit=<n>] */
+export async function handleAssistantRead(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!assistantGate(req, res)) return;
+  const p = q(req);
+  const vault = (p.get('vault') ?? '').trim();
+  const path = (p.get('path') ?? '').trim();
+  const session = (p.get('session') ?? '').trim();
+  if (!vault || !path === !session) { sendError(res, 400, 'invalid_query', 'vault, and exactly one of path or session, are required.'); return; }
+  const num = (key: string) => { const v = p.get(key); const n = v === null ? NaN : Number(v); return Number.isFinite(n) ? n : undefined; };
+  const window = { offset: num('offset'), limit: num('limit') };
+  let f: BrainFile;
+  try {
+    // A session without an offset reads its END (the conclusion); a file reads from the top.
+    f = session ? readBrainSession(vault, session, window) : readBrainFile(vault, path, window);
+  } catch (err) {
+    if (err instanceof BrainReadError) { sendError(res, err.code === 'not_found' ? 404 : 400, err.code, err.message); return; }
+    throw err;
+  }
+  if (!f.own) markTainted();
+  sendJson(res, 200, {
+    vault: f.vault,
+    path: f.path,
+    file: f.file,
+    total: f.total,
+    offset: f.offset,
+    ...(f.offset > 0 ? { earlier: `--offset ${Math.max(f.offset - f.text.length, 0)}` } : {}),
+    ...(f.more ? { more: true, next: `--offset ${f.offset + f.text.length}` } : {}),
+    text: fenceUnlessOwn(f.own, f.vault, f.text),
   });
 }
 

@@ -497,7 +497,8 @@
 }
 
 .filter-sync-spin {
-  animation: filter-sync-rotate 0.9s linear infinite;
+  animation: var(--dc-motion-ambient-name, filter-sync-rotate) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes filter-sync-rotate {

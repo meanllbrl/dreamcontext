@@ -61,7 +61,7 @@
   color: #bcacff; background: var(--color-bg); padding: 2px 7px; border-radius: 6px;
   border: 1px solid rgba(157, 140, 255, 0.4); z-index: 3;
 }
-.rtl-today-dot { width: 5px; height: 5px; border-radius: 50%; background: #9d8cff; animation: rtl-pulse 1.6s ease-in-out infinite; }
+.rtl-today-dot { width: 5px; height: 5px; border-radius: 50%; background: #9d8cff; animation: var(--dc-motion-ambient-name, rtl-pulse) 1.6s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 @keyframes rtl-pulse { 0%, 100% { opacity: 0.5; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
 
 /* ── connectors ─────────────────────────────────────────────────────────────── */

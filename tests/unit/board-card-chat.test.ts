@@ -16,7 +16,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { boardScopeArgs } from '../../src/lib/automations/board-scope.js';
+import { BOARD_AGENT_DISALLOWED_TOOLS, boardScopeArgs } from '../../src/lib/automations/board-scope.js';
+import { chatDeniedToolArgs } from '../../src/server/routes/agent-chat.js';
 import { createAutomation } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
 import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV, type AutomationManifest } from '../../src/lib/automations/types.js';
@@ -175,6 +176,40 @@ describe('prepareCardChat', () => {
     expect(prep.permissionArgs?.some((a) => a.includes(`whiteboard add ${board}:`))).toBe(true);
     expect(prep.permissionArgs?.some((a) => a.includes(other))).toBe(false);
     prep.dispose();
+  });
+});
+
+/**
+ * The chat deny (agent-chat.ts chatDeniedToolArgs, 2026-10-17): the route spreads the card's
+ * permission argv and then `chatDeniedToolArgs(scopedCard)`, scopedCard = `!!permissionArgs`.
+ * Composed here exactly so: a scoped card keeps ONLY its board scope's `--disallowedTools`
+ * (a second flag would collide), an attached card is not scoped and is denied native plan mode.
+ */
+describe('a card spawn and the native plan-mode deny', () => {
+  const spawnArgs = (permissionArgs: string[] | null) => [
+    ...(permissionArgs ?? []), ...chatDeniedToolArgs(!!permissionArgs),
+  ];
+  const flagCount = (a: string[]) => a.filter((x) => x === '--disallowedTools').length;
+
+  it('a scoped home-board card carries only its own board-scope --disallowedTools', () => {
+    makeAgent();
+    const prep = prepareCardChat(contextRoot, { agent: 'board-pilot', board }, home);
+    expect(prep.ok).toBe(true);
+    if (!prep.ok) return;
+    const a = spawnArgs(prep.permissionArgs);
+    expect(flagCount(a)).toBe(1);
+    const i = a.indexOf('--disallowedTools');
+    expect(a.slice(i + 1, i + 1 + BOARD_AGENT_DISALLOWED_TOOLS.length)).toEqual([...BOARD_AGENT_DISALLOWED_TOOLS]);
+    expect(a.join(' ')).not.toContain('EnterPlanMode');
+    prep.dispose();
+  });
+
+  it('an attached card keeps the pane envelope and carries the chat deny flag', () => {
+    makeAgent({ whiteboard: null });
+    const prep = prepareCardChat(contextRoot, { agent: 'board-pilot', board }, home);
+    expect(prep.ok).toBe(true);
+    if (!prep.ok) return;
+    expect(spawnArgs(prep.permissionArgs)).toEqual(['--disallowedTools', 'EnterPlanMode,ExitPlanMode']);
   });
 });
 

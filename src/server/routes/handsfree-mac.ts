@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -129,6 +130,31 @@ function verifyPowerSeam(): Partial<MacSessionDeps> {
   return {
     powerRun: run, batteryPollMs: 2000, sudoersInstalled: () => true, installSudoers: async () => 'ok', removeSudoers: async () => 'ok',
     readThermal: async () => 'nominal',
+    ...verifyFakeTunnelSeam(),
+  };
+}
+
+/**
+ * VERIFY SEAM: `DREAMCONTEXT_MAC_VERIFY_FAKE_TUNNEL=1` (with the power seam, so a scratch HOME
+ * only) replaces cloudflared with a loopback stand-in: the address is the phone listener itself
+ * and the probe passes. It brings the panel's running state up without a Cloudflare tunnel (a
+ * quick tunnel can be rate-limited); nothing leaves the machine.
+ */
+function verifyFakeTunnelSeam(): Partial<MacSessionDeps> {
+  if (process.env.DREAMCONTEXT_MAC_VERIFY_FAKE_TUNNEL !== '1') return {};
+  return {
+    ensureBinary: async () => '/usr/bin/true',
+    probe: async () => true,
+    makeSupervisor: (o, e) => ({
+      pid: null,
+      url: null,
+      start: async () => {
+        const url = `http://127.0.0.1:${o.phonePort}`;
+        e.onUrl(url, false);
+        return { child: new EventEmitter() as never, url, mode: 'quick' as const };
+      },
+      stop: async () => {},
+    }),
   };
 }
 
@@ -228,7 +254,12 @@ export const handsfreeMacRoutes = {
       sendError(res, 400, 'mac_unknown_project', `Not a registered project: ${unknown.join(', ')}.`);
       return;
     }
-    sendJson(res, 200, await macSession().start({ vaults }));
+    // Bag mode: true / false, or omitted = the remembered choice.
+    if (b?.bagMode !== undefined && typeof b.bagMode !== 'boolean') {
+      sendError(res, 400, 'invalid_bag_mode', 'bagMode must be true or false.');
+      return;
+    }
+    sendJson(res, 200, await macSession().start({ vaults, ...(typeof b?.bagMode === 'boolean' ? { bagMode: b.bagMode } : {}) }));
   }, 5 * 60_000),
   stop: guarded(async (_req, res) => { await macSession().stop(); sendJson(res, 200, macSession().status()); }),
   qr: guarded(async (_req, res) => { sendJson(res, 200, { url: macSession().mintQr() }); }),

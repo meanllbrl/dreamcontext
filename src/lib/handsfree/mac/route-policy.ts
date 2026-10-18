@@ -260,6 +260,9 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/assistant/projects': deny(ASSISTANT),
   'GET /api/assistant/sessions': deny(ASSISTANT),
   'GET /api/assistant/watch': deny(ASSISTANT),
+  'GET /api/assistant/recall': deny(ASSISTANT),
+  'GET /api/assistant/index': deny(ASSISTANT),
+  'GET /api/assistant/read': deny(ASSISTANT),
   'POST /api/assistant/broadcast': deny(ASSISTANT),
   'POST /api/assistant/ui/:verb': deny(ASSISTANT),
   'POST /api/assistant/look': deny(ASSISTANT),
@@ -475,6 +478,14 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/releases': allow(PROJECT_WRITE),
   'PATCH /api/releases/:version': allow(PROJECT_WRITE),
   'DELETE /api/releases/:version': allow(PROJECT_WRITE),
+  // Light mode's Auto reads THIS Mac's memory and power source for its own windows; the
+  // phone's light mode is the phone's business (its request is refused locally, Auto stays off).
+  'GET /api/app/machine': deny('laptop-only: this Mac\'s memory and power source, for its own windows\' Light mode'),
+  // The sleep-eval test set is copies of this brain's past sleep rounds and stays on this Mac
+  // (task: uyku-ve-gorev-acma-olculur…, "yalnız yerel, yayımlanmaz"); its labelling deck is a
+  // desktop Tasks-screen surface.
+  'GET /api/sleep-eval/labels': deny('laptop-only: the sleep-eval test set is local copies of past sleep rounds'),
+  'POST /api/sleep-eval/labels': deny('laptop-only: labels the local sleep-eval test set'),
 };
 
 /** The row for a matched route (`method` as registered, `path` the registered pattern), or

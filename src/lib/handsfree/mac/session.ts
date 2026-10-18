@@ -20,6 +20,7 @@ import {
   type MacBattery, type MacDevice, type MacErrorCode, type MacPhase, type MacStatus, type MacThermal, type MacThermalState,
 } from './contract.js';
 import * as power from './power.js';
+import { readMacPrefs, writeMacPrefs } from './prefs.js';
 import * as thermal from './thermal.js';
 import * as tunnel from './tunnel.js';
 
@@ -41,6 +42,8 @@ export interface MacState {
   exposedVaults?: string[];
   /** The thermal governor's ledger: a crash leaves it here and boot recovery releases it. */
   clamped?: thermal.LedgerEntry[];
+  /** The run's Bag mode, for REPORTING only: boot recovery releases `clamped` whatever it says. */
+  bagMode?: boolean;
 }
 
 /** The SIGTERM path's release budget: the desktop shell SIGKILLs the server 1.5 s after SIGTERM. */
@@ -137,6 +140,8 @@ export class MacSession {
   private lastError: MacErrorCode | null = null;
   /** The projects this run exposes (chosen at start). */
   private vaults: string[] = [];
+  /** This run's Bag mode (chosen at start); null while off. */
+  private bagMode: boolean | null = null;
   private readonly home: string;
 
   constructor(private readonly d: MacSessionDeps) {
@@ -166,6 +171,8 @@ export class MacSession {
       lastError: this.lastError,
       exposedVaults: [...this.vaults],
       thermal: this.governor?.snapshot() ?? { state: null, slowed: 0 },
+      // While on: the run's own mode, not the file it was started from.
+      bagMode: this.phase !== 'off' && this.bagMode !== null ? this.bagMode : readMacPrefs(this.home).bagMode,
     };
   }
 
@@ -221,8 +228,10 @@ export class MacSession {
   }
 
   /** Start Mac mode for the chosen projects (`vaults`, registered names): the phone sees only
-   *  those. The route validates the names against the registry; changing the set = stop + start. */
-  async start(opts: { vaults: string[] }): Promise<MacStatus> {
+   *  those. The route validates the names against the registry; changing the set = stop + start.
+   *  `bagMode` (omitted = the remembered choice) is remembered once the preflight passes, even
+   *  when the tunnel then fails; changing it = stop + start. */
+  async start(opts: { vaults: string[]; bagMode?: boolean }): Promise<MacStatus> {
     if (this.phase !== 'off') throw new MacModeError('mac_already_on', 'Mac mode is already on.');
     await this.releasePendingThermal();
     const vaults = [...new Set((opts?.vaults ?? []).filter((v) => typeof v === 'string' && v))];
@@ -231,6 +240,8 @@ export class MacSession {
     if (!this.d.auth().store.passphraseVerifier || !this.sudoersInstalled()) throw new MacModeError('mac_not_setup', 'Set Mac mode up first.');
     const run = this.d.powerRun;
     if (!(await power.sudoWorks(run))) throw new MacModeError('mac_sudo_missing', 'The sleep permission is missing; run setup again.');
+    const bagMode = typeof opts.bagMode === 'boolean' ? opts.bagMode : readMacPrefs(this.home).bagMode;
+    writeMacPrefs(this.home, { bagMode });
     this.phase = 'starting';
     this.lastError = null;
     const nonce = randomBytes(16).toString('hex');
@@ -238,6 +249,7 @@ export class MacSession {
     let sleepDisabled = false;
     try {
       this.vaults = vaults;
+      this.bagMode = bagMode;
       this.d.setExposedVaults?.(vaults);
       this.d.setProbeNonce(nonce);
       const { port } = await this.d.startListener();
@@ -273,12 +285,13 @@ export class MacSession {
       this.state = {
         on: true, serverPid: this.d.serverPid ?? process.pid, tunnelPid: this.supervisor.pid, tunnelBin: bin,
         startedAt: new Date().toISOString(), priorLpm: null, sleepDisabledByUs: true, url, mode: fixed ? 'fixed' : 'quick',
-        exposedVaults: [...vaults],
+        exposedVaults: [...vaults], bagMode,
       };
       writeState(this.home, this.state);
       this.governor = new thermal.ThermalGovernor({
         serverPid: this.d.serverPid ?? process.pid, home: this.home, run: this.d.thermalRun,
         readThermal: this.d.readThermal, pollMs: this.d.thermalPollMs, filter: this.d.thermalFilter,
+        clamp: bagMode,
         onChange: (clamped) => { if (this.state) { this.state = { ...this.state, clamped }; writeState(this.home, this.state); } },
       });
       this.governor.start();
@@ -341,6 +354,7 @@ export class MacSession {
     this.d.setProbeNonce(null);
     this.d.setExposedVaults?.([]);
     this.vaults = [];
+    this.bagMode = null;
     if (sleepDisabled || prior) {
       try { await power.restorePower(prior, this.d.powerRun); } catch { this.lastError = this.lastError ?? 'mac_sudo_missing'; }
     }

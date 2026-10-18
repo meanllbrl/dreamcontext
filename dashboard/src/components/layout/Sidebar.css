@@ -174,7 +174,8 @@
 }
 
 .sidebar-sync-refresh--pending svg {
-  animation: sync-refresh-spin 0.9s linear infinite;
+  animation: var(--dc-motion-ambient-name, sync-refresh-spin) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes sync-refresh-spin {
@@ -214,7 +215,8 @@
 }
 /* The GitHub mark swaps to a spinning refresh glyph while a sync is in flight. */
 .sidebar-icon--spin svg {
-  animation: sync-refresh-spin 0.9s linear infinite;
+  animation: var(--dc-motion-ambient-name, sync-refresh-spin) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* Small gear — the ONLY sync-row element that opens Settings. */
@@ -290,7 +292,8 @@
 }
 
 .sidebar-item--nudge {
-  animation: about-bounce 1.5s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, about-bounce) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* A small pulsing "look here" dot in the top-right corner. */
@@ -675,7 +678,8 @@
   border-radius: 2px;
   background: linear-gradient(180deg, #c4b6ff, #8b7bff);
   transform-origin: center;
-  animation: sidebarSleepyBlink 4.4s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, sidebarSleepyBlink) 4.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* ─── Collapsed: the sync row is ONE icon ─────────────────────────────────────

@@ -547,15 +547,28 @@
   background: var(--color-error);
   border-color: transparent;
   color: #fff;
-  animation: chat-cmp-mic-pulse 1.4s ease-in-out infinite;
+  position: relative;
+}
+/* The brightening is a white veil whose opacity breathes — a `filter` keyframe repaints the
+   button every frame, a veil's opacity is composited. */
+.chat-cmp-send.chat-cmp-mic.is-recording::after {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  animation: var(--dc-motion-status-name, chat-cmp-mic-pulse) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-cmp-mic-pulse {
-  0%, 100% { filter: brightness(1); }
-  50% { filter: brightness(1.28); }
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.22; }
 }
 /* Motion is decoration here — the fill already says "recording". */
 @media (prefers-reduced-motion: reduce) {
-  .chat-cmp-send.chat-cmp-mic.is-recording { animation: none; }
+  .chat-cmp-send.chat-cmp-mic.is-recording::after { animation: none; }
 }
 
 /* A refused or failed take says so in the row. A take that was rejected client-side looks
@@ -687,10 +700,10 @@
   height: 18px;
   overflow: hidden;
 }
-.chat-cmp-modetrigger-face .smascot,
-.chat-cmp-modetrigger-face .smascot * { animation-play-state: paused; }
-.chat-cmp-modetrigger:hover .chat-cmp-modetrigger-face .smascot,
-.chat-cmp-modetrigger:hover .chat-cmp-modetrigger-face .smascot * { animation-play-state: running; }
+/* The face holds still until its row is pointed at: a local pause through the motion contract's
+   play variable, restored with `inherit` (so a hidden window still pauses it). */
+.chat-cmp-modetrigger-face .smascot { --dc-motion-play: paused; }
+.chat-cmp-modetrigger:hover .chat-cmp-modetrigger-face .smascot { --dc-motion-play: inherit; }
 .chat-cmp-modetrigger .chat-cmp-modeltrigger-model { color: var(--color-text); }
 .chat-cmp-modetrigger-version {
   font-family: var(--font-mono);
@@ -712,13 +725,15 @@
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: 0 0 0 1.5px var(--color-accent);
+  box-shadow: 0 0 0 1.5px var(--color-accent), 0 0 0 5px color-mix(in srgb, var(--color-accent) 18%, transparent);
   pointer-events: none;
-  animation: chat-cmp-modetrigger-breathe 2.4s ease-in-out infinite;
+  opacity: 0.8;
+  animation: var(--dc-motion-ambient-name, chat-cmp-modetrigger-breathe) 2.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-cmp-modetrigger-breathe {
-  0%, 100% { opacity: 0.35; box-shadow: 0 0 0 1.5px var(--color-accent); }
-  50% { opacity: 1; box-shadow: 0 0 0 1.5px var(--color-accent), 0 0 0 5px color-mix(in srgb, var(--color-accent) 18%, transparent); }
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-cmp-modetrigger.is-unseen::after { animation: none; opacity: 0.8; }
@@ -996,12 +1011,9 @@
   height: 24px;
   overflow: hidden;
 }
-.chat-cmp-pickrow-face .smascot,
-.chat-cmp-pickrow-face .smascot * { animation-play-state: paused; }
+.chat-cmp-pickrow-face .smascot { --dc-motion-play: paused; }
 .chat-cmp-pickrow:hover .chat-cmp-pickrow-face .smascot,
-.chat-cmp-pickrow:hover .chat-cmp-pickrow-face .smascot *,
-.chat-cmp-pickrow.is-active .chat-cmp-pickrow-face .smascot,
-.chat-cmp-pickrow.is-active .chat-cmp-pickrow-face .smascot * { animation-play-state: running; }
+.chat-cmp-pickrow.is-active .chat-cmp-pickrow-face .smascot { --dc-motion-play: inherit; }
 
 .chat-cmp-pickrow-body {
   display: flex;

@@ -20,13 +20,14 @@
  * by what came back on stdout, then by the cache's own age and `accountUuid`.
  */
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { probeAccountForDecision, probeAccountUsage, RELOGIN_RECHECK_DELAY_MS, resetSharedProbes, SHARED_PROBE_TTL_MS, USAGE_PROBE_TIMEOUT_MS, type ProbeRun } from '../../src/lib/claude-usage-probe.js';
 import { sandboxDirFor, writeClaudeAccounts, type ClaudeAccount } from '../../src/lib/claude-accounts.js';
 import { SHARED_SANDBOX_ENTRIES } from '../../src/lib/claude-account-sandbox.js';
 import type { ClaudeAuthStatus } from '../../src/lib/claude-auth.js';
+import { claudeRejectionsFilePath, recordAccountRejection } from '../../src/lib/claude-limit-rejections.js';
 
 const HOME = mkdtempSync(join(tmpdir(), 'dc-probe-'));
 const REAL_HOME = process.env.HOME;
@@ -188,6 +189,61 @@ describe('ok — the LIVE REPORT is believed first, whatever the cache did', () 
     if (res.status === 'ok') {
       expect(res.limits.limits.find((l) => l.key === 'session')?.lockedReason).toBe('weekly_limit_reached');
     }
+  });
+});
+
+// 2026-10-18: a weekly refusal stood until its stated reset while the account's week had been
+// reset early. The cache path lives in `readAccountRejections`; a live report is the one reading
+// the CLI may not have written back yet, so the probe hands it over itself.
+describe('a live report can end a remembered refusal', () => {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const onTheHour = (ms: number) => { const d = new Date(ms); d.setUTCMinutes(0, 0, 0); return d.getTime(); };
+  const WEEK_RESET = onTheHour(Date.now() + 2 * 86_400_000);
+  const SESSION_RESET = onTheHour(Date.now() + 3 * 3_600_000);
+  const when = (ms: number) => {
+    const d = new Date(ms);
+    const h = d.getUTCHours();
+    return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()} at ${h % 12 || 12}${h < 12 ? 'am' : 'pm'} (UTC)`;
+  };
+  const report = (weekPercent: number) => [
+    `Current session: 3% used · resets ${when(SESSION_RESET)}`,
+    `Current week (all models): ${weekPercent}% used · resets ${when(WEEK_RESET)}`,
+  ].join('\n');
+
+  const refuse = () => recordAccountRejection(
+    registered.id, { window: 'weekly', resetsAtMs: WEEK_RESET, via: 'quotaLimits' }, HOME, Date.now() - 10 * 60_000);
+  /** Straight off the file: `readAccountRejections` would also judge the cache. */
+  const stillRefused = () => existsSync(claudeRejectionsFilePath(HOME))
+    && registered.id in (JSON.parse(readFileSync(claudeRejectionsFilePath(HOME), 'utf-8')) as { rejected: object }).rejected;
+  const probe = (weekPercent: number) => probeAccountUsage(SANDBOX, {
+    home: HOME,
+    authStatus: noJudge as never,
+    runProbe: async () => ({ timedOut: false, stdout: envelope(report(weekPercent)) }),
+  });
+
+  beforeEach(() => { rmSync(claudeRejectionsFilePath(HOME), { force: true }); });
+
+  it('room in the refused week ends it', async () => {
+    refuse();
+    writeSandboxConfig({ oauthAccount: { accountUuid: ACCOUNT_UUID } });
+    expect((await probe(0)).status).toBe('ok');
+    expect(stillRefused()).toBe(false);
+  });
+
+  it('a week still near full leaves it', async () => {
+    refuse();
+    writeSandboxConfig({ oauthAccount: { accountUuid: ACCOUNT_UUID } });
+    expect((await probe(96)).status).toBe('ok');
+    expect(stillRefused()).toBe(true);
+  });
+
+  it('a directory signed in as someone else never ends it, even with no uuid in the register', async () => {
+    // The probe's own identity check needs a registered uuid; this one has only the email.
+    writeClaudeAccounts([{ ...registered, accountUuid: '' }], HOME);
+    refuse();
+    writeSandboxConfig({ oauthAccount: { accountUuid: 'uuid-x', emailAddress: 'someone-else@example.com' } });
+    expect((await probe(0)).status).toBe('ok');
+    expect(stillRefused()).toBe(true);
   });
 });
 

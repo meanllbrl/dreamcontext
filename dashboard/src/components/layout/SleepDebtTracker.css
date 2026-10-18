@@ -104,7 +104,8 @@ button.sleep-tracker[aria-expanded='true'] {
 
 /* "Must sleep" earns a gentle pulse so an overdue consolidation nags the eye. */
 .sleep-tracker--must_sleep .sleep-tracker-fill {
-  animation: sleep-tracker-pulse 1.8s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, sleep-tracker-pulse) 1.8s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes sleep-tracker-pulse {
@@ -128,7 +129,8 @@ button.sleep-tracker--sleeping[aria-expanded='true'] {
 }
 .sleep-tracker--sleeping .sleep-tracker-fill {
   --fill: var(--color-accent, #7b68ee);
-  animation: sleep-tracker-breathe 2.4s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, sleep-tracker-breathe) 2.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* The drifting "z z z" — each z rises and fades on a stagger, like sleep-comic zees. */
@@ -141,7 +143,8 @@ button.sleep-tracker--sleeping[aria-expanded='true'] {
   color: var(--color-accent, #7b68ee);
 }
 .sleep-tracker-zzz span {
-  animation: sleep-tracker-zzz 1.6s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, sleep-tracker-zzz) 1.6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .sleep-tracker-zzz span:nth-child(1) { animation-delay: 0s; font-size: 0.78em; }
 .sleep-tracker-zzz span:nth-child(2) { animation-delay: 0.22s; font-size: 0.9em; }
@@ -176,7 +179,8 @@ button.sleep-tracker--waiting[aria-expanded='true'] {
 .sleep-tracker--waiting .sleep-tracker-fill {
   --fill: var(--color-accent, #7b68ee);
   width: 100% !important;
-  animation: sleep-tracker-breathe 2s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, sleep-tracker-breathe) 2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* The drifting "· · ·" — a low-key "working on it" pulse while sleep boots. */
@@ -189,7 +193,8 @@ button.sleep-tracker--waiting[aria-expanded='true'] {
   color: var(--color-accent, #7b68ee);
 }
 .sleep-tracker-wait-dots span {
-  animation: sleep-tracker-wait-dots 1.4s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, sleep-tracker-wait-dots) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .sleep-tracker-wait-dots span:nth-child(2) { animation-delay: 0.2s; }
 .sleep-tracker-wait-dots span:nth-child(3) { animation-delay: 0.4s; }

@@ -508,3 +508,16 @@
 .settings-field-hint--warn {
   color: var(--color-warning);
 }
+
+/* "Couldn't load settings — Retry": above the agent controls, which keep working. */
+.settings-load-failed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+
+/* Light mode's Auto says why it is on. */
+.settings-light-reason {
+  white-space: nowrap;
+}

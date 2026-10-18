@@ -126,6 +126,7 @@ vi.mock('../../src/cli/commands/sleep.js', async (importOriginal) => {
 
 const {
   startChatSession, assistantAllowedTools, assistantSettingArgs, sharesUserMcp, recallEnvFor, spawnEffortFor, notifyAssistantAutonomy,
+  chatDeniedToolArgs,
 } = await import('../../src/server/routes/agent-chat.js');
 const { registerChat, isDelegatedConversation, GONE_TTL_MS, _resetChatRegistry } = await import(
   '../../src/lib/assistant/chat-registry.js'
@@ -215,17 +216,28 @@ afterEach(() => {
 // ─── --allowedTools ─────────────────────────────────────────────────────────────────
 
 describe('assistantAllowedTools', () => {
-  it('pre-approves the assistant verbs under auto only', () => {
+  const READS = 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*)';
+  const expected = { auto: 'Bash(dreamcontext assistant:*)', ask: READS, bypass: null } as const;
+
+  it('pre-approves every assistant verb under auto, only the three reads under ask, nothing under bypass', () => {
     expect(assistantAllowedTools('auto')).toEqual(['--allowedTools', 'Bash(dreamcontext assistant:*)']);
-    expect(assistantAllowedTools('ask')).toEqual([]);
+    expect(assistantAllowedTools('ask')).toEqual(['--allowedTools', READS]);
     expect(assistantAllowedTools('bypass')).toEqual([]);
   });
 
+  it('under ask, no verb that writes, sends or drives a window is pre-approved', () => {
+    const ask = assistantAllowedTools('ask')[1];
+    for (const verb of ['send', 'answer', 'broadcast', 'chat', 'close', 'open', 'agent', 'look', 'notify', 'focus', 'tile']) {
+      expect(ask).not.toContain(`assistant ${verb}`);
+    }
+    expect(ask).not.toContain('assistant:*');
+  });
+
   for (const autonomy of ['auto', 'ask', 'bypass'] as const) {
-    it(`the __assistant__ spawn under ${autonomy} ${autonomy === 'auto' ? 'carries' : 'carries no'} --allowedTools`, () => {
+    it(`the __assistant__ spawn under ${autonomy} carries ${expected[autonomy] ?? 'no --allowedTools'}`, () => {
       makeAssistantVault(autonomy);
       const { child } = spawnChat({ mode: 'assistant' });
-      expect(flagValue(child, '--allowedTools')).toBe(autonomy === 'auto' ? 'Bash(dreamcontext assistant:*)' : null);
+      expect(flagValue(child, '--allowedTools')).toBe(expected[autonomy]);
     });
   }
 
@@ -239,6 +251,61 @@ describe('assistantAllowedTools', () => {
         }
       }
     }
+  });
+});
+
+// ─── --disallowedTools: no native plan mode in Chat ─────────────────────────────────
+
+describe('chatDeniedToolArgs (2026-10-17: "planla" in Basic opened native plan mode)', () => {
+  it('denies EnterPlanMode and ExitPlanMode unless the card is scoped', () => {
+    expect(chatDeniedToolArgs(false)).toEqual(['--disallowedTools', 'EnterPlanMode,ExitPlanMode']);
+    expect(chatDeniedToolArgs(true)).toEqual([]);
+  });
+
+  for (const mode of ['basic', 'plan', 'assistant'] as const) {
+    it(`the ${mode} spawn carries --disallowedTools EnterPlanMode,ExitPlanMode exactly once`, () => {
+      if (mode === 'assistant') makeAssistantVault('auto');
+      const { child } = spawnChat({ mode });
+      expect(flagValue(child, '--disallowedTools')).toBe('EnterPlanMode,ExitPlanMode');
+      expect(argvOf(child).filter((a) => a === '--disallowedTools')).toHaveLength(1);
+    });
+  }
+
+  it('the variadic flag swallows nothing: the value is followed by a flag or ends the argv', () => {
+    makeAssistantVault('auto');
+    for (const mode of ['basic', 'plan', 'assistant'] as const) {
+      const a = argvOf(spawnChat({ mode }).child);
+      const next = a[a.indexOf('--disallowedTools') + 2];
+      expect(next === undefined || next.startsWith('--')).toBe(true);
+    }
+  });
+
+  it('a real card spawn: an attached card is denied, a scoped home-board card carries only its board scope', async () => {
+    const { createAutomation } = await import('../../src/lib/automations/store.js');
+    const { approveAutomation } = await import('../../src/lib/automations/registry.js');
+    const { createWhiteboard } = await import('../../src/lib/whiteboards/store.js');
+    const ctx = join(projectRoot, '_dream_context');
+    const { slug: board } = createWhiteboard(ctx, 'Northwind Ops');
+    const cardSpawn = (agent: string, whiteboard: string | null) => {
+      const m = createAutomation(ctx, {
+        slug: agent, title: agent, mode: 'call', prompt: 'Keep the board tidy.', review: 'agent', learning: false,
+        ...(whiteboard ? { whiteboard } : {}),
+      });
+      approveAutomation(projectRoot, m, new Date(), fakeHome);
+      const ws = new FakeWs();
+      startChatSession(ws as unknown as import('ws').WebSocket, projectRoot, {
+        bypass: false, sessionId: '', resumeId: '', model: '', effort: '', mode: 'basic', account: '',
+        initialPrompt: '', deferPrompt: false, vault: 'demo-vault', card: { agent, board },
+      });
+      return argvOf(spawned[spawned.length - 1]);
+    };
+    const attached = cardSpawn('attached-pilot', null);
+    expect(attached.filter((a) => a === '--disallowedTools')).toHaveLength(1);
+    expect(attached[attached.indexOf('--disallowedTools') + 1]).toBe('EnterPlanMode,ExitPlanMode');
+    const scoped = cardSpawn('home-pilot', board);
+    expect(scoped.filter((a) => a === '--disallowedTools')).toHaveLength(1);
+    expect(scoped[scoped.indexOf('--disallowedTools') + 1]).toBe('Agent');
+    expect(scoped.join(' ')).not.toContain('EnterPlanMode');
   });
 });
 
@@ -276,7 +343,7 @@ describe('the Assistant carries its own settings, not the owner\'s global ones',
 // ─── Autonomy change respawns a live Assistant ──────────────────────────────────────
 
 describe('autonomy auto → ask while the Assistant lives', () => {
-  it('respawns it in place with --resume and without --allowedTools, before the next turn', async () => {
+  it('respawns it in place with --resume and only the read verbs pre-approved, before the next turn', async () => {
     makeAssistantVault('auto', { conversationId: CONV });
     state.transcripts.add(CONV);
     const { ws, child: first } = spawnChat({ mode: 'assistant', resumeId: CONV });
@@ -299,7 +366,7 @@ describe('autonomy auto → ask while the Assistant lives', () => {
     first.emit('close', 0);
     expect(spawned).toHaveLength(2);
     const second = spawned[1];
-    expect(argvOf(second)).not.toContain('--allowedTools');
+    expect(flagValue(second, '--allowedTools')).toBe(assistantAllowedTools('ask')[1]);
     expect(flagValue(second, '--permission-mode')).toBe('default');
     expect(flagValue(second, '--resume')).toBe(CONV);
     expect(ws.close).not.toHaveBeenCalled();

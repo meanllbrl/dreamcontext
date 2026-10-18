@@ -8,6 +8,7 @@ import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
+import { checkCloseGate } from '../../lib/sleep-eval/report.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
 import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
 import {
@@ -628,6 +629,24 @@ function blockOnOpenChildren(slug: string, newStatus: string, defs: StatusDef[])
   const block = parentCloseBlock(loadFamily(getStateDir()), defs, slug, newStatus);
   if (!block) return false;
   error(block);
+  process.exitCode = 1;
+  return true;
+}
+
+/**
+ * The sleep-eval close gate: a sub-task of a parent gated by the eval baseline may not move
+ * to a done-kind status until a run made for it scores no lower than the baseline (minus the
+ * set's tolerance). Prints why and returns true when the close must be refused.
+ */
+async function blockOnSleepEvalGate(backend: TaskBackend, root: string, slug: string): Promise<boolean> {
+  const task = await backend.get(slug);
+  const gate = checkCloseGate(root, slug, task?.parent_task ?? null);
+  if (!gate.applies) return false;
+  if (gate.ok) {
+    info(gate.message);
+    return false;
+  }
+  error(gate.message);
   process.exitCode = 1;
   return true;
 }
@@ -2114,6 +2133,10 @@ export function registerTasksCommand(program: Command): void {
       if (blockOnMissingRequired('complete', slug, current?.custom_fields, ensureContextRoot(),
           (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
       if (blockOnOpenChildren(slug, 'completed', statusSet())) return;
+      // The sleep-eval gate runs BEFORE the evidence gate: `--force` journals its
+      // "forced" entry as it passes, so a later refusal would leave that entry
+      // behind for a close that never happened.
+      if (await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
       if (await blockOnEvidence(backend, slug, 'completed', statusSet(), opts)) return;
 
       await backend.complete(slug, summary);
@@ -2175,6 +2198,9 @@ export function registerTasksCommand(program: Command): void {
         const cur = await backend.get(slug);
         if (blockOnMissingRequired(isDone(defs, newStatus) ? 'complete' : `move to ${newStatus}`, slug, cur?.custom_fields, ensureContextRoot(),
             (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
+        // Sleep-eval gate before the evidence gate (see `complete`): a forced pass
+        // journals as it goes, so nothing that can still refuse may come after it.
+        if (isDone(defs, newStatus) && await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
         if (await blockOnEvidence(backend, slug, newStatus, defs, opts)) return;
       }
 
@@ -2323,6 +2349,7 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
       if (blockOnOpenChildren(slug, DONE_KEY, defs)) return;
+      if (await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
       const note = opts.note?.trim();
       await backend.addJournal(slug, { kind: 'approval', actor: actorOf(), body: `- approved${note ? `: ${note}` : ''}` });
       const now = today();

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import { phoneAllows } from '../lib/phoneSurface';
+import { pollMs } from '../lib/windowActivity';
 import type { Capabilities } from '../components/sleepy/agentSession';
 import {
   FALLBACK_MODEL_CONFIG, type ModelConfig, type SessionStats, type UsageLimitsResponse,
@@ -17,6 +18,10 @@ import type { CouncilLiveResponse } from '../lib/councilLive';
  * polling, but session-stats/goal-live/council-live back a background chip's live badge —
  * they must keep polling while `enabled`, independent of whether the project is the
  * foreground chip. Do not drop their explicit `refetchInterval` in favor of the default.
+ *
+ * Each interval is a FUNCTION through `pollMs` (lib/windowActivity.ts), so it is re-read on
+ * every tick: ×4 slower while the window is visible but unfocused, ×2 in Light mode, and
+ * React Query skips it while the window is hidden.
  */
 
 /**
@@ -31,7 +36,7 @@ export function useAgentCapabilities() {
     queryKey: ['agent-capabilities'],
     queryFn: () => api.get<Capabilities>('/agent/capabilities'),
     staleTime: 30_000,
-    refetchInterval: 30_000,
+    refetchInterval: () => pollMs(30_000),
     retry: false,
   });
 }
@@ -65,7 +70,7 @@ export function useAgentModelConfig() {
     queryKey: ['agent-model-config'],
     queryFn: () => api.get<ModelConfig>('/agent/model-config'),
     staleTime: 10_000,
-    refetchInterval: 30_000,
+    refetchInterval: () => pollMs(30_000),
     refetchOnWindowFocus: true,
     retry: false,
     placeholderData: FALLBACK_MODEL_CONFIG,
@@ -86,7 +91,7 @@ export function useAgentSessionStats(claudeId: string | undefined, enabled: bool
     queryKey: ['agent-session-stats', claudeId],
     queryFn: () => api.get<SessionStats>(`/agent/session-stats?claudeId=${encodeURIComponent(claudeId!)}`),
     enabled: enabled && !!claudeId,
-    refetchInterval: enabled ? 5_000 : false,
+    refetchInterval: enabled ? () => pollMs(5_000) : false,
     staleTime: 4_000,
     retry: false,
     placeholderData: EMPTY_STATS,
@@ -122,7 +127,7 @@ export function useUsageLimits(enabled: boolean, accountId = '') {
     queryKey: ['agent-usage-limits', accountId],
     queryFn: () => api.get<UsageLimitsResponse>(path),
     enabled,
-    refetchInterval: enabled ? 60_000 : false,
+    refetchInterval: enabled ? () => pollMs(60_000) : false,
     staleTime: 55_000,
     retry: false,
     placeholderData: NO_USAGE_LIMITS,
@@ -195,7 +200,7 @@ export function useClaudeAccounts(enabled: boolean) {
     enabled,
     // Every chat turn writes its account's usage to disk (claude-usage-meter.ts) and the route
     // only reads files, so a short interval is what keeps the panel as current as the chats.
-    refetchInterval: enabled ? 30_000 : false,
+    refetchInterval: enabled ? () => pollMs(30_000) : false,
     staleTime: 20_000,
     retry: false,
     placeholderData: NO_ACCOUNTS,
@@ -283,7 +288,7 @@ export function useTaskProgress(slug: string | null, enabled: boolean) {
     queryKey: ['agent-task-progress', slug],
     queryFn: () => api.get<TaskProgress>(`/agent/task-progress?slug=${encodeURIComponent(slug!)}`),
     enabled: enabled && !!slug,
-    refetchInterval: enabled && slug ? 4_000 : false,
+    refetchInterval: enabled && slug ? () => pollMs(4_000) : false,
     staleTime: 3_000,
     retry: false,
   });
@@ -315,7 +320,7 @@ export function useSessionFacts(enabled: boolean, sessionId: string | null) {
     queryFn: () => api.get<SessionFacts>(
       sessionId ? `/agent/session-facts?session=${encodeURIComponent(sessionId)}` : '/agent/session-facts'),
     enabled,
-    refetchInterval: enabled ? 15_000 : false,
+    refetchInterval: enabled ? () => pollMs(15_000) : false,
     staleTime: 12_000,
     retry: false,
     placeholderData: UNKNOWN_SESSION_FACTS,
@@ -331,14 +336,19 @@ const GOAL_LIVE_INACTIVE: GoalLiveResponse = { active: false };
  * panel only ever renders above the orchestrator's own composer. Cheap poll — the
  * server just reads one small JSON file.
  */
-export function useAgentGoalLive(claudeId: string | undefined, enabled: boolean) {
+export function useAgentGoalLive(claudeId: string | undefined, enabled: boolean, busy = false) {
   const api = useApi();
   return useQuery({
     queryKey: ['agent-goal-live', claudeId],
     queryFn: () => api.get<GoalLiveResponse>(`/agent/goal-live?claudeId=${encodeURIComponent(claudeId!)}`),
     // Not served on the phone (phoneSurface.ts): no poll there at all.
     enabled: enabled && !!claudeId && phoneAllows('GET', '/api/agent/goal-live'),
-    refetchInterval: enabled && phoneAllows('GET', '/api/agent/goal-live') ? 2_000 : false,
+    // 2 s while a run is live, and while the pane's own turn is running (a run starts from a
+    // turn here and stamps its file partway in: a 15 s tick would show it late). An idle pane
+    // checks at the slow cadence. Shared key: one busy observer speeds the whole query.
+    refetchInterval: enabled && phoneAllows('GET', '/api/agent/goal-live')
+      ? (q) => pollMs(q.state.data?.active || busy ? 2_000 : 15_000)
+      : false,
     staleTime: 1_500,
     retry: false,
     placeholderData: GOAL_LIVE_INACTIVE,
@@ -368,8 +378,8 @@ export function useHeadlessTeammates(claudeId: string | undefined, launched: rea
     ),
     enabled: !!claudeId,
     refetchInterval: (q) => {
-      if (q.state.data?.teammates?.some((t) => t.status === 'running')) return 3_000;
-      return mentioned.length ? 6_000 : 15_000;
+      if (q.state.data?.teammates?.some((t) => t.status === 'running')) return pollMs(3_000);
+      return pollMs(mentioned.length ? 6_000 : 15_000);
     },
     staleTime: 2_000,
     retry: false,
@@ -386,14 +396,17 @@ const COUNCIL_LIVE_INACTIVE: CouncilLiveResponse = { active: false };
  * panel only renders above the orchestrator's own composer. Shared query key → the
  * panel and the dock badge dedupe into one poll per conversation.
  */
-export function useAgentCouncilLive(claudeId: string | undefined, enabled: boolean) {
+export function useAgentCouncilLive(claudeId: string | undefined, enabled: boolean, busy = false) {
   const api = useApi();
   return useQuery({
     queryKey: ['agent-council-live', claudeId],
     queryFn: () => api.get<CouncilLiveResponse>(`/agent/council-live?claudeId=${encodeURIComponent(claudeId!)}`),
     // Not served on the phone (phoneSurface.ts): no poll there at all.
     enabled: enabled && !!claudeId && phoneAllows('GET', '/api/agent/council-live'),
-    refetchInterval: enabled && phoneAllows('GET', '/api/agent/council-live') ? 2_000 : false,
+    // 2 s while a debate is live or the pane's turn is running (see useAgentGoalLive).
+    refetchInterval: enabled && phoneAllows('GET', '/api/agent/council-live')
+      ? (q) => pollMs(q.state.data?.active || busy ? 2_000 : 15_000)
+      : false,
     staleTime: 1_500,
     retry: false,
     placeholderData: COUNCIL_LIVE_INACTIVE,

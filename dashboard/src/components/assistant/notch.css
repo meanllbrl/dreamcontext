@@ -128,16 +128,32 @@ html:has(.dc-notch) #root {
   text-align: center;
 }
 
-/* Attention: a slow pulse on the avatar, never a colour flood. */
-.dc-notch--attention .dc-notch__avatar {
-  animation: dc-notch-pulse 1.6s ease-in-out infinite;
+/* Attention: a slow pulse on the avatar, never a colour flood. The ring is a layer of its own
+   (the avatar may be an <img>, which draws no pseudo-element) that only fades, so the pulse is
+   composited; at rest (Light mode, reduced motion) the ring stands still, fully drawn.
+   A status indicator (styles/global.css motion contract). */
+.dc-notch__face {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 auto;
+  border-radius: var(--radius-full);
+}
+.dc-notch--attention .dc-notch__face::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 0 var(--space-1) var(--color-accent-soft);
+  pointer-events: none;
+  animation: var(--dc-motion-status-name, dc-notch-pulse) 1.6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes dc-notch-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 var(--color-accent-soft); }
-  50% { box-shadow: 0 0 0 var(--space-1) var(--color-accent-soft); }
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dc-notch--attention .dc-notch__avatar { animation: none; box-shadow: 0 0 0 var(--space-1) var(--color-accent-soft); }
+  .dc-notch--attention .dc-notch__face::after { animation: none; }
 }
 
 .dc-notch__panel {
@@ -278,18 +294,31 @@ html:has(.dc-notch) #root {
   height: 2px;
   border-radius: var(--radius-full);
   pointer-events: none;
+  overflow: hidden;
+}
+/* The sweep is a half-width band MOVED across the hairline (transform, composited), not a
+   background repainted every frame. At rest it sits in the middle. A status indicator. */
+.dc-notch__glow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 50%;
   background: linear-gradient(90deg,
     transparent, var(--notch-glow-1), var(--notch-glow-2), var(--notch-glow-3),
-    var(--notch-glow-4), transparent) 0 0 / 50% 100% no-repeat;
-  animation: dc-notch-loading 1.4s ease-in-out infinite;
+    var(--notch-glow-4), transparent);
+  transform: translateX(50%);
+  animation: var(--dc-motion-status-name, dc-notch-sweep) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
-@keyframes dc-notch-loading {
-  from { background-position: -100% 0; }
-  to { background-position: 200% 0; }
+@keyframes dc-notch-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(200%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dc-notch__glow { animation: none; }
+  .dc-notch__glow::before { animation: none; }
 }
 
 /* ── LISTENING (ListeningOverlay.tsx) ─────────────────────────────────────────────────────
@@ -334,11 +363,22 @@ html:has(.dc-notch) #root {
   opacity: calc(0.08 + var(--lvl) * 0.3);
   border-color: var(--color-accent-soft);
 }
-/* At rest (no sound yet) the rings still breathe, so an open mic never looks like a dead one. */
-.dc-listen[data-phase='recording'] .dc-listen__ring--1 { animation: dc-listen-breathe 1.8s ease-in-out infinite; }
+/* At rest (no sound yet) the rings still breathe, so an open mic never looks like a dead one.
+   The breath is a halo layer that fades and swells (opacity + transform; the ring's own
+   opacity and scale follow the voice). Still, the halo stands drawn. A status indicator. */
+.dc-listen[data-phase='recording'] .dc-listen__ring--1::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 0 6px var(--color-accent-soft);
+  pointer-events: none;
+  animation: var(--dc-motion-status-name, dc-listen-breathe) 1.8s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
 @keyframes dc-listen-breathe {
-  0%, 100% { box-shadow: 0 0 0 0 var(--color-accent-soft); }
-  50% { box-shadow: 0 0 0 6px var(--color-accent-soft); }
+  0%, 100% { opacity: 0; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1); }
 }
 .dc-listen__avatar {
   position: relative;
@@ -369,7 +409,8 @@ html:has(.dc-notch) #root {
   border-color: var(--color-accent) transparent var(--color-accent) transparent;
   opacity: 0.8;
   transform: scale(0.7);
-  animation: dc-listen-spin 1.1s linear infinite;
+  animation: var(--dc-motion-status-name, dc-listen-spin) 1.1s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .dc-listen[data-phase='transcribing'] .dc-listen__ring--2,
 .dc-listen[data-phase='transcribing'] .dc-listen__ring--3 { opacity: 0.12; }
@@ -379,7 +420,7 @@ html:has(.dc-notch) #root {
 .dc-listen[data-phase='too-short'] .dc-listen__ring { border-color: var(--color-warning); opacity: 0.35; transform: scale(0.7); }
 @media (prefers-reduced-motion: reduce) {
   .dc-listen__ring { transition: none; }
-  .dc-listen[data-phase='recording'] .dc-listen__ring--1,
+  .dc-listen[data-phase='recording'] .dc-listen__ring--1::after,
   .dc-listen[data-phase='transcribing'] .dc-listen__ring--1 { animation: none; }
 }
 
@@ -491,7 +532,8 @@ html:has(.dc-notch) #root {
   border-radius: var(--radius-full);
   border: 1.5px solid var(--color-success);
   border-right-color: transparent;
-  animation: dc-agent-spin 1.2s linear infinite;
+  animation: var(--dc-motion-status-name, dc-agent-spin) 1.2s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes dc-agent-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .dc-agent-avatar.is-working::after { animation: none; border-right-color: var(--color-success); } }
@@ -605,7 +647,8 @@ html:has(.dc-notch) #root {
 .dc-glance__row[data-activity='working'] .dc-glance__dot,
 .dc-glance__row[data-activity='starting'] .dc-glance__dot {
   background: var(--color-success);
-  animation: dc-glance-breathe 1.6s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, dc-glance-breathe) 1.6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .dc-glance__row[data-activity='asking'] .dc-glance__dot { background: var(--color-warning); }
 @keyframes dc-glance-breathe { 50% { opacity: 0.35; } }
@@ -662,12 +705,22 @@ html:has(.dc-notch) #root {
   content: '';
   position: absolute;
   left: var(--space-6);
-  right: var(--space-6);
   bottom: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--notch-glow-2), var(--notch-glow-3), transparent) 0 0 / 40% 100% no-repeat;
-  animation: dc-notch-loading 1.8s ease-in-out infinite;
   pointer-events: none;
+  /* A band two fifths of the line (the pill less its insets) wide, MOVED along it
+     (composited), fading in at the start and out at the end as the repainted background sweep
+     used to enter and leave. At rest it sits in the middle. A status indicator. */
+  width: calc((100% - 2 * var(--space-6)) * 0.4);
+  background: linear-gradient(90deg, transparent, var(--notch-glow-2), var(--notch-glow-3), transparent);
+  transform: translateX(75%);
+  animation: var(--dc-motion-status-name, dc-notch-busy-sweep) 1.8s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+@keyframes dc-notch-busy-sweep {
+  0% { transform: translateX(0); opacity: 0; }
+  20%, 80% { opacity: 1; }
+  100% { transform: translateX(150%); opacity: 0; }
 }
 
 /* ── THE PEEK (NotchPeek.tsx): the pill grown down by one thing ───────────────────────────── */
@@ -745,7 +798,11 @@ html:has(.dc-notch) #root {
 }
 .dc-peek__row:hover { background: var(--color-bg-secondary); }
 .dc-peek__row[data-activity='working'] .dc-glance__dot,
-.dc-peek__row[data-activity='starting'] .dc-glance__dot { background: var(--color-success); animation: dc-glance-breathe 1.6s ease-in-out infinite; }
+.dc-peek__row[data-activity='starting'] .dc-glance__dot {
+  background: var(--color-success);
+  animation: var(--dc-motion-status-name, dc-glance-breathe) 1.6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
 .dc-peek__row[data-activity='asking'] .dc-glance__dot { background: var(--color-warning); }
 .dc-peek__open { display: block; margin-left: auto; }
 
@@ -829,7 +886,11 @@ html:has(.dc-notch) #root {
 }
 .dc-handoff__phase { white-space: nowrap; color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
 .dc-handoff__ago { white-space: nowrap; color: var(--color-text-tertiary); font-size: var(--font-size-2xs); font-variant-numeric: tabular-nums; }
-.dc-handoff[data-phase='running'] .dc-glance__dot { background: var(--color-success); animation: dc-glance-breathe 1.6s ease-in-out infinite; }
+.dc-handoff[data-phase='running'] .dc-glance__dot {
+  background: var(--color-success);
+  animation: var(--dc-motion-status-name, dc-glance-breathe) 1.6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
 .dc-handoff[data-phase='waiting'] .dc-glance__dot { background: var(--color-warning); }
 .dc-handoff[data-phase='done'] .dc-glance__dot { background: var(--color-success); }
 .dc-handoff[data-phase='done'] .dc-handoff__phase { color: var(--color-success); }

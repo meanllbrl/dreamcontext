@@ -88,7 +88,8 @@
 /* Stars turn on their own clock — much slower than the sky, so depth reads as
    parallax rather than as one rigid diorama. */
 .space-stars {
-  animation: space-star-drift 900s linear infinite;
+  animation: var(--dc-motion-ambient-name, space-star-drift) 900s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes space-star-drift {
@@ -144,7 +145,8 @@
   stroke: rgba(139, 108, 246, 0.55);
   stroke-width: 1.6;
   stroke-dasharray: 5 7;
-  animation: space-flow 2.4s linear infinite;
+  animation: var(--dc-motion-ambient-name, space-flow) 2.4s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 .space-wire.is-inert {
@@ -179,9 +181,14 @@
   }
 }
 
+/* The live wire pulses rather than marching its dashes: a dash offset repaints the path every
+   frame, opacity is composited (task: the desktop app stays light on an 8GB MacBook Air). */
 @keyframes space-flow {
-  to {
-    stroke-dashoffset: -24;
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
   }
 }
 
@@ -568,7 +575,8 @@
   margin: -120px 0 0 -120px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(139, 108, 246, 0.4) 0%, rgba(139, 108, 246, 0) 68%);
-  animation: space-breathe 6s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, space-breathe) 6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
   pointer-events: none;
 }
 

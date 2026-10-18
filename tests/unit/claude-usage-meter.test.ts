@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  meterEndsRefusal, meterFrameAllowed, meterShowsRoomSince, mergeUsageReadings, readUsageMeter, readUsageMeterFrame, recordUsageMeter, usageMeterFilePath,
+  EARLY_RESET_DROP_POINTS, meterEndsRefusal, meterFrameAllowed, meterShowsRoomSince, mergeUsageReadings, readUsageMeter, readUsageMeterFrame, recordUsageMeter, usageMeterFilePath,
 } from '../../src/lib/claude-usage-meter.js';
 import { readUsageLimits, type UsageLimitsResponse } from '../../src/lib/claude-usage.js';
 
@@ -135,6 +135,31 @@ describe('the store', () => {
     // A new window (another reset) starts over.
     recordUsageMeter(sandbox, { limits: [{ key: 'session', percent: 4, resetsAt: resetsAt + 5 * 3_600_000 }], fetchedAtMs: AT + 120_000 }, home);
     expect(readUsageMeter(sandbox, home)?.limits[0]?.percent).toBe(4);
+  });
+
+  // 2026-10-18: the preferred account's week read 100% at 16:11 and 0% at 16:48, both "resets
+  // Oct 20 07:00" — reset early, same reset time. Keeping the higher number wrote it full again.
+  it('an EARLY RESET is believed: a newer reading far lower in the same window replaces the old one', () => {
+    const resetsAt = AT + 37 * 3_600_000;
+    recordUsageMeter(sandbox, { limits: [{ key: 'weekly', percent: 100, resetsAt }], fetchedAtMs: AT }, home);
+    recordUsageMeter(sandbox, { limits: [{ key: 'weekly', percent: 0, resetsAt }], fetchedAtMs: AT + 37 * 60_000 }, home);
+    expect(readUsageMeter(sandbox, home)?.limits[0]?.percent).toBe(0);
+  });
+
+  it('a drop smaller than EARLY_RESET_DROP_POINTS is still a straggler', () => {
+    const resetsAt = AT + 3_600_000;
+    recordUsageMeter(sandbox, { limits: [{ key: 'session', percent: 95, resetsAt }], fetchedAtMs: AT }, home);
+    recordUsageMeter(sandbox, {
+      limits: [{ key: 'session', percent: 95 - EARLY_RESET_DROP_POINTS + 1, resetsAt }], fetchedAtMs: AT + 60_000,
+    }, home);
+    expect(readUsageMeter(sandbox, home)?.limits[0]?.percent).toBe(95);
+  });
+
+  it('an OLDER reading never replaces a newer one, however much lower', () => {
+    const resetsAt = AT + 3_600_000;
+    recordUsageMeter(sandbox, { limits: [{ key: 'session', percent: 95, resetsAt }], fetchedAtMs: AT }, home);
+    recordUsageMeter(sandbox, { limits: [{ key: 'session', percent: 2, resetsAt }], fetchedAtMs: AT - 10_000 }, home);
+    expect(readUsageMeter(sandbox, home)?.limits[0]?.percent).toBe(95);
   });
 
   it('a corrupt file is no reading, and the next record replaces it', () => {

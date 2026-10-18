@@ -3,7 +3,7 @@ import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
 import { VaultProvider, emitInstance, useInstanceEvent, useVault } from './context/VaultContext';
 import { ProjectProvider } from './context/ProjectContext';
 import { I18nProvider } from './context/I18nContext';
-import { createInstanceQueryClient, setInstanceActive } from './lib/instanceQueryClient';
+import { createInstanceQueryClient, registerInstanceClient, setInstanceActive } from './lib/instanceQueryClient';
 import { Shell, type ShellNavigation } from './components/layout/Shell';
 import { AnnouncementsModal } from './components/layout/AnnouncementsModal';
 import { AgentSurface, PROJECT_ROLLUP_EVENT } from './components/sleepy/AgentSurface';
@@ -468,6 +468,8 @@ export function ProjectInstance({
   // closing or evicting this instance ends them (and their `claude`).
   useEffect(() => () => dropBoardAgentScratch({ vault }), [vault]);
 
+  // The window's registry reaches this client on refocus; the cleanup frees it with the tab.
+  useEffect(() => registerInstanceClient(queryClient), [queryClient]);
   // Page-data polling follows visibility. Nothing else does — see this file's header.
   useEffect(() => {
     setInstanceActive(queryClient, isActive);

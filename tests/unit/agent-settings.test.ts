@@ -32,7 +32,7 @@ import {
   coerceAgentSettings, DEFAULT_AGENT_SETTINGS,
   readChatPermissionMode, writeChatPermissionMode,
   writeAgentSettings, AGENT_SETTINGS_EVENT, onAgentSettings,
-  CHAT_PERMISSION_MODE_KEY, CHAT_PERMISSION_MODE_EVENT,
+  CHAT_PERMISSION_MODE_KEY, CHAT_PERMISSION_MODE_EVENT, resetAgentSettingsForTests,
   type AgentSettings as AgentSettingsShape,
 } from '../../dashboard/src/lib/agentSettings.js';
 import { coerceAgentSettings as coerceServerAgentSettings } from '../../src/server/routes/launcher.js';
@@ -54,6 +54,33 @@ function makeLocalStorageStub(): Storage {
 // each test below uses its OWN vault name rather than trying to reset it.
 beforeEach(() => {
   (globalThis as unknown as { localStorage: Storage }).localStorage = makeLocalStorageStub();
+  resetAgentSettingsForTests();
+});
+
+describe('lightMode (Settings → Performance → Light mode)', () => {
+  it("defaults to 'auto' on both sides", () => {
+    expect(DEFAULT_AGENT_SETTINGS.lightMode).toBe('auto');
+    expect(coerceAgentSettings({}).lightMode).toBe('auto');
+    expect(coerceServerAgentSettings({}).lightMode).toBe('auto');
+  });
+
+  it('runs one input table through BOTH coercers (lockstep): only on/off pin it', () => {
+    const table: Array<[unknown, 'auto' | 'on' | 'off']> = [
+      ['on', 'on'], ['off', 'off'], ['auto', 'auto'], ['ON', 'auto'], [true, 'auto'], [1, 'auto'], [null, 'auto'], [undefined, 'auto'], ['', 'auto'],
+    ];
+    for (const [input, want] of table) {
+      expect(coerceAgentSettings({ lightMode: input as never }).lightMode).toBe(want);
+      expect(coerceServerAgentSettings({ lightMode: input }).lightMode).toBe(want);
+    }
+  });
+
+  it('every field the dashboard carries exists on the server, with the same default', () => {
+    const server = coerceServerAgentSettings({});
+    for (const [k, v] of Object.entries(DEFAULT_AGENT_SETTINGS)) {
+      expect(server, k).toHaveProperty(k);
+      expect((server as Record<string, unknown>)[k], k).toEqual(v);
+    }
+  });
 });
 
 describe('coerceAgentSettings renderer', () => {

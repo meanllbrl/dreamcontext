@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { pollMs } from '../lib/windowActivity';
 
 /** Mirrors EmbedModelState in src/lib/embeddings/embedder.ts. */
 export type EmbedModelState = 'not_downloaded' | 'downloading' | 'ready' | 'error';
@@ -41,7 +42,7 @@ export function useEmbeddingModelStatus(enabled: boolean) {
     enabled,
     retry: false,
     refetchInterval: (query) =>
-      query.state.data?.state === 'downloading' ? 1_500 : false,
+      query.state.data?.state === 'downloading' ? pollMs(1_500) : false,
   });
 }
 
@@ -86,7 +87,7 @@ export function useEmbeddingIndexStatus(enabled: boolean) {
     enabled,
     retry: false,
     refetchInterval: (query) =>
-      query.state.data?.state === 'building' ? 1_500 : false,
+      query.state.data?.state === 'building' ? pollMs(1_500) : false,
   });
 }
 

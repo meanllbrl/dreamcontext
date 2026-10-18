@@ -161,7 +161,8 @@
   background: radial-gradient(circle at 50% 45%, var(--color-vivid-purple), transparent 62%);
   filter: blur(38px);
   opacity: 0.32;
-  animation: about-breathe 6s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, about-breathe) 6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .about-hero-video {
   position: relative;

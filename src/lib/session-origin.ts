@@ -88,6 +88,21 @@ export function prepareDashboardEnv(env: NodeJS.ProcessEnv, serverPid: number): 
   env.DREAMCONTEXT_SERVER_PID = String(serverPid);
 }
 
+/**
+ * The env a PINNED agent pane (Chat or the embedded terminal) exports to its `claude`: the tab's
+ * stable roster id, and — always with it — the server that spawned it. The ONLY place a tab id
+ * is minted into an env. One direction is an invariant (tests/unit/spawn-env-invariant.test.ts):
+ * a process carrying DREAMCONTEXT_TAB_SESSION also carries DREAMCONTEXT_SERVER_PID, because the
+ * orphan sweep (orphan-processes.ts) attributes a leftover process to a tab only through both.
+ * The reverse is legal: {@link prepareDashboardEnv} stamps the server pid with no tab id.
+ */
+export function tabSessionEnv(pinId: string, serverPid: number = process.pid): {
+  DREAMCONTEXT_TAB_SESSION: string;
+  DREAMCONTEXT_SERVER_PID: string;
+} {
+  return { DREAMCONTEXT_TAB_SESSION: pinId, DREAMCONTEXT_SERVER_PID: String(serverPid) };
+}
+
 export interface PsRow {
   ppid: number;
   command: string;

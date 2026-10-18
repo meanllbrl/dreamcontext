@@ -19,16 +19,26 @@
  * between list and chat; a word only a closed chat's message holds is found under Kapalı with the
  * hit marked, the chips filter, an open chat's loaded text is searched too, a closed hit resumes.
  *
- * THE CHAT STACK (AC19-AC20): three open chats (one asking, one working on the Mac through a laptop
- * chat socket, one idle): rows above the focused chat, waiting first, a tap swaps (animated, none
- * under reduced motion), a Mac row updates live and is adopted on tap, three rows keep the
- * focused chat's economy; at 390x844 and 375x667.
+ * TWO SCREENS (owner, 2026-10-17, replacing AC19-AC20's stack): three open chats (one asking, one
+ * working on the Mac through a laptop chat socket, one idle). A chat is on screen alone, no band of
+ * other chats above it; a list tap moves forward and ‹ / the back gesture move back (animated,
+ * none under reduced motion); the open chats are list rows, waiting first, a Mac row updates live
+ * and is adopted on tap; at 390x844 and 375x667.
  *
  * HONEST LIMIT — Chromium's phone emulation, not an iPhone: safe-area insets and the keyboard
  * are not exercised (AC15 is the owner's iPhone check).
  *
- * `--local`: the same checks on the MAIN listener (no tunnel, no Mac mode start): the layout
- * keys off the viewport, so this is the fast loop while styling. The evidence run is without it.
+ * BAG MODE (the laptop panel's "Bag mode" switch, under the project checklist): the row, its
+ * hint, on by default, toggling, sizes and a screenshot at 1440 in every run, and at 390 px when
+ * the Hands-free button renders there. Start → running → Return → reload (Start sends the
+ * choice, the running panel and status say Normal mode, the reload shows the remembered choice
+ * and prefs.json holds it) runs only under `--local`: a full run starts no second quick tunnel.
+ *
+ * `--local`: the same checks on the MAIN listener (no tunnel, no Mac mode start from the phone
+ * part): the layout keys off the viewport, so this is the fast loop while styling. The server
+ * also gets DREAMCONTEXT_MAC_VERIFY_FAKE_TUNNEL=1 (scratch HOME only): the panel's own Start
+ * runs over a loopback stand-in for cloudflared, so the running state needs no Cloudflare
+ * tunnel. It is the evidence run for Bag mode; the phone evidence run is without it.
  *
  * FAILURE POLICY — collect, don't fail fast; exit 0 iff every check passed.
  * Screenshots: tmp/verify-handsfree-mobile/<size>-<page>.png
@@ -38,7 +48,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
 import dns from 'node:dns';
 import net from 'node:net';
-import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,7 +101,7 @@ process.stdin.on('data', (c) => {
     const text = ((o.message && o.message.content) || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
     if (!inited) { inited = true; out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] }); }
     row({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
-    // AC19's stack needs a chat waiting for you and one working: ASK raises a question card and
+    // The two-screen check needs a chat waiting for you and one working: ASK raises a question card and
     // waits; WORK <s> says one line and finishes after <s> seconds.
     if (text === 'ASK') {
       const said = { role: 'assistant', content: [{ type: 'text', text: '14 webhooks found, none fired in 90 days.' }] };
@@ -169,7 +179,11 @@ async function startServer(port) {
   const PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath), join(HOME, '.local', 'bin')].join(':');
   const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], {
     cwd: PROJ,
-    env: { ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_MAC_VERIFY_POWER_LOG: POWER_LOG },
+    env: {
+      ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_MAC_VERIFY_POWER_LOG: POWER_LOG,
+      // --local: Mac mode's Start runs over a loopback stand-in, never a Cloudflare tunnel.
+      ...(LOCAL ? { DREAMCONTEXT_MAC_VERIFY_FAKE_TUNNEL: '1' } : {}),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   srv.stderr.on('data', (d) => { const s = String(d); if (/error/i.test(s)) process.stderr.write(`[server] ${s}`); });
@@ -223,7 +237,11 @@ function watch(page, tag) {
   const errors = []; const forbidden = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`${tag}: ${m.text().slice(0, 200)}`); });
   page.on('pageerror', (e) => errors.push(`${tag} pageerror: ${String(e).slice(0, 200)}`));
-  page.on('response', (r) => { if (r.status() === 403) forbidden.push(`${tag}: ${r.request().method()} ${r.url().replace(/^https?:\/\/[^/]+/, '')}`); });
+  page.on('response', (r) => {
+    if (r.status() === 403) forbidden.push(`${tag}: ${r.request().method()} ${r.url().replace(/^https?:\/\/[^/]+/, '')}`);
+    // A 5xx names its request, so a console's bare "status of 502" can be traced.
+    if (r.status() >= 500) errors.push(`${tag}: ${r.status()} ${r.request().method()} ${r.url().replace(/^https?:\/\/[^/]+/, '')}`);
+  });
   return { errors, forbidden };
 }
 
@@ -325,6 +343,8 @@ const chatMetrics = (page) => page.evaluate(() => {
 
 let server = null;
 let browser = null;
+/** The Android check's subscription refusal (see there): its console 400 is expected. */
+let expectAndroid400 = false;
 let phoneBrowser = null;
 let proxy = null;
 const watchers = [];
@@ -491,20 +511,94 @@ try {
     await mctx.close();
   }
 
-  // ── AC19-AC20: the project's open chats, STACKED ────────────────────────────────────
+  // ── TWO SCREENS (owner, 2026-10-17): the Sohbetler list, and one chat ───────────────
   // Three open chats: one waiting for you (a question card), one working ON THE MAC (a laptop
-  // chat socket), one idle and focused. Then a tap swaps, a Mac row is adopted, the labels move
-  // on their own, three rows keep the focused chat's economy, and the same at 375x667.
-  console.log('\n── phone stack 390x844: asking, working on the Mac, idle');
+  // chat socket), one idle. Inside a chat there is the chat alone, no band of other chats above
+  // it; a list tap moves forward (the chat comes in from the right), ‹ and the back gesture move
+  // back (the list comes in from the left); the other open chats are rows on the list, waiting
+  // first, their labels moving on their own, and a Mac row is adopted on tap.
+  console.log('\n── phone two screens 390x844: asking, working on the Mac, idle');
   if (!LOCAL) {
     await mac(port, 'POST', 'stop');
     const one = await mac(port, 'POST', 'start', { vaults: ['proj'] });
     report.check('Mac mode restarts for proj', one.status === 200, JSON.stringify(one.json).slice(0, 160));
   }
+  if (!LOCAL) {
+    // Notifications on an ANDROID phone over the quick tunnel (owner, 2026-10-17: none ever came):
+    // a plain Chrome tab subscribes, so the button shows there, with the note that the address
+    // changes per start; the iPhone runs above still read "needs the fixed address".
+    console.log('\n── android phone 412x915: notifications on a quick address');
+    const aqr = (await mac(port, 'POST', 'qr')).json.url;
+    // Chromium's NEW headless mode (the old headless shell answers every Notification.permission
+    // with "denied") and a PERSISTENT profile (a fresh context is incognito, where Chrome has no
+    // Push API at all): the closest a script gets to the owner's Android Chrome.
+    const androidProfile = join(SCRATCH, 'android-profile');
+    rmSync(androidProfile, { recursive: true, force: true });
+    const actx = await chromium.launchPersistentContext(androidProfile, { ...devices['Pixel 7'], channel: 'chromium', proxy: { server: proxy.url } });
+    await actx.grantPermissions(['notifications'], { origin: new URL(aqr).origin });
+    const ap = await actx.newPage();
+    watchers.push(watch(ap, 'android'));
+    await ap.goto(aqr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await until(async () => ap.url().includes('vault=proj'), 25000);
+    await ap.waitForTimeout(3000);
+    await dismiss(ap);
+    report.check('android: the list offers "Turn on notifications" on the quick address, with the per-start note', await until(async () => (await ap.locator('[data-testid="push-optin"]').getAttribute('data-state')) === 'off'
+      && (await ap.locator('[data-testid="push-enable"]:visible').count()) === 1 && (await ap.locator('[data-testid="push-quick-note"]:visible').count()) === 1, 20000),
+      String(await ap.locator('[data-testid="push-optin"]').getAttribute('data-state').catch(() => null)));
+    await ap.screenshot({ path: join(SHOTS, 'android-412-list-push.png') });
+    // The tap asks for the permission, subscribes through the browser's real push service and
+    // hands the subscription to the Mac over the tunnel. Unbranded Chromium subscribes at
+    // jmt17.google.com, which the Mac's push-host allow-list does not hold (Android Chrome uses
+    // fcm.googleapis.com, which it does), so here the Mac's answer is 200 or exactly that refusal.
+    // Recorded from inside the page (a wrapped fetch): neither the page's nor the context's
+    // response events report a request its service worker answers.
+    await ap.evaluate(() => {
+      const f = window.fetch.bind(window);
+      window.__puts = [];
+      window.fetch = async (input, init) => {
+        const r = await f(input, init);
+        try {
+          const u = String(input?.url ?? input);
+          if (u.endsWith('/api/handsfree/push/subscription') && (init?.method ?? 'GET') === 'PUT') {
+            window.__puts.push({ status: r.status, host: new URL(JSON.parse(init.body).endpoint).hostname, body: await r.clone().text() });
+          }
+        } catch { /* not ours */ }
+        return r;
+      };
+    });
+    const putNow = () => ap.evaluate(() => window.__puts?.[0] ?? null);
+    let put = null;
+    await ap.locator('[data-testid="push-enable"]').click();
+    await until(async () => (put = await putNow()) !== null || (await ap.locator('[data-testid="push-optin"]').getAttribute('data-state')) === 'on', 45000);
+    // When nothing reached the Mac, say which step stopped (permission, worker, key, subscribe).
+    const why = put ? null : await ap.evaluate(async () => {
+      const out = { permission: Notification.permission };
+      try {
+        const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, no) => setTimeout(() => no(new Error('no active worker in 10 s')), 10000))]);
+        out.worker = reg.active?.scriptURL ?? null;
+        const k = await fetch('/api/handsfree/push/key', { credentials: 'same-origin' });
+        out.key = k.status;
+        const { publicKey } = await k.json();
+        const b = atob(publicKey.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - publicKey.length % 4) % 4));
+        const sub = await Promise.race([reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(b, (x) => x.charCodeAt(0)) }), new Promise((_, no) => setTimeout(() => no(new Error('subscribe hung 20 s')), 20000))]);
+        out.endpointHost = new URL(sub.endpoint).hostname;
+      } catch (e) { out.error = `${e.name}: ${e.message}`; }
+      return out;
+    }).catch((e) => ({ evalError: String(e) }));
+    const KNOWN = ['fcm.googleapis.com', 'web.push.apple.com', 'updates.push.services.mozilla.com'];
+    report.check(`android: the tap asks, subscribes and hands the subscription to the Mac (PUT ${put?.status}, push host ${put?.host})`,
+      !!put && !!put.host && (put.status === 200 || (put.status === 400 && !KNOWN.includes(put.host) && /invalid_subscription/.test(put.body))), JSON.stringify(put ?? why));
+    // That refusal is the console's "status of 400" here (once per PUT, and the opt-in row puts
+    // again on its next check): expected for this test browser only, so the console check below
+    // lets exactly that line through for this page.
+    expectAndroid400 = put?.status === 400 && !KNOWN.includes(put.host);
+    await ap.screenshot({ path: join(SHOTS, 'android-412-list-push-after.png') });
+    await actx.close();
+  }
   const sqr = LOCAL ? `${base}/?vault=proj` : (await mac(port, 'POST', 'qr')).json.url;
   const sctx = await phoneContext({ ...devices['iPhone 13'], viewport: { width: 390, height: 844 } });
   const sp = await sctx.newPage();
-  watchers.push(watch(sp, 'phone stack'));
+  watchers.push(watch(sp, 'phone two screens'));
   await sp.goto(sqr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   await until(async () => sp.url().includes('vault=proj'), 25000);
   await sp.waitForTimeout(3000);
@@ -533,40 +627,61 @@ try {
   // reconnect) are real Mac chats, listed as such; the checks below look past them.
   const orphanIds = new Set(((await (await fetch(`${base}/api/agent/live-chats`)).json().catch(() => ({ chats: [] }))).chats ?? []).map((c) => c.conversationId));
   report.note(`(${orphanIds.size} chat(s) already running on the Mac from the runs above)`);
-  const rowsNow = () => sp.evaluate((orphans) => [...document.querySelectorAll('[data-testid="phone-stack-row"]')]
-    .filter((e) => e.getBoundingClientRect().height > 0 && !orphans.includes(e.dataset.id))
-    .map((e) => ({ id: e.dataset.id, kind: e.dataset.kind, waiting: e.dataset.waiting === 'true',
-      state: (e.querySelector('[data-testid="phone-stack-state"]')?.textContent ?? '').trim(),
-      line: (e.querySelector('.mchat-stack-line')?.textContent ?? '').trim() })), [...orphanIds]);
-  const swapAnim = () => sp.evaluate(() => {
-    const el = [...document.querySelectorAll('.agent-surface[data-mobile] .agent-panes')].find((e) => e.getBoundingClientRect().height > 0);
+  /** The list's open rows (empty while a chat is on screen). */
+  const rowsNow = () => sp.evaluate((orphans) => {
+    const el = [...document.querySelectorAll('[data-testid="phone-list"]')].find((e) => e.getBoundingClientRect().height > 0);
+    return [...(el?.querySelectorAll('[data-testid="list-tab-row"], [data-testid="mac-live-row"]') ?? [])]
+      .filter((e) => !orphans.includes(e.dataset.id))
+      .map((e) => {
+        const state = (e.querySelector('[data-testid="list-state"], [data-testid="mac-live-state"]')?.textContent ?? '').trim();
+        const sub = (e.querySelector('.mlist-sub')?.textContent ?? '').replace(/\s+/g, ' ').trim();
+        return { id: e.dataset.id, kind: e.dataset.kind, waiting: e.dataset.waiting === 'true', state, line: sub.slice(state.length).replace(/^ · /, '').trim() };
+      });
+  }, [...orphanIds]);
+  /** The move that brought the screen on: the chat's panes (forward) or the list's first block (back). */
+  const navAnim = (which) => sp.evaluate((w) => {
+    const el = w === 'push'
+      ? [...document.querySelectorAll('.agent-surface[data-mobile] .agent-panes')].find((e) => e.getBoundingClientRect().height > 0)
+      : document.querySelector('[data-testid="phone-list"] > *');
     if (!el) return null;
     const cs = getComputedStyle(el);
-    return { swap: el.dataset.swap ?? null, name: cs.animationName, dur: cs.animationDuration };
-  });
+    return { nav: el.closest('.agent-surface')?.getAttribute('data-phone-nav') ?? null, name: cs.animationName, dur: cs.animationDuration };
+  }, which);
+  const bands = () => sp.locator('[data-testid="phone-stack"]').count();
   const ssend = async (t) => { const c = svis('.chat-cmp-input').first(); await c.click(); await c.fill(t); await sp.waitForTimeout(120); await sp.keyboard.press('Enter'); };
   const focusedText = async () => (await svis('.chat-pane').first().innerText().catch(() => '')).replace(/\s+/g, ' ');
+  const back = async () => { await svis('[data-testid="chat-back"]').click(); return until(() => onList(sp), 8000); };
   const newChat = async () => {
-    const fromList = await onList(sp);
-    const before = (await rowsNow()).length;
-    if (fromList) await sp.locator('[data-testid="list-new"]').click();
-    // In a chat: the header's ＋.
-    else await svis('.agent-overlay-head .mchat-head-btn[aria-label="New chat"]').first().click();
-    await until(async () => !(await onList(sp)) && (await svis('.chat-cmp-input').count()) > 0 && (fromList || (await rowsNow()).length > before), 15000);
+    if (!(await onList(sp))) await back();
+    await sp.locator('[data-testid="list-new"]').click();
+    await until(async () => !(await onList(sp)) && (await svis('.chat-cmp-input').count()) > 0, 15000);
     await sp.waitForTimeout(600);
   };
+  // Resting: the composer measured with nothing focused (the keyboard down), as AC12 does.
+  const rest = () => sp.evaluate(() => { document.activeElement?.blur?.(); });
 
-  // Chat A asks a question; chat B (focused) answers plainly.
+  // Chat A asks a question; chat B answers plainly.
   await newChat();
   await ssend('ASK');
   report.check('chat A is waiting for you (its question card is on screen)', await until(async () => (await focusedText()).includes('Delete the old webhooks?'), 20000));
   await newChat();
   await ssend('hello');
-  report.check('chat B (focused) answered and is idle', await until(async () => (await focusedText()).includes('ECHO hello'), 20000));
+  report.check('chat B answered and is idle', await until(async () => (await focusedText()).includes('ECHO hello'), 20000));
+  await rest();
+  await sp.waitForTimeout(300);
+  const cm3 = await chatMetrics(sp);
+  const push3 = await navAnim('push');
+  await sp.screenshot({ path: join(SHOTS, '390x844-chat-alone.png') });
+  report.check(`two screens: chat B alone, no band of other chats (${await bands()}), header 44 (${cm3.headH}), <= 32px above the transcript (${cm3.gap}), resting composer <= 64 (${cm3.cmpH}), transcript >= 75% of 844 (${cm3.scrollH})`,
+    (await bands()) === 0 && cm3.headH >= 43 && cm3.headH <= 45 && cm3.gap >= 0 && cm3.gap <= 32 && cm3.cmpH > 0 && cm3.cmpH <= 64 && cm3.scrollH >= 0.75 * 844 && !cm3.overflowX, JSON.stringify(cm3));
+  report.check(`forward: the chat comes in from the right (${push3?.name} ${push3?.dur})`, push3?.nav === 'push' && push3.name === 'mnavPush' && parseFloat(push3.dur) > 0 && parseFloat(push3.dur) <= 0.25, JSON.stringify(push3));
+  report.check('‹ returns to the list', await back());
+  const pop3 = await navAnim('pop');
+  report.check(`back: the list comes in from the left (${pop3?.name} ${pop3?.dur})`, pop3?.nav === 'pop' && pop3.name === 'mnavPop' && parseFloat(pop3.dur) > 0 && parseFloat(pop3.dur) <= 0.25, JSON.stringify(pop3));
   let rows = await rowsNow();
-  const idA = rows[0]?.id;
-  report.check('AC19 chat A is a row above B, marked waiting, reading "Waiting for you" and its question', rows.length === 1 && rows[0].kind === 'tab' && rows[0].waiting
-    && /Waiting for you|Seni bekliyor/.test(rows[0].state) && rows[0].line === 'Delete the old webhooks?', JSON.stringify(rows));
+  const idA = rows.find((r) => r.waiting)?.id;
+  report.check('the list holds both: A first, waiting, "Waiting for you" and its question; then B', rows.length === 2 && rows[0].kind === 'tab' && rows[0].waiting
+    && /Waiting for you|Seni bekliyor/.test(rows[0].state) && rows[0].line === 'Delete the old webhooks?' && rows[1].kind === 'tab' && !rows[1].waiting, JSON.stringify(rows));
 
   // A chat working ON THE MAC: a laptop chat socket, the way any desktop client opens one.
   const { WebSocket: NodeWs } = await import('ws');
@@ -579,67 +694,52 @@ try {
   await sleep(1200);
   laptop.send(JSON.stringify({ type: 'user', text: 'WORK 30' }));
   if (!LOCAL) {
-    report.check('AC19 the Mac\'s working chat appears as a row ("Working", its last line), waiting row still first', await until(async () => {
+    report.check('the Mac\'s working chat is a row on the list ("Working", its last line), the waiting row still first', await until(async () => {
       rows = await rowsNow();
       const m = rows.find((r) => r.id === MAC_ID);
-      return rows.length === 2 && rows[0].id === idA && !!m && m.kind === 'mac' && /Working|Çalışıyor/.test(m.state) && m.line === 'Running npm test 412/895';
+      return rows.length === 3 && rows[0].id === idA && !!m && m.kind === 'mac' && /Working|Çalışıyor/.test(m.state) && m.line === 'Running npm test 412/895';
     }, 20000), JSON.stringify(rows));
     // Review r1 M4: the list's age for a Mac chat comes from the wire, over the tunnel.
     const wire = await sp.evaluate(async () => (await fetch('/api/agent/live-chats', { credentials: 'same-origin' })).json());
     const macWire = (wire.chats ?? []).find((c) => c.conversationId === MAC_ID);
     report.check('AC21 the Mac chat carries its age on the wire (updatedAt, recent)', !!macWire && typeof macWire.updatedAt === 'number' && Date.now() - macWire.updatedAt < 120_000, JSON.stringify(macWire));
   }
-  // Resting: the composer measured with nothing focused (the keyboard down), as AC12 does.
-  const rest = () => sp.evaluate(() => { document.activeElement?.blur?.(); });
-  await rest();
-  await sp.waitForTimeout(300);
-  const cm3 = await chatMetrics(sp);
-  await sp.screenshot({ path: join(SHOTS, '390x844-stack.png') });
-  report.check(`AC20 rows are >= 44px (${cm3.rowHs}), no horizontal overflow, header 44 (${cm3.headH}), resting composer <= 64 (${cm3.cmpH})`,
-    cm3.rowHs.length > 0 && cm3.rowHs.every((h) => h >= 44) && !cm3.overflowX && cm3.headH >= 43 && cm3.headH <= 45 && cm3.cmpH > 0 && cm3.cmpH <= 64, JSON.stringify(cm3));
+  await sp.screenshot({ path: join(SHOTS, '390x844-list-open.png') });
 
-  // Tap A: it becomes the focused chat and B becomes a row; the swap plays (<= 250 ms).
-  await sp.locator(`[data-testid="phone-stack-row"][data-id="${idA}"]:visible`).click();
-  const anim = await swapAnim();
-  report.check(`AC20 the swap animates (${anim?.name} ${anim?.dur})`, !!anim && /^mchatSwap[AB]$/.test(anim.name) && parseFloat(anim.dur) > 0 && parseFloat(anim.dur) <= 0.25, JSON.stringify(anim));
-  report.check('AC19 tapping A focuses it (its question on screen); A leaves the stack and B is a row now', await until(async () => {
-    rows = await rowsNow();
-    return (await focusedText()).includes('Delete the old webhooks?') && !rows.some((r) => r.id === idA) && rows.filter((r) => r.kind === 'tab').length === 1;
-  }, 10000), JSON.stringify(rows));
+  // Forward to A from the list: A alone, its question on screen. The phone's back gesture returns.
+  await sp.locator(`[data-testid="list-tab-row"][data-id="${idA}"]:visible`).click();
+  report.check('a list tap opens A alone (its question on screen, no band of other chats)', await until(async () => !(await onList(sp)) && (await focusedText()).includes('Delete the old webhooks?') && (await bands()) === 0, 10000));
+  const pushA = await navAnim('push');
+  report.check(`…moving forward (${pushA?.name})`, pushA?.name === 'mnavPush', JSON.stringify(pushA));
   await sp.waitForTimeout(400);
-  await sp.screenshot({ path: join(SHOTS, '390x844-stack-swapped.png') });
+  await sp.screenshot({ path: join(SHOTS, '390x844-chat-a.png') });
+  await sp.goBack();
+  report.check('the back gesture returns to the list, not out of the app', await until(() => onList(sp), 8000) && sp.url().includes('vault=proj'), sp.url());
 
   if (!LOCAL) {
-    report.check('AC19 the Mac row updates live: Working -> Idle with its new last line, no tap', await until(async () => {
+    report.check('the Mac row updates live on the list: Working -> Idle with its new last line, no tap', await until(async () => {
       const m = (await rowsNow()).find((r) => r.id === MAC_ID);
       return !!m && /Idle|Boşta/.test(m.state) && m.line === 'All 895 green.';
     }, 45000), JSON.stringify(await rowsNow()));
     // Tap the Mac row: the running chat is ADOPTED (the laptop's socket is taken over), never resumed beside it.
-    await sp.locator(`[data-testid="phone-stack-row"][data-id="${MAC_ID}"]:visible`).click();
-    report.check('AC19 tapping the Mac row adopts that chat: the laptop socket is taken over, it is focused here, A (waiting) and B are rows', await until(async () => {
+    await sp.locator(`[data-testid="mac-live-row"][data-id="${MAC_ID}"]:visible`).click();
+    report.check('tapping the Mac row adopts that chat: the laptop socket is taken over, it is on screen here', await until(async () => laptopClosed && (await focusedText()).includes('All 895 green.'), 20000), JSON.stringify({ laptopClosed }));
+    await back();
+    report.check('…and on the list it is this phone\'s row now: three rows, A (waiting) first', await until(async () => {
       rows = await rowsNow();
-      return laptopClosed && (await focusedText()).includes('All 895 green.') && rows.length === 2 && rows.every((r) => r.kind === 'tab') && rows[0].id === idA && rows[0].waiting;
-    }, 20000), JSON.stringify({ laptopClosed, rows }));
+      return rows.length === 3 && rows.every((r) => r.kind === 'tab') && rows[0].id === idA && rows[0].waiting;
+    }, 20000), JSON.stringify({ rows }));
   }
   try { laptop.close(); } catch { /* gone */ }
 
-  // Three rows: the focused chat keeps AC12's economy (transcript >= 60% of 844).
-  for (let i = 0; i < 3 && (await rowsNow()).length < 3; i++) await newChat();
-  await rest();
-  await sp.waitForTimeout(600);
-  const cm4 = await chatMetrics(sp);
-  await sp.screenshot({ path: join(SHOTS, '390x844-stack-3rows.png') });
-  report.check(`AC20 with 3 rows (${cm4.rowHs}): header 44 (${cm4.headH}), resting composer <= 64 (${cm4.cmpH}), transcript >= 60% of 844 (${cm4.scrollH}), waiting row first, no overflow`,
-    cm4.rowHs.length >= 3 && cm4.stackH <= 3 * 44 + 4 * 4 + 1 && cm4.rowHs.every((h) => h >= 44) && cm4.headH >= 43 && cm4.headH <= 45 && cm4.cmpH > 0 && cm4.cmpH <= 64 && cm4.scrollH >= 0.6 * 844 && !cm4.overflowX
-      && (await rowsNow())[0].id === idA, JSON.stringify({ cm4, rows: await rowsNow() }));
-
-  // Reduced motion: no swap animation, no row entrance.
+  // Reduced motion: neither move animates.
   await sp.emulateMedia({ reducedMotion: 'reduce' });
-  rows = await rowsNow();
-  await sp.locator(`[data-testid="phone-stack-row"][data-id="${rows[rows.length - 1].id}"]:visible`).click();
-  const still = await swapAnim();
-  const rowAnim = await sp.evaluate(() => { const r = [...document.querySelectorAll('[data-testid="phone-stack-row"]')].find((e) => e.getBoundingClientRect().height > 0); return r ? getComputedStyle(r).animationName : null; });
-  report.check(`AC20 under prefers-reduced-motion the swap and rows do not animate (${still?.name}, ${rowAnim})`, !!still && still.name === 'none' && rowAnim === 'none', JSON.stringify({ still, rowAnim }));
+  await sp.locator(`[data-testid="list-tab-row"][data-id="${idA}"]:visible`).click();
+  await until(async () => !(await onList(sp)), 8000);
+  const stillPush = await navAnim('push');
+  await back();
+  const stillPop = await navAnim('pop');
+  report.check(`under prefers-reduced-motion neither move animates (${stillPush?.name}, ${stillPop?.name})`, stillPush?.name === 'none' && stillPop?.name === 'none', JSON.stringify({ stillPush, stillPop }));
   await sp.emulateMedia({ reducedMotion: 'no-preference' });
 
   // ── AC22: search the list. A word only a CLOSED chat's message holds; then one only an OPEN
@@ -691,23 +791,17 @@ try {
   const zebra = (rs) => rs.filter((r) => /zebra/i.test(r.text)).length;
   report.check('AC21 a double tap on a closed row opened it once (one open row for it, none closed)', zebra(ls.open) === 1 && zebra(ls.closed) === 0, JSON.stringify(ls));
   await search.fill('');
-  // Back into a chat for the 375x667 stack.
+  // Back into a chat, at 375x667: the chat alone there too.
   await sp.locator('[data-testid="list-tab-row"]:visible').first().click();
   await until(async () => !(await onList(sp)) && (await svis('.chat-cmp-input').count()) > 0, 10000);
-
-  // The same stack at 375x667.
-  console.log('\n── phone stack 375x667');
+  console.log('\n── phone two screens 375x667');
   await sp.setViewportSize({ width: 375, height: 667 });
   await rest();
   await sp.waitForTimeout(800);
   const cm5 = await chatMetrics(sp);
-  rows = await rowsNow();
-  await sp.locator(`[data-testid="phone-stack-row"][data-id="${rows[rows.length - 1].id}"]:visible`).click();
-  const anim5 = await swapAnim();
-  await sp.waitForTimeout(500);
-  await sp.screenshot({ path: join(SHOTS, '375x667-stack.png') });
-  report.check(`AC20 375x667: rows >= 44px (${cm5.rowHs}), the stack holds at most 3 rows of height (${cm5.stackH}), no overflow, composer <= 64 (${cm5.cmpH}), a tap swaps with the animation (${anim5?.name})`,
-    cm5.rowHs.length >= 3 && cm5.stackH <= 3 * 44 + 4 * 4 + 1 && cm5.rowHs.every((h) => h >= 44) && !cm5.overflowX && cm5.cmpH > 0 && cm5.cmpH <= 64 && /^mchatSwap[AB]$/.test(anim5?.name ?? ''), JSON.stringify({ cm5, anim5 }));
+  await sp.screenshot({ path: join(SHOTS, '375x667-chat-alone.png') });
+  report.check(`375x667: the chat alone (bands ${await bands()}), no overflow, resting composer <= 64 (${cm5.cmpH}), transcript >= 70% of ${cm5.innerH} (${cm5.scrollH})`,
+    (await bands()) === 0 && !cm5.overflowX && cm5.cmpH > 0 && cm5.cmpH <= 64 && cm5.scrollH >= 0.7 * cm5.innerH, JSON.stringify(cm5));
   // The list and its search at 375x667.
   await toList();
   await sp.locator('[data-testid="list-search"]:visible').fill('zebra');
@@ -789,7 +883,108 @@ try {
   await desk.locator('[data-testid="hf-mac-projects"] label', { hasText: 'proj' }).first().locator('input').check();
   report.check('AC16 …and enabled again with one', !(await desk.locator('[data-testid="hf-mac-start"]').isDisabled()));
 
-  const errs = watchers.flatMap((w) => w.errors).filter((e) => !/__TAURI|Failed to load resource: the server responded with a status of 401/.test(e));
+  // ── Bag mode: the switch, Start sends it, remembered after a reload ──────────────
+  console.log('\n── desktop 1440x900: Bag mode');
+  const bagRow = desk.locator('[data-testid="hf-mac-bag-row"]');
+  const bagSwitch = bagRow.locator('input[role="switch"]');
+  /** Where the row sits and whether anything spills sideways (the sheet, the page). */
+  const bagGeom = (page) => page.evaluate(() => {
+    const sheet = document.querySelector('[data-testid="hf-sheet"]');
+    const row = document.querySelector('[data-testid="hf-mac-bag-row"]');
+    const sw = row?.querySelector('input[role="switch"]');
+    const r = (el) => (el ? el.getBoundingClientRect() : null);
+    const rs = r(sheet); const rr = r(row); const rw = r(sw);
+    return {
+      afterChecklist: row?.previousElementSibling?.getAttribute('data-testid') === 'hf-mac-projects',
+      sheetOverflow: sheet ? sheet.scrollWidth > sheet.clientWidth + 1 : true,
+      pageOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+      inSheet: !!(rs && rr && rr.left >= rs.left - 1 && rr.right <= rs.right + 1),
+      rowW: Math.round(rr?.width ?? 0), rowH: Math.round(rr?.height ?? 0),
+      switchW: Math.round(rw?.width ?? 0), switchH: Math.round(rw?.height ?? 0),
+    };
+  });
+  report.check('Bag mode: the row shows before Start', await until(async () => await bagRow.isVisible(), 10000));
+  const bagText = (await bagRow.textContent().catch(() => '')) ?? '';
+  report.check('Bag mode: the row reads "Bag mode" with its one-line hint',
+    bagText.includes('Bag mode') && bagText.includes('Heavy jobs slow down when the Mac gets hot; off means full performance.'), bagText);
+  report.check('Bag mode: the switch is on by default (never chosen, or a start that sent no choice)', await bagSwitch.isChecked().catch(() => false));
+  const g1440 = await bagGeom(desk);
+  report.check('Bag mode: the row sits directly under the project checklist', g1440.afterChecklist, JSON.stringify(g1440));
+
+  // The whole row is the target: its title, the switch itself, then its hint.
+  await bagRow.locator('.hf-mac-bag-title').click();
+  const offByTitle = await until(async () => !(await bagSwitch.isChecked()), 3000);
+  await bagSwitch.click();
+  const onBySwitch = await until(async () => await bagSwitch.isChecked(), 3000);
+  await bagRow.locator('.hf-quiet').click();
+  const offByHint = await until(async () => !(await bagSwitch.isChecked()), 3000);
+  report.check('Bag mode: the switch toggles from the title, the switch and the hint (off → on → off)', offByTitle && onBySwitch && offByHint, JSON.stringify({ offByTitle, onBySwitch, offByHint }));
+  const gOff = await bagGeom(desk);
+  report.check(`Bag mode: no horizontal overflow; the row is a ${gOff.rowW}x${gOff.rowH} target inside the sheet (switch ${gOff.switchW}x${gOff.switchH})`,
+    !gOff.sheetOverflow && !gOff.pageOverflow && gOff.inSheet && gOff.rowH >= 24 && gOff.switchW >= 24 && gOff.switchH > 0, JSON.stringify(gOff));
+  await desk.screenshot({ path: join(SHOTS, '1440-mac-panel-bag-off.png') });
+
+  if (LOCAL) {
+    // Start sends the choice; the run reports it; Return + reload shows it remembered.
+    const startReq = desk.waitForRequest((r) => r.url().endsWith('/api/handsfree/mac/start') && r.method() === 'POST', { timeout: 15000 });
+    await desk.locator('[data-testid="hf-mac-start"]').click();
+    const sent = await startReq.then((r) => r.postDataJSON()).catch(() => null);
+    report.check('Bag mode: Start sends bagMode: false (with the checked project)', sent?.bagMode === false && JSON.stringify(sent?.vaults) === '["proj"]', JSON.stringify(sent));
+    report.check('Bag mode: Mac mode starts (loopback stand-in for the tunnel)',
+      await until(async () => (await desk.locator('[data-testid="hf-mac-panel"][data-phase="on"]').count()) > 0, 30000),
+      JSON.stringify((await mac(port, 'GET', 'status')).json).slice(0, 240));
+    const bagLine = desk.locator('[data-testid="hf-mac-bag"]');
+    report.check('Bag mode: the running panel says Normal mode (data-bag=off)',
+      await until(async () => (await bagLine.getAttribute('data-bag')) === 'off' && ((await bagLine.textContent()) ?? '').includes('Normal mode'), 10000),
+      await bagLine.textContent().catch(() => '(no line)'));
+    const st = await mac(port, 'GET', 'status');
+    report.check('Bag mode: status reports bagMode false while on', st.json.phase === 'on' && st.json.bagMode === false, JSON.stringify({ phase: st.json.phase, bagMode: st.json.bagMode }));
+    await desk.screenshot({ path: join(SHOTS, '1440-mac-panel-running-normal.png') });
+
+    await desk.locator('[data-testid="hf-mac-return"]').click();
+    report.check('Bag mode: Return goes back to the start screen',
+      await until(async () => (await desk.locator('[data-testid="hf-mac-panel"][data-phase="off"]').count()) > 0, 20000));
+    await desk.reload({ waitUntil: 'domcontentloaded' });
+    await desk.waitForTimeout(3000);
+    await dismiss(desk);
+    for (let i = 0; i < 3; i++) { await desk.keyboard.press('Escape'); await desk.waitForTimeout(200); }
+    await desk.locator('[data-testid="hf-button"]:visible').first().click();
+    // A fresh page holds no local choice: an unchecked switch can only come from the server.
+    report.check('Bag mode: after a reload the switch shows the remembered choice (off)',
+      await until(async () => (await bagSwitch.count()) === 1 && !(await bagSwitch.isChecked()), 10000));
+    let prefs = null;
+    try { prefs = JSON.parse(readFileSync(join(HOME, '.dreamcontext', 'handsfree-mac', 'prefs.json'), 'utf8')); } catch (e) { prefs = String(e); }
+    report.check('Bag mode: prefs.json holds { bagMode: false }', JSON.stringify(prefs) === '{"bagMode":false}', JSON.stringify(prefs));
+    await desk.screenshot({ path: join(SHOTS, '1440-mac-panel-remembered.png') });
+  } else {
+    report.note('(Bag mode: Start / running / remembered run only under --local: a full run starts no second quick tunnel)');
+  }
+
+  // 390 px: the laptop window made narrow (fine pointer, no touch): the panel, if the button shows.
+  console.log('\n── desktop 390x844: Bag mode');
+  const narrowCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const narrow = await narrowCtx.newPage();
+  watchers.push(watch(narrow, 'desktop-390'));
+  await narrow.addInitScript(() => { Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true }); });
+  await narrow.goto(`${base}/?vault=proj&page=tasks`, { waitUntil: 'domcontentloaded' });
+  await narrow.waitForTimeout(4000);
+  await dismiss(narrow);
+  for (let i = 0; i < 3; i++) { await narrow.keyboard.press('Escape'); await narrow.waitForTimeout(200); }
+  const narrowBtn = narrow.locator('[data-testid="hf-button"]:visible').first();
+  if (await narrowBtn.count()) {
+    await narrowBtn.click();
+    const shown = await until(async () => await narrow.locator('[data-testid="hf-mac-bag-row"]').isVisible(), 10000);
+    const g390 = await bagGeom(narrow);
+    report.check('Bag mode: 390 px: the row shows inside the panel, no horizontal overflow',
+      shown && g390.inSheet && !g390.sheetOverflow && !g390.pageOverflow, JSON.stringify(g390));
+    await narrow.screenshot({ path: join(SHOTS, '390-mac-panel-bag.png') });
+  } else {
+    report.note('Bag mode: the Hands-free button is not shown at 390 px (the window chrome hides it): no 390 panel');
+  }
+  await narrowCtx.close();
+
+  const errs = watchers.flatMap((w) => w.errors).filter((e) => !/__TAURI|Failed to load resource: the server responded with a status of 401/.test(e))
+    .filter((e) => !(expectAndroid400 && /^android: Failed to load resource: the server responded with a status of 400/.test(e)));
   const f403 = watchers.flatMap((w) => w.forbidden);
   report.check('no console errors on any page', errs.length === 0, errs.slice(0, 12).join('\n      '));
   report.check('no 403 in the network log', f403.length === 0, [...new Set(f403)].slice(0, 20).join('\n      '));

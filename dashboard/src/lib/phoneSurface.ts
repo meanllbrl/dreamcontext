@@ -130,6 +130,9 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'GET /api/assistant/projects',
   'GET /api/assistant/sessions',
   'GET /api/assistant/watch',
+  'GET /api/assistant/recall',
+  'GET /api/assistant/index',
+  'GET /api/assistant/read',
   'POST /api/assistant/broadcast',
   'POST /api/assistant/ui/:verb',
   'POST /api/assistant/look',
@@ -176,6 +179,9 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/automations/dispatcher/uninstall',
   'GET /api/automations/:slug/telegram',
   'POST /api/automations/:slug/telegram',
+  'GET /api/app/machine',
+  'GET /api/sleep-eval/labels',
+  'POST /api/sleep-eval/labels',
 ];
 
 /** A registered pattern as a matcher (the router's own rule). */

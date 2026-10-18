@@ -58,7 +58,7 @@
   background: var(--color-border-hover);
 }
 .council-live-round-dots b[data-state='done'] { background: var(--council-live-done); }
-.council-live-round-dots b[data-state='active'] { background: var(--council-live-accent); animation: council-live-pulse 1.4s ease-in-out infinite; }
+.council-live-round-dots b[data-state='active'] { background: var(--council-live-accent); animation: var(--dc-motion-status-name, council-live-pulse) 1.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
 .council-live-phase { color: var(--council-live-accent); font-weight: 700; }
 .council-live-phase[data-phase='interlude'] { color: var(--color-warning); }
@@ -74,7 +74,7 @@
   background: var(--stance-c, var(--council-live-idle));
 }
 .council-live-personas b[data-s='wait'] { opacity: 0.35; }
-.council-live-personas b[data-s='think'] { animation: council-live-pulse 1.4s ease-in-out infinite; }
+.council-live-personas b[data-s='think'] { animation: var(--dc-motion-status-name, council-live-pulse) 1.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
 /* Convergence meter + leading option key. */
 .council-live-conv { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; flex-shrink: 0; }
@@ -180,7 +180,7 @@
   vertical-align: 1px;
 }
 .council-live-cell-name b[data-s='wait'] { opacity: 0.35; }
-.council-live-cell-name b[data-s='think'] { animation: council-live-pulse 1.4s ease-in-out infinite; }
+.council-live-cell-name b[data-s='think'] { animation: var(--dc-motion-status-name, council-live-pulse) 1.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
 .council-live-stance-chip {
   display: inline-block;

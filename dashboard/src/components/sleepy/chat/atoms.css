@@ -14,7 +14,8 @@
 }
 .chat-a-dot[data-status='running'] {
   background: var(--color-warning);
-  animation: chat-a-pulse 1.2s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, chat-a-pulse) 1.2s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .chat-a-dot[data-status='done'] { background: var(--color-success); }
 .chat-a-dot[data-status='error'] { background: var(--color-error); }
@@ -261,16 +262,38 @@
    the shared loop period, the same rhythm as a running agent's dot elsewhere, and scales rather
    than fades so the face keeps its contrast at every frame. */
 .chat-a-avatar[data-running] {
-  animation: chat-a-work var(--motion-breath, 1600ms) ease-in-out infinite;
+  position: relative;
+  animation: var(--dc-motion-status-name, chat-a-work) var(--motion-breath, 1600ms) ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
+/* The ring rides a pseudo-element whose opacity follows the same breath (composited). */
+.chat-a-avatar[data-running]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-hue, var(--color-text-tertiary)) 35%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  animation: var(--dc-motion-status-name, chat-a-work-ring) var(--motion-breath, 1600ms) ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+/* A character hops instead, and a logo disc clips its own overflow (the ring could not show). */
+.chat-a-avatar[data-role][data-running]:not([data-logo])::after,
+.chat-a-avatar[data-logo][data-running]::after { content: none; }
 @keyframes chat-a-work {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
-  50% { transform: scale(1.08); box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-hue, var(--color-text-tertiary)) 35%, transparent); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+@keyframes chat-a-work-ring {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
 /* A character has no disc to ring, so it works the way Sleepy does: a small hop on the same
    loop period. Still motion only; the body keeps its colour at every frame. */
 .chat-a-avatar[data-role][data-running]:not([data-logo]) {
-  animation: chat-a-hop var(--motion-breath, 1600ms) ease-in-out infinite;
+  animation: var(--dc-motion-status-name, chat-a-hop) var(--motion-breath, 1600ms) ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-a-hop {
   0%, 100% { transform: translateY(0) scale(1); }
@@ -278,7 +301,8 @@
   60% { transform: translateY(0) scale(1.04, 0.96); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .chat-a-avatar[data-running] { animation: none; }
+  .chat-a-avatar[data-running],
+  .chat-a-avatar[data-running]::after { animation: none; }
   .chat-a-avatar[data-role][data-running]:not([data-logo]) { animation: none; }
 }
 
@@ -351,7 +375,8 @@
 .chat-a-progress[data-status='running'] .chat-a-progress-fill {
   width: 40%;
   background: var(--color-accent);
-  animation: chat-a-sweep 1.4s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, chat-a-sweep) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 /* Travels edge to edge WITHOUT leaving the track — a bar that spends half its cycle
    off-screen reads as broken rather than busy. */
@@ -362,6 +387,8 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-a-progress[data-status='running'] .chat-a-progress-fill { animation: none; width: 100%; opacity: 0.5; }
 }
+/* Light mode removes the sweep: rest as the reduced-motion bar, never as a made-up 40 %. */
+:root[data-light='true'] .chat-a-progress[data-status='running'] .chat-a-progress-fill { width: 100%; opacity: 0.5; }
 
 .chat-a-alerticon { flex: 0 0 auto; color: var(--color-text); }
 

@@ -4,7 +4,8 @@ import { useI18n } from '../../context/I18nContext';
 import { useApi } from '../../context/VaultContext';
 import { CopyButton, fill, HandsfreeQr } from './HandsfreeParts';
 import { macAction, macDevices, refreshMacStatus, useMacStatus } from './macStore';
-import type { MacDevice, MacStatus } from './macContract';
+import { MAC_BAG_MODE_DEFAULT, type MacDevice, type MacStatus } from './macContract';
+import { Toggle } from '../settings/SettingRow';
 
 /**
  * The Hands-free sheet's "Bu Mac'ten" panel: set up once (one admin prompt; the phone password
@@ -13,7 +14,8 @@ import type { MacDevice, MacStatus } from './macContract';
  * `/api/handsfree/mac/*`; nothing here holds a secret past the moment it is shown.
  */
 /** `vault`: the project this window shows, pre-checked in the start checklist (AC16): the phone
- *  sees only the projects checked at start; changing them = Return + start again. */
+ *  sees only the projects checked at start; changing them = Return + start again. Under the
+ *  checklist, the Bag mode switch (pre-set from the remembered choice), sent with Start. */
 export function MacPanel({ vault, onClose }: { vault: string; onClose: () => void }) {
   const { t } = useI18n();
   const api = useApi();
@@ -27,6 +29,8 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
   const projects = (registered?.vaults ?? []).filter((v) => v.exists).map((v) => v.name);
   const [chosen, setChosen] = useState<string[]>([vault]);
   const toggle = (name: string) => setChosen((c) => (c.includes(name) ? c.filter((n) => n !== name) : [...c, name]));
+  /** Bag mode: follows the remembered choice (status, while off) until the owner flips it. */
+  const [bag, setBag] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** The passphrase, held only until the sheet closes (shown once). */
@@ -70,7 +74,8 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
     if (r?.passphrase) setPassphrase(r.passphrase);
   };
   const startVaults = chosen.filter((n) => projects.includes(n));
-  const start = async () => { await act<MacStatus>('start', 'post', 'start', { vaults: startVaults }); };
+  const bagChoice = bag ?? status?.bagMode ?? MAC_BAG_MODE_DEFAULT;
+  const start = async () => { await act<MacStatus>('start', 'post', 'start', { vaults: startVaults, bagMode: bagChoice }); };
   const showQr = async () => {
     const r = await act<{ url: string }>('qr', 'post', 'qr');
     if (!r) return;
@@ -117,6 +122,13 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
               </label>
             ))}
           </fieldset>
+          <label className="hf-mac-bag" data-testid="hf-mac-bag-row">
+            <span className="hf-mac-bag-text">
+              <span className="hf-mac-bag-title">{t('handsfree.mac.bag')}</span>
+              <span className="hf-quiet">{t('handsfree.mac.bagHint')}</span>
+            </span>
+            <Toggle checked={bagChoice} disabled={!!busy} onChange={setBag} />
+          </label>
           <div className="hf-actions hf-actions--end">
             <button type="button" className="hf-btn" disabled={!!busy} onClick={() => void newPassword()}>{t('handsfree.mac.newPassword')}</button>
             <button type="button" className="hf-btn hf-btn--primary" data-testid="hf-mac-start" disabled={!!busy || startVaults.length === 0} onClick={() => void start()}>
@@ -154,6 +166,9 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
             <p className="hf-quiet">
               {status.sleepAllowed ? t('handsfree.mac.sleepAllowed') : t('handsfree.mac.power')}
               {status.battery.percent !== null && <> · {fill(t('handsfree.mac.battery'), { pct: String(status.battery.percent) })}</>}
+            </p>
+            <p className="hf-quiet" data-testid="hf-mac-bag" data-bag={status.bagMode ? 'on' : 'off'}>
+              {status.bagMode ? t('handsfree.mac.bagOn') : t('handsfree.mac.bagOff')}
             </p>
             {(status.thermal?.slowed ?? 0) > 0 && (
               <p className="hf-quiet" data-testid="hf-mac-thermal">{fill(t('handsfree.mac.thermalSlowed'), { n: String(status.thermal.slowed) })}</p>

@@ -4,7 +4,7 @@
 // tabs kept, no duplicates). The pure decisions AgentSurface.tsx calls.
 import { describe, it, expect } from 'vitest';
 import {
-  generationOf, mergeStoredRoster, putOutcome, withBaseGeneration,
+  carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, withBaseGeneration,
 } from '../../dashboard/src/components/handsfree/rosterRehydrate.js';
 
 const tab = (claudeId: string, title: string, id = `s-${claudeId}`) => ({ id, claudeId, title });
@@ -84,3 +84,53 @@ describe('PUT generation and the stale answer', () => {
   });
 });
 
+
+// The owner, 2026-10-17, from the phone: "mac'te açık olmayan sessionları da açık gibi gösteriyor".
+// Opening the phone resumed all six of its stored tabs on the Mac and listed them under Açık.
+describe('phoneRestorable', () => {
+  const stored = [saved('RUNNING', 'Desktop chat the phone also had'), saved('OLD', 'Yesterday on the phone'), saved('DRAIN', 'Finishing'), saved(undefined, 'Legacy dormant')];
+  const live = { chats: [{ conversationId: 'RUNNING' }, { conversationId: 'DRAIN' }, { conversationId: 'NOT-STORED' }], draining: ['DRAIN'] };
+
+  it('keeps only the stored tabs the Mac runs right now', () => {
+    expect(phoneRestorable(stored, live).map((m) => m.sessionId)).toEqual(['RUNNING']);
+  });
+
+  it('a stored tab with no running chat is never restored, so nothing is spawned for it', () => {
+    expect(phoneRestorable(stored, { chats: [], draining: [] })).toEqual([]);
+  });
+
+  it('restores nothing when the Mac did not answer', () => {
+    expect(phoneRestorable(stored, null)).toEqual([]);
+  });
+
+  it('keeps the stored entry itself (title, mode) for what it restores', () => {
+    const withMode = [{ ...saved('RUNNING', 'Renamed here'), mode: 'develop' }];
+    expect(phoneRestorable(withMode, live)).toEqual(withMode);
+  });
+});
+
+// Review r1 (edge-cases): a passing 502 on live-chats restored nothing, and the next save then
+// wrote only what was on screen, deleting the stored tabs of chats the Mac was still running.
+describe('carriedUnrestored', () => {
+  const stored = [
+    { ...saved('A', 'Running on the Mac'), mode: 'develop', pane: 1, active: true, bound: true },
+    saved('B', 'Opened again on this phone'),
+    saved('A', 'A duplicate'),
+    saved(undefined, 'Legacy dormant'),
+  ];
+
+  it('keeps every unjudged stored tab, once, with its title and mode but not its placement', () => {
+    expect(carriedUnrestored(stored, new Set())).toEqual([
+      { ...saved('A', 'Running on the Mac'), mode: 'develop' },
+      saved('B', 'Opened again on this phone'),
+    ]);
+  });
+
+  it('leaves a tab now on screen to the screen', () => {
+    expect(carriedUnrestored(stored, new Set(['B'])).map((m) => m.sessionId)).toEqual(['A']);
+  });
+
+  it('carries nothing after a restore that could judge (the surface empties the list)', () => {
+    expect(carriedUnrestored([], new Set())).toEqual([]);
+  });
+});

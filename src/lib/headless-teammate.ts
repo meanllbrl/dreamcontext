@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { findTranscriptBySessionId } from './transcript-locate.js';
@@ -94,6 +95,19 @@ function ts(v: unknown): number | undefined {
 
 interface Row { type?: unknown; operation?: unknown; content?: unknown; timestamp?: unknown; totalDuration?: unknown; message?: { stop_reason?: unknown; model?: unknown; content?: unknown } }
 
+/** Everything a summary reads off the transcript's TEXT — the part worth caching while the file
+ *  is unchanged. The status, which also depends on the clock and the process table, is
+ *  {@link finishSummary}'s. */
+interface TeammateDigest {
+  brief?: string;
+  startedAt?: number;
+  model?: string;
+  /** Every tool call of the latest assignment, in order (never mutated after the digest). */
+  steps: TeammateStep[];
+  exit: Row | null;
+  lastAnswer: { text: string; clean: boolean } | null;
+}
+
 /**
  * Summarize one headless run's transcript. Pure: the file's text, its mtime, the clock and the
  * liveness answer are all passed in, so every state is reproducible in a test. `alive` is null
@@ -102,6 +116,10 @@ interface Row { type?: unknown; operation?: unknown; content?: unknown; timestam
 export function summarizeTeammateTranscript(
   session: string, raw: string, mtimeMs: number, nowMs: number, alive: boolean | null,
 ): TeammateSummary {
+  return finishSummary(session, digestTeammateTranscript(raw), mtimeMs, nowMs, alive);
+}
+
+function digestTeammateTranscript(raw: string): TeammateDigest {
   const rows: Row[] = [];
   for (const line of raw.split('\n')) {
     const s = line.trim();
@@ -116,7 +134,7 @@ export function summarizeTeammateTranscript(
   for (let i = rows.length - 1; i >= 0; i -= 1) {
     if (rows[i].type === 'queue-operation' && rows[i].operation === 'enqueue') { assigned = i; break; }
   }
-  const summary: TeammateSummary = { session, status: 'running', steps: [], toolUses: 0, updatedAt: mtimeMs };
+  const summary: TeammateDigest = { steps: [], exit: null, lastAnswer: null };
   if (assigned >= 0) {
     const brief = rows[assigned].content;
     if (typeof brief === 'string' && brief.trim()) summary.brief = cap(brief.trim(), TEAMMATE_TEXT_CAP);
@@ -161,8 +179,23 @@ export function summarizeTeammateTranscript(
       }
     }
   }
-  summary.toolUses = steps.length;
-  summary.steps = steps.slice(-TEAMMATE_STEP_CAP);
+  summary.steps = steps;
+  summary.exit = exit;
+  summary.lastAnswer = lastAnswer;
+  return summary;
+}
+
+function finishSummary(
+  session: string, d: TeammateDigest, mtimeMs: number, nowMs: number, alive: boolean | null,
+): TeammateSummary {
+  const summary: TeammateSummary = { session, status: 'running', steps: [], toolUses: 0, updatedAt: mtimeMs };
+  if (d.brief !== undefined) summary.brief = d.brief;
+  if (d.startedAt !== undefined) summary.startedAt = d.startedAt;
+  if (d.model !== undefined) summary.model = d.model;
+  const { exit, lastAnswer } = d;
+  summary.toolUses = d.steps.length;
+  // Copies: the digest may be cached, and a finished run's open steps are rewritten below.
+  summary.steps = d.steps.slice(-TEAMMATE_STEP_CAP).map((s) => ({ ...s }));
 
   if (exit) {
     summary.endedAt = mtimeMs;
@@ -218,11 +251,73 @@ export function readTeammateTranscript(session: string, home: string = homedir()
   }
 }
 
+/** Digests by real path, valid while the file's (size, mtime) are unchanged. The teammate list
+ *  is polled every few seconds per pane; a finished run's transcript never changes again. */
+const digests = new Map<string, { size: number; mtimeMs: number; digest: TeammateDigest }>();
+const DIGEST_MAX = 128;
+let digestReads = 0;
+
+/**
+ * {@link readTeammateTranscript} + {@link summarizeTeammateTranscript} for the polled list,
+ * under the same file rules, read asynchronously and only when the file changed since the last
+ * poll. Null when there is no readable transcript (the caller's "not on disk yet").
+ */
+export async function summarizeTeammateFile(
+  session: string, nowMs: number, alive: boolean | null, home: string = homedir(),
+): Promise<TeammateSummary | null> {
+  if (!TEAMMATE_SESSION_RE.test(session)) return null;
+  const path = findTranscriptBySessionId([session], home);
+  if (!path) return null;
+  try {
+    if (!(await lstat(path)).isFile()) return null;
+    const root = await realpath(join(home, '.claude', 'projects'));
+    const real = await realpath(path);
+    if (!real.startsWith(root + sep)) return null;
+    const fh = await open(real, 'r');
+    try {
+      const st = await fh.stat();
+      const hit = digests.get(real);
+      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) {
+        return finishSummary(session, hit.digest, st.mtimeMs, nowMs, alive);
+      }
+      const start = Math.max(0, st.size - TEAMMATE_READ_CAP_BYTES);
+      const buf = Buffer.alloc(st.size - start);
+      let got = 0;
+      while (got < buf.length) {
+        const { bytesRead } = await fh.read(buf, got, buf.length - got, start + got);
+        if (bytesRead <= 0) break;
+        got += bytesRead;
+      }
+      digestReads += 1;
+      let raw = buf.toString('utf-8', 0, got);
+      // A tail read starts mid-line: drop the fragment rather than parse half a row.
+      if (start > 0) raw = raw.slice(raw.indexOf('\n') + 1);
+      const digest = digestTeammateTranscript(raw);
+      digests.delete(real);
+      digests.set(real, { size: st.size, mtimeMs: st.mtimeMs, digest });
+      if (digests.size > DIGEST_MAX) digests.delete(digests.keys().next().value as string);
+      return finishSummary(session, digest, st.mtimeMs, nowMs, alive);
+    } finally { await fh.close().catch(() => {}); }
+  } catch {
+    return null;
+  }
+}
+
+/** Tests only: how many transcripts {@link summarizeTeammateFile} has actually read, and a reset. */
+export function teammateDigestReads(): number {
+  return digestReads;
+}
+export function resetTeammateDigests(): void {
+  digests.clear();
+  digestReads = 0;
+}
+
 // ─── Is it still alive? ─────────────────────────────────────────────────────────
 
 let psCache: { at: number; text: string | null } | null = null;
 let psInFlight: Promise<string | null> | null = null;
-const PS_TTL_MS = 2000;
+/** One `ps` snapshot serves every pane's teammate poll for this long. */
+const PS_TTL_MS = 5000;
 
 /** The process table's command lines, one `ps` for every caller within {@link PS_TTL_MS}. */
 function processTable(nowMs: number): Promise<string | null> {

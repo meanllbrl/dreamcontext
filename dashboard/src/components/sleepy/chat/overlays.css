@@ -311,7 +311,8 @@
   height: 5px;
   border-radius: 50%;
   background: var(--color-accent);
-  animation: chat-working-bounce 1.05s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, chat-working-bounce) 1.05s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .chat-working-dots span:nth-child(2) { animation-delay: 0.14s; }
 .chat-working-dots span:nth-child(3) { animation-delay: 0.28s; }
@@ -322,7 +323,7 @@
   40% { opacity: 1; transform: translateY(-3px); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .chat-working-dots span { animation: chat-pulse-soft 1.4s ease-in-out infinite; }
+  .chat-working-dots span { animation: var(--dc-motion-status-name, chat-pulse-soft) 1.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 }
 
 .chat-banner-reconnecting {
@@ -341,7 +342,8 @@
   height: 6px;
   border-radius: 50%;
   background: currentColor;
-  animation: chat-pulse-soft 1.1s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, chat-pulse-soft) 1.1s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .chat-banner-reconnecting-dot { animation: none; } }

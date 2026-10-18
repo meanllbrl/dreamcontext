@@ -13,8 +13,11 @@
 
 /* No entry animation on cards: WebKit (the desktop app's WKWebView) replays CSS
    animations when an element's box is recalculated or moved in the DOM, so cards
-   flickered on every board re-render (data refetch, hover, drag state). */
-.bd-card { will-change: transform; }
+   flickered on every board re-render (data refetch, hover, drag state).
+   A compositing layer only for the card in hand: `will-change` on EVERY card kept one GPU
+   layer per card alive for the board's whole life (task: the desktop app stays light on an
+   8GB MacBook Air). A card is "in hand" from the press that starts its drag. */
+.bd-card[draggable='true']:active { will-change: transform; }
 
 /* Drag & drop — column drop target + landing silhouette */
 .bd-col-droptarget {
@@ -34,7 +37,18 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--color-accent);
-  animation: bd_dropPulse 1.1s ease-in-out infinite;
+  animation: var(--dc-motion-ambient-name, bd_dropPulse) 1.1s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+/* The at-risk banner's dot and the sync chip's arrows: classes, not inline styles, so the
+   motion contract (styles/global.css) can rest or pause them. */
+.bd-atrisk-dot {
+  animation: var(--dc-motion-ambient-name, bd_pulse) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+.bd-sync-spin {
+  animation: var(--dc-motion-ambient-name, bd_spin) .8s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .bd-pop { animation: bd_pop .14s cubic-bezier(.2, .8, .2, 1); }
 .bd-panel { animation: bd_panelIn .24s cubic-bezier(.2, .8, .2, 1); }

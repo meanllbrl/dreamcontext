@@ -41,6 +41,7 @@ import {
 } from '../checkout-directive.js';
 import { clearSessionEdits, recordSessionEdit } from '../../lib/session-edits.js';
 import { forgetSessionFacts, readSessionFacts } from '../../lib/session-facts.js';
+import { tabSessionEnv } from '../../lib/session-origin.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import { claudeAuthStatus } from '../../lib/claude-auth.js';
@@ -296,11 +297,36 @@ export function assistantPermissionMode(autonomy: Autonomy): 'default' | 'auto' 
  * `dreamcontext assistant …` Bash call otherwise pays the auto-mode classifier (measured
  * 11-26 s each on Spidey's context). The matcher refuses compound commands (`;`, `&&`, `|`,
  * `$(…)`, a second line — security review 2026-09-27), and the server's gated()/decide()
- * stays the real guard for send/answer/broadcast. `ask` must keep prompting (the CLI prompt
- * IS the approval for the free verbs there); `bypass` needs nothing. Never on any other spawn.
+ * stays the real guard for send/answer/broadcast. `ask` keeps prompting for every other verb
+ * (the CLI prompt IS the approval for the free verbs there), but the READS pass: a recall, an
+ * index or a file read writes nothing, and asking the owner before each one is the slowness
+ * they asked to remove (owner, 2026-10-17). `bypass` needs nothing. Never on any other spawn.
  */
+export const ASSISTANT_READ_TOOLS = ['recall', 'index', 'read'].map((v) => `Bash(dreamcontext assistant ${v}:*)`);
+
 export function assistantAllowedTools(autonomy: Autonomy): string[] {
-  return autonomy === 'auto' ? ['--allowedTools', 'Bash(dreamcontext assistant:*)'] : [];
+  if (autonomy === 'auto') return ['--allowedTools', 'Bash(dreamcontext assistant:*)'];
+  if (autonomy === 'ask') return ['--allowedTools', ASSISTANT_READ_TOOLS.join(',')];
+  return [];
+}
+
+/**
+ * Claude Code's native plan mode, removed from every chat spawn. 2026-10-17: the owner said
+ * "planla" in a Basic tab and the agent opened EnterPlanMode and wrote plans/*.md, where Chat's
+ * planning is dreamcontext's Plan mode (it ends by creating the task). Basic adds no brief, so
+ * nothing but a deny stops Claude's reflex; the surface briefing says where the request goes.
+ * A SCOPED home-board card already brings its own `--disallowedTools` (board-scope.ts,
+ * BOARD_AGENT_DISALLOWED_TOOLS) and a second flag would collide, so it gets none. An ATTACHED
+ * agent card keeps the pane envelope and is not scoped: it is denied on purpose.
+ * The list is constant across chat spawns, so the prompt cache holds; only the first resume of
+ * an older conversation after the upgrade misses it once. The Chat ExitPlanMode approval UI
+ * (dashboard PlanCard.tsx, chatProtocol.ts, chatSession.ts, ToolCard.tsx) is now idle in Chat
+ * and kept deliberately as a fallback for older transcripts, not a bug to fix; a conversation
+ * that was inside native plan mode before the upgrade may hit one ExitPlanMode tool error on
+ * resume and recover. Cron and RemoteTrigger stay: /loop and /schedule are user-typed skills.
+ */
+export function chatDeniedToolArgs(scopedCard: boolean): string[] {
+  return scopedCard ? [] : ['--disallowedTools', 'EnterPlanMode,ExitPlanMode'];
 }
 
 /**
@@ -1636,6 +1662,8 @@ export function startChatSession(
     ...(spawnModel ? ['--model', spawnModel] : []),
     ...(spawnEffort ? ['--effort', spawnEffort] : []),
     ...(assistantConfig ? assistantAllowedTools(assistantConfig.autonomy) : []),
+    // Variadic, but every later element is a `--` flag, so it swallows nothing.
+    ...chatDeniedToolArgs(scopedCard),
     ...assistantSettingArgs(isAssistant),
     // A SANDBOXED session reaches the user's MCP servers BY REFERENCE. Its own config is
     // seeded with no MCP keys at any depth, so without this flag it would silently lose every
@@ -1658,9 +1686,7 @@ export function startChatSession(
   // hooks (which inherit this env through `claude`) record roster id → live conversation
   // id on every rotation — the SAME map the embedded terminal writes/reads (AC7: chat and
   // terminal resume interop through one registry). Only when actually pinned/resumed.
-  const tabEnv = pinId && idArg.length
-    ? { DREAMCONTEXT_TAB_SESSION: pinId, DREAMCONTEXT_SERVER_PID: String(process.pid) }
-    : {};
+  const tabEnv = pinId && idArg.length ? tabSessionEnv(pinId) : {};
 
   // ── Seed this pane's context-handoff toggle BEFORE the child starts ─────────
   //

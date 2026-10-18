@@ -191,6 +191,14 @@
       ]
     },
     {
+      "path": "assistant index",
+      "desc": "Every project's knowledge index (path, name, description) — when recall did not find it",
+      "args": [],
+      "valueFlags": [
+        "--vault"
+      ]
+    },
+    {
       "path": "assistant look",
       "desc": "Screenshot the owner's screen(s) and print the image paths to Read — only when the owner asks",
       "args": [],
@@ -222,6 +230,31 @@
       "path": "assistant projects",
       "desc": "Every registered project: what it is, what is active, live chats",
       "args": []
+    },
+    {
+      "path": "assistant read",
+      "desc": "Read a file in a project's brain (a path recall or index gave), or a past session with --session",
+      "args": [
+        "<vault>",
+        "[path]"
+      ],
+      "valueFlags": [
+        "--session",
+        "--offset",
+        "--limit"
+      ]
+    },
+    {
+      "path": "assistant recall",
+      "desc": "Search your own memory and every project's brain; each project's best hits",
+      "args": [
+        "<query...>"
+      ],
+      "valueFlags": [
+        "--vault",
+        "--top",
+        "--types"
+      ]
     },
     {
       "path": "assistant send",
@@ -3015,6 +3048,79 @@
       "valueFlags": [
         "--flag"
       ]
+    },
+    {
+      "path": "sleep eval",
+      "desc": "Measure how sleep files tasks: a fixed test set from this brain's past rounds, scored before and after a change",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "sleep eval baseline",
+      "desc": "Make a run the baseline, gate the children of --parent on it, and write the score into that parent task",
+      "args": [
+        "<run>"
+      ],
+      "valueFlags": [
+        "--parent"
+      ]
+    },
+    {
+      "path": "sleep eval build",
+      "desc": "Freeze the test set (>= 10 past rounds) and propose label candidates for each round",
+      "args": [],
+      "valueFlags": [
+        "--min",
+        "--add-source",
+        "--name"
+      ]
+    },
+    {
+      "path": "sleep eval candidates",
+      "desc": "Re-run the candidate pass for one round (or every round without candidates)",
+      "args": [
+        "[round]"
+      ],
+      "valueFlags": [
+        "--focus"
+      ]
+    },
+    {
+      "path": "sleep eval label",
+      "desc": "Answer a card: what sleep should have done (new-task | add-to-task | nothing), or keep | reject for a repeated correction; \"nothing\" needs --reason (already-exists, abandoned, too-small, badly-written, wrong-project, not-work)",
+      "args": [
+        "<id>",
+        "<answer>"
+      ],
+      "valueFlags": [
+        "--reason",
+        "--note"
+      ]
+    },
+    {
+      "path": "sleep eval run",
+      "desc": "Replay every round through the sleep-tasks specialist, one at a time, each in its own scratch vault",
+      "args": [],
+      "valueFlags": [
+        "--rounds",
+        "--for",
+        "--label",
+        "--agents",
+        "--retry",
+        "--round-timeout"
+      ]
+    },
+    {
+      "path": "sleep eval score",
+      "desc": "Score a run (default: the newest) against the current labels; re-scores the baseline on the same labels and writes the report",
+      "args": [
+        "[run]"
+      ]
+    },
+    {
+      "path": "sleep eval status",
+      "desc": "The set, label progress, runs and the baseline",
+      "args": []
     },
     {
       "path": "sleep history",

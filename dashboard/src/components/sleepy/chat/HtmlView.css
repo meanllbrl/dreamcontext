@@ -135,7 +135,8 @@
   height: 5px;
   border-radius: 50%;
   background: var(--color-accent);
-  animation: chat-htmlpending-bounce 1.05s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, chat-htmlpending-bounce) 1.05s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .chat-htmlpending-dots span:nth-child(2) { animation-delay: 0.14s; }
 .chat-htmlpending-dots span:nth-child(3) { animation-delay: 0.28s; }
@@ -174,21 +175,26 @@
 .chat-htmlpending-bars span {
   height: 8px;
   border-radius: var(--radius-full);
-  background: linear-gradient(
-    90deg,
-    var(--color-bg-tertiary) 25%,
-    var(--color-bg-elevated) 37%,
-    var(--color-bg-tertiary) 63%
-  );
-  background-size: 400% 100%;
-  animation: chat-htmlpending-shimmer 1.4s ease infinite;
+  position: relative;
+  overflow: hidden;
+  background: var(--color-bg-tertiary);
+}
+/* The highlight slides on a pseudo-element (transform), not a moving background. */
+.chat-htmlpending-bars span::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 25%, var(--color-bg-elevated) 37%, transparent 63%);
+  transform: translateX(-100%);
+  animation: var(--dc-motion-ambient-name, chat-htmlpending-shimmer) 1.4s ease infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .chat-htmlpending-bars span:nth-child(1) { width: 100%; }
 .chat-htmlpending-bars span:nth-child(2) { width: 82%; }
 .chat-htmlpending-bars span:nth-child(3) { width: 46%; }
 @keyframes chat-htmlpending-shimmer {
-  0% { background-position: 100% 50%; }
-  100% { background-position: 0 50%; }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 @media (prefers-reduced-motion: reduce) {

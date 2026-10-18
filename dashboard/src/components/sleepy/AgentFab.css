@@ -60,12 +60,14 @@
 .agent-fab-dot[data-status="idle"] { background: var(--color-text-tertiary); }
 .agent-fab-dot[data-status="connecting"] {
   background: var(--color-warning);
-  animation: agentDotPulse 1.3s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentDotPulse) 1.3s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .agent-fab-dot[data-status="live"] { background: var(--color-success); }
 .agent-fab-dot[data-status="streaming"] {
   background: var(--color-success);
-  animation: agentDotPulse 1.1s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentDotPulse) 1.1s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 .agent-fab-dot[data-status="ended"] { background: var(--color-error); }
 
@@ -80,7 +82,8 @@
   background: var(--mood-waiting);
   border: 2px solid var(--color-bg-elevated);
   box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 80%, transparent);
-  animation: agentBadgePulse 1.5s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, agentBadgePulse) 1.5s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 /* Session/working label — wraps to TWO lines then ellipsis (req A). */

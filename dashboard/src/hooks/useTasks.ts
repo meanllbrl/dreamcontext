@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { useApi } from '../context/VaultContext';
+import { pollMs } from '../lib/windowActivity';
 import { buildStatusModel, DEFAULT_STATUSES, type StatusDef, type StatusModel } from '../lib/statusModel';
 
 export type { StatusDef, StatusKind, StatusModel } from '../lib/statusModel';
@@ -289,7 +290,7 @@ export function useSyncStatus() {
     queryKey: ['tasks-sync-status'],
     queryFn: () => api.get<{ status: SyncStatus }>('/tasks/sync-status'),
     select: (d) => d.status,
-    refetchInterval: 30_000,
+    refetchInterval: () => pollMs(30_000),
   });
 }
 
@@ -333,7 +334,7 @@ export function useSyncJob() {
     queryFn: () => api.get<{ job: SyncJob | null }>('/tasks/sync-jobs/current'),
     select: (d) => d.job,
     // Poll fast while a job runs so the progress bar is live; idle otherwise.
-    refetchInterval: (query) => (query.state.data?.job?.status === 'running' ? 800 : false),
+    refetchInterval: (query) => (query.state.data?.job?.status === 'running' ? pollMs(800) : false),
     refetchOnWindowFocus: true,
   });
 }

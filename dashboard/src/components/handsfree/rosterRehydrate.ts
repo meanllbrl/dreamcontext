@@ -37,6 +37,48 @@ export interface OpenTabLike { claudeId: string; title: string }
 export interface SavedTabLike { sessionId?: string; title: string }
 
 /**
+ * What Mac mode's phone restores from its stored roster: ONLY the chats the Mac runs right now
+ * (`live`, the `/agent/live-chats` answer), which the restore then adopts passively with no
+ * spawn. A restore used to `--resume` every stored tab, so opening the phone started a `claude`
+ * on the Mac for each chat it had ever opened (six at once in the owner's report, 2026-10-17,
+ * the oldest from the day before) and listed them all as open. A stored tab that is not running
+ * stays a closed chat, under Kapalı, and opens only on a tap. A draining conversation is not
+ * adoptable, an entry with no conversation id has nothing to adopt, and `live: null` (the Mac
+ * did not answer) restores nothing: the list still shows the Mac's running chats.
+ */
+export function phoneRestorable<S extends { sessionId?: string }>(
+  saved: readonly S[],
+  live: { chats: ReadonlyArray<{ conversationId: string }>; draining?: readonly string[] } | null,
+): S[] {
+  if (!live) return [];
+  const draining = new Set(live.draining ?? []);
+  const running = new Set(live.chats.map((c) => c.conversationId).filter((id) => !draining.has(id)));
+  return saved.filter((m) => !!m.sessionId && running.has(m.sessionId));
+}
+
+/**
+ * The stored phone tabs a restore could not judge because the Mac did not answer
+ * `live-chats`, carried on every save until a restore can: an unreachable Mac must not read as
+ * "every chat closed", so a save never deletes their title, mode or agent (pattern
+ * a-delete-is-never-inferred-from-absence). Each conversation once; one now on screen is the
+ * screen's to write; placement and the GET-only `bound` are dropped.
+ */
+export function carriedUnrestored<S extends { sessionId?: string; pane?: number; active?: boolean; bound?: boolean }>(
+  unrestored: readonly S[],
+  onScreen: ReadonlySet<string>,
+): Omit<S, 'pane' | 'active' | 'bound'>[] {
+  const seen = new Set<string>();
+  const out: Omit<S, 'pane' | 'active' | 'bound'>[] = [];
+  for (const m of unrestored) {
+    if (!m.sessionId || onScreen.has(m.sessionId) || seen.has(m.sessionId)) continue;
+    seen.add(m.sessionId);
+    const { pane: _pane, active: _active, bound: _bound, ...entry } = m;
+    out.push(entry);
+  }
+  return out;
+}
+
+/**
  * Merge the stored roster into the tabs on screen:
  *  - `fresh`: stored entries with no tab here yet (started on the phone, or restored on launch),
  *    each conversation at most once (no duplicate ids); entries without a conversation id pass;

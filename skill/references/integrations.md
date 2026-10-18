@@ -393,6 +393,7 @@ dreamcontext app status      # show installed version and state
 - **No Node.js on the Mac**: the app checks for Node.js 18 or newer itself. When none is usable, the opening splash hands over to a setup screen that downloads a pinned, SHA-256-verified official Node.js into `~/.dreamcontext/node/<version>` (with a `current` link and global npm packages in `~/.dreamcontext/npm-global`) and then continues starting up; offline, checksum and disk errors offer Retry, and a startup failure shows the same window with "Try again". Testing switch: `DREAMCONTEXT_FORCE_NODE_SETUP=1`.
 - **Agent panel setup**: inside a project, the agent surface's missing-prerequisite panel is the same checklist (agent scope: Claude, its sign-in, the built-in terminal).
 - Delivery is CLI/curl-driven (no Apple notarization); prefers your auto-upgrading global CLI over its bundled copy. First launch may need right-click → Open.
+- **Light mode** (Settings → Agents → Session → **Light mode**: Auto / On / Off; `lightMode` in `~/.dreamcontext/agent-ui.json`, default `auto`). Auto turns it on for a Mac with ≤ 8 GB of memory or one running on battery (`GET /api/app/machine`), and the row says which. When on: no endless animation runs (every indicator rests at its static look), no backdrop blur anywhere, terminals render as text (DOM, never WebGL), and every poll runs at half the rate. Independently of it, the app always slows down when it is not looked at: a window visible beside another app keeps only status motion (working ring, asking bounce, recording) and polls at a quarter of the rate; a hidden or minimised window pauses every endless animation and makes no polling requests; at most two terminals hold a WebGL context at a time. Suggest it when someone reports the app lagging, fans spinning or black squares on a MacBook Air. Measured with `npm run verify:idle-load` (scratch fixture, BEFORE/AFTER numbers) and `scripts/verify/real-app-load.sh` (the real app's WebKit/WindowServer CPU).
 - **Routable banners (`dreamcontext://` URL scheme)** — the app claims the `dreamcontext` scheme, so a banner's click lands in the exact place: an automation banner on that agent's thread (its document opens in a small viewer window rendered as formatted markdown with its images), a "Claude is asking" banner on that chat tab (brought forward, or resumed if closed), a sleep banner on Sleep, and a banner with no in-app place in a Notifications window listing recent banners. The existing window and tab of that project come forward; a duplicate is never opened. Without the desktop app the click falls back to opening the file, as before. Hooks and scripts post their own with `dreamcontext notify` — see [cli-reference.md](cli-reference.md#notifications).
 
 ---
@@ -580,9 +581,19 @@ all; switching it off mid-reply stops the voice at once. Plus the corrector's vo
 project's name, first**, because those are the nouns the Assistant is spoken to about. A normal
 vault's vocabulary never gets the other projects.
 
+**It knows; it delegates the work (2026-10-17).** A question a brain already answers (a link,
+a file path, a decision, what was picked) is answered from that brain: `assistant recall`, then
+`assistant read` the hit, then the answer. A project's agent is asked only for what no brain
+holds or what needs its live code, git, PRs or tests, and every action inside a project still
+goes to that project's own agent. A session digest is a summary that can lose the conclusion;
+`read <vault> --session <id>` reads the session's own end.
+
 **Its verbs — only its own session can run them.**
 
 ```bash
+dreamcontext assistant recall '<keywords>' [--vault v] [--top n]   # its memory + every project's brain, per project
+dreamcontext assistant index [--vault v]              # every project's knowledge index, on demand
+dreamcontext assistant read <vault> (<path> | --session <id>)   # a brain file, or a past session's end
 dreamcontext assistant projects                       # every project: what it is, what is active, live chats
 dreamcontext assistant sessions [--vault v] [--status working|asking|idle]
 dreamcontext assistant watch <sessionId> [--until idle|asking|any] [--timeout 590]

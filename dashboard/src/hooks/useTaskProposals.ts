@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { pollMs } from '../lib/windowActivity';
 
 /**
  * Sleep's task proposals, the tasks it opened itself, and what the owner's
@@ -89,7 +90,7 @@ export function useTaskProposals() {
   return useQuery({
     queryKey: KEY,
     queryFn: () => api.get<ProposalsPayload>('/task-proposals'),
-    refetchInterval: POLL_MS,
+    refetchInterval: () => pollMs(POLL_MS),
   });
 }
 
@@ -99,7 +100,7 @@ export function useTaskProposalsCount() {
   return useQuery({
     queryKey: [...KEY, 'count'],
     queryFn: () => api.get<{ waiting: number }>('/task-proposals/count'),
-    refetchInterval: POLL_MS,
+    refetchInterval: () => pollMs(POLL_MS),
   });
 }
 
