@@ -51,6 +51,11 @@ const MARK_RE = /^==(?=[^\s=])([\s\S]*?[^\s=])==/;
  * start with a WORD to be coloured.
  */
 const PENS: Record<string, string> = { '!': 'mark-alarm', '+': 'mark-good' };
+/**
+ * Every class a pen can put on `<mark>`. Sanitizers that allow-list classes keep exactly these
+ * (task markdown, components/tasks/page/taskMarkdown.ts), so a new pen is never dropped there.
+ */
+export const PEN_CLASSES: readonly string[] = Object.values(PENS);
 const PEN_RE = /^([!+])(?=[a-zA-Z])/;
 
 const markExtension: TokenizerAndRendererExtension = {

@@ -458,13 +458,16 @@ async function markdownMedia(browser, base) {
       const all = (sel) => bodies.flatMap((b) => [...b.querySelectorAll(sel)]);
       const banned = 'style, svg, image, rect, iframe, form, object, embed, link, meta, base, script, button, picture, track, math';
       const attrs = '[style], [onerror], [onload], [mask], [srcset], [target], a[href^="javascript:" i], video[poster]';
-      const head = document.querySelector('[data-task-page] .task-section-head');
+      // A real <button> of the page itself (outside every markdown body): `button{display:none}`
+      // in a card would hide it if a <style> got through.
+      const pageButton = [...document.querySelectorAll('[data-task-page] button')].find((b) => !b.closest('.markdown-body')) ?? null;
       return {
         xss: window.__xss ?? null,
         bannedEls: all(banned).map((n) => n.outerHTML.slice(0, 80)),
         bannedAttrs: all(attrs).map((n) => n.outerHTML.slice(0, 80)),
         nonCheckboxInputs: all('input').filter((n) => !(n.type === 'checkbox' && n.disabled)).map((n) => n.outerHTML),
-        sectionHeadDisplay: head ? getComputedStyle(head).display : 'missing',
+        pageButtonDisplay: pageButton ? getComputedStyle(pageButton).display : 'missing',
+        pens: all('mark').map((n) => n.className),
         imgs: all('img').map((n) => n.getAttribute('src')),
         video: all('video').map((n) => ({ src: n.getAttribute('src'), controls: n.hasAttribute('controls'), sources: [...n.querySelectorAll('source')].map((x) => `${x.getAttribute('src')}|${x.getAttribute('type')}`) })),
         details: all('details > summary').length,
@@ -477,7 +480,8 @@ async function markdownMedia(browser, base) {
     check('markdown: no payload element survives (style, svg, iframe, form, object, embed, link, meta, …)', dom.bannedEls.length === 0, dom.bannedEls.join(' | '));
     check('markdown: no payload attribute survives (style, on*, mask, srcset, javascript:, an http poster)', dom.bannedAttrs.length === 0, dom.bannedAttrs.join(' | '));
     check('markdown: an input survives only as a disabled task-list checkbox', dom.nonCheckboxInputs.length === 0, dom.nonCheckboxInputs.join(' | '));
-    check('markdown: no page-wide style change (a real dashboard button stays visible)', dom.sectionHeadDisplay !== 'none' && dom.sectionHeadDisplay !== 'missing', dom.sectionHeadDisplay);
+    check('markdown: no page-wide style change (a real dashboard <button> stays visible)', dom.pageButtonDisplay !== 'none' && dom.pageButtonDisplay !== 'missing', dom.pageButtonDisplay);
+    check('markdown: the ==!…== and ==+…== pens keep their classes', dom.pens.includes('mark-alarm') && dom.pens.includes('mark-good'), JSON.stringify(dom.pens));
     const xTest = attempted.filter((u) => new URL(u).hostname === 'x.test');
     check('markdown: x.test is reached only by the https media', xTest.every((u) => ALLOWED_X_TEST.has(u)), xTest.join(' '));
     for (const src of ['https://github.com/user-attachments/assets/x.png', 'https://firebasestorage.googleapis.com/x.png', 'verify-media/local.png']) {

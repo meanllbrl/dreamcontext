@@ -359,6 +359,57 @@ describe('the provenance marker', () => {
     expect(declined()).toEqual([]);
   });
 
+  // Fourth pass, Minor 2: the owner's edits at the first accept are on the card; the keep the
+  // leftover path writes carries them as its diff (null only when name and Why both match).
+  it('the leftover keep records the card\'s name and Why against the proposal as its diff', async () => {
+    const p = propose();
+    claim(p.id, staleAt());
+    cardOnSlug(p.id); // name "add-a-csv-export", Why "Because."
+    expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+    expect(keeps(p.id)[0].diff).toEqual({
+      name: { from: NAME, to: SLUG },
+      why: { from: 'The owner asked for it.', to: 'Because.' },
+    });
+  });
+
+  it('the leftover keep has no diff when the card kept the proposal\'s name and Why', async () => {
+    const p = propose();
+    claim(p.id, staleAt());
+    writeFileSync(join(stateDir, `${SLUG}.md`), [
+      '---', 'id: task_addacsve', `name: "${NAME}"`, 'status: todo', `from_proposal: "${p.id}"`,
+      'created_at: "2026-10-01"', 'updated_at: "2026-10-01"', '---', '', '## Why', '', 'The owner asked for it.', '',
+    ].join('\n'));
+    expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+    expect(keeps(p.id)[0].diff).toBeNull();
+  });
+
+  // Fourth pass, Minor 1: a create that throws AFTER writing the marked card (a remote push
+  // failing) is an accept that happened: 200 with a warning, the claim kept, and the next
+  // accept past the TTL finishes it.
+  it('a create that throws after the card write: 200 with a warning, claim kept, the leftover finishes it later', async () => {
+    const p = propose();
+    const create = LocalTaskBackend.prototype.create;
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
+      await create.call(this, input);
+      throw new Error('the remote push failed');
+    });
+    const r = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
+    vi.restoreAllMocks();
+    expect(r.code).toBe(200);
+    expect(String(r.body.warning)).toMatch(/the remote push failed.*accept it again/);
+    expect(readTaskFile(join(stateDir, `${SLUG}.md`)).from_proposal).toBe(p.id);
+    const live = readProposals(ctx).proposals.find((x) => x.id === p.id)!;
+    expect(live.status).toBe('pending');
+    expect(live.claim?.slug).toBe(SLUG);
+    expect(listAudit(ctx).filter((e) => e.kind === 'accept' && e.slug === SLUG)).toHaveLength(1);
+
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + TTL + 60_000);
+    const again = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
+    expect(again.code).toBe(200);
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)).toMatchObject({ status: 'accepted', slug: SLUG });
+    expect(keeps(p.id)).toHaveLength(1);
+  });
+
   it('a fresh claim on a card that carries the marker: refused, being accepted right now', async () => {
     const p = propose();
     claim(p.id, new Date().toISOString());
@@ -475,5 +526,33 @@ describe('tasks complete --force', () => {
     await cli('tasks', 'complete', 'force-me', 'Done.', '--force', '--reason', 'a spike, no tests');
     expect(forces()).toHaveLength(1);
     expect(forcedEntries()).toHaveLength(1);
+  }, 20_000);
+  // Fourth pass: the child's status write lands, then the PARENT's status re-sync (a follow-up
+  // write) finds the parent busy. The force happened: it is recorded once, with a warning.
+  it('a busy parent after the child\'s status landed: the force is recorded once, with a warning; a retry adds none', async () => {
+    seed('force-parent', 'todo', ['- [ ] Parent criterion']);
+    seed('force-child', 'in_progress', ['- [ ] Unproven']);
+    const childPath = join(stateDir, 'force-child.md');
+    writeFileSync(childPath, readFileSync(childPath, 'utf-8').replace('\nstatus: in_progress\n', '\nstatus: in_progress\nparent_task: force-parent\n'));
+    const childForces = () => listAudit(ctx).filter((e) => e.kind === 'force' && e.slug === 'force-child');
+    const childForced = () => readJournal(stateDir, 'force-child').filter((e) => e.label.startsWith('forced'));
+    const lines: string[] = [];
+    console.log = (...a: unknown[]) => { lines.push(a.join(' ')); };
+    console.error = (...a: unknown[]) => { lines.push(a.join(' ')); };
+
+    const release = hold('force-parent');
+    const code = await cli('tasks', 'complete', 'force-child', 'Done.', '--force', '--reason', 'a spike, no tests');
+    release();
+    expect(code).toBe(0);
+    expect(statusOf('force-child')).toBe('completed');
+    expect(childForces()).toHaveLength(1);
+    expect(childForced()).toHaveLength(1);
+    expect(childForced()[0].id).toBe(childForces()[0].journalId);
+    expect(lines.join('\n')).toMatch(/is completed and the force is recorded, but a follow-up write failed: "force-parent" was busy/);
+    expect(lines.join('\n')).not.toMatch(/--force was not applied/);
+
+    await cli('tasks', 'complete', 'force-child', 'Done.', '--force', '--reason', 'a spike, no tests');
+    expect(childForces()).toHaveLength(1);
+    expect(childForced()).toHaveLength(1);
   }, 20_000);
 });

@@ -73,6 +73,9 @@ export const KNOWN_LOCAL_ONLY_TASK_FIELDS: readonly string[] = [
   // The agent a task is assigned to: an agent is a vault entity with no remote
   // counterpart, and agents are never people, so it never becomes an assignee.
   'agent',
+  // The sleep proposal a card was accepted from (task-proposals.ts): written with the card,
+  // read by the accept-recovery path; no remote has a field for it.
+  'from_proposal',
 ];
 
 /** Identity fields the mirror-rebuild path mints fresh rather than restoring. */

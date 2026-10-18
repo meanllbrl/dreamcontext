@@ -635,8 +635,31 @@ function forceNotApplied(pending: PendingForce, err: unknown): void {
   const why = err instanceof TaskFileBusyError
     ? 'the task is busy (another writer holds it); try again in a moment'
     : `the status could not be written (${err instanceof Error ? err.message : String(err)})`;
-  error(`--force was not applied: ${why}. "${pending.slug}" is unchanged, and no force was recorded.`);
+  error(`--force was not applied: ${why}. The status of "${pending.slug}" is unchanged, and no force was recorded.`);
   process.exitCode = 1;
+}
+
+/**
+ * The write a `--force` waited on threw. The card says what happened: when its status is the
+ * target, the status write landed and a FOLLOW-UP write failed (a busy parent's status re-sync,
+ * a remote backend's mutation record), so the force is recorded and the failure is a warning;
+ * otherwise the force was not applied. Returns whether the status landed.
+ */
+async function forceAfterFailedWrite(backend: TaskBackend, pending: PendingForce, err: unknown): Promise<boolean> {
+  let landed = false;
+  try {
+    landed = (await backend.get(pending.slug))?.status === pending.newStatus;
+  } catch { /* unreadable reads as not landed */ }
+  if (!landed) {
+    forceNotApplied(pending, err);
+    return false;
+  }
+  await recordForce(backend, pending);
+  const what = err instanceof TaskFileBusyError
+    ? `"${err.slug}" was busy (another writer holds it)`
+    : err instanceof Error ? err.message : String(err);
+  warn(`"${pending.slug}" is ${pending.newStatus} and the force is recorded, but a follow-up write failed: ${what}.`);
+  return true;
 }
 
 /**
@@ -2237,14 +2260,15 @@ export function registerTasksCommand(program: Command): void {
       const gated = await blockOnEvidence(backend, slug, 'completed', statusSet(), opts);
       if (gated === 'blocked') return;
 
+      let forceRecorded = false;
       try {
         await backend.complete(slug, summary);
       } catch (err) {
         if (!gated) throw err;
-        forceNotApplied(gated, err);
-        return;
+        if (!(await forceAfterFailedWrite(backend, gated, err))) return;
+        forceRecorded = true;
       }
-      if (gated) await recordForce(backend, gated);
+      if (gated && !forceRecorded) await recordForce(backend, gated);
       success(`Task completed: ${slug}`);
       // `complete()` stamps the real end of the window (and the start too, when a
       // task went straight from not-started to done). Report it, so this verb is
@@ -2352,8 +2376,8 @@ export function registerTasksCommand(program: Command): void {
         await backend.updateFields(slug, { status: newStatus, updated_at: now, ...dates });
       } catch (err) {
         if (!pendingForce) throw err;
-        forceNotApplied(pendingForce, err);
-        return;
+        if (!(await forceAfterFailedWrite(backend, pendingForce, err))) return;
+        pendingForce = null; // recorded by forceAfterFailedWrite
       }
       if (pendingForce) await recordForce(backend, pendingForce);
       success(`Task ${slug} → ${newStatus}`);

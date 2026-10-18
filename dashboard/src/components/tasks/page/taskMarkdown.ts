@@ -1,7 +1,7 @@
 import { marked } from 'marked';
 // Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — every parse path
 // imports it for itself, because which modules a route loads is not fixed.
-import '../../../lib/markdownMark';
+import { PEN_CLASSES } from '../../../lib/markdownMark';
 import DOMPurify from 'dompurify';
 
 /**
@@ -89,9 +89,17 @@ export function sourceAllowed(tag: string, value: string, base: string): boolean
   return url.origin === new URL(base).origin;
 }
 
-/** A `class` keeps only `language-*` tokens (a fenced block's language, for highlighting and mermaid). */
-export function keptClasses(value: string): string {
-  return value.split(/\s+/).filter((c) => /^language-[\w#+.-]+$/.test(c)).join(' ');
+/**
+ * The classes a tag keeps, by tag: a `<code>` keeps `language-*` (a fenced block's language, for
+ * highlighting and mermaid), a `<mark>` keeps exactly the pen classes `==!…==` / `==+…==` emit
+ * (lib/markdownMark.ts), and every other tag keeps none.
+ */
+export function keptClasses(tag: string, value: string): string {
+  const name = tag.toLowerCase();
+  const keep = name === 'code' ? (c: string) => /^language-[\w#+.-]+$/.test(c)
+    : name === 'mark' ? (c: string) => PEN_CLASSES.includes(c)
+    : () => false;
+  return value.split(/\s+/).filter(keep).join(' ');
 }
 
 /** `type` on a `<source>` is a media type and nothing else. */
@@ -115,7 +123,7 @@ if (purify.isSupported) purify.addHook('afterSanitizeAttributes', (node) => {
     else if ((name === 'src' || name === 'poster') && !sourceAllowed(tag, value, window.location.href)) el.removeAttribute(name);
     else if (name === 'type' && !(tag === 'input' || (tag === 'source' && mediaTypeAllowed(value)))) el.removeAttribute(name);
     else if (name === 'class') {
-      const kept = keptClasses(value);
+      const kept = keptClasses(tag, value);
       if (kept) el.setAttribute('class', kept);
       else el.removeAttribute('class');
     }

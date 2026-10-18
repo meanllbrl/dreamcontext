@@ -481,8 +481,22 @@ export async function acceptProposal(
       variant,
     });
   } catch (err) {
-    // Release the claim, but a release that fails (a busy store) must not hide WHY the create
-    // failed: the claim then expires on its own (CLAIM_TTL_MS), and the create's error surfaces.
+    // The create threw AFTER the card was written (a remote backend's push, a field layered
+    // after the first write): the card with this proposal's marker is on disk, so the task
+    // exists. Keep the claim (it goes stale, and the next accept finishes it through the
+    // leftover path) and answer as an accept that happened, with a warning.
+    if (provenanceOf(contextRoot, slug) === p.id) {
+      const why = err instanceof Error ? err.message : String(err);
+      console.error(`[task-proposals] ${id}: "${slug}" was created, but the create did not finish (${why}).`);
+      return {
+        slug,
+        parent,
+        ...(parentDropped ? { parentDropped } : {}),
+        warning: `The task "${slug}" was created, but the create did not finish (${why}); accept it again in a few minutes to finish.`,
+      };
+    }
+    // Nothing on disk: release the claim. A release that fails (a busy store) must not hide WHY
+    // the create failed: the claim then expires on its own (CLAIM_TTL_MS), and the error surfaces.
     try {
       mutateProposals(contextRoot, (store) => {
         const live = store.proposals.find((x) => x.id === id);
@@ -574,7 +588,13 @@ async function finishLeftoverAccept(contextRoot: string, backend: TaskBackend, i
     if (!live || live.status !== 'pending' || live.claim?.slug !== slug) {
       throw new ProposalError('resolved', `Proposal ${id} changed while its accept was being finished.`);
     }
-    markAccepted(contextRoot, live, slug, null);
+    // The owner's edits at that first accept live on the card: the keep records them as its diff.
+    const diff: { name?: { from: string; to: string }; why?: { from: string; to: string } } = {};
+    const cardName = (task?.name ?? '').trim();
+    const cardWhy = (task?.why ?? '').trim();
+    if (cardName && cardName !== live.name.trim()) diff.name = { from: live.name, to: cardName };
+    if (cardWhy && cardWhy !== live.why.trim()) diff.why = { from: live.why, to: cardWhy };
+    markAccepted(contextRoot, live, slug, Object.keys(diff).length > 0 ? diff : null);
   });
   return {
     slug,

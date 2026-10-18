@@ -105,7 +105,7 @@ describe('the task screens have no raw HTML sink', () => {
     expect(hook).toMatch(/name === 'href' && !\(tag === 'a' && hrefAllowed\(value\)\)/);
     expect(hook).toMatch(/\(name === 'src' \|\| name === 'poster'\) && !sourceAllowed\(tag, value, window\.location\.href\)/);
     expect(hook).toMatch(/name === 'type' && !\(tag === 'input' \|\| \(tag === 'source' && mediaTypeAllowed\(value\)\)\)/);
-    expect(hook).toMatch(/keptClasses\(value\)/);
+    expect(hook).toMatch(/keptClasses\(tag, value\)/);
   });
 
   it('hrefAllowed: http(s), mailto, relative and #; nothing else', async () => {
@@ -142,12 +142,27 @@ describe('the task screens have no raw HTML sink', () => {
     }
   });
 
-  it('class keeps only language-*; a <source> type is a media type', async () => {
+  // Fourth pass: the class rule is per tag. `<code>` keeps its language, `<mark>` keeps exactly
+  // the pens lib/markdownMark.ts emits (so `==!alarm==` keeps its colour), every other tag none.
+  it('class: code keeps language-*, mark keeps the pen classes, every other tag none; a <source> type is a media type', async () => {
     const { keptClasses, mediaTypeAllowed } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
-    expect(keptClasses('language-ts')).toBe('language-ts');
-    expect(keptClasses('language-mermaid hljs')).toBe('language-mermaid');
-    expect(keptClasses('btn btn--primary')).toBe('');
-    expect(keptClasses('sidebar-badge language-')).toBe('');
+    const { PEN_CLASSES } = await import('../../dashboard/src/lib/markdownMark');
+    expect(keptClasses('code', 'language-ts')).toBe('language-ts');
+    expect(keptClasses('code', 'language-mermaid hljs')).toBe('language-mermaid');
+    expect(keptClasses('code', 'btn btn--primary')).toBe('');
+    expect(keptClasses('code', 'sidebar-badge language-')).toBe('');
+    expect(keptClasses('pre', 'language-ts')).toBe('');
+    expect(keptClasses('mark', 'mark-alarm')).toBe('mark-alarm');
+    expect(keptClasses('mark', 'mark-good')).toBe('mark-good');
+    expect(keptClasses('mark', 'mark-alarm evil')).toBe('mark-alarm');
+    expect(keptClasses('mark', 'language-ts')).toBe('');
+    expect(keptClasses('span', 'mark-alarm')).toBe('');
+    expect(keptClasses('div', 'language-ts')).toBe('');
+    // Every pen the extension can emit is kept (a new pen is never dropped).
+    expect([...PEN_CLASSES].sort()).toEqual(['mark-alarm', 'mark-good']);
+    for (const pen of PEN_CLASSES) expect(keptClasses('mark', pen)).toBe(pen);
+    const src = code(read(join(SRC, 'components/tasks/page/taskMarkdown.ts')));
+    expect(src).toMatch(/import \{ PEN_CLASSES \} from '\.\.\/\.\.\/\.\.\/lib\/markdownMark';/);
     expect(mediaTypeAllowed('video/mp4')).toBe(true);
     expect(mediaTypeAllowed('audio/ogg')).toBe(true);
     expect(mediaTypeAllowed('text/html')).toBe(false);

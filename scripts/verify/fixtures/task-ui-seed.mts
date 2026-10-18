@@ -120,6 +120,8 @@ const MEDIA_PAYLOADS = [
   '<img src=x onerror="window.__xss=1">',
 ].join('\n\n');
 const MEDIA_LIST = [
+  // The app's own highlighter pens (lib/markdownMark.ts): their classes survive the allow-list.
+  'An ==!alarm pen== and a ==+good pen== in one line.',
   '![a GitHub attachment](https://github.com/user-attachments/assets/x.png)',
   '<img src="https://firebasestorage.googleapis.com/x.png" alt="a Firebase image">',
   '![a relative image](verify-media/local.png)',
