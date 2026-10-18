@@ -73,7 +73,8 @@ export function GiveToAgentDialog() {
   if (choice === 'author') return <AuthorTaskComposer onClose={close} />;
 
   const needsAgent = (c: GiveToAgentPreset) => c !== 'agent';
-  const offered = CHOICES.filter((c) => (c === 'author' || !!slug) && (!needsAgent(c) || agentReady));
+  // A task's door offers what can be done with it; without one, only writing a new task.
+  const offered = CHOICES.filter((c) => (c === 'author' ? !slug : !!slug) && (!needsAgent(c) || agentReady));
   const name = task ? taskName(task) : slug;
 
   const startDevelop = () => {

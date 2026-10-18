@@ -1107,9 +1107,10 @@ try {
     await tileCase('columns', { alpha: { x: 0, y: 25, width: 896, height: 1120 }, beta: { x: 904, y: 25, width: 896, height: 1120 } });
     await tileCase('rows', { alpha: { x: 0, y: 25, width: 1800, height: 556 }, beta: { x: 0, y: 589, width: 1800, height: 556 } });
 
-    // Detail click: the assistant answers with a dream-actions button naming the project.
+    // Detail click: the assistant answers with a dream-actions button naming the project. The task
+    // opens as its own page since the task rebuild (plan r3 § 5a), so its title is `.tkp-title`.
     const answer = `SAY:Found it.\n\n\`\`\`dream-actions\n[{"label":"Open the login task","action":"task","id":"${ALPHA_TASK}","vault":"alpha-app"}]\n\`\`\``;
-    const detailTitle = () => proj.evaluate(() => document.querySelector('.detail-panel .detail-title')?.textContent ?? '');
+    const detailTitle = () => proj.evaluate(() => document.querySelector('[data-task-page] .tkp-title')?.textContent ?? '');
     ok('before the click the project shows no task detail', await detailTitle() === '', await detailTitle());
     await notch4.fill('.dc-notch__chat textarea', answer);
     await notch4.keyboard.press('Enter');
@@ -1118,7 +1119,7 @@ try {
     ok('the notch answer renders the detail button', shown);
     const emitsBefore = emits.length;
     if (shown) await btn.first().click();
-    const landed = await proj.waitForFunction(() => document.querySelector('.detail-panel .detail-title')?.textContent === 'Fix the login flow', null, { timeout: 15_000 }).then(() => true, () => false);
+    const landed = await proj.waitForFunction(() => document.querySelector('[data-task-page] .tkp-title')?.textContent === 'Fix the login flow', null, { timeout: 15_000 }).then(() => true, () => false);
     const rang = emits.slice(emitsBefore).some((e) => e.target === 'vault-alpha-app' && e.event === 'dream://assistant-command');
     ok('the click rings THAT project\'s window through the relay (doorbell to vault-alpha-app)', rang, JSON.stringify(emits.slice(emitsBefore)));
     ok('…and the project window opens THAT task\'s detail', landed, `detail="${await detailTitle()}" slug=${ALPHA_TASK}`);

@@ -939,6 +939,39 @@ dreamcontext core releases add --ver 1.4.0 --summary "..." -y
 
 ---
 
+## The dashboard's task screens
+
+The same model, seen by the owner. Every task-authored string (a section, a criterion, a journal body, a proposal, a learned quote, an audit note) renders as plain text or through one sanitizing markdown renderer (`marked` + DOMPurify), so a payload pulled from a remote or written by an agent never runs. Every screen speaks English and Turkish.
+
+- **The board** (Tasks) groups cards by **Now / Next / Later** by default, ordered by rank, with the active cycle in a strip above it (number, dates, goal, done/total leaves, days left, a link to Planning). One click regroups by status; version and assignee are in the Group menu. A finished card shows in Now only while it is in the active cycle; every other finished card waits in a **Done** lane that stays closed until opened, and a cancelled card is not on the board. A parent card shows `n/m` of its sub-tasks and opens them in place. A sub-task whose parent sits in another column shows under its parent's name. Dragging a card to another column plans it (`tasks plan`), and dropping it on a card of the same column ranks it (`tasks rank`). Right-click → **Move to Later** plans it into Later. **List** and **Timeline** show the same cards. On a phone it shows one column at a time. Saved views keep their own filter, sort and grouping. A view saved before 0.33.0 that named a retired layout opens on the Board. One grouped or sorted by priority or urgency opens on Now / Next / Later and rank. Its priority, urgency and RICE filters are dropped.
+- **The task page** (a card click, ⌘K, the Brain map) shows:
+  - the name as written, back to the board, status, and the place on the axis (Now / Next / Later or a cycle);
+  - the parent path, and the door to an agent;
+  - the criteria, each with what proves it (`cmd`, `commit`, `shot`, `owner`, `legacy`) and the observed tag (a tick there is the owner's `owner:` approval);
+  - Why, Constraints & Decisions and the other sections, each collapsible;
+  - the sub-tasks with `n/m`;
+  - the journal, five entries at a time with "Show older";
+  - the properties (dates, people, the agent, feature, roadmap, tags, custom fields).
+  A card's old in-card `## Changelog` renders only when opened, and a diagram loads only when the card has one. While the task is in review, the header carries the verdict: **Approve**, or **Send back** with a required note (the same call as `tasks approve` / `tasks send-back <name> --note "…"`).
+- **The Inbox** is what waits for the owner, and it carries the sidebar badge:
+  - **Reviews**: approve or send back in place. A review with an unticked criterion says "evidence incomplete": it is listed, but not counted in the badge.
+  - **Proposals and change cards**: sleep's proposals and the migration's uncertain changes, accept or reject as before.
+  - **Held open**: parents a sync kept open, each with Seen.
+  - **What sleep learned**: a rule from the owner's repeated corrections or a filing-rule change, with the quotes and their dates, and **Revert**.
+  - **Records**: every owner override (approval, send-back, accept, apply, force, exemption) with who, through what (`cli`, `dashboard`, `phone`, `no-origin`) and when. A `no-origin` record sits on a warning tint: a write with no browser Origin is the shape a scripted call has.
+- **Planning** lists the cycles (start a planned one; close the active one) and creates one (goal, start, weeks; the default is the project's). Its board puts the Next queue beside a cycle: drag or "Move to" plans, ↑ / ↓ ranks, and the capacity line compares the leaves planned with what the last three closed cycles finished.
+- **The Close deck** (Close on the active cycle) is `cycle close` with buttons. Each unfinished leaf, grouped under its parent with its carry count, gets **Carry**, **Back to Next** or **Cancel**, and **Apply to the rest** fills the undecided ones. Close stays disabled until every leaf is decided, and a close that cancels anything asks once. An interrupted close resumes with what it recorded.
+- **Releases** shows what is done but in no release yet, and the releases themselves. It is read-only; releases change through `dreamcontext core releases`.
+- **"Give to an agent"** is the one door on the task surfaces: the task page's button, a card's context menu and the toolbar's "Write it with an agent". It reads the task by slug and offers four choices:
+  - **Develop**: readiness first (`tasks ready`: gaps shown, Start disabled until ready), then the same Develop session the Plan chat hands over to;
+  - **A named agent**: the Assign-to-agent composer;
+  - **Custom prompt**: the Delegate composer with its four modes, carrying the task's Why and criteria;
+  - **Write a new task**: the authoring composer.
+  Develop, the custom prompt and authoring need the in-app agent (the desktop app, Agents on). The Plan chat's own Develop button is unchanged.
+- **Retired in 0.33.0**: the Eisenhower matrix, the RICE scatter, Calendar and Activity heatmap views, the Versions popover, the task detail drawer, and the board's "Send to backlog". Priority, urgency, version and RICE stay readable on the card and in the CLI; the dashboard no longer edits them (decisions 3 and 10).
+
+---
+
 ## Multi-product (monorepos)
 
 `dreamcontext init` asks whether the project is a monorepo with multiple products and records the list in `state/.config.json` under `multiProduct: string[] | false`. When products are configured:

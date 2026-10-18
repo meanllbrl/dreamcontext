@@ -295,7 +295,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   };
 
   return (
-    <div ref={barRef} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)', flexWrap: 'nowrap' }}>
+    <div ref={barRef} className="bd-toolbar" style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)', flexWrap: 'nowrap' }}>
       {/* search — shrinks first so the toolbar stays a single row on narrower widths */}
       <div style={{ position: 'relative', flex: '0 1 212px', minWidth: 130 }}>
         <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>⌕</span>

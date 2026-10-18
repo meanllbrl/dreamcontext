@@ -101,13 +101,13 @@ const NAV_GROUPS: NavGroup[] = [
       // top to bottom instead of alternating.
       { launch: 'chat', labelKey: 'nav.chat' },
       { page: 'tasks', labelKey: 'nav.tasks' },
-      // The task system's other screens (plan r3 § 5d): what waits for the owner, the cycles,
-      // and what shipped. Next to Tasks, because they are the same work seen three other ways.
+      { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
+      { page: 'agents', labelKey: 'nav.agents', maturity: 'beta' },
+      // The task screens (plan r3 § 5d). After Agents, so Automations stays right after Tasks and
+      // Agents right after Automations (the owner's order); before the beta and alpha pages.
       { page: 'inbox', labelKey: 'nav.inbox' },
       { page: 'planning', labelKey: 'nav.planning' },
       { page: 'releases', labelKey: 'nav.releases' },
-      { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
-      { page: 'agents', labelKey: 'nav.agents', maturity: 'beta' },
       { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
       { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
       { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },

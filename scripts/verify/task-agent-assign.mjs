@@ -13,7 +13,11 @@
  * WHAT IT PROVES, each check naming the mutation it guards:
  *   T1  the composer shows what will happen and what syncs (the disclosure); the assignment sets
  *       `agent:`, runs the agent with the task in its prompt, logs the result line, and puts the
- *       agent's face on the task detail and the Kanban card. The CLI does the same.
+ *       agent's face on the task page and the Kanban card. The CLI does the same.
+ *       The composer is reached as a person reaches it since the task rebuild (plan r3 § 5e): the
+ *       task page's "Give to an agent" door, choice "A named agent". The door reads the task by
+ *       slug first, so every step WAITS for its selector (`[data-task-ready]`,
+ *       `[data-give-ready]`, the composer), never for a fixed sleep.
  *   T2  a To Do task moves to In progress; an In Review task does NOT move.
  *   T5  `dreamcontext tasks assign-agent` inside an agent run is refused and writes nothing.
  *   T7  an agent not approved to run is refused: the composer opens its review in place with
@@ -178,22 +182,27 @@ async function openPage(browser, theme, base) {
     while (Date.now() < end) { if (await fn().catch(() => false)) return true; await page.waitForTimeout(150); }
     return false;
   };
-  /** A fresh load onto the Tasks board (a detail panel left open would cover the cards). */
+  /** A fresh load onto the Tasks board. */
   const toBoard = async () => {
     await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(2000);
+    const tasksRow = page.locator('.sidebar-item').filter({ has: page.locator('.sidebar-label', { hasText: /^Tasks$/ }) }).first();
+    await tasksRow.waitFor({ timeout: 15000 });
     for (let i = 0; i < 4 && (await page.locator('.announcements-modal-scrim').count()); i++) {
-      await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+      await page.keyboard.press('Escape');
+      await page.locator('.announcements-modal-scrim').first().waitFor({ state: 'detached', timeout: 2000 }).catch(() => {});
     }
-    await page.locator('.sidebar-item').filter({ has: page.locator('.sidebar-label', { hasText: /^Tasks$/ }) }).first().click();
+    await tasksRow.click();
     await until(async () => (await page.locator('.bd-card').count()) > 0, 15000);
   };
   const card = (t) => page.locator('.bd-card', { hasText: t.name }).first();
-  /** Open a task's detail, then its "Assign to agent" composer. */
+  /** Open a task's page, then the door's "A named agent": the Assign-to-agent composer. */
   const openComposer = async (t) => {
     await toBoard();
     await card(t).click();
-    await page.locator('.detail-icon-btn[aria-label="Assign to agent"]').first().click({ timeout: 10000 });
+    await page.locator('[data-task-ready]').first().waitFor({ timeout: 15000 });
+    await page.locator('[data-task-page] .tkp-header-top .tkp-btn--primary').first().click();
+    await page.locator('[data-give-ready="true"]').waitFor({ timeout: 15000 });
+    await page.locator('[data-give-choice="agent"]').click();
     return until(async () => (await page.locator('.modal.ata').count()) === 1, 8000);
   };
   const composer = page.locator('.modal.ata');
@@ -208,7 +217,7 @@ async function functional(browser, base) {
   try {
     // ── T1/T2: an approved agent, a To Do task ────────────────────────────────────────────
     console.log('\n═══ T1 / T2. Assign a To Do task to an approved agent ═══');
-    check('the task detail offers "Assign to agent", which opens the composer', await ui.openComposer(TASKS.todo));
+    check('the task page\'s door offers a named agent, which opens the composer', await ui.openComposer(TASKS.todo));
     const disclosure = await composer.locator('.ata-disclosure').innerText().catch(() => '');
     // Guards a composer that hides what syncs: the owner must read it before assigning.
     check('the composer discloses what reaches the task and that it syncs to ClickUp or GitHub',
@@ -232,7 +241,7 @@ async function functional(browser, base) {
       await until(async () => resultLine(TASKS.todo, SCOUT), 30000), taskText(TASKS.todo).split('## Changelog')[1]?.slice(0, 400));
     await primary().click(); // Close
     const detailFace = page.locator('.task-agent-row .task-agent-face[aria-label="Assigned to Scout"]');
-    check('the agent\'s face is on the task detail', await until(async () => (await detailFace.count()) > 0, 8000));
+    check('the agent\'s face is on the task page', await until(async () => (await detailFace.count()) > 0, 8000));
     await page.screenshot({ path: join(SHOTS, 'light-2-detail-face.png') });
     await ui.toBoard();
     check('…and on the Kanban card', await until(async () => (await ui.card(TASKS.todo).locator('.task-agent-face').count()) > 0, 8000));
@@ -304,7 +313,8 @@ async function darkPass(browser, base) {
     await composer.locator('.modal-actions .btn--ghost').first().click();
     await ui.toBoard();
     await ui.card(TASKS.todo).click();
-    check('[dark] the detail shows the agent\'s face',
+    await page.locator('[data-task-ready]').first().waitFor({ timeout: 15000 });
+    check('[dark] the task page shows the agent\'s face',
       await until(async () => (await page.locator('.task-agent-row .task-agent-face').count()) > 0, 8000));
     await page.screenshot({ path: join(SHOTS, 'dark-3-detail-face.png') });
     await ui.toBoard();

@@ -4280,6 +4280,16 @@ const TR_PARTIAL: Record<string, string> = {
   'giveAgent.develop.notReady': 'Bu görev henüz geliştirmeye hazır değil. Eksikleri:',
   'giveAgent.develop.start': 'Geliştirmeye başla',
   'giveAgent.develop.refused': 'Ajan burada başlayamadı. Ajanlar açıkken masaüstü uygulamasını aç, sonra tekrar dene.',
+  // Task strings the rebuilt task screens read (plan r3 § 5f)
+  'tasks.add_entry': 'Ekle',
+  'tasks.changelog': 'Geçmiş',
+  'tasks.customFields.sectionLabel': 'Özel alanlar',
+  'tasks.history_empty': 'Henüz geçmiş yok.',
+  'tasks.history_placeholder': 'Geçmişe bir not ekle...',
+  'tasks.todo': 'Yapılacak',
+  'tasks.in_progress': 'Devam ediyor',
+  'tasks.in_review': 'İncelemede',
+  'tasks.completed': 'Tamamlandı',
 };
 
 const PARTIALS: Record<string, Record<string, string>> = { tr: TR_PARTIAL };

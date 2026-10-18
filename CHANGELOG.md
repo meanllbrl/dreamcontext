@@ -9,6 +9,32 @@ All notable changes to dreamcontext will be documented in this file.
 A task is a page now, the board asks "when?" before "how important?", and what waits for the
 owner has one place. Plan r3 § W5 (C5).
 
+#### New screens
+
+- **The task page.** A card click, ⌘K and the Brain map open one task as a page. It has:
+  - the name exactly as written, back to the board, status, and its place on the "when?" axis;
+  - the parent path, and the door to an agent;
+  - criteria with what proves each one;
+  - decisions and the other sections, collapsible;
+  - sub-tasks with n/m;
+  - the journal, five entries at a time with "Show older";
+  - the properties.
+  A legacy in-card Changelog renders only when opened, and a 300 KB legacy card opens in under a second.
+- **The board groups by Now / Next / Later** with a cycle strip.
+  - Finished work waits in a closed Done lane, cancelled work leaves the board, and a parent opens its sub-tasks in place.
+  - Dragging plans or ranks, and "Move to Later" plans.
+  - A phone shows one column at a time.
+- **The Inbox** has reviews (approve, or send back with a note), proposals and change cards, held-open parents, what sleep learned with Revert, and every owner override with who and through what. Its badge counts fully evidenced reviews only.
+- **Planning** creates, starts and fills cycles, with a capacity hint. **The Close deck** closes one: carry, back or cancel per leaf, nothing undecided.
+- **Releases**: read-only, shipped and not yet released.
+- **One "Give to an agent" door** replaces Delegate, Assign and "Author with agent" on the task surfaces. It offers:
+  - Develop (readiness first, the Plan chat's Develop session);
+  - a named agent;
+  - a custom prompt;
+  - writing a new task.
+  The Plan chat's own Develop is unchanged.
+- **Safety.** Every task-authored string renders as text or through one sanitizing markdown renderer; `verify:task-ui` seeds script, iframe, `onerror` and `javascript:` payloads and fails if any runs. The screens speak English and Turkish.
+
 #### Removed (and why)
 
 - **The Eisenhower matrix, the RICE scatter, the Calendar and the Activity heatmap views.**
