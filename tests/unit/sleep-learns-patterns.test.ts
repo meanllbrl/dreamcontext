@@ -197,8 +197,14 @@ describe('learning a rule', () => {
     expect(text).toContain('Components use named exports');
     expect(text).not.toContain('Always use named exports, never default exports.');
     expect(text.match(new RegExp(`\\[${first.ruleId}\\]`, 'g'))).toHaveLength(1);
-    // an awake edit of that block
-    writeFileSync(patternFile('named-exports'), text.replace('Components use named exports', 'Components and hooks use named exports'));
+    // An awake edit of that block. The rule sentence now also opens the frontmatter
+    // `description` (refreshed with the rule), so the edit targets the block's own rule
+    // line, which starts a line, never the `description:` line.
+    expect(text).toContain('description: "Components use named exports; a default export is never used."');
+    const edited = text.replace('\nComponents use named exports;', '\nComponents and hooks use named exports;');
+    expect(edited).not.toBe(text);
+    expect(edited).toContain('description: "Components use named exports; a default export is never used."');
+    writeFileSync(patternFile('named-exports'), edited);
     ingest('s5', 's6');
     expect(() => learnRule(ctx, {
       pattern: 'named-exports', title: 'No emoji', rule: 'Do not use emoji anywhere in replies or commits.',
@@ -206,6 +212,25 @@ describe('learning a rule', () => {
     })).toThrow(/edited awake/);
     text = readFileSync(patternFile('named-exports'), 'utf-8');
     expect(text).toContain('Components and hooks use named exports');
+  });
+
+  it('6b. the guard and the description refresh are independent: an awake edit of the description alone survives a replace', () => {
+    ingest('s1', 's2');
+    const first = learnRule(ctx, { pattern: 'named-exports', title: 'Named exports only', rule: 'Always use named exports, never default exports.', cites: groupOf('s1', 's2').ids });
+    // the awake agent rewrites only the description; the learned block is untouched
+    const text = readFileSync(patternFile('named-exports'), 'utf-8');
+    const awake = text.replace('description: "Always use named exports, never default exports."', 'description: "How Larkspur Notes exports modules."');
+    expect(awake).not.toBe(text);
+    writeFileSync(patternFile('named-exports'), awake);
+    ingest('s10', 's11');
+    const c = learnRule(ctx, {
+      pattern: 'named-exports', title: 'Named exports for components', rule: 'Components use named exports; a default export is never used.',
+      cites: groupOf('s10', 's11').ids, replaces: first.ruleId,
+    });
+    expect(c.action).toBe('replace');
+    const after = readFileSync(patternFile('named-exports'), 'utf-8');
+    expect(after).toContain('description: "How Larkspur Notes exports modules."');
+    expect(after).toContain('\nComponents use named exports; a default export is never used.\n');
   });
 });
 
