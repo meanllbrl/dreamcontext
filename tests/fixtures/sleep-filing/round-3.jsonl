@@ -1,0 +1,4 @@
+{"type": "user", "promptSource": "sdk", "message": {"role": "user", "content": "add a --json flag to tasks proposals"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Added."}]}}
+{"type": "user", "promptSource": "sdk", "message": {"role": "user", "content": "please put the --json flag for proposals in the readme as well"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Noted."}]}}

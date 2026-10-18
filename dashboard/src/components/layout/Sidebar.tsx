@@ -18,6 +18,7 @@ import {
 import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
 import type { ProjectRollup } from '../sleepy/agentStatus';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
+import { useTaskProposalsCount } from '../../hooks/useTaskProposals';
 import './Sidebar.css';
 
 export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
@@ -193,6 +194,10 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   // their laptop must not clear this badge here.
   const { data: agentFeed } = useAgentFeed();
   const agentUnread = agentFeed?.unreadTotal ?? 0;
+  // Sleep's proposals and the tasks it opened itself wait on the Tasks page; the
+  // rail is how the owner learns they exist (sleep often runs with nobody in a session).
+  const { data: proposalCount } = useTaskProposalsCount();
+  const proposalsWaiting = proposalCount?.waiting ?? 0;
   // Hypotheses is in the rail for everyone, on or off. It used to be hidden
   // while the learning layer was disabled, which made the layer undiscoverable
   // by exactly the people who had never turned it on: the page that explains it
@@ -338,7 +343,8 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
               const isAbout = page === 'about';
               const badgeCount = page === 'announcements' ? unread.length
                 : page === 'automations' ? agentUnread
-                  : 0;
+                  : page === 'tasks' ? proposalsWaiting
+                    : 0;
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
@@ -356,7 +362,9 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                         plain row pays no extra gap. */}
                     {(badgeCount > 0 || level) && (
                       <span className="sidebar-item-end">
-                        {badgeCount > 0 && <span className="sidebar-badge">{badgeCount}</span>}
+                        {badgeCount > 0 && (
+                          <span className="sidebar-badge" {...(page === 'tasks' ? { title: t('nav.tasks.waitingBadge').replace('{n}', String(badgeCount)) } : {})}>{badgeCount}</span>
+                        )}
                         <MaturityTag level={level} className="sidebar-maturity" />
                       </span>
                     )}

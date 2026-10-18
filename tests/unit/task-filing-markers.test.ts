@@ -28,8 +28,10 @@ describe('agents/sleep-tasks.md — the protocol the bar cannot enforce', () => 
 
   it.each([
     ['the scope test',            'Lands in THIS project?'],
-    ['the direct-evidence rubric', 'Direct evidence — file now; indirect — defer'],
-    ['the deferred-candidate flag family', 'task-candidate:'],
+    ['the filing order (C4)',      'Where new work goes: in this order, the first that fits wins.'],
+    ['the high-confidence basis',  '--basis ask --quote'],
+    ['the proposal path',          'dreamcontext tasks propose'],
+    ['the rules read',             'dreamcontext tasks rules'],
     ['the latest-session-wins report line', 'Killed by a later session'],
   ])('names %s', (_what, marker) => {
     expect(content).toContain(marker);

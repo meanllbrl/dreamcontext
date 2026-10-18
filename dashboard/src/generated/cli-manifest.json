@@ -2991,6 +2991,19 @@
       "group": true
     },
     {
+      "path": "tasks accept",
+      "desc": "Accept a proposal: it becomes a task in the Next queue (owner only)",
+      "args": [
+        "<id>"
+      ],
+      "valueFlags": [
+        "--name",
+        "-w",
+        "--why",
+        "--parent"
+      ]
+    },
+    {
       "path": "tasks approve",
       "desc": "Approve a task in review: the owner's verdict, recorded in the journal, closes it (never from an agent)",
       "args": [
@@ -3077,7 +3090,10 @@
         "--field",
         "--by",
         "--neighbor-checked",
-        "--declined-checked"
+        "--declined-checked",
+        "--basis",
+        "--quote",
+        "--evidence"
       ]
     },
     {
@@ -3174,6 +3190,13 @@
       ]
     },
     {
+      "path": "tasks keep",
+      "desc": "Keep a task sleep opened: it leaves the Proposals section and counts as a good filing (owner only)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
       "path": "tasks list",
       "desc": "List tasks, with filters, grouping, tag discovery, and JSON output",
       "args": [],
@@ -3243,6 +3266,28 @@
       ]
     },
     {
+      "path": "tasks proposals",
+      "desc": "List what waits for the owner: sleep's proposals and the tasks sleep opened itself",
+      "args": []
+    },
+    {
+      "path": "tasks propose",
+      "desc": "Propose a task to the owner (sleep's path for a new top-level task without an ask/defect basis)",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "-w",
+        "--why",
+        "--quote",
+        "--parent",
+        "--basis",
+        "--by",
+        "--neighbor-checked",
+        "--declined-checked"
+      ]
+    },
+    {
       "path": "tasks provision",
       "desc": "Create the recommended fields on the remote task container (urgency, summary, RICE, …)",
       "args": []
@@ -3266,6 +3311,17 @@
       ]
     },
     {
+      "path": "tasks reject",
+      "desc": "Reject a proposal or a task sleep opened, with a reason (feeds the task-filing rules)",
+      "args": [
+        "<item>"
+      ],
+      "valueFlags": [
+        "--reason",
+        "--note"
+      ]
+    },
+    {
       "path": "tasks rename",
       "desc": "Rename a task (file + slug + remote mapping) — never duplicates the remote task",
       "args": [
@@ -3284,6 +3340,57 @@
         "--impact",
         "--confidence",
         "--effort"
+      ]
+    },
+    {
+      "path": "tasks rules",
+      "desc": "Read the task-filing rules sleep learned from the owner's rejects (required before sleep files or proposes)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "tasks rules history",
+      "desc": "Every change to the rules, newest first",
+      "args": []
+    },
+    {
+      "path": "tasks rules merge",
+      "desc": "Fold one rule into another: their rejects are unioned and the second disappears",
+      "args": [
+        "<keep>",
+        "<drop>"
+      ],
+      "valueFlags": [
+        "--title",
+        "--dont",
+        "--do",
+        "--by"
+      ]
+    },
+    {
+      "path": "tasks rules pending",
+      "desc": "The owner's rejects no rule cites yet (what the next distillation reads)",
+      "args": []
+    },
+    {
+      "path": "tasks rules revert",
+      "desc": "Undo the latest change to a rule (owner only; the Tasks screen does the same)",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "tasks rules set",
+      "desc": "Add or rewrite a rule: it must cite the rejects it rests on and give a don't and a do example",
+      "args": [
+        "[id]"
+      ],
+      "valueFlags": [
+        "--title",
+        "--dont",
+        "--do",
+        "--rests-on",
+        "--by"
       ]
     },
     {

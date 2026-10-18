@@ -64,6 +64,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/settings/ClaudeAccounts.css::.dc-acct-bar-fill': 'bar',
   'pages/SettingsPage.css::.embed-model-bar-fill': 'bar',
   'components/settings/RecallModeCards.css::.recall-bar-fill': 'bar',
+  'components/tasks/ProposalsSection.css::.tp-bar-fill': 'bar',
   'components/sleepy/chat/pinShelf.css::.pin-track-fill': 'bar',
   'components/sleepy/chat/atoms.css::.chat-a-progress[data-status=\'running\'] .chat-a-progress-fill': 'progress bar',
   'components/sleepy/chat/composer.css::.chat-cmp-usagebar-fill': 'usage bar',

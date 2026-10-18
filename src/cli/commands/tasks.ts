@@ -10,6 +10,35 @@ import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
 import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
+import {
+  acceptProposal,
+  addProposal,
+  dropFiled,
+  filingBrake,
+  keepFiled,
+  pendingProposals,
+  ProposalError,
+  readProposals,
+  recordFiled,
+  rejectFiled,
+  rejectProposal,
+  storableQuote,
+  taskOnBoard,
+  waitingFiled,
+} from '../../lib/task-proposals.js';
+import { FEEDBACK_REASONS, isFeedbackReason, reasonLabel } from '../../lib/task-feedback.js';
+import {
+  mergeRules,
+  readRuleHistory,
+  readRules,
+  RuleError,
+  RULES_REL_PATH,
+  rulesForBrief,
+  revertRule,
+  setRule,
+  stampRulesRead,
+  uncitedRejects,
+} from '../../lib/task-filing-rules.js';
 import { appendDedupLogEntry } from '../../lib/embeddings/dedup-log.js';
 import {
   appendDeclined,
@@ -799,7 +828,10 @@ export function registerTasksCommand(program: Command): void {
     .option('--by <actor>', 'Who is filing: human | sleep. During a sleep cycle a task filed as anything but `human` must clear the filing bar')
     .option('--neighbor-checked <slug>', 'The nearest existing task you looked at and judged a separate concern (lifts a review-band filing-bar refusal)')
     .option('--declined-checked <key>', 'The declined idea you read and judged different from this task (lifts a semantic declined-match refusal)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; parent?: string; field?: string[]; allowMissingRequired?: boolean; by?: string; neighborChecked?: string; declinedChecked?: string }) => {
+    .option('--basis <basis>', 'Sleep only: why a NEW top-level task may be filed without the owner — ask (they asked for it) | defect (a failing output)')
+    .option('--quote <text>', 'With --basis ask: the owner\'s own words, verbatim from a session of this sleep')
+    .option('--evidence <text>', 'With --basis defect: the failing output, verbatim from a tool result of this sleep')
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; parent?: string; field?: string[]; allowMissingRequired?: boolean; by?: string; neighborChecked?: string; declinedChecked?: string; basis?: string; quote?: string; evidence?: string }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -817,6 +849,11 @@ export function registerTasksCommand(program: Command): void {
       // storage layer.
       const actor: FilingActor = opts.by === 'human' ? 'human' : opts.by === 'sleep' ? 'sleep' : 'unknown';
       const contextRoot = ensureContextRoot();
+      if (opts.basis !== undefined && opts.basis !== 'ask' && opts.basis !== 'defect') {
+        error('--basis must be ask or defect.');
+        process.exitCode = 1;
+        return;
+      }
       const verdict = await assertTaskFilingBar({
         contextRoot,
         actor,
@@ -830,6 +867,11 @@ export function registerTasksCommand(program: Command): void {
         description: opts.description,
         neighborChecked: opts.neighborChecked,
         declinedChecked: opts.declinedChecked,
+        mode: 'file',
+        parent: opts.parent ?? null,
+        basis: (opts.basis as 'ask' | 'defect' | undefined) ?? null,
+        quote: opts.quote,
+        evidence: opts.evidence,
       });
       // The bar's notices say what it could NOT check ("neighbor check skipped").
       // They print on a REFUSAL too: a specialist reading a cap refusal still has
@@ -901,6 +943,12 @@ export function registerTasksCommand(program: Command): void {
       let version: string | null = null;
       let cycleFromVersion: string | null = null;
       let queue: 'later' | null = null;
+      // Sleep never plans: placing work in a cycle or a queue is the owner's call.
+      if (verdict.underBar && opts.version !== undefined && opts.version.trim()) {
+        error('A task filed by sleep is never planned: drop -v (the owner plans it with `tasks plan`).');
+        process.exitCode = 1;
+        return;
+      }
       if (opts.version !== undefined && opts.version.trim()) {
         const v = opts.version.trim();
         const cycle = resolveCycleRef(readCycles(contextRoot).cycles, v);
@@ -981,7 +1029,9 @@ export function registerTasksCommand(program: Command): void {
           if (inherited.ok) feature = { slug: inherited.slug };
         }
       }
-      const parentCycle = parent && typeof parent.raw.cycle === 'string' && parent.raw.cycle.trim() ? parent.raw.cycle.trim() : null;
+      // A child inherits its parent's cycle — except one sleep files: sleep puts
+      // nothing in a cycle, so it waits outside until the owner plans it.
+      const parentCycle = !verdict.underBar && parent && typeof parent.raw.cycle === 'string' && parent.raw.cycle.trim() ? parent.raw.cycle.trim() : null;
 
       // --field key=value pairs → custom_fields, validated against the override.
       let customFields: Record<string, string | number> | undefined;
@@ -1009,6 +1059,30 @@ export function registerTasksCommand(program: Command): void {
       if (blockOnMissingRequired('create', slug, customFields, ensureContextRoot(),
           (k) => `--field ${k}="<value>"`, opts.allowMissingRequired)) return;
 
+      // Sleep's ledger FIRST: a task sleep filed is never on the board without its
+      // "opened by sleep" record (the section's reject button and the brake read
+      // it), and the section only shows a record whose task exists. A create that
+      // fails takes the record back out.
+      const sleepBasis = verdict.underBar ? ((opts.basis as 'ask' | 'defect' | undefined) ?? null) : null;
+      const sleepWords = verdict.underBar
+        ? storableQuote(sleepBasis === 'defect' ? (opts.evidence ?? '') : (opts.quote ?? ''), contextRoot)
+        : '';
+      let filedAt: string | null = null;
+      if (verdict.underBar) {
+        try {
+          filedAt = recordFiled(contextRoot, {
+            slug,
+            name,
+            why,
+            quote: sleepWords,
+            basis: sleepBasis ?? 'unknown',
+            parent: parent?.slug ?? null,
+          });
+        } catch (err) {
+          if (err instanceof ProposalError) { error(err.message); process.exitCode = 1; return; }
+          throw err;
+        }
+      }
       try {
         await backend.create({
           name,
@@ -1028,6 +1102,7 @@ export function registerTasksCommand(program: Command): void {
           variant: 'cli',
         });
       } catch (err) {
+        if (filedAt) dropFiled(contextRoot, slug, filedAt);
         if (err instanceof TaskBackendError && err.code === 'already_exists') {
           // This is the RACE-LOSING branch: the pre-check passed and the
           // under-lock re-check found the file. Non-zero, like the pre-check's
@@ -1041,8 +1116,20 @@ export function registerTasksCommand(program: Command): void {
       if (feature) {
         applyTaskFeatureLink(ensureContextRoot(), slug, feature);
       }
-      // Count it against this cycle's cap (no-op outside a cycle).
-      if (verdict.underBar) recordCycleTaskFiled(contextRoot, slug);
+      // Count it against this cycle's cap (no-op outside a cycle). The Tasks
+      // screen shows it as "opened by sleep" with one-tap reject from the record
+      // written above, and its outcome feeds the brake (task-proposals.ts).
+      if (verdict.underBar) {
+        recordCycleTaskFiled(contextRoot, slug);
+        await backend.updateFields(slug, { created_by: 'sleep', filing_basis: sleepBasis });
+        await backend.addJournal(slug, {
+          kind: 'sleep',
+          label: 'filed by sleep',
+          body: sleepBasis
+            ? `- basis ${sleepBasis}${verdict.basisSession ? ` (session ${verdict.basisSession})` : ''}: "${sleepWords}"`
+            : `- a sub-task of ${parent?.slug ?? 'its parent'}, filed without the owner (sub-tasks need no approval)`,
+        });
+      }
       // A task create IS a dedup decision, so it belongs in the same log
       // `sleep done` renders as the cycle's "Semantic dedup since epoch" digest.
       // Nothing is logged when the check came back `unavailable`: there is no
@@ -1337,6 +1424,292 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
       success(`Undeclined: ${removedKey} — it may be filed again.`);
+    });
+
+  // ─── Proposals: what sleep wants on the board but may not put there ─────────
+  // Owner decision 8 (task-proposals.ts): a NEW top-level task without an ask or
+  // defect basis waits here for the owner, on the Tasks screen.
+
+  tasks
+    .command('propose')
+    .argument('<name>', 'The task as a plain sentence')
+    .description('Propose a task to the owner (sleep\'s path for a new top-level task without an ask/defect basis)')
+    .requiredOption('-w, --why <why>', 'Who is hurt, by what, at what cost (40+ characters)')
+    .requiredOption('--quote <text>', 'The session line it came from, verbatim (shown to the owner)')
+    .option('--parent <task>', 'The existing parent it would belong under (suggested to the owner)')
+    .option('--basis <basis>', 'ask | defect | discussion (default discussion)')
+    .option('--by <actor>', 'sleep | agent (default sleep)')
+    .option('--neighbor-checked <slug>', 'The nearest existing task you looked at and judged a separate concern')
+    .option('--declined-checked <key>', 'The declined idea you read and judged different from this one')
+    .option('--json', 'Print the stored proposal as JSON')
+    .action(async (name: string, opts: { why: string; quote: string; parent?: string; basis?: string; by?: string; neighborChecked?: string; declinedChecked?: string; json?: boolean }) => {
+      const root = ensureContextRoot();
+      const backend = getTaskBackend();
+      const basis = opts.basis ?? 'discussion';
+      if (basis !== 'ask' && basis !== 'defect' && basis !== 'discussion') {
+        error('--basis must be ask, defect or discussion.');
+        process.exitCode = 1;
+        return;
+      }
+      const slug = slugify(name);
+      if (!slug) { error(`"${name}" has no usable slug.`); process.exitCode = 1; return; }
+      if ((await backend.get(slug)) !== null) {
+        error(`A task "${slug}" already exists: log or add a criterion there instead.`);
+        process.exitCode = 1;
+        return;
+      }
+      let parent: string | null = null;
+      if (opts.parent !== undefined) {
+        const resolved = await resolveTaskSlug(backend, opts.parent);
+        if (!resolved) { process.exitCode = 1; return; }
+        parent = resolved;
+      }
+      const verdict = await assertTaskFilingBar({
+        contextRoot: root,
+        actor: opts.by === 'agent' ? 'unknown' : 'sleep',
+        mode: 'propose',
+        why: opts.why,
+        slug,
+        name,
+        quote: opts.quote,
+        parent,
+        neighborChecked: opts.neighborChecked,
+        declinedChecked: opts.declinedChecked,
+      });
+      for (const notice of verdict.notices ?? []) console.log(chalk.dim(`  ${notice}`));
+      if (!verdict.allowed) {
+        error(verdict.reason ?? 'Refused by the task-filing bar.');
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        const p = addProposal(root, {
+          name,
+          why: opts.why,
+          quote: opts.quote,
+          basis,
+          parent,
+          session: verdict.basisSession ?? null,
+          by: opts.by === 'agent' ? 'agent' : 'sleep',
+        });
+        if (opts.json) { console.log(JSON.stringify(p, null, 2)); return; }
+        success(`Proposed: ${p.id} "${p.name}" — it waits for the owner on the Tasks screen.`);
+      } catch (err) {
+        if (err instanceof ProposalError) { error(err.message); process.exitCode = 1; return; }
+        throw err;
+      }
+    });
+
+  tasks
+    .command('proposals')
+    .description('List what waits for the owner: sleep\'s proposals and the tasks sleep opened itself')
+    .option('--json', 'Machine-readable output')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const store = readProposals(root);
+      const pending = pendingProposals(store);
+      const filed = waitingFiled(store, taskOnBoard(root));
+      const brake = filingBrake(store);
+      if (opts.json) {
+        console.log(JSON.stringify({ proposals: pending, filed, brake }, null, 2));
+        return;
+      }
+      const rate = brake.rate === null ? 'nothing judged yet' : `${brake.rejected}/${brake.window} rejected (${Math.round(brake.rate * 100)}%)`;
+      console.log(chalk.dim(`  Direct filing ${brake.open ? 'on' : 'OFF'} — sleep's last items: ${rate}`));
+      if (pending.length === 0 && filed.length === 0) {
+        info('Nothing waits for the owner.');
+        return;
+      }
+      if (pending.length > 0) {
+        console.log(header(`Proposals (${pending.length})`));
+        for (const p of pending) {
+          console.log(`  ${chalk.bold(p.id)}  ${p.name}${p.parent ? chalk.dim(`  ↳ under ${p.parent}`) : ''}`);
+          console.log(`      ${chalk.dim(p.why)}`);
+          console.log(`      ${chalk.dim(`"${p.quote}" (${p.basis})`)}`);
+        }
+      }
+      if (filed.length > 0) {
+        console.log(header(`Opened by sleep (${filed.length})`));
+        for (const f of filed) {
+          console.log(`  ${chalk.bold(f.slug)}  ${chalk.dim(`${f.basis}${f.parent ? `, under ${f.parent}` : ''}`)}`);
+        }
+      }
+      console.log(chalk.dim('  The owner decides on the Tasks screen (or: tasks accept <id> / tasks reject <id|slug> --reason <r> / tasks keep <slug>).'));
+    });
+
+  tasks
+    .command('accept')
+    .argument('<id>', 'The proposal id (tp_…)')
+    .description('Accept a proposal: it becomes a task in the Next queue (owner only)')
+    .option('--name <name>', 'Correct the name before accepting (recorded as feedback)')
+    .option('-w, --why <why>', 'Correct the Why before accepting (recorded as feedback)')
+    .option('--parent <task>', 'File it under this parent instead of the suggested one')
+    .option('--no-parent', 'File it top-level even though a parent was suggested')
+    .action(async (id: string, opts: { name?: string; why?: string; parent?: string | boolean }) => {
+      // Accepting is the owner's step: an agent environment never accepts its own sleep's work.
+      if (refuseSelfApproval(process.env)) return;
+      const root = ensureContextRoot();
+      const backend = getTaskBackend();
+      const parent = opts.parent === false ? null : typeof opts.parent === 'string' ? opts.parent : undefined;
+      try {
+        const r = await acceptProposal(root, backend, statusSet(), id, { name: opts.name, why: opts.why, parent }, 'cli');
+        success(`Accepted: ${r.slug} (in the Next queue${r.parent ? `, under ${r.parent}` : ''}).`);
+        if (r.parentDropped) warn(`Filed top-level: ${r.parentDropped}`);
+        if (r.warning) warn(r.warning);
+      } catch (err) {
+        if (err instanceof ProposalError) { error(err.message); process.exitCode = 1; return; }
+        throw err;
+      }
+    });
+
+  tasks
+    .command('reject')
+    .argument('<item>', 'A proposal id (tp_…) or the slug of a task sleep opened')
+    .description('Reject a proposal or a task sleep opened, with a reason (feeds the task-filing rules)')
+    .requiredOption('--reason <reason>', `One of: ${FEEDBACK_REASONS.join(', ')}`)
+    .option('--note <text>', 'Anything the reason does not say')
+    .action(async (item: string, opts: { reason: string; note?: string }) => {
+      if (!isFeedbackReason(opts.reason)) {
+        error(`--reason must be one of: ${FEEDBACK_REASONS.join(', ')}.`);
+        process.exitCode = 1;
+        return;
+      }
+      const root = ensureContextRoot();
+      try {
+        if (item.startsWith('tp_')) {
+          const p = rejectProposal(root, item, { reason: opts.reason, note: opts.note });
+          success(`Rejected proposal ${p.id} (${reasonLabel(opts.reason)}); sleep will not propose it again.`);
+        } else {
+          const f = await rejectFiled(root, getTaskBackend(), statusSet(), item, { reason: opts.reason, note: opts.note });
+          success(`Rejected ${f.slug} (${reasonLabel(opts.reason)}): cancelled, and sleep will not file it again.`);
+        }
+      } catch (err) {
+        if (err instanceof ProposalError) { error(err.message); process.exitCode = 1; return; }
+        throw err;
+      }
+    });
+
+  // ─── Task-filing rules: what sleep learned from the owner's rejects ─────────
+  const rules = tasks
+    .command('rules')
+    .description('Read the task-filing rules sleep learned from the owner\'s rejects (required before sleep files or proposes)')
+    .option('--json', 'Machine-readable output')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const stamped = stampRulesRead(root);
+      const pending = uncitedRejects(root).length;
+      if (opts.json) {
+        console.log(JSON.stringify({ rules: readRules(root), pendingRejects: pending, stamped }, null, 2));
+        return;
+      }
+      console.log(rulesForBrief(root));
+      if (pending > 0) console.log(chalk.dim(`  ${pending} reject(s) no rule cites yet: dreamcontext tasks rules pending`));
+      if (stamped) console.log(chalk.dim('  Read for this sleep cycle: filing and proposing are open.'));
+    });
+
+  rules
+    .command('pending')
+    .description('The owner\'s rejects no rule cites yet (what the next distillation reads)')
+    .option('--json', 'Machine-readable output')
+    .action((opts: { json?: boolean }) => {
+      const list = uncitedRejects(ensureContextRoot());
+      if (opts.json) { console.log(JSON.stringify(list, null, 2)); return; }
+      if (list.length === 0) { info('Every reject is cited by a rule.'); return; }
+      console.log(header(`Rejects no rule cites (${list.length})`));
+      for (const e of list) {
+        console.log(`  ${chalk.bold(e.id)}  ${e.reason ? reasonLabel(e.reason) : 'no reason'}  ${chalk.dim(e.at.slice(0, 10))}`);
+        console.log(`      ${e.proposal.name}`);
+        if (e.note) console.log(`      ${chalk.dim(`note: ${e.note}`)}`);
+      }
+    });
+
+  rules
+    .command('set')
+    .argument('[id]', 'The rule to rewrite (R<n>); omit to add a new one')
+    .description('Add or rewrite a rule: it must cite the rejects it rests on and give a don\'t and a do example')
+    .option('--title <text>', 'The rule in one line')
+    .option('--dont <text>', 'An example of what NOT to file (from a real reject)')
+    .option('--do <text>', 'What to do instead (a criterion on X, a sub-task of Y, nothing)')
+    .option('--rests-on <ids>', 'Comma-separated feedback ids of the rejects it rests on (added to an existing rule\'s)')
+    .option('--by <actor>', 'sleep | agent (default sleep)')
+    .action((id: string | undefined, opts: { title?: string; dont?: string; do?: string; restsOn?: string; by?: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const r = setRule(root, id ?? null, {
+          title: opts.title, dont: opts.dont, do: opts.do,
+          restsOn: opts.restsOn ? opts.restsOn.split(',') : undefined,
+          by: opts.by === 'agent' ? 'agent' : 'sleep',
+        });
+        stampRulesRead(root);
+        success(`${id ? 'Rewrote' : 'Added'} ${r.id} "${r.title}" (rests on ${r.restsOn.length} reject(s)) in ${RULES_REL_PATH}.`);
+      } catch (err) {
+        if (err instanceof RuleError) { error(err.message); process.exitCode = 1; return; }
+        throw err;
+      }
+    });
+
+  rules
+    .command('merge')
+    .argument('<keep>', 'The rule that stays (R<n>)')
+    .argument('<drop>', 'The rule folded into it (R<n>)')
+    .description('Fold one rule into another: their rejects are unioned and the second disappears')
+    .option('--title <text>', 'New wording for the merged rule')
+    .option('--dont <text>', 'New don\'t example')
+    .option('--do <text>', 'New do example')
+    .option('--by <actor>', 'sleep | agent (default sleep)')
+    .action((keep: string, drop: string, opts: { title?: string; dont?: string; do?: string; by?: string }) => {
+      const root = ensureContextRoot();
+      try {
+        const r = mergeRules(root, keep, drop, { title: opts.title, dont: opts.dont, do: opts.do, by: opts.by === 'agent' ? 'agent' : 'sleep' });
+        stampRulesRead(root);
+        success(`Merged ${drop} into ${r.id} (rests on ${r.restsOn.length} reject(s)).`);
+      } catch (err) {
+        if (err instanceof RuleError) { error(err.message); process.exitCode = 1; return; }
+        throw err;
+      }
+    });
+
+  rules
+    .command('revert')
+    .argument('<id>', 'The rule (R<n>)')
+    .description('Undo the latest change to a rule (owner only; the Tasks screen does the same)')
+    .action((id: string) => {
+      if (refuseSelfApproval(process.env)) return;
+      try {
+        const r = revertRule(ensureContextRoot(), id, 'owner');
+        success(r ? `Reverted ${id} to "${r.title}".` : `Reverted ${id}: the rule is gone.`);
+      } catch (err) {
+        if (err instanceof RuleError) { error(err.message); process.exitCode = 1; return; }
+        throw err;
+      }
+    });
+
+  rules
+    .command('history')
+    .description('Every change to the rules, newest first')
+    .option('--json', 'Machine-readable output')
+    .action((opts: { json?: boolean }) => {
+      const h = readRuleHistory(ensureContextRoot());
+      if (opts.json) { console.log(JSON.stringify(h, null, 2)); return; }
+      if (h.length === 0) { info('No rule has been written yet.'); return; }
+      for (const c of h) {
+        console.log(`  ${chalk.dim(c.at.slice(0, 16).replace('T', ' '))}  ${c.id}  ${c.action} by ${c.by}  ${chalk.dim((c.after ?? c.before)?.title ?? '')}`);
+      }
+    });
+
+  tasks
+    .command('keep')
+    .argument('<slug>', 'A task sleep opened')
+    .description('Keep a task sleep opened: it leaves the Proposals section and counts as a good filing (owner only)')
+    .action((slug: string) => {
+      if (refuseSelfApproval(process.env)) return;
+      try {
+        const f = keepFiled(ensureContextRoot(), slug);
+        success(`Kept ${f.slug}.`);
+      } catch (err) {
+        if (err instanceof ProposalError) { error(err.message); process.exitCode = 1; return; }
+        throw err;
+      }
     });
 
   // Rename a task — the slug-safe way (#77). Renaming changes the name-derived

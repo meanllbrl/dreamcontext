@@ -345,7 +345,7 @@ Status: `todo → in_progress → in_review → completed` by default. **Evidenc
 
 **Objectives.** When the project has objectives, propose `objectives: [slug-a, slug-b]` links for tasks you create (`tasks create --objectives a,b` or `dreamcontext tasks objectives <task> a,b`); **never overwrite a non-empty `objectives:` list**, it is a PO decision → [tasks-and-features.md](references/tasks-and-features.md).
 
-**Cycles, RICE, dates, tags/people, Workflow, multi-product** → [tasks-and-features.md](references/tasks-and-features.md).
+**Cycles, RICE, dates, tags/people, Workflow, multi-product, sleep's proposals** → [tasks-and-features.md](references/tasks-and-features.md).
 **Syncing tasks to a cloud backend (ClickUp _or_ GitHub — one at a time)** → [integrations.md](references/integrations.md).
 
 ---

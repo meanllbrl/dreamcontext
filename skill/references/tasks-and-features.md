@@ -30,12 +30,13 @@ Defaults: `status=todo`, no cycle (reads as Next). Nothing lands in a cycle on i
 - **Name = a short plain sentence** describing what the task does ("Fix the login redirect loop"). Never a type-prefixed slug (`feat-x-y`) — the file slug is derived from the name automatically.
 - **`--why` is mandatory.** Creation fails without a non-empty reason; `created_at` covers the "when". A task must be readable months later on its Why alone.
 - **Lean card.** A new card contains only `## Why`; its journal starts with a `created` entry. Every other section (`user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`) is created on first `tasks insert`, in canonical position. Never insert placeholders to "complete" the shape; a section with nothing to say shouldn't exist.
+- **Sleep's own filing** needs a basis or goes to proposals: see [Sleep files only at high confidence](#sleep-files-only-at-high-confidence-proposals-and-the-filing-rules).
 - **`--neighbor-checked <slug>` / `--declined-checked <key>` — proof of having looked (sleep only).** During a sleep cycle the filing bar refuses a task whose nearest existing task is semantically close, or that looks like an idea somebody declined. Both refusals name the exact flag that lifts them, and each takes the **slug/key it named** — passing a different one is refused again. They are not bypasses: they say "I read that neighbor / that declined reason, and this is genuinely separate". A near-verbatim duplicate (the merge band) has no flag at all; fold it in instead. A person filing their own task during a background cycle uses `--by human`, which is never checked. When the CLI prints `neighbor check skipped (…)` the semantic floor is OFF for that run — do the keyword dedup yourself (`memory recall "<topic>" --types task`) and check `tasks declined` by hand.
 
 ### Sub-tasks: a parent and its steps (two levels)
 A **feature** is an area, a **parent task** is a deliverable with an end, a **sub-task** is one step of it. Two levels only.
 ```bash
-dreamcontext tasks create "Step one" -w "…" --parent <parent>   # inherits objectives, feature, cycle
+dreamcontext tasks create "Step one" -w "…" --parent <parent>   # inherits objectives, feature, cycle (not cycle when sleep files it)
 dreamcontext tasks parent <task> <parent|clear>                  # place, move or detach
 dreamcontext tasks show <task>                                   # the context packet
 ```
@@ -45,6 +46,33 @@ dreamcontext tasks show <task>                                   # the context p
 - **The Read hook:** reading a sub-task's card in a session adds its parent's card next to it (`.claude/hooks/read-task-guard.cjs`, PostToolUse `Read`; any other Read costs one node start and adds nothing).
 - **Session binding:** a Develop run (`goal-live start`), a handoff, an agent run for a task, or `tasks bind <task>` binds the session (`state/.session-task/<id>.json`, machine-local); after a compaction the packet is delivered again. It survives Stop and compaction, ends with SessionEnd (a resume re-binds), `/clear` unbinds, 7 days idle reaps it. `tasks unbind` clears it.
 - **Sync:** GitHub sub-issues and ClickUp subtasks, both ways. A remote three levels deep is flattened onto the top parent (warned); a remote that drops a link never clears the local one; a remote close of a parent with open sub-tasks is held open here (journaled) and the next push reopens it. ClickUp cannot un-subtask through its API: a local detach warns.
+
+### Sleep files only at high confidence: proposals and the filing rules
+
+What sleep may put on the board itself, in order (the first fit wins): a **criterion** on an existing task, a **sub-task** under an existing parent, a **new top-level task** only with a basis, and otherwise a **proposal**. Only a new top-level task waits for the owner. Sleep never plans: what it files sits in no cycle (a sub-task does not inherit its parent's).
+
+```bash
+dreamcontext tasks create "<sentence>" --by sleep --basis ask --quote "<the owner's words>" -w "…"     # they asked for it
+dreamcontext tasks create "<sentence>" --by sleep --basis defect --evidence "<failing output>" -w "…"  # a proven defect
+dreamcontext tasks propose "<sentence>" -w "…" --quote "<session line>" [--parent <p>]  # everything else
+dreamcontext tasks proposals [--json]        # what waits: proposals + tasks sleep opened
+dreamcontext tasks accept <tp_id> [--name … -w … --parent <p>|--no-parent]   # owner only → Next queue
+dreamcontext tasks reject <tp_id|slug> --reason <reason> [--note "…"]        # every reject has a reason
+dreamcontext tasks keep <slug>               # owner only: a task sleep opened is fine
+dreamcontext tasks rules                     # read the task-filing rules (sleep must, each cycle)
+dreamcontext tasks rules pending|history     # rejects no rule cites yet / every change
+dreamcontext tasks rules set [R<n>] --title … --dont … --do … --rests-on <fb ids>
+dreamcontext tasks rules merge <keep> <drop>; dreamcontext tasks rules revert <R<n>>   # revert: owner only
+```
+
+- **The basis is checked, not trusted.** `--quote` must appear, as whole words, in a turn the owner TYPED in a session this sleep consolidates and share a word with the task's name or Why; tool results, hook context, sub-agent notifications, skill-loader text, compaction summaries and `tasks show` output do not count, and a refusal says where the words did appear. Quotes are stored and journaled scrubbed of secrets, on one line. `--evidence` must appear in a tool result (or an owner turn). A proposal's `--quote` must appear in the session (owner or assistant words). Sessions an orchestrator spawned are never searched.
+- **Proposals live on the Tasks screen** (the Proposals section and a count on Tasks in the sidebar), never in a chat or the snapshot: sleep often runs with nobody in a session. Each shows the name, the Why, the session quote and the suggested parent; accept and reject are one tap. Tasks sleep filed itself show in the same section as "opened by sleep" until kept or rejected.
+- **Accept** creates the task in the **Next** queue with `created_by: human` (the owner decides when it enters a cycle); a corrected name or Why is recorded as the diff. `accept`, `keep` and `rules revert` refuse an agent environment; the dashboard is the owner's path.
+- **Reject reasons:** `already-exists`, `abandoned`, `too-small`, `badly-written`, `wrong-project`, `not-work`. Every reject is written to `state/.task-feedback.json` (the proposal, its basis, the quote, the reason, the note) and to the declined store, so no later cycle re-files it. A rejected task sleep filed moves to the project's cancelled-kind status (refused when none is declared).
+- **What the reasons change, deterministically:** each `already-exists` lowers this project's neighbour review threshold by 0.01 (at most 0.05); three rejects of the same kind of candidate (similar name + Why) block that kind for both `create` and `propose`, and if they were `too-small` the refusal points at a criterion instead.
+- **The brake:** when more than 30% of sleep's last 20 judged items (filed tasks + decided proposals) were rejected, direct filing is off and only criteria, sub-tasks and proposals remain, until accepted proposals bring the rate down. `sleep done` prints what was filed, proposed and rejected, the brake when it is off, and a warning when the active cycle ends within 2 days with open work.
+- **The task-filing rules** (`knowledge/patterns/task-filing-rules.md`) are sleep's distillation of the rejects: every rule cites the reject ids it rests on and gives a don't/do pair; a near-duplicate rule is refused (merge), and the file is capped (8,000 chars, 15 rules). While a sleep runs, `tasks create --by sleep` and `tasks propose` refuse until `tasks rules` was read in that cycle (and again after a change). Every change is in `state/.task-filing-rules-history.json` (written before the file, under one lock); the owner reverts a rule from the Tasks screen in one tap, and a revert of a change that is no longer the latest is refused. A ledger, verdict or history file that cannot be read is never overwritten: writes refuse, and sleep files and proposes nothing until it is fixed.
+- **Storage:** `state/.task-proposals.json` (proposals + the ledger of tasks sleep filed) and `state/.task-feedback.json` are brain content the generated brain ignore does not exclude, so they sync like `.task-declined.json`; a brain that ignores all of `state/` keeps them on this machine. `created_by: sleep` on a card is informational only: a remote backend's pull may overwrite it.
 
 ### Declining an idea (work that never became a task)
 

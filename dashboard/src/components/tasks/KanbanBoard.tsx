@@ -15,6 +15,7 @@ import { BoardToolbar, type MenuKey } from './BoardToolbar';
 import { BoardColumn, type BoardColumnData, type BoardSubGroup } from './BoardColumn';
 import { BoardCard } from './BoardCard';
 import { AtRiskAlert } from './AtRiskAlert';
+import { ProposalsSection } from './ProposalsSection';
 import { SaveScopeDialog } from './SaveScopeDialog';
 import { TaskDetailPanel } from './TaskDetailPanel';
 import { TaskCreateModal } from './TaskCreateModal';
@@ -281,6 +282,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
         agentReady={agentReady}
         flash={flash}
       />
+
+      <ProposalsSection />
 
       {showAlert && (
         <AtRiskAlert

@@ -1,0 +1,4 @@
+{"type": "user", "promptSource": "sdk", "message": {"role": "user", "content": "ship the --since flag for tasks list today"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Done. The --since flag filters by updated_at."}]}}
+{"type": "user", "promptSource": "sdk", "message": {"role": "user", "content": "also the readme should document the new --since flag for tasks list"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Noted."}]}}

@@ -10,6 +10,8 @@
  *   isMeta: true                     skill loaders, peer hand-backs, local-command caveats
  *   promptSource: 'system'           task notifications, peer and scheduled turns
  *   turnOrigin: task_notification | peer | system | scheduled
+ *   isCompactSummary: true           a compaction's summary, model-written
+ *   isVisibleInTranscriptOnly: true  the same summary's display copy
  *
  * Those fields are what this module trusts first. Older transcripts lack them, so the
  * text shapes in {@link isSystemNoiseMessage} stay as the fallback.
@@ -28,13 +30,18 @@ export const INJECTED_TURN_ORIGINS: ReadonlySet<string> = new Set([
 
 /**
  * True when a user-role transcript record was injected by the harness rather than typed
- * by a person: `isMeta: true`, `promptSource: 'system'`, or an injected `turnOrigin`.
- * A record with none of those fields reads as NOT injected (older transcripts carry
+ * by a person: `isMeta: true`, `promptSource: 'system'`, an injected `turnOrigin`, or a
+ * compaction summary (`isCompactSummary` / `isVisibleInTranscriptOnly`), which the model
+ * wrote. A record with none of those fields reads as NOT injected (older transcripts carry
  * none of them; the text fallback handles those).
  */
 export function isInjectedUserRecord(rec: object): boolean {
-  const r = rec as { isMeta?: unknown; promptSource?: unknown; turnOrigin?: unknown };
+  const r = rec as {
+    isMeta?: unknown; promptSource?: unknown; turnOrigin?: unknown;
+    isCompactSummary?: unknown; isVisibleInTranscriptOnly?: unknown;
+  };
   if (r.isMeta === true) return true;
+  if (r.isCompactSummary === true || r.isVisibleInTranscriptOnly === true) return true;
   if (r.promptSource === 'system') return true;
   return typeof r.turnOrigin === 'string' && INJECTED_TURN_ORIGINS.has(r.turnOrigin);
 }

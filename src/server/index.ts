@@ -24,6 +24,15 @@ import { wireNotchInbox } from '../lib/assistant/notch-inbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
+import {
+  handleTaskProposalsList,
+  handleTaskProposalsCount,
+  handleTaskProposalAccept,
+  handleTaskProposalReject,
+  handleFiledTaskReject,
+  handleFiledTaskKeep,
+  handleTaskFilingRuleRevert,
+} from './routes/task-proposals.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksJournal, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
@@ -299,6 +308,14 @@ export function buildRouter(): Router {
 
   // Tasks
   router.get('/api/tasks', handleTasksList);
+  // Sleep's proposals + the tasks it opened itself (the Tasks screen's Proposals section).
+  router.get('/api/task-proposals', handleTaskProposalsList);
+  router.get('/api/task-proposals/count', handleTaskProposalsCount);
+  router.post('/api/task-proposals/filed/:slug/reject', handleFiledTaskReject);
+  router.post('/api/task-proposals/filed/:slug/keep', handleFiledTaskKeep);
+  router.post('/api/task-proposals/:id/accept', handleTaskProposalAccept);
+  router.post('/api/task-proposals/:id/reject', handleTaskProposalReject);
+  router.post('/api/task-filing-rules/:id/revert', handleTaskFilingRuleRevert);
   router.post('/api/tasks', handleTasksCreate);
   // Sync routes are registered BEFORE :slug — first match wins.
   router.get('/api/tasks/sync-status', handleTasksSyncStatus);

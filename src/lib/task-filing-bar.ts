@@ -14,6 +14,31 @@ import {
   type DeclinedIdea,
 } from './task-declined.js';
 import { resolveTombstone } from './task-tombstones.js';
+import {
+  basisSessions,
+  describeMiss,
+  MIN_EVIDENCE_CHARS,
+  matchForm,
+  quoteIsAbout,
+  quoteProblem,
+  sessionsFromSleepState,
+  verifyAskQuote,
+  verifyDefectEvidence,
+  verifyProposalQuote,
+  type BasisSession,
+} from './ask-basis.js';
+import {
+  CorruptStoreError,
+  kindBlock,
+  KIND_REJECTS,
+  readFeedbackStrict,
+  reasonLabel,
+  tightenedReviewThreshold,
+  type TaskFeedbackEntry,
+} from './task-feedback.js';
+import { filingBrake, readProposalsStrict, BRAKE_MAX_REJECT_RATE, type ProposalStore } from './task-proposals.js';
+import { loadFamily } from './task-parent.js';
+import { rulesReadRefusal } from './task-filing-rules.js';
 
 /**
  * task-filing-bar — the ONE gate every writer passes before a sleep cycle is
@@ -119,6 +144,25 @@ export interface FilingBarInput {
   embed?: FilingBarEmbedder;
   /** Injected for tests; defaults to now. */
   nowMs?: number;
+  /**
+   * `file` = a task goes on the board now (`tasks create`); `propose` = it goes
+   * to the owner's proposals inbox (`tasks propose`). Default `file`.
+   */
+  mode?: 'file' | 'propose';
+  /**
+   * The existing parent this task is filed under (`--parent`). A sub-task of an
+   * existing parent is sleep's second choice and needs no basis: only a NEW
+   * top-level task waits for the owner (decision 2026-10-15).
+   */
+  parent?: string | null;
+  /** `--basis`: why sleep may file a new top-level task on its own. */
+  basis?: 'ask' | 'defect' | null;
+  /** `--quote`: the owner's words (ask) / the session line a proposal came from. */
+  quote?: string;
+  /** `--evidence`: the failing output a defect rests on. */
+  evidence?: string;
+  /** The sessions a basis is checked against. Tests inject; default: `.sleep.json`. */
+  sessions?: BasisSession[];
 }
 
 /**
@@ -159,6 +203,8 @@ export interface FilingBarVerdict {
   };
   /** Dim lines the caller MUST print — e.g. "neighbor check skipped …". */
   notices?: string[];
+  /** The session the basis (or a proposal's quote) was found in. */
+  basisSession?: string;
 }
 
 function readSleepStateSafe(contextRoot: string): SleepState | null {
@@ -209,11 +255,18 @@ export async function assertTaskFilingBar(input: FilingBarInput): Promise<Filing
   const { contextRoot, actor } = input;
   const nowMs = input.nowMs ?? Date.now();
 
-  // An explicit human is never under the bar, cycle or not.
-  if (actor === 'human') return { allowed: true, underBar: false };
-  if (!isSleepCycleLive(contextRoot, nowMs) && actor !== 'sleep') {
+  const mode = input.mode ?? 'file';
+  // An explicit human is never under the bar, cycle or not. A PROPOSAL is
+  // always under it: it is sleep's own path, whoever runs the command.
+  if (mode === 'file' && actor === 'human') return { allowed: true, underBar: false };
+  if (mode === 'file' && !isSleepCycleLive(contextRoot, nowMs) && actor !== 'sleep') {
     return { allowed: true, underBar: false };
   }
+
+  // Gate 0 — the task-filing rules. While a sleep runs, nothing is filed or
+  // proposed until the rules as they are NOW were read in this cycle.
+  const unread = rulesReadRefusal(contextRoot);
+  if (unread) return { allowed: false, underBar: true, reason: unread };
 
   // Either a live cycle, or `--by sleep` outside one: hold the bar. A specialist
   // that names itself is taken at its word.
@@ -230,6 +283,12 @@ export async function assertTaskFilingBar(input: FilingBarInput): Promise<Filing
     cap: capFor(contextRoot),
     filed: cycleTasksFiled(contextRoot),
     actor,
+    mode,
+    parent: input.parent ?? null,
+    basis: input.basis ?? null,
+    quote: input.quote,
+    evidence: input.evidence,
+    sessions: input.sessions,
   });
 }
 
@@ -316,17 +375,24 @@ interface ContentArgs {
   cap: number;
   filed: string[];
   actor: FilingActor;
+  mode: 'file' | 'propose';
+  parent: string | null;
+  basis: 'ask' | 'defect' | null;
+  quote?: string;
+  evidence?: string;
+  sessions?: BasisSession[];
 }
 
 async function checkContent(args: ContentArgs): Promise<FilingBarVerdict> {
   const { contextRoot, why, slug, cap, filed, actor } = args;
-  const hatch = actor === 'unknown'
+  const hatch = actor === 'unknown' && args.mode === 'file'
     ? ' If this is your OWN task and not the cycle\'s, pass `--by human`.'
     : '';
 
   // 1. The cap. Checked FIRST so a cycle at its limit gets the cap message
   //    rather than being told to write a better Why for a task it cannot file.
-  if (filed.length >= cap) {
+  //    It caps what goes on the board; a proposal waits for the owner instead.
+  if (args.mode === 'file' && filed.length >= cap) {
     return {
       allowed: false,
       underBar: true,
@@ -382,6 +448,42 @@ async function checkContent(args: ContentArgs): Promise<FilingBarVerdict> {
     }
   }
 
+  // 4b. The owner already rejected this KIND of candidate KIND_REJECTS times.
+  //     An unreadable verdict store refuses: what it would have blocked is unknown.
+  let feedback: TaskFeedbackEntry[];
+  try {
+    feedback = readFeedbackStrict(contextRoot);
+  } catch (err) {
+    if (err instanceof CorruptStoreError) return { allowed: false, underBar: true, reason: err.message + hatch };
+    throw err;
+  }
+  const kind = kindBlock(feedback, { name: title, why: trimmed });
+  if (kind) {
+    const ids = kind.matches.slice(0, 5).map((m) => m.id).join(', ');
+    return {
+      allowed: false,
+      underBar: true,
+      reason: kind.reason === 'too-small'
+        ? `The owner rejected ${kind.matches.length} candidates like this as too small (${ids}). `
+          + 'This kind of work is a criterion on an existing task, not a task: '
+          + 'dreamcontext tasks insert <task> acceptance_criteria "…".' + hatch
+        : `The owner rejected ${kind.matches.length} candidates like this (${reasonLabel(kind.reason)}; ${ids}). `
+          + `After ${KIND_REJECTS} rejects of one kind, sleep neither files nor proposes it. `
+          + 'Read the rules: dreamcontext tasks rules.' + hatch,
+    };
+  }
+
+  // 4c. The basis. A proposal must quote the session it came from; a direct
+  //     top-level file must rest on the owner's ask or on a defect with evidence
+  //     — and only while the brake is open. A sub-task of an existing parent
+  //     needs neither (only a NEW top-level task waits for the owner).
+  const basisOutcome = checkBasis(args);
+  if (basisOutcome.refusal !== undefined) {
+    return { allowed: false, underBar: true, reason: basisOutcome.refusal + hatch };
+  }
+  const basisSession = basisOutcome.session;
+  const withBasis = <T extends FilingBarVerdict>(v: T): T => (basisSession ? { ...v, basisSession } : v);
+
   // 5 + 6. The semantic gates — or an honest statement that they did not run.
   //
   // An injected embedder IS the availability answer (tests): it bypasses the
@@ -393,15 +495,16 @@ async function checkContent(args: ContentArgs): Promise<FilingBarVerdict> {
           : semanticSkipReason(contextRoot);
 
   if (skip !== null) {
-    return {
+    return withBasis({
       allowed: true,
       underBar: true,
       neighbor: { state: 'unavailable', why: skip },
       notices: [skipNotice(skip)],
-    };
+    });
   }
 
-  const gateArgs: GateArgs = { ...args, title, body: trimmed, hatch };
+  const tightened = tightenedReviewThreshold(feedback);
+  const gateArgs: GateArgs = { ...args, title, body: trimmed, hatch, reviewThreshold: tightened.threshold };
 
   const neighborOutcome = await runNeighborGate(gateArgs);
   if (neighborOutcome.refusal !== undefined) {
@@ -415,12 +518,12 @@ async function checkContent(args: ContentArgs): Promise<FilingBarVerdict> {
   // The embedding layer failed mid-flight: gate 6 would fail the same way, so
   // report the skip once and pass, exactly as an up-front skip does.
   if (neighborOutcome.neighbor.state === 'unavailable') {
-    return {
+    return withBasis({
       allowed: true,
       underBar: true,
       neighbor: neighborOutcome.neighbor,
       notices: [skipNotice(neighborOutcome.neighbor.why)],
-    };
+    });
   }
 
   const declinedOutcome = await runDeclinedSemanticGate(gateArgs);
@@ -434,11 +537,72 @@ async function checkContent(args: ContentArgs): Promise<FilingBarVerdict> {
     };
   }
 
-  return {
+  return withBasis({
     allowed: true,
     underBar: true,
     neighbor: neighborOutcome.neighbor,
     ...(declinedOutcome.declined ? { declined: declinedOutcome.declined } : {}),
+  });
+}
+
+/** Gate 4c. Returns the session the basis was found in, or a refusal. */
+function checkBasis(args: ContentArgs): { refusal?: string; session?: string } {
+  const sessions = () => args.sessions ?? basisSessions(sessionsFromSleepState(args.contextRoot));
+  if (args.mode === 'propose') {
+    const problem = quoteProblem(args.quote);
+    if (problem) return { refusal: `A proposal shows the owner where it came from. ${problem}` };
+    const m = verifyProposalQuote(sessions(), args.quote!);
+    if (!m.ok) return { refusal: describeMiss(m, 'The --quote was not found in a session of this sleep.') };
+    return { session: m.session };
+  }
+  if (args.parent) return {};
+
+  // An unreadable ledger refuses: the brake it holds cannot be read either.
+  let store: ProposalStore;
+  try {
+    store = readProposalsStrict(args.contextRoot);
+  } catch (err) {
+    if (err instanceof CorruptStoreError) return { refusal: err.message };
+    throw err;
+  }
+  const brake = filingBrake(store);
+  if (!brake.open) {
+    return {
+      refusal: `Direct filing is off: the owner rejected ${brake.rejected} of sleep's last ${brake.window} items `
+        + `(${Math.round((brake.rate ?? 0) * 100)}% > ${Math.round(BRAKE_MAX_REJECT_RATE * 100)}%). `
+        + 'Put it under an existing parent (--parent), add it as a criterion, or propose it: '
+        + 'dreamcontext tasks propose "<name>" -w "<why>" --quote "<session line>".',
+    };
+  }
+  if (args.basis === 'ask') {
+    const problem = quoteProblem(args.quote);
+    if (problem) return { refusal: problem };
+    // The ask must be about THIS task: a real owner line on another subject is no basis.
+    const subject = [args.name ?? args.slug ?? '', args.description ?? '', args.why ?? ''].join('\n');
+    if (!quoteIsAbout(args.quote!, subject)) {
+      return {
+        refusal: 'The --quote shares no word with this task\'s name, description or Why: '
+          + 'an ask is a basis only for the task it asks for. Quote the owner\'s line that asks for THIS.',
+      };
+    }
+    const m = verifyAskQuote(sessions(), args.quote!);
+    if (!m.ok) return { refusal: describeMiss(m, 'The --quote is not something the owner typed in a session of this sleep.') };
+    return { session: m.session };
+  }
+  if (args.basis === 'defect') {
+    const ev = (args.evidence ?? '').trim();
+    if (matchForm(ev).length < MIN_EVIDENCE_CHARS) {
+      return { refusal: `--evidence must be the failing output itself, verbatim (at least ${MIN_EVIDENCE_CHARS} characters).` };
+    }
+    const m = verifyDefectEvidence(sessions(), ev);
+    if (!m.ok) return { refusal: describeMiss(m, 'The --evidence was not found in a tool result or an owner turn of this sleep.') };
+    return { session: m.session };
+  }
+  return {
+    refusal: 'A NEW top-level task from sleep needs a basis: --basis ask --quote "<the owner\'s words>" '
+      + '(they asked for it) or --basis defect --evidence "<the failing output>". '
+      + 'Without one: add a criterion to an existing task, file it under a parent (--parent), or propose it: '
+      + 'dreamcontext tasks propose "<name>" -w "<why>" --quote "<session line>".',
   };
 }
 
@@ -448,6 +612,8 @@ interface GateArgs extends ContentArgs {
   /** The trimmed `--why`, already past the length floor. */
   body: string;
   hatch: string;
+  /** This project's review threshold (tightened by "already exists" rejects). */
+  reviewThreshold: number;
 }
 
 /**
@@ -469,7 +635,13 @@ async function runNeighborGate(
     result = await dedupCandidate(
       contextRoot,
       { title, description: args.description, body },
-      { types: ['task'], topK: 5, excludeCapture: true, ...(args.embed ? { embed: args.embed } : {}) },
+      {
+        types: ['task'],
+        topK: 5,
+        excludeCapture: true,
+        reviewThreshold: args.reviewThreshold,
+        ...(args.embed ? { embed: args.embed } : {}),
+      },
     );
   } catch (err) {
     // `dedupCandidate` throws only on programmer error (a blank candidate, an
@@ -517,8 +689,20 @@ async function runNeighborGate(
     neighbor,
     refusal: `Nearest task is \`${top.slug}\` (cosine ${top.sim.toFixed(2)} ≥ ${result.reviewThreshold} review). `
       + 'If this is a slice of it, fold it in; if it is genuinely separate, '
-      + `re-run with --neighbor-checked ${top.slug}.` + mismatch + hatch,
+      + `re-run with --neighbor-checked ${top.slug}.` + familyHint(args, top.slug) + mismatch + hatch,
   };
+}
+
+/** When the nearest task belongs to a family, offer filing under that family's parent. */
+function familyHint(args: GateArgs, slug: string): string {
+  if (args.parent) return '';
+  try {
+    const family = loadFamily(join(args.contextRoot, 'state'));
+    const parent = family.children.get(slug)?.length ? slug : family.parentOf.get(slug) ?? null;
+    return parent ? ` If it is a step of \`${parent}\`, file it as a sub-task: --parent ${parent}.` : '';
+  } catch {
+    return '';
+  }
 }
 
 /**

@@ -55,6 +55,10 @@ import {
   CURATOR_TASK_SLUG,
 } from '../../lib/sleep-flags.js';
 import { loadStatuses } from '../../lib/overrides.js';
+import { activeCycle, cycleProgress, daysLeft, readCycles } from '../../lib/cycles.js';
+import { loadFamily } from '../../lib/task-parent.js';
+import { cycleCounts, filingBrake, readProposals } from '../../lib/task-proposals.js';
+import { rulesForBrief } from '../../lib/task-filing-rules.js';
 import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-log.js';
 import { scanDigests, planDigestGc, runDigestGc } from '../../lib/session-digest.js';
 import { collectBrainDirty, renderBrainDirtyWarning } from '../../lib/brain-dirty.js';
@@ -535,6 +539,10 @@ export function registerSleepCommand(program: Command): void {
         if (decision.depth !== 'deep') {
           say.info('Light/standard consolidation: do NOT merge/summarize-replace/delete knowledge — flag candidates in the report instead.');
         }
+        // The task-filing rules go into the brief: sleep-tasks gets them verbatim,
+        // and the CLI refuses its first file/propose until it has run `tasks rules`.
+        const filingRules = rulesForBrief(root);
+        say.info(`${filingRules}\nPass these to sleep-tasks verbatim; it must run \`dreamcontext tasks rules\` before filing or proposing (the CLI refuses until it has).`);
 
         // Change C — a NEW cycle supersedes any previous cycle's pending
         // private-derivation disclosure. This is the one genuine wedge (a
@@ -581,6 +589,7 @@ export function registerSleepCommand(program: Command): void {
             cappedByCatchup: decision.cappedByCatchup,
             migrations: codeNotices,
             automationOutputs,
+            filingRules,
           }, null, 2));
         }
       } finally {
@@ -670,6 +679,7 @@ export function registerSleepCommand(program: Command): void {
         const fresh = readSleepState(root);
         const previousDebt = fresh.debt;
         const epoch = fresh.sleep_started_at;
+        const previousConsolidatedAt = fresh.last_consolidated_at;
 
         const result = applyConsolidation(fresh, epoch);
         const today_ = today();
@@ -682,19 +692,30 @@ export function registerSleepCommand(program: Command): void {
         // Finalize and persist the new state exactly once.
         const finalState = finalizeSleepState(result.state, summary, today_, new Date().toISOString());
         writeSleepState(root, finalState);
-        return { previousDebt, epoch, today_, finalState };
+        return { previousDebt, epoch, today_, finalState, previousConsolidatedAt };
       });
       if (!doneLock.locked) {
         error('Sleep state is busy — refusing to consolidate from a stale read. Retry in a moment.');
         process.exitCode = 1;
         return;
       }
-      const { previousDebt, epoch, today_, finalState } = doneLock.value;
+      const { previousDebt, epoch, today_, finalState, previousConsolidatedAt } = doneLock.value;
 
       if (epoch && finalState.sessions.length > 0) {
         success(`Consolidation complete. Debt reduced from ${previousDebt} to ${finalState.debt}. ${finalState.sessions.length} post-epoch session(s) preserved.`);
       } else {
         success(`Consolidation complete. Debt reset from ${previousDebt} to ${finalState.debt}.`);
+      }
+
+      // Task filing (owner decision 8): what this cycle filed and proposed, what
+      // the owner rejected since the last sleep, and the brake. Then the one
+      // cycle signal sleep gives — it never plans anything itself.
+      try {
+        for (const line of taskFilingLines(root, epoch, previousConsolidatedAt)) info(line);
+        const ending = cycleEndingWarning(root);
+        if (ending) warn(ending);
+      } catch (err) {
+        warn(`Task filing counts: skipped — ${(err as Error).message ?? err}`);
       }
 
       // AC6 (1/2) — recidivism escalation: reconcile this cycle's --flag
@@ -1347,4 +1368,31 @@ export function registerRecallCommand(program: Command): void {
       writeSleepState(root, state);
     },
   });
+}
+
+/** `sleep done`'s task-filing report: filed / proposed / rejected, and the brake when it is off. */
+export function taskFilingLines(root: string, epoch: string | null, lastConsolidatedAt: string | null): string[] {
+  const c = cycleCounts(root, epoch, lastConsolidatedAt);
+  const brake = filingBrake(readProposals(root));
+  const lines = [
+    `Tasks this cycle: filed ${c.filed} new + ${c.children} sub-task(s), proposed ${c.proposed}; `
+      + `the owner rejected ${c.rejected} since the last sleep.`,
+  ];
+  if (!brake.open) {
+    lines.push(`Direct filing is OFF: ${brake.rejected} of sleep's last ${brake.window} items were rejected `
+      + `(${Math.round((brake.rate ?? 0) * 100)}%). New top-level tasks go to proposals until the rate recovers.`);
+  }
+  return lines;
+}
+
+/** The active cycle ends within two days with open leaves: say so (sleep never plans). */
+export function cycleEndingWarning(root: string, now: string = today()): string | null {
+  const c = activeCycle(readCycles(root).cycles);
+  if (!c) return null;
+  const left = daysLeft(c, now);
+  if (left > 2) return null;
+  const progress = cycleProgress(loadFamily(join(root, 'state')), loadStatuses(root), c.id);
+  if (progress.open.length === 0) return null;
+  return `Cycle #${c.number} ends ${left === 0 ? 'today' : `in ${left} day(s)`} with ${progress.open.length} open item(s). `
+    + 'Closing it is the owner\'s call (carry, back to Next, or cancel); sleep planned nothing.';
 }
