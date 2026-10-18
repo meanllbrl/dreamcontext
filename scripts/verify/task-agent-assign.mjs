@@ -106,8 +106,19 @@ function cli(args) {
 const taskPath = (t) => join(STATE, `${t.slug}.md`);
 const taskText = (t) => (existsSync(taskPath(t)) ? readFileSync(taskPath(t), 'utf-8') : '');
 const field = (t, key) => (new RegExp(`^${key}: ['"]?([^'"\\n]*)['"]?$`, 'm').exec(taskText(t)) ?? [])[1] ?? null;
-const resultLine = (t, agent) => new RegExp(
-  `### \\d{4}-\\d{2}-\\d{2} - Agent ${agent.title} \\(\`${agent.slug}\`\\)\\n- Run \\S+: ok\\. Document: `).test(taskText(t));
+const journalPath = (t) => join(STATE, 'journal', `${t.slug}.md`);
+const journalText = (t) => (existsSync(journalPath(t)) ? readFileSync(journalPath(t), 'utf-8') : '');
+// The run's result is a journal entry (`state/journal/<slug>.md`):
+//   ### 2026-10-18 14:02 - log: Agent Scout (`scout`) [je_…] (by agent:scout)
+//   - Run <iso>: ok. Document: automations/output/scout/….md.
+// A card written before the journal split carried it under `## Changelog` instead.
+const resultLine = (t, agent) => {
+  const who = `Agent ${agent.title} \\(\`${agent.slug}\`\\)`;
+  const journal = new RegExp(
+    `^### \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} - log: ${who} \\[je_[A-Za-z0-9_-]+\\](?: \\(by [^)]+\\))?\\n- Run \\S+: ok\\. Document: `, 'm');
+  const legacy = new RegExp(`### \\d{4}-\\d{2}-\\d{2} - ${who}\\n- Run \\S+: ok\\. Document: `);
+  return journal.test(journalText(t)) || legacy.test(taskText(t));
+};
 const promptsFor = (agent) => (existsSync(PROMPTS) ? readdirSync(PROMPTS) : [])
   .filter((f) => f.startsWith(`${agent.slug}-`)).map((f) => readFileSync(join(PROMPTS, f), 'utf-8'));
 
@@ -241,7 +252,7 @@ async function functional(browser, base) {
     check('the agent ran through the run path, with the task in its prompt', ran, `prompts: ${promptsFor(SCOUT).length}`);
     // Guards a run whose outcome never reaches the task.
     check('the result line lands in the task changelog: "Agent Scout (`scout`)" then "Run …: ok. Document: …"',
-      await until(async () => resultLine(TASKS.todo, SCOUT), 30000), taskText(TASKS.todo).split('## Changelog')[1]?.slice(0, 400));
+      await until(async () => resultLine(TASKS.todo, SCOUT), 30000), journalText(TASKS.todo).slice(0, 400) || taskText(TASKS.todo).split('## Changelog')[1]?.slice(0, 400));
     await primary().click(); // Close
     const detailFace = page.locator('.task-agent-row .task-agent-face[aria-label="Assigned to Scout"]');
     check('the agent\'s face is on the task page', await until(async () => (await detailFace.count()) > 0, 8000));
@@ -290,7 +301,7 @@ async function functional(browser, base) {
       taskText(TASKS.gated).slice(0, 300));
     check('…and confirms in place', await until(async () => (await composer.locator('.ata-done').count()) === 1, 10000));
     check('…and the agent ran and logged its result', await until(async () => resultLine(TASKS.gated, DIGEST), 30000),
-      taskText(TASKS.gated).split('## Changelog')[1]?.slice(0, 300));
+      journalText(TASKS.gated).slice(0, 300) || taskText(TASKS.gated).split('## Changelog')[1]?.slice(0, 300));
 
     check('[light] no uncaught page errors', ui.errors.length === 0, ui.errors.slice(0, 3).join(' | '));
   } finally {

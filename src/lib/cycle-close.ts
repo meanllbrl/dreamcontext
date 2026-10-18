@@ -167,9 +167,16 @@ export async function executeClose(
   await applyPlacement(backend, family, back, { cycle: null, queue: 'next' }, `back to Next at the close of cycle ${label(cycle)}`);
   for (const slug of cancel) {
     const brief = family.bySlug.get(slug);
-    if (!brief || isCancelled(defs, brief.status)) continue;
-    await backend.updateFields(slug, { status: cancelKey!, updated_at: today() });
-    await backend.addJournal(slug, { kind: 'status', label: cancelKey!, body: `- cancelled at the close of cycle ${label(cycle)}` });
+    if (!brief) continue;
+    const note = `- cancelled at the close of cycle ${label(cycle)}`;
+    if (isCancelled(defs, brief.status)) {
+      // A resumed close whose cancel wrote the status and stopped before the journal entry:
+      // write the entry now. One already there means this step finished: skip it.
+      if ((await backend.readJournal(slug)).some((e) => e.kind === 'status' && e.body === note)) continue;
+    } else {
+      await backend.updateFields(slug, { status: cancelKey!, updated_at: today() });
+    }
+    await backend.addJournal(slug, { kind: 'status', label: cancelKey!, body: note });
   }
   const parents = [...carry, ...back, ...cancel].map((s) => family.parentOf.get(s)).filter((p): p is string => !!p);
   await syncParentPlacements(backend, stateDir, defs, readCycles(contextRoot).cycles, parents);

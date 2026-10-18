@@ -313,6 +313,39 @@ describe('planning, leaves, and the close ritual (AC3)', () => {
     expect(readJournal(stateDir, 'step-a').filter((e) => /carried from cycle #1/.test(e.body))).toHaveLength(1);
   });
 
+  // End review, open question (b): the cancel wrote the status, then the journal entry. A close
+  // that stopped between the two skipped the cancelled task on resume and lost its entry.
+  it('a close that stops between a cancel\'s status and its journal entry writes the entry on resume, once', async () => {
+    card('step-c');
+    await cli('cycle', 'new', '--goal', 'Week one');
+    await cli('cycle', 'start', '1');
+    await cli('tasks', 'plan', 'step-c', 'now');
+    const [one] = readCycles(root).cycles;
+    // The journal file cannot be written (a directory sits at its path): the status lands, the entry does not.
+    const journalFile = join(stateDir, 'journal', 'step-c.md');
+    const hadJournal = existsSync(journalFile) ? readFileSync(journalFile, 'utf-8') : null;
+    rmSync(journalFile, { force: true });
+    mkdirSync(journalFile, { recursive: true });
+    let crashed = false;
+    try {
+      await cli('cycle', 'close', '--cancel', 'step-c');
+    } catch {
+      crashed = true;
+    } finally {
+      rmSync(journalFile, { recursive: true, force: true });
+      if (hadJournal !== null) writeFileSync(journalFile, hadJournal);
+    }
+    expect(crashed).toBe(true);
+    expect(fm('step-c').status).toBe('cancelled');
+    expect(readCycles(root).cycles.find((c) => c.id === one.id)!.closing).toMatchObject({ cancelled: ['step-c'] });
+    const cancelEntries = () => readJournal(stateDir, 'step-c').filter((e) => e.kind === 'status' && /cancelled at the close of cycle #1/.test(e.body));
+    expect(cancelEntries()).toHaveLength(0);
+
+    expect(await cli('cycle', 'close')).toBe(0);
+    expect(readCycles(root).cycles.find((c) => c.id === one.id)!.status).toBe('closed');
+    expect(cancelEntries()).toHaveLength(1);
+  });
+
   it('a resumed close whose carry target was closed meanwhile takes --into (review round 2, minor)', async () => {
     writeFileSync(join(root, 'core', 'CYCLES.json'), serializeCycles([
       cyc({ id: 'cy_open0001', start: '2026-10-12', end: '2026-10-18', status: 'active',
