@@ -9,6 +9,9 @@ import { promptInput } from '../../lib/prompt.js';
 import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
+import { ensureLocalStateIgnored, recordAudit } from '../../lib/task-audit.js';
+import { applyVerdict } from '../../lib/task-verdict.js';
+import { newJournalEntryId } from '../../lib/task-journal.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
 import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
 import {
@@ -81,7 +84,7 @@ import { foldAscii } from '../../lib/fold-ascii.js';
 import { listObjectives } from '../../lib/objectives-store.js';
 import { resolveFeature, applyTaskFeatureLink, anyFeaturesExist } from '../../lib/feature-links.js';
 import { loadTaskOverride, loadStatuses, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
-import { DONE_STATUS_KEY as DONE_KEY, isActive, isCancelled, isDone, isReview, statusKeys, type StatusDef } from '../../lib/task-status.js';
+import { isActive, isCancelled, isDone, isReview, statusKeys, type StatusDef } from '../../lib/task-status.js';
 import { describeStatusMappings } from '../../lib/task-backend/status-mapping.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
@@ -596,7 +599,21 @@ async function blockOnEvidence(
       return true;
     }
     const open = [...gate.unproven, ...gate.reviewOnly].map((c) => `${c.n}. ${c.text}`).join('; ');
+    // Every --force is listed on the Inbox (A7/E9). The audit is written first, under
+    // the journal entry's id: a force that cannot be audited is refused before it is
+    // journaled, so nothing passes the gate unaudited.
+    const root = ensureContextRoot();
+    const journalId = newJournalEntryId();
+    try {
+      ensureLocalStateIgnored(root);
+      recordAudit(root, { kind: 'force', slug, actor: actorOf() ?? 'owner', via: 'cli', note: force.reason.trim(), journalId });
+    } catch (err) {
+      error(`Refusing --force: it cannot be recorded in the task audit (${err instanceof Error ? err.message : String(err)}).`);
+      process.exitCode = 1;
+      return true;
+    }
     await backend.addJournal(slug, {
+      id: journalId,
       kind: 'status',
       label: `forced → ${newStatus}`,
       actor: actorOf(),
@@ -689,6 +706,30 @@ function childDecisions(
   }
   for (const c of open) if (!out.has(c.slug) && fallback) out.set(c.slug, fallback);
   return out;
+}
+
+/** `tasks approve` / `tasks send-back`: the shared verdict (lib/task-verdict.ts), printed. */
+async function verdictCommand(name: string, v: { verdict: 'approve' | 'send_back'; note?: string }): Promise<void> {
+  const defs = statusSet();
+  const backend = getTaskBackend();
+  const slug = await resolveTaskSlug(backend, name);
+  if (!slug) return;
+  let r;
+  try {
+    r = await applyVerdict(backend, ensureContextRoot(), defs, slug, { verdict: v.verdict, note: v.note, actor: actorOf(), via: 'cli' });
+  } catch (err) {
+    error(`Refusing the verdict: it cannot be recorded in the task audit (${err instanceof Error ? err.message : String(err)}).`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!r.ok) {
+    if (r.code === 'not_found') return;
+    error(r.message);
+    process.exitCode = 1;
+    return;
+  }
+  if (r.gateMessage) info(r.gateMessage);
+  success(v.verdict === 'approve' ? `Task ${slug} approved → ${r.status}` : `Task ${slug} sent back → ${r.status}`);
 }
 
 export function registerTasksCommand(program: Command): void {
@@ -1582,8 +1623,17 @@ export function registerTasksCommand(program: Command): void {
       const root = ensureContextRoot();
       const backend = getTaskBackend();
       const parent = opts.parent === false ? null : typeof opts.parent === 'string' ? opts.parent : undefined;
+      // Every accept is listed on the Inbox (E9): the audit must be writable first.
+      try {
+        ensureLocalStateIgnored(root);
+      } catch (err) {
+        error(`Refusing the accept: it cannot be recorded in the task audit (${err instanceof Error ? err.message : String(err)}).`);
+        process.exitCode = 1;
+        return;
+      }
       try {
         const r = await acceptProposal(root, backend, statusSet(), id, { name: opts.name, why: opts.why, parent }, 'cli');
+        recordAudit(root, { kind: 'accept', slug: r.slug, actor: actorOf() ?? 'owner', via: 'cli', note: `proposal ${id}`, journalId: null });
         success(`Accepted: ${r.slug} (in the Next queue${r.parent ? `, under ${r.parent}` : ''}).`);
         if (r.parentDropped) warn(`Filed top-level: ${r.parentDropped}`);
         if (r.warning) warn(r.warning);
@@ -2337,25 +2387,18 @@ export function registerTasksCommand(program: Command): void {
     .option('--note <text>', 'What you checked')
     .action(async (name: string, opts: { note?: string }) => {
       if (refuseSelfApproval(process.env)) return;
-      const defs = statusSet();
-      const backend = getTaskBackend();
-      const slug = await resolveTaskSlug(backend, name);
-      if (!slug) return;
-      const cur = await backend.get(slug);
-      if (!cur) return;
-      if (!isReview(defs, cur.status)) {
-        error(`${slug} is ${cur.status}; only a task in review is approved.`);
-        process.exitCode = 1;
-        return;
-      }
-      if (blockOnOpenChildren(slug, DONE_KEY, defs)) return;
-      if (await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
-      const note = opts.note?.trim();
-      await backend.addJournal(slug, { kind: 'approval', actor: actorOf(), body: `- approved${note ? `: ${note}` : ''}` });
-      const now = today();
-      const dates = dateUpdatesForStatus(DONE_KEY, cur, now, defs);
-      await backend.updateFields(slug, { status: DONE_KEY, updated_at: now, ...dates });
-      success(`Task ${slug} approved → ${DONE_KEY}`);
+      await verdictCommand(name, { verdict: 'approve', note: opts.note });
+    });
+
+  // The owner's other verdict: review → back to work, with what is missing
+  tasks
+    .command('send-back')
+    .argument('<name>')
+    .description('Send a task in review back to work with a note: the owner\'s verdict, recorded in the journal (never from an agent)')
+    .requiredOption('--note <text>', 'What is missing or wrong')
+    .action(async (name: string, opts: { note: string }) => {
+      if (refuseSelfApproval(process.env)) return;
+      await verdictCommand(name, { verdict: 'send_back', note: opts.note });
     });
 
   // Read-only view of the project's status set + how each maps to the remotes

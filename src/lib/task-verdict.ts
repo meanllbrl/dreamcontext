@@ -1,0 +1,81 @@
+import { join } from 'node:path';
+import { today } from './id.js';
+import { checkCloseGate } from './sleep-eval/report.js';
+import { ensureLocalStateIgnored, recordAudit, type AuditVia } from './task-audit.js';
+import type { TaskBackend } from './task-backend/types.js';
+import { dateUpdatesForStatus } from './task-dates.js';
+import { loadFamily, parentCloseBlock } from './task-parent.js';
+import { DONE_STATUS_KEY, isActive, isReview, type StatusDef } from './task-status.js';
+
+/**
+ * The owner's verdict on a task in review (plan r3 § W4, owner decision 2): approve
+ * (review → done) or send it back with a note (review → the first active status).
+ * One function for the CLI (`tasks approve`, `tasks send-back`) and the dashboard
+ * verdict route, so the two can never disagree.
+ *
+ * Every verdict is journaled on the task and recorded in the task audit with WHO and
+ * THROUGH WHAT. The ignore entries the audit needs are ensured FIRST, before anything
+ * moves: a failure there throws and nothing is done, rather than a verdict left done
+ * and unaudited.
+ */
+
+export type Verdict = 'approve' | 'send_back';
+
+export interface VerdictInput {
+  verdict: Verdict;
+  note?: string;
+  /** The person acting (a journal actor); null when nobody is resolved. */
+  actor: string | null;
+  via: AuditVia;
+}
+
+export type VerdictRefusal = 'not_found' | 'not_in_review' | 'subtasks_open' | 'sleep_eval_gate' | 'note_required';
+
+export type VerdictResult =
+  | { ok: true; status: string; /** The sleep-eval gate's pass message, when the gate applied. */ gateMessage: string | null }
+  | { ok: false; code: VerdictRefusal; message: string };
+
+/** The status a task sent back returns to: the first active-kind status in pipeline order. */
+export function sendBackStatus(defs: readonly StatusDef[]): string {
+  const active = [...defs].filter((d) => isActive(defs, d.key)).sort((a, b) => a.order - b.order)[0];
+  return active?.key ?? 'in_progress';
+}
+
+export async function applyVerdict(
+  backend: TaskBackend,
+  contextRoot: string,
+  defs: readonly StatusDef[],
+  slug: string,
+  v: VerdictInput,
+): Promise<VerdictResult> {
+  ensureLocalStateIgnored(contextRoot);
+  const cur = await backend.get(slug);
+  if (!cur) return { ok: false, code: 'not_found', message: `Task not found: ${slug}` };
+  const what = v.verdict === 'approve' ? 'approved' : 'sent back';
+  if (!isReview(defs, cur.status)) {
+    return { ok: false, code: 'not_in_review', message: `${slug} is ${cur.status}; only a task in review is ${what}.` };
+  }
+  const note = v.note?.trim() ?? '';
+  const auditActor = v.actor ?? 'owner';
+
+  if (v.verdict === 'send_back') {
+    if (!note) return { ok: false, code: 'note_required', message: 'Sending a task back needs a note: what is missing or wrong.' };
+    const target = sendBackStatus(defs);
+    const je = await backend.addJournal(slug, { kind: 'approval', label: 'sent back', actor: v.actor, body: `- sent back: ${note}` });
+    await backend.updateFields(slug, { status: target, updated_at: today() });
+    recordAudit(contextRoot, { kind: 'send_back', slug, actor: auditActor, via: v.via, note, journalId: je.id });
+    return { ok: true, status: target, gateMessage: null };
+  }
+
+  const block = parentCloseBlock(loadFamily(join(contextRoot, 'state')), defs, slug, DONE_STATUS_KEY);
+  if (block) return { ok: false, code: 'subtasks_open', message: block };
+  const gate = checkCloseGate(contextRoot, slug, cur.parent_task ?? null);
+  if (gate.applies && !gate.ok) return { ok: false, code: 'sleep_eval_gate', message: gate.message };
+
+  const je = await backend.addJournal(slug, { kind: 'approval', actor: v.actor, body: `- approved${note ? `: ${note}` : ''}` });
+  const now = today();
+  const dates = dateUpdatesForStatus(DONE_STATUS_KEY, cur, now, defs);
+  await backend.updateFields(slug, { status: DONE_STATUS_KEY, updated_at: now, ...dates });
+  recordAudit(contextRoot, { kind: 'approval', slug, actor: auditActor, via: v.via, note: note || null, journalId: je.id });
+  return { ok: true, status: DONE_STATUS_KEY, gateMessage: gate.applies ? gate.message : null };
+}

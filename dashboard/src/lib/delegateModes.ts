@@ -1,4 +1,4 @@
-import type { Task } from '../hooks/useTasks';
+import type { TaskDetail } from '../hooks/useTasks';
 import { buildDelegatePrompt, taskContextBlock, taskShowLead } from './delegateAgent';
 
 /**
@@ -45,7 +45,7 @@ export interface DelegateMode {
    */
   reveal?: true;
   /** The prompt draft the composer opens with (fully editable before sending). */
-  build(task: Task, title: string): string;
+  build(task: TaskDetail, title: string): string;
 }
 
 /**

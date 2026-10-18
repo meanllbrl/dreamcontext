@@ -36,9 +36,11 @@ import {
   type SyncReport,
   type TaskBackend,
   type TaskData,
+  type TaskListItem,
   type TaskSummary,
   type UpdateFieldsOptions,
 } from './types.js';
+import { parseCriteria } from '../task-evidence.js';
 import type { LocalTaskDescriptor } from './sync-state.js';
 
 /**
@@ -305,7 +307,68 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
     body: content.trim(),
     rawBody: content,
     raw: data,
+    ...placementOf(data),
   };
+}
+
+/** The card's place on the "when?" axis (C3), read as stored. */
+function placementOf(data: Record<string, unknown>): { cycle: string | null; queue: 'next' | 'later' | null; rank: number | null } {
+  return {
+    cycle: typeof data.cycle === 'string' && data.cycle.trim() ? data.cycle.trim() : null,
+    queue: data.queue === 'next' || data.queue === 'later' ? data.queue : null,
+    rank: typeof data.rank === 'number' && Number.isFinite(data.rank) ? data.rank : null,
+  };
+}
+
+/**
+ * The list view of one card (`GET /api/tasks`, plan r3 § W4): frontmatter, criteria
+ * counts and the file size. Never a body, a section or the journal: the list is
+ * polled, the body is the task page's (`GET /api/tasks/:slug`). `children` is filled
+ * by the caller, which sees the whole family.
+ */
+export function readTaskCard(filePath: string): TaskListItem {
+  const slug = basename(filePath, '.md');
+  const { data } = readFrontmatter<Record<string, unknown>>(filePath);
+  const criteria = parseCriteria(readSectionSafe(filePath, 'Acceptance Criteria'));
+  let bytes = 0;
+  try { bytes = statSync(filePath).size; } catch { /* vanished */ }
+  return {
+    slug,
+    id: (data.id as string) ?? '',
+    name: (data.name as string) ?? slug,
+    description: (data.description as string) ?? '',
+    status: normalizeStatusKey(data.status) || 'todo',
+    created_at: (data.created_at as string) ?? '',
+    updated_at: (data.updated_at as string) ?? '',
+    tags: Array.isArray(data.tags) ? data.tags as string[] : [],
+    parent_task: safeParentRef(data.parent_task),
+    related_feature: (data.related_feature as string) ?? null,
+    version: (data.version as string) ?? null,
+    start_date: (data.start_date as string) ?? null,
+    due_date: (data.due_date as string) ?? null,
+    objectives: Array.isArray(data.objectives) ? (data.objectives as unknown[]).map(String) : [],
+    assignee: (data.assignee as string) ?? null,
+    ...(typeof data.agent === 'string' && isSafeAutomationSlug(data.agent.trim()) ? { agent: data.agent.trim() } : {}),
+    custom_fields:
+      data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
+        ? (data.custom_fields as Record<string, string | number | null>)
+        : {},
+    created_by: typeof data.created_by === 'string' ? data.created_by : null,
+    ...placementOf(data),
+    criteria: { total: criteria.length, done: criteria.filter((c) => c.checked).length },
+    children: null,
+    bytes,
+    // Legacy, read-only (decision 11): read as the full card reads them, so the board's
+    // legacy views and filters keep their values.
+    priority: (data.priority as string) ?? 'medium',
+    urgency: (data.urgency as string) ?? 'medium',
+    rice: normalizeRice(data.rice),
+  };
+}
+
+/** {@link readTaskCard} through the read memo (keyed on the card's stat only: no journal in it). */
+export function readTaskCardMemo(filePath: string): TaskListItem {
+  return memoRead('card', filePath, () => readTaskCard(filePath));
 }
 
 // ─── Read memo ───────────────────────────────────────────────────────────────
@@ -343,7 +406,7 @@ function journalSig(cardPath: string): string {
   }
 }
 
-function memoRead<T>(kind: 'fm' | 'task', path: string, read: () => T): T {
+function memoRead<T>(kind: 'fm' | 'task' | 'card', path: string, read: () => T): T {
   const abs = resolve(path);
   const key = `${kind}\0${abs}`;
   const sig = kind === 'task' ? `${fileSig(abs)}|${journalSig(abs)}` : fileSig(abs);
@@ -368,6 +431,7 @@ export function forgetTaskRead(path: string): void {
   const abs = resolve(path);
   readMemo.delete(`fm\0${abs}`);
   readMemo.delete(`task\0${abs}`);
+  readMemo.delete(`card\0${abs}`);
 }
 
 /** Tests only: forget every memoized task read. */

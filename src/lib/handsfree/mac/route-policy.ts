@@ -129,6 +129,20 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/tasks/:slug/changelog': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/assign-agent': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/insert': allow(PROJECT_WRITE),
+  'POST /api/tasks/:slug/verdict': allow('the owner approves a task in review or sends it back, as the Inbox does (audited with its via)'),
+  'POST /api/tasks/:slug/plan': allow(PROJECT_WRITE),
+  'POST /api/tasks/:slug/rank': allow(PROJECT_WRITE),
+
+  // The Inbox, the Planning screen and the Close deck (C5)
+  'GET /api/inbox': allow(READ),
+  'GET /api/inbox/count': allow(READ),
+  'POST /api/inbox/seen': allow('marks an Inbox record seen, as the Inbox does (who and through what are kept on it)'),
+  'POST /api/learned/:id/revert': allow('the owner reverts a rule sleep learned in this project, as the Inbox does'),
+  'GET /api/cycles': allow(READ),
+  'GET /api/cycles/:id/close-plan': allow(READ),
+  'POST /api/cycles': allow(PROJECT_WRITE),
+  'POST /api/cycles/:id/start': allow(PROJECT_WRITE),
+  'POST /api/cycles/:id/close': allow(PROJECT_WRITE),
 
   // Sleep
   'GET /api/sleep': allow(READ),

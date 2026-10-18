@@ -1,6 +1,7 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { isSameOriginAsHost, remoteAccessEnabled } from './remote-access.js';
-import { isMacOriginAllowed, macProbeNonce } from './phone-origin.js';
+import { isMacOriginAllowed, macProbeNonce, requestSurface } from './phone-origin.js';
+import type { AuditVia } from '../lib/task-audit.js';
 import { MAC_PROBE_HEADER, MAC_SURFACE_HEADER, MAC_WS_PATHS } from '../lib/handsfree/mac/contract.js';
 import { classifyMacRoute, type MacRouteClass, type RouteMatcher } from '../lib/handsfree/mac/route-policy.js';
 import { deviceCookieValue, hasValidDeviceSession, clearDeviceCookieHeader } from './handsfree-auth.js';
@@ -57,6 +58,28 @@ export function sendJson(res: ServerResponse, statusCode: number, data: unknown)
  */
 export function sendError(res: ServerResponse, statusCode: number, error: string, message: string): void {
   sendJson(res, statusCode, { error, message });
+}
+
+/**
+ * An owner-only write (a verdict, a proposal accept, a change apply, a learned revert,
+ * an Inbox "seen") must come from a browser: the dashboard and the phone always send
+ * `Origin` on a write, a scripted call (an agent's `curl`) usually does not. Sends 403
+ * `origin_required` and returns false when the header is missing. An accident guard and
+ * a detective aid, not a security boundary (plan r3 E9): a determined local process can
+ * forge the header, and every such write is also recorded with its `via`.
+ */
+export function requireBrowserOrigin(req: IncomingMessage, res: ServerResponse): boolean {
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin.length > 0) return true;
+  sendError(res, 403, 'origin_required', 'This action is the owner\'s and is taken in the dashboard; a request without a browser Origin is refused.');
+  return false;
+}
+
+/** How a server write reached us, for the task audit: no Origin, the phone, or the dashboard. */
+export function writeVia(req: IncomingMessage): AuditVia {
+  const origin = req.headers.origin;
+  if (typeof origin !== 'string' || origin.length === 0) return 'no-origin';
+  return requestSurface(req) !== 'desktop' ? 'phone' : 'dashboard';
 }
 
 /** Origins allowed to call the local dashboard API — loopback only. */

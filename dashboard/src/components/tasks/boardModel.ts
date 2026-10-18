@@ -11,7 +11,7 @@
  *   LOCAL   (git-ignored `state/board.local.json`)        — "save for yourself"
  * `mergeBoard()` folds them into the runtime view list the UI renders.
  */
-import type { Task } from '../../hooks/useTasks';
+import type { Task, TaskBase } from '../../hooks/useTasks';
 import { DEFAULT_STATUS_MODEL, type StatusModel } from '../../lib/statusModel';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────────
@@ -261,7 +261,7 @@ export function cfgKey(c: ViewConfig): string {
 
 // ─── Task accessors (bridge the design's mock fields to the real Task shape) ─────
 
-export function taskName(t: Task): string {
+export function taskName(t: TaskBase): string {
   return t.name && t.name.trim() ? t.name : t.slug.replace(/-/g, ' ');
 }
 export function taskDue(t: Task): string | null { return t.due_date ?? null; }
@@ -301,7 +301,7 @@ export function taskAssignee(t: Task): string {
  * purpose: an agent is never a person, so it is not part of the assignee filter or grouping; the
  * card shows it as its own face.
  */
-export function taskAgent(t: Task): string | null {
+export function taskAgent(t: TaskBase): string | null {
   const slug = typeof t.agent === 'string' ? t.agent.trim() : '';
   return slug || null;
 }

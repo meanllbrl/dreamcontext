@@ -201,3 +201,26 @@ export function markAuditSeen(contextRoot: string, id: string, actor: string, vi
     return hit;
   });
 }
+
+/**
+ * A sync held a parent open (a remote close while its sub-tasks are open, r2 B6): flag
+ * it on the Inbox once. A flag already waiting for that parent is not repeated on every
+ * pull. The sync is never aborted for the audit: when the record cannot be written
+ * (its ignore entries cannot be ensured, the file is busy), nothing is written and
+ * `warn` says so.
+ */
+export function recordHeldOpen(contextRoot: string, slug: string, open: number, warn: (message: string) => void): void {
+  try {
+    if (listAudit(contextRoot, { kinds: ['held_open'], unseenOnly: true }).some((e) => e.slug === slug)) return;
+    recordAudit(contextRoot, {
+      kind: 'held_open',
+      slug,
+      actor: 'sync',
+      via: 'cli',
+      note: `closed on the remote while ${open} sub-task(s) are open; kept open here`,
+      journalId: null,
+    });
+  } catch (err) {
+    warn(`${slug}: the held-open parent is not on the Inbox (the task audit cannot be written: ${err instanceof Error ? err.message : String(err)}).`);
+  }
+}

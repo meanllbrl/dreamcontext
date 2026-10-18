@@ -5,7 +5,8 @@ import { marked } from 'marked';
 import '../../lib/markdownMark';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
-import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
+// The panel shows one task as GET /api/tasks/:slug serves it (the list carries no body).
+import type { TaskDetail as Task, RiceFields, RiceInput } from '../../hooks/useTasks';
 import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus, useTaskOverrides, useStatusModel } from '../../hooks/useTasks';
 import { useObjectives } from '../../hooks/useObjectives';
 import { confirmAction } from '../../lib/desktop';

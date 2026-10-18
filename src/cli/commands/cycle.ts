@@ -16,18 +16,16 @@ import {
   cycleProgress,
   daysBetween,
   daysLeft,
-  markClosing,
   newCycle,
   nextPlannedCycle,
   readCycles,
-  recordClose,
   resolveCycleRef,
   startCycle,
   unresolvedCycleRefs,
   type ClosePlan,
   type CycleView,
 } from '../../lib/cycles.js';
-import { applyPlacement, syncParentPlacements } from './tasks-plan.js';
+import { closableCycle, CloseError, decideClose, executeClose, resumeClose, type CloseAction, type CloseResult } from '../../lib/cycle-close.js';
 
 /**
  * `dreamcontext cycle` — the planning time box. A cycle is a date range with a
@@ -36,7 +34,6 @@ import { applyPlacement, syncParentPlacements } from './tasks-plan.js';
  * sent back to the queue, or cancelled, and each carry is counted.
  */
 
-type CloseAction = 'carry' | 'back' | 'cancel';
 const ACTIONS: readonly CloseAction[] = ['carry', 'back', 'cancel'];
 
 function fail(msg: string): void {
@@ -225,116 +222,83 @@ export function registerCycleCommand(program: Command): void {
     .action(async (ref: string | undefined, opts: { carry: string[]; back: string[]; cancel: string[]; all?: string; into?: string }) => {
       const root = ensureContextRoot();
       const stateDir = join(root, 'state');
-      const { cycles } = readCycles(root);
-      const c = ref ? resolveCycleRef(cycles, ref) : activeCycle(cycles);
-      if (!c) return fail(ref ? `No cycle "${ref}". See: dreamcontext cycle list` : 'No cycle is active; name the one to close.');
-      if (c.status === 'closed') return fail(`Cycle ${label(c)} is already closed.`);
+      let c: CycleView;
+      let cycles: CycleView[];
+      try {
+        ({ cycle: c, cycles } = closableCycle(root, ref));
+      } catch (e) {
+        if (e instanceof CloseError) return fail(e.message);
+        throw e;
+      }
       if (opts.all !== undefined && !ACTIONS.includes(opts.all as CloseAction)) return fail('--all must be carry, back or cancel.');
 
       const defs = loadStatuses(root);
       const family = loadFamily(stateDir);
-      const cancelKey = defs.find((d) => d.kind === 'cancelled')?.key ?? null;
       let plan: ClosePlan;
-      if (c.closing) {
-        // A close that stopped halfway: its decisions were recorded before any
-        // card moved, so finish exactly those (the moves are idempotent).
-        plan = c.closing;
-        if ([...opts.carry, ...opts.back, ...opts.cancel].length > 0 || opts.all) {
-          warn('Ignoring the flags: finishing the decisions already recorded for this close.');
-        }
-        // The one thing a resume may change: where carried work goes, when the
-        // recorded target was closed or removed meanwhile.
-        if (opts.into && plan.carried.length > 0) {
-          const target = resolveCycleRef(cycles, opts.into);
-          if (!target || target.id === c.id || target.status === 'closed') return fail(`Cannot carry into "${opts.into}": no open cycle by that number or id.`);
-          plan = { ...plan, into: target.id };
-          markClosing(root, c.id, plan);
-        }
-        info(`Resuming the interrupted close of cycle ${label(c)}.`);
-      } else {
-        const progress = cycleProgress(family, defs, c.id);
-        const openSlugs = new Set(progress.open.map((b) => b.slug));
-        const decisions = new Map<string, CloseAction>();
-        for (const action of ACTIONS) {
-          for (const slug of splitList(opts[action])) {
-            if (!openSlugs.has(slug)) {
-              return fail(`${slug} is not an unfinished leaf of cycle ${label(c)}. Unfinished: ${[...openSlugs].join(', ') || '(none)'}`);
+      try {
+        if (c.closing) {
+          // A close that stopped halfway: its decisions were recorded before any
+          // card moved, so finish exactly those (the moves are idempotent).
+          if ([...opts.carry, ...opts.back, ...opts.cancel].length > 0 || opts.all) {
+            warn('Ignoring the flags: finishing the decisions already recorded for this close.');
+          }
+          plan = resumeClose(root, c, cycles, opts.into);
+          info(`Resuming the interrupted close of cycle ${label(c)}.`);
+        } else {
+          const progress = cycleProgress(family, defs, c.id);
+          const openSlugs = new Set(progress.open.map((b) => b.slug));
+          const decisions = new Map<string, CloseAction>();
+          for (const action of ACTIONS) {
+            for (const slug of splitList(opts[action])) {
+              if (!openSlugs.has(slug)) {
+                return fail(`${slug} is not an unfinished leaf of cycle ${label(c)}. Unfinished: ${[...openSlugs].join(', ') || '(none)'}`);
+              }
+              if (decisions.has(slug) && decisions.get(slug) !== action) return fail(`${slug} is named for both ${decisions.get(slug)} and ${action}.`);
+              decisions.set(slug, action);
             }
-            if (decisions.has(slug) && decisions.get(slug) !== action) return fail(`${slug} is named for both ${decisions.get(slug)} and ${action}.`);
-            decisions.set(slug, action);
           }
-        }
-        for (const b of progress.open) if (!decisions.has(b.slug) && opts.all) decisions.set(b.slug, opts.all as CloseAction);
+          for (const b of progress.open) if (!decisions.has(b.slug) && opts.all) decisions.set(b.slug, opts.all as CloseAction);
 
-        const undecided = progress.open.filter((b) => !decisions.has(b.slug));
-        if (undecided.length > 0) {
-          if (!process.stdin.isTTY || !process.stdout.isTTY) {
-            error(`Cycle ${label(c)} has ${undecided.length} unfinished leaf/leaves without a decision:`);
-            for (const b of undecided) console.log(`  - ${b.slug} [${b.status}]${carryCount(cycles, b.slug) > 0 ? ` (carried ${carryCount(cycles, b.slug)}×)` : ''}`);
-            console.log(chalk.dim('  Decide each: --carry <tasks> | --back <tasks> | --cancel <tasks>, or --all carry|back|cancel'));
-            process.exitCode = 1;
-            return;
+          const undecided = progress.open.filter((b) => !decisions.has(b.slug));
+          if (undecided.length > 0) {
+            if (!process.stdin.isTTY || !process.stdout.isTTY) {
+              error(`Cycle ${label(c)} has ${undecided.length} unfinished leaf/leaves without a decision:`);
+              for (const b of undecided) console.log(`  - ${b.slug} [${b.status}]${carryCount(cycles, b.slug) > 0 ? ` (carried ${carryCount(cycles, b.slug)}×)` : ''}`);
+              console.log(chalk.dim('  Decide each: --carry <tasks> | --back <tasks> | --cancel <tasks>, or --all carry|back|cancel'));
+              process.exitCode = 1;
+              return;
+            }
+            for (const b of undecided) {
+              const n = carryCount(cycles, b.slug);
+              const action = await select<CloseAction>({
+                message: `${b.slug} [${b.status}]${n > 0 ? ` — carried ${n}× already` : ''}`,
+                choices: [
+                  { value: 'carry', name: 'Carry into the next cycle' },
+                  { value: 'back', name: 'Back to the Next queue' },
+                  { value: 'cancel', name: 'Cancel' },
+                ],
+              });
+              decisions.set(b.slug, action);
+            }
           }
-          for (const b of undecided) {
-            const n = carryCount(cycles, b.slug);
-            const action = await select<CloseAction>({
-              message: `${b.slug} [${b.status}]${n > 0 ? ` — carried ${n}× already` : ''}`,
-              choices: [
-                { value: 'carry', name: 'Carry into the next cycle' },
-                { value: 'back', name: 'Back to the Next queue' },
-                { value: 'cancel', name: 'Cancel' },
-              ],
-            });
-            decisions.set(b.slug, action);
-          }
+          plan = decideClose(root, c, cycles, family, defs, decisions, opts.into);
         }
-
-        const want = (a: CloseAction) => progress.open.filter((b) => decisions.get(b.slug) === a).map((b) => b.slug);
-        plan = { carried: want('carry'), backed: want('back'), cancelled: want('cancel'), result: { done: progress.done, total: progress.total }, into: null };
-        if (plan.carried.length > 0) {
-          const target = opts.into ? resolveCycleRef(cycles, opts.into) : nextPlannedCycle(cycles, c.id);
-          if (!target) {
-            return fail(opts.into
-              ? `No cycle "${opts.into}" to carry into.`
-              : 'No planned cycle to carry into. Open one first: dreamcontext cycle new --goal "..."');
-          }
-          if (target.id === c.id || target.status === 'closed') return fail(`Cannot carry into cycle ${label(target)} (${target.id === c.id ? 'the one closing' : 'closed'}).`);
-          plan.into = target.id;
-        }
-        if (plan.cancelled.length > 0 && !cancelKey) {
-          return fail('This project declares no cancelled-kind status (overrides/task.md); carry or send these back instead.');
-        }
-        // Decisions first, cards second: a close that stops halfway resumes from here.
-        markClosing(root, c.id, plan);
-      }
-      const carry = plan.carried;
-      const back = plan.backed;
-      const cancel = plan.cancelled;
-      const progress = plan.result;
-      const into: CycleView | null = plan.into ? cycles.find((x) => x.id === plan.into) ?? null : null;
-      if (carry.length > 0 && (!into || into.status === 'closed')) {
-        return fail(`The cycle this close carries into (${plan.into ?? 'none'}) is missing or closed. Open one (dreamcontext cycle new --goal "...") and finish with: dreamcontext cycle close ${c.number} --into <n>`);
+      } catch (e) {
+        if (e instanceof CloseError) return fail(e.message);
+        throw e;
       }
 
-      const backend = getTaskBackend();
-      for (const slug of carry) {
-        const n = carryCount(cycles, slug) + 1;
-        await applyPlacement(backend, family, [slug], { cycle: into!.id, queue: null },
-          `carried from cycle ${label(c)} into ${label(into!)} (carried ${n}×)`);
+      let closed: CloseResult;
+      try {
+        closed = await executeClose(root, getTaskBackend(), c, cycles, family, defs, plan);
+      } catch (e) {
+        if (e instanceof CloseError) return fail(e.message);
+        throw e;
       }
-      await applyPlacement(backend, family, back, { cycle: null, queue: 'next' }, `back to Next at the close of cycle ${label(c)}`);
-      for (const slug of cancel) {
-        const brief = family.bySlug.get(slug);
-        if (!brief || isCancelled(defs, brief.status)) continue;
-        await backend.updateFields(slug, { status: cancelKey!, updated_at: today() });
-        await backend.addJournal(slug, { kind: 'status', label: cancelKey!, body: `- cancelled at the close of cycle ${label(c)}` });
-      }
-      const parents = [...carry, ...back, ...cancel].map((s) => family.parentOf.get(s)).filter((p): p is string => !!p);
-      await syncParentPlacements(backend, stateDir, defs, readCycles(root).cycles, parents);
-
-      const closed = recordClose(root, c.id, { carried: carry, backed: back, cancelled: cancel, result: progress });
-      success(`Cycle ${label(closed)} closed: ${progress.done}/${progress.total} leaves done` +
-        (carry.length ? `, ${carry.length} carried into ${label(into!)}` : '') +
+      const { carry, back, cancel } = closed.moved;
+      const progress = closed.result;
+      success(`Cycle ${label(closed.cycle)} closed: ${progress.done}/${progress.total} leaves done` +
+        (carry.length ? `, ${carry.length} carried into ${label(closed.into!)}` : '') +
         (back.length ? `, ${back.length} back to Next` : '') +
         (cancel.length ? `, ${cancel.length} cancelled` : '') + '.');
       const next = nextPlannedCycle(readCycles(root).cycles);

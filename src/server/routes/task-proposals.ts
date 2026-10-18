@@ -27,7 +27,9 @@ import {
 import { recentRuleChanges, readRules, revertRule, RuleError } from '../../lib/task-filing-rules.js';
 import { applySuggestion, BacklogError, keepAsIs, waitingSuggestions } from '../../lib/backlog-migration.js';
 import { recordDashboardChange } from '../change-tracker.js';
-import { parseJsonBody, sendError, sendJson } from '../middleware.js';
+import { parseJsonBody, requireBrowserOrigin, sendError, sendJson, writeVia } from '../middleware.js';
+import { ensureLocalStateIgnored, recordAudit } from '../../lib/task-audit.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 
 /**
  * The Proposals section of the Tasks screen (owner decision 8).
@@ -65,6 +67,11 @@ export async function handleTaskProposalsList(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  sendJson(res, 200, buildProposalsPayload(contextRoot));
+}
+
+/** What the Proposals section draws (also the Inbox's `proposals`). */
+export function buildProposalsPayload(contextRoot: string): Record<string, unknown> {
   const store = readProposals(contextRoot);
   const briefs = new Map(loadTaskBriefs(join(contextRoot, 'state')).map((b) => [b.slug, b]));
   const nameOf = (slug: string | null): string | null => (slug ? briefs.get(slug)?.name ?? null : null);
@@ -74,7 +81,7 @@ export async function handleTaskProposalsList(
   // The task migration's uncertain changes wait in the same section (they are
   // not sleep's filings, so they never touch the brake or the feedback store).
   const changes = waitingSuggestions(contextRoot);
-  sendJson(res, 200, {
+  return {
     waiting: waitingCount(store, onBoard) + changes.length,
     changes,
     proposals: pendingProposals(store).map((p) => ({ ...p, parentName: nameOf(p.parent) })),
@@ -93,7 +100,20 @@ export async function handleTaskProposalsList(
       restsOn: (c.after ?? c.before)?.restsOn.length ?? 0,
       removed: c.after === null,
     })),
-  });
+  };
+}
+
+/** The proposals and change cards waiting for the owner: the C4 badge count. */
+export function proposalsWaiting(contextRoot: string): number {
+  return waitingCount(readProposals(contextRoot), taskOnBoard(contextRoot)) + waitingSuggestions(contextRoot).length;
+}
+
+function actorOf(contextRoot: string): string {
+  try {
+    return resolveActivePerson(contextRoot).slug ?? 'owner';
+  } catch {
+    return 'owner';
+  }
 }
 
 const RULE_ID = /^R\d{1,4}$/;
@@ -135,7 +155,7 @@ export async function handleTaskProposalsCount(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
-  sendJson(res, 200, { waiting: waitingCount(readProposals(contextRoot), taskOnBoard(contextRoot)) + waitingSuggestions(contextRoot).length });
+  sendJson(res, 200, { waiting: proposalsWaiting(contextRoot) });
 }
 
 function str(v: unknown): string | undefined {
@@ -149,11 +169,19 @@ export async function handleTaskProposalAccept(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (!requireBrowserOrigin(req, res)) return;
   const { id } = params;
   if (!PROPOSAL_ID.test(id)) { sendError(res, 400, 'invalid', `Invalid proposal id: ${id}`); return; }
   const body = (await parseJsonBody(req)) ?? {};
   const parent = body.parent === null ? null : str(body.parent);
   if (typeof parent === 'string' && !isSafeTaskSlug(parent)) { sendError(res, 400, 'invalid', 'Invalid parent slug.'); return; }
+  // Every accept is listed on the Inbox (E9): the audit must be writable first.
+  try {
+    ensureLocalStateIgnored(contextRoot);
+  } catch (err) {
+    sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this accept is refused: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
   try {
     const r = await acceptProposal(
       contextRoot,
@@ -169,6 +197,7 @@ export async function handleTaskProposalAccept(
       target: r.slug,
       summary: `Accepted sleep's proposal ${id} into the Next queue`,
     });
+    recordAudit(contextRoot, { kind: 'accept', slug: r.slug, actor: actorOf(contextRoot), via: writeVia(req), note: `proposal ${id}`, journalId: null });
     sendJson(res, 200, r);
   } catch (err) {
     fail(res, err);
@@ -283,8 +312,15 @@ export async function handleTaskChangeApply(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (!requireBrowserOrigin(req, res)) return;
   const target = suggestionTarget(params, (await parseJsonBody(req)) ?? {}, res);
   if (!target) return;
+  try {
+    ensureLocalStateIgnored(contextRoot);
+  } catch (err) {
+    sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this change is refused: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
   try {
     const rec = await applySuggestion(contextRoot, getTaskBackend(contextRoot), target.slug, target.id);
     recordDashboardChange(contextRoot, {
@@ -293,6 +329,7 @@ export async function handleTaskChangeApply(
       target: target.slug,
       summary: `Applied the task migration's suggestion (${rec.suggestion?.change ?? rec.outcome})`,
     });
+    recordAudit(contextRoot, { kind: 'apply', slug: target.slug, actor: actorOf(contextRoot), via: writeVia(req), note: String(rec.suggestion?.change ?? rec.outcome), journalId: null });
     sendJson(res, 200, { slug: target.slug, outcome: rec.outcome, into: rec.into ?? null });
   } catch (err) {
     failBacklog(res, err);

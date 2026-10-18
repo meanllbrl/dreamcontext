@@ -1,6 +1,7 @@
 import type { RiceFields } from '../rice.js';
 import type { TaskFilter, TaskRecord } from '../task-query.js';
 import type { JournalEntry, NewJournalEntry } from '../task-journal.js';
+import type { EvidenceKind } from '../task-evidence.js';
 
 /**
  * Pluggable task backend — issue #11.
@@ -117,6 +118,53 @@ export interface TaskData {
   rawBody: string;
   /** Raw frontmatter as parsed — change-tracking diffs raw values, not normalized ones. */
   raw: Record<string, unknown>;
+  /** The cycle the card is planned into (`cy_<id>`, possibly not yet synced), or null (C3). */
+  cycle?: string | null;
+  /** `next` | `later` when the card waits outside a cycle; null when unset. */
+  queue?: 'next' | 'later' | null;
+  /** Order inside its cycle or queue; null when unranked. */
+  rank?: number | null;
+}
+
+/**
+ * One card in `GET /api/tasks` (plan r3 § W4): the frontmatter and a few derived counts,
+ * never a body, a section or the journal. The task page reads `GET /api/tasks/:slug`.
+ */
+export interface TaskListItem {
+  slug: string; id: string; name: string; description: string; status: string;
+  created_at: string; updated_at: string; tags: string[];
+  parent_task: string | null; related_feature: string | null; version: string | null;
+  start_date: string | null; due_date: string | null; objectives: string[];
+  assignee: string | null; agent?: string; custom_fields: Record<string, string | number | null>;
+  created_by: string | null;
+  cycle: string | null; queue: 'next' | 'later' | null; rank: number | null;
+  criteria: { total: number; done: number };
+  /** Non-cancelled children (rollupOf); null for a task with none. */
+  children: { total: number; done: number } | null;
+  /** The card file's size in bytes. */
+  bytes: number;
+  /** Legacy, read-only (decision 11). */
+  priority?: string; urgency?: string; rice?: RiceFields | null;
+}
+
+/** One acceptance criterion as the task page shows it. */
+export interface CriterionView {
+  n: number;
+  text: string;
+  checked: boolean;
+  ref: string | null;
+  kind: EvidenceKind | null;
+  observed: boolean;
+}
+
+/** `GET /api/tasks/:slug`: the whole card, its parsed criteria, its parent and its children. */
+export interface TaskDetailResponse {
+  task: Omit<TaskData, 'raw' | 'rawBody'> & {
+    cycle: string | null; queue: 'next' | 'later' | null; rank: number | null;
+    criteria: CriterionView[];
+    parent: { slug: string; name: string; status: string } | null;
+    children: TaskListItem[];
+  };
 }
 
 /** Section keys accepted by insertSection (matches SECTION_MAP in section-insert.ts). */

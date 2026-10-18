@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Task } from '../../hooks/useTasks';
+import type { TaskDetail } from '../../hooks/useTasks';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { useVault } from '../../context/VaultContext';
 import { delegateTaskToAgent } from '../../lib/delegateAgent';
@@ -12,7 +12,8 @@ import { taskName } from './boardModel';
 import './TaskCreateModal.css';
 
 interface DelegateComposerProps {
-  task: Task;
+  /** The task as GET /api/tasks/:slug serves it: the prompt hands over its Why and criteria. */
+  task: TaskDetail;
   onClose: () => void;
   /** Called after a successful delegate so the board can flash a confirmation toast. */
   onDelegated?: (title: string) => void;

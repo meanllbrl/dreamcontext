@@ -51,6 +51,7 @@ import { loadFamily } from '../task-parent.js';
 import { activeCycle, readCycles } from '../cycles.js';
 import { cycleOfCard, mergeOrder, orderNeedsPush, pushPriority, remotePlacement } from '../task-order.js';
 import { applyRemoteParentLink, holdOpenParent, noteParentLinkFailure, parentLinkSettled } from './parent-sync.js';
+import { recordHeldOpen } from '../task-audit.js';
 import {
   applyRemoteComments,
   commentBodyFor,
@@ -1755,6 +1756,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       report.warnings.push(`pull ${slug}: closed on GitHub while ${heldOpen.open} sub-task(s) are open; kept ${heldOpen.keep} here.`);
       statusM.value = heldOpen.keep;
       statusM.winner = 'local';
+      recordHeldOpen(this.contextRoot, slug, heldOpen.open, (m) => report.warnings.push(`pull ${m}`));
     }
     // Cycle and order (C3): a card on the new model merges its cycle label and
     // its order (through the priority label) and never takes a priority or an

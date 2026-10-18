@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { today, slugify } from '../../lib/id.js';
 import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
-import { parseJsonBody, sendJson, sendError } from '../middleware.js';
+import { parseJsonBody, requireBrowserOrigin, sendJson, sendError, writeVia } from '../middleware.js';
 import { currentSyncJob, startSyncJob } from '../sync-job.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
@@ -43,11 +43,15 @@ import {
   statusKeys,
   type StatusKind,
 } from '../../lib/task-status.js';
-import { criteriaOfBody, describeGate, gateStatus, setCriterion } from '../../lib/task-evidence.js';
+import { criteriaOfBody, describeGate, evidenceKind, gateStatus, parseCriteria, setCriterion } from '../../lib/task-evidence.js';
 import { checkParentLink, loadFamily, parentCloseBlock, rollupOf } from '../../lib/task-parent.js';
 import { newJournalEntryId, type NewJournalEntry } from '../../lib/task-journal.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
+import { ensureLocalStateIgnored, recordAudit } from '../../lib/task-audit.js';
+import { listTaskCards } from '../../lib/task-list.js';
+import { applyVerdict } from '../../lib/task-verdict.js';
+import { planTask, rankTask } from '../../lib/task-plan.js';
 import {
   getTaskBackend,
   getTaskSyncStatus,
@@ -55,6 +59,8 @@ import {
   TaskBackendError,
   type TaskBackend,
   type TaskData,
+  type TaskDetailResponse,
+  type TaskListItem,
   type RemoteMember,
 } from '../../lib/task-backend/index.js';
 
@@ -340,13 +346,9 @@ export async function handleTasksList(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
-  const backend = backendFor(contextRoot);
-  const summaries = await backend.list();
-  const tasks: ReturnType<typeof toApiTask>[] = [];
-  for (const s of summaries) {
-    const task = await backend.get(s.name);
-    if (task) tasks.push(toApiTask(task));
-  }
+  // Cards only (plan r3 § W4): no body, section or journal. The task page reads
+  // GET /api/tasks/:slug; this list is polled by every open window.
+  const tasks: TaskListItem[] = listTaskCards(join(contextRoot, 'state'), loadStatuses(contextRoot));
   sendJson(res, 200, { tasks });
 }
 
@@ -855,7 +857,36 @@ export async function handleTasksGet(
     return;
   }
 
-  sendJson(res, 200, { task: toApiTask(task) });
+  sendJson(res, 200, taskDetail(contextRoot, task));
+}
+
+/** The task page's view of one task: the card, its parsed criteria, its parent and children. */
+function taskDetail(contextRoot: string, task: TaskData): TaskDetailResponse {
+  const stateDir = join(contextRoot, 'state');
+  const defs = loadStatuses(contextRoot);
+  const family = loadFamily(stateDir);
+  const parentSlug = family.parentOf.get(task.slug) ?? null;
+  const parent = parentSlug ? family.bySlug.get(parentSlug) ?? null : null;
+  const kidSlugs = new Set((family.children.get(task.slug) ?? []).map((c) => c.slug));
+  const children = kidSlugs.size > 0 ? listTaskCards(stateDir, defs).filter((c) => kidSlugs.has(c.slug)) : [];
+  return {
+    task: {
+      ...toApiTask(task),
+      cycle: task.cycle ?? null,
+      queue: task.queue ?? null,
+      rank: task.rank ?? null,
+      criteria: parseCriteria(task.acceptance_criteria).map((c) => ({
+        n: c.n,
+        text: c.text,
+        checked: c.checked,
+        ref: c.evidence,
+        kind: evidenceKind(c.evidence),
+        observed: c.observed,
+      })),
+      parent: parent ? { slug: parent.slug, name: parent.name, status: parent.status } : null,
+      children,
+    },
+  };
 }
 
 /**
@@ -1195,6 +1226,10 @@ export async function handleTasksUpdate(
   let actor: string | null = null;
   try { actor = resolveActivePerson(contextRoot).slug; } catch { /* nobody resolved */ }
   const pendingJournal: NewJournalEntry[] = [];
+  // Every approval this save makes is also a task-audit record (plan r3 E9): an owner
+  // tick and a review → done drag. This route does not refuse an Origin-less write
+  // (R4-2 item 1); it records it as `via: 'no-origin'`.
+  const pendingAudit: Array<{ journalId: string; note: string }> = [];
   if (bodyChanged && newBody !== null) {
     const before = criteriaOfBody(oldContent);
     let nextBody: string = newBody;
@@ -1203,6 +1238,7 @@ export async function handleTasksUpdate(
       if (c.checked && !c.evidence && !(prev?.checked && prev.evidence)) {
         const id = newJournalEntryId();
         pendingJournal.push({ id, kind: 'approval', actor: actor ?? 'owner', body: `- ticked in the dashboard: ${c.text}` });
+        pendingAudit.push({ journalId: id, note: `ticked: ${c.text}` });
         nextBody = setCriterion(nextBody, c.n, true, `owner:${id}`);
       } else if (c.checked && !c.evidence && prev?.checked && prev.evidence) {
         nextBody = setCriterion(nextBody, c.n, true, prev.evidence);
@@ -1241,7 +1277,9 @@ export async function handleTasksUpdate(
       }
     }
     if (isDone(statuses, target) && isReview(statuses, existing.status)) {
-      pendingJournal.push({ kind: 'approval', actor: actor ?? 'owner', body: `- approved in the dashboard (${existing.status} → ${target})` });
+      const id = newJournalEntryId();
+      pendingJournal.push({ id, kind: 'approval', actor: actor ?? 'owner', body: `- approved in the dashboard (${existing.status} → ${target})` });
+      pendingAudit.push({ journalId: id, note: `approved (${existing.status} → ${target})` });
     } else if (isDone(statuses, target) || isReview(statuses, target)) {
       const gate = gateStatus(newBody ?? oldContent, isDone(statuses, target) ? 'done' : 'review');
       if (!gate.ok) {
@@ -1252,6 +1290,17 @@ export async function handleTasksUpdate(
     pendingJournal.push({ kind: 'status', label: target, actor: actor ?? 'owner', body: '- moved in the dashboard' });
   }
 
+  // Preflight: an approval is audited, so the audit's ignore entries must be writable
+  // BEFORE anything moves; when they are not, the save is refused and nothing is done.
+  if (pendingAudit.length > 0) {
+    try {
+      ensureLocalStateIgnored(contextRoot);
+    } catch (err) {
+      sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this approval is refused: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+  }
+
   updates.updated_at = today();
   const task = await backend.updateFields(
     slug,
@@ -1259,6 +1308,10 @@ export async function handleTasksUpdate(
     bodyChanged && newBody !== null ? { body: newBody } : undefined,
   );
   for (const entry of pendingJournal) await backend.addJournal(slug, entry);
+  const via = writeVia(req);
+  for (const a of pendingAudit) {
+    recordAudit(contextRoot, { kind: 'approval', slug, actor: actor ?? 'owner', via, note: a.note, journalId: a.journalId });
+  }
 
   // Bidirectional invariant: the feature side (related_tasks membership)
   // follows every task-side related_feature change.
@@ -1345,12 +1398,17 @@ export async function handleTasksJournal(
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
     return;
   }
-  const asked = Number(new URL(req.url ?? '', 'http://x').searchParams.get('limit'));
+  const query = new URL(req.url ?? '', 'http://x').searchParams;
+  const asked = Number(query.get('limit'));
   const limit = Number.isInteger(asked) && asked > 0 ? Math.min(asked, 50) : PANEL_JOURNAL_LIMIT;
   const all = await backend.readJournal(slug);
+  // `before=<je_id>`: the page of entries older than that one ("Show older").
+  const before = query.get('before');
+  const from = before ? all.findIndex((e) => e.id === before) + 1 : 0;
+  const page = before && from === 0 ? [] : all.slice(from, from + limit);
   sendJson(res, 200, {
     total: all.length,
-    entries: all.slice(0, limit).map(({ id, date, kind, label, actor, body }) => ({ id, date, kind, label, actor, body })),
+    entries: page.map(({ id, date, kind, label, actor, body }) => ({ id, date, kind, label, actor, body })),
   });
 }
 
@@ -1509,4 +1567,115 @@ export async function handleTasksAssignAgent(
     console.error('[tasks] assign-agent failed', err);
     sendError(res, 500, 'assign_failed', 'Failed to assign the task.');
   }
+}
+
+// ─── The owner's verdict, planning and ranking (plan r3 § W4) ────────────────
+
+const VERDICT_STATUS: Record<string, number> = { not_found: 404, note_required: 400, not_in_review: 409, subtasks_open: 409, sleep_eval_gate: 409 };
+
+/**
+ * POST /api/tasks/:slug/verdict — `{ verdict: 'approve' | 'send_back', note? }`.
+ * The owner's verdict on a task in review, through the same lib/task-verdict.ts as
+ * `tasks approve` / `tasks send-back`. Owner-only: refused (403) without a browser
+ * Origin; the audit records `via`. Not `refuseSelfApproval` (E9: the server may itself
+ * run inside a Claude session).
+ */
+export async function handleTaskVerdict(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!requireBrowserOrigin(req, res)) return;
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  const body = await parseJsonBody(req);
+  const verdict = body?.verdict;
+  if (verdict !== 'approve' && verdict !== 'send_back') {
+    sendError(res, 400, 'invalid_verdict', 'verdict must be "approve" or "send_back".');
+    return;
+  }
+  const note = body?.note;
+  if (note !== undefined && typeof note !== 'string') {
+    sendError(res, 400, 'invalid_note', 'note must be a string.');
+    return;
+  }
+  const backend = backendFor(contextRoot);
+  let actor: string | null = null;
+  try { actor = resolveActivePerson(contextRoot).slug; } catch { /* nobody resolved */ }
+  let r;
+  try {
+    r = await applyVerdict(backend, contextRoot, loadStatuses(contextRoot), slug, {
+      verdict, note: note as string | undefined, actor, via: writeVia(req),
+    });
+  } catch (err) {
+    sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this verdict is refused: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  if (!r.ok) { sendError(res, VERDICT_STATUS[r.code] ?? 409, r.code, r.message); return; }
+  const task = await backend.get(slug);
+  if (!task) { sendError(res, 404, 'not_found', `Task not found: ${slug}`); return; }
+  recordDashboardChange(contextRoot, {
+    entity: 'task',
+    action: 'update',
+    target: `state/${slug}.md`,
+    field: 'status',
+    summary: verdict === 'approve' ? `Approved task '${slug}'` : `Sent task '${slug}' back`,
+  });
+  sendJson(res, 200, taskDetail(contextRoot, task));
+}
+
+/** POST /api/tasks/:slug/plan — `{ target: 'now' | 'next' | 'later' | <cycle id or number> }`. */
+export async function handleTaskPlan(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  const body = await parseJsonBody(req);
+  const target = body?.target;
+  if (typeof target !== 'string' || !target.trim()) {
+    sendError(res, 400, 'unknown_target', 'target must be now, next, later or a cycle id or number.');
+    return;
+  }
+  const r = await planTask(contextRoot, backendFor(contextRoot), slug, target);
+  if (!r.ok) {
+    const code = r.code === 'not_found' ? 404 : r.code === 'not_open' ? 409 : 400;
+    sendError(res, code, r.code === 'closed_cycle' ? 'unknown_target' : r.code, r.message);
+    return;
+  }
+  if (r.moved.length > 0) {
+    recordDashboardChange(contextRoot, {
+      entity: 'task', action: 'update', target: `state/${slug}.md`, field: 'cycle, queue',
+      summary: `Planned task '${slug}' into ${r.where}`,
+    });
+  }
+  sendJson(res, 200, { placement: r.placement, moved: r.moved });
+}
+
+/** POST /api/tasks/:slug/rank — `{ before: <slug> }` or `{ after: <slug> }`, exactly one. */
+export async function handleTaskRank(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  const body = await parseJsonBody(req);
+  const before = body?.before;
+  const after = body?.after;
+  const anchor = typeof before === 'string' && after === undefined ? { before }
+    : typeof after === 'string' && before === undefined ? { after }
+      : null;
+  const other = anchor ? ('before' in anchor ? anchor.before : anchor.after) : null;
+  if (!anchor || !other || !isSafeTaskSlug(other)) {
+    sendError(res, 400, 'bad_anchor', 'Give exactly one of before or after: the slug of a task in the same cycle or queue.');
+    return;
+  }
+  const r = await rankTask(contextRoot, backendFor(contextRoot), slug, anchor);
+  if (!r.ok) { sendError(res, r.code === 'not_found' ? 404 : 400, r.code, r.message); return; }
+  sendJson(res, 200, { rank: r.rank });
 }

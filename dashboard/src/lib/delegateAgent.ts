@@ -1,4 +1,4 @@
-import type { Task } from '../hooks/useTasks';
+import type { TaskDetail } from '../hooks/useTasks';
 import { preparePrompt } from './agentPrompt';
 import { emitInstance } from '../context/VaultContext';
 
@@ -102,7 +102,7 @@ export function taskShowLead(slug: string): string {
  * `title` is passed in (rather than re-derived here) so the prompt's "Task:" line and the
  * delegated tab's title come from ONE `taskName(task)` call in the composer and can't drift.
  */
-export function buildDelegatePrompt(task: Task, title: string): string {
+export function buildDelegatePrompt(task: TaskDetail, title: string): string {
   return [
     'Work on this dreamcontext task and drive it to completion, fully autonomously — do NOT ask me questions (I am away). Think hard.',
     taskContextBlock(task, title),
@@ -121,7 +121,7 @@ export function buildDelegatePrompt(task: Task, title: string): string {
  * "Discuss" changes the INSTRUCTION and nothing else — the task the agent is looking at is
  * byte-identical across all four. Each mode wraps it with its own lead-in and closing ask.
  */
-export function taskContextBlock(task: Task, title: string): string {
+export function taskContextBlock(task: TaskDetail, title: string): string {
   const parts: string[] = [`Task: ${title}`];
   if (task.description?.trim()) parts.push(`Description:\n${task.description.trim()}`);
   if (task.why?.trim()) parts.push(`Why:\n${task.why.trim()}`);

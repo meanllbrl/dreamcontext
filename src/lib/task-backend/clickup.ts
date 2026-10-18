@@ -54,6 +54,7 @@ import { cardHasChangelog, foldCardChangelog } from '../task-card.js';
 import { withTaskFileLock } from '../task-file-lock.js';
 import { loadFamily } from '../task-parent.js';
 import { applyRemoteParentLink, holdOpenParent, noteParentLinkFailure, parentLinkSettled } from './parent-sync.js';
+import { recordHeldOpen } from '../task-audit.js';
 import {
   applyRemoteComments,
   commentBodyFor,
@@ -1724,6 +1725,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       report.warnings.push(`pull ${slug}: closed on ClickUp while ${heldOpen.open} subtask(s) are open; kept ${heldOpen.keep} here.`);
       statusM.value = heldOpen.keep;
       statusM.winner = 'local';
+      recordHeldOpen(this.contextRoot, slug, heldOpen.open, (m) => report.warnings.push(`pull ${m}`));
     }
     // Order (C3): a card on the new model merges its order through the native
     // priority and never takes a priority from ClickUp; a legacy card keeps the

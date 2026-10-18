@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel } from '../../hooks/useTasks';
+import { useTask, useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel } from '../../hooks/useTasks';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
@@ -237,7 +237,10 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     setPendingSave(null);
   }, [pendingSave, s, flash]);
 
-  const selectedTask = selectedSlug ? tasks.find((t) => t.slug === selectedSlug) || null : null;
+  // The list carries no body (plan r3 § W4): the open task and the one being delegated are
+  // read by slug, so the panel and the delegate prompt get the whole card.
+  const { data: selectedTask = null } = useTask(selectedSlug ?? '');
+  const { data: delegateDetail = null } = useTask(delegateTask?.slug ?? '');
   const onTaskMove = useCallback((slug: string, updates: Partial<Pick<Task, 'priority' | 'urgency'>>) => updateTask.mutate({ slug, updates }), [updateTask]);
 
   if (!s.ready || isLoading) {
@@ -396,9 +399,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
         />
       )}
 
-      {delegateTask && (
+      {delegateTask && delegateDetail && (
         <DelegateComposer
-          task={delegateTask}
+          task={delegateDetail}
           onClose={() => setDelegateTask(null)}
           onDelegated={(title) => flash(`Delegated “${title}” to Claude`)}
         />
