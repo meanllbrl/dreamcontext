@@ -141,9 +141,9 @@ try {
   await openBoard();
   await page.locator('.bd-card', { hasText: 'Q4 roadmap' }).first().click();
   await page.locator('[data-task-ready="q4-roadmap"]').waitFor({ timeout: 10000 });
-  const opts = await page.locator('#tp-status option').allTextContents().catch(() => []);
+  const opts = await page.locator('#tkp-status option').allTextContents().catch(() => []);
   check('03 the task page status select lists all six statuses in order', opts.join('|') === 'To Do|Planned|In Progress|In Review|Completed|Cancelled', opts.join('|'));
-  await page.locator('#tp-status').scrollIntoViewIfNeeded().catch(() => {});
+  await page.locator('#tkp-status').scrollIntoViewIfNeeded().catch(() => {});
   await shot('03-task-page-status-select');
 
   // 04 — Settings › Task Format

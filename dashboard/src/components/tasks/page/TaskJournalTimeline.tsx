@@ -20,24 +20,24 @@ function JournalPage({ slug, before, shownBefore, isLast, onOlder }: {
 }) {
   const { t } = useI18n();
   const { data, isLoading } = useTaskJournal(slug, before);
-  if (isLoading) return <li className="tp-meta">{t('taskPage.loading')}</li>;
+  if (isLoading) return <li className="tkp-meta">{t('taskPage.loading')}</li>;
   const entries = data?.entries ?? [];
-  if (before === null && entries.length === 0) return <li className="tp-empty">{t('tasks.history_empty')}</li>;
+  if (before === null && entries.length === 0) return <li className="tkp-empty">{t('tasks.history_empty')}</li>;
   const older = data ? data.total - shownBefore - entries.length : 0;
   return (
     <>
       {entries.map((e) => (
-        <li key={e.id} className={`tp-entry tp-entry--${e.kind}`}>
-          <div className="tp-entry-head">
-            <span className="tp-entry-kind">{heading(e)}</span>
-            <span className="tp-meta">{[e.date, e.actor].filter(Boolean).join(' · ')}</span>
+        <li key={e.id} className={`tkp-entry tkp-entry--${e.kind}`}>
+          <div className="tkp-entry-head">
+            <span className="tkp-entry-kind">{heading(e)}</span>
+            <span className="tkp-meta">{[e.date, e.actor].filter(Boolean).join(' · ')}</span>
           </div>
-          {e.body && <TaskMarkdown text={e.body} idPrefix={`tp-je-${e.id}`} className="tp-entry-body" />}
+          {e.body && <TaskMarkdown text={e.body} idPrefix={`tkp-je-${e.id}`} className="tkp-entry-body" />}
         </li>
       ))}
       {isLast && older > 0 && entries.length > 0 && (
         <li>
-          <button type="button" className="tp-btn" onClick={() => onOlder(entries[entries.length - 1].id)}>
+          <button type="button" className="tkp-btn" onClick={() => onOlder(entries[entries.length - 1].id)}>
             {t('taskPage.journal.older').replace('{n}', String(older))}
           </button>
         </li>
@@ -56,7 +56,7 @@ export function TaskJournalTimeline({ slug, onError }: { slug: string; onError: 
   const [cursors, setCursors] = useState<Array<string | null>>([null]);
   const addEntry = useAddTaskChangelog();
   const [entry, setEntry] = useState('');
-  const inputId = `tp-journal-add-${slug}`;
+  const inputId = `tkp-journal-add-${slug}`;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -68,8 +68,8 @@ export function TaskJournalTimeline({ slug, onError }: { slug: string; onError: 
   };
 
   return (
-    <div className="tp-journal">
-      <ol className="tp-timeline" aria-label={t('tasks.changelog')}>
+    <div className="tkp-journal">
+      <ol className="tkp-timeline" aria-label={t('tasks.changelog')}>
         {cursors.map((before, i) => (
           <JournalPage
             key={before ?? 'newest'}
@@ -81,17 +81,17 @@ export function TaskJournalTimeline({ slug, onError }: { slug: string; onError: 
           />
         ))}
       </ol>
-      <form onSubmit={submit} className="tp-journal-add">
-        <label className="tp-label" htmlFor={inputId}>{t('taskPage.journal.addLabel')}</label>
-        <div className="tp-row">
+      <form onSubmit={submit} className="tkp-journal-add">
+        <label className="tkp-label" htmlFor={inputId}>{t('taskPage.journal.addLabel')}</label>
+        <div className="tkp-row">
           <input
             id={inputId}
-            className="tp-input"
+            className="tkp-input"
             value={entry}
             onChange={(e) => setEntry(e.target.value)}
             placeholder={t('tasks.history_placeholder')}
           />
-          <button type="submit" className="tp-btn tp-btn--primary" disabled={!entry.trim() || addEntry.isPending}>
+          <button type="submit" className="tkp-btn tkp-btn--primary" disabled={!entry.trim() || addEntry.isPending}>
             {t('tasks.add_entry')}
           </button>
         </div>

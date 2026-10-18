@@ -18,10 +18,10 @@ import {
 import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
 import type { ProjectRollup } from '../sleepy/agentStatus';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
-import { useTaskProposalsCount } from '../../hooks/useTaskProposals';
+import { useInboxCount } from '../../hooks/useInbox';
 import './Sidebar.css';
 
-export type Page = 'tasks' | 'task' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
+export type Page = 'tasks' | 'task' | 'inbox' | 'planning' | 'releases' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
 
 interface SidebarProps {
   activePage: Page;
@@ -35,7 +35,7 @@ interface SidebarProps {
 
 /** The i18n key of each page's name (the phone's top bar shows it). */
 export const PAGE_LABEL_KEY: Record<Page, string> = {
-  tasks: 'nav.tasks', task: 'nav.task', roadmap: 'nav.roadmap', hypotheses: 'nav.hypotheses', lab: 'nav.labpage', automations: 'nav.automations',
+  tasks: 'nav.tasks', task: 'nav.task', inbox: 'nav.inbox', planning: 'nav.planning', releases: 'nav.releases', roadmap: 'nav.roadmap', hypotheses: 'nav.hypotheses', lab: 'nav.labpage', automations: 'nav.automations',
   agents: 'nav.agents', core: 'nav.core', knowledge: 'nav.knowledge', sleep: 'nav.sleep', brain: 'nav.brain', council: 'nav.council',
   settings: 'nav.settings', packs: 'nav.packs', about: 'nav.about', taxonomy: 'nav.taxonomy', announcements: 'nav.announcements',
   whiteboards: 'nav.whiteboard',
@@ -101,6 +101,11 @@ const NAV_GROUPS: NavGroup[] = [
       // top to bottom instead of alternating.
       { launch: 'chat', labelKey: 'nav.chat' },
       { page: 'tasks', labelKey: 'nav.tasks' },
+      // The task system's other screens (plan r3 § 5d): what waits for the owner, the cycles,
+      // and what shipped. Next to Tasks, because they are the same work seen three other ways.
+      { page: 'inbox', labelKey: 'nav.inbox' },
+      { page: 'planning', labelKey: 'nav.planning' },
+      { page: 'releases', labelKey: 'nav.releases' },
       { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
       { page: 'agents', labelKey: 'nav.agents', maturity: 'beta' },
       { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
@@ -194,10 +199,12 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   // their laptop must not clear this badge here.
   const { data: agentFeed } = useAgentFeed();
   const agentUnread = agentFeed?.unreadTotal ?? 0;
-  // Sleep's proposals and the tasks it opened itself wait on the Tasks page; the
-  // rail is how the owner learns they exist (sleep often runs with nobody in a session).
-  const { data: proposalCount } = useTaskProposalsCount();
-  const proposalsWaiting = proposalCount?.waiting ?? 0;
+  // What waits for the owner — sleep's proposals and change cards, fully evidenced reviews,
+  // parents a sync held open — lives on the Inbox; the rail is how the owner learns it exists
+  // (sleep often runs with nobody in a session). A review with an unticked criterion is
+  // listed there but not counted here (`GET /api/inbox/count`).
+  const { data: inboxCount } = useInboxCount();
+  const inboxWaiting = inboxCount?.waiting ?? 0;
   // Hypotheses is in the rail for everyone, on or off. It used to be hidden
   // while the learning layer was disabled, which made the layer undiscoverable
   // by exactly the people who had never turned it on: the page that explains it
@@ -344,7 +351,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
               const isAbout = page === 'about';
               const badgeCount = page === 'announcements' ? unread.length
                 : page === 'automations' ? agentUnread
-                  : page === 'tasks' ? proposalsWaiting
+                  : page === 'inbox' ? inboxWaiting
                     : 0;
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
@@ -364,7 +371,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                     {(badgeCount > 0 || level) && (
                       <span className="sidebar-item-end">
                         {badgeCount > 0 && (
-                          <span className="sidebar-badge" {...(page === 'tasks' ? { title: t('nav.tasks.waitingBadge').replace('{n}', String(badgeCount)) } : {})}>{badgeCount}</span>
+                          <span className="sidebar-badge" {...(page === 'inbox' ? { title: t('nav.inbox.waitingBadge').replace('{n}', String(badgeCount)) } : {})}>{badgeCount}</span>
                         )}
                         <MaturityTag level={level} className="sidebar-maturity" />
                       </span>

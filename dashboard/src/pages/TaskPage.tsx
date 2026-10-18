@@ -77,18 +77,18 @@ export function TaskPage({ slug, onNavigate }: TaskPageProps) {
   };
 
   if (!slug) return null;
-  if (isLoading) return <div className="tp-page tp-state">{t('taskPage.loading')}</div>;
+  if (isLoading) return <div className="tkp-page tkp-state">{t('taskPage.loading')}</div>;
   if (error || !task) {
     return (
-      <div className="tp-page tp-state">
+      <div className="tkp-page tkp-state">
         <p>{t('taskPage.notFound')}</p>
-        <button type="button" className="tp-btn" onClick={back}>{t('taskPage.backToBoard')}</button>
+        <button type="button" className="tkp-btn" onClick={back}>{t('taskPage.backToBoard')}</button>
       </div>
     );
   }
 
   return (
-    <div className="tp-page" data-task-page={task.slug} data-task-ready={painted === task.slug ? task.slug : undefined}>
+    <div className="tkp-page" data-task-page={task.slug} data-task-ready={painted === task.slug ? task.slug : undefined}>
       <TaskHeader
         task={task}
         onBack={back}
@@ -99,9 +99,9 @@ export function TaskPage({ slug, onNavigate }: TaskPageProps) {
       {mutationError && (
         <div className="error-state" role="alert" style={{ whiteSpace: 'pre-line' }}>{mutationError}</div>
       )}
-      <div className="tp-layout">
-        <div className="tp-doc">
-          {task.description && <p className="tp-summary">{task.description}</p>}
+      <div className="tkp-layout">
+        <div className="tkp-doc">
+          {task.description && <p className="tkp-summary">{task.description}</p>}
           <TaskSections
             slug={task.slug}
             sections={sections}
@@ -113,13 +113,13 @@ export function TaskPage({ slug, onNavigate }: TaskPageProps) {
             <TaskJournalTimeline slug={task.slug} onError={onMutationError} />
           </TaskSection>
         </div>
-        <aside className="tp-rail" aria-label={t('taskPage.properties')}>
+        <aside className="tkp-rail" aria-label={t('taskPage.properties')}>
           <TaskFields task={task} collapse={collapse} onError={onMutationError} onGiveToAgent={() => setAssigning(true)} />
-          <div className="tp-danger">
-            <button type="button" className="tp-btn tp-btn--danger" onClick={handleDelete} disabled={deleteTask.isPending}>
+          <div className="tkp-danger">
+            <button type="button" className="tkp-btn tkp-btn--danger" onClick={handleDelete} disabled={deleteTask.isPending}>
               {t('taskPage.delete.button')}
             </button>
-            <span className="tp-meta">{t('taskPage.delete.hint')}</span>
+            <span className="tkp-meta">{t('taskPage.delete.hint')}</span>
           </div>
         </aside>
       </div>

@@ -38,33 +38,33 @@ export function TaskHeader({ task, onBack, onOpenTask, onGiveToAgent, onError }:
   const statusLabel = (k: string) => (['todo', 'in_progress', 'in_review', 'completed'].includes(k) ? t(`tasks.${k}`) : sm.labelOf(k));
 
   return (
-    <header className="tp-header">
-      <div className="tp-header-top">
-        <button type="button" className="tp-btn tp-back" onClick={onBack}>
+    <header className="tkp-header">
+      <div className="tkp-header-top">
+        <button type="button" className="tkp-btn tkp-back" onClick={onBack}>
           <span aria-hidden="true">←</span> {t('taskPage.backToBoard')}
         </button>
-        <button type="button" className="tp-btn tp-btn--primary" onClick={onGiveToAgent}>
+        <button type="button" className="tkp-btn tkp-btn--primary" onClick={onGiveToAgent}>
           {t('giveAgent.open')}
         </button>
       </div>
 
       {task.parent && (
-        <nav className="tp-breadcrumb" aria-label={t('taskPage.header.parentPath')}>
-          <button type="button" className="tp-link" onClick={() => onOpenTask(task.parent!.slug)} lang="und">
+        <nav className="tkp-breadcrumb" aria-label={t('taskPage.header.parentPath')}>
+          <button type="button" className="tkp-link" onClick={() => onOpenTask(task.parent!.slug)} lang="und">
             {task.parent.name || task.parent.slug}
           </button>
-          <span aria-hidden="true" className="tp-meta">/</span>
+          <span aria-hidden="true" className="tkp-meta">/</span>
         </nav>
       )}
 
-      <h1 className="tp-title" lang="und">{task.name || task.slug}</h1>
+      <h1 className="tkp-title" lang="und">{task.name || task.slug}</h1>
 
-      <div className="tp-header-controls">
-        <label className="tp-control">
-          <span className="tp-label">{t('taskPage.header.status')}</span>
+      <div className="tkp-header-controls">
+        <label className="tkp-control">
+          <span className="tkp-label">{t('taskPage.header.status')}</span>
           <select
-            id="tp-status"
-            className="tp-select"
+            id="tkp-status"
+            className="tkp-select"
             value={task.status}
             disabled={updateTask.isPending}
             onChange={(e) => updateTask.mutate({ slug: task.slug, updates: { status: e.target.value } }, { onError })}
@@ -72,11 +72,11 @@ export function TaskHeader({ task, onBack, onOpenTask, onGiveToAgent, onError }:
             {statuses.map((k) => <option key={k} value={k}>{statusLabel(k)}</option>)}
           </select>
         </label>
-        <label className="tp-control">
-          <span className="tp-label">{t('taskPage.header.placement')}</span>
+        <label className="tkp-control">
+          <span className="tkp-label">{t('taskPage.header.placement')}</span>
           <select
-            id="tp-placement"
-            className="tp-select"
+            id="tkp-placement"
+            className="tkp-select"
             value={placement}
             disabled={plan.isPending}
             onChange={(e) => plan.mutate({ slug: task.slug, target: e.target.value }, { onError })}
@@ -88,12 +88,12 @@ export function TaskHeader({ task, onBack, onOpenTask, onGiveToAgent, onError }:
             {cycle && cycle !== active && !planned.some((c) => c.id === cycle) && <option value={cycle}>{cycleLabel(cycle)}</option>}
           </select>
         </label>
-        {cycle && <span className="tp-chip">{cycleLabel(cycle)}</span>}
+        {cycle && <span className="tkp-chip">{cycleLabel(cycle)}</span>}
       </div>
 
       {sm.kindOf(task.status) === 'review' && (
-        <div className="tp-review">
-          <p className="tp-meta">{t('taskPage.header.inReview')}</p>
+        <div className="tkp-review">
+          <p className="tkp-meta">{t('taskPage.header.inReview')}</p>
           <TaskVerdictBar slug={task.slug} />
         </div>
       )}

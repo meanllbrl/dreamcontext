@@ -4,7 +4,7 @@
  * so these rules are the seams, not the polish.
  */
 
-.tp-page {
+.tkp-page {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -15,12 +15,12 @@
   overflow-wrap: anywhere;
 }
 
-.tp-state {
+.tkp-state {
   align-items: flex-start;
   color: var(--color-text-secondary);
 }
 
-.tp-layout {
+.tkp-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   gap: var(--space-6);
@@ -28,11 +28,11 @@
 }
 
 @media (max-width: 1023px) {
-  .tp-layout { grid-template-columns: minmax(0, 1fr); }
+  .tkp-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
-.tp-doc,
-.tp-rail {
+.tkp-doc,
+.tkp-rail {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -41,13 +41,13 @@
 
 /* ── Header ── */
 
-.tp-header {
+.tkp-header {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
 
-.tp-header-top {
+.tkp-header-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -55,7 +55,7 @@
   flex-wrap: wrap;
 }
 
-.tp-title {
+.tkp-title {
   margin: 0;
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-semibold);
@@ -64,27 +64,27 @@
   text-transform: none;
 }
 
-.tp-breadcrumb {
+.tkp-breadcrumb {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
 }
 
-.tp-header-controls {
+.tkp-header-controls {
   display: flex;
   align-items: flex-end;
   gap: var(--space-3);
   flex-wrap: wrap;
 }
 
-.tp-control {
+.tkp-control {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
 
-.tp-review {
+.tkp-review {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -94,7 +94,7 @@
   background: var(--color-bg-secondary);
 }
 
-.tp-summary {
+.tkp-summary {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-base);
@@ -103,7 +103,7 @@
 
 /* ── Shared controls ── */
 
-.tp-btn {
+.tkp-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -119,26 +119,26 @@
   cursor: pointer;
 }
 
-.tp-btn:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-bg-secondary); }
-.tp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.tkp-btn:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-bg-secondary); }
+.tkp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.tp-btn--primary {
+.tkp-btn--primary {
   border-color: var(--color-accent-strong);
   background: var(--color-accent-strong);
   color: var(--color-accent-text);
 }
 
-.tp-btn--primary:hover:not(:disabled) { border-color: var(--color-accent-strong); background: var(--color-accent-strong); }
+.tkp-btn--primary:hover:not(:disabled) { border-color: var(--color-accent-strong); background: var(--color-accent-strong); }
 
-.tp-btn--danger {
+.tkp-btn--danger {
   border-color: var(--color-error);
   background: none;
   color: var(--color-error);
 }
 
-.tp-btn--danger:hover:not(:disabled) { border-color: var(--color-error); background: var(--color-error-subtle); }
+.tkp-btn--danger:hover:not(:disabled) { border-color: var(--color-error); background: var(--color-error-subtle); }
 
-.tp-link {
+.tkp-link {
   min-height: var(--space-8);
   padding: 0;
   border: none;
@@ -150,10 +150,10 @@
   cursor: pointer;
 }
 
-[data-theme='dark'] .tp-link { color: var(--color-accent); }
+[data-theme='dark'] .tkp-link { color: var(--color-accent); }
 
-.tp-select,
-.tp-input {
+.tkp-select,
+.tkp-input {
   min-height: var(--space-8);
   padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
@@ -164,57 +164,57 @@
   font-size: var(--font-size-sm);
 }
 
-.tp-input { flex: 1; min-width: 0; }
+.tkp-input { flex: 1; min-width: 0; }
 
-.tp-textarea {
+.tkp-textarea {
   width: 100%;
   padding: var(--space-2);
   line-height: var(--line-height-normal);
   resize: vertical;
 }
 
-.tp-btn:focus-visible,
-.tp-link:focus-visible,
-.tp-select:focus-visible,
-.tp-input:focus-visible,
-.tp-check:focus-visible,
-.tp-child:focus-visible {
+.tkp-btn:focus-visible,
+.tkp-link:focus-visible,
+.tkp-select:focus-visible,
+.tkp-input:focus-visible,
+.tkp-check:focus-visible,
+.tkp-child:focus-visible {
   outline: 2px solid var(--color-border-focus);
   outline-offset: 2px;
 }
 
-.tp-label {
+.tkp-label {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-secondary);
 }
 
-.tp-meta {
+.tkp-meta {
   margin: 0;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
-.tp-empty {
+.tkp-empty {
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 
-.tp-error {
+.tkp-error {
   margin: 0;
   color: var(--color-error);
   font-size: var(--font-size-sm);
   white-space: pre-line;
 }
 
-.tp-row {
+.tkp-row {
   display: flex;
   gap: var(--space-2);
   align-items: center;
 }
 
-.tp-count {
+.tkp-count {
   margin-left: var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
@@ -222,7 +222,7 @@
   color: var(--color-text-secondary);
 }
 
-.tp-chip {
+.tkp-chip {
   display: inline-flex;
   align-items: center;
   min-height: var(--space-5);
@@ -235,15 +235,15 @@
   white-space: nowrap;
 }
 
-.tp-chip--cmd,
-.tp-chip--commit,
-.tp-chip--shot,
-.tp-chip--owner { border-color: var(--color-success); background: var(--color-success-subtle); color: var(--color-text); }
-.tp-chip--legacy,
-.tp-chip--observed { border-color: var(--color-warning); background: var(--color-warning-subtle); color: var(--color-text); }
-.tp-chip--missing { border-color: var(--color-error); background: var(--color-error-subtle); color: var(--color-text); }
+.tkp-chip--cmd,
+.tkp-chip--commit,
+.tkp-chip--shot,
+.tkp-chip--owner { border-color: var(--color-success); background: var(--color-success-subtle); color: var(--color-text); }
+.tkp-chip--legacy,
+.tkp-chip--observed { border-color: var(--color-warning); background: var(--color-warning-subtle); color: var(--color-text); }
+.tkp-chip--missing { border-color: var(--color-error); background: var(--color-error-subtle); color: var(--color-text); }
 
-.tp-status-dot {
+.tkp-status-dot {
   flex: 0 0 auto;
   width: var(--space-2);
   height: var(--space-2);
@@ -252,39 +252,39 @@
 
 /* ── Blocks and sections ── */
 
-.tp-block {
+.tkp-block {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
 
-.tp-block-title {
+.tkp-block-title {
   margin: 0;
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
 }
 
-.tp-sections {
+.tkp-sections {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
 }
 
-.tp-sections > .task-section,
-.tp-doc > .task-section {
+.tkp-sections > .task-section,
+.tkp-doc > .task-section {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
 }
 
-.tp-more { display: flex; flex-direction: column; gap: var(--space-4); }
-.tp-more-title { margin: 0 0 var(--space-2); font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); }
-.tp-legacy { display: flex; flex-direction: column; gap: var(--space-3); }
+.tkp-more { display: flex; flex-direction: column; gap: var(--space-4); }
+.tkp-more-title { margin: 0 0 var(--space-2); font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); }
+.tkp-legacy { display: flex; flex-direction: column; gap: var(--space-3); }
 
 /* ── Criteria ── */
 
-.tp-criteria { display: flex; flex-direction: column; gap: var(--space-2); }
+.tkp-criteria { display: flex; flex-direction: column; gap: var(--space-2); }
 
-.tp-criteria-list {
+.tkp-criteria-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -293,7 +293,7 @@
   list-style: none;
 }
 
-.tp-criterion {
+.tkp-criterion {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
@@ -303,7 +303,7 @@
   border-radius: var(--radius-md);
 }
 
-.tp-check {
+.tkp-check {
   flex: 0 0 auto;
   width: var(--space-5);
   height: var(--space-5);
@@ -312,7 +312,7 @@
   cursor: pointer;
 }
 
-.tp-criterion-text {
+.tkp-criterion-text {
   flex: 1;
   min-width: 0;
   font-size: var(--font-size-sm);
@@ -320,9 +320,9 @@
   cursor: pointer;
 }
 
-.tp-criterion[data-checked] .tp-criterion-text { color: var(--color-text-secondary); }
+.tkp-criterion[data-checked] .tkp-criterion-text { color: var(--color-text-secondary); }
 
-.tp-criterion-tags {
+.tkp-criterion-tags {
   display: inline-flex;
   flex-wrap: wrap;
   gap: var(--space-1);
@@ -330,7 +330,7 @@
 
 /* ── Sub-tasks ── */
 
-.tp-children {
+.tkp-children {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -339,7 +339,7 @@
   list-style: none;
 }
 
-.tp-child {
+.tkp-child {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -356,16 +356,16 @@
   cursor: pointer;
 }
 
-.tp-child:hover { border-color: var(--color-border-hover); }
-.tp-child-name { flex: 1; min-width: 0; }
-.tp-child-status,
-.tp-child-crit { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.tkp-child:hover { border-color: var(--color-border-hover); }
+.tkp-child-name { flex: 1; min-width: 0; }
+.tkp-child-status,
+.tkp-child-crit { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
 
 /* ── Journal ── */
 
-.tp-journal { display: flex; flex-direction: column; gap: var(--space-4); }
+.tkp-journal { display: flex; flex-direction: column; gap: var(--space-4); }
 
-.tp-timeline {
+.tkp-timeline {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -374,7 +374,7 @@
   list-style: none;
 }
 
-.tp-entry {
+.tkp-entry {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -382,33 +382,33 @@
   border-left: 2px solid var(--color-border);
 }
 
-.tp-entry--evidence,
-.tp-entry--approval { border-left-color: var(--color-success); }
+.tkp-entry--evidence,
+.tkp-entry--approval { border-left-color: var(--color-success); }
 
-.tp-entry-head {
+.tkp-entry-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-2);
 }
 
-.tp-entry-kind {
+.tkp-entry-kind {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text);
 }
 
-.tp-journal-add { display: flex; flex-direction: column; gap: var(--space-1); }
+.tkp-journal-add { display: flex; flex-direction: column; gap: var(--space-1); }
 
 /* ── Verdict ── */
 
-.tp-verdict { display: flex; flex-direction: column; gap: var(--space-2); }
-.tp-verdict-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.tp-verdict-form { display: flex; flex-direction: column; gap: var(--space-2); }
+.tkp-verdict { display: flex; flex-direction: column; gap: var(--space-2); }
+.tkp-verdict-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.tkp-verdict-form { display: flex; flex-direction: column; gap: var(--space-2); }
 
 /* ── Properties rail (moved from the old task panel) ── */
 
-.tp-rail .props-block {
+.tkp-rail .props-block {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
@@ -661,7 +661,7 @@
   resize: vertical;
 }
 
-.tp-danger {
+.tkp-danger {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -670,7 +670,7 @@
 
 /* ── Diagrams (lib/mermaidRender wraps each one in a stage) ── */
 
-.tp-page .markdown-body .mermaid-rendered {
+.tkp-page .markdown-body .mermaid-rendered {
   margin: var(--space-3) 0;
   padding: var(--space-3);
   border: 1px solid var(--color-border);
@@ -679,7 +679,7 @@
   overflow-x: auto;
 }
 
-.tp-page .markdown-body .mermaid-error {
+.tkp-page .markdown-body .mermaid-error {
   color: var(--color-error);
   font-size: var(--font-size-xs);
   white-space: pre-wrap;
@@ -688,12 +688,12 @@
 /* ── A phone (390 px): one column, and every control 44 px tall ── */
 
 @media (max-width: 640px) {
-  .tp-page { padding: var(--space-3); }
-  .tp-title { font-size: var(--font-size-xl); }
-  .tp-btn,
-  .tp-link,
-  .tp-select,
-  .tp-input,
+  .tkp-page { padding: var(--space-3); }
+  .tkp-title { font-size: var(--font-size-xl); }
+  .tkp-btn,
+  .tkp-link,
+  .tkp-select,
+  .tkp-input,
   .prop-select,
   .prop-text-input,
   .task-field-empty,
@@ -702,7 +702,7 @@
   .assignee-chip__remove,
   .task-tag-remove,
   .task-tag-picker .ss-trigger { min-height: var(--space-11); min-width: var(--space-11); }
-  .tp-header-controls { flex-direction: column; align-items: stretch; }
+  .tkp-header-controls { flex-direction: column; align-items: stretch; }
   .task-field { flex-direction: column; }
   .task-field-label { flex: none; padding-top: 0; }
 }

@@ -10,6 +10,9 @@ import { AgentSurface, PROJECT_ROLLUP_EVENT } from './components/sleepy/AgentSur
 import type { ProjectRollup } from './components/sleepy/agentStatus';
 import { TasksPage } from './pages/TasksPage';
 import { TaskPage } from './pages/TaskPage';
+import { InboxPage } from './pages/InboxPage';
+import { PlanningPage } from './pages/PlanningPage';
+import { ReleasesPage } from './pages/ReleasesPage';
 import { RoadmapPage } from './pages/RoadmapPage';
 import { HypothesesPage } from './pages/HypothesesPage';
 import { LabPage } from './pages/LabPage';
@@ -78,7 +81,7 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
     'dreamcontext-agent-open-page',
     (detail) => {
       const page = detail?.page;
-      if (page !== 'tasks' && page !== 'task' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings') return;
+      if (page !== 'tasks' && page !== 'task' && page !== 'inbox' && page !== 'planning' && page !== 'releases' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings') return;
       nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null);
     },
   );
@@ -354,9 +357,15 @@ function PageRouter({
     case 'brain':
       return <BrainPage onNavigate={handleBrainNavigate} />;
     case 'tasks':
-      return <TasksPage focus={focus} onOpenTask={(slug) => nav.navigate('task', slug)} />;
+      return <TasksPage focus={focus} onOpenTask={(slug) => nav.navigate('task', slug)} onOpenPlanning={() => nav.navigate('planning', null)} />;
     case 'task':
       return <TaskPage slug={nav.focusId} onNavigate={nav.navigate} />;
+    case 'inbox':
+      return <InboxPage onNavigate={nav.navigate} />;
+    case 'planning':
+      return <PlanningPage onNavigate={nav.navigate} />;
+    case 'releases':
+      return <ReleasesPage onNavigate={nav.navigate} />;
     case 'roadmap':
       return <RoadmapPage onNavigate={(page, id) => nav.navigate(page, id ?? null)} focus={focus} />;
     case 'hypotheses':

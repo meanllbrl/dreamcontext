@@ -19,7 +19,8 @@ import {
 import './ProposalsSection.css';
 
 /**
- * The Proposals section at the top of the Tasks page (owner decision 8).
+ * The Proposals section of the Inbox (owner decision 8; it moved off the Tasks board in
+ * plan r3 § 5d, with its accept and reject unchanged).
  *
  * Sleep files a new top-level task only on the owner's ask or a proven defect;
  * everything else it would have filed waits here, and so does every task it did

@@ -34,22 +34,22 @@ export function TaskVerdictBar({ slug, onDone }: { slug: string; onDone?: (verdi
   };
 
   return (
-    <div className="tp-verdict" data-verdict-bar={slug}>
+    <div className="tkp-verdict" data-verdict-bar={slug}>
       {!sendingBack ? (
-        <div className="tp-verdict-row">
-          <button type="button" className="tp-btn tp-btn--primary" disabled={verdict.isPending} onClick={() => submit('approve')}>
+        <div className="tkp-verdict-row">
+          <button type="button" className="tkp-btn tkp-btn--primary" disabled={verdict.isPending} onClick={() => submit('approve')}>
             {t('taskPage.verdict.approve')}
           </button>
-          <button type="button" className="tp-btn" disabled={verdict.isPending} onClick={() => setSendingBack(true)}>
+          <button type="button" className="tkp-btn" disabled={verdict.isPending} onClick={() => setSendingBack(true)}>
             {t('taskPage.verdict.sendBack')}
           </button>
         </div>
       ) : (
-        <form className="tp-verdict-form" onSubmit={onSendBack}>
-          <label className="tp-label" htmlFor={noteId}>{t('taskPage.verdict.noteLabel')}</label>
+        <form className="tkp-verdict-form" onSubmit={onSendBack}>
+          <label className="tkp-label" htmlFor={noteId}>{t('taskPage.verdict.noteLabel')}</label>
           <textarea
             id={noteId}
-            className="tp-input tp-textarea"
+            className="tkp-input tkp-textarea"
             rows={3}
             value={note}
             required
@@ -57,17 +57,17 @@ export function TaskVerdictBar({ slug, onDone }: { slug: string; onDone?: (verdi
             onChange={(e) => setNote(e.target.value)}
             placeholder={t('taskPage.verdict.notePlaceholder')}
           />
-          <div className="tp-verdict-row">
-            <button type="submit" className="tp-btn tp-btn--primary" disabled={!note.trim() || verdict.isPending}>
+          <div className="tkp-verdict-row">
+            <button type="submit" className="tkp-btn tkp-btn--primary" disabled={!note.trim() || verdict.isPending}>
               {t('taskPage.verdict.sendBackConfirm')}
             </button>
-            <button type="button" className="tp-btn" onClick={() => { setSendingBack(false); setNote(''); }}>
+            <button type="button" className="tkp-btn" onClick={() => { setSendingBack(false); setNote(''); }}>
               {t('taskPage.cancel')}
             </button>
           </div>
         </form>
       )}
-      {error && <p className="tp-error" role="alert">{error}</p>}
+      {error && <p className="tkp-error" role="alert">{error}</p>}
     </div>
   );
 }

@@ -54,7 +54,7 @@ export const APP_LINK_PAGES = [
   'sleep', 'automations', 'tasks', 'knowledge', 'core', 'lab', 'roadmap', 'hypotheses', 'settings', 'agents',
   // The task UI's pages (plan r3 § W5). Read here only: the Node writer still links a task as
   // `page/tasks/<slug>`, which the board opens as the task page.
-  'task',
+  'task', 'inbox', 'planning', 'releases',
 ] as const;
 export type AppLinkPage = typeof APP_LINK_PAGES[number];
 /** The pages whose link may name one item. */

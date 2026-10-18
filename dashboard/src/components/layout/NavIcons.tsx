@@ -54,6 +54,38 @@ function TasksIcon() {
   );
 }
 
+/** Inbox — a tray with an opening: what waits for the owner's verdict. */
+function InboxIcon() {
+  return (
+    <Svg>
+      <path d="M3.5 13.5 6 5.5h12l2.5 8v5h-17z" />
+      <path d="M3.5 13.5h5l1 2h5l1-2h5" />
+    </Svg>
+  );
+}
+
+/** Planning — a turning arrow round a line: the cycle and what goes into it. */
+function PlanningIcon() {
+  return (
+    <Svg>
+      <path d="M20 12a8 8 0 1 1-2.4-5.7" />
+      <path d="M20 4v4.5h-4.5" />
+      <line x1="9" y1="12" x2="15" y2="12" />
+    </Svg>
+  );
+}
+
+/** Releases — a package: what shipped together. */
+function ReleasesIcon() {
+  return (
+    <Svg>
+      <path d="M12 3.5 20 7.5v9l-8 4-8-4v-9z" />
+      <path d="M4 7.5 12 11.5 20 7.5" />
+      <line x1="12" y1="11.5" x2="12" y2="20.5" />
+    </Svg>
+  );
+}
+
 /** Hypotheses — a flask: the falsifiable-claim validation loop. */
 function HypothesesIcon() {
   return (
@@ -277,6 +309,9 @@ export function ChatIcon() {
  */
 export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   tasks: TasksIcon,
+  inbox: InboxIcon,
+  planning: PlanningIcon,
+  releases: ReleasesIcon,
   roadmap: RoadmapIcon,
   hypotheses: HypothesesIcon,
   lab: LabIcon,

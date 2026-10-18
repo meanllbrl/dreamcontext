@@ -13,20 +13,20 @@ export function TaskChildren({ items, onOpen }: { items: Task[]; onOpen: (slug: 
   const counted = items.filter((c) => !sm.isCancelled(c.status) && c.status !== 'cancelled');
   const done = counted.filter((c) => sm.isDone(c.status)).length;
   return (
-    <section className="tp-block" aria-labelledby="tp-children-title">
-      <h2 className="tp-block-title" id="tp-children-title">
+    <section className="tkp-block" aria-labelledby="tkp-children-title">
+      <h2 className="tkp-block-title" id="tkp-children-title">
         {t('taskPage.children.title')}
-        <span className="tp-count">{t('taskPage.children.rollup').replace('{done}', String(done)).replace('{total}', String(counted.length))}</span>
+        <span className="tkp-count">{t('taskPage.children.rollup').replace('{done}', String(done)).replace('{total}', String(counted.length))}</span>
       </h2>
-      <ul className="tp-children">
+      <ul className="tkp-children">
         {items.map((c) => (
           <li key={c.slug}>
-            <button type="button" className="tp-child" onClick={() => onOpen(c.slug)}>
-              <span className="tp-status-dot" style={{ background: sm.colorOf(c.status) }} aria-hidden="true" />
-              <span className="tp-child-name" lang="und">{c.name || c.slug}</span>
-              <span className="tp-child-status">{sm.labelOf(c.status)}</span>
+            <button type="button" className="tkp-child" onClick={() => onOpen(c.slug)}>
+              <span className="tkp-status-dot" style={{ background: sm.colorOf(c.status) }} aria-hidden="true" />
+              <span className="tkp-child-name" lang="und">{c.name || c.slug}</span>
+              <span className="tkp-child-status">{sm.labelOf(c.status)}</span>
               {c.criteria.total > 0 && (
-                <span className="tp-child-crit">{`${c.criteria.done}/${c.criteria.total}`}</span>
+                <span className="tkp-child-crit">{`${c.criteria.done}/${c.criteria.total}`}</span>
               )}
             </button>
           </li>

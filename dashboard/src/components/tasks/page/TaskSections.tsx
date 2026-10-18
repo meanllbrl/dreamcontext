@@ -28,18 +28,18 @@ export function TaskSections({ slug, sections, collapse, criteria }: {
       {body}
     </TaskSection>
   );
-  const md = (key: BodySection['key']) => <TaskMarkdown text={textOf(key)} idPrefix={`tp-${key}-${slug}`} />;
+  const md = (key: BodySection['key']) => <TaskMarkdown text={textOf(key)} idPrefix={`tkp-${key}-${slug}`} />;
 
   const lead = textOf('lead');
   const others = of('other');
   const legacy = textOf('changelog');
 
   return (
-    <div className="tp-sections">
-      {lead && <TaskMarkdown text={lead} idPrefix={`tp-lead-${slug}`} />}
-      {section('why', t('taskPage.section.why'), textOf('why') ? md('why') : <p className="tp-empty">{t('taskPage.section.whyEmpty')}</p>)}
-      <section className="tp-block" aria-labelledby={`tp-criteria-${slug}`}>
-        <h2 className="tp-block-title" id={`tp-criteria-${slug}`}>{t('taskPage.section.criteria')}</h2>
+    <div className="tkp-sections">
+      {lead && <TaskMarkdown text={lead} idPrefix={`tkp-lead-${slug}`} />}
+      {section('why', t('taskPage.section.why'), textOf('why') ? md('why') : <p className="tkp-empty">{t('taskPage.section.whyEmpty')}</p>)}
+      <section className="tkp-block" aria-labelledby={`tkp-criteria-${slug}`}>
+        <h2 className="tkp-block-title" id={`tkp-criteria-${slug}`}>{t('taskPage.section.criteria')}</h2>
         {criteria}
       </section>
       {section('decisions', t('taskPage.section.decisions'), <TaskDecisions slug={slug} text={textOf('decisions')} />)}
@@ -47,19 +47,19 @@ export function TaskSections({ slug, sections, collapse, criteria }: {
       {textOf('details') && section('details', t('taskPage.section.details'), md('details'))}
       {textOf('notes') && section('notes', t('taskPage.section.notes'), md('notes'))}
       {others.length > 0 && section('more', t('taskPage.section.more'), (
-        <div className="tp-more">
+        <div className="tkp-more">
           {others.map((s, i) => (
-            <div key={`${s.title}-${i}`} className="tp-more-item">
-              <h3 className="tp-more-title">{s.title}</h3>
-              <TaskMarkdown text={s.text} idPrefix={`tp-more-${slug}-${i}`} />
+            <div key={`${s.title}-${i}`} className="tkp-more-item">
+              <h3 className="tkp-more-title">{s.title}</h3>
+              <TaskMarkdown text={s.text} idPrefix={`tkp-more-${slug}-${i}`} />
             </div>
           ))}
         </div>
       ), others.length)}
       {legacy && section('legacy', t('taskPage.section.legacy'), (
-        <div className="tp-legacy">
-          <p className="tp-meta">{t('taskPage.section.legacyHint')}</p>
-          <TaskMarkdown text={legacy} idPrefix={`tp-legacy-${slug}`} />
+        <div className="tkp-legacy">
+          <p className="tkp-meta">{t('taskPage.section.legacyHint')}</p>
+          <TaskMarkdown text={legacy} idPrefix={`tkp-legacy-${slug}`} />
         </div>
       ))}
     </div>

@@ -30,31 +30,31 @@ export function TaskCriteria({ task, onError }: { task: TaskDetail; onError: (er
     );
   };
 
-  if (task.criteria.length === 0) return <p className="tp-empty">{t('taskPage.criteria.empty')}</p>;
+  if (task.criteria.length === 0) return <p className="tkp-empty">{t('taskPage.criteria.empty')}</p>;
   const done = task.criteria.filter((c) => c.checked).length;
   return (
-    <div className="tp-criteria">
-      <p className="tp-meta">{t('taskPage.criteria.count').replace('{done}', String(done)).replace('{total}', String(task.criteria.length))}</p>
-      <ol className="tp-criteria-list">
+    <div className="tkp-criteria">
+      <p className="tkp-meta">{t('taskPage.criteria.count').replace('{done}', String(done)).replace('{total}', String(task.criteria.length))}</p>
+      <ol className="tkp-criteria-list">
         {task.criteria.map((c) => {
-          const id = `tp-crit-${task.slug}-${c.n}`;
+          const id = `tkp-crit-${task.slug}-${c.n}`;
           return (
-            <li key={c.n} className="tp-criterion" data-checked={c.checked || undefined}>
+            <li key={c.n} className="tkp-criterion" data-checked={c.checked || undefined}>
               <input
                 id={id}
                 type="checkbox"
-                className="tp-check"
+                className="tkp-check"
                 checked={c.checked}
                 disabled={updateTask.isPending}
                 onChange={(e) => tick(c, e.target.checked)}
               />
-              <label htmlFor={id} className="tp-criterion-text">{c.text}</label>
-              <span className="tp-criterion-tags">
-                {c.observed && <span className="tp-chip tp-chip--observed">{t('taskPage.criteria.observed')}</span>}
+              <label htmlFor={id} className="tkp-criterion-text">{c.text}</label>
+              <span className="tkp-criterion-tags">
+                {c.observed && <span className="tkp-chip tkp-chip--observed">{t('taskPage.criteria.observed')}</span>}
                 {c.checked && c.kind && (
-                  <span className={`tp-chip tp-chip--${c.kind}`} title={c.ref ?? undefined}>{t(`taskPage.evidence.${c.kind}`)}</span>
+                  <span className={`tkp-chip tkp-chip--${c.kind}`} title={c.ref ?? undefined}>{t(`taskPage.evidence.${c.kind}`)}</span>
                 )}
-                {c.checked && !c.kind && <span className="tp-chip tp-chip--missing">{t('taskPage.evidence.missing')}</span>}
+                {c.checked && !c.kind && <span className="tkp-chip tkp-chip--missing">{t('taskPage.evidence.missing')}</span>}
               </span>
             </li>
           );

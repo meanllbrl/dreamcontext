@@ -17,7 +17,6 @@ import { BoardColumn, type BoardColumnData, type BoardSubGroup } from './BoardCo
 import { BoardCard } from './BoardCard';
 import { CycleStrip } from './CycleStrip';
 import { AtRiskAlert } from './AtRiskAlert';
-import { ProposalsSection } from './ProposalsSection';
 import { SleepEvalBanner } from './SleepEvalDeck';
 import { SaveScopeDialog } from './SaveScopeDialog';
 import { TaskCreateModal } from './TaskCreateModal';
@@ -341,7 +340,6 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
       />
 
       <CycleStrip onOpenPlanning={onOpenPlanning} />
-      <ProposalsSection />
       <SleepEvalBanner />
 
       {showAlert && (
