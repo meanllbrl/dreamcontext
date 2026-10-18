@@ -9,6 +9,7 @@ import { insertToSection } from '../../lib/markdown.js';
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { generateId, slugify, today } from '../../lib/id.js';
+import { fillQuotedToken } from '../../lib/template-fill.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { analyzeFeatures, type FeatureRef, type TaskRef } from '../../lib/feature-freshness.js';
 import { featuresDir, featureSlug, featureProduct, FEATURES_SUBDIR, FEATURES_TYPE } from '../../lib/features-path.js';
@@ -204,11 +205,12 @@ export function registerFeaturesCommand(program: Command): void {
       const date = today();
 
       const template = getFeatureTemplate();
-      const content = template
+      // Name and description go in as valid YAML double-quoted scalars: a `"` or `\` in
+      // either used to end the scalar early and corrupt the file (the task create paths had
+      // the same flaw). Plain values produce the same bytes as before.
+      const content = fillQuotedToken(fillQuotedToken(template, '{{NAME}}', name), '{{DESCRIPTION}}', opts.description ?? '')
         .replaceAll('{{ID}}', generateId('feat'))
         .replaceAll('{{DATE}}', date)
-        .replaceAll('{{NAME}}', name)
-        .replaceAll('{{DESCRIPTION}}', opts.description ?? '')
         .replaceAll('{{WHY}}', why || '(To be defined)');
 
       if (folder) mkdirSync(targetDir, { recursive: true });

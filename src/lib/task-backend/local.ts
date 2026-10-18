@@ -6,6 +6,7 @@ import { DEFAULT_STATUSES, normalizeStatusKey, statusKeys, type StatusDef } from
 import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../frontmatter.js';
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
+import { fillQuotedToken } from '../template-fill.js';
 import { normalizeRice } from '../rice.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
@@ -183,17 +184,16 @@ function renderTaskTemplate(
   input: CreateTaskInput,
   opts: { name: string; status: string; description: string },
 ): string {
-  return template
+  const quoted = fillQuotedToken(fillQuotedToken(template, '{{NAME}}', opts.name), '{{DESCRIPTION}}', opts.description);
+  return quoted
     .replaceAll('{{ID}}', generateId('task'))
-    .replaceAll('{{NAME}}', opts.name)
-    .replaceAll('{{DESCRIPTION}}', opts.description)
     .replaceAll('{{PRIORITY}}', input.priority ?? 'medium')
     .replaceAll('{{URGENCY}}', input.urgency ?? 'medium')
     .replaceAll('{{STATUS}}', opts.status)
     .replaceAll('{{TAGS}}', JSON.stringify(input.tags ?? []))
     .replaceAll('{{DATE}}', today())
     .replaceAll('{{WHY}}', input.why || '(To be defined)')
-    .replaceAll('{{VERSION}}', input.version ? `"${input.version}"` : 'null');
+    .replaceAll('{{VERSION}}', input.version ? JSON.stringify(input.version) : 'null');
 }
 
 /**
@@ -620,17 +620,21 @@ export class LocalTaskBackend implements TaskBackend {
       const name = input.name.trim();
       const dateStr = today();
       const tags = input.tags ?? [];
-      const tagsYaml = tags.length > 0 ? `[${tags.map(t => `"${t}"`).join(', ')}]` : '[]';
-      const versionYaml = input.version ? `"${input.version}"` : 'null';
+      // Every string scalar through JSON.stringify: a valid YAML double-quoted scalar for any
+      // text (a `"` or `\` in a name used to end it early and corrupt the card), and the same
+      // bytes as before for a plain or Turkish value (golden-pinned).
+      const q = (v: string) => JSON.stringify(v);
+      const tagsYaml = tags.length > 0 ? `[${tags.map(t => q(t)).join(', ')}]` : '[]';
+      const versionYaml = input.version ? q(input.version) : 'null';
       const riceYaml = input.rice
         ? `\nrice:\n  reach: ${input.rice.reach ?? 'null'}\n  impact: ${input.rice.impact ?? 'null'}\n  confidence: ${input.rice.confidence ?? 'null'}\n  effort: ${input.rice.effort ?? 'null'}\n  score: ${input.rice.score ?? 'null'}`
         : '';
       const content = `---
 id: "${generateId('task')}"
-name: "${name}"
-description: "${input.description ?? ''}"
-priority: "${input.priority ?? 'medium'}"
-urgency: "${input.urgency ?? 'medium'}"
+name: ${q(name)}
+description: ${q(input.description ?? '')}
+priority: ${q(input.priority ?? 'medium')}
+urgency: ${q(input.urgency ?? 'medium')}
 status: "todo"
 created_at: "${dateStr}"
 updated_at: "${dateStr}"
