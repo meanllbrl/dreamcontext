@@ -14,8 +14,29 @@ const repoRoot = join(import.meta.dirname, '..', '..');
 const read = (rel: string): string => readFileSync(join(repoRoot, rel), 'utf-8');
 const SKILL = read('skill/SKILL.md');
 
-/** 45 KiB. The skill was 73,517 B before the slimming wave. */
-const SKILL_MAX_BYTES = 46_080;
+/**
+ * The cap on SKILL.md WITHOUT its frontmatter `hooks:` block: that block is settings Claude Code
+ * parses (it mirrors install-skill.ts's hookCommand), not text the model reads, so a longer hook
+ * command must not eat the prose budget. Name, description and the rest of the frontmatter count.
+ * The skill was 73,517 B before the slimming wave.
+ */
+const SKILL_MAX_BYTES = 45_071; // 46,080 total at ff9bb0bd minus its 1,009-byte hooks: block
+
+/**
+ * SKILL.md with the frontmatter `hooks:` block taken out: from the `hooks:` line up to the next
+ * top-level frontmatter key or the closing `---`. `block` is what was removed ('' if none).
+ */
+function withoutHooksBlock(text: string): { measured: string; block: string } {
+  const close = text.indexOf('\n---\n', 4);
+  const front = close < 0 ? '' : text.slice(0, close + 1);
+  const start = front.search(/^hooks:[ \t]*\n/m);
+  if (start < 0) return { measured: text, block: '' };
+  const after = start + 'hooks:'.length;
+  const next = front.slice(after).search(/\n(?=[A-Za-z_][\w-]*:)/);
+  const end = next < 0 ? front.length : after + next + 1;
+  return { measured: text.slice(0, start) + text.slice(end), block: text.slice(start, end) };
+}
+const { measured: SKILL_MEASURED, block: HOOKS_BLOCK } = withoutHooksBlock(SKILL);
 /** A capability row is one line of summary plus a link; its detail lives in a reference. */
 const CAPABILITY_ROW_MAX_CHARS = 700;
 
@@ -45,8 +66,16 @@ function section(heading: string): string {
 }
 
 describe('skill/SKILL.md size and shape', () => {
-  it(`stays at or under ${SKILL_MAX_BYTES} bytes`, () => {
-    expect(Buffer.byteLength(SKILL, 'utf-8')).toBeLessThanOrEqual(SKILL_MAX_BYTES);
+  it(`stays at or under ${SKILL_MAX_BYTES} bytes, measured without the frontmatter hooks: block`, () => {
+    // The strip found the block and took only it: a bad strip cannot pass by deleting everything.
+    expect(HOOKS_BLOCK.startsWith('hooks:\n'), 'the frontmatter hooks: block was found').toBe(true);
+    expect(SKILL_MEASURED.startsWith('---\n')).toBe(true);
+    const front = SKILL_MEASURED.slice(0, SKILL_MEASURED.indexOf('\n---\n', 4) + 1);
+    expect(front).toMatch(/^name: /m);
+    expect(front).toMatch(/^description: /m);
+    expect(front).not.toMatch(/^hooks:/m);
+    expect(SKILL_MEASURED.length + HOOKS_BLOCK.length).toBe(SKILL.length);
+    expect(Buffer.byteLength(SKILL_MEASURED, 'utf-8')).toBeLessThanOrEqual(SKILL_MAX_BYTES);
   });
 
   it(`keeps every capability row at or under ${CAPABILITY_ROW_MAX_CHARS} chars`, () => {
