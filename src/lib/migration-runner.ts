@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { compareVersions } from './version-check.js';
-import { pendingMigrations } from '../migrations/index.js';
+import { agentTaskNeeded, pendingMigrations } from '../migrations/index.js';
 import {
   readLedger,
   appendLedger,
@@ -176,7 +176,7 @@ export function runMigrations(
       (e) => e.version === migration.version && e.executor === 'agent'
         && e.step === migration.agentTask!.id,
     );
-    if (!hasAgentEntry) {
+    if (!hasAgentEntry && agentTaskNeeded(migration, contextRoot)) {
       pendingAgentTasks.push({
         version: migration.version,
         agentTask: migration.agentTask,

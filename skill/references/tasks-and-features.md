@@ -74,6 +74,27 @@ dreamcontext tasks rules merge <keep> <drop>; dreamcontext tasks rules revert <R
 - **The task-filing rules** (`knowledge/patterns/task-filing-rules.md`) are sleep's distillation of the rejects: every rule cites the reject ids it rests on and gives a don't/do pair; a near-duplicate rule is refused (merge), and the file is capped (8,000 chars, 15 rules). While a sleep runs, `tasks create --by sleep` and `tasks propose` refuse until `tasks rules` was read in that cycle (and again after a change). Every change is in `state/.task-filing-rules-history.json` (written before the file, under one lock); the owner reverts a rule from the Tasks screen in one tap, and a revert of a change that is no longer the latest is refused. A ledger, verdict or history file that cannot be read is never overwritten: writes refuse, and sleep files and proposes nothing until it is fixed.
 - **Storage:** `state/.task-proposals.json` (proposals + the ledger of tasks sleep filed) and `state/.task-feedback.json` are brain content the generated brain ignore does not exclude, so they sync like `.task-declined.json`; a brain that ignores all of `state/` keeps them on this machine. `created_by: sleep` on a card is informational only: a remote backend's pull may overwrite it.
 
+### Moving the open backlog onto the new model (migration 0.33.0)
+
+Nobody starts it: it is a registry migration (`src/migrations/0.33.0-backlog.ts`, after the journal split).
+
+- **Code step** (`update` / `sleep start`): every `planning` entry leaves `core/RELEASES.json` and `state/.active-version.json` is removed (both kept verbatim in the change list); every open task without a place gets one: legacy version `BACKLOG` → Later, everything else → Next, ranked so the old active version's work and work in flight lead; legacy `parent_task` ids become slugs; `<x>-step-<n>` goes under the one open `<x>-epic…`. Legacy `version`, `priority`, `urgency` stay on the card, unread. It takes stock: every task open at that moment gets a record waiting for an outcome.
+- **Agent task** `reorganize-open-tasks` (sleep-migration, in the next sleep, background included): each waiting task gets exactly one outcome, keep (optionally under a parent, or in Later), merge (cancelled + `absorbed_by: <slug>`, never deleted) or cancel, each with its own reason. A family is an AREA, so it becomes a feature link (`related_feature`, set on the parent and passed to its steps), never a parent; only a deliverable gets a parent, born clean (name ≤80, a criterion). The agent never moves a task off a feature it already has. What it is not sure about it does not apply: the task is kept and the change waits in the **Proposals** section of the Tasks screen as a change card (Apply / Keep as is; owner only). These never touch sleep's brake or feedback.
+- **Any brain:** the rules are generic; a brain with nothing open writes nothing and never lists the agent task, and a second run writes nothing. `migrations record` refuses while a task still waits.
+- **The change list** `state/.backlog-migration.json`: every value the migration replaced (`before`/`after`, who, when), the retired planning entries, the old active-version file, the parents it created, every outcome. It is the undo record; it syncs like `.task-declined.json` (machine-local where `state/` is ignored).
+
+```bash
+dreamcontext migrations backlog show [--pending] [--json]   # what waits, and every decision
+dreamcontext migrations backlog decide <slug> keep|merge|cancel [--parent <p>] [--feature <f>] [--queue next|later] [--into <slug>] --reason "…"
+dreamcontext migrations backlog parent "<deliverable>" --why "…" --criterion "…" --children a,b[,…] [--feature <f>]
+dreamcontext migrations backlog propose <slug> merge|cancel|parent|later|feature [--into|--parent <slug> | --feature <f>] --why "…"
+dreamcontext migrations backlog report [--json]             # open / top-level / parents / groups by feature before → now, outcomes, proposals
+dreamcontext tasks list -g feature                          # the board by area: where the families become few
+dreamcontext tasks list -g parent                           # families under their parent, standalone last, top-level count
+```
+
+A decision taken in an agent run is the agent's; one taken in a person's shell, or on the Tasks screen, is the owner's, and an agent never overrules it.
+
 ### Declining an idea (work that never became a task)
 
 When the user drops, cancels or says no to a piece of work that has **no task yet**, record it — otherwise the next sleep cycle sees only that it was discussed, and files it.

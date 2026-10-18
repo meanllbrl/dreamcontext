@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import {
   useAcceptProposal,
+  useAnswerChange,
   useKeepFiled,
   useRejectItem,
   useRevertRule,
   useTaskProposals,
+  type ChangeSuggestion,
   type FeedbackReason,
   type FiledBySleep,
   type FilingBasis,
@@ -27,6 +29,9 @@ import './ProposalsSection.css';
  * owner kept sleep's work week by week, and the task-filing rules it learned
  * from the rejects, each revertible in one tap.
  *
+ * The task migration's uncertain reorganisations (merge, cancel, under a parent,
+ * Later) wait here too, as change cards: apply, or keep the task as it is.
+ *
  * Renders nothing until sleep has proposed, filed or learned anything, so a
  * project that never sleeps keeps a clean board.
  */
@@ -44,7 +49,8 @@ export function ProposalsSection() {
 
   if (!data) return null;
   // Counted from the cards themselves, so the header can never promise a card it does not draw.
-  const waiting = data.proposals.length + data.filed.length;
+  const changes = data.changes ?? [];
+  const waiting = data.proposals.length + data.filed.length + changes.length;
   const hasVerdicts = data.trend.some((w) => w.kept + w.rejected > 0);
   if (waiting === 0 && !hasVerdicts && data.rules.length === 0) return null;
 
@@ -86,6 +92,9 @@ export function ProposalsSection() {
               ))}
               {data.filed.map((f) => (
                 <li key={f.slug}><FiledCard task={f} reasons={data.reasons} /></li>
+              ))}
+              {changes.map((c) => (
+                <li key={c.id}><ChangeCard suggestion={c} /></li>
               ))}
             </ul>
           )}
@@ -210,6 +219,40 @@ function FiledCard({ task, reasons }: { task: FiledBySleep; reasons: ProposalsPa
         </div>
       )}
       {failed && <p className="tp-error" role="alert">{(failed as Error).message || t('proposals.failed')}</p>}
+    </article>
+  );
+}
+
+/**
+ * A reorganisation the task migration was not sure enough to apply: merge this
+ * task into another, cancel it, put it under a parent, link it to a feature, or
+ * move it to Later. The task stays as it is until the owner answers; nothing is
+ * deleted either way.
+ */
+function ChangeCard({ suggestion }: { suggestion: ChangeSuggestion }) {
+  const { t } = useI18n();
+  const answer = useAnswerChange();
+  const busy = answer.isPending;
+  const target = suggestion.targetName ?? suggestion.target ?? '';
+  return (
+    <article className="tp-card tp-card--change" aria-busy={busy}>
+      <div className="tp-labels">
+        <span className="tp-chip">{t('proposals.label.change')}</span>
+      </div>
+      <h3 className="tp-name">{suggestion.name}</h3>
+      <p className="tp-change">{t(`proposals.change.${suggestion.change}`).replace('{target}', target)}</p>
+      <p className="tp-why">{suggestion.why}</p>
+      <div className="tp-actions">
+        <button type="button" className="btn btn--primary btn--sm" disabled={busy}
+          onClick={() => answer.mutate({ slug: suggestion.slug, id: suggestion.id, apply: true })}>
+          {t(`proposals.change.apply.${suggestion.change}`)}
+        </button>
+        <button type="button" className="btn btn--ghost btn--sm" disabled={busy}
+          onClick={() => answer.mutate({ slug: suggestion.slug, id: suggestion.id, apply: false })}>
+          {t('proposals.change.keep')}
+        </button>
+      </div>
+      {answer.error && <p className="tp-error" role="alert">{(answer.error as Error).message || t('proposals.failed')}</p>}
     </article>
   );
 }

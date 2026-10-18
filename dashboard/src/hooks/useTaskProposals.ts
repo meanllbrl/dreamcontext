@@ -54,8 +54,24 @@ export interface RuleChangeRow {
   removed: boolean;
 }
 
+/** A reorganisation the task migration was not sure about (server: lib/backlog-migration.ts). */
+export interface ChangeSuggestion {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  change: 'merge' | 'cancel' | 'parent' | 'later' | 'feature';
+  target: string | null;
+  targetName: string | null;
+  why: string;
+  by: 'code' | 'agent' | 'owner';
+  proposedAt: string;
+}
+
 export interface ProposalsPayload {
   waiting: number;
+  /** Absent from a server that predates the task migration. */
+  changes?: ChangeSuggestion[];
   proposals: TaskProposal[];
   filed: FiledBySleep[];
   brake: { window: number; rejected: number; rate: number | null; open: boolean };
@@ -156,6 +172,23 @@ export function useRevertRule() {
   const invalidate = useInvalidate();
   return useMutation({
     mutationFn: ({ id, at }: RevertInput) => api.post<unknown>(`/task-filing-rules/${id}/revert`, { at }),
+    onSuccess: invalidate,
+  });
+}
+
+export interface ChangeAnswer {
+  slug: string;
+  /** The suggestion the owner saw: a newer one refuses, so a stale card never acts. */
+  id: string;
+  apply: boolean;
+}
+
+export function useAnswerChange() {
+  const api = useApi();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ slug, id, apply }: ChangeAnswer) =>
+      api.post<unknown>(`/task-proposals/changes/${slug}/${apply ? 'apply' : 'keep'}`, { id }),
     onSuccess: invalidate,
   });
 }

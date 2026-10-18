@@ -10,6 +10,7 @@ import { migration0230SoulSplit } from './0.23.0-soul-split.js';
 import { migration0280 } from './0.28.0.js';
 import { migration0310 } from './0.31.0.js';
 import { migration0330 } from './0.33.0.js';
+import { migration0330Backlog } from './0.33.0-backlog.js';
 import type { Migration } from './types.js';
 
 /**
@@ -22,7 +23,9 @@ import type { Migration } from './types.js';
 // the runner gates each step by its own id, merges same-version changelog
 // entries, and unfinishedAgentTasks matches each agentTask id separately.
 // The user-split entry stays FIRST so its residue task is printed first.
-export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0330];
+// 0.33.0 also has two: the journal split runs before the backlog migration, so
+// the backlog is judged on short cards.
+export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0330, migration0330Backlog];
 
 /**
  * Return all migrations whose version falls in the half-open range (from, to].
@@ -64,6 +67,20 @@ export function unfinishedAgentTasks(contextRoot: string, toVersion: string): Mi
     const entries = ledger.filter((e) => e.version === m.version);
     const started = entries.some((e) => e.executor === 'code' || e.executor === 'detected');
     const done = entries.some((e) => e.executor === 'agent' && e.step === m.agentTask!.id);
-    return started && !done;
+    return started && !done && agentTaskNeeded(m, contextRoot);
   }).sort((a, b) => compareVersions(a.version, b.version));
+}
+
+/**
+ * Whether a migration's agentTask still has work here (its own `needed`
+ * predicate; true when it has none). A predicate that throws counts as true:
+ * an unanswerable question is surfaced, never silently dropped.
+ */
+export function agentTaskNeeded(m: Migration, contextRoot: string): boolean {
+  if (!m.agentTask?.needed) return true;
+  try {
+    return m.agentTask.needed(contextRoot);
+  } catch {
+    return true;
+  }
 }

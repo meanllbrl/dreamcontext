@@ -2502,6 +2502,65 @@
       "args": []
     },
     {
+      "path": "migrations backlog",
+      "desc": "The 0.33.0 task migration: what waits, decide each open task, group families, before/after",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "migrations backlog decide",
+      "desc": "Give one open task its outcome: keep (optionally under a parent, linked to a feature, or in Later), merge (cancelled + absorbed_by, never deleted) or cancel",
+      "args": [
+        "<task>",
+        "<outcome>"
+      ],
+      "valueFlags": [
+        "--parent",
+        "--queue",
+        "--into",
+        "--feature",
+        "--reason"
+      ]
+    },
+    {
+      "path": "migrations backlog parent",
+      "desc": "Create a parent for a family of open tasks (a deliverable, never an area) and keep each of them under it",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--why",
+        "--children",
+        "--criterion",
+        "--description",
+        "--feature"
+      ]
+    },
+    {
+      "path": "migrations backlog propose",
+      "desc": "Not sure? Keep the task as it is and put the change in front of the owner on the Tasks screen (Proposals)",
+      "args": [
+        "<task>",
+        "<change>"
+      ],
+      "valueFlags": [
+        "--into",
+        "--parent",
+        "--feature",
+        "--why"
+      ]
+    },
+    {
+      "path": "migrations backlog report",
+      "desc": "Before/after counts: open, top-level, parents, groups by feature, outcomes, proposals waiting, placement",
+      "args": []
+    },
+    {
+      "path": "migrations backlog show",
+      "desc": "What the migration took stock of: tasks still waiting for an outcome, and every decision so far",
+      "args": []
+    },
+    {
       "path": "migrations pending",
       "desc": "Print pending agent task instructions for any unfinished migrations",
       "args": []

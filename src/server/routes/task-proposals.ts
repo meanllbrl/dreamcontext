@@ -25,6 +25,7 @@ import {
   waitingFiled,
 } from '../../lib/task-proposals.js';
 import { recentRuleChanges, readRules, revertRule, RuleError } from '../../lib/task-filing-rules.js';
+import { applySuggestion, BacklogError, keepAsIs, waitingSuggestions } from '../../lib/backlog-migration.js';
 import { recordDashboardChange } from '../change-tracker.js';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 
@@ -70,8 +71,12 @@ export async function handleTaskProposalsList(
   // A task that left the board some other way (deleted, renamed away) is neither
   // shown nor counted: the badge and the list use the same predicate.
   const onBoard = taskOnBoard(contextRoot);
+  // The task migration's uncertain changes wait in the same section (they are
+  // not sleep's filings, so they never touch the brake or the feedback store).
+  const changes = waitingSuggestions(contextRoot);
   sendJson(res, 200, {
-    waiting: waitingCount(store, onBoard),
+    waiting: waitingCount(store, onBoard) + changes.length,
+    changes,
     proposals: pendingProposals(store).map((p) => ({ ...p, parentName: nameOf(p.parent) })),
     filed: waitingFiled(store, onBoard)
       .map((f) => ({ ...f, status: briefs.get(f.slug)?.status ?? null, parentName: nameOf(f.parent) })),
@@ -130,7 +135,7 @@ export async function handleTaskProposalsCount(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
-  sendJson(res, 200, { waiting: waitingCount(readProposals(contextRoot), taskOnBoard(contextRoot)) });
+  sendJson(res, 200, { waiting: waitingCount(readProposals(contextRoot), taskOnBoard(contextRoot)) + waitingSuggestions(contextRoot).length });
 }
 
 function str(v: unknown): string | undefined {
@@ -235,5 +240,78 @@ export async function handleFiledTaskKeep(
     sendJson(res, 200, { slug: f.slug, outcome: f.outcome });
   } catch (err) {
     fail(res, err);
+  }
+}
+
+// ─── The task migration's suggestions ────────────────────────────────────────
+
+const SUGGESTION_ID = /^bs_[A-Za-z0-9_-]{1,40}$/;
+
+const BACKLOG_STATUS: Record<BacklogError['code'], number> = {
+  no_store: 404,
+  not_found: 404,
+  corrupt: 500,
+  not_open: 409,
+  invalid: 400,
+  decided: 409,
+  no_cancel_status: 409,
+  has_children: 409,
+  stale: 409,
+};
+
+function suggestionTarget(params: Record<string, string>, body: Record<string, unknown>, res: ServerResponse): { slug: string; id: string } | null {
+  const { slug } = params;
+  const id = str(body.id);
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid', 'Invalid task slug.'); return null; }
+  if (!id || !SUGGESTION_ID.test(id)) { sendError(res, 400, 'invalid', 'id (the suggestion being answered) is required.'); return null; }
+  return { slug, id };
+}
+
+function failBacklog(res: ServerResponse, err: unknown): void {
+  if (err instanceof BacklogError) {
+    sendError(res, BACKLOG_STATUS[err.code], err.code, err.message);
+    return;
+  }
+  console.error('[task-proposals:changes]', err);
+  sendError(res, 500, 'write_failed', 'Could not record the decision.');
+}
+
+/** The owner applies a reorganisation the task migration was not sure about. */
+export async function handleTaskChangeApply(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const target = suggestionTarget(params, (await parseJsonBody(req)) ?? {}, res);
+  if (!target) return;
+  try {
+    const rec = await applySuggestion(contextRoot, getTaskBackend(contextRoot), target.slug, target.id);
+    recordDashboardChange(contextRoot, {
+      entity: 'task',
+      action: 'update',
+      target: target.slug,
+      summary: `Applied the task migration's suggestion (${rec.suggestion?.change ?? rec.outcome})`,
+    });
+    sendJson(res, 200, { slug: target.slug, outcome: rec.outcome, into: rec.into ?? null });
+  } catch (err) {
+    failBacklog(res, err);
+  }
+}
+
+/** The owner keeps the task as it is: the suggestion is answered, the card is untouched. */
+export async function handleTaskChangeKeep(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const target = suggestionTarget(params, (await parseJsonBody(req)) ?? {}, res);
+  if (!target) return;
+  try {
+    keepAsIs(contextRoot, target.slug, target.id);
+    sendJson(res, 200, { slug: target.slug, outcome: 'keep' });
+  } catch (err) {
+    failBacklog(res, err);
   }
 }

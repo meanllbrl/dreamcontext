@@ -1,13 +1,10 @@
 import type { Command } from 'commander';
-import { join } from 'node:path';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { error, success } from '../../lib/format.js';
 import { today } from '../../lib/id.js';
-import { applyTaskFeatureLink, resolveFeature } from '../../lib/feature-links.js';
-import { loadStatuses } from '../../lib/overrides.js';
 import { getTaskBackend, type TaskBackend } from '../../lib/task-backend/index.js';
-import { checkParentLink, loadFamily } from '../../lib/task-parent.js';
+import { linkTaskToParent } from '../../lib/task-parent-link.js';
 import { bindSession, unbindSession } from '../../lib/session-task.js';
 import { isSafeSessionId } from '../../lib/transcript-locate.js';
 import { buildContextPacket, PACKET_CAP, PACKET_JOURNAL_ENTRIES } from '../../lib/task-context-packet.js';
@@ -99,8 +96,6 @@ export function registerTaskFamilyCommands(tasks: Command): void {
     .description('Make a task a sub-task of a parent (two levels only; inherits objectives and feature when it has none), or clear it')
     .action(async (name: string, parentName: string) => {
       const root = ensureContextRoot();
-      const stateDir = join(root, 'state');
-      const defs = loadStatuses(root);
       const backend = getTaskBackend();
       const slug = await resolve(backend, name);
       if (!slug) return;
@@ -121,33 +116,18 @@ export function registerTaskFamilyCommands(tasks: Command): void {
 
       const parentSlug = await resolve(backend, parentName);
       if (!parentSlug) return;
-      const check = checkParentLink(loadFamily(stateDir), defs, slug, parentSlug);
-      if (!check.ok) {
-        error(check.reason);
+      const linked = await linkTaskToParent(root, backend, slug, parentSlug);
+      if (!linked.ok) {
+        error(linked.reason);
         process.exitCode = 1;
         return;
       }
-      if (task.parent_task === check.parent) {
-        success(`${slug} is already a sub-task of ${check.parent}.`);
+      if (linked.already) {
+        success(`${slug} is already a sub-task of ${linked.parent}.`);
         return;
       }
-      const parent = await backend.get(check.parent);
-      if (!parent) return;
-      // Inherit what binds a step to its deliverable, but never overwrite what
-      // the task already says about itself.
-      const inherit: Record<string, unknown> = {};
-      if (task.objectives.length === 0 && parent.objectives.length > 0) inherit.objectives = [...parent.objectives];
-      const featureFromParent = !task.related_feature && parent.related_feature ? resolveFeature(root, parent.related_feature) : null;
-      if (!task.raw.cycle && typeof parent.raw.cycle === 'string' && parent.raw.cycle) inherit.cycle = parent.raw.cycle;
-      const from = task.parent_task ? ` (moved from ${task.parent_task})` : '';
-      await backend.addJournal(slug, { kind: 'log', body: `- placed under ${check.parent}${from}` });
-      await backend.updateFields(slug, { parent_task: check.parent, ...inherit, updated_at: today() });
-      if (featureFromParent?.ok) {
-        applyTaskFeatureLink(root, slug, { slug: featureFromParent.slug });
-        inherit.related_feature = featureFromParent.slug;
-      }
-      success(`${slug} is now a sub-task of ${check.parent}${from}.`);
-      const inherited = Object.keys(inherit);
-      if (inherited.length > 0) console.log(chalk.dim(`  inherited: ${inherited.join(', ')}`));
+      const from = linked.was ? ` (moved from ${linked.was})` : '';
+      success(`${slug} is now a sub-task of ${linked.parent}${from}.`);
+      if (linked.inherited.length > 0) console.log(chalk.dim(`  inherited: ${linked.inherited.join(', ')}`));
     });
 }

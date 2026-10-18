@@ -98,6 +98,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/task-proposals/count': allow(READ),
   'POST /api/task-proposals/filed/:slug/reject': allow('rejects a task sleep opened in this project, as the Tasks screen does'),
   'POST /api/task-proposals/filed/:slug/keep': allow('keeps a task sleep opened in this project, as the Tasks screen does'),
+  'POST /api/task-proposals/changes/:slug/apply': allow('applies a reorganisation the task migration suggested in this project, as the Tasks screen does'),
+  'POST /api/task-proposals/changes/:slug/keep': allow('keeps a task as it is against the task migration\'s suggestion, as the Tasks screen does'),
   'POST /api/task-proposals/:id/accept': allow('accepts one of sleep\'s task proposals in this project, as the Tasks screen does'),
   'POST /api/task-proposals/:id/reject': allow('rejects one of sleep\'s task proposals in this project, as the Tasks screen does'),
   'POST /api/task-filing-rules/:id/revert': allow('reverts one of this project\'s task-filing rules, as the Tasks screen does'),

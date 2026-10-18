@@ -130,6 +130,15 @@
 .tp-card[aria-busy='true'] { opacity: 0.6; }
 .tp-card--filed { border-style: dashed; }
 
+.tp-change {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-normal);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
 .tp-labels { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 
 .tp-chip {

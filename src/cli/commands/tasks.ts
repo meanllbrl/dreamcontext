@@ -125,6 +125,7 @@ import {
   GROUP_BY_FIELDS,
   collectTags,
   groupTasks,
+  NONE_KEY,
   type TaskRecord,
   type TaskFilter,
   type GroupBy,
@@ -774,9 +775,20 @@ export function registerTasksCommand(program: Command): void {
       console.log(header('Tasks'));
       const cycles = readCycles(ensureContextRoot()).cycles;
       if (opts.groupBy) {
-        for (const g of groupTasks(matched, opts.groupBy as GroupBy, statusSet())) {
+        const groups = groupTasks(matched, opts.groupBy as GroupBy, statusSet());
+        const byParent = opts.groupBy === 'parent';
+        for (const g of groups) {
           console.log(`\n  ${chalk.bold(g.key)} ${chalk.dim(`(${g.tasks.length})`)}`);
-          for (const t of g.tasks) console.log(renderTaskLine(t, { long: opts.long, cycles }));
+          for (const t of g.tasks) {
+            // A family's sub-tasks sit one step in from their parent's own row.
+            const step = byParent && g.key !== NONE_KEY.parent && t.name !== g.key ? '  ' : '';
+            console.log(step + renderTaskLine(t, { long: opts.long, cycles }));
+          }
+        }
+        if (byParent) {
+          const standalone = groups.find((g) => g.key === NONE_KEY.parent)?.tasks.length ?? 0;
+          const families = groups.length - (standalone > 0 ? 1 : 0);
+          console.log(chalk.dim(`\n  ${families + standalone} top-level item(s): ${families} famil${families === 1 ? 'y' : 'ies'} + ${standalone} standalone task(s)`));
         }
       } else {
         for (const t of matched) console.log(renderTaskLine(t, { long: opts.long, cycles }));

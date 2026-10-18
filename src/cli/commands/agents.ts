@@ -35,6 +35,11 @@ import {
 /** The env vars a Claude session or an agent run carries. */
 const SELF_APPROVAL_ENVS = ['CLAUDECODE', AGENT_SELF_ENV, 'DREAMCONTEXT_AUTOMATION_RUN'] as const;
 
+/** True in a Claude session or an agent run (the shells that must not act as the owner). */
+export function isSelfApprovalEnv(env: NodeJS.ProcessEnv): boolean {
+  return SELF_APPROVAL_ENVS.some((k) => env[k] !== undefined);
+}
+
 /** The refusal. It names the page, never a command: a session that reads it
  *  must not be one shell line away from approving the agent itself. */
 export const SELF_APPROVAL_REFUSAL =
@@ -47,7 +52,7 @@ export const SELF_APPROVAL_REFUSAL =
  * agent run. Returns true when it refused, so the caller returns without acting.
  */
 export function refuseSelfApproval(env: NodeJS.ProcessEnv): boolean {
-  if (!SELF_APPROVAL_ENVS.some((k) => env[k] !== undefined)) return false;
+  if (!isSelfApprovalEnv(env)) return false;
   error(SELF_APPROVAL_REFUSAL);
   process.exitCode = 1;
   return true;

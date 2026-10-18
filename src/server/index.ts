@@ -28,6 +28,8 @@ import {
   handleTaskProposalsList,
   handleTaskProposalsCount,
   handleTaskProposalAccept,
+  handleTaskChangeApply,
+  handleTaskChangeKeep,
   handleTaskProposalReject,
   handleFiledTaskReject,
   handleFiledTaskKeep,
@@ -313,6 +315,8 @@ export function buildRouter(): Router {
   router.get('/api/task-proposals/count', handleTaskProposalsCount);
   router.post('/api/task-proposals/filed/:slug/reject', handleFiledTaskReject);
   router.post('/api/task-proposals/filed/:slug/keep', handleFiledTaskKeep);
+  router.post('/api/task-proposals/changes/:slug/apply', handleTaskChangeApply);
+  router.post('/api/task-proposals/changes/:slug/keep', handleTaskChangeKeep);
   router.post('/api/task-proposals/:id/accept', handleTaskProposalAccept);
   router.post('/api/task-proposals/:id/reject', handleTaskProposalReject);
   router.post('/api/task-filing-rules/:id/revert', handleTaskFilingRuleRevert);
