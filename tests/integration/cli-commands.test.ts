@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
+import { hookCommand } from '../../src/cli/commands/install-skill.js';
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
 
@@ -841,11 +842,11 @@ parent_task: null
       expect(settings.hooks.SessionStart).toBeDefined();
       // Two SessionStart groups: the context snapshot + the dashboard auto-open.
       expect(settings.hooks.SessionStart).toHaveLength(2);
-      expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('npx dreamcontext hook session-start');
-      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe('npx dreamcontext hook ensure-dashboard');
+      expect(settings.hooks.SessionStart[0].hooks[0].command).toBe(hookCommand('session-start'));
+      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe(hookCommand('ensure-dashboard'));
       expect(settings.hooks.Stop).toBeDefined();
       expect(settings.hooks.Stop).toHaveLength(1);
-      expect(settings.hooks.Stop[0].hooks[0].command).toBe('npx dreamcontext hook stop');
+      expect(settings.hooks.Stop[0].hooks[0].command).toBe(hookCommand('stop'));
     });
 
     it('preserves existing settings when adding hooks', () => {
@@ -866,11 +867,11 @@ parent_task: null
       // Existing PostToolUse hook preserved + our new one added
       expect(settings.hooks.PostToolUse).toHaveLength(2);
       expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe('echo done');
-      expect(settings.hooks.PostToolUse[1].hooks[0].command).toBe('npx dreamcontext hook post-tool-use');
+      expect(settings.hooks.PostToolUse[1].hooks[0].command).toBe(hookCommand('post-tool-use'));
       // Hooks added (session-start snapshot + ensure-dashboard auto-open)
       expect(settings.hooks.SessionStart).toHaveLength(2);
-      expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('npx dreamcontext hook session-start');
-      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe('npx dreamcontext hook ensure-dashboard');
+      expect(settings.hooks.SessionStart[0].hooks[0].command).toBe(hookCommand('session-start'));
+      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe(hookCommand('ensure-dashboard'));
       expect(settings.hooks.Stop).toHaveLength(1);
     });
 
@@ -891,8 +892,8 @@ parent_task: null
 
       // Old hook replaced, not duplicated; ensure-dashboard added as the 2nd group
       expect(settings.hooks.SessionStart).toHaveLength(2);
-      expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('npx dreamcontext hook session-start');
-      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe('npx dreamcontext hook ensure-dashboard');
+      expect(settings.hooks.SessionStart[0].hooks[0].command).toBe(hookCommand('session-start'));
+      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe(hookCommand('ensure-dashboard'));
       // Stop hook also added
       expect(settings.hooks.Stop).toHaveLength(1);
     });
@@ -913,9 +914,9 @@ parent_task: null
       run('install-skill', tmpDir);
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
 
-      // Same single hook (no duplicate), timeout bumped to the canonical value.
+      // Same single hook (no duplicate), rewritten in place, timeout bumped to the canonical value.
       expect(settings.hooks.UserPromptSubmit).toHaveLength(1);
-      expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toBe('npx dreamcontext hook user-prompt-submit');
+      expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toBe(hookCommand('user-prompt-submit'));
       expect(settings.hooks.UserPromptSubmit[0].hooks[0].timeout).toBe(120);
     });
 
@@ -936,12 +937,12 @@ parent_task: null
       expect(settings.hooks.PostToolUse).toBeDefined();
       expect(settings.hooks.PostToolUse).toHaveLength(1);
       expect(settings.hooks.PostToolUse[0].matcher).toBe('Edit|Write');
-      expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe('npx dreamcontext hook post-tool-use');
+      expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe(hookCommand('post-tool-use'));
       expect(settings.hooks.PostToolUse[0].hooks[0].timeout).toBe(30);
 
       expect(settings.hooks.PreCompact).toBeDefined();
       expect(settings.hooks.PreCompact).toHaveLength(1);
-      expect(settings.hooks.PreCompact[0].hooks[0].command).toBe('npx dreamcontext hook pre-compact');
+      expect(settings.hooks.PreCompact[0].hooks[0].command).toBe(hookCommand('pre-compact'));
       expect(settings.hooks.PreCompact[0].hooks[0].timeout).toBe(5);
     });
 
@@ -954,11 +955,11 @@ parent_task: null
 
       const agentEntry = settings.hooks.PreToolUse.find((g: any) => g.matcher === 'Agent');
       expect(agentEntry).toBeDefined();
-      expect(agentEntry.hooks[0].command).toBe('npx dreamcontext hook pre-tool-use');
+      expect(agentEntry.hooks[0].command).toBe(hookCommand('pre-tool-use'));
 
       const writeEntry = settings.hooks.PreToolUse.find((g: any) => g.matcher === 'Edit|Write|MultiEdit');
       expect(writeEntry).toBeDefined();
-      expect(writeEntry.hooks[0].command).toBe('npx dreamcontext hook pre-tool-use');
+      expect(writeEntry.hooks[0].command).toBe(hookCommand('pre-tool-use'));
     });
 
     it('does not duplicate the write-tools PreToolUse entry on repeated install', () => {

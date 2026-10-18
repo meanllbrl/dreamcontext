@@ -35,14 +35,36 @@ import { syncPatternShims } from '../../lib/patterns.js';
 
 // ─── Hook Constants (Claude) ───────────────────────────────────────────────
 
-const SESSION_START_HOOK = 'npx dreamcontext hook session-start';
-const STOP_HOOK = 'npx dreamcontext hook stop';
-const SUBAGENT_START_HOOK = 'npx dreamcontext hook subagent-start';
-const PRE_TOOL_USE_HOOK = 'npx dreamcontext hook pre-tool-use';
-const USER_PROMPT_SUBMIT_HOOK = 'npx dreamcontext hook user-prompt-submit';
-const POST_TOOL_USE_HOOK = 'npx dreamcontext hook post-tool-use';
-const PRE_COMPACT_HOOK = 'npx dreamcontext hook pre-compact';
-const ENSURE_DASHBOARD_HOOK = 'npx dreamcontext hook ensure-dashboard';
+/**
+ * The command Claude Code runs for one hook event.
+ *
+ * A `dreamcontext` on PATH runs directly; only without one does the hook fall back to `npx`,
+ * whose package resolution cost ~0.5 s and a second node process (~60 MB) on EVERY event, and
+ * with ten agents at work that was the machine's second-largest load. No absolute path: the
+ * settings file is committed and shared, so the command must work on any machine. `exec`
+ * replaces the shell, so the hook's own exit code and stdout reach Claude Code unchanged.
+ *
+ * Mirrored in skill/SKILL.md's frontmatter `hooks:` (Claude Code dedupes identical commands, so
+ * a skill copy that drifted would run every event twice); tests/unit/install-skill-hooks.test.ts
+ * holds the two together.
+ */
+export function hookCommand(event: string): string {
+  return `command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook ${event} || exec npx dreamcontext hook ${event}`;
+}
+
+/** The command every installer before {@link hookCommand} wrote; rewritten in place on update. */
+export function legacyHookCommand(event: string): string {
+  return `npx dreamcontext hook ${event}`;
+}
+
+const SESSION_START_HOOK = hookCommand('session-start');
+const STOP_HOOK = hookCommand('stop');
+const SUBAGENT_START_HOOK = hookCommand('subagent-start');
+const PRE_TOOL_USE_HOOK = hookCommand('pre-tool-use');
+const USER_PROMPT_SUBMIT_HOOK = hookCommand('user-prompt-submit');
+const POST_TOOL_USE_HOOK = hookCommand('post-tool-use');
+const PRE_COMPACT_HOOK = hookCommand('pre-compact');
+const ENSURE_DASHBOARD_HOOK = hookCommand('ensure-dashboard');
 const OLD_HOOK = 'npx dreamcontext snapshot'; // migration target
 
 // ─── Hook Types ─────────────────────────────────────────────────────────────
@@ -66,27 +88,31 @@ interface SettingsJson {
 
 interface HookSpec {
   event: string;
+  /** The `dreamcontext hook <name>` subcommand; the installed command is {@link hookCommand}(name). */
+  name: string;
   command: string;
   timeout: number;
   matcher?: string;
 }
 
-const HOOK_SPECS: HookSpec[] = [
-  { event: 'SessionStart', command: SESSION_START_HOOK, timeout: 10, matcher: 'startup|resume|compact|clear' },
-  { event: 'Stop', command: STOP_HOOK, timeout: 5 },
-  { event: 'SubagentStart', command: SUBAGENT_START_HOOK, timeout: 5 },
-  { event: 'PreToolUse', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Agent' },
+export const HOOK_SPECS: readonly HookSpec[] = [
+  { event: 'SessionStart', name: 'session-start', command: SESSION_START_HOOK, timeout: 10, matcher: 'startup|resume|compact|clear' },
+  // 45 s, not 5: a TS project whose check takes over 4 s is type-checked once per turn, at Stop
+  // (lib/tsc-check.ts), and a hook killed by its timeout loses its answer.
+  { event: 'Stop', name: 'stop', command: STOP_HOOK, timeout: 45 },
+  { event: 'SubagentStart', name: 'subagent-start', command: SUBAGENT_START_HOOK, timeout: 5 },
+  { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Agent' },
   // Second PreToolUse entry: gates direct writes to protected files (e.g. marketing/.env).
   // The hook.ts action already branches on tool_name, so the same command serves both gates.
-  { event: 'PreToolUse', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Edit|Write|MultiEdit' },
-  { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
-  { event: 'PostToolUse', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
-  { event: 'PreCompact', command: PRE_COMPACT_HOOK, timeout: 5 },
+  { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Edit|Write|MultiEdit' },
+  { event: 'UserPromptSubmit', name: 'user-prompt-submit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
+  { event: 'PostToolUse', name: 'post-tool-use', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
+  { event: 'PreCompact', name: 'pre-compact', command: PRE_COMPACT_HOOK, timeout: 5 },
   // Auto-open the dashboard when a session starts and no server is already up.
   // Separate SessionStart group (own matcher) so it does NOT fire on compaction —
   // mid-session compaction should not relaunch the dashboard. Opt out with
   // DREAMCONTEXT_AUTO_DASHBOARD=0.
-  { event: 'SessionStart', command: ENSURE_DASHBOARD_HOOK, timeout: 10, matcher: 'startup|resume' },
+  { event: 'SessionStart', name: 'ensure-dashboard', command: ENSURE_DASHBOARD_HOOK, timeout: 10, matcher: 'startup|resume' },
 ];
 
 // ─── Catalog Types ──────────────────────────────────────────────────────────
@@ -222,9 +248,11 @@ async function resolvePlatforms(projectRoot: string, raw?: string): Promise<Plat
 
 /**
  * Ensure all dreamcontext hooks are installed.
- * Migrates old `npx dreamcontext snapshot` hook if present.
+ * Migrates old `npx dreamcontext snapshot` hook if present, and rewrites a handler an older
+ * installer wrote (`npx dreamcontext hook <name>`) IN PLACE to {@link hookCommand}: matching on
+ * the new string alone would add a second handler beside the old one and run every event twice.
  */
-function ensureClaudeHooks(projectRoot: string): { added: string[]; updated: string[]; migrated: boolean } {
+export function ensureClaudeHooks(projectRoot: string): { added: string[]; updated: string[]; migrated: boolean } {
   const settingsPath = join(projectRoot, '.claude', 'settings.json');
   const result = { added: [] as string[], updated: [] as string[], migrated: false };
 
@@ -266,6 +294,7 @@ function ensureClaudeHooks(projectRoot: string): { added: string[]; updated: str
     // e.g. UserPromptSubmit installed at 5s before the Haiku recall path (which
     // can take ~15s) made the larger 120s timeout necessary, so the hook keeps
     // timing out after upgrade. Re-running install now heals the drift.
+    const legacy = legacyHookCommand(spec.name);
     let existingHandler: HookHandler | undefined;
     for (const group of settings.hooks[spec.event]) {
       if ((group.matcher ?? '') !== (spec.matcher ?? '')) continue;
@@ -275,6 +304,32 @@ function ensureClaudeHooks(projectRoot: string): { added: string[]; updated: str
         break;
       }
     }
+    // No current handler: an older installer's one becomes it, in place (matcher and position kept).
+    let rewritten = false;
+    if (!existingHandler) {
+      for (const group of settings.hooks[spec.event]) {
+        if ((group.matcher ?? '') !== (spec.matcher ?? '')) continue;
+        const handler = group.hooks?.find((h) => h.command === legacy);
+        if (handler) {
+          handler.command = spec.command;
+          existingHandler = handler;
+          rewritten = true;
+          break;
+        }
+      }
+    }
+    // Any other copy of this hook under the same matcher (a legacy line an older installer added
+    // beside the current one) would run the event a second time: drop it.
+    let pruned = false;
+    for (const group of settings.hooks[spec.event]) {
+      if ((group.matcher ?? '') !== (spec.matcher ?? '') || !Array.isArray(group.hooks)) continue;
+      const before = group.hooks.length;
+      group.hooks = group.hooks.filter((h) => h === existingHandler || (h.command !== legacy && h.command !== spec.command));
+      if (group.hooks.length !== before) pruned = true;
+    }
+    if (pruned) {
+      settings.hooks[spec.event] = settings.hooks[spec.event].filter((g) => !Array.isArray(g.hooks) || g.hooks.length > 0);
+    }
     if (!existingHandler) {
       const group: MatcherGroup = {
         hooks: [{ type: 'command', command: spec.command, timeout: spec.timeout }],
@@ -282,7 +337,7 @@ function ensureClaudeHooks(projectRoot: string): { added: string[]; updated: str
       if (spec.matcher) group.matcher = spec.matcher;
       settings.hooks[spec.event].push(group);
       result.added.push(spec.event);
-    } else if (existingHandler.timeout !== spec.timeout) {
+    } else if (existingHandler.timeout !== spec.timeout || rewritten || pruned) {
       existingHandler.timeout = spec.timeout;
       result.updated.push(spec.event);
     }
@@ -957,7 +1012,7 @@ export async function installCoreForPlatform(
     }
     if (hookResult.updated.length > 0) {
       const updatedEvents = [...new Set(hookResult.updated)].join(' + ');
-      notes.push(platformPrefixed(platform, `${chalk.yellow('↑')} ${chalk.dim(`Reconciled hook timeouts (${updatedEvents})`)}`));
+      notes.push(platformPrefixed(platform, `${chalk.yellow('↑')} ${chalk.dim(`Updated hooks (${updatedEvents})`)}`));
     }
     if (hookResult.migrated) {
       notes.push(platformPrefixed(platform, `${chalk.yellow('↑')} ${chalk.dim('Migrated old snapshot hook -> session-start hook')}`));

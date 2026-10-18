@@ -59,6 +59,7 @@
     "gen:lab-mirrors": "node scripts/gen-lab-mirrors.mjs",
     "verify:chat-html": "node scripts/verify/chat-html.mjs",
     "verify:idle-load": "node scripts/verify/idle-load.mjs",
+    "verify:hook-cost": "node scripts/verify/hook-cost.mjs",
     "verify:dream-actions": "node scripts/verify/dream-actions.mjs",
     "verify:chat-shelf-ui": "node scripts/verify/chat-shelf-ui.mjs",
     "verify:chat-composer": "node scripts/verify/chat-composer-ui.mjs",

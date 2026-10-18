@@ -149,6 +149,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // Recall
   'GET /api/recall/haiku': allow('a recall query over this project; side-effect free'),
   'GET /api/recall': allow('a recall query over this project; side-effect free'),
+  'POST /api/recall/prompt': deny('laptop-only: an agent hook on this Mac hands its prompt recall to the running app (the phone has GET /api/recall)'),
   'GET /api/recall/options': deny(SETTINGS),
   'GET /api/recall/cloud/status': deny(SETTINGS),
   'POST /api/recall/cloud/key': deny(SECRET),

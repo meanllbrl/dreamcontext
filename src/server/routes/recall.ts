@@ -11,7 +11,10 @@ import {
 import { hybridSearch, hybridReady } from '../../lib/embeddings/hybrid.js';
 import { haikuRecall, makeClaudeExecutor } from '../../lib/recall-query-extractor.js';
 import { resolveRecallMode } from '../../cli/commands/sleep.js';
-import { sendJson, sendError } from '../middleware.js';
+import { hybridPromptRecall, toWirePromptHit } from '../../cli/commands/hook.js';
+import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import { isLoopback } from './agent-spawn-shared.js';
+import { realpathSync } from 'node:fs';
 
 // Every channel the engine can produce — derived from CORPUS_TYPES, never
 // re-listed here. The previous hardcoded five silently dropped `objective`,
@@ -129,6 +132,50 @@ export async function handleRecallGet(
     const tookMs = Date.now() - started;
 
     sendJson(res, 200, { query, mode, tier, tookMs, hits: hits.map(serializeHit) });
+  } catch (err) {
+    sendError(res, 500, 'recall_failed', err instanceof Error ? err.message : 'Recall failed');
+  }
+}
+
+/**
+ * POST /api/recall/prompt  { prompt, root }
+ *
+ * The prompt hook's hybrid recall, run here for it. A hook is a fresh process per prompt, so it
+ * loads the e5 model every time (~5 CPU-seconds, ~450 MB); this server keeps it loaded. Same
+ * function as the hook's in-process path (`hybridPromptRecall`), local tier only, so the hook
+ * prints the same block either way. This machine only (loopback socket). `root` is not a vault
+ * selector: it must name the vault this request already resolved to, or the hook is told to
+ * recall itself (409), as it is when the model or index is not ready here.
+ */
+export async function handleRecallPromptPost(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!isLoopback(req)) {
+    sendError(res, 403, 'forbidden', 'Only an agent hook on this machine may ask for this.');
+    return;
+  }
+  const body = await parseJsonBody(req);
+  const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
+  const root = typeof body?.root === 'string' ? body.root : '';
+  if (!prompt.trim() || !root || !contextRoot) {
+    sendError(res, 400, 'bad_request', 'prompt and root are required');
+    return;
+  }
+  const real = (p: string) => { try { return realpathSync(p); } catch { return null; } };
+  if (real(root) === null || real(root) !== real(contextRoot)) {
+    sendError(res, 409, 'other_vault', 'This server is not serving that vault.');
+    return;
+  }
+  if (!hybridReady(contextRoot, 'hybrid', 'local')) {
+    sendError(res, 409, 'not_ready', 'The local model or index is not ready here.');
+    return;
+  }
+  try {
+    const r = await hybridPromptRecall(prompt, contextRoot, 'local');
+    sendJson(res, 200, { label: r.label, timing: r.timing, hits: r.hits.map(toWirePromptHit) });
   } catch (err) {
     sendError(res, 500, 'recall_failed', err instanceof Error ? err.message : 'Recall failed');
   }
