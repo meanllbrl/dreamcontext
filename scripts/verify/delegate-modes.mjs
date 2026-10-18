@@ -10,7 +10,7 @@
  * `GET /api/tasks/:slug` serves it, so the harness WAITS for that detail-backed prompt by selector,
  * never by a fixed sleep — offers four jobs — Autonomous / Discuss / Is it done? / Summarize — where picking one
  * REDRAFTS the prompt, re-arms the permission toggle to what that job needs, and (for Discuss)
- * promises to open on screen rather than in the corner. Plus the model picker, and the promise
+ * promises to open on screen (in Chat) rather than in the corner. Plus the model picker, and the promise
  * that a mode switch never silently eats a prompt you had already edited.
  *
  * WHAT IT DRIVES — the real dashboard server, the real `/api/tasks` + `/api/agent/*` routes,
@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { markAnnouncementsSeen } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(tmpdir(), 'dc-ui-delegate-modes');
@@ -112,7 +113,10 @@ const check = (label, ok, ev = '') => {
 async function runTheme(base, theme) {
   console.log(`\n═══ ${theme} ═══`);
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 }, colorScheme: theme });
+  const context = await browser.newContext({ viewport: { width: 1500, height: 1000 }, colorScheme: theme });
+  // The on-load "What's New" popup's scrim would swallow the right-click on the card.
+  await markAnnouncementsSeen(context, base);
+  const page = await context.newPage();
   page.on('pageerror', (e) => check(`no page error (${String(e).slice(0, 80)})`, false));
 
   const until = async (fn, ms = 15000) => {
@@ -179,8 +183,10 @@ async function runTheme(base, theme) {
   check('the same task body rides along unchanged',
     discuss.includes('Ship the login screen') && discuss.includes('**(A1)**'));
   check('discuss disarms bypass-permissions', !(await bypassBox.isChecked()));
-  check('discuss says it will open in Agents rather than the corner',
-    /opens in\s*Agents/i.test((await modal.innerText()).replace(/\s+/g, ' ')));
+  // The overlay the session opens in is called Chat since 14998f3a ("the rail says Automations,
+  // not Agents"); the composer's hint followed it, this check had not.
+  check('discuss says it will open in Chat rather than the corner',
+    /opens in\s*Chat/i.test((await modal.innerText()).replace(/\s+/g, ' ')));
   await page.screenshot({ path: join(SHOTS, `discuss-${theme}.png`) });
 
   // IS IT DONE? — verifies without building, and can run commands unattended.

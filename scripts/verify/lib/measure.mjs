@@ -384,3 +384,33 @@ export async function rawKeys(page, rootSel) {
   const text = await chromeText(page, rootSel, []);
   return [...new Set(text.match(/\b(?:agents|scheduler)\.[a-zA-Z]+\.[a-zA-Z.]+\b/g) || [])];
 }
+
+/**
+ * Mark every shipped "What's New" announcement as seen before the page loads, so the on-load
+ * popup never opens. Its scrim covers the whole window, and a click aimed at the rail then
+ * lands on it instead — a harness artifact that reads like a dead button. The ids come from
+ * the server's own `/announcements.json`, so a new release's story is covered without an edit.
+ */
+export async function markAnnouncementsSeen(context, base) {
+  let ids = [];
+  try {
+    const res = await fetch(`${base}/announcements.json`);
+    if (res.ok) ids = ((await res.json()) ?? []).map((a) => a?.id).filter((id) => typeof id === 'string');
+  } catch { /* no manifest: nothing to hide */ }
+  await context.addInitScript((seen) => {
+    try { localStorage.setItem('dreamcontext.dashboard.announcementsSeen', JSON.stringify(seen)); } catch { /* private mode */ }
+  }, ids);
+}
+
+/**
+ * Wait until nothing on the page is still animating, so a screenshot shows the settled UI and
+ * not an entrance caught mid-flight (the rail's staggered fade-in runs on every page load).
+ * An endless animation (a live status dot) never finishes, so only finite ones are waited on.
+ */
+export async function animationsSettled(page, timeout = 5000) {
+  return page.waitForFunction(() => document.getAnimations().every((a) => {
+    if (a.playState !== 'running') return true;
+    const iterations = a.effect?.getTiming?.().iterations;
+    return iterations === Infinity;
+  }), null, { timeout }).then(() => true, () => false);
+}

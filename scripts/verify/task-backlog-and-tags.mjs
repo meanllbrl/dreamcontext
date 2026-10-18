@@ -19,8 +19,12 @@
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { distIndex, markAnnouncementsSeen } from './lib/measure.mjs';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const PORT = process.env.PORT || '4797';
 const URL = `http://127.0.0.1:${PORT}`;
@@ -57,7 +61,11 @@ seed('other-task', 'Other task', ['layer:frontend']);
 
 const frontmatter = (slug) => readFileSync(join(stateDir, `${slug}.md`), 'utf8').split('---')[1] ?? '';
 
-const server = spawn(process.execPath, ['dist/index.js', 'dashboard', '--no-open', '--port', PORT], {
+// The scratch vault is the server's cwd and the dist path is absolute: from the repo's cwd the
+// server resolves the repo's own `_dream_context/` (or none, in a worktree) instead of the
+// scratch vault this harness seeded.
+const server = spawn(process.execPath, [distIndex(REPO), 'dashboard', '--no-open', '--port', PORT], {
+  cwd: vaultDir,
   env: { ...process.env, HOME: home },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -82,7 +90,10 @@ try {
     check('seed is dated', /due_date: '2026-08-25'/.test(frontmatter('shelve-me')));
 
     browser = await chromium.launch();
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    // The on-load "What's New" popup's scrim would swallow the clicks: mark it seen first.
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await markAnnouncementsSeen(context, URL);
+    const page = await context.newPage();
 
     const dismissAnnouncements = async () => {
       for (let i = 0; i < 3; i += 1) {

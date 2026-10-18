@@ -41,7 +41,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { distIndex, scratchDir, setTheme, shotsDir } from './lib/measure.mjs';
+import { animationsSettled, distIndex, markAnnouncementsSeen, scratchDir, setTheme, shotsDir } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -175,6 +175,9 @@ async function settle(page, w, label, tag) {
   check(`${tag} no payload ran or reached the DOM`, x.ok, x.detail);
   const problems = w.take();
   check(`${tag} no console error, page error or failed request`, problems.length === 0, problems.join('\n      '));
+  // The screenshots are the owner's evidence: they must show the settled UI, never the rail's
+  // entrance fade (or any other finite animation) caught mid-flight.
+  check(`${tag} the page has settled (no running animation) before the screenshot`, await animationsSettled(page));
   await page.screenshot({ path: join(SHOTS, `${label}.png`), fullPage: false });
 }
 
@@ -209,6 +212,7 @@ async function grid(browser, base, ids) {
       console.log(`\n${tag}`);
       const context = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: theme });
       await setTheme(context, theme);
+      await markAnnouncementsSeen(context, base);
       const page = await context.newPage();
       const watcher = watch(page, tag);
 
@@ -287,7 +291,17 @@ async function grid(browser, base, ids) {
         check(`${tag} inbox: records carry via`, (await page.locator('[data-inbox-record]').count()) >= 3 && (await page.locator('[data-inbox-record]:not([data-via])').count()) === 0);
         check(`${tag} inbox: the held-open flag is listed`, (await page.locator('[data-inbox-flag]').count()) > 0);
         check(`${tag} inbox: a learned rule and a filing rule are listed`, (await page.locator('[data-inbox-learned]').count()) >= 2);
+        const proposals = page.locator('[data-inbox-section="proposals"]');
+        await proposals.locator('.tp-card').first().waitFor({ timeout: 8000 }).catch(() => {});
+        const proposalsText = (await proposals.innerText().catch(() => '')) || '';
+        check(`${tag} inbox: the seeded proposal is visible`, proposalsText.includes('Export as CSV'), proposalsText.slice(0, 160));
+        check(`${tag} inbox: the seeded change card is visible`, proposalsText.includes('Maybe park this'), proposalsText.slice(0, 160));
       }
+      // No section is ever a bare heading: each shows its content or its empty state.
+      const bare = await page.locator('[data-inbox-section]').evaluateAll((els) => els
+        .filter((el) => [...el.children].filter((c) => c.tagName !== 'H2').every((c) => !(c.textContent ?? '').trim()))
+        .map((el) => el.getAttribute('data-inbox-section')));
+      check(`${tag} inbox: every section shows content or an empty state`, bare.length === 0, bare.join(', '));
       await settle(page, watcher, `inbox-${w}-${theme}`, `${tag} inbox`);
 
       await go(page, base, 'planning', '[data-planning-ready]');
@@ -314,6 +328,7 @@ async function grid(browser, base, ids) {
 async function timing(browser, base) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await setTheme(context, 'light');
+  await markAnnouncementsSeen(context, base);
   const page = await context.newPage();
   const runs = [];
   for (let i = 0; i < 3; i += 1) {
@@ -334,6 +349,7 @@ async function flows(browser, base, ids) {
   console.log('\nflows');
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await setTheme(context, 'light');
+  await markAnnouncementsSeen(context, base);
   const page = await context.newPage();
   const watcher = watch(page, 'flows');
   const confirm = async () => {

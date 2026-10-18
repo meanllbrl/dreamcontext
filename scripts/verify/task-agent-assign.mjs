@@ -34,7 +34,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { distIndex, scratchDir, setTheme, shotsDir } from './lib/measure.mjs';
+import { distIndex, markAnnouncementsSeen, scratchDir, setTheme, shotsDir } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST_INDEX = distIndex(REPO);
@@ -174,6 +174,9 @@ async function startServer(port) {
 async function openPage(browser, theme, base) {
   const context = await browser.newContext({ viewport: { width: 1500, height: 1000 }, colorScheme: theme });
   await setTheme(context, theme);
+  // The 0.32.0 "What's New" popup opens on load and its scrim swallows the first click on the
+  // rail: mark every announcement seen before the page loads.
+  await markAnnouncementsSeen(context, base);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));

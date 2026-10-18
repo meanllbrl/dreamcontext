@@ -45,8 +45,12 @@
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { distIndex, markAnnouncementsSeen } from './lib/measure.mjs';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const PORT = process.env.PORT || '4793';
 const URL = `http://127.0.0.1:${PORT}`;
@@ -83,7 +87,11 @@ seedTask('spared-task', 'Spared task');
 
 const onDisk = (slug) => existsSync(join(stateDir, `${slug}.md`));
 
-const server = spawn(process.execPath, ['dist/index.js', 'dashboard', '--no-open', '--port', PORT], {
+// The scratch vault is the server's cwd and the dist path is absolute: from the repo's cwd the
+// server resolves the repo's own `_dream_context/` (or none, in a worktree) instead of the
+// scratch vault this harness seeded.
+const server = spawn(process.execPath, [distIndex(REPO), 'dashboard', '--no-open', '--port', PORT], {
+  cwd: vaultDir,
   env: { ...process.env, HOME: home },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -108,7 +116,10 @@ try {
     check('both tasks seeded', onDisk('doomed-task') && onDisk('spared-task'));
 
     browser = await chromium.launch();
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    // The on-load "What's New" popup's scrim would swallow the clicks: mark it seen first.
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await markAnnouncementsSeen(context, URL);
+    const page = await context.newPage();
 
     // Nothing should ever ask the webview for a dialog. If something does, the
     // product is back on a code path a stale app shell answers "no" to — so
@@ -217,7 +228,9 @@ try {
     // product silently answered no. Faked rather than driven through the real
     // .app because the whole point is the OLD binary, which we cannot ship.
     seedTask('stale-shell-task', 'Stale shell task');
-    const stale = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const staleContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await markAnnouncementsSeen(staleContext, URL);
+    const stale = await staleContext.newPage();
     let staleNativeDialogs = 0;
     stale.on('dialog', (d) => { staleNativeDialogs += 1; d.dismiss(); });
     await stale.addInitScript(() => {
