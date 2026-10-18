@@ -3086,6 +3086,16 @@
       ]
     },
     {
+      "path": "sleep eval exempt",
+      "desc": "Owner only: let a sub-task close without an eval run, for a stated reason (journaled on the task, listed here and on the Inbox)",
+      "args": [
+        "<child>"
+      ],
+      "valueFlags": [
+        "--reason"
+      ]
+    },
+    {
       "path": "sleep eval label",
       "desc": "Answer a card: what sleep should have done (new-task | add-to-task | nothing), or keep | reject for a repeated correction; \"nothing\" needs --reason (already-exists, abandoned, too-small, badly-written, wrong-project, not-work)",
       "args": [
