@@ -1,5 +1,5 @@
 /**
- * The motion clock: every ENDLESS CSS animation on this page moves 30 times a second instead
+ * The motion clock: every ENDLESS CSS animation on this page moves 15 times a second instead
  * of on every display frame (task: durum animasyonları WindowServer'ı yormaz).
  *
  * Why a clock and not CSS. While any animation runs on the display link, macOS recomposites
@@ -28,9 +28,11 @@
  */
 import { getWindowActivity, onWindowActivity, type WindowActivity } from './windowActivity';
 
-/** Frames per second for every endless animation. 12 was measured cheapest, but a turning ring
- *  jumped 30 degrees a frame and read as stuck (owner, 2026-10-18); 30 turns it 12 degrees a frame. */
-export const MOTION_FPS = 30;
+/** Frames per second for every endless animation: the owner's pick (2026-10-19) from WindowServer
+ *  in the real app (Light mode off, on power, three chats working): nothing moving 4.5 %, 15 fps
+ *  14-15 %, 20 fps 18-22 %, 30 fps 25-31 %. At 12 a turning ring jumped 30 degrees a step and read
+ *  as stuck (owner, 2026-10-18); 15 turns it 24 degrees. */
+export const MOTION_FPS = 15;
 /** A finite count past this is endless in practice (the CSS motion guard uses the same line). */
 export const ENDLESS_COUNT = 50;
 /** After the window comes back, look for animations that started paused only this much later:

@@ -113,9 +113,10 @@ function host() {
 describe('motion clock', () => {
   beforeEach(() => { resetMotionClockForTests(); log.length = 0; });
 
-  it('runs at 24-30 fps: smooth enough for a turning ring, far below the display link', () => {
-    expect(MOTION_FPS).toBeGreaterThanOrEqual(24);
-    expect(MOTION_FPS).toBeLessThanOrEqual(30);
+  it('runs at 15-20 fps: a ring that does not read as stuck, WindowServer under 20 %', () => {
+    // Real app, owner's M1 Pro: 15 fps 14-15 %, 20 fps 18-22 %, 30 fps 25-31 %; 12 read as stuck.
+    expect(MOTION_FPS).toBeGreaterThanOrEqual(15);
+    expect(MOTION_FPS).toBeLessThanOrEqual(20);
   });
 
   it('holds every endless animation already running at install, and leaves finite ones alone', () => {

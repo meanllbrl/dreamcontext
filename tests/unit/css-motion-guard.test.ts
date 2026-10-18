@@ -15,7 +15,7 @@
  *         shorthand) outside `@media (prefers-reduced-motion)`; in a rule that sets the
  *         shorthand, `animation-play-state` comes after it (the shorthand resets it);
  *   (v)   no endless animation set from TS/TSX (inline styles cannot be rested or paused);
- *   (vi)  every window starts lib/motionClock.ts at boot, so whatever runs is stepped at 24-30 fps
+ *   (vi)  every window starts lib/motionClock.ts at boot, so whatever runs is stepped at 15-20 fps
  *         and never left on the display link (task: durum animasyonları WindowServer'ı yormaz).
  * And `global.css` carries the root rules that drive the variables.
  *
@@ -289,7 +289,7 @@ describe('CSS motion contract', () => {
     expect(endlessText('pop 200ms ease-out both')).toBe(false);
   });
 
-  it('(vi) every window steps its endless animations at 24-30 fps, never on the display link', () => {
+  it('(vi) every window steps its endless animations at 15-20 fps, never on the display link', () => {
     // The contract's variables decide WHETHER an animation runs; lib/motionClock.ts decides how
     // often it moves (task: durum animasyonları WindowServer'ı yormaz, AC4). Every window boots
     // through main.tsx -> App.tsx, so the clock is started there, at module scope, unconditionally.
@@ -300,8 +300,8 @@ describe('CSS motion contract', () => {
     expect(app).toMatch(/^initMotionClock\(\);$/m);
     const clock = readFileSync(join(SRC, 'lib', 'motionClock.ts'), 'utf8');
     const fps = Number(/export const MOTION_FPS = (\d+);/.exec(clock)?.[1]);
-    expect(fps).toBeGreaterThanOrEqual(24);
-    expect(fps).toBeLessThanOrEqual(30);
+    expect(fps).toBeGreaterThanOrEqual(15);
+    expect(fps).toBeLessThanOrEqual(20);
     // It holds what the contract runs: endless by the same line this guard uses.
     expect(clock).toMatch(new RegExp(`export const ENDLESS_COUNT = ${ENDLESS_COUNT};`));
     expect(readFileSync(join(SRC, 'styles', 'global.css'), 'utf8')).toMatch(/lib\/motionClock\.ts/);
