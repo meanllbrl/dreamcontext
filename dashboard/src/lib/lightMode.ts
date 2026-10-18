@@ -2,9 +2,10 @@
  * Light mode — the app's "go easy on this Mac" switch (owner decision 2, 2026-10-17).
  *
  * Settings → Performance → Light mode: Auto / On / Off. Auto turns it on for a Mac with ≤ 8 GB
- * of memory or one running on battery. When it is on:
- *   - every endless animation is removed (each indicator shows its resting style) and every
- *     `backdrop-filter` is off — both through `data-light` on <html> (styles/global.css);
+ * of memory, in macOS Low Power Mode, or on battery at 20 % or below. When it is on:
+ *   - decorative endless animations are removed and every `backdrop-filter` is off, both
+ *     through `data-light` on <html> (styles/global.css); status indicators keep moving on the
+ *     30 fps clock (lib/motionClock.ts): still, a working ring read as stuck (owner, 2026-10-18);
  *   - terminals render on DOM (components/sleepy/webglBudget.ts);
  *   - every poll runs at half the rate (`pollMs` ×2, lib/windowActivity.ts).
  *
@@ -22,10 +23,14 @@ import { getWindowActivity, pollMs, setLightPollFactor } from './windowActivity'
 export interface MachineFacts {
   totalMemGb: number | null;
   onBattery: boolean | null;
+  /** 0-100; null or absent where unknown (an older server answers without it). */
+  batteryPercent?: number | null;
+  /** macOS Low Power Mode; null or absent where unknown. */
+  lowPowerMode?: boolean | null;
 }
 
 /** Why light mode is on: the setting pins it, or Auto saw low memory / battery power. */
-export type LightModeReason = 'setting' | 'ram' | 'battery';
+export type LightModeReason = 'setting' | 'ram' | 'battery' | 'low-power';
 
 export interface LightModeState {
   on: boolean;
@@ -35,6 +40,9 @@ export interface LightModeState {
 
 /** Auto's memory line: an "8 GB" Mac reports a little under 8 GiB, so the line sits at 8.5. */
 export const LOW_MEMORY_GB = 8.5;
+/** Auto's battery line: a Mac on battery runs as fast as on AC, so only a LOW battery counts
+ *  (owner, 2026-10-18: "şarjı %20'ye geldiğinde ya da Low Power Mode'dayken"). */
+export const LOW_BATTERY_PERCENT = 20;
 const MACHINE_POLL_MS = 60_000;
 /** How long boot waits for the machine facts before Auto answers without them. */
 const FACTS_WAIT_MS = 1_500;
@@ -47,7 +55,10 @@ export function computeLightMode(setting: LightModeSetting, facts: MachineFacts 
   if (typeof facts.totalMemGb === 'number' && facts.totalMemGb > 0 && facts.totalMemGb <= LOW_MEMORY_GB) {
     return { on: true, reason: 'ram' };
   }
-  if (facts.onBattery === true) return { on: true, reason: 'battery' };
+  if (facts.lowPowerMode === true) return { on: true, reason: 'low-power' };
+  if (facts.onBattery === true && typeof facts.batteryPercent === 'number' && facts.batteryPercent <= LOW_BATTERY_PERCENT) {
+    return { on: true, reason: 'battery' };
+  }
   return { on: false, reason: null };
 }
 
@@ -123,6 +134,8 @@ export function initLightMode(depsIn?: Partial<LightModeDeps>): Promise<boolean>
       facts = {
         totalMemGb: typeof f?.totalMemGb === 'number' ? f.totalMemGb : null,
         onBattery: typeof f?.onBattery === 'boolean' ? f.onBattery : null,
+        batteryPercent: typeof f?.batteryPercent === 'number' ? f.batteryPercent : null,
+        lowPowerMode: typeof f?.lowPowerMode === 'boolean' ? f.lowPowerMode : null,
       };
     } catch { /* the route failed: keep what we knew (nothing, at boot) */ }
     recompute();

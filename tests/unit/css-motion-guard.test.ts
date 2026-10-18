@@ -14,7 +14,9 @@
  *   (iv)  no literal `animation-play-state` (and no `paused`/`running` inside an `animation`
  *         shorthand) outside `@media (prefers-reduced-motion)`; in a rule that sets the
  *         shorthand, `animation-play-state` comes after it (the shorthand resets it);
- *   (v)   no endless animation set from TS/TSX (inline styles cannot be rested or paused).
+ *   (v)   no endless animation set from TS/TSX (inline styles cannot be rested or paused);
+ *   (vi)  every window starts lib/motionClock.ts at boot, so whatever runs is stepped at 24-30 fps
+ *         and never left on the display link (task: durum animasyonları WindowServer'ı yormaz).
  * And `global.css` carries the root rules that drive the variables.
  *
  * Runs over every file, so it is green only once every lane's CSS follows the contract.
@@ -156,7 +158,9 @@ describe('CSS motion contract', () => {
     const g = readFileSync(join(SRC, 'styles/global.css'), 'utf8').replace(/\s+/g, ' ');
     expect(g).toContain(":root[data-window-active='false'] { --dc-motion-ambient-name: none; }");
     expect(g).toContain(":root[data-window-hidden='true'] { --dc-motion-play: paused; }");
-    expect(g).toContain(":root[data-light='true'] { --dc-motion-ambient-name: none; --dc-motion-status-name: none; }");
+    // Light mode rests decoration only; status keeps moving on the clock (owner, 2026-10-18).
+    expect(g).toContain(":root[data-light='true'] { --dc-motion-ambient-name: none; }");
+    expect(g).not.toMatch(/:root\[data-light='true'\] \{[^}]*--dc-motion-status-name/);
     expect(g).toMatch(/:root\[data-light='true'\] \*,[^{]*\{ backdrop-filter: none !important; -webkit-backdrop-filter: none !important; \}/);
   });
 
@@ -285,10 +289,56 @@ describe('CSS motion contract', () => {
     expect(endlessText('pop 200ms ease-out both')).toBe(false);
   });
 
+  it('(vi) every window steps its endless animations at 24-30 fps, never on the display link', () => {
+    // The contract's variables decide WHETHER an animation runs; lib/motionClock.ts decides how
+    // often it moves (task: durum animasyonları WindowServer'ı yormaz, AC4). Every window boots
+    // through main.tsx -> App.tsx, so the clock is started there, at module scope, unconditionally.
+    const main = readFileSync(join(SRC, 'main.tsx'), 'utf8');
+    expect(main).toMatch(/import \{ App \} from '\.\/App';/);
+    const app = readFileSync(join(SRC, 'App.tsx'), 'utf8');
+    expect(app).toMatch(/^import \{ initMotionClock \} from '\.\/lib\/motionClock';$/m);
+    expect(app).toMatch(/^initMotionClock\(\);$/m);
+    const clock = readFileSync(join(SRC, 'lib', 'motionClock.ts'), 'utf8');
+    const fps = Number(/export const MOTION_FPS = (\d+);/.exec(clock)?.[1]);
+    expect(fps).toBeGreaterThanOrEqual(24);
+    expect(fps).toBeLessThanOrEqual(30);
+    // It holds what the contract runs: endless by the same line this guard uses.
+    expect(clock).toMatch(new RegExp(`export const ENDLESS_COUNT = ${ENDLESS_COUNT};`));
+    expect(readFileSync(join(SRC, 'styles', 'global.css'), 'utf8')).toMatch(/lib\/motionClock\.ts/);
+  });
+
   it('every allowlisted TS file still exists and says why', () => {
     for (const [rel, why] of Object.entries(TS_ALLOWLIST)) {
       expect(statSync(join(SRC, rel)).isFile()).toBe(true);
       expect(why.length).toBeGreaterThan(20);
     }
+  });
+});
+
+// Light mode keeps STATUS motion (it removes only ambient decoration): a `:root[data-light='true']`
+// rule that restyles an element whose animation is a status animation was written for the old
+// Light mode that stopped it. With the animation running again it freezes the look (a spinner
+// whose whole border is one colour turns with nothing visibly moving) or breaks it (an
+// indeterminate bar forced to full width that still sweeps off its track).
+describe('Light mode leaves status animations alone', () => {
+  it('no Light-mode rule restyles an element that runs a status animation', () => {
+    const offenders: string[] = [];
+    for (const file of walk(SRC, ['.css'])) {
+      const root = postcss.parse(readFileSync(file, 'utf-8'), { from: file });
+      const statusSelectors = new Set<string>();
+      root.walkRules((rule) => {
+        const animated = rule.nodes?.some((n) => n.type === 'decl'
+          && /^animation(-name)?$/.test((n as Declaration).prop)
+          && /--dc-motion-status-name/.test((n as Declaration).value));
+        if (animated) for (const s of rule.selectors) statusSelectors.add(s.replace(/\s+/g, ' ').trim());
+      });
+      root.walkRules((rule) => {
+        for (const s of rule.selectors) {
+          const m = s.replace(/\s+/g, ' ').trim().match(/^:root\[data-light=['"]true['"]\] (.+)$/);
+          if (m && statusSelectors.has(m[1])) offenders.push(`${relative(SRC, file)}: ${s}`);
+        }
+      });
+    }
+    expect(offenders).toEqual([]);
   });
 });

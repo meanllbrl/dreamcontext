@@ -266,14 +266,17 @@ export interface RunningAutomation {
 }
 
 export interface Inbox {
+  /** The project the owner is looking at (presence), or null: he is in another app. */
   lookingAt: string | null;
+  /** The chat he is focused on in it, or null (the chat surface is closed, or none). */
+  lookingAtSession: string | null;
   notices: InboxNotice[];
   posts: AutomationPost[];
   running: RunningAutomation[];
   muted: Array<{ vault: string; slug: string }>;
 }
 
-export const EMPTY_INBOX: Inbox = { lookingAt: null, notices: [], posts: [], running: [], muted: [] };
+export const EMPTY_INBOX: Inbox = { lookingAt: null, lookingAtSession: null, notices: [], posts: [], running: [], muted: [] };
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -323,7 +326,9 @@ export function readInbox(raw: unknown): Inbox {
   }
   const muted = arr('muted').map(rec).filter((m): m is Record<string, unknown> => !!m && typeof m.vault === 'string' && SLUG_RE.test(str(m.slug)))
     .map((m) => ({ vault: m.vault as string, slug: str(m.slug) }));
-  return { lookingAt: typeof o.lookingAt === 'string' ? o.lookingAt : null, notices, posts, running, muted };
+  const lookingAt = typeof o.lookingAt === 'string' ? o.lookingAt : null;
+  const lookingAtSession = lookingAt && typeof o.lookingAtSession === 'string' ? o.lookingAtSession : null;
+  return { lookingAt, lookingAtSession, notices, posts, running, muted };
 }
 
 /** How long an unread finished chat keeps its name on the collapsed pill ("acme finished"). */
@@ -345,8 +350,14 @@ export function recentFinishedVault(notices: InboxNotice[], now = Date.now()): s
  * on it; it folds on leave). Owner, 2026-10-17: a prompt's peek used to stay until answered or
  * waved away. Folding loses nothing: a prompt still turns the pill to "asking" and stays on top
  * of "Now", a finish keeps its name on the pill (`FINISHED_PILL_MS`) and its inbox row.
+ *
+ * Owner, 2026-10-18: while he is IN the app (any project window in front) a prompt or a finish
+ * from a chat he is not focused on is on his screen already, beside him: it gets `inApp`, a
+ * glance, instead of its full time. The chat he is focused on drops no peek at all.
  */
 export const PEEK_TTL_MS = {
+  /** A prompt or a finish while the owner is in the app, in a chat he is not focused on. */
+  inApp: 5_000,
   /** A permission blocks a running turn: the longest look. */
   permission: 60_000,
   question: 45_000,
@@ -361,13 +372,18 @@ export const PEEK_TTL_MS = {
   started: 4_500,
 } as const;
 
-/** The TTL of a peek that folds by itself; null for one with no clock (hover, summary, progress). */
-export function peekTtlMs(item: { kind: string; notice?: { kind: string } }): number | null {
+/**
+ * The TTL of a peek that folds by itself; null for one with no clock (hover, summary, progress).
+ * `inApp`: the owner is in the app, so a prompt or a chat's finish is a glance (`PEEK_TTL_MS.inApp`).
+ */
+export function peekTtlMs(item: { kind: string; notice?: { kind: string } }, inApp = false): number | null {
   switch (item.kind) {
-    case 'permission': return PEEK_TTL_MS.permission;
-    case 'question': return PEEK_TTL_MS.question;
+    case 'permission': return inApp ? PEEK_TTL_MS.inApp : PEEK_TTL_MS.permission;
+    case 'question': return inApp ? PEEK_TTL_MS.inApp : PEEK_TTL_MS.question;
     case 'finished': return PEEK_TTL_MS.handoff;
-    case 'notice': return item.notice?.kind === 'account' ? PEEK_TTL_MS.account : PEEK_TTL_MS.finished;
+    case 'notice':
+      if (item.notice?.kind === 'account') return PEEK_TTL_MS.account;
+      return inApp ? PEEK_TTL_MS.inApp : PEEK_TTL_MS.finished;
     case 'post': return PEEK_TTL_MS.post;
     case 'started': return PEEK_TTL_MS.started;
     default: return null;
@@ -375,12 +391,25 @@ export function peekTtlMs(item: { kind: string; notice?: { kind: string } }): nu
 }
 
 /**
- * The prompts worth a peek: those in a project the owner is NOT looking at. A prompt in the
- * window in front of him is already on his screen (owner, 2026-10-17: "aynı penceredeyken de
- * bildirim düşüyor"). `lookingAt` is the presence report (`GET /api/assistant/inbox`).
+ * The prompts worth a peek: every one but the prompt in the chat the owner is FOCUSED on, which
+ * is on his screen already. Owner, 2026-10-17 hid every prompt in the project in front ("aynı
+ * penceredeyken de bildirim düşüyor"); 2026-10-18 narrowed it to the focused chat: "sadece ben
+ * dreamcontext'teysem ve [o session]'da soru soruluyorsa gösterme". A prompt in another chat of
+ * the same project still peeks, briefly (`PEEK_TTL_MS.inApp`). `lookingAtSession` is the
+ * presence report (`GET /api/assistant/inbox`).
  */
-export function offScreenAsks<T extends { vault: string; ask: unknown }>(chats: T[], lookingAt: string | null): T[] {
-  return chats.filter((c) => !!c.ask && c.vault !== lookingAt);
+export function offScreenAsks<T extends { sessionId: string; ask: unknown }>(chats: T[], lookingAtSession: string | null): T[] {
+  return chats.filter((c) => !!c.ask && c.sessionId !== lookingAtSession);
+}
+
+/**
+ * The key a notice is announced under. A chat's finish keeps one id for its whole life
+ * (`fin:<session>`: the server replaces it each turn), so a key of the id alone announced only
+ * its FIRST finish and listed every later one silently (owner, 2026-10-18: "hiçbir yerde
+ * gözükmüyor"). Each turn's finish is its own news: its time is in the key.
+ */
+export function noticeKey(n: Pick<InboxNotice, 'id' | 'kind' | 'at'>): string {
+  return n.kind === 'finished' ? `${n.id}@${n.at}` : n.id;
 }
 
 /** An announcement that waits for the peek to be free holds this many; the oldest drop first. */

@@ -535,14 +535,16 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                     }
                   />
 
-                  {/* Light mode: Auto / On / Off. Auto turns it on for ≤ 8 GB of memory or on
-                      battery, and the row says which (lib/lightMode.ts). */}
+                  {/* Light mode: Auto / On / Off. Auto turns it on for ≤ 8 GB of memory, Low Power
+                      Mode, or a battery at 20 % or below, and the row says which (lib/lightMode.ts). */}
                   <SettingRow
                     title={t('settings.performance.light')}
                     hint={t('settings.performance.light_hint')}
                     status={agentCfg.lightMode === 'auto' && light.on && light.reason !== 'setting' ? (
                       <span className="settings-field-hint settings-light-reason">
-                        {t(light.reason === 'battery' ? 'settings.performance.light_active_battery' : 'settings.performance.light_active_ram')}
+                        {t(light.reason === 'battery' ? 'settings.performance.light_active_battery'
+                          : light.reason === 'low-power' ? 'settings.performance.light_active_low_power'
+                          : 'settings.performance.light_active_ram')}
                       </span>
                     ) : null}
                     control={

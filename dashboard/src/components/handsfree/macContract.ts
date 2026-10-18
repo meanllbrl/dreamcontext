@@ -17,8 +17,9 @@ export const REATTACH_PASSIVE = 'passive';
 /** The longest a passive upgrade waits on the holder's pong (under the 15 s connect timeout). */
 export const HOLDER_PROBE_MS = 3000;
 
-/** Dashboard-only: the desktop's sheet fires this on `window` after a successful Return, so a
- *  chat pane the phone had taken over reattaches by itself. */
+/** Dashboard-only: the desktop's status poller (`macStore.ts`) fires this on `window` when a run
+ *  ends, whoever pressed Return: a chat pane the phone had taken over reattaches by itself and
+ *  the agent surface re-reads its roster, where Return put the tabs the phone had open. */
 export const MAC_MODE_ENDED_EVENT = 'dc:mac-mode-ended';
 
 export type MacTunnelMode = 'quick' | 'fixed';

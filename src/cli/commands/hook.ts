@@ -1,7 +1,11 @@
 import { bindSession, endBinding, readBinding, reapBindings, rebindFromTombstone, touchBinding, unbindSession } from '../../lib/session-task.js';
 import { buildContextPacket } from '../../lib/task-context-packet.js';
 import { Command } from 'commander';
-import { readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync } from 'node:fs';
+import {
+  readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
+} from 'node:fs';
+import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative } from 'node:path';
@@ -41,13 +45,14 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
-import { bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
+import { bm25Search, loadSkillDocs, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
 } from '../../lib/patterns.js';
 import { hybridSearch, hybridReady, HOOK_MAX_INLINE_EMBED, type RecallTiming } from '../../lib/embeddings/hybrid.js';
-import { resolvePromptTier } from '../../lib/recall-cloud-config.js';
+import { resolvePromptTier, type RecallTier } from '../../lib/recall-cloud-config.js';
+import { listVaults } from '../../lib/vaults.js';
 import {
   crossVaultRecall,
   resolveConnectedVaults,
@@ -73,6 +78,9 @@ import {
   lastMainChainContext,
 } from '../../lib/context-watch.js';
 import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-state-lock.js';
+import {
+  checkEditedFile, checkAtStop, takeTscResults, tscStopReason, tscWorkFor, defaultTscRunner, filterTscErrors, TSC_TIMEOUT_MS,
+} from '../../lib/tsc-check.js';
 import { shouldStartAutoSleep, currentAutoSleepFingerprint } from '../../lib/auto-sleep.js';
 import { resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 import {
@@ -182,36 +190,74 @@ export function analyzeTranscript(
   try {
     const stat = statSync(transcriptPath);
     if (stat.size === 0 || stat.size > MAX_TRANSCRIPT_BYTES) return ZERO_ANALYSIS;
-    const content = readFileSync(transcriptPath, 'utf-8');
-    const sinceMs = sinceISO ? Date.parse(sinceISO) : NaN;
+    const scan = new TranscriptScan(sinceISO ?? null);
+    scan.consume(readFileSync(transcriptPath, 'utf-8'));
+    return scan.result(subtractStartup);
+  } catch {
+    return ZERO_ANALYSIS;
+  }
+}
 
-    // Extract task slugs from dreamcontext CLI commands and task file paths.
-    // Only match within "command":"..." JSON values to avoid prose/explanation noise.
-    // AC8b: widened from log|insert|complete|create to also catch status/start/
-    // reopen/rename — every verb that names a task slug as its first positional
-    // arg, still anchored inside the quoted "command" value.
-    const slugs = new Set<string>();
-    for (const m of content.matchAll(/"command"\s*:\s*"[^"]*dreamcontext\s+tasks?\s+(?:log|insert|complete|create|status|start|reopen|rename)\s+(?:\\?["'])?([a-z0-9][a-z0-9-]*)/g)) {
-      slugs.add(m[1]);
-    }
-    // Match task file paths in "file_path":"..." JSON values
-    for (const m of content.matchAll(/"file_path"\s*:\s*"[^"]*_dream_context\/state\/([a-z0-9][a-z0-9-]*)\.md"/g)) {
-      slugs.add(m[1]);
-    }
+// Extract task slugs from dreamcontext CLI commands and task file paths.
+// Only match within "command":"..." JSON values to avoid prose/explanation noise.
+// AC8b: widened from log|insert|complete|create to also catch status/start/
+// reopen/rename — every verb that names a task slug as its first positional
+// arg, still anchored inside the quoted "command" value.
+const COMMAND_SLUG_RE = /"command"\s*:\s*"[^"]*dreamcontext\s+tasks?\s+(?:log|insert|complete|create|status|start|reopen|rename)\s+(?:\\?["'])?([a-z0-9][a-z0-9-]*)/g;
+// Match task file paths in "file_path":"..." JSON values
+const PATH_SLUG_RE = /"file_path"\s*:\s*"[^"]*_dream_context\/state\/([a-z0-9][a-z0-9-]*)\.md"/g;
 
-    // One guarded JSON.parse pass over the already-in-memory transcript (no
-    // extra file I/O; malformed lines skipped): every axis is read from the
-    // record's structure, so text that merely mentions a tool or a decision
-    // counts for nothing.
-    let userTurns = 0;
-    let assistantChars = 0;
-    let decisionMarkers = 0;
-    let changeCount = 0;
-    let toolCount = 0;
-    const usage = new UsageLedger();
-    let lineIndex = 0;
-    for (const line of content.split('\n')) {
-      lineIndex++;
+interface TranscriptScanState {
+  sinceISO: string | null;
+  lineIndex: number;
+  commandSlugs: string[];
+  pathSlugs: string[];
+  userTurns: number;
+  assistantChars: number;
+  decisionMarkers: number;
+  changeCount: number;
+  toolCount: number;
+  usage: UsageLedgerState;
+}
+
+/**
+ * The analysis of one transcript, record by record, resumable: a Stop that already read a
+ * transcript's first N bytes saves this state and reads only what was appended since (see
+ * {@link analyzeTranscriptResumable}). Fed the whole file at once, it IS the full parse, so the
+ * two can never disagree. Text is fed as whole lines; the last piece of a file may end mid-line.
+ */
+class TranscriptScan {
+  private lineIndex = 0;
+  // Two ordered sets so the slug order matches one regex pass over the whole file:
+  // every command slug in file order, then every path slug.
+  private readonly commandSlugs = new Set<string>();
+  private readonly pathSlugs = new Set<string>();
+  private userTurns = 0;
+  private assistantChars = 0;
+  private decisionMarkers = 0;
+  private changeCount = 0;
+  private toolCount = 0;
+  private usage = new UsageLedger();
+  private readonly sinceMs: number;
+
+  constructor(readonly sinceISO: string | null) {
+    this.sinceMs = sinceISO ? Date.parse(sinceISO) : NaN;
+  }
+
+  /**
+   * Scan `text`. With `trailingPiece` false (the default) `text` ends with a newline (or is the
+   * whole file), and the empty string after the last newline is not a record.
+   */
+  consume(text: string, trailingPiece = true): void {
+    for (const m of text.matchAll(COMMAND_SLUG_RE)) this.commandSlugs.add(m[1]);
+    for (const m of text.matchAll(PATH_SLUG_RE)) this.pathSlugs.add(m[1]);
+
+    // One guarded JSON.parse pass (malformed lines skipped): every axis is read from the
+    // record's structure, so text that merely mentions a tool or a decision counts for nothing.
+    const lines = text.split('\n');
+    if (!trailingPiece && lines[lines.length - 1] === '') lines.pop();
+    for (const line of lines) {
+      this.lineIndex++;
       const trimmed = line.trim();
       if (!trimmed) continue;
       let rec: unknown;
@@ -221,40 +267,218 @@ export function analyzeTranscript(
         continue; // not a JSON record (or partial) — skip
       }
       if (!rec || typeof rec !== 'object') continue;
-      usage.observe(rec, lineIndex);
-      if (!Number.isNaN(sinceMs)) {
+      this.usage.observe(rec, this.lineIndex);
+      if (!Number.isNaN(this.sinceMs)) {
         const ts = recordTimestampMs(rec);
-        if (ts !== null && ts <= sinceMs) continue; // already consolidated
+        if (ts !== null && ts <= this.sinceMs) continue; // already consolidated
       }
-      usage.add(rec, lineIndex);
+      this.usage.add(rec, this.lineIndex);
       const role = recordRole(rec);
       if (role === 'user') {
         const typed = humanTurnText(rec);
         if (typed !== null) {
-          userTurns++;
-          if (hasDecisionMarker(typed)) decisionMarkers++;
+          this.userTurns++;
+          if (hasDecisionMarker(typed)) this.decisionMarkers++;
         }
       } else if (role === 'assistant') {
-        assistantChars += sumAssistantTextChars(rec);
-        decisionMarkers += countAssistantDecisionBlocks(rec);
+        this.assistantChars += sumAssistantTextChars(rec);
+        this.decisionMarkers += countAssistantDecisionBlocks(rec);
       }
       const uses = countToolUseBlocks(rec);
-      toolCount += uses.tools;
-      changeCount += uses.changes;
+      this.toolCount += uses.tools;
+      this.changeCount += uses.changes;
     }
-
-    return {
-      changeCount,
-      toolCount,
-      taskSlugs: [...slugs],
-      userTurns,
-      assistantChars,
-      decisionMarkers,
-      novelTokens: usage.novelTokens(subtractStartup),
-    };
-  } catch {
-    return ZERO_ANALYSIS;
   }
+
+  result(subtractStartup: boolean): TranscriptAnalysis {
+    return {
+      changeCount: this.changeCount,
+      toolCount: this.toolCount,
+      taskSlugs: [...new Set([...this.commandSlugs, ...this.pathSlugs])],
+      userTurns: this.userTurns,
+      assistantChars: this.assistantChars,
+      decisionMarkers: this.decisionMarkers,
+      novelTokens: this.usage.novelTokens(subtractStartup),
+    };
+  }
+
+  toJSON(): TranscriptScanState {
+    return {
+      sinceISO: this.sinceISO,
+      lineIndex: this.lineIndex,
+      commandSlugs: [...this.commandSlugs],
+      pathSlugs: [...this.pathSlugs],
+      userTurns: this.userTurns,
+      assistantChars: this.assistantChars,
+      decisionMarkers: this.decisionMarkers,
+      changeCount: this.changeCount,
+      toolCount: this.toolCount,
+      usage: this.usage.toJSON(),
+    };
+  }
+
+  static fromJSON(st: TranscriptScanState): TranscriptScan {
+    const scan = new TranscriptScan(st.sinceISO);
+    scan.lineIndex = st.lineIndex;
+    for (const x of st.commandSlugs) scan.commandSlugs.add(x);
+    for (const x of st.pathSlugs) scan.pathSlugs.add(x);
+    scan.userTurns = st.userTurns;
+    scan.assistantChars = st.assistantChars;
+    scan.decisionMarkers = st.decisionMarkers;
+    scan.changeCount = st.changeCount;
+    scan.toolCount = st.toolCount;
+    scan.usage = UsageLedger.fromJSON(st.usage);
+    return scan;
+  }
+}
+
+/** Where a Stop left off in one transcript (see {@link analyzeTranscriptResumable}). */
+export interface TranscriptCheckpoint {
+  v: 1;
+  /** Bytes analysed: always just after a newline. */
+  size: number;
+  /** sha1 of the file's first `headLen` bytes and of the `tailLen` bytes ending at `size`: a
+   *  file rewritten rather than appended to fails one of them and is read again in full. */
+  headLen: number;
+  head: string;
+  tailLen: number;
+  tail: string;
+  scan: TranscriptScanState;
+}
+
+/** A session's checkpoints, one per transcript (the main one and each sub-agent's). */
+export interface SessionAnalysisCache {
+  entries: Record<string, TranscriptCheckpoint>;
+}
+
+const CHECKPOINT_PROBE_BYTES = 4096;
+
+function sha1Of(buf: Buffer): string {
+  return createHash('sha1').update(buf).digest('hex');
+}
+
+function readBytes(fd: number, start: number, end: number): Buffer {
+  const len = Math.max(0, end - start);
+  const buf = Buffer.alloc(len);
+  let read = 0;
+  while (read < len) {
+    const n = readSync(fd, buf, read, len - read, start + read);
+    if (n === 0) break;
+    read += n;
+  }
+  return read === len ? buf : buf.subarray(0, read);
+}
+
+/**
+ * {@link analyzeTranscript}, resumed from `cache`: when the transcript only GREW since the last
+ * Stop (same first and last-read bytes, same consolidation bound), only the appended bytes are
+ * read and parsed, so a Stop on a long session stops costing a read of the whole file. Anything
+ * else (shrunk, rewritten, a new bound, no checkpoint) is a full parse. The checkpoint always ends
+ * on a newline; a trailing partial line is counted in the result, as a full parse counts it, but
+ * re-read next time. `cache.entries[path]` is updated in place.
+ */
+export function analyzeTranscriptResumable(
+  transcriptPath: string,
+  sinceISO: string | null | undefined,
+  opts: { subtractStartup?: boolean },
+  cache: SessionAnalysisCache,
+): TranscriptAnalysis {
+  const subtractStartup = opts.subtractStartup ?? true;
+  const since = sinceISO ?? null;
+  let fd: number | null = null;
+  try {
+    if (!existsSync(transcriptPath)) {
+      delete cache.entries[transcriptPath];
+      return ZERO_ANALYSIS;
+    }
+    const size = statSync(transcriptPath).size;
+    if (size === 0 || size > MAX_TRANSCRIPT_BYTES) {
+      delete cache.entries[transcriptPath];
+      return ZERO_ANALYSIS;
+    }
+    fd = openSync(transcriptPath, 'r');
+    const cp = cache.entries[transcriptPath];
+    let scan: TranscriptScan | null = null;
+    let offset = 0;
+    if (cp && cp.v === 1 && cp.scan?.sinceISO === since && cp.size > 0 && cp.size <= size
+      && sha1Of(readBytes(fd, 0, cp.headLen)) === cp.head
+      && sha1Of(readBytes(fd, cp.size - cp.tailLen, cp.size)) === cp.tail) {
+      scan = TranscriptScan.fromJSON(cp.scan);
+      offset = cp.size;
+    }
+    if (!scan) scan = new TranscriptScan(since);
+
+    const fresh = readBytes(fd, offset, size);
+    const nl = fresh.lastIndexOf(0x0a);
+    const whole = nl >= 0 ? fresh.subarray(0, nl + 1) : fresh.subarray(0, 0);
+    const partial = fresh.subarray(nl + 1);
+    if (whole.length > 0) scan.consume(whole.toString('utf-8'), false);
+    const end = offset + whole.length;
+    if (end > 0) {
+      const headLen = Math.min(CHECKPOINT_PROBE_BYTES, end);
+      const tailLen = Math.min(CHECKPOINT_PROBE_BYTES, end);
+      cache.entries[transcriptPath] = {
+        v: 1, size: end,
+        headLen, head: sha1Of(readBytes(fd, 0, headLen)),
+        tailLen, tail: sha1Of(readBytes(fd, end - tailLen, end)),
+        scan: scan.toJSON(),
+      };
+    } else {
+      delete cache.entries[transcriptPath];
+    }
+    if (partial.length > 0) {
+      // Counted now (a full parse would), re-read next time once its newline has landed.
+      const withTail = TranscriptScan.fromJSON(scan.toJSON());
+      withTail.consume(partial.toString('utf-8'));
+      return withTail.result(subtractStartup);
+    }
+    return scan.result(subtractStartup);
+  } catch {
+    delete cache.entries[transcriptPath];
+    return ZERO_ANALYSIS;
+  } finally {
+    if (fd !== null) {
+      try { closeSync(fd); } catch { /* already closed */ }
+    }
+  }
+}
+
+/** `~/.dreamcontext/cache/session-analysis/`: where the Stop hook keeps each session's checkpoints. */
+export function sessionAnalysisCacheDir(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'cache', 'session-analysis');
+}
+
+const SESSION_ANALYSIS_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
+
+export function readSessionAnalysisCache(sessionId: string, home?: string): SessionAnalysisCache {
+  try {
+    const raw = JSON.parse(readFileSync(join(sessionAnalysisCacheDir(home), `${safeCacheName(sessionId)}.json`), 'utf-8'));
+    if (raw && typeof raw === 'object' && raw.entries && typeof raw.entries === 'object') return raw as SessionAnalysisCache;
+  } catch { /* none yet, or unreadable: a full parse rebuilds it */ }
+  return { entries: {} };
+}
+
+/** Best-effort; also drops checkpoints of sessions untouched for two weeks. */
+export function writeSessionAnalysisCache(sessionId: string, cache: SessionAnalysisCache, home?: string): void {
+  try {
+    const dir = sessionAnalysisCacheDir(home);
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${safeCacheName(sessionId)}.json`);
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(cache));
+    renameSync(tmp, path);
+    const now = Date.now();
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      try {
+        if (now - statSync(p).mtimeMs > SESSION_ANALYSIS_MAX_AGE_MS) rmSync(p, { force: true });
+      } catch { /* raced */ }
+    }
+  } catch { /* the next Stop parses in full */ }
+}
+
+function safeCacheName(sessionId: string): string {
+  return sessionId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'no-session';
 }
 
 /**
@@ -356,6 +580,8 @@ export interface PromptRecallDeps {
   /** Injectable home for the tier, consent and key lookups (tests). */
   home?: string;
   haiku?: typeof haikuRecall;
+  /** The running dashboard's warm recall (tests inject; `null` = never ask it). */
+  viaDashboard?: ((prompt: string, root: string) => Promise<PromptRecall | null>) | null;
 }
 
 export interface PromptRecall {
@@ -391,21 +617,114 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
 
   const tier = recallMode === 'hybrid' ? resolvePromptTier(root, env, deps.home).tier : 'local';
   if (hybridReady(root, recallMode, tier, deps.home)) {
-    // BM25 + dense fusion (decision-embedding-layer). `hybridReady` gates on a model that is already on
-    // disk AND a warm index, so a prompt never triggers a download or a cold index build. Raw `.score`
-    // is untouched, so the gate in `recallGatePasses` is unchanged.
-    const t0 = performance.now();
-    const corpus = buildCorpusCached(root);
-    const timing: RecallTiming = { tier: 'local', querySource: 'none', fallback: 'none', corpusMs: Math.round(performance.now() - t0) };
-    const hits = await hybridSearch(prompt, corpus, root, RECALL_INJECT_TOP_K, {
-      tier,
-      home: deps.home,
-      timing,
-      maxInlineEmbed: HOOK_MAX_INLINE_EMBED,
-    });
-    return { hits, label: hybridHeaderLabel(timing), haiku: false, timing };
+    // The local tier's cost is loading the e5 model into THIS process (~5 CPU-seconds and ~450 MB
+    // per prompt, measured). When the app's dashboard server is running it holds the model warm:
+    // it runs the very same search (hybridPromptRecall) and answers in milliseconds. Not running,
+    // too slow (1.5 s) or an older server: the in-process path below, exactly as before.
+    if (recallMode === 'hybrid' && tier === 'local' && deps.viaDashboard !== null && env.DREAMCONTEXT_RECALL_VIA_SERVER !== '0') {
+      const remote = await (deps.viaDashboard ?? recallViaDashboard)(prompt, root).catch(() => null);
+      if (remote) return remote;
+    }
+    return hybridPromptRecall(prompt, root, tier, deps.home);
   }
   return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_INJECT_TOP_K), label: 'BM25', haiku: false, timing: null };
+}
+
+/**
+ * The hybrid prompt recall itself: BM25 + dense fusion (decision-embedding-layer). The prompt hook
+ * runs it in-process; the dashboard server runs it for the hook (POST /api/recall/prompt) with its
+ * model already loaded, so both answer with the same hits. Callers gate on `hybridReady`: a model
+ * already on disk AND a warm index, so a prompt never triggers a download or a cold index build.
+ * Raw `.score` is untouched, so the gate in `recallGatePasses` is unchanged.
+ */
+export async function hybridPromptRecall(prompt: string, root: string, tier: RecallTier, home?: string): Promise<PromptRecall> {
+  const t0 = performance.now();
+  const corpus = buildCorpusCached(root);
+  const timing: RecallTiming = { tier: 'local', querySource: 'none', fallback: 'none', corpusMs: Math.round(performance.now() - t0) };
+  const hits = await hybridSearch(prompt, corpus, root, RECALL_INJECT_TOP_K, {
+    tier,
+    home,
+    timing,
+    maxInlineEmbed: HOOK_MAX_INLINE_EMBED,
+  });
+  return { hits, label: hybridHeaderLabel(timing), haiku: false, timing };
+}
+
+/** One recall hit as the dashboard sends it to the hook: what rendering and the access bump read. */
+export interface WirePromptHit {
+  score: number;
+  rankScore: number;
+  snippet: string;
+  doc: Pick<CorpusDoc, 'type' | 'path' | 'relPath' | 'slug' | 'title' | 'description' | 'tags' | 'body'>;
+}
+
+export function toWirePromptHit(h: RecallHit): WirePromptHit {
+  const d = h.doc;
+  return {
+    score: h.score,
+    rankScore: h.rankScore,
+    snippet: h.snippet,
+    doc: { type: d.type, path: d.path, relPath: d.relPath, slug: d.slug, title: d.title, description: d.description, tags: d.tags, body: d.body },
+  };
+}
+
+function fromWirePromptHit(w: WirePromptHit): RecallHit {
+  const doc = { ...w.doc, tokens: [], tokenSet: new Set<string>(), termFreq: new Map<string, number>() } as CorpusDoc;
+  return { doc, score: w.score, rankScore: w.rankScore, snippet: w.snippet };
+}
+
+/** How long the prompt hook waits for the dashboard before recalling in-process. */
+export const RECALL_VIA_SERVER_TIMEOUT_MS = 1500;
+
+/**
+ * Ask the running dashboard server to recall for this prompt with its warm model. Null on any
+ * miss (no server, a server for another vault, an older server without the route, a timeout,
+ * a malformed answer): the caller then recalls in-process. Never throws.
+ */
+export function recallViaDashboard(
+  prompt: string,
+  root: string,
+  opts: { port?: number; timeoutMs?: number; home?: string } = {},
+): Promise<PromptRecall | null> {
+  const port = opts.port ?? resolveDashboardPort();
+  const timeoutMs = opts.timeoutMs ?? RECALL_VIA_SERVER_TIMEOUT_MS;
+  let vault: string | null = null;
+  try {
+    const projectRoot = resolve(dirname(root));
+    vault = listVaults(opts.home).find((v) => resolve(v.path) === projectRoot)?.name ?? null;
+  } catch { /* unregistered: the server's own vault must then be this one */ }
+  const body = JSON.stringify({ prompt, root });
+  return new Promise((resolveRecall) => {
+    let settled = false;
+    const done = (v: PromptRecall | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveRecall(v);
+    };
+    const timer = setTimeout(() => { req.destroy(); done(null); }, timeoutMs);
+    const headers: Record<string, string | number> = { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) };
+    if (vault) headers['x-dreamcontext-vault'] = vault;
+    const req = httpRequest({ host: '127.0.0.1', port, path: '/api/recall/prompt', method: 'POST', headers }, (res) => {
+      let data = '';
+      res.setEncoding('utf-8');
+      res.on('data', (c: string) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return done(null);
+        try {
+          const parsed = JSON.parse(data) as { hits?: unknown; label?: unknown; timing?: unknown };
+          if (!Array.isArray(parsed.hits) || typeof parsed.label !== 'string') return done(null);
+          const hits = (parsed.hits as WirePromptHit[]).map(fromWirePromptHit);
+          done({ hits, label: parsed.label, haiku: false, timing: (parsed.timing ?? null) as RecallTiming | null });
+        } catch {
+          done(null);
+        }
+      });
+      res.on('error', () => done(null));
+    });
+    req.on('error', () => done(null));
+    req.end(body);
+  });
 }
 
 /**
@@ -513,9 +832,26 @@ function usageKey(rec: object, lineIndex: number): string {
  * when a consolidation bound excluded it, nothing is subtracted, because the
  * first post-bound message is real work, not startup.
  */
+interface UsageLedgerState {
+  firstKey: string | null;
+  /** [key, novel, startup] per counted message, in first-seen order. */
+  byMessage: Array<[string, number, number]>;
+}
+
 class UsageLedger {
   private readonly byMessage = new Map<string, { novel: number; startup: number }>();
   private firstKey: string | null = null;
+
+  toJSON(): UsageLedgerState {
+    return { firstKey: this.firstKey, byMessage: [...this.byMessage].map(([k, u]) => [k, u.novel, u.startup]) };
+  }
+
+  static fromJSON(st: UsageLedgerState): UsageLedger {
+    const ledger = new UsageLedger();
+    ledger.firstKey = st.firstKey;
+    for (const [k, novel, startup] of st.byMessage) ledger.byMessage.set(k, { novel, startup });
+    return ledger;
+  }
 
   /** Note the transcript's first API message. Called for EVERY record, before the bound check. */
   observe(rec: object, lineIndex: number): void {
@@ -781,15 +1117,19 @@ export function mergeAnalyses(main: TranscriptAnalysis, subs: TranscriptAnalysis
  * Sub-agent harvesting is best-effort — a missing or unreadable `subagents/`
  * dir yields the main analysis unchanged, never a throw.
  */
-export function analyzeSession(loc: TranscriptLocation, sinceISO?: string | null): TranscriptAnalysis {
-  const main = loc.mainPath ? analyzeTranscript(loc.mainPath, sinceISO) : ZERO_ANALYSIS;
+export function analyzeSession(loc: TranscriptLocation, sinceISO?: string | null, cache?: SessionAnalysisCache): TranscriptAnalysis {
+  // With a cache (the Stop hook), each transcript is read from where the last Stop left off.
+  const analyze = (p: string, opts: { subtractStartup?: boolean } = {}) => (cache
+    ? analyzeTranscriptResumable(p, sinceISO, opts, cache)
+    : analyzeTranscript(p, sinceISO, opts));
+  const main = loc.mainPath ? analyze(loc.mainPath) : ZERO_ANALYSIS;
   try {
     const subPaths = listSubagentTranscripts(loc);
     if (subPaths.length === 0) return main;
     // Only the MAIN transcript's startup is subtracted. A sub-agent's first
     // message (its system prompt plus the brief it was handed) is context the
     // fan-out really paid for, not the session's own boot.
-    return mergeAnalyses(main, subPaths.map(p => analyzeTranscript(p, sinceISO, { subtractStartup: false })));
+    return mergeAnalyses(main, subPaths.map(p => analyze(p, { subtractStartup: false })));
   } catch {
     return main;
   }
@@ -1045,52 +1385,9 @@ export function runFormatter(detection: FormatterDetection, filePath: string): {
 export function runTscCheck(filePath: string): string | null {
   const tsconfig = findTsconfig(filePath);
   if (!tsconfig) return null;
-  return runTscCheckWithConfig(filePath, tsconfig);
+  const projectRoot = dirname(tsconfig);
+  return filterTscErrors(defaultTscRunner(projectRoot, TSC_TIMEOUT_MS).output, filePath, projectRoot);
 }
-
-/** Run tsc --noEmit with a known tsconfig path. Returns errors filtered to the file, or null. */
-function runTscCheckWithConfig(filePath: string, tsconfigPath: string): string | null {
-  const projectRoot = dirname(tsconfigPath);
-  let tscOutput: string;
-  try {
-    const localBin = resolveLocalBin('tsc', projectRoot);
-    const args = ['--noEmit', '--pretty', 'false', '--incremental'];
-    if (localBin) {
-      execFileSync(localBin, args, {
-        cwd: projectRoot, timeout: 30000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    } else {
-      execFileSync('npx', ['tsc', ...args], {
-        cwd: projectRoot, timeout: 30000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    }
-    return null; // clean compile
-  } catch (err: unknown) {
-    if (err && typeof err === 'object' && 'stdout' in err) {
-      tscOutput = String((err as { stdout?: string }).stdout || '') + String((err as { stderr?: string }).stderr || '');
-    } else {
-      return null; // tsc not installed or other non-TS error
-    }
-  }
-
-  if (!tscOutput.trim()) return null;
-
-  // Filter to errors in the edited file only (absolute and relative path matching)
-  const resolvedPath = resolve(filePath);
-  const relativePath = relative(projectRoot, resolvedPath);
-
-  const lines = tscOutput.split('\n');
-  const relevantErrors: string[] = [];
-  for (const line of lines) {
-    if (line.includes(resolvedPath) || line.includes(relativePath)) {
-      relevantErrors.push(line.trim());
-    }
-  }
-
-  if (relevantErrors.length === 0) return null;
-  return `TypeScript errors in ${basename(filePath)}:\n${relevantErrors.join('\n')}`;
-}
-
 
 /**
  * Resolve the auto-sleep nag state for THIS machine. Cheap and total: any
@@ -1729,6 +2026,44 @@ function spawnBrainPull(root: string): void {
 
 // ─── Command Registration ───────────────────────────────────────────────────
 
+/** When this hook process started: Claude Code's timeout runs from its launch, not from a call. */
+function hookStartedAt(): number {
+  return Math.round(Date.now() - process.uptime() * 1000);
+}
+
+/** Room a Stop keeps between its last check and the timeout, to print its answer and exit. */
+const STOP_EXIT_MARGIN_MS = 2000;
+/** What a Stop spends on everything but the type-check (the ledger, the analysis): measured ~0.3 s. */
+const STOP_OWN_WORK_MS = 1500;
+
+/**
+ * The Stop hook's installed timeout for this project, in ms: the smallest timeout on a Stop
+ * handler that runs `dreamcontext hook stop` in the project's .claude/settings(.local).json.
+ * 45 s (what install-skill writes today) when none is found. An older install still says 5 s:
+ * the type-check never plans past it.
+ */
+function installedStopTimeoutMs(): number {
+  let found: number | null = null;
+  const dirs = [process.env.CLAUDE_PROJECT_DIR, process.cwd()].filter((d): d is string => !!d);
+  for (const dir of [...new Set(dirs)]) {
+    for (const name of ['settings.json', 'settings.local.json']) {
+      try {
+        const settings = JSON.parse(readFileSync(join(dir, '.claude', name), 'utf-8')) as {
+          hooks?: Record<string, Array<{ hooks?: Array<{ command?: unknown; timeout?: unknown }> }>>;
+        };
+        for (const group of settings.hooks?.Stop ?? []) {
+          for (const h of group.hooks ?? []) {
+            if (typeof h.command === 'string' && /dreamcontext hook stop\b/.test(h.command) && typeof h.timeout === 'number' && h.timeout > 0) {
+              found = found === null ? h.timeout : Math.min(found, h.timeout);
+            }
+          }
+        }
+      } catch { /* absent or unreadable */ }
+    }
+  }
+  return (found ?? 45) * 1000;
+}
+
 export function registerHookCommand(program: Command): void {
   const hook = program
     .command('hook')
@@ -1757,30 +2092,81 @@ export function registerHookCommand(program: Command): void {
       try {
         if (process.env.DREAMCONTEXT_CHAT_TAB === '1' && !isNestedClaudeHook()) {
           titleBlock = chatTabTitleStopBlock(process.env, input as Record<string, unknown>, resolveContextRoot());
-          if (titleBlock) console.log(JSON.stringify(titleBlock));
         }
       } catch { /* advisory — must never break the stop path */ }
+
+      // ── Type errors in the files this session edited ─────────────────────
+      // A TS edit whose check another agent's hook ran, or a slow project's whole turn
+      // (checked once here instead of on every edit; see lib/tsc-check.ts), reports here.
+      // Checked LAST (finishStop), after the session ledger is written: a check takes seconds,
+      // and a hook its timeout cuts off must never lose the ledger with it. Bounded by the time
+      // the installed Stop hook actually has. Blocks ONCE: a stop that is itself the continuation
+      // of a block reports nothing, so a type error left in place can never loop the turn.
+      const stopSessionId = typeof input.session_id === 'string' ? input.session_id : '';
+      let tscCanBlock = false;
+      try {
+        tscCanBlock = !!stopSessionId && input.stop_hook_active !== true && tscWorkFor(stopSessionId);
+      } catch { /* advisory — must never break the stop path */ }
+
+      // One answer on stdout (two JSON objects would be no answer at all), printed by
+      // finishStop on every way out of this handler; nothing else here writes stdout.
+      let stopFinished = false;
+      const finishStop = (): void => {
+        if (stopFinished) return;
+        stopFinished = true;
+        let tscReason: string | null = null;
+        if (tscCanBlock) {
+          try {
+            const tscMessages = checkAtStop(stopSessionId, {
+              startedAt: hookStartedAt(),
+              budgetMs: installedStopTimeoutMs() - STOP_EXIT_MARGIN_MS,
+            });
+            if (tscMessages.length > 0) tscReason = tscStopReason(tscMessages);
+          } catch { /* advisory — must never break the stop path */ }
+        }
+        const stopBlock = titleBlock || tscReason
+          ? { decision: 'block' as const, reason: [titleBlock?.reason, tscReason].filter(Boolean).join('\n\n') }
+          : null;
+        if (stopBlock) console.log(JSON.stringify(stopBlock));
+        // The chip update the early path below held back while a block was still possible.
+        try {
+          if (!stopBlock && (titleBlock || tscCanBlock) && process.env.DREAMCONTEXT_AGENT_STATUS_FILE && !isNestedClaudeHook()) {
+            writeAgentTurnState(process.env.DREAMCONTEXT_AGENT_STATUS_FILE, 'ready');
+          }
+        } catch { /* status is best-effort */ }
+      };
 
       // ── Live turn state → dashboard status chip ──────────────────────────
       // Stop means the turn ENDED — flip the embedded tab's chip to "ready" via the
       // status-file contract (see writeAgentTurnState). Before the root check: the
       // chip must update even when a brain is missing. Nested-guarded so a `claude
       // -p` the agent ran via Bash can't mark the still-working outer turn done.
+      // A turn that may still be blocked (title, type errors) decides in finishStop.
       try {
-        if (!titleBlock && process.env.DREAMCONTEXT_AGENT_STATUS_FILE && !isNestedClaudeHook()) {
+        if (!titleBlock && !tscCanBlock && process.env.DREAMCONTEXT_AGENT_STATUS_FILE && !isNestedClaudeHook()) {
           writeAgentTurnState(process.env.DREAMCONTEXT_AGENT_STATUS_FILE, 'ready');
         }
       } catch { /* status is best-effort — the chip falls back to the screen heuristic */ }
 
       const root = resolveContextRoot();
-      if (!root) process.exit(0);
+      if (!root) {
+        finishStop();
+        process.exit(0);
+      }
 
       const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
       const transcriptPath = typeof input.transcript_path === 'string' ? input.transcript_path : null;
       const lastAssistantMessage = typeof input.last_assistant_message === 'string'
         ? input.last_assistant_message : null;
 
-      if (!sessionId) process.exit(0);
+      if (!sessionId) {
+        finishStop();
+        process.exit(0);
+      }
+
+      // Everything from here to finishStop() is the session ledger and auto-sleep; whatever
+      // it throws, the one stdout answer (title, type errors) is still printed.
+      try {
 
       // Keep the embedded-tab session map fresh on every completed turn (see the
       // session-start handler for the full story). Belt-and-suspenders: a `/clear`
@@ -1823,9 +2209,13 @@ export function registerHookCommand(program: Command): void {
       // (pre-epoch work) or produced BY the consolidation (the sleep fan-out),
       // and re-scoring them here is exactly how debt was flooring at 9-10
       // right after every sleep instead of resting at 0.
+      // Resumed from this session's last Stop: a long session's Stop reads only what its
+      // transcripts gained since, not the whole file every turn (see analyzeTranscriptResumable).
+      const analysisCache = readSessionAnalysisCache(sessionId);
       const analysis = transcriptOnDisk
-        ? analyzeSession(resolveTranscript(transcriptPath, { sessionId }), state.last_consolidated_at)
+        ? analyzeSession(resolveTranscript(transcriptPath, { sessionId }), state.last_consolidated_at, analysisCache)
         : ZERO_ANALYSIS;
+      if (transcriptOnDisk) writeSessionAnalysisCache(sessionId, analysisCache);
       const { changeCount, toolCount } = analysis;
       // Weighted-sum debt: log-compressed token / change / tool axes plus the
       // substance ladder, summed and rounded onto 0..SESSION_SCORE_MAX. Replaces
@@ -1929,6 +2319,11 @@ export function registerHookCommand(program: Command): void {
         if (process.env.DREAMCONTEXT_DEBUG) {
           console.error('[auto-sleep] evaluation failed:', (autoErr as Error).message ?? autoErr);
         }
+      }
+
+      } finally {
+        // Last: the type-check and the one stdout answer (see finishStop).
+        finishStop();
       }
     });
 
@@ -2893,6 +3288,7 @@ export function registerHookCommand(program: Command): void {
         ? input.tool_input as Record<string, unknown>
         : {};
       const filePath = typeof toolInput.file_path === 'string' ? toolInput.file_path : '';
+      const hookSessionId = typeof input.session_id === 'string' ? input.session_id : '';
 
       const messages: string[] = [];
 
@@ -2915,13 +3311,21 @@ export function registerHookCommand(program: Command): void {
           }
         }
 
-        // Phase 2: TypeScript check (use pre-found tsconfig)
+        // Phase 2: TypeScript check (use pre-found tsconfig). One check per project at a time,
+        // shared by every agent editing it (see lib/tsc-check.ts): errors this hook does not
+        // see now reach the session at its next PostToolUse or at Stop.
         if (config.tsconfig) {
-          const tsErrors = runTscCheckWithConfig(filePath, config.tsconfig);
-          if (tsErrors) {
-            messages.push(tsErrors);
-          }
+          try {
+            messages.push(...checkEditedFile(config.tsconfig, filePath, {
+              sessionId: hookSessionId,
+              startedAt: hookStartedAt(),
+              stopBudgetMs: installedStopTimeoutMs() - STOP_EXIT_MARGIN_MS - STOP_OWN_WORK_MS,
+            }));
+          } catch { /* the type-check is advisory — never let it break the edit path */ }
         }
+      } else if (hookSessionId) {
+        // Errors another hook's check found in this session's earlier TS edits.
+        try { messages.push(...takeTscResults(hookSessionId)); } catch { /* advisory */ }
       }
 
       // ── Phase 3: the opt-in context-handoff nudge ─────────────────────────

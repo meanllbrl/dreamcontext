@@ -21,39 +21,39 @@ hooks:
     - matcher: "startup|resume|compact|clear"
       hooks:
         - type: command
-          command: "npx dreamcontext hook session-start"
+          command: "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook session-start || exec npx dreamcontext hook session-start"
           timeout: 10
   Stop:
     - hooks:
         - type: command
-          command: "npx dreamcontext hook stop"
-          timeout: 5
+          command: "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook stop || exec npx dreamcontext hook stop"
+          timeout: 45
   SubagentStart:
     - hooks:
         - type: command
-          command: "npx dreamcontext hook subagent-start"
+          command: "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook subagent-start || exec npx dreamcontext hook subagent-start"
           timeout: 5
   PreToolUse:
     - matcher: "Agent"
       hooks:
         - type: command
-          command: "npx dreamcontext hook pre-tool-use"
+          command: "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook pre-tool-use || exec npx dreamcontext hook pre-tool-use"
           timeout: 5
   UserPromptSubmit:
     - hooks:
         - type: command
-          command: "npx dreamcontext hook user-prompt-submit"
+          command: "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook user-prompt-submit || exec npx dreamcontext hook user-prompt-submit"
           timeout: 5
   PostToolUse:
     - matcher: "Edit|Write"
       hooks:
         - type: command
-          command: "npx dreamcontext hook post-tool-use"
+          command: "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook post-tool-use || exec npx dreamcontext hook post-tool-use"
           timeout: 30
   PreCompact:
     - hooks:
         - type: command
-          command: "npx dreamcontext hook pre-compact"
+          command: "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook pre-compact || exec npx dreamcontext hook pre-compact"
           timeout: 5
 ---
 

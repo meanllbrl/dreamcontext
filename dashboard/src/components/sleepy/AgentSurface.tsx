@@ -40,6 +40,7 @@ import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '..
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSession';
+import { setFocusedChat } from '../../lib/focusedChat';
 import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
@@ -79,7 +80,7 @@ import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, withBaseGeneration } from '../handsfree/rosterRehydrate';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
-import type { LiveChatWire, LiveChatsWire } from '../handsfree/macContract';
+import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire } from '../handsfree/macContract';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 
 /**
@@ -639,12 +640,20 @@ export function AgentSurface() {
   // Mac mode's phone: the stored tabs the last restore could not judge (the Mac did not answer
   // live-chats), kept on every save so an unreachable Mac never deletes them.
   const unrestoredRef = useRef<SavedMeta[]>([]);
-  // Bumped to pull the roster again (a stale PUT).
+  // Bumped to pull the roster again (a stale PUT, or Mac mode's Return).
   const [rehydrateNonce, setRehydrateNonce] = useState(0);
   const rehydrateRoster = useCallback(() => {
     hydratedRef.current = false;
     setRehydrateNonce((n) => n + 1);
   }, []);
+  // Mac mode ended, whoever pressed Return: Return moved the tabs the phone had open into this
+  // project's roster, so it is pulled again and they open beside the tabs already here (a chat
+  // the Mac still runs is adopted, not spawned again).
+  useEffect(() => {
+    if (isMacPhoneSurface()) return;
+    window.addEventListener(MAC_MODE_ENDED_EVENT, rehydrateRoster);
+    return () => window.removeEventListener(MAC_MODE_ENDED_EVENT, rehydrateRoster);
+  }, [rehydrateRoster]);
   // ── The Claude account changed underneath us ───────────────────────────────────────
   //
   // `claude` reads its credentials once, at startup, so signing into a different account
@@ -2679,6 +2688,16 @@ export function AgentSurface() {
     const s = sessions.current.get(sid);
     return s && s.status !== 'closed' ? s : undefined;
   }, [sessionList]);
+
+  // The chat the owner is focused on, for the window's presence report (lib/focusedChat.ts):
+  // the focused pane's visible tab, only while the surface is open on a desktop. Its id is the
+  // conversation the chat was spawned on (`claudeId`), which the server's chat registry keys by.
+  const focusedLive = liveSession(focusedSessionId);
+  const focusedChatId = expanded && !isMobile && focusedLive?.kind === 'chat' ? focusedLive.claudeId : '';
+  useEffect(() => {
+    if (vault) setFocusedChat(vault, focusedChatId || null);
+  }, [vault, focusedChatId]);
+  useEffect(() => () => { if (vault) setFocusedChat(vault, null); }, [vault]);
 
   /**
    * A tab's TRANSPORT kind — which object actually runs it — as opposed to the display kind

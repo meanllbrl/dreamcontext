@@ -18,7 +18,7 @@ import { ListeningOverlay } from './ListeningOverlay';
 import { NOTCH_GROW_EASE, drawsOpen, islandClip, planMotion, type IslandRect, type MotionPhase, type MotionRequest } from './notchMotion';
 import {
   EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
-  PEEK_TTL_MS, offScreenAsks, peekTtlMs, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
+  PEEK_TTL_MS, noticeKey, offScreenAsks, peekTtlMs, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
   type ActivityItem, type GlanceChat, type Handoff, type Inbox, type Rollup,
   createRawGate, startsFresh,
 } from './notchModel';
@@ -708,11 +708,13 @@ export function Notch() {
   const hoverRef = useRef(false);
 
   // A prompt the owner has not seen yet drops the peek by itself; it folds after its TTL
-  // (`PEEK_TTL_MS`) and still waits on the pill and under "Now". One already seen (answered,
-  // dismissed, timed out, or asked in the project on screen) never drops it again.
+  // (`PEEK_TTL_MS`: a glance while he is in the app) and still waits on the pill and under
+  // "Now". One already seen (answered, dismissed, timed out, or asked in the chat he is focused
+  // on) never drops it again.
+  const inApp = inbox.lookingAt !== null;
   const askKey = (c: GlanceChat) => `${c.sessionId}:${c.ask!.id}`;
   const askKeys = glance.filter((c) => c.ask).map(askKey).join('|');
-  const peekAsks = offScreenAsks(glance, inbox.lookingAt);
+  const peekAsks = offScreenAsks(glance, inbox.lookingAtSession);
   const peekAsksRef = useRef(peekAsks);
   peekAsksRef.current = peekAsks;
   const seenAsks = useRef<Set<string>>(new Set());
@@ -723,7 +725,7 @@ export function Notch() {
     if (fresh && canPeekRef.current) setPeek('ask');
     if (!keys.length) setPeek((p) => (p === 'ask' ? null : p));
   }, [askKeys]);
-  // The owner brought the asking project to the front: the prompt is on his screen now.
+  // The owner focused the asking chat: the prompt is on his screen now.
   useEffect(() => {
     if (!peekAsks.length) setPeek((p) => (p === 'ask' ? null : p));
   }, [peekAsks.length]);
@@ -766,13 +768,26 @@ export function Notch() {
   // Arrivals wait in a queue until the peek is free, then speak one at a time: an arrival that
   // lands under a waiting prompt, a progress line, the open notch or another announcement used
   // to be listed silently, and the owner never heard about the finish (2026-10-04).
-  const [peekQueue, setPeekQueue] = useState<Array<{ id: string; item: PeekItem }>>([]);
+  // `id` is the announcement (a notice's `noticeKey`: each turn of a chat is its own finish),
+  // `row` the inbox row it speaks for.
+  const [peekQueue, setPeekQueue] = useState<Array<{ id: string; row: string; item: PeekItem }>>([]);
   const seenInbox = useRef<{ booted: boolean; ids: Set<string>; runs: Set<string> }>({ booted: false, ids: new Set(), runs: new Set() });
   useEffect(() => {
     const seen = seenInbox.current;
-    const fresh: Array<{ id: string; item: PeekItem }> = [];
-    for (const n of inbox.notices) if (!seen.ids.has(n.id)) { seen.ids.add(n.id); fresh.push({ id: n.id, item: { kind: 'notice', notice: n } }); }
-    for (const p of inbox.posts) if (!seen.ids.has(p.key)) { seen.ids.add(p.key); fresh.push({ id: p.key, item: { kind: 'post', post: p } }); }
+    const fresh: Array<{ id: string; row: string; item: PeekItem }> = [];
+    const listedKeys = new Set<string>();
+    for (const n of inbox.notices) {
+      const key = noticeKey(n);
+      listedKeys.add(key);
+      if (!seen.ids.has(key)) { seen.ids.add(key); fresh.push({ id: key, row: n.id, item: { kind: 'notice', notice: n } }); }
+    }
+    for (const p of inbox.posts) {
+      listedKeys.add(p.key);
+      if (!seen.ids.has(p.key)) { seen.ids.add(p.key); fresh.push({ id: p.key, row: p.key, item: { kind: 'post', post: p } }); }
+    }
+    // A key dies once the server stops listing it: an unread row stays listed for hours, so
+    // nothing is announced twice, and the set does not grow with every turn of every chat.
+    for (const k of [...seen.ids]) if (!listedKeys.has(k)) seen.ids.delete(k);
     const liveRuns = new Set(inbox.running.map(runKey));
     const starts: Array<{ id: string; item: PeekItem }> = [];
     for (const r of inbox.running) if (!seen.runs.has(runKey(r))) { seen.runs.add(runKey(r)); starts.push({ id: `run:${runKey(r)}`, item: { kind: 'started', run: r } }); }
@@ -781,7 +796,9 @@ export function Notch() {
     // Server order is newest first; the queue speaks oldest first. A start is news only when
     // nothing else is: it never waits in the queue behind (or ahead of) a finish or a post.
     const arrivals = fresh.reverse();
-    if (arrivals.length) setPeekQueue((q) => enqueuePeeks(q, arrivals));
+    // A newer turn of a chat still waiting in the queue replaces the older one's announcement.
+    const rows = new Set(arrivals.map((a) => a.row));
+    if (arrivals.length) setPeekQueue((q) => enqueuePeeks(q.filter((x) => !rows.has(x.row)), arrivals));
     else if (starts.length && canPeekRef.current && !peekReasonRef.current) { setEventPeek(starts[0].item); setPeek('event'); }
   }, [inbox]);
   // Drain: the next waiting arrival speaks once the peek is free. One the owner already acted on
@@ -792,24 +809,34 @@ export function Notch() {
     const listed = new Set([...notices.map((n) => n.id), ...posts.map((p) => p.key)]);
     const [next, ...rest] = peekQueue;
     setPeekQueue(rest);
-    if (!listed.has(next.id)) return;
+    if (!listed.has(next.row)) return;
+    // The chat the owner is focused on finished: he watched it happen.
+    if (next.item.kind === 'notice' && next.item.notice.kind === 'finished' && next.item.notice.sessionId === inbox.lookingAtSession) return;
     setEventPeek(next.item);
     setPeek('event');
-  }, [peekQueue, peek, canPeek, notices, posts]);
+  }, [peekQueue, peek, canPeek, notices, posts, inbox.lookingAtSession]);
+  // A finish on the peek whose row went away (the owner focused that chat, or it is working
+  // again) has nothing left to say.
+  useEffect(() => {
+    if (eventPeek?.kind !== 'notice' || eventPeek.notice.kind !== 'finished') return;
+    const id = eventPeek.notice.id;
+    if (!notices.some((n) => n.id === id)) setEventPeek(null);
+  }, [notices, eventPeek]);
 
   // The event / progress peek folds by itself — never while the pointer rests on it.
   useEffect(() => {
     if ((peek !== 'event' && peek !== 'progress') || !eventPeek) return;
     peekExpiredRef.current = false;
-    const ms = eventPeek.kind === 'progress' ? readingTimeMs(eventPeek.text) : peekTtlMs(eventPeek) ?? PEEK_TTL_MS.finished;
+    const ms = eventPeek.kind === 'progress' ? readingTimeMs(eventPeek.text) : peekTtlMs(eventPeek, inApp) ?? PEEK_TTL_MS.finished;
     // A hover the webview DID see folds on leave (onHoverOut); otherwise the OS is asked.
     return foldWhenAway(ms, () => {
       if (hoverRef.current) peekExpiredRef.current = true;
       return hoverRef.current;
     }, () => setPeek((p) => (p === 'event' || p === 'progress' ? null : p)));
-  }, [peek, eventPeek]);
-  // A prompt's peek folds too; a new prompt (or a permission over a question) restarts the clock.
-  const askTtl = peekAsks.some((c) => c.ask?.kind === 'permission') ? PEEK_TTL_MS.permission : PEEK_TTL_MS.question;
+  }, [peek, eventPeek, inApp]);
+  // A prompt's peek folds too; a new prompt (or a permission over a question) restarts the clock,
+  // and so does the owner coming into the app (a glance) or leaving it (the full time).
+  const askTtl = peekTtlMs({ kind: peekAsks.some((c) => c.ask?.kind === 'permission') ? 'permission' : 'question' }, inApp)!;
   useEffect(() => {
     if (peek !== 'ask') return;
     peekExpiredRef.current = false;

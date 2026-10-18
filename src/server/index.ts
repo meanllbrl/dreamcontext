@@ -236,7 +236,7 @@ import { handlePacksGet } from './routes/packs.js';
 import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
 import { handleTaxonomyGet } from './routes/taxonomy.js';
-import { handleRecallGet, handleRecallHaikuGet } from './routes/recall.js';
+import { handleRecallGet, handleRecallPromptPost, handleRecallHaikuGet } from './routes/recall.js';
 import { recallCloudRoutes } from './routes/recall-cloud.js';
 import { recallOptionsRoutes } from './routes/recall-options.js';
 import {
@@ -413,6 +413,8 @@ export function buildRouter(): Router {
   // The /haiku variant adds intent-aware, LLM-filtered recall for Ask mode.
   router.get('/api/recall/haiku', handleRecallHaikuGet);
   router.get('/api/recall', handleRecallGet);
+  // The prompt hook's hybrid recall, run on this server's warm model (loopback only).
+  router.post('/api/recall/prompt', handleRecallPromptPost);
   // Opt-in cloud recall tiers (Settings): status, key, consent, index. Every handler guards itself
   // (loopback Host, same-origin Origin, loopback socket).
   router.get('/api/recall/options', recallOptionsRoutes.options);

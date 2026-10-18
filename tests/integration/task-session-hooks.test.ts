@@ -13,6 +13,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, w
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { hookCommand } from '../../src/cli/commands/install-skill.js';
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
 const GUARD = join(__dirname, '..', '..', 'dist', 'hooks', 'read-task-guard.cjs');
@@ -84,7 +85,7 @@ describe('Read hook (AC5)', () => {
     const settings = JSON.parse(readFileSync(join(project, '.claude', 'settings.json'), 'utf-8'));
     const post = settings.hooks.PostToolUse.find((g: { matcher?: string }) => g.matcher === 'Read');
     expect(post.hooks[0].command).toBe('node "$CLAUDE_PROJECT_DIR/.claude/hooks/read-task-guard.cjs"');
-    expect(settings.hooks.SessionEnd[0].hooks[0].command).toBe('npx dreamcontext hook session-end');
+    expect(settings.hooks.SessionEnd[0].hooks[0].command).toBe(hookCommand('session-end'));
   });
 });
 

@@ -387,8 +387,6 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-a-progress[data-status='running'] .chat-a-progress-fill { animation: none; width: 100%; opacity: 0.5; }
 }
-/* Light mode removes the sweep: rest as the reduced-motion bar, never as a made-up 40 %. */
-:root[data-light='true'] .chat-a-progress[data-status='running'] .chat-a-progress-fill { width: 100%; opacity: 0.5; }
 
 .chat-a-alerticon { flex: 0 0 auto; color: var(--color-text); }
 

@@ -12,19 +12,24 @@ import { isDelegatedSession } from './delegations.js';
  * Owner, 2026-10-04: the notch is where every chat, automation and account event reaches him,
  * and a click lands in the window it is about. Three kinds live in this server's memory:
  *
- *   finished — a chat finished a turn while its project was NOT the one on screen
+ *   finished — a chat finished a turn while the owner was NOT focused on that very chat
  *   account  — an account hit its limit, and (when a chat moved) which account took over
- *   presence — which project the owner is looking at right now (the input to `finished`)
+ *   presence — which project, and which chat in it, the owner is looking at right now
  *
  * Automation posts and running automations are NOT here: they live on disk per project and
  * are joined at read time (`src/server/assistant-inbox.ts`). The mute list for them is here,
  * because it is machine-local owner state like the rest.
  *
  * "NOT ON SCREEN" is the presence report: every project window says which project it shows
- * while it has focus (`POST /api/assistant/presence`) and withdraws it on blur. A report goes
- * stale after PRESENCE_TTL_MS so a window that died while focused cannot hide finishes forever.
- * A finish in the project the owner is looking at is not news; looking at a project later
- * clears its finishes, since the owner has now seen them.
+ * while it has focus (`POST /api/assistant/presence`), and which chat has the focus when the chat
+ * surface is open, and withdraws it on blur. A report goes stale after PRESENCE_TTL_MS so a
+ * window that died while focused cannot hide finishes forever.
+ *
+ * Owner, 2026-10-18: only the chat he is FOCUSED on is on his screen. A finish there is not news
+ * and focusing a chat clears its finish. Every other chat, even one in the project in front, is
+ * news: the notch shows it briefly (it knows he is in the app from `lookingAt`). Looking at a
+ * project still clears its finishes, but only those older than SEEN_GRACE_MS, so a finish in
+ * the project in front lives long enough for that brief peek.
  *
  * EVERY KEY HAS A DEATH (`pattern-every-store-key-needs-a-death`): events are capped at
  * EVENTS_CAP and die after EVENT_TTL_MS; a pending finish timer dies with its session's next
@@ -36,6 +41,9 @@ import { isDelegatedSession } from './delegations.js';
 export const FINISH_DEBOUNCE_MS = 2_500;
 /** A presence report older than this is not believed. Windows re-report every 20 s. */
 export const PRESENCE_TTL_MS = 60_000;
+/** Looking at a project clears its finishes only once they are this old: a newer one has not
+ *  had its peek yet (the notch polls every 4 s and may be speaking another one first). */
+export const SEEN_GRACE_MS = 30_000;
 export const EVENTS_CAP = 40;
 export const EVENT_TTL_MS = 12 * 60 * 60_000;
 /** A limit and a switch for the same account this close together are one event. */
@@ -82,25 +90,35 @@ export type AccountEventView = AccountEvent & { account: string; toAccount: stri
 
 // ─── Presence ───────────────────────────────────────────────────────────────────────
 
-interface Presence { label: string; vault: string | null; at: number }
+interface Presence { label: string; vault: string | null; sessionId: string | null; at: number }
 let presence: Presence | null = null;
 
-/** A window reports what it shows while focused (`vault`), or that it lost focus (`null`). */
-export function setPresence(label: string, vault: string | null, now = Date.now()): void {
+/**
+ * A window reports what it shows while focused (`vault`, and the chat that has the focus when
+ * the chat surface is open), or that it lost focus (`null`).
+ */
+export function setPresence(label: string, vault: string | null, sessionId: string | null = null, now = Date.now()): void {
   if (vault === null) {
     // Only the window that holds the report may withdraw it: a blur in window A arriving after
     // window B gained focus must not erase B.
     if (presence && presence.label === label) presence = null;
     return;
   }
-  presence = { label, vault, at: now };
-  dropFinishedFor(vault);
+  presence = { label, vault, sessionId, at: now };
+  if (sessionId) dropFinishedSession(sessionId);
+  dropFinishedFor(vault, now - SEEN_GRACE_MS);
 }
 
 /** The project the owner is looking at right now, or null (another app, or nothing reported). */
 export function lookingAt(now = Date.now()): string | null {
   if (!presence || now - presence.at > PRESENCE_TTL_MS) return null;
   return presence.vault;
+}
+
+/** The chat the owner is focused on right now, or null (none open, another app, stale). */
+export function lookingAtSession(now = Date.now()): string | null {
+  if (!presence || now - presence.at > PRESENCE_TTL_MS) return null;
+  return presence.sessionId;
 }
 
 // ─── Events ─────────────────────────────────────────────────────────────────────────
@@ -120,8 +138,9 @@ function push(e: NotchEvent): void {
   prune(e.at);
 }
 
-function dropFinishedFor(vault: string): void {
-  events = events.filter((e) => !(e.kind === 'finished' && e.vault === vault));
+/** Clear `vault`'s finishes recorded at or before `seenBefore` (all of them by default). */
+function dropFinishedFor(vault: string, seenBefore = Infinity): void {
+  events = events.filter((e) => !(e.kind === 'finished' && e.vault === vault && e.at <= seenBefore));
 }
 
 function dropFinishedSession(sessionId: string): void {
@@ -151,7 +170,7 @@ function onChange({ entry, from }: ChatChange): void {
     finishTimers.delete(id);
     const now = getChat(id);
     if (!now || now.status !== 'idle' || isDelegatedSession(id)) return;
-    if (lookingAt() === now.vault) return;
+    if (lookingAtSession() === id) return;
     recordFinished(now);
   }, FINISH_DEBOUNCE_MS);
   t.unref?.();

@@ -12,9 +12,17 @@ let state: MacStatus | null = null;
 const listeners = new Set<(s: MacStatus | null) => void>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 
+/** Did this reading end a run? On or stopping before, off now; a start that failed is not one. */
+export function macModeEnded(prev: MacStatus | null, next: MacStatus | null): boolean {
+  return (prev?.phase === 'on' || prev?.phase === 'stopping') && next?.phase === 'off';
+}
+
 function emit(next: MacStatus | null): void {
+  const ended = macModeEnded(state, next);
   state = next;
   for (const l of listeners) l(next);
+  // Whoever pressed Return (this sheet, another window, the CLI): this window sees it here.
+  if (ended) window.dispatchEvent(new Event(MAC_MODE_ENDED_EVENT));
 }
 
 export async function refreshMacStatus(): Promise<MacStatus | null> {
@@ -58,7 +66,6 @@ export async function macAction<T>(method: 'post' | 'delete', path: string, body
   try {
     const value = method === 'post' ? await api.post<T>(`/handsfree/mac/${path}`, body) : await api.del<T>(`/handsfree/mac/${path}`);
     void refreshMacStatus();
-    if (path === 'stop') window.dispatchEvent(new Event(MAC_MODE_ENDED_EVENT));
     return { ok: true, value };
   } catch (err) {
     void refreshMacStatus();

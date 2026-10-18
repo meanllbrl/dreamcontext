@@ -79,8 +79,10 @@
   to { transform: rotate(360deg); }
 }
 
+/* At rest (reduced motion) the ring closes: a quarter arc that does not turn reads as stuck, a
+   closed accent ring as "still waiting". Light mode keeps status motion, so it turns there. */
 @media (prefers-reduced-motion: reduce) {
-  .gh-login-spinner { animation: none; }
+  .gh-login-spinner { animation: none; border-color: var(--color-accent); }
 }
 
 .gh-login-pat-toggle {

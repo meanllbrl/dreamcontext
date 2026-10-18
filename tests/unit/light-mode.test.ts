@@ -51,7 +51,12 @@ describe('computeLightMode', () => {
   it('Auto: ≤ 8 GB → on (low memory), on battery → on (battery), 16 GB on AC → off', () => {
     expect(computeLightMode('auto', { totalMemGb: 8, onBattery: false })).toEqual({ on: true, reason: 'ram' });
     expect(computeLightMode('auto', { totalMemGb: LOW_MEMORY_GB, onBattery: false })).toEqual({ on: true, reason: 'ram' });
-    expect(computeLightMode('auto', { totalMemGb: 16, onBattery: true })).toEqual({ on: true, reason: 'battery' });
+    // Battery alone is not a reason (a Mac on battery runs as fast as on AC): only a LOW one is.
+    expect(computeLightMode('auto', { totalMemGb: 16, onBattery: true, batteryPercent: 64 })).toEqual({ on: false, reason: null });
+    expect(computeLightMode('auto', { totalMemGb: 16, onBattery: true, batteryPercent: 20 })).toEqual({ on: true, reason: 'battery' });
+    expect(computeLightMode('auto', { totalMemGb: 16, onBattery: true })).toEqual({ on: false, reason: null });
+    expect(computeLightMode('auto', { totalMemGb: 16, onBattery: false, batteryPercent: 10 })).toEqual({ on: false, reason: null });
+    expect(computeLightMode('auto', { totalMemGb: 16, onBattery: false, lowPowerMode: true })).toEqual({ on: true, reason: 'low-power' });
     expect(computeLightMode('auto', { totalMemGb: 16, onBattery: false })).toEqual({ on: false, reason: null });
   });
 

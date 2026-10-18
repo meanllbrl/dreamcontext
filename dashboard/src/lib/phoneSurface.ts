@@ -52,6 +52,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/admin/shutdown',
   'POST /api/tasks/token',
   'POST /api/embeddings/download',
+  'POST /api/recall/prompt',
   'GET /api/recall/options',
   'GET /api/recall/cloud/status',
   'POST /api/recall/cloud/key',
