@@ -28,7 +28,8 @@ import { recentRuleChanges, readRules, revertRule, RuleError } from '../../lib/t
 import { applySuggestion, BacklogError, keepAsIs, waitingSuggestions } from '../../lib/backlog-migration.js';
 import { recordDashboardChange } from '../change-tracker.js';
 import { parseJsonBody, requireBrowserOrigin, sendError, sendJson, writeVia } from '../middleware.js';
-import { ensureLocalStateIgnored, recordAudit } from '../../lib/task-audit.js';
+import { ensureLocalStateIgnored, recordAudit, type NewAuditEntry } from '../../lib/task-audit.js';
+import { TaskFileBusyError } from '../../lib/task-file-lock.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 
 /**
@@ -51,7 +52,29 @@ const ERROR_STATUS: Record<ProposalError['code'], number> = {
   corrupt: 500,
 };
 
+/** A card or store another writer holds: refused before the decision was made, retry. */
+function failBusy(res: ServerResponse, err: unknown): boolean {
+  if (!(err instanceof TaskFileBusyError)) return false;
+  sendError(res, 409, 'busy', `${err.message} The decision was not made; try again in a moment.`);
+  return true;
+}
+
+/**
+ * The audit record of a decision that already happened. A failure here is a warning on the
+ * 200, logged, never a refusal: the task was created or changed whatever the audit says.
+ */
+function auditAfterCommit(contextRoot: string, entry: NewAuditEntry): Array<'audit_not_recorded'> {
+  try {
+    recordAudit(contextRoot, entry);
+    return [];
+  } catch (err) {
+    console.error(`[task-proposals] ${entry.slug}: done, but not recorded in the task audit (${err instanceof Error ? err.message : String(err)}).`);
+    return ['audit_not_recorded'];
+  }
+}
+
 function fail(res: ServerResponse, err: unknown): void {
+  if (failBusy(res, err)) return;
   if (err instanceof ProposalError) {
     sendError(res, ERROR_STATUS[err.code], err.code, err.message);
     return;
@@ -182,8 +205,9 @@ export async function handleTaskProposalAccept(
     sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this accept is refused: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
+  let r: Awaited<ReturnType<typeof acceptProposal>>;
   try {
-    const r = await acceptProposal(
+    r = await acceptProposal(
       contextRoot,
       getTaskBackend(contextRoot),
       loadStatuses(contextRoot),
@@ -191,17 +215,19 @@ export async function handleTaskProposalAccept(
       { name: str(body.name), why: str(body.why), parent },
       'dashboard',
     );
-    recordDashboardChange(contextRoot, {
-      entity: 'task',
-      action: 'create',
-      target: r.slug,
-      summary: `Accepted sleep's proposal ${id} into the Next queue`,
-    });
-    recordAudit(contextRoot, { kind: 'accept', slug: r.slug, actor: actorOf(contextRoot), via: writeVia(req), note: `proposal ${id}`, journalId: null });
-    sendJson(res, 200, r);
   } catch (err) {
     fail(res, err);
+    return;
   }
+  // The task exists from here: what follows is recorded, never refused.
+  recordDashboardChange(contextRoot, {
+    entity: 'task',
+    action: 'create',
+    target: r.slug,
+    summary: `Accepted sleep's proposal ${id} into the Next queue`,
+  });
+  const warnings = auditAfterCommit(contextRoot, { kind: 'accept', slug: r.slug, actor: actorOf(contextRoot), via: writeVia(req), note: `proposal ${id}`, journalId: null });
+  sendJson(res, 200, { ...r, ...(warnings.length > 0 ? { auditWarning: warnings[0], warnings } : {}) });
 }
 
 function rejectInput(body: Record<string, unknown>): { reason: (typeof FEEDBACK_REASONS)[number]; note?: string } | null {
@@ -297,6 +323,7 @@ function suggestionTarget(params: Record<string, string>, body: Record<string, u
 }
 
 function failBacklog(res: ServerResponse, err: unknown): void {
+  if (failBusy(res, err)) return;
   if (err instanceof BacklogError) {
     sendError(res, BACKLOG_STATUS[err.code], err.code, err.message);
     return;
@@ -321,19 +348,22 @@ export async function handleTaskChangeApply(
     sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this change is refused: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
+  let rec: Awaited<ReturnType<typeof applySuggestion>>;
   try {
-    const rec = await applySuggestion(contextRoot, getTaskBackend(contextRoot), target.slug, target.id);
-    recordDashboardChange(contextRoot, {
-      entity: 'task',
-      action: 'update',
-      target: target.slug,
-      summary: `Applied the task migration's suggestion (${rec.suggestion?.change ?? rec.outcome})`,
-    });
-    recordAudit(contextRoot, { kind: 'apply', slug: target.slug, actor: actorOf(contextRoot), via: writeVia(req), note: String(rec.suggestion?.change ?? rec.outcome), journalId: null });
-    sendJson(res, 200, { slug: target.slug, outcome: rec.outcome, into: rec.into ?? null });
+    rec = await applySuggestion(contextRoot, getTaskBackend(contextRoot), target.slug, target.id);
   } catch (err) {
     failBacklog(res, err);
+    return;
   }
+  // The change is applied from here: what follows is recorded, never refused.
+  recordDashboardChange(contextRoot, {
+    entity: 'task',
+    action: 'update',
+    target: target.slug,
+    summary: `Applied the task migration's suggestion (${rec.suggestion?.change ?? rec.outcome})`,
+  });
+  const warnings = auditAfterCommit(contextRoot, { kind: 'apply', slug: target.slug, actor: actorOf(contextRoot), via: writeVia(req), note: String(rec.suggestion?.change ?? rec.outcome), journalId: null });
+  sendJson(res, 200, { slug: target.slug, outcome: rec.outcome, into: rec.into ?? null, ...(warnings.length > 0 ? { auditWarning: warnings[0], warnings } : {}) });
 }
 
 /** The owner keeps the task as it is: the suggestion is answered, the card is untouched. */

@@ -10,7 +10,7 @@ import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
 import { ensureLocalStateIgnored, recordAudit } from '../../lib/task-audit.js';
-import { applyVerdict } from '../../lib/task-verdict.js';
+import { applyVerdict, VerdictPreflightError } from '../../lib/task-verdict.js';
 import { newJournalEntryId } from '../../lib/task-journal.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
 import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
@@ -718,7 +718,9 @@ async function verdictCommand(name: string, v: { verdict: 'approve' | 'send_back
   try {
     r = await applyVerdict(backend, ensureContextRoot(), defs, slug, { verdict: v.verdict, note: v.note, actor: actorOf(), via: 'cli' });
   } catch (err) {
-    error(`Refusing the verdict: it cannot be recorded in the task audit (${err instanceof Error ? err.message : String(err)}).`);
+    error(err instanceof VerdictPreflightError
+      ? `Refusing the verdict: it cannot be recorded in the task audit (${err.message}). Nothing changed.`
+      : `The verdict could not be written; nothing changed (${err instanceof Error ? err.message : String(err)}).`);
     process.exitCode = 1;
     return;
   }
@@ -730,6 +732,11 @@ async function verdictCommand(name: string, v: { verdict: 'approve' | 'send_back
   }
   if (r.gateMessage) info(r.gateMessage);
   success(v.verdict === 'approve' ? `Task ${slug} approved → ${r.status}` : `Task ${slug} sent back → ${r.status}`);
+  for (const w of r.warnings) {
+    warn(w === 'journal_not_recorded'
+      ? 'The verdict is on the card, but its journal entry could not be written.'
+      : 'The verdict is on the card, but it could not be recorded in the task audit.');
+  }
 }
 
 export function registerTasksCommand(program: Command): void {

@@ -50,7 +50,8 @@ import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
 import { ensureLocalStateIgnored, recordAudit } from '../../lib/task-audit.js';
 import { listTaskCards } from '../../lib/task-list.js';
-import { applyVerdict } from '../../lib/task-verdict.js';
+import { applyVerdict, VerdictPreflightError } from '../../lib/task-verdict.js';
+import { TaskFileBusyError } from '../../lib/task-file-lock.js';
 import { planTask, rankTask } from '../../lib/task-plan.js';
 import {
   getTaskBackend,
@@ -1302,15 +1303,40 @@ export async function handleTasksUpdate(
   }
 
   updates.updated_at = today();
-  const task = await backend.updateFields(
-    slug,
-    updates,
-    bodyChanged && newBody !== null ? { body: newBody } : undefined,
-  );
-  for (const entry of pendingJournal) await backend.addJournal(slug, entry);
+  // The commit point. A busy card refuses here with nothing written; after it, a journal or
+  // audit record that cannot follow is a warning on a 200, never a refusal of a save that
+  // happened (the feature link and the dashboard change record still run).
+  let task: TaskData;
+  try {
+    task = await backend.updateFields(
+      slug,
+      updates,
+      bodyChanged && newBody !== null ? { body: newBody } : undefined,
+    );
+  } catch (err) {
+    if (err instanceof TaskFileBusyError) {
+      sendError(res, 409, 'busy', `${slug} is being written by another process (a sleep cycle may be running). Nothing was changed; try again in a moment.`);
+      return;
+    }
+    throw err;
+  }
+  const warnings: Array<'journal_not_recorded' | 'audit_not_recorded'> = [];
+  for (const entry of pendingJournal) {
+    try {
+      await backend.addJournal(slug, entry);
+    } catch (err) {
+      if (!warnings.includes('journal_not_recorded')) warnings.push('journal_not_recorded');
+      console.error(`[tasks] ${slug}: saved, but a journal entry could not be written (${err instanceof Error ? err.message : String(err)}).`);
+    }
+  }
   const via = writeVia(req);
   for (const a of pendingAudit) {
-    recordAudit(contextRoot, { kind: 'approval', slug, actor: actor ?? 'owner', via, note: a.note, journalId: a.journalId });
+    try {
+      recordAudit(contextRoot, { kind: 'approval', slug, actor: actor ?? 'owner', via, note: a.note, journalId: a.journalId });
+    } catch (err) {
+      if (!warnings.includes('audit_not_recorded')) warnings.push('audit_not_recorded');
+      console.error(`[tasks] ${slug}: saved, but an approval could not be recorded in the task audit (${err instanceof Error ? err.message : String(err)}).`);
+    }
   }
 
   // Bidirectional invariant: the feature side (related_tasks membership)
@@ -1329,7 +1355,7 @@ export async function handleTasksUpdate(
     summary: buildFieldSummary('task', `state/${slug}.md`, fieldChanges),
   });
 
-  sendJson(res, 200, { task: toApiTask(task) });
+  sendJson(res, 200, { task: toApiTask(task), ...(warnings.length > 0 ? { auditWarning: warnings[0], warnings } : {}) });
 }
 
 /**
@@ -1571,7 +1597,7 @@ export async function handleTasksAssignAgent(
 
 // ─── The owner's verdict, planning and ranking (plan r3 § W4) ────────────────
 
-const VERDICT_STATUS: Record<string, number> = { not_found: 404, note_required: 400, not_in_review: 409, subtasks_open: 409, sleep_eval_gate: 409 };
+const VERDICT_STATUS: Record<string, number> = { not_found: 404, note_required: 400, not_in_review: 409, subtasks_open: 409, sleep_eval_gate: 409, busy: 409 };
 
 /**
  * POST /api/tasks/:slug/verdict — `{ verdict: 'approve' | 'send_back', note? }`.
@@ -1609,7 +1635,14 @@ export async function handleTaskVerdict(
       verdict, note: note as string | undefined, actor, via: writeVia(req),
     });
   } catch (err) {
-    sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this verdict is refused: ${err instanceof Error ? err.message : String(err)}`);
+    // Only a preflight failure is "audit unavailable": nothing was written. Anything else that
+    // throws comes before the status write too (the records after it never throw), so it is
+    // reported as a failed write, never as a refusal of something that happened.
+    if (err instanceof VerdictPreflightError) {
+      sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this verdict is refused and nothing changed: ${err.message}`);
+    } else {
+      sendError(res, 500, 'write_failed', `The verdict could not be written; nothing changed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     return;
   }
   if (!r.ok) { sendError(res, VERDICT_STATUS[r.code] ?? 409, r.code, r.message); return; }
@@ -1622,7 +1655,11 @@ export async function handleTaskVerdict(
     field: 'status',
     summary: verdict === 'approve' ? `Approved task '${slug}'` : `Sent task '${slug}' back`,
   });
-  sendJson(res, 200, taskDetail(contextRoot, task));
+  // The verdict happened. A record that could not follow it is a warning, never a refusal.
+  sendJson(res, 200, {
+    ...taskDetail(contextRoot, task),
+    ...(r.warnings.length > 0 ? { auditWarning: r.warnings[0], warnings: r.warnings } : {}),
+  });
 }
 
 /** POST /api/tasks/:slug/plan — `{ target: 'now' | 'next' | 'later' | <cycle id or number> }`. */

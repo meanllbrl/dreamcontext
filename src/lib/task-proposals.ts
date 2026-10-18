@@ -15,7 +15,7 @@ import {
   type FeedbackReason,
 } from './task-feedback.js';
 import type { TaskBackend } from './task-backend/types.js';
-import { withTaskFileLock } from './task-file-lock.js';
+import { TaskFileBusyError, withTaskFileLock } from './task-file-lock.js';
 import { checkParentLink, loadFamily } from './task-parent.js';
 import type { StatusDef } from './task-status.js';
 
@@ -469,24 +469,31 @@ export async function acceptProposal(
   if (name !== p.name) diff.name = { from: p.name, to: name };
   if (why !== p.why) diff.why = { from: p.why, to: why };
 
-  mutateProposals(contextRoot, (s) => {
-    const live = s.proposals.find((x) => x.id === id);
-    if (!live || live.status !== 'pending' || live.claim?.slug !== slug) {
-      throw new ProposalError('resolved', `Proposal ${id} changed while it was being accepted; the task "${slug}" was created.`);
-    }
-    delete live.claim;
-    Object.assign(live, { status: 'accepted', resolvedAt: new Date().toISOString(), slug });
-    appendFeedback(contextRoot, {
-      id: p.id,
-      source: 'proposal',
-      verdict: 'keep',
-      outcome: 'new-task',
-      proposal: { name: p.name, why: p.why, parent: p.parent },
-      basis: p.basis,
-      quote: storableQuote(p.quote, contextRoot),
-      diff: Object.keys(diff).length > 0 ? diff : null,
+  // After the create, a busy store must not read as a refused accept (the route would say
+  // "nothing was changed" over a task that exists): it becomes the result's warning.
+  try {
+    mutateProposals(contextRoot, (s) => {
+      const live = s.proposals.find((x) => x.id === id);
+      if (!live || live.status !== 'pending' || live.claim?.slug !== slug) {
+        throw new ProposalError('resolved', `Proposal ${id} changed while it was being accepted; the task "${slug}" was created.`);
+      }
+      delete live.claim;
+      Object.assign(live, { status: 'accepted', resolvedAt: new Date().toISOString(), slug });
+      appendFeedback(contextRoot, {
+        id: p.id,
+        source: 'proposal',
+        verdict: 'keep',
+        outcome: 'new-task',
+        proposal: { name: p.name, why: p.why, parent: p.parent },
+        basis: p.basis,
+        quote: storableQuote(p.quote, contextRoot),
+        diff: Object.keys(diff).length > 0 ? diff : null,
+      });
     });
-  });
+  } catch (err) {
+    if (!(err instanceof TaskFileBusyError)) throw err;
+    warning = `${warning ? `${warning} ` : ''}The task "${slug}" was created, but the proposal could not be marked accepted (its store is busy).`;
+  }
   return { slug, parent, ...(parentDropped ? { parentDropped } : {}), ...(warning ? { warning } : {}) };
 }
 
