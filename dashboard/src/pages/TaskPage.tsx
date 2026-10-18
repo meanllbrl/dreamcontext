@@ -12,7 +12,7 @@ import { TaskSections } from '../components/tasks/page/TaskSections';
 import { TaskChildren } from '../components/tasks/page/TaskChildren';
 import { TaskFields } from '../components/tasks/page/TaskFields';
 import { TaskJournalTimeline } from '../components/tasks/page/TaskJournalTimeline';
-import { AssignToAgentComposer } from '../components/tasks/AssignToAgentComposer';
+import { useGiveToAgent } from '../lib/giveToAgent';
 import '../components/tasks/page/TaskPage.css';
 
 interface TaskPageProps {
@@ -34,7 +34,7 @@ export function TaskPage({ slug, onNavigate }: TaskPageProps) {
   const { data: task, isLoading, error } = useTask(slug ?? '');
   const deleteTask = useDeleteTask();
   const collapse = useSectionCollapse();
-  const [assigning, setAssigning] = useState(false);
+  const giveToAgent = useGiveToAgent();
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [painted, setPainted] = useState<string | null>(null);
 
@@ -93,7 +93,7 @@ export function TaskPage({ slug, onNavigate }: TaskPageProps) {
         task={task}
         onBack={back}
         onOpenTask={openTask}
-        onGiveToAgent={() => setAssigning(true)}
+        onGiveToAgent={() => giveToAgent({ slug: task.slug })}
         onError={onMutationError}
       />
       {mutationError && (
@@ -114,7 +114,7 @@ export function TaskPage({ slug, onNavigate }: TaskPageProps) {
           </TaskSection>
         </div>
         <aside className="tkp-rail" aria-label={t('taskPage.properties')}>
-          <TaskFields task={task} collapse={collapse} onError={onMutationError} onGiveToAgent={() => setAssigning(true)} />
+          <TaskFields task={task} collapse={collapse} onError={onMutationError} onGiveToAgent={() => giveToAgent({ slug: task.slug })} />
           <div className="tkp-danger">
             <button type="button" className="tkp-btn tkp-btn--danger" onClick={handleDelete} disabled={deleteTask.isPending}>
               {t('taskPage.delete.button')}
@@ -123,7 +123,6 @@ export function TaskPage({ slug, onNavigate }: TaskPageProps) {
           </div>
         </aside>
       </div>
-      {assigning && <AssignToAgentComposer task={task} onClose={() => setAssigning(false)} />}
     </div>
   );
 }

@@ -2205,7 +2205,59 @@ export function AgentSurface() {
   // one of N, and the first to run sets `accepted` — so the composer in project A is told its
   // task was delegated while the agent doing the work is in project B, reading a task file
   // that does not exist there. See `lib/delegateAgent.ts`'s header.
+  // ── Develop a task (the "Give to an agent" door's Develop choice, plan r3 § 5e) ──────
+  //
+  // The same Develop session the Plan chat's hand-off opens (a chat in `develop` mode, seeded
+  // with `developKickoffPrompt`), started from a task surface instead of a plan tab. Modelled
+  // on `openTrainSession`: synchronous, so the delegate ACK below stays true to what happened.
+  // The kickoff is a few hundred characters and takes `preparePrompt`'s inline branch without
+  // awaiting; the token path is kept for a pathological slug only, and a failed mint is
+  // reported by its own dialog. The door checks readiness before it asks.
+  const openDevelopSession = useCallback((taskSlug: string): boolean => {
+    if (!canSpawn) return false;
+    const title = cleanTabTitle(taskSlug) ?? taskSlug;
+    const open = (inline: string, token: string) => {
+      const s = spawn(false, undefined, false, 'chat', inline, '', true, token, false, '', true, 'develop');
+      setSessionList((prev) => [...prev, {
+        id: s.id, title, titleByAgent: true, kind: 'chat', bypass: s.bypass, claudeId: s.claudeId, mode: 'develop',
+      }]);
+      if (panes.length === 0) {
+        const pid = nextPaneId();
+        setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
+        setActivePaneId(pid);
+      } else {
+        const apid = panes.some((p) => p.id === activePaneId) ? activePaneId : panes[0].id;
+        setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
+        setActivePaneId(apid);
+      }
+      setExpanded(true);
+    };
+    const prompt = developKickoffPrompt(taskSlug);
+    if (promptFitsInline(prompt)) {
+      open(prompt, '');
+      return true;
+    }
+    void preparePrompt(vault, prompt).then(
+      (prepared) => open(prepared.inline, prepared.token),
+      (err) => {
+        console.error('[agent-surface] Develop could not prepare its prompt:', err);
+        void confirmAction({
+          title: 'Could not open the development session',
+          body: `${taskSlug}\n\n${err instanceof Error ? err.message : String(err)}`,
+          confirmLabel: 'OK',
+          cancelLabel: 'Close',
+        });
+      },
+    );
+    return true;
+  }, [caps, claudeReady, agentSettings.enabled, spawn, panes, activePaneId, vault]);
+
   useInstanceEvent<DelegateAgentDetail>(DELEGATE_AGENT_EVENT, (detail) => {
+    // The door's Develop choice carries a task, not a prompt: it opens a Develop session.
+    if (detail?.mode === 'develop' && detail.taskSlug) {
+      if (openDevelopSession(detail.taskSlug)) detail.accepted = true;
+      return;
+    }
     // Either transport counts as "there is a prompt"; a detail carrying neither is a no-op.
     if ((detail?.prompt || detail?.promptToken) && delegateAgent(detail)) detail.accepted = true;
   });

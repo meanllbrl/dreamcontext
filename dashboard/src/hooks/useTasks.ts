@@ -548,6 +548,22 @@ export function useFeatureOptions() {
   });
 }
 
+/** Whether a task is ready to develop (`GET /api/tasks/:slug/readiness`), and what it lacks. */
+export interface TaskReadiness {
+  ready: boolean;
+  gaps: Array<{ field: string; problem: string }>;
+}
+
+/** The door's Develop choice reads this before it lets a session start. */
+export function useTaskReadiness(slug: string, enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['tasks', slug, 'readiness'],
+    queryFn: () => api.get<TaskReadiness>(`/tasks/${encodeURIComponent(slug)}/readiness`),
+    enabled: enabled && !!slug,
+  });
+}
+
 /** One journal entry as `GET /api/tasks/:slug/journal` serves it. */
 export interface TaskJournalEntry {
   id: string;

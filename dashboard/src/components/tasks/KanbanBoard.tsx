@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useTask, useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, usePlanTask, useRankTask } from '../../hooks/useTasks';
+import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, usePlanTask, useRankTask } from '../../hooks/useTasks';
 import { useCycles } from '../../hooks/useCycles';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
@@ -20,13 +20,10 @@ import { AtRiskAlert } from './AtRiskAlert';
 import { SleepEvalBanner } from './SleepEvalDeck';
 import { SaveScopeDialog } from './SaveScopeDialog';
 import { TaskCreateModal } from './TaskCreateModal';
-import { DelegateComposer } from './DelegateComposer';
-import { AssignToAgentComposer } from './AssignToAgentComposer';
 import { useI18n } from '../../context/I18nContext';
-import { AuthorTaskComposer } from './AuthorTaskComposer';
+import { useGiveToAgent } from '../../lib/giveToAgent';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
-import { SparkIcon } from '../sleepy/TypeIcons';
 import { TimelineGantt } from './TimelineGantt';
 import './Board.css';
 
@@ -69,10 +66,8 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
   const planTask = usePlanTask();
   const rankTask = useRankTask();
   const deleteTask = useDeleteTask();
-  // Desktop-only gate for "Delegate to Claude": the in-app agent needs a real embedded
-  // terminal + the claude CLI (so it's hidden on the web build / when prereqs are missing,
-  // A6) AND the Agents surface must be enabled in Settings — otherwise the delegated agent
-  // has no dock to surface in and the menu item would dead-end.
+  // Whether the in-app agent can start sessions (desktop, prerequisites, surface enabled):
+  // the toolbar's "Write it with an agent" path is offered only then (A6).
   const { data: agentCaps } = useAgentCapabilities();
   const [agentSettings, setAgentSettings] = useState(() => readAgentSettings());
   useEffect(() => {
@@ -90,10 +85,8 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
-  const [delegateTask, setDelegateTask] = useState<Task | null>(null);
-  const [assignAgentTask, setAssignAgentTask] = useState<Task | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [showAuthor, setShowAuthor] = useState(false);
+  const giveToAgent = useGiveToAgent();
   const [pendingSave, setPendingSave] = useState<PendingSave>(null);
   const [dismissedAlert, setDismissedAlert] = useState(false);
   const [toast, setToast] = useState<{ msg: string; tone: 'ok' | 'error' } | null>(null);
@@ -269,11 +262,9 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
     if (!ok) return;
     deleteTask.mutate(task.slug, { onSuccess: () => flash(t('board.toast.deleted')), onError: () => flash(t('board.toast.deleteFailed'), 'error') });
   }, [deleteTask, flash, t]);
-  // Open the Delegate composer for a task (from the context menu). The composer dispatches
-  // the delegate event the always-mounted AgentSurface listens for; we just host the modal.
-  const ctxDelegate = useCallback((task: Task) => { setDelegateTask(task); setCtxMenu(null); }, []);
-  // "Assign to agent" runs one of the project's own agents on the task.
-  const ctxAssignAgent = useCallback((task: Task) => { setAssignAgentTask(task); setCtxMenu(null); }, []);
+  // The one door to an agent (plan r3 § 5e): Develop, a named agent or a custom prompt, all
+  // from the dialog `ProjectInstance` mounts, which reads the task by slug.
+  const ctxGiveToAgent = useCallback((task: Task) => { setCtxMenu(null); giveToAgent({ slug: task.slug }); }, [giveToAgent]);
 
   // ── view actions ────────────────────────────────────────────────────────────────
   const handleRequestSave = useCallback(() => { setPendingSave({ mode: 'save' }); closeAllMenus(); }, [closeAllMenus]);
@@ -286,10 +277,6 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
     flash(scope === 'shared' ? t('board.toast.savedShared') : t('board.toast.savedLocal'));
     setPendingSave(null);
   }, [pendingSave, s, flash, t]);
-
-  // The list carries no body (plan r3 § W4): the task being delegated is read by slug, so the
-  // delegate prompt gets the whole card.
-  const { data: delegateDetail = null } = useTask(delegateTask?.slug ?? '');
 
   if (!s.ready || isLoading) {
     return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>{t('board.loading')}</div>;
@@ -334,7 +321,7 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
         openMenu={openMenu}
         setOpenMenu={setOpenMenu}
         onNewTask={() => setShowCreate(true)}
-        onAuthorWithAgent={() => setShowAuthor(true)}
+        onAuthorWithAgent={() => giveToAgent({ preset: 'author' })}
         agentReady={agentReady}
         flash={flash}
       />
@@ -448,40 +435,17 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
       {ctxMenu && (
         <TaskContextMenu
           menu={ctxMenu}
-          agentReady={agentReady}
           inLater={orderOf(ctxMenu.task, activeCycleId) === 'later'}
           onClose={() => setCtxMenu(null)}
           onOpen={(x) => { openTask(x.slug); setCtxMenu(null); }}
           onMoveToLater={ctxMoveToLater}
-          onDelegate={ctxDelegate}
-          onAssignAgent={ctxAssignAgent}
+          onGiveToAgent={ctxGiveToAgent}
           onSetStatus={ctxSetStatus}
           onDelete={ctxDelete}
         />
       )}
 
-      {delegateTask && delegateDetail && (
-        <DelegateComposer
-          task={delegateDetail}
-          onClose={() => setDelegateTask(null)}
-          onDelegated={(title) => flash(t('board.toast.delegated').replace('{name}', title))}
-        />
-      )}
-
-      {assignAgentTask && (
-        <AssignToAgentComposer
-          task={assignAgentTask}
-          onClose={() => setAssignAgentTask(null)}
-        />
-      )}
-
       {showCreate && <TaskCreateModal onClose={() => setShowCreate(false)} />}
-      {showAuthor && (
-        <AuthorTaskComposer
-          onClose={() => setShowAuthor(false)}
-          onStarted={() => flash(t('board.toast.authoring'))}
-        />
-      )}
       {pendingSave && <SaveScopeDialog title={pendingTitle} defaultScope={pendingDefaultScope} onPick={handlePickScope} onCancel={() => setPendingSave(null)} />}
 
       {toast && (
@@ -495,14 +459,12 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
 }
 
 interface CtxMenuState { x: number; y: number; task: Task }
-function TaskContextMenu({ menu, agentReady, inLater, onClose, onOpen, onDelegate, onAssignAgent, onSetStatus, onMoveToLater, onDelete }: {
+function TaskContextMenu({ menu, inLater, onClose, onOpen, onGiveToAgent, onSetStatus, onMoveToLater, onDelete }: {
   menu: CtxMenuState;
-  agentReady?: boolean;
   inLater: boolean;
   onClose: () => void;
   onOpen: (t: Task) => void;
-  onDelegate: (t: Task) => void;
-  onAssignAgent: (t: Task) => void;
+  onGiveToAgent: (t: Task) => void;
   onSetStatus: (t: Task, status: string) => void;
   onMoveToLater: (t: Task) => void;
   onDelete: (t: Task) => void;
@@ -510,7 +472,7 @@ function TaskContextMenu({ menu, agentReady, inLater, onClose, onOpen, onDelegat
   const sm = useStatusModel();
   const { t } = useI18n();
   const { task } = menu;
-  const W = 220, H = agentReady ? 224 : 190, SUB_W = 188;
+  const W = 220, H = 190, SUB_W = 188;
   const left = typeof window !== 'undefined' ? Math.min(menu.x, window.innerWidth - W - 8) : menu.x;
   const top = typeof window !== 'undefined' ? Math.min(menu.y, window.innerHeight - H - 8) : menu.y;
   // Flip the flyout to the left when the main menu sits too close to the right edge.
@@ -546,18 +508,10 @@ function TaskContextMenu({ menu, agentReady, inLater, onClose, onOpen, onDelegat
           <span style={{ flex: 1 }}>{t('board.menu.open')}</span>
         </div>
 
-        {/* Delegate to Claude — desktop-only (the in-app agent). */}
-        {agentReady && (
-          <div className="bd-row" role="menuitem" onClick={() => onDelegate(task)} style={{ ...row, color: 'var(--color-accent)' }}>
-            <span style={{ display: 'inline-flex', flex: '0 0 auto' }}><SparkIcon size={14} /></span>
-            <span style={{ flex: 1 }}>{t('board.menu.delegate')}</span>
-          </div>
-        )}
-
-        {/* Assign to agent: one of this project's agents takes the task and runs on it. */}
-        <div className="bd-row" role="menuitem" onClick={() => onAssignAgent(task)} style={row}>
+        {/* The one door to an agent: Develop, a named agent or a custom prompt (plan r3 § 5e). */}
+        <div className="bd-row" role="menuitem" onClick={() => onGiveToAgent(task)} style={row}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><rect x="4" y="8" width="16" height="12" rx="3" /><path d="M12 4v4M9 13h.01M15 13h.01M9 17h6" /></svg>
-          <span style={{ flex: 1 }}>{t('tasks.assignToAgent')}</span>
+          <span style={{ flex: 1 }}>{t('board.menu.giveToAgent')}</span>
         </div>
 
         <div style={{ height: 1, background: 'var(--color-border)', margin: '5px 4px' }} />

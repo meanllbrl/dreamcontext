@@ -13,6 +13,7 @@ import { TaskPage } from './pages/TaskPage';
 import { InboxPage } from './pages/InboxPage';
 import { PlanningPage } from './pages/PlanningPage';
 import { ReleasesPage } from './pages/ReleasesPage';
+import { GiveToAgentDialog } from './components/agent-door/GiveToAgentDialog';
 import { RoadmapPage } from './pages/RoadmapPage';
 import { HypothesesPage } from './pages/HypothesesPage';
 import { LabPage } from './pages/LabPage';
@@ -518,6 +519,8 @@ export function ProjectInstance({
                     <OpenAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
                     <NavFocusAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
                     <TalkToAgentBridge />
+                    {/* The one "Give to an agent" door on the task surfaces (plan r3 § 5e). */}
+                    <GiveToAgentDialog />
                     <AppLinkBridge
                       nav={nav}
                       link={pendingLink}

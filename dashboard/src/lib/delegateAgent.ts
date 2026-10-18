@@ -59,6 +59,15 @@ export interface DelegateAgentDetail {
    * Reveal replaces the screen you left with the screen you actually wanted.
    */
   reveal?: boolean;
+  /**
+   * `develop`: open a Develop session on {@link taskSlug} (the "Give to an agent" door's
+   * Develop choice) instead of delegating a prompt. `prompt` and `promptToken` stay empty; the
+   * surface seeds the session with `developKickoffPrompt` itself, the way the Plan chat's
+   * hand-off does.
+   */
+  mode?: 'develop';
+  /** The task a `develop` request is for. */
+  taskSlug?: string;
   /** Set to true by the AgentSurface listener once it has actually spawned the session.
    *  Left false when its guards reject (not desktop / prereqs missing / surface disabled),
    *  or when no surface is mounted to listen at all. */
