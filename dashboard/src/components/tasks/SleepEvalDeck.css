@@ -40,8 +40,8 @@
   outline-offset: 2px;
 }
 .se-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.se-btn-primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-text-on-brand); }
-.se-btn-primary:hover { background: var(--color-accent-strong); border-color: var(--color-accent-strong); }
+.se-btn-primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
+.se-btn-primary:hover { background: var(--color-accent-strong); border-color: var(--color-accent-strong); filter: brightness(1.08); }
 .se-btn-keep { background: var(--color-success); border-color: var(--color-success); color: var(--color-text-on-brand); }
 .se-btn-keep:hover { border-color: var(--color-success-ink); }
 .se-btn-reject { color: var(--color-error-ink); border-color: var(--color-error); background: var(--color-bg); }

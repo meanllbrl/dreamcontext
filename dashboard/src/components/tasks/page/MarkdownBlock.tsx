@@ -10,7 +10,7 @@ import { hasMermaidFence, renderMarkdown } from './taskMarkdown';
  * Diagrams: the mermaid code is loaded only when the text holds a ```mermaid fence, and only
  * through `lib/mermaidRender` (`initMermaid`, `securityLevel: 'strict'`).
  */
-export function TaskMarkdown({ text, idPrefix, className }: { text: string; idPrefix: string; className?: string }) {
+export function MarkdownBlock({ text, idPrefix, className }: { text: string; idPrefix: string; className?: string }) {
   const { resolved: theme } = useTheme();
   const html = useMemo(() => renderMarkdown(text), [text]);
   // One object per html: React re-applies the prop whenever the object is new, which would

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useAddTaskChangelog, useTaskJournal, type TaskJournalEntry } from '../../../hooks/useTasks';
 import { useI18n } from '../../../context/I18nContext';
-import { TaskMarkdown } from './TaskMarkdown';
+import { MarkdownBlock } from './MarkdownBlock';
 
 /** The server's page size (`PANEL_JOURNAL_LIMIT`): every page before the last one is full. */
 const PAGE = 5;
@@ -32,7 +32,7 @@ function JournalPage({ slug, before, shownBefore, isLast, onOlder }: {
             <span className="tkp-entry-kind">{heading(e)}</span>
             <span className="tkp-meta">{[e.date, e.actor].filter(Boolean).join(' · ')}</span>
           </div>
-          {e.body && <TaskMarkdown text={e.body} idPrefix={`tkp-je-${e.id}`} className="tkp-entry-body" />}
+          {e.body && <MarkdownBlock text={e.body} idPrefix={`tkp-je-${e.id}`} className="tkp-entry-body" />}
         </li>
       ))}
       {isLast && older > 0 && entries.length > 0 && (

@@ -55,7 +55,7 @@ describe('the task screens have no raw HTML sink', () => {
     }
     expect(offenders).toEqual([]);
     // The one place that does it: the shared markdown block.
-    expect(FILES.filter((f) => code(read(f)).includes('dangerouslySetInnerHTML')).map(rel)).toEqual(['components/tasks/page/TaskMarkdown.tsx']);
+    expect(FILES.filter((f) => code(read(f)).includes('dangerouslySetInnerHTML')).map(rel)).toEqual(['components/tasks/page/MarkdownBlock.tsx']);
   });
 
   it('taskMarkdown.ts sanitizes what marked.parse returns', () => {
@@ -78,7 +78,7 @@ describe('the task screens have no raw HTML sink', () => {
   });
 
   it('the markdown block loads diagrams lazily, only for a mermaid fence', () => {
-    const src = code(read(join(SRC, 'components/tasks/page/TaskMarkdown.tsx')));
+    const src = code(read(join(SRC, 'components/tasks/page/MarkdownBlock.tsx')));
     expect(src).toMatch(/import\('\.\.\/\.\.\/\.\.\/lib\/mermaidRender'\)/);
     expect(src).not.toMatch(/^import .*mermaidRender/m);
     expect(src).toMatch(/hasMermaidFence\(text\)/);

@@ -4,7 +4,7 @@ import { TaskSection } from '../detail/TaskSection';
 import type { SectionCollapse, SectionId } from '../detail/useSectionCollapse';
 import type { BodySection } from './bodySections';
 import { TaskDecisions } from './TaskDecisions';
-import { TaskMarkdown } from './TaskMarkdown';
+import { MarkdownBlock } from './MarkdownBlock';
 
 /**
  * The card's document sections, each collapsible and each through the sanitizing renderer:
@@ -28,7 +28,7 @@ export function TaskSections({ slug, sections, collapse, criteria }: {
       {body}
     </TaskSection>
   );
-  const md = (key: BodySection['key']) => <TaskMarkdown text={textOf(key)} idPrefix={`tkp-${key}-${slug}`} />;
+  const md = (key: BodySection['key']) => <MarkdownBlock text={textOf(key)} idPrefix={`tkp-${key}-${slug}`} />;
 
   const lead = textOf('lead');
   const others = of('other');
@@ -36,7 +36,7 @@ export function TaskSections({ slug, sections, collapse, criteria }: {
 
   return (
     <div className="tkp-sections">
-      {lead && <TaskMarkdown text={lead} idPrefix={`tkp-lead-${slug}`} />}
+      {lead && <MarkdownBlock text={lead} idPrefix={`tkp-lead-${slug}`} />}
       {section('why', t('taskPage.section.why'), textOf('why') ? md('why') : <p className="tkp-empty">{t('taskPage.section.whyEmpty')}</p>)}
       <section className="tkp-block" aria-labelledby={`tkp-criteria-${slug}`}>
         <h2 className="tkp-block-title" id={`tkp-criteria-${slug}`}>{t('taskPage.section.criteria')}</h2>
@@ -51,7 +51,7 @@ export function TaskSections({ slug, sections, collapse, criteria }: {
           {others.map((s, i) => (
             <div key={`${s.title}-${i}`} className="tkp-more-item">
               <h3 className="tkp-more-title">{s.title}</h3>
-              <TaskMarkdown text={s.text} idPrefix={`tkp-more-${slug}-${i}`} />
+              <MarkdownBlock text={s.text} idPrefix={`tkp-more-${slug}-${i}`} />
             </div>
           ))}
         </div>
@@ -59,7 +59,7 @@ export function TaskSections({ slug, sections, collapse, criteria }: {
       {legacy && section('legacy', t('taskPage.section.legacy'), (
         <div className="tkp-legacy">
           <p className="tkp-meta">{t('taskPage.section.legacyHint')}</p>
-          <TaskMarkdown text={legacy} idPrefix={`tkp-legacy-${slug}`} />
+          <MarkdownBlock text={legacy} idPrefix={`tkp-legacy-${slug}`} />
         </div>
       ))}
     </div>
