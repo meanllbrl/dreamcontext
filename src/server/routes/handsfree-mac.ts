@@ -15,6 +15,7 @@ import { deviceIdHash, ensureMacHandsfreeDir, generatePassphrase, hashPassphrase
 import { isPhoneSocket, macExposedVaults, macPublicOrigin, setMacExposedVaults, setMacProbeNonce, setMacPublicOrigin } from '../phone-origin.js';
 import { setMacPhoneSource } from '../handsfree-login.js';
 import { phoneDeviceShowing, releasePhoneSessions } from './agent-chat.js';
+import { landPhoneRosterOnDesktop } from './agent-sessions.js';
 import { onChatChange } from '../../lib/assistant/chat-registry.js';
 import { loadOrCreateVapid, sendPush, type VapidKeys } from '../../lib/handsfree/mac/push.js';
 import { PushStore, setVerifyPushOrigin, subscriptionRefusal } from '../../lib/handsfree/mac/push-store.js';
@@ -158,6 +159,21 @@ function verifyFakeTunnelSeam(): Partial<MacSessionDeps> {
   };
 }
 
+/** Return: each exposed project's phone tabs move into its desktop roster. A registered NAME
+ *  only (never a path); a project that fails is logged and the others still land. */
+async function landPhoneTabs(vaults: readonly string[], o: { waitMs: number }): Promise<number> {
+  const registered = new Map(listVaults().map((v) => [v.name, v.path]));
+  let n = 0;
+  for (const name of vaults) {
+    const path = registered.get(name);
+    if (!path) continue;
+    try { n += await landPhoneRosterOnDesktop(join(path, '_dream_context'), o); } catch (err) {
+      console.warn(`[handsfree-mac] the phone's tabs of ${name} did not land: ${(err as Error).message}`);
+    }
+  }
+  return n;
+}
+
 /** The process's Mac session (created on first use) over the real OS adapters. */
 export function macSession(): MacSession {
   if (!session) {
@@ -172,6 +188,7 @@ export function macSession(): MacSession {
       setPhoneSource: setMacPhoneSource,
       setExposedVaults: setMacExposedVaults,
       releasePhoneSessions,
+      landPhoneTabs,
       notify,
       ...verifyPowerSeam(),
     };

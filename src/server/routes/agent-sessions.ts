@@ -37,7 +37,8 @@ import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
  * reaches it (403).
  * The CSRF guard already fronts the PUT in the server entry.
  *
- * GENERATION. The file carries a top-level `generation` (absent = 0); a PUT keeps it. A PUT
+ * GENERATION. The file carries a top-level `generation` (absent = 0); a PUT keeps it, and Mac
+ * mode's Return bumps it when it moves the phone's tabs in ({@link landPhoneRosterOnDesktop}). A PUT
  * names the generation it was based on (`baseGeneration`): a stale base gets 409
  * `roster_stale` with the stored surface, and the client re-hydrates from it.
  */
@@ -128,7 +129,8 @@ const MAX_RUN_FIRED_AT = 64;
 
 const ROSTER_REL_PATH = join('state', '.agent-sessions.json');
 /** A Mac-mode phone's own roster, next to the desktop's: the two screens never write each
- *  other's tab list, and the desktop file stays byte-identical while the phone works. */
+ *  other's tab list, and the desktop file stays byte-identical while the phone works. Return
+ *  moves the phone's tabs into the desktop's ({@link landPhoneRosterOnDesktop}). */
 const PHONE_ROSTER_REL_PATH = join('state', '.agent-sessions.phone.json');
 
 /** The names a tab carries before anyone named it — mirrors the client's
@@ -402,6 +404,67 @@ async function acquireRosterLockWithin(contextRoot: string, waitMs: number, phon
     if (lock) return lock;
     if (Date.now() >= deadline) return null;
     await new Promise((r) => { setTimeout(r, 25); });
+  }
+}
+
+// ─── Mac mode's Return: the phone's tabs land on the desktop ─────────────────
+
+/**
+ * Which of the phone's tabs land in the desktop's roster at Return, and what the phone's roster
+ * keeps. PURE. A tab lands when the desktop does not have its conversation yet: in ONE new pane
+ * right of the desktop's, its phone placement dropped, with `bypass: false` (a permission field
+ * never travels from the phone's file into the desktop's), up to {@link MAX_SESSIONS}. A landed
+ * tab MOVES (the phone keeps it no longer, so a tab later closed on the desktop never comes back
+ * from a stale phone file); a tab the desktop already has is the desktop's. A shell, an entry
+ * with no conversation and a tab with no room left stay where they are.
+ */
+export function phoneTabsLanding(desktop: readonly SavedMeta[], phone: readonly SavedMeta[]): { land: SavedMeta[]; keep: SavedMeta[] } {
+  const onDesktop = new Set(desktop.map((m) => m.sessionId).filter((id): id is string => !!id));
+  const pane = Math.min(MAX_SESSIONS - 1, desktop.reduce((n, m) => Math.max(n, (m.pane ?? 0) + 1), 0));
+  let room = Math.max(0, MAX_SESSIONS - desktop.length);
+  const land: SavedMeta[] = [];
+  const keep: SavedMeta[] = [];
+  for (const m of phone) {
+    if (!m.sessionId || m.kind === 'shell') { keep.push(m); continue; }
+    if (onDesktop.has(m.sessionId)) continue;
+    if (room === 0) { keep.push(m); continue; }
+    onDesktop.add(m.sessionId);
+    room--;
+    const { pane: _pane, active: _active, ...entry } = m;
+    land.push({ ...entry, bypass: false, pane });
+  }
+  return { land, keep };
+}
+
+/**
+ * Mac mode's Return for one project: the phone's tabs move into the desktop's roster
+ * ({@link phoneTabsLanding}). Both generations are bumped, so a desktop window still holding the
+ * old roster gets 409 on its next save and re-hydrates (the landed tabs appear) instead of
+ * saving them away. Nothing is written when nothing moves. Returns how many tabs landed; throws
+ * when a roster lock stays held past `waitMs`.
+ */
+export async function landPhoneRosterOnDesktop(contextRoot: string, opts: { waitMs?: number } = {}): Promise<number> {
+  if (!existsSync(storePath(contextRoot, true))) return 0;
+  const waitMs = opts.waitMs ?? 2_000;
+  // Desktop first, then phone; a PUT only ever holds one of the two.
+  const deskLock = await acquireRosterLockWithin(contextRoot, waitMs);
+  if (!deskLock) throw new Error('the desktop roster is locked');
+  try {
+    const phoneLock = await acquireRosterLockWithin(contextRoot, waitMs, true);
+    if (!phoneLock) throw new Error('the phone roster is locked');
+    try {
+      const { generation: deskGen, ...desk } = readSurface(contextRoot);
+      const { generation: phoneGen, ...phone } = readSurface(contextRoot, true);
+      const { land, keep } = phoneTabsLanding(desk.sessions, phone.sessions);
+      if (keep.length === phone.sessions.length) return 0;
+      if (land.length) writeSurface(contextRoot, { ...desk, sessions: [...desk.sessions, ...land] }, deskGen + 1);
+      writeSurface(contextRoot, { ...phone, sessions: keep }, phoneGen + 1, true);
+      return land.length;
+    } finally {
+      releaseFileLock(phoneLock);
+    }
+  } finally {
+    releaseFileLock(deskLock);
   }
 }
 

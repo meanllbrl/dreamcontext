@@ -80,7 +80,7 @@ import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, withBaseGeneration } from '../handsfree/rosterRehydrate';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
-import type { LiveChatWire, LiveChatsWire } from '../handsfree/macContract';
+import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire } from '../handsfree/macContract';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 
 /**
@@ -640,12 +640,20 @@ export function AgentSurface() {
   // Mac mode's phone: the stored tabs the last restore could not judge (the Mac did not answer
   // live-chats), kept on every save so an unreachable Mac never deletes them.
   const unrestoredRef = useRef<SavedMeta[]>([]);
-  // Bumped to pull the roster again (a stale PUT).
+  // Bumped to pull the roster again (a stale PUT, or Mac mode's Return).
   const [rehydrateNonce, setRehydrateNonce] = useState(0);
   const rehydrateRoster = useCallback(() => {
     hydratedRef.current = false;
     setRehydrateNonce((n) => n + 1);
   }, []);
+  // Mac mode ended, whoever pressed Return: Return moved the tabs the phone had open into this
+  // project's roster, so it is pulled again and they open beside the tabs already here (a chat
+  // the Mac still runs is adopted, not spawned again).
+  useEffect(() => {
+    if (isMacPhoneSurface()) return;
+    window.addEventListener(MAC_MODE_ENDED_EVENT, rehydrateRoster);
+    return () => window.removeEventListener(MAC_MODE_ENDED_EVENT, rehydrateRoster);
+  }, [rehydrateRoster]);
   // ── The Claude account changed underneath us ───────────────────────────────────────
   //
   // `claude` reads its credentials once, at startup, so signing into a different account
