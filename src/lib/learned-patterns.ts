@@ -244,17 +244,45 @@ function paragraphs(content: string): string[] {
     .filter((p) => p.length > 0);
 }
 
-/** The `### … [lr_x]` block: from its heading to the next heading or the end. */
+/** A quote line of a learned block, as {@link ruleBlock} writes it. */
+const QUOTE_LINE = /^- ".*" \(\d{4}-\d{2}-\d{2}\)$/;
+
+/**
+ * The `### … [lr_x]` block, by its known shape: the heading, the rule line, then the
+ * `- "…" (date)` quote lines. It ends there, not at the next heading: a block `--edits` put in
+ * the middle of hand-written prose is followed by paragraphs that are not part of it, and
+ * reading them in would make every later `--replaces` look like an awake edit. The guard stays
+ * byte-exact for the block itself: any change to its heading, rule or quotes still differs.
+ */
 function findBlock(content: string, ruleId: string): { start: number; end: number; text: string } | null {
   const lines = content.split('\n');
   const startLine = lines.findIndex((l) => /^###\s/.test(l) && l.includes(`[${ruleId}]`));
   if (startLine < 0) return null;
   let endLine = startLine + 1;
-  while (endLine < lines.length && !/^#{1,6}\s/.test(lines[endLine])) endLine++;
-  while (endLine > startLine + 1 && lines[endLine - 1].trim() === '') endLine--;
+  if (endLine < lines.length && lines[endLine].trim() !== '' && !/^#{1,6}\s/.test(lines[endLine])) endLine++;
+  while (endLine < lines.length && QUOTE_LINE.test(lines[endLine])) endLine++;
   const start = lines.slice(0, startLine).join('\n').length + (startLine > 0 ? 1 : 0);
   const text = lines.slice(startLine, endLine).join('\n');
   return { start, end: start + text.length, text };
+}
+
+/**
+ * Where `text` stands as whole paragraphs in `content`: after the body's start, a blank line or
+ * a heading line, and before a blank line, a heading or the end of the file.
+ */
+function paragraphMatches(content: string, text: string): number[] {
+  const fm = /^---\n[\s\S]*?\n---\n/.exec(content);
+  const bodyStart = fm ? fm[0].length : 0;
+  const out: number[] = [];
+  for (let at = content.indexOf(text); at >= 0; at = content.indexOf(text, at + 1)) {
+    const head = content.slice(0, at);
+    const prevLine = head.endsWith('\n') ? head.slice(0, -1).split('\n').pop() ?? '' : null;
+    const startsOk = at === bodyStart || head.endsWith('\n\n') || (prevLine !== null && /^#{1,6}\s/.test(prevLine));
+    const tail = content.slice(at + text.length);
+    const endsOk = tail === '' || tail === '\n' || /^\s*$/.test(tail) || tail.startsWith('\n\n') || tail.startsWith('\n#');
+    if (startsOk && endsOk) out.push(at);
+  }
+  return out;
 }
 
 function appendToSection(content: string, block: string): string {
@@ -382,9 +410,12 @@ export function learnRule(contextRoot: string, input: LearnInput, now: Date = ne
     } else if (editsText !== undefined) {
       if (!editsText) throw new LearnError('--edits needs the exact paragraph to replace.');
       if (before === null) throw new LearnError(`${slug} does not exist; --edits replaces a paragraph in an existing pattern.`);
-      const first = before.indexOf(editsText);
-      if (first < 0) throw new LearnError(`The paragraph to edit is not in ${slug} verbatim (it may have been edited awake since); not overwritten.`);
-      if (before.indexOf(editsText, first + 1) >= 0) throw new LearnError(`The paragraph to edit appears more than once in ${slug}; quote a longer, unique paragraph.`);
+      // Only a whole paragraph: a match that starts or ends mid-line would splice the block's
+      // heading into a sentence, where findBlock can never find it again.
+      const hits = paragraphMatches(before, editsText);
+      if (hits.length === 0) throw new LearnError(`The paragraph to edit is not in ${slug} verbatim (it may have been edited awake since); not overwritten.`);
+      if (hits.length > 1) throw new LearnError(`The paragraph to edit appears more than once in ${slug}; quote a longer, unique paragraph.`);
+      const first = hits[0];
       editedText = editsText;
       block = ruleBlock(title, ruleId, rule, quotes);
       after = before.slice(0, first) + block + before.slice(first + editsText.length);

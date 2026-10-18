@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { Command } from 'commander';
 import { ownerTurns } from '../../src/lib/ask-basis.js';
 import {
-  backfillSessions, ingestSessions, readCorrections, recurringGroups, type CorrectionGroup, type SessionRef,
+  backfillSessions, ingestSessions, MAX_ITEMS, readCorrections, recurringGroups, TTL_DAYS, type CorrectionGroup, type SessionRef,
 } from '../../src/lib/owner-corrections.js';
 import {
   LearnError, learnRule, listLearnedItems, openGroups, readLearnedChanges, recurringCorrectionsBrief, revertItem, revertLearned,
@@ -231,6 +231,55 @@ describe('learning a rule', () => {
     const after = readFileSync(patternFile('named-exports'), 'utf-8');
     expect(after).toContain('description: "How Larkspur Notes exports modules."');
     expect(after).toContain('\nComponents use named exports; a default export is never used.\n');
+  });
+});
+
+describe('5c. --edits works on whole paragraphs, and its block can be replaced later (end review, finding 3)', () => {
+  const RULE = 'Never use default exports for components; use named exports.';
+
+  it('a sub-paragraph --edits (a match inside a line) is refused as not verbatim, nothing written', () => {
+    const original = readFileSync(join(FIX, 'default-exports.md'), 'utf-8');
+    writeFileSync(patternFile('default-exports'), original);
+    ingest('s10', 's11');
+    const g = groupOf('s10', 's11');
+    for (const edits of ['default exports for components.', 'Use default exports', 'Keep one component']) {
+      expect(() => learnRule(ctx, { pattern: 'default-exports', title: 'Named exports for components', rule: RULE, cites: g.ids, edits }),
+        edits).toThrow(/not in default-exports verbatim/);
+    }
+    expect(readFileSync(patternFile('default-exports'), 'utf-8')).toBe(original);
+  });
+
+  it('a rule written by --edits is replaced later with --replaces; an awake edit of that block still refuses', () => {
+    writeFileSync(patternFile('default-exports'), readFileSync(join(FIX, 'default-exports.md'), 'utf-8'));
+    ingest('s10', 's11');
+    const edited = learnRule(ctx, {
+      pattern: 'default-exports', title: 'Named exports for components', rule: RULE,
+      cites: groupOf('s10', 's11').ids, edits: 'Use default exports for components.',
+    });
+    expect(edited.action).toBe('edit');
+    // The hand-written paragraph after the block is not part of it.
+    expect(readFileSync(patternFile('default-exports'), 'utf-8')).toContain(`${edited.writtenBlock}\n\nKeep one component per file.`);
+
+    ingest('s5', 's6');
+    const replaced = learnRule(ctx, {
+      pattern: 'default-exports', title: 'No emoji', rule: 'Do not use emoji anywhere in replies or commits.',
+      cites: groupOf('s5', 's6').ids, replaces: edited.ruleId,
+    });
+    expect(replaced.action).toBe('replace');
+    let text = readFileSync(patternFile('default-exports'), 'utf-8');
+    expect(text).toContain('Do not use emoji anywhere in replies or commits.');
+    expect(text).not.toContain(RULE);
+    expect(text).toContain('\n\nKeep one component per file.');
+
+    // An awake edit of the block's rule line: the next contradiction is refused.
+    writeFileSync(patternFile('default-exports'), text.replace('\nDo not use emoji anywhere', '\nDo not use emoji or GIFs anywhere'));
+    ingest('s1', 's2');
+    expect(() => learnRule(ctx, {
+      pattern: 'default-exports', title: 'Named exports only', rule: 'Always use named exports, never default exports.',
+      cites: groupOf('s1', 's2').ids, replaces: edited.ruleId,
+    })).toThrow(/edited awake/);
+    text = readFileSync(patternFile('default-exports'), 'utf-8');
+    expect(text).toContain('Do not use emoji or GIFs anywhere');
   });
 });
 
@@ -460,5 +509,59 @@ describe('backfill, redaction, the brief', () => {
     // the forged marker only ever appears inside a quote line, never as a line of its own
     expect(lines.filter((l) => l.startsWith('--- END OF RECURRING OWNER CORRECTIONS'))).toHaveLength(1);
     expect(brief.text).toContain('patterns learn');
+  });
+});
+
+/**
+ * End review, open question (a): the ledger cap kept the LAST MAX_ITEMS by insertion order, and a
+ * backfill appends sessions in registry order, not time order. An older session read after a
+ * full ledger pushed newer items out, and every later run re-read them as new (`added` > 0
+ * forever). The cap now keeps the newest by `at`, and `added` counts only what was kept.
+ */
+describe('the ledger cap keeps the newest corrections, and a re-run adds nothing', () => {
+  const NOW = new Date('2026-10-18T12:00:00.000Z');
+  function session(id: string, count: number, startIso: string, word: string): SessionRef {
+    const start = Date.parse(startIso);
+    const path = join(projectRoot, `${id}.jsonl`);
+    writeFileSync(path, Array.from({ length: count }, (_, n) => JSON.stringify({
+      type: 'user', uuid: `${id}-${n}`, timestamp: new Date(start + n * 1000).toISOString(),
+      message: { role: 'user', content: `Never use ${word} number ${n}.` },
+    })).join('\n') + '\n');
+    return { id, path };
+  }
+
+  it('an older session read after a full ledger is dropped, not the newer items, and re-runs add 0', () => {
+    const recent = session('recent-larkspur', MAX_ITEMS, '2026-10-17T00:00:00.000Z', 'tabs');
+    const older = session('older-larkspur', 5, '2026-10-01T00:00:00.000Z', 'spaces');
+    expect(ingestSessions(ctx, [recent], PERSON, 'backfill', NOW).added).toBe(MAX_ITEMS);
+    // The older five do not fit: they are the oldest, so they are the ones left out.
+    expect(ingestSessions(ctx, [older], PERSON, 'backfill', NOW).added).toBe(0);
+    const stored = readCorrections(ctx);
+    expect(stored).toHaveLength(MAX_ITEMS);
+    expect(stored.every((i) => i.session === 'recent-larkspur')).toBe(true);
+    // A second backfill over both, in either order, finds nothing new.
+    expect(ingestSessions(ctx, [older, recent], PERSON, 'backfill', NOW).added).toBe(0);
+    expect(ingestSessions(ctx, [recent, older], PERSON, 'backfill', NOW).added).toBe(0);
+    expect(readCorrections(ctx)).toEqual(stored);
+  }, 30_000);
+
+  it('a newer session read after a full ledger replaces the oldest items and is stored oldest first', () => {
+    const older = session('older-larkspur', MAX_ITEMS, '2026-10-01T00:00:00.000Z', 'spaces');
+    const recent = session('recent-larkspur', 3, '2026-10-17T00:00:00.000Z', 'tabs');
+    ingestSessions(ctx, [older], PERSON, 'backfill', NOW);
+    expect(ingestSessions(ctx, [recent], PERSON, 'backfill', NOW).added).toBe(3);
+    const stored = readCorrections(ctx);
+    expect(stored).toHaveLength(MAX_ITEMS);
+    expect(stored.filter((i) => i.session === 'recent-larkspur')).toHaveLength(3);
+    const times = stored.map((i) => Date.parse(i.at));
+    expect(times).toEqual([...times].sort((x, y) => x - y));
+    expect(ingestSessions(ctx, [recent, older], PERSON, 'backfill', NOW).added).toBe(0);
+  }, 30_000);
+
+  it('a turn past the TTL is never counted as added', () => {
+    const stale = session('stale-larkspur', 2, new Date(NOW.getTime() - (TTL_DAYS + 5) * 86_400_000).toISOString(), 'gifs');
+    expect(ingestSessions(ctx, [stale], PERSON, 'backfill', NOW).added).toBe(0);
+    expect(ingestSessions(ctx, [stale], PERSON, 'backfill', NOW).added).toBe(0);
+    expect(readCorrections(ctx)).toEqual([]);
   });
 });

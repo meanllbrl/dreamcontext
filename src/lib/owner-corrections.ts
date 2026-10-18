@@ -140,13 +140,27 @@ export function readCorrections(contextRoot: string): OwnerCorrection[] {
   }
 }
 
-function prune(items: OwnerCorrection[], now: Date): OwnerCorrection[] {
+/**
+ * Drop what is past the TTL, then keep the newest {@link MAX_ITEMS} by `at` — not by insertion
+ * order: a backfill appends sessions in registry order, so the ledger's tail is not its newest
+ * end. At an equal `at`, an item this ingest brought (`fresh`) goes first, so a re-run never
+ * swaps a stored item out for its own copy. An unparseable `at` counts as now.
+ */
+function prune(items: OwnerCorrection[], now: Date, fresh: ReadonlySet<string> = new Set()): OwnerCorrection[] {
   const cutoff = now.getTime() - TTL_DAYS * 86_400_000;
-  const live = items.filter((i) => {
+  const time = (i: OwnerCorrection) => {
     const t = Date.parse(i.at);
-    return Number.isNaN(t) || t >= cutoff;
-  });
-  return live.length > MAX_ITEMS ? live.slice(live.length - MAX_ITEMS) : live;
+    return Number.isNaN(t) ? now.getTime() : t;
+  };
+  // Stored oldest first by `at`, which is also what `readCorrections` promises.
+  const ranked = items
+    .filter((i) => time(i) >= cutoff)
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => time(a.item) - time(b.item)
+      || Number(fresh.has(b.item.key)) - Number(fresh.has(a.item.key))
+      || a.index - b.index)
+    .map((r) => r.item);
+  return ranked.length > MAX_ITEMS ? ranked.slice(ranked.length - MAX_ITEMS) : ranked;
 }
 
 /**
@@ -170,7 +184,7 @@ export function ingestSessions(
     const keys = new Set(items.map((i) => i.key));
     const longTurnSession = new Map<string, string>();
     for (const i of items) if (i.turnHash && !longTurnSession.has(i.turnHash)) longTurnSession.set(i.turnHash, i.session);
-    let added = 0;
+    const fresh = new Set<string>();
     for (const s of sessions) {
       if (!isSafeSessionId(s.id)) continue;
       const turns = ownerTurns(s.path);
@@ -199,12 +213,15 @@ export function ingestSessions(
             origin: source === 'backfill' ? 'unknown' : 'recorded',
             ...(turnHash ? { turnHash } : {}),
           });
-          added++;
+          fresh.add(key);
         }
       });
     }
-    writeLocalStateJson(contextRoot, OWNER_CORRECTIONS_REL, { version: 1, items: prune(items, now) });
-    return { added };
+    const kept = prune(items, now, fresh);
+    writeLocalStateJson(contextRoot, OWNER_CORRECTIONS_REL, { version: 1, items: kept });
+    // Only what survived the prune was added: a turn past the TTL, or older than the newest
+    // MAX_ITEMS, is read and dropped again on every run and must not count as new each time.
+    return { added: kept.filter((i) => fresh.has(i.key)).length };
   });
 }
 
