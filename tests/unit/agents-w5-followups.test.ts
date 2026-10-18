@@ -76,7 +76,7 @@ describe('the wave 4 fallback strings now have keys', () => {
       'dashboard/src/components/agents/AutomationDialog.tsx',
       'dashboard/src/pages/AutomationsPage.tsx',
       'dashboard/src/components/tasks/AssignToAgentComposer.tsx',
-      'dashboard/src/components/tasks/TaskDetailPanel.tsx',
+      'dashboard/src/components/tasks/page/TaskFields.tsx',
       'dashboard/src/lib/assignToAgent.ts',
     ].map(read).join('\n').replace(/\s+/g, ' ');
     for (const key of W5_KEYS) {
@@ -100,7 +100,7 @@ describe('the wave 4 fallback strings now have keys', () => {
       'dashboard/src/components/agents/AgentProfilePanel.tsx',
       'dashboard/src/components/agents/AutomationDialog.tsx',
       'dashboard/src/components/tasks/AssignToAgentComposer.tsx',
-      'dashboard/src/components/tasks/TaskDetailPanel.tsx',
+      'dashboard/src/components/tasks/page/TaskFields.tsx',
       'dashboard/src/lib/assignToAgent.ts',
     ];
     for (const f of files) {

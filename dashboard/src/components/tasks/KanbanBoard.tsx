@@ -18,7 +18,6 @@ import { AtRiskAlert } from './AtRiskAlert';
 import { ProposalsSection } from './ProposalsSection';
 import { SleepEvalBanner } from './SleepEvalDeck';
 import { SaveScopeDialog } from './SaveScopeDialog';
-import { TaskDetailPanel } from './TaskDetailPanel';
 import { TaskCreateModal } from './TaskCreateModal';
 import { DelegateComposer } from './DelegateComposer';
 import { AssignToAgentComposer } from './AssignToAgentComposer';
@@ -39,7 +38,7 @@ const distinct = (xs: string[]): string[] => Array.from(new Set(xs));
 
 type PendingSave = { mode: 'save' | 'create'; name?: string } | null;
 
-export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
+export function KanbanBoard({ focus, onOpenTask }: { focus?: FocusTarget; onOpenTask?: (slug: string) => void } = {}) {
   const sm = useStatusModel();
   const s = useBoardState();
   const { data: tasks = [], isLoading } = useTasks();
@@ -72,7 +71,6 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
   const [delegateTask, setDelegateTask] = useState<Task | null>(null);
   const [assignAgentTask, setAssignAgentTask] = useState<Task | null>(null);
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showAuthor, setShowAuthor] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave>(null);
@@ -83,8 +81,10 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   // A refusal (the evidence gate's 409 names every unproven criterion) stays long enough to read.
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), toast.tone === 'error' ? 8000 : 1900); return () => clearTimeout(t); }, [toast]);
 
-  // Open the task the ⌘K palette / Brain map navigated to in the TaskDetailPanel.
-  useFocusTarget(focus, (slug) => setSelectedSlug(slug));
+  // A task opens as its own page (plan r3 § 5a): a card click, and the task the ⌘K palette or
+  // the Brain map navigated the board to.
+  const openTask = useCallback((slug: string) => onOpenTask?.(slug), [onOpenTask]);
+  useFocusTarget(focus, openTask);
 
   const closeAllMenus = useCallback(() => { setOpenMenu(null); setViewMenuId(null); }, []);
 
@@ -216,8 +216,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     });
     if (!ok) return;
     deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed') });
-    if (selectedSlug === task.slug) setSelectedSlug(null);
-  }, [deleteTask, flash, selectedSlug]);
+  }, [deleteTask, flash]);
   // Open the Delegate composer for a task (from the context menu). The composer dispatches
   // the delegate event the always-mounted AgentSurface listens for; we just host the modal.
   const ctxDelegate = useCallback((task: Task) => { setDelegateTask(task); setCtxMenu(null); }, []);
@@ -237,9 +236,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     setPendingSave(null);
   }, [pendingSave, s, flash]);
 
-  // The list carries no body (plan r3 § W4): the open task and the one being delegated are
-  // read by slug, so the panel and the delegate prompt get the whole card.
-  const { data: selectedTask = null } = useTask(selectedSlug ?? '');
+  // The list carries no body (plan r3 § W4): the task being delegated is read by slug, so the
+  // delegate prompt gets the whole card.
   const { data: delegateDetail = null } = useTask(delegateTask?.slug ?? '');
   const onTaskMove = useCallback((slug: string, updates: Partial<Pick<Task, 'priority' | 'urgency'>>) => updateTask.mutate({ slug, updates }), [updateTask]);
 
@@ -332,7 +330,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
                 assigneeName={assigneeName}
                 onToggleCollapse={() => setColCollapsed((m) => ({ ...m, [colKey]: !m[colKey] }))}
                 onAddTask={() => setShowCreate(true)}
-                onCardClick={(t) => setSelectedSlug(t.slug)}
+                onCardClick={(t) => openTask(t.slug)}
                 onCardContextMenu={openCtxMenu}
                 onCardDragStart={onCardDragStart}
                 onCardDragEnd={endDrag}
@@ -361,7 +359,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
                       </div>
                     )}
                     {sub.cards.map((t) => (
-                      <BoardCard key={t.id} task={t} cardProps={s.cardProps} variant="list" assigneeName={assigneeName} onClick={() => setSelectedSlug(t.slug)} onContextMenu={(e) => openCtxMenu(e, t)} />
+                      <BoardCard key={t.id} task={t} cardProps={s.cardProps} variant="list" assigneeName={assigneeName} onClick={() => openTask(t.slug)} onContextMenu={(e) => openCtxMenu(e, t)} />
                     ))}
                   </div>
                 ))}
@@ -370,10 +368,10 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
           </div>
         ) : (
           <div style={{ flex: 1, minHeight: 0, padding: 16, display: 'flex', flexDirection: 'column' }}>
-            {s.layout === 'eisenhower' && <EisenhowerMatrix tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} onTaskMove={onTaskMove} />}
-            {s.layout === 'scatter' && <RiceScatter tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} />}
-            {s.layout === 'timeline' && <TimelineGantt tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} />}
-            {s.layout === 'calendar' && <TaskCalendar tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} />}
+            {s.layout === 'eisenhower' && <EisenhowerMatrix tasks={filtered} onTaskClick={(t) => openTask(t.slug)} onTaskMove={onTaskMove} />}
+            {s.layout === 'scatter' && <RiceScatter tasks={filtered} onTaskClick={(t) => openTask(t.slug)} />}
+            {s.layout === 'timeline' && <TimelineGantt tasks={filtered} onTaskClick={(t) => openTask(t.slug)} />}
+            {s.layout === 'calendar' && <TaskCalendar tasks={filtered} onTaskClick={(t) => openTask(t.slug)} />}
             {s.layout === 'heatmap' && <ActivityHeatmap tasks={filtered} />}
           </div>
         )}
@@ -389,7 +387,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
           menu={ctxMenu}
           agentReady={agentReady}
           onClose={() => setCtxMenu(null)}
-          onOpen={(t) => { setSelectedSlug(t.slug); setCtxMenu(null); }}
+          onOpen={(t) => { openTask(t.slug); setCtxMenu(null); }}
           onSendToBacklog={ctxSendToBacklog}
           onDelegate={ctxDelegate}
           onAssignAgent={ctxAssignAgent}
@@ -414,7 +412,6 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
         />
       )}
 
-      {selectedTask && <TaskDetailPanel task={selectedTask} onClose={() => setSelectedSlug(null)} />}
       {showCreate && <TaskCreateModal onClose={() => setShowCreate(false)} />}
       {showAuthor && (
         <AuthorTaskComposer

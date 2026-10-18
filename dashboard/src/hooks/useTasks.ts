@@ -558,12 +558,17 @@ export interface TaskJournalEntry {
   body: string;
 }
 
-/** The task's newest journal entries (history lives beside the card, not in it). */
-export function useTaskJournal(slug: string) {
+/**
+ * One page of the task's journal, newest first (history lives beside the card, not in it).
+ * `before` is the id of the last entry already shown: the page of entries older than it
+ * ("Show older"). Under `['tasks', slug]`, so a task invalidation refreshes every page.
+ */
+export function useTaskJournal(slug: string, before: string | null = null) {
   const api = useApi();
   return useQuery({
-    queryKey: ['tasks', slug, 'journal'],
-    queryFn: () => api.get<{ total: number; entries: TaskJournalEntry[] }>(`/tasks/${encodeURIComponent(slug)}/journal`),
+    queryKey: ['tasks', slug, 'journal', before],
+    queryFn: () => api.get<{ total: number; entries: TaskJournalEntry[] }>(
+      `/tasks/${encodeURIComponent(slug)}/journal${before ? `?before=${encodeURIComponent(before)}` : ''}`),
     enabled: !!slug,
   });
 }

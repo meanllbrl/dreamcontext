@@ -9,6 +9,7 @@ import { AnnouncementsModal } from './components/layout/AnnouncementsModal';
 import { AgentSurface, PROJECT_ROLLUP_EVENT } from './components/sleepy/AgentSurface';
 import type { ProjectRollup } from './components/sleepy/agentStatus';
 import { TasksPage } from './pages/TasksPage';
+import { TaskPage } from './pages/TaskPage';
 import { RoadmapPage } from './pages/RoadmapPage';
 import { HypothesesPage } from './pages/HypothesesPage';
 import { LabPage } from './pages/LabPage';
@@ -77,7 +78,7 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
     'dreamcontext-agent-open-page',
     (detail) => {
       const page = detail?.page;
-      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings') return;
+      if (page !== 'tasks' && page !== 'task' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings') return;
       nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null);
     },
   );
@@ -353,7 +354,9 @@ function PageRouter({
     case 'brain':
       return <BrainPage onNavigate={handleBrainNavigate} />;
     case 'tasks':
-      return <TasksPage focus={focus} />;
+      return <TasksPage focus={focus} onOpenTask={(slug) => nav.navigate('task', slug)} />;
+    case 'task':
+      return <TaskPage slug={nav.focusId} onNavigate={nav.navigate} />;
     case 'roadmap':
       return <RoadmapPage onNavigate={(page, id) => nav.navigate(page, id ?? null)} focus={focus} />;
     case 'hypotheses':

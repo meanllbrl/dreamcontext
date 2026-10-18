@@ -21,7 +21,7 @@ import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useTaskProposalsCount } from '../../hooks/useTaskProposals';
 import './Sidebar.css';
 
-export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
+export type Page = 'tasks' | 'task' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
 
 interface SidebarProps {
   activePage: Page;
@@ -35,7 +35,7 @@ interface SidebarProps {
 
 /** The i18n key of each page's name (the phone's top bar shows it). */
 export const PAGE_LABEL_KEY: Record<Page, string> = {
-  tasks: 'nav.tasks', roadmap: 'nav.roadmap', hypotheses: 'nav.hypotheses', lab: 'nav.labpage', automations: 'nav.automations',
+  tasks: 'nav.tasks', task: 'nav.task', roadmap: 'nav.roadmap', hypotheses: 'nav.hypotheses', lab: 'nav.labpage', automations: 'nav.automations',
   agents: 'nav.agents', core: 'nav.core', knowledge: 'nav.knowledge', sleep: 'nav.sleep', brain: 'nav.brain', council: 'nav.council',
   settings: 'nav.settings', packs: 'nav.packs', about: 'nav.about', taxonomy: 'nav.taxonomy', announcements: 'nav.announcements',
   whiteboards: 'nav.whiteboard',
@@ -223,7 +223,8 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   // While the overlay covers the page, Chat is where the user IS — one active row, not two.
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
-  const current: Page | null = chatOpen && showChat ? null : activePage;
+  // One task's page is part of Tasks: the rail keeps the Tasks row lit while it is open.
+  const current: Page | null = chatOpen && showChat ? null : activePage === 'task' ? 'tasks' : activePage;
   const vaultLabel = vault ?? '';
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no

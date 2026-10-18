@@ -244,8 +244,8 @@ describe('multi-review round (2026-10-17): Majors 1-4', () => {
     expect(readJournal(stateDir, 'gate-me').some((e) => e.kind === 'status' && e.label === 'in_review')).toBe(true);
   });
 
-  it('M4: the panel shows a gate refusal line by line, as an alert, long enough to read', () => {
-    const src = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'tasks', 'TaskDetailPanel.tsx'), 'utf-8');
+  it('M4: the task page shows a gate refusal line by line, as an alert, long enough to read', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'pages', 'TaskPage.tsx'), 'utf-8');
     const errDiv = /<div className="error-state"[^>]*>\{mutationError\}<\/div>/.exec(src)?.[0] ?? '';
     expect(errDiv).toContain('role="alert"');
     expect(errDiv).toContain("whiteSpace: 'pre-line'");

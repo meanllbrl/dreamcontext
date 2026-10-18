@@ -168,3 +168,18 @@
   color: var(--color-text);
   border-color: var(--color-border);
 }
+
+/* A destructive action that is not the primary one (moved here from the retired task panel). */
+.btn--danger-ghost {
+  background: none;
+  border: 1px solid var(--color-error);
+  color: var(--color-error);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.btn--danger-ghost:hover {
+  background: var(--color-error-subtle);
+}
