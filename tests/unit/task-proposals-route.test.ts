@@ -52,7 +52,9 @@ afterEach(() => rmSync(projectRoot, { recursive: true, force: true }));
 
 function req(body?: unknown): IncomingMessage {
   const r = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
-  Object.assign(r, { method: 'POST', headers: { 'content-type': 'application/json' } });
+  // The dashboard is a browser: its writes carry Origin (the owner-only routes refuse one
+  // without it; tests/unit/inbox-api.test.ts asserts that 403 for accept and apply).
+  Object.assign(r, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:4173' } });
   return r;
 }
 type Handler = (req: IncomingMessage, res: ServerResponse, params: Record<string, string>, ctx: string) => Promise<void>;

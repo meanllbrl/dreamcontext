@@ -1,6 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { generateId } from './id.js';
 import { ensureGitignoreEntries } from './gitignore.js';
 import { safeResolveInside } from './safe-resolve.js';
 import { withTaskFileLock } from './task-file-lock.js';
@@ -152,7 +152,9 @@ export function recordAudit(contextRoot: string, e: NewAuditEntry, now: Date = n
   if (!AUDIT_KINDS.includes(e.kind)) throw new AuditError(`Unknown audit kind: ${String(e.kind)}`);
   if (!AUDIT_VIAS.includes(e.via)) throw new AuditError(`Unknown audit via: ${String(e.via)}`);
   const entry: AuditEntry = {
-    id: generateId('ta'),
+    // Its own random id, never `generateId`: an audit write must not draw from the id
+    // sequence task and cycle creation share (it would shift every id after it).
+    id: `ta_${randomBytes(6).toString('base64url')}`,
     at: now.toISOString(),
     kind: e.kind,
     slug: e.slug,
