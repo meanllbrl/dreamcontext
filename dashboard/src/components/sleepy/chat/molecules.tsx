@@ -389,7 +389,7 @@ export function ThinkingPill({
   tokens: number;
   open: boolean;
   onToggle: () => void;
-  body: string;
+  body: ReactNode;
   /** Who was thinking. Defaults to the lead. */
   actor?: AgentRoleId;
   /** Opens its stretch (shows the avatar) or follows it (keeps the column, hides the face). */

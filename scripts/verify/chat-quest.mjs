@@ -1107,6 +1107,10 @@ async function runThemeIn(browser, base, theme, report) {
     (await thinking.locator('.chat-m-thinking-label').innerText()).trim() === 'Thought it through'
     && /\d/.test(await thinking.locator('.chat-m-thinking-meta').innerText()),
     await thinking.innerText().catch(() => '<none>'));
+  ok('a thinking row is open by default, its body rendered as markdown',
+    (await thinking.locator('.chat-m-thinking-head').getAttribute('aria-expanded')) === 'true'
+    && (await thinking.locator('.chat-m-thinking-body .md-preview').count()) === 1,
+    await thinking.innerHTML().catch(() => '<none>'));
   const failCard = vis('.chat-dreamcard[data-status="error"]').first();
   const failText = (await failCard.locator('.chat-m-toolhead').innerText().catch(() => '')).replace(/\s+/g, ' ');
   const failAria = (await failCard.locator('.chat-m-toolhead-hit').getAttribute('aria-label').catch(() => '')) || '';
