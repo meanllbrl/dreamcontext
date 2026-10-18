@@ -5,6 +5,7 @@ import type { FixRunState } from '../../hooks/useOnboarding';
 import type { ReadinessCheck, Surface } from '../../lib/onboardingTypes';
 import { StatusGlyph, type GlyphMode } from './StatusGlyph';
 import { WaitingCard, type WaitingVariant } from './WaitingCard';
+import { fill } from '../../lib/fill';
 
 /**
  * One row of the readiness checklist: glyph, title, why, then EITHER a state line OR one
@@ -99,7 +100,7 @@ export function CheckRow({
     if (mode === 'failed') return t('onboarding.checklist.failed');
     if (mode === 'blocked') {
       const deps = (check.blockedBy ?? []).map((d) => t(`onboarding.check.${d}.title`)).join(', ');
-      return t('onboarding.checklist.blocked').replace('{deps}', deps);
+      return fill(t('onboarding.checklist.blocked'), { deps });
     }
     return check.reason ? t(`onboarding.reason.${check.reason}`) : '';
   }
@@ -149,7 +150,7 @@ export function CheckRow({
         <div className="ob-rail" role="progressbar" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.received}>
           <span className="ob-rail-fill" style={{ transform: `scaleX(${Math.min(1, progress.received / progress.total)})` }} />
           <span className="ob-rail-label">
-            {t('onboarding.checklist.progress').replace('{received}', mb(progress.received)).replace('{total}', mb(progress.total))}
+            {fill(t('onboarding.checklist.progress'), { received: mb(progress.received), total: mb(progress.total) })}
           </span>
         </div>
       ) : working && wait === null ? (

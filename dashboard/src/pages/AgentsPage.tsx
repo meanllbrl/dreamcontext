@@ -6,6 +6,7 @@ import { AgentProfilePanel } from '../components/agents/AgentProfilePanel';
 import { AgentIdentityDialog } from '../components/agents/AgentIdentityDialog';
 import type { AgentsFocus } from '../lib/openAgents';
 import './AgentsPage.css';
+import { fill } from '../lib/fill';
 
 /** What a focus asks the page to do: open one agent's profile, open the create dialog (with a
  *  home board preset when a board asked), or both. */
@@ -80,7 +81,7 @@ export function AgentsPage({ focus, onFocusDone }: { focus: AgentsFocus | null; 
             <div className="arp-titleline">
               <h1 className="page-title arp-title">{t('agents.team.title')}</h1>
               {agents && count > 0 && (
-                <span className="arp-count">{t(rosterCountKey(count)).replace('{n}', String(count))}</span>
+                <span className="arp-count">{fill(t(rosterCountKey(count)), { n: String(count) })}</span>
               )}
             </div>
             <p className="arp-lead">{t('agents.page.lead')}</p>

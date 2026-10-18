@@ -1,6 +1,7 @@
 import { useI18n } from '../../context/I18nContext';
 import { approvalState, type AgentApprovalState, type AgentSummary } from '../../hooks/useAgents';
 import { AgentAvatar } from './AgentAvatar';
+import { fill } from '../../lib/fill';
 
 /** A translated string, or `fallback` when the key has no copy yet (the W4b rule: lanes add no keys). */
 export function tx(t: (key: string) => string, key: string, fallback: string): string {
@@ -82,7 +83,7 @@ export function AgentRosterCard({
       className={`agr-card${selected ? ' agr-card--on' : ''}`}
       onClick={() => onOpen(agent.slug)}
       aria-pressed={selected}
-      title={t('agents.roster.open').replace('{name}', agent.title)}
+      title={fill(t('agents.roster.open'), { name: agent.title })}
       data-agent={agent.slug}
       data-approval-state={state}
     >

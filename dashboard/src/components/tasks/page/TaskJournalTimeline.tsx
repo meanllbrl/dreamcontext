@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useAddTaskChangelog, useTaskJournal, type TaskJournalEntry } from '../../../hooks/useTasks';
 import { useI18n } from '../../../context/I18nContext';
 import { MarkdownBlock } from './MarkdownBlock';
+import { fill } from '../../../lib/fill';
 
 /** The server's page size (`PANEL_JOURNAL_LIMIT`): every page before the last one is full. */
 const PAGE = 5;
@@ -19,8 +20,10 @@ function JournalPage({ slug, before, shownBefore, isLast, onOlder }: {
   onOlder: (lastId: string) => void;
 }) {
   const { t } = useI18n();
-  const { data, isLoading } = useTaskJournal(slug, before);
+  const { data, isLoading, isError } = useTaskJournal(slug, before);
   if (isLoading) return <li className="tkp-meta">{t('taskPage.loading')}</li>;
+  // A failed read is not an empty history: say so, before the empty and the list.
+  if (isError) return <li className="tkp-error" role="alert">{t('taskPage.journal.loadFailed')}</li>;
   const entries = data?.entries ?? [];
   if (before === null && entries.length === 0) return <li className="tkp-empty">{t('tasks.history_empty')}</li>;
   const older = data ? data.total - shownBefore - entries.length : 0;
@@ -38,7 +41,7 @@ function JournalPage({ slug, before, shownBefore, isLast, onOlder }: {
       {isLast && older > 0 && entries.length > 0 && (
         <li>
           <button type="button" className="tkp-btn" onClick={() => onOlder(entries[entries.length - 1].id)}>
-            {t('taskPage.journal.older').replace('{n}', String(older))}
+            {fill(t('taskPage.journal.older'), { n: String(older) })}
           </button>
         </li>
       )}

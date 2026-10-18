@@ -1,6 +1,7 @@
 import type { Task } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
 import { TaskVerdictBar } from '../tasks/page/TaskVerdictBar';
+import { fill } from '../../lib/fill';
 
 /** Every criterion ticked: the review can be approved, and it counts in the Inbox badge. */
 export function isFullyEvidenced(t: Task): boolean {
@@ -24,7 +25,7 @@ export function InboxReviews({ reviews, onOpenTask }: { reviews: Task[]; onOpenT
             <div className="ibx-row-head">
               <button type="button" className="ibx-link" onClick={() => onOpenTask(r.slug)} lang="und">{r.name || r.slug}</button>
               <span className="ibx-meta">
-                {t('inbox.reviews.criteria').replace('{done}', String(r.criteria.done)).replace('{total}', String(r.criteria.total))}
+                {fill(t('inbox.reviews.criteria'), { done: String(r.criteria.done), total: String(r.criteria.total) })}
               </span>
               {!ready && <span className="ibx-tag ibx-tag--warn">{t('inbox.reviews.incomplete')}</span>}
             </div>

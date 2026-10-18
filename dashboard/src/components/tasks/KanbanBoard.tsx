@@ -26,6 +26,7 @@ import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCap
 import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
 import { TimelineGantt } from './TimelineGantt';
 import './Board.css';
+import { fill } from '../../lib/fill';
 
 const AVATAR_PALETTE = ['#9d8cff', '#4aa8ff', '#4ade80', '#f0abfc', '#fbbf24', '#5eead4', '#f9a8d4'];
 const distinct = (xs: string[]): string[] => Array.from(new Set(xs));
@@ -208,7 +209,7 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
     if (!task || keyOf(task) === colValue) return;
     if (s.groupBy === 'order') {
       if (colValue === 'done') return;
-      planTask.mutate({ slug: task.slug, target: colValue }, { onSuccess: () => flash(t('board.toast.planned').replace('{lane}', orderLabels[colValue as OrderLane] ?? colValue)), onError });
+      planTask.mutate({ slug: task.slug, target: colValue }, { onSuccess: () => flash(fill(t('board.toast.planned'), { lane: orderLabels[colValue as OrderLane] ?? colValue })), onError });
       return;
     }
     const field = s.groupBy as Dim;
@@ -238,7 +239,7 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
     if (task.status !== status) {
       updateTask.mutate(
         { slug: task.slug, updates: { status } as Partial<Task> },
-        { onSuccess: () => flash(t('board.toast.moved').replace('{status}', sm.labelOf(status))), onError },
+        { onSuccess: () => flash(fill(t('board.toast.moved'), { status: sm.labelOf(status) })), onError },
       );
     }
     setCtxMenu(null);
@@ -248,13 +249,13 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
     setCtxMenu(null);
     planTask.mutate(
       { slug: task.slug, target: 'later' },
-      { onSuccess: () => flash(t('board.toast.planned').replace('{lane}', orderLabels.later)), onError },
+      { onSuccess: () => flash(fill(t('board.toast.planned'), { lane: orderLabels.later })), onError },
     );
   }, [planTask, flash, onError, orderLabels, t]);
   const ctxDelete = useCallback(async (task: Task) => {
     setCtxMenu(null);
     const ok = await confirmAction({
-      title: t('board.delete.title').replace('{name}', task.name || task.slug),
+      title: fill(t('board.delete.title'), { name: task.name || task.slug }),
       body: t('board.delete.body'),
       confirmLabel: t('taskPage.delete.confirm'),
       destructive: true,
@@ -284,8 +285,8 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
 
   const activeName = s.activeView?.name ?? t('board.view');
   const pendingTitle = pendingSave?.mode === 'create'
-    ? t('board.save.create').replace('{name}', pendingSave.name || t('board.view.new'))
-    : t('board.save.title').replace('{name}', activeName);
+    ? fill(t('board.save.create'), { name: pendingSave.name || t('board.view.new') })
+    : fill(t('board.save.title'), { name: activeName });
   const pendingDefaultScope: SaveScope = s.activeView?.origin === 'local' || s.activeView?.hasLocalOverride ? 'local' : 'shared';
   const isEmpty = filtered.length === 0;
   const isTimeline = s.layout === 'timeline';

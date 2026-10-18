@@ -702,6 +702,10 @@
   .assignee-chip__remove,
   .task-tag-remove,
   .task-tag-picker .ss-trigger { min-height: var(--space-11); min-width: var(--space-11); }
+  /* A criterion's 20px checkbox keeps its look; its label (htmlFor, so a tap on it ticks the
+     box) fills the row instead, a 44px target across the whole width. */
+  .tkp-criterion { padding-block: 0; align-items: center; }
+  .tkp-criterion-text { align-self: stretch; display: flex; align-items: center; min-height: var(--space-11); }
   .tkp-header-controls { flex-direction: column; align-items: stretch; }
   .task-field { flex-direction: column; }
   .task-field-label { flex: none; padding-top: 0; }

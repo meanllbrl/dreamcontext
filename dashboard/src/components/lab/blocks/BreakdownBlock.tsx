@@ -218,12 +218,12 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
       {picker && <ExplorerHeader frame={f} funnelId={funnelId} selection={sel} onFunnel={onFunnel} full={!!fullscreen} />}
       {unknownFunnel && (
         <div className="lab-explorer-note" data-lab-unknown-funnel="">
-          {t('lab.blocks.explorer.unknownFunnel').replace('{id}', unknownFunnel).replace('{name}', shownName)}
+          {fill(t('lab.blocks.explorer.unknownFunnel'), { id: unknownFunnel, name: shownName })}
         </div>
       )}
       {unknown.length > 0 && (
         <div className="lab-explorer-note" data-lab-unknown-dims="">
-          {t('lab.blocks.explorer.unknownMetrics').replace('{keys}', unknown.join(', '))}
+          {fill(t('lab.blocks.explorer.unknownMetrics'), { keys: unknown.join(', ') })}
         </div>
       )}
     </>
@@ -238,7 +238,7 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
     );
   }
 
-  const reasonText = (reason: string | null) => t('lab.blocks.breakdown.unmeasured').replace('{reason}', reason ?? t('lab.blocks.breakdown.noPath'));
+  const reasonText = (reason: string | null) => fill(t('lab.blocks.breakdown.unmeasured'), { reason: reason ?? t('lab.blocks.breakdown.noPath') });
   const users = (n: number) => fmtCompact(n, locale);
   // One line instead of a row of dead chips; the reason is the path's own, else why it is missing.
   const offLine = (axis: BreakdownAxis) => {
@@ -267,12 +267,12 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
       ? t('lab.blocks.breakdown.lanesHint0')
       : pinned.length === 1
         ? t('lab.blocks.breakdown.lanesHint1')
-        : t('lab.blocks.breakdown.lanesHintN').replace('{n}', String(pinned.length));
+        : fill(t('lab.blocks.breakdown.lanesHintN'), { n: String(pinned.length) });
   const allActive = axes.every((a) => sel[a.key] === undefined);
   // A tip outlives nothing: once its chip is enabled (or gone) it closes.
   const tipLive = !!tip && axes.some((a) => a.chips.some((c) => !c.enabled && tip.id === `${uid}-tip-${a.key}-${c.value}`));
 
-  const pinText = t('lab.blocks.breakdown.pin').replace('{sel}', `'${labelOf(current.selection)}'`);
+  const pinText = fill(t('lab.blocks.breakdown.pin'), { sel: `'${labelOf(current.selection)}'` });
   const pin = () => {
     if (blocked === null) onLanes?.([...pinned, current.selection]);
   };
@@ -286,7 +286,7 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
         type="button"
         className="lab-breakdown-lane-remove"
         data-lab-lane-remove={i + 1}
-        aria-label={t('lab.blocks.breakdown.removeLane').replace('{n}', String(i + 1))}
+        aria-label={fill(t('lab.blocks.breakdown.removeLane'), { n: String(i + 1) })}
         onClick={() => onLanes?.(pinned.filter((_, j) => j !== i))}
       >
         <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
@@ -320,7 +320,7 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
                   onSelection?.(next);
                 }}
               >
-                <option value="">{t('lab.blocks.breakdown.anyValue').replace('{dim}', axis.label)}</option>
+                <option value="">{fill(t('lab.blocks.breakdown.anyValue'), { dim: axis.label })}</option>
                 {axis.chips.map((chip) => (
                   <option
                     key={chip.value}
@@ -330,7 +330,7 @@ export function BreakdownBlock({ frame, options, selection, onSelection, lanes, 
                     data-lab-breakdown-option={chip.value}
                   >
                     {!chip.enabled
-                      ? t('lab.blocks.breakdown.optionUnmeasured').replace('{value}', chip.value)
+                      ? fill(t('lab.blocks.breakdown.optionUnmeasured'), { value: chip.value })
                       : counts && chip.users !== null ? `${chip.value} · ${users(chip.users)}` : chip.value}
                   </option>
                 ))}

@@ -11,6 +11,7 @@ import { WEB_URL_REASON_TEXT, isTrustedHost, trustHost, validateWebUrl, type Web
 import { useWbText } from '../whiteboardHost';
 import { WidgetButton, WidgetFrame, WidgetNotice } from './WidgetFrame';
 import type { WidgetProps } from './types';
+import { fill } from '../../../lib/fill';
 
 /**
  * A web page or a file on the board (D7; files and pages on this computer since 2026-10-06).
@@ -81,12 +82,11 @@ function WebPage({ page, title, active, size }: FrameProps & { page: PageCheck }
           <div className="wb-web-buttons">
             <WidgetButton onClick={() => setLoaded(true)}>{tx('whiteboard.web.load', 'Load')}</WidgetButton>
             <WidgetButton onClick={() => { trustHost(page.host); setLoaded(true); }}>
-              {tx('whiteboard.web.trust', 'Trust {host} on this machine').replace('{host}', page.unicodeHost)}
+              {fill(tx('whiteboard.web.trust', 'Trust {host} on this machine'), { host: page.unicodeHost })}
             </WidgetButton>
           </div>
           <p className="wb-web-trust-note">
-            {tx('whiteboard.web.trustNote', 'Trust {host} on this machine: every board URL on this host will load automatically.')
-              .replace('{host}', page.unicodeHost)}
+            {fill(tx('whiteboard.web.trustNote', 'Trust {host} on this machine: every board URL on this host will load automatically.'), { host: page.unicodeHost })}
           </p>
         </div>
       )}

@@ -28,10 +28,8 @@ import {
 
 export type Translate = (key: string) => string;
 
-/** `{name}` placeholders filled from `vars` (a placeholder with no value stays as written). */
-export function fill(text: string, vars: Record<string, string | number>): string {
-  return text.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m));
-}
+/** `{name}` placeholders filled from `vars`: the dashboard's one helper (lib/fill.ts). */
+export { fill } from '../../../lib/fill';
 
 // ─── One number formatter for the explorer (tr-TR / en-US) ────────────────
 //

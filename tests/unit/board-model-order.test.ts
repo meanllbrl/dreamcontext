@@ -95,6 +95,28 @@ describe('nestByParent', () => {
     expect(items[0]).toMatchObject({ kind: 'card', node: { task: { slug: 'epic' }, children: [{ slug: 'kid' }] } });
     expect(items[1]).toMatchObject({ kind: 'orphans', parent: { slug: 'elsewhere', name: 'Elsewhere epic' }, nodes: [{ task: { slug: 'lone' } }] });
   });
+  // Second-pass review, Minor 6: C under B under A, all in one column, was counted but never drawn.
+  it('a chain A → B → C in one column draws B and C under A, and every card exactly once', () => {
+    const a = task('a-epic');
+    const b = task('b-step', { parent_task: 'a-epic' });
+    const c = task('c-detail', { parent_task: 'b-step' });
+    const items = nestByParent([a, b, c], [a, b, c]);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: 'card', node: { task: { slug: 'a-epic' } } });
+    const node = (items[0] as Extract<(typeof items)[number], { kind: 'card' }>).node;
+    expect(node.children.map((t) => t.slug)).toEqual(['b-step', 'c-detail']);
+  });
+
+  it('the chain under a parent from another column heads one group; a parent cycle stands alone', () => {
+    const b = task('b-step', { parent_task: 'a-epic' });
+    const c = task('c-detail', { parent_task: 'b-step' });
+    const grouped = nestByParent([b, c], [task('a-epic'), b, c]);
+    expect(grouped).toMatchObject([{ kind: 'orphans', parent: { slug: 'a-epic' }, nodes: [{ task: { slug: 'b-step' }, children: [{ slug: 'c-detail' }] }] }]);
+    const x = task('x-loop', { parent_task: 'y-loop' });
+    const y = task('y-loop', { parent_task: 'x-loop' });
+    const drawn = nestByParent([x, y], [x, y]).flatMap((i) => (i.kind === 'card' ? [i.node] : i.nodes));
+    expect(drawn.map((n) => n.task.slug).sort()).toEqual(['x-loop', 'y-loop']);
+  });
 });
 
 describe('saved views normalise to configVersion 2', () => {

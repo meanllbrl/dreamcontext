@@ -15,6 +15,7 @@ import {
 } from './cardViewState';
 import type { Block, BlockProps, BlockRenderer, Card, Frame } from './boardTypes';
 import './board.css';
+import { fill } from '../../../lib/fill';
 
 /**
  * ONE CARD ON A BOARD: a title, a freshness line, and its blocks.
@@ -179,7 +180,7 @@ export function autoSyncText(
   if (next.kind === 'off') return t('lab.board.fresh.autoOff');
   if (next.kind === 'due') return t('lab.board.fresh.autoDue');
   const when = ago(new Date(next.at).toISOString(), locale);
-  return t(next.kind === 'backoff' ? 'lab.board.fresh.autoBackoff' : 'lab.board.fresh.autoAt').replace('{when}', when);
+  return fill(t(next.kind === 'backoff' ? 'lab.board.fresh.autoBackoff' : 'lab.board.fresh.autoAt'), { when });
 }
 
 /** The freshness line's words: live job state first, then age (+ the skip reason when known). */
@@ -196,12 +197,10 @@ export function freshnessText(
   if (fresh === 'never' || fresh === 'failed') return t(`lab.board.fresh.${fresh}`);
   const updated = ago(summary.fetchedAt as string, locale);
   if (fresh === 'fresh' && reason === 'upstream-unchanged') {
-    return t('lab.board.fresh.upstream')
-      .replace('{ago}', updated)
-      .replace('{checked}', summary.checkedAt ? ago(summary.checkedAt, locale) : updated);
+    return fill(t('lab.board.fresh.upstream'), { ago: updated, checked: summary.checkedAt ? ago(summary.checkedAt, locale) : updated });
   }
-  if (fresh === 'fresh' && reason === 'ttl') return t('lab.board.fresh.ttl').replace('{ago}', updated);
-  return t(`lab.board.fresh.${fresh}`).replace('{ago}', updated);
+  if (fresh === 'fresh' && reason === 'ttl') return fill(t('lab.board.fresh.ttl'), { ago: updated });
+  return fill(t(`lab.board.fresh.${fresh}`), { ago: updated });
 }
 
 export interface BoardCardProps {
@@ -308,7 +307,7 @@ export function BoardCard({
     const node = ignored.length > 0 ? (
       <>
         <p className="board-block-note" data-lab-not-split={ignored.join(',')}>
-          {t('lab.board.card.notSplit').replace('{dims}', ignored.join(', '))}
+          {fill(t('lab.board.card.notSplit'), { dims: ignored.join(', ') })}
         </p>
         {drawn}
       </>
@@ -328,7 +327,7 @@ export function BoardCard({
           </div>
         </header>
         <div className="board-card-missing">
-          <p>{t('lab.board.card.missing').replace('{slug}', card.insight ?? '')}</p>
+          <p>{fill(t('lab.board.card.missing'), { slug: card.insight ?? '' })}</p>
           {onRemove && (
             <button type="button" className="board-btn" data-lab-card-remove onClick={onRemove}>{t('lab.board.card.remove')}</button>
           )}

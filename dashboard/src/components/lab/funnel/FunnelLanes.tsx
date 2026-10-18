@@ -6,6 +6,7 @@ import { alignStepKeys, dropSeverity } from './funnelModel';
 import { fmtCount, fmtDrop } from '../explorer/explorerFormat';
 import { dropBadgeText, pctText } from './FunnelFlow';
 import './FunnelLanes.css';
+import { fill } from '../../../lib/fill';
 
 /** The most lanes drawn side by side (the card's pin limit). */
 export const MAX_DRAWN_LANES = 4;
@@ -113,14 +114,14 @@ export function FunnelLanes({ lanes, base, markWorst = false, dense = false }: {
       {model.lanes.map((lane, li) => {
         const note = lane.measured
           ? fmtCount(lane.users, locale)
-          : t('lab.blocks.explorer.notMeasured').replace('{sel}', lane.label).replace('{reason}', lane.reason ?? t('lab.blocks.breakdown.noPath'));
+          : fill(t('lab.blocks.explorer.notMeasured'), { sel: lane.label, reason: lane.reason ?? t('lab.blocks.breakdown.noPath') });
         return (
           <div
             key={`h${li}`}
             className="funnel-lanes-head"
             data-lab-lane={li + 1}
             data-lab-lane-unmeasured={lane.measured ? undefined : ''}
-            title={`${t('lab.blocks.funnel.lane').replace('{n}', String(li + 1))}: ${lane.label} · ${note}`}
+            title={`${fill(t('lab.blocks.funnel.lane'), { n: String(li + 1) })}: ${lane.label} · ${note}`}
           >
             <span className="funnel-lanes-head-row">
               <span className="funnel-lanes-num" data-lane={li + 1}>{li + 1}</span>
@@ -142,7 +143,7 @@ export function FunnelLanes({ lanes, base, markWorst = false, dense = false }: {
             }
             if (!d.measured) {
               // Not measured on this path: the word, its reason in the title, never a bar of 0.
-              const why = t('lab.explorer.notMeasuredWhy').replace('{reason}', lane.reasons.get(step.key) ?? t('lab.blocks.breakdown.noPath'));
+              const why = fill(t('lab.explorer.notMeasuredWhy'), { reason: lane.reasons.get(step.key) ?? t('lab.blocks.breakdown.noPath') });
               return (
                 <span
                   key={`c${li}`}

@@ -13,6 +13,7 @@ import { CloseGlyph, GroupEditor, MenuItem } from './BoardTabMenu';
 import { useTabLayout } from './useTabLayout';
 import './BoardSwitcher.css';
 import './BoardTabs.css';
+import { fill } from '../../lib/fill';
 
 type Panel = 'boards' | 'create' | null;
 type Menu = { kind: 'tab'; slug: string; x: number; y: number } | { kind: 'group'; id: string; x: number; y: number } | null;
@@ -145,7 +146,7 @@ export function BoardTabs({ slug, name, onOpen, onRenameNote }: BoardTabsProps) 
     setMenu(null);
     setPanel(null);
     setConfirm({
-      ask: t('whiteboard.tabs.closeAsk').replace('{name}', nameOf(target)),
+      ask: fill(t('whiteboard.tabs.closeAsk'), { name: nameOf(target) }),
       run: () => close(target),
       ...at,
     });
@@ -393,7 +394,7 @@ export function BoardTabs({ slug, name, onOpen, onRenameNote }: BoardTabsProps) 
               {layout.groups.filter((g) => g.id !== menuTab.group).map((g) => (
                 <MenuItem
                   key={g.id}
-                  label={t('whiteboard.tabs.addToGroup').replace('{name}', g.name || t('whiteboard.tabs.unnamed'))}
+                  label={fill(t('whiteboard.tabs.addToGroup'), { name: g.name || t('whiteboard.tabs.unnamed') })}
                   swatch={g.color}
                   onClick={() => { change((l) => addToGroup(l, menuTab.slug, g.id)); setMenu(null); }}
                 />
@@ -407,7 +408,7 @@ export function BoardTabs({ slug, name, onOpen, onRenameNote }: BoardTabsProps) 
               <div className="wbt-menu-sep" role="separator" />
               <MenuItem label={t('whiteboard.tabs.close')} disabled={single} onClick={() => askClose(menuTab.slug, menu)} />
               <MenuItem label={t('whiteboard.tabs.closeOthers')} disabled={single} onClick={() => askCloseMany(
-                t('whiteboard.tabs.closeOthersAsk').replace('{n}', String(layout.tabs.length - 1)),
+                fill(t('whiteboard.tabs.closeOthersAsk'), { n: String(layout.tabs.length - 1) }),
                 (l) => closeOtherTabs(l, menuTab.slug),
                 menu,
               )} />
@@ -419,9 +420,7 @@ export function BoardTabs({ slug, name, onOpen, onRenameNote }: BoardTabsProps) 
               onChange={(patch) => change((l) => updateGroup(l, menuGroup.id, patch))}
               onUngroup={() => { change((l) => ungroup(l, menuGroup.id)); setMenu(null); }}
               onClose={() => askCloseMany(
-                t('whiteboard.tabs.closeGroupAsk')
-                  .replace('{name}', menuGroup.name || t('whiteboard.tabs.unnamed'))
-                  .replace('{n}', String(layout.tabs.filter((x) => x.group === menuGroup.id).length)),
+                fill(t('whiteboard.tabs.closeGroupAsk'), { name: menuGroup.name || t('whiteboard.tabs.unnamed'), n: String(layout.tabs.filter((x) => x.group === menuGroup.id).length) }),
                 (l) => closeGroup(l, menuGroup.id),
                 menu,
               )}

@@ -18,6 +18,7 @@ import { useAgentSession, useBoardAgents } from '../useBoardAgents';
 import { WidgetFrame, WidgetNotice } from './WidgetFrame';
 import type { WidgetProps } from './types';
 import './agentWidget.css';
+import { fill } from '../../../lib/fill';
 
 type Tx = (key: string, fallback: string) => string;
 
@@ -61,7 +62,7 @@ export function AgentWidget({ elementId, payload, active, size }: WidgetProps) {
           ? <WidgetNotice tone="loading">{tx('whiteboard.agent.loading', 'Loading the agent…')}</WidgetNotice>
           : (
             <WidgetNotice tone="missing">
-              {tx('whiteboard.agent.missing', 'No agent named {slug} in this project. Removing this card never deletes an agent.').replace('{slug}', slug)}
+              {fill(tx('whiteboard.agent.missing', 'No agent named {slug} in this project. Removing this card never deletes an agent.'), { slug })}
             </WidgetNotice>
           )}
       </WidgetFrame>
@@ -123,7 +124,7 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
         className="wb-agent-face"
         role="button"
         tabIndex={0}
-        aria-label={tx('whiteboard.agent.talk', 'Talk to {name} in the panel').replace('{name}', agent.title)}
+        aria-label={fill(tx('whiteboard.agent.talk', 'Talk to {name} in the panel'), { name: agent.title })}
         onClick={talk}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); talk(); } }}
       >
@@ -163,7 +164,7 @@ function AgentCard({ elementId, agent, active, size, board, tx }: {
         {dropping && (
           <div className="wb-agent-drop-veil" aria-hidden="true">
             <span className="wb-agent-drop-label">
-              {tx('whiteboard.agent.dropHere', 'Add to the chat with {name}').replace('{name}', agent.title)}
+              {fill(tx('whiteboard.agent.dropHere', 'Add to the chat with {name}'), { name: agent.title })}
             </span>
             {target?.what && <span className="wb-agent-drop-what">{target.what}</span>}
           </div>
@@ -299,7 +300,7 @@ export function Blocked({ agent, onReview, tx }: { agent: Pick<AgentSummary, 'ti
   return (
     <p className="wb-agent-blocked">
       <span>
-        {tx('whiteboard.agent.blockedUnapproved', '{name} is not approved on this machine yet.').replace('{name}', agent.title)}
+        {fill(tx('whiteboard.agent.blockedUnapproved', '{name} is not approved on this machine yet.'), { name: agent.title })}
       </span>
       <button type="button" className="wb-widget-btn" onClick={onReview}>
         {tx('whiteboard.agent.review', 'Review in Agents')}

@@ -15,6 +15,7 @@ import { SOUL_MAX_CHARS, SOUL_TEMPLATES, normalizeSoul, soulProblem, soulTemplat
 import { AgentAvatar } from './AgentAvatar';
 import { tx } from './AgentRosterCard';
 import './AgentIdentityDialog.css';
+import { fill } from '../../lib/fill';
 
 /** The model list, mirrored like every composer in the dashboard (no import path into the CLI's
  *  registry). `''` is "no model of its own": the agent runs on Claude's default. */
@@ -158,7 +159,7 @@ export function AgentIdentityDialog({
   const blocker = identityFormError(form);
   const agentTitle = detail.data?.agent.title ?? '';
   const heading = editing
-    ? t('agents.identity.editTitle').replace('{name}', agentTitle)
+    ? fill(t('agents.identity.editTitle'), { name: agentTitle })
     : t('agents.identity.createTitle');
 
   const set = <K extends keyof IdentityForm>(key: K, value: IdentityForm[K]) => {
@@ -198,20 +199,20 @@ export function AgentIdentityDialog({
   /** Save first, then the photo: a new agent has no slug to store a photo under until it exists.
    *  A photo failure is reported, never rolled back: an agent with initials is a working agent. */
   const finish = (saved: AgentSummary) => {
-    const message = (editing ? t('agents.identity.saved') : t('agents.identity.created')).replace('{name}', saved.title);
+    const message = fill((editing ? t('agents.identity.saved') : t('agents.identity.created')), { name: saved.title });
     if (!photo) {
       onSaved(saved.slug, message);
       return;
     }
     upload.mutate({ slug: saved.slug, bytes: photo }, {
       onSuccess: () => onSaved(saved.slug, message),
-      onError: (err) => onSaved(saved.slug, t('agents.identity.photoFailed').replace('{reason}', (err as Error).message)),
+      onError: (err) => onSaved(saved.slug, fill(t('agents.identity.photoFailed'), { reason: (err as Error).message })),
     });
   };
 
   const fail = (err: unknown) => {
     const key = identityErrorKey(err);
-    setError(key === 'agents.identity.truncated' ? t(key) : t(key).replace('{reason}', (err as Error).message));
+    setError(key === 'agents.identity.truncated' ? t(key) : fill(t(key), { reason: (err as Error).message }));
   };
 
   const save = () => {
@@ -335,7 +336,7 @@ export function AgentIdentityDialog({
           <div className="aid-soul-foot">
             {soulUndo ? (
               <span className="aid-note aid-soul-undo" role="status">
-                {t('agents.identity.soulReplaced').replace('{name}', soulUndo.name)}
+                {fill(t('agents.identity.soulReplaced'), { name: soulUndo.name })}
                 <button type="button" className="aid-textbtn" onClick={undoTemplate} data-soul-undo>
                   {t('agents.identity.soulUndo')}
                 </button>

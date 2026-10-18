@@ -16,6 +16,7 @@ import { hydrateWhiteboardPrefs, isWhiteboardPrefsHydrated } from '../components
 import { BoardTabs } from './whiteboards/BoardTabs';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import './WhiteboardsPage.css';
+import { fill } from '../lib/fill';
 
 interface WhiteboardsPageProps {
   /** Shell navigation focus: the `id` is a board slug, opened full-bleed. */
@@ -262,7 +263,7 @@ function SaveStatus({ state }: { state: SaveState }) {
     case 'failed':
       return (
         <span className="wbp-status wbp-status--bad" role="alert">
-          {t('whiteboard.page.notSavedReason').replace('{reason}', state.reason)}
+          {fill(t('whiteboard.page.notSavedReason'), { reason: state.reason })}
         </span>
       );
     case 'deleted':

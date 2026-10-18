@@ -5,6 +5,7 @@ import { Sparkline } from './Sparkline';
 import { DeltaMark, useMeasured, type ChartBodyProps } from './chartBody';
 import { useChartSize } from './chart';
 import './NumberCard.css';
+import { fill } from '../../lib/fill';
 
 /**
  * The stat tile (dataviz "figure contract"): the hero figure, its unit, the
@@ -159,8 +160,8 @@ export function NumberCard({
     change !== null ? `(${signed(change)})` : '',
     period ?? '',
   ].filter(Boolean).join(' ');
-  const ofGoal = pct !== null ? t('lab.blocks.stat.ofGoal').replace('{pct}', `${pctText(pct)}%`) : '';
-  const goalLine = goal !== null ? t('lab.blocks.stat.goal').replace('{v}', fmt(goal)) : '';
+  const ofGoal = pct !== null ? fill(t('lab.blocks.stat.ofGoal'), { pct: `${pctText(pct)}%` }) : '';
+  const goalLine = goal !== null ? fill(t('lab.blocks.stat.goal'), { v: fmt(goal) }) : '';
 
   return (
     <div

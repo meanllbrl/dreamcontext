@@ -2,6 +2,7 @@ import type { Task } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
 import { type CardNode, type CardProps, nestByParent } from './boardModel';
 import { BoardCard } from './BoardCard';
+import { fill } from '../../lib/fill';
 
 export interface BoardSubGroup {
   key: string;
@@ -79,7 +80,7 @@ export function BoardColumn({
     <div key={n.task.id} className="bd-node">
       {card(n.task)}
       {n.children.length > 0 && isExpanded(n.task.slug) && (
-        <div className="bd-nested" role="group" aria-label={t('board.card.subtasksOf').replace('{name}', n.task.name || n.task.slug)}>
+        <div className="bd-nested" role="group" aria-label={fill(t('board.card.subtasksOf'), { name: n.task.name || n.task.slug })}>
           {n.children.map((c) => card(c, true))}
         </div>
       )}

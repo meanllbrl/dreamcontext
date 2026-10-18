@@ -5,6 +5,7 @@ import type { PeerMention } from '../../lib/agentComposer';
 import { automationPhotoUrl } from '../../api/client';
 import { dropScratch } from '../sleepy/chat/composerScratch';
 import { mentionedIn, withoutMention, type ComposerAgent } from '../../lib/agentChannelMention';
+import { fill } from '../../lib/fill';
 
 /**
  * `#agents` AS A COMPOSER HOST — the whole adapter between this channel and the chat's own
@@ -136,7 +137,7 @@ export function useAgentsChannelHost(
   // run in flight and read when that turn ends. The note says where it goes.
   const busyNote = (target: ComposerAgent): ChannelNote => ({
     kind: 'hint',
-    text: tRef.current('agents.busy').replace('{name}', target.title),
+    text: fill(tRef.current('agents.busy'), { name: target.title }),
     busySlug: target.slug,
   });
 
@@ -207,7 +208,7 @@ export function useAgentsChannelHost(
       if (!body) {
         // A bare `@agent` with nothing after it is someone mid-sentence, not a request. Refuse
         // rather than starting a run with an empty prompt.
-        return refuse(tRef.current('agents.composer.noBody').replace('{name}', target.title));
+        return refuse(fill(tRef.current('agents.composer.noBody'), { name: target.title }));
       }
       lastSent.current = text;
       draft.current = '';

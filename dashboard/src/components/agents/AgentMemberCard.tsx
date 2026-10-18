@@ -5,6 +5,7 @@ import { nextFireWords } from '../../lib/agentDraft';
 import { AgentAvatar } from './AgentAvatar';
 import { useI18n } from '../../context/I18nContext';
 import './AgentMemberCard.css';
+import { fill } from '../../lib/fill';
 
 /** The word for a run's outcome. K26/K40: a status is a WORD, not a coloured
  *  badge — it reads at a glance and survives being read aloud. */
@@ -133,8 +134,7 @@ export function AgentMemberCard({
   const description = summarize(summary.description, 150);
   // The key lands in the strings file in a later wave; until then `t` hands the key back.
   const boardWords = summary.whiteboard
-    ? (t('agents.card.board') === 'agents.card.board' ? 'on {board}' : t('agents.card.board'))
-      .replace('{board}', summary.whiteboard)
+    ? fill((t('agents.card.board') === 'agents.card.board' ? 'on {board}' : t('agents.card.board')), { board: summary.whiteboard })
     : null;
 
   const toggle = (e: React.MouseEvent) => {
@@ -143,9 +143,7 @@ export function AgentMemberCard({
     setEnabled.mutate({ slug: summary.slug, enabled: next }, {
       onSuccess: () => onToast(`${summary.title}: ${next ? 'resumed' : 'paused'}.`),
       onError: (err) => onToast(
-        t(next ? 'agents.card.resumeFailed' : 'agents.card.pauseFailed')
-          .replace('{name}', summary.title)
-          .replace('{reason}', (err as Error).message),
+        fill(t(next ? 'agents.card.resumeFailed' : 'agents.card.pauseFailed'), { name: summary.title, reason: (err as Error).message }),
       ),
     });
   };
@@ -178,7 +176,7 @@ export function AgentMemberCard({
           </button>
           <p className="agent-card-meta">
             {/* The agent it runs as leads the meta: who does the work, then when. */}
-            {runsAs && <><span className="agent-card-agent">{t('automations.runsAs').replace('{name}', runsAs)}</span> · </>}
+            {runsAs && <><span className="agent-card-agent">{fill(t('automations.runsAs'), { name: runsAs })}</span> · </>}
             <span className={scheduled ? '' : 'agent-card-oncall'}>{summary.cadenceLabel}</span>
             {summary.model && <> · {summary.model}</>}
             {/* Its home board: the one place this agent can change anything, so the list
@@ -193,7 +191,7 @@ export function AgentMemberCard({
             className={`agent-switch${summary.enabled ? ' agent-switch--on' : ''}`}
             role="switch"
             aria-checked={summary.enabled}
-            aria-label={t('agents.card.scheduledAria').replace('{name}', summary.title)}
+            aria-label={fill(t('agents.card.scheduledAria'), { name: summary.title })}
             onClick={toggle}
             disabled={setEnabled.isPending}
             title={t(summary.enabled ? 'agents.card.pause' : 'agents.card.resume')}

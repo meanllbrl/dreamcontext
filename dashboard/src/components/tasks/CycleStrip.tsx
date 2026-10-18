@@ -1,6 +1,7 @@
 import { useCycles } from '../../hooks/useCycles';
 import { useI18n } from '../../context/I18nContext';
 import './CycleStrip.css';
+import { fill } from '../../lib/fill';
 
 /**
  * The active cycle above the board: its number, dates, goal, done/total leaves and the days
@@ -25,13 +26,13 @@ export function CycleStrip({ onOpenPlanning }: { onOpenPlanning?: () => void }) 
 
   return (
     <div className="cycle-strip" data-cycle-strip={active.id}>
-      <span className="cycle-strip-title">{t('taskPage.header.cycleN').replace('{n}', String(active.number))}</span>
+      <span className="cycle-strip-title">{fill(t('taskPage.header.cycleN'), { n: String(active.number) })}</span>
       <span className="cycle-strip-text">{`${active.start} – ${active.end}`}</span>
       {active.goal && <span className="cycle-strip-goal" lang="und">{active.goal}</span>}
       <span className="cycle-strip-text">
-        {t('board.cycle.progress').replace('{done}', String(active.progress.done)).replace('{total}', String(active.progress.total))}
+        {fill(t('board.cycle.progress'), { done: String(active.progress.done), total: String(active.progress.total) })}
       </span>
-      <span className="cycle-strip-text">{t('board.cycle.daysLeft').replace('{n}', String(Math.max(0, active.daysLeft)))}</span>
+      <span className="cycle-strip-text">{fill(t('board.cycle.daysLeft'), { n: String(Math.max(0, active.daysLeft)) })}</span>
       {onOpenPlanning && (
         <button type="button" className="cycle-strip-btn" onClick={onOpenPlanning}>{t('board.cycle.open')}</button>
       )}

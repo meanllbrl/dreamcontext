@@ -16,8 +16,6 @@ const CHOICES: GiveToAgentPreset[] = ['develop', 'agent', 'custom', 'author'];
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-/** The choices that hand over to a composer, which then owns the keyboard (its own Escape). */
-const COMPOSER_CHOICES: readonly GiveToAgentPreset[] = ['agent', 'custom', 'author'];
 
 /** Whether the in-app agent can start sessions here (desktop, prerequisites, surface on). */
 function useAgentReady(): boolean {
@@ -77,7 +75,10 @@ export function GiveToAgentDialog() {
     // After React has removed the dialog, so focus lands on the trigger, not on nothing.
     if (back && back.isConnected) requestAnimationFrame(() => back.focus());
   };
-  const composerOwnsKeyboard = choice !== null && COMPOSER_CHOICES.includes(choice);
+  // Only a composer that is actually drawn owns the keyboard. A named-agent or custom preset
+  // waits for its task: while it loads (or after it failed to) the chooser is what is on
+  // screen, and the door keeps Escape, focus and the Tab trap.
+  const composerOwnsKeyboard = choice === 'author' || ((choice === 'agent' || choice === 'custom') && !!task);
 
   // Escape closes the door on the chooser and on the Develop panel. An embedded composer
   // handles its own Escape, so the door stays out of its way.

@@ -15,6 +15,7 @@ import {
 import { ColumnPicker, FunnelSetTable, nextSort, sortFunnels, type FunnelTableCopy } from '../funnel/FunnelSetTable';
 import { BlockEmpty } from './blockCommon';
 import './dataBlocks.css';
+import { fill } from '../../../lib/fill';
 
 /**
  * A funnel block's `table` layout (the explorer's Table tab): every funnel of the set as one row,
@@ -52,11 +53,11 @@ export function FunnelTableView({ insight, picked, onFunnel, selection, dims }: 
     funnel: t('lab.blocks.funnelTable.funnel'),
     selectForCompare: '',
     rowActions: '',
-    open: (name) => t('lab.blocks.funnelTable.open').replace('{name}', name),
+    open: (name) => fill(t('lab.blocks.funnelTable.open'), { name }),
     lowSample: t('lab.blocks.funnelTable.lowSample'),
-    lowSampleTitle: (n) => t('lab.blocks.funnelTable.lowSampleTitle').replace('{n}', String(n)),
-    noiseTitle: (n) => t('lab.blocks.funnelTable.noiseTitle').replace('{n}', String(n)),
-    deltaTitle: (now, prev) => t('lab.blocks.funnelTable.deltaTitle').replace('{now}', now).replace('{prev}', prev),
+    lowSampleTitle: (n) => fill(t('lab.blocks.funnelTable.lowSampleTitle'), { n: String(n) }),
+    noiseTitle: (n) => fill(t('lab.blocks.funnelTable.noiseTitle'), { n: String(n) }),
+    deltaTitle: (now, prev) => fill(t('lab.blocks.funnelTable.deltaTitle'), { now, prev }),
     columns: t('lab.blocks.funnelTable.columns'),
     columnsTitle: t('lab.blocks.funnelTable.columnsTitle'),
     reset: t('lab.blocks.funnelTable.reset'),
@@ -123,12 +124,12 @@ export function FunnelTableView({ insight, picked, onFunnel, selection, dims }: 
       </div>
       {sel && (
         <p className="board-block-note" data-lab-funnel-table-selection="" role="note">
-          {t('lab.blocks.funnelTable.selection').replace('{sel}', sel)}
+          {fill(t('lab.blocks.funnelTable.selection'), { sel })}
         </p>
       )}
       {prev?.source && (
         <div className="funnel-ovw-deltasrc">
-          {t('lab.blocks.funnelTable.deltaSource').replace('{from}', prev.source.range.fromISO).replace('{to}', prev.source.range.toISO)}
+          {fill(t('lab.blocks.funnelTable.deltaSource'), { from: prev.source.range.fromISO, to: prev.source.range.toISO })}
         </div>
       )}
       {rows.length === 0 ? (

@@ -8,6 +8,7 @@ import {
   taskAgent, taskName, taskVersion,
 } from './boardModel';
 import { TaskAgentFace } from './AssignToAgentComposer';
+import { fill } from '../../lib/fill';
 
 interface BoardCardProps {
   task: Task;
@@ -104,7 +105,7 @@ export function BoardCard({ task, cardProps: cp, dragging, variant = 'board', as
       type="button"
       className="bd-rollup"
       aria-expanded={onToggleExpand ? !!expanded : undefined}
-      aria-label={t('board.card.subtasks').replace('{done}', String(kids.done)).replace('{total}', String(kids.total))}
+      aria-label={fill(t('board.card.subtasks'), { done: String(kids.done), total: String(kids.total) })}
       onClick={(e) => { e.stopPropagation(); onToggleExpand?.(); }}
       disabled={!onToggleExpand}
     >

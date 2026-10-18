@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { useTeamUpdates, useTeamFetch } from '../../hooks/useBrainStatus';
 import './TeamUpdatesBadge.css';
+import { fill } from '../../lib/fill';
 
 interface TeamUpdatesBadgeProps {
   /** Scope to one vault (the Launcher per-project chip). Absent = aggregate every vault. */
@@ -42,7 +43,7 @@ export function TeamUpdatesBadge({ vaultName, compact }: TeamUpdatesBadgeProps) 
         <span className="update-badge-dot" />
         {!compact && (
           <span className="update-badge-label">
-            {anyPending ? t('brain.team.pending') : t('brain.team.updates').replace('{n}', String(totalUpdates))}
+            {anyPending ? t('brain.team.pending') : fill(t('brain.team.updates'), { n: String(totalUpdates) })}
           </span>
         )}
         {compact && <span className="update-badge-label">{totalUpdates}</span>}

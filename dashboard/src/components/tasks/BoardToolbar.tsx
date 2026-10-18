@@ -12,6 +12,7 @@ import {
   dimGet, taskAssignees, taskVersion,
 } from './boardModel';
 import { type BarFit, fitOnLayout, fitOnResize, fitRetest, initialFit, menusToClose } from './toolbarCollapse';
+import { fill } from '../../lib/fill';
 
 export type MenuKey = 'filter' | 'viewtype' | 'group' | 'sort' | 'props' | 'newtask' | null;
 
@@ -56,6 +57,14 @@ const chipTrigger = (active: boolean): CSSProperties => ({
   background: active ? 'var(--color-accent-soft)' : 'var(--color-bg)',
   color: active ? 'var(--color-text)' : 'var(--color-text-secondary)', transition: 'all .12s', whiteSpace: 'nowrap',
 });
+/**
+ * Every control here is a real <button> (keyboard, focus, role for free). styles/reset.css
+ * already clears a button's border, background, font and colour in CSS, so the hover classes
+ * (.bd-row, .bd-chip, .bd-hover, .bd-danger) still apply; inline only the box a <div> or <span>
+ * had: no padding or margin, left-aligned text. A menu row also keeps the full width.
+ */
+const btn: CSSProperties = { padding: 0, margin: 0, textAlign: 'left' };
+const rowBtn: CSSProperties = { ...btn, width: '100%' };
 const popBase: CSSProperties = {
   position: 'absolute', top: 42, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)',
   borderRadius: 10, boxShadow: 'var(--shadow-lg)', padding: 6, zIndex: 40,
@@ -110,8 +119,8 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   const fieldSummary = (key: keyof BoardFilters): { text: string; active: boolean } => {
     const fld = f[key] as { inc: string[]; exc: string[] };
     const parts: string[] = [];
-    if (fld.inc.length) parts.push(t('board.filter.isN').replace('{n}', String(fld.inc.length)));
-    if (fld.exc.length) parts.push(t('board.filter.isNotN').replace('{n}', String(fld.exc.length)));
+    if (fld.inc.length) parts.push(fill(t('board.filter.isN'), { n: String(fld.inc.length) }));
+    if (fld.exc.length) parts.push(fill(t('board.filter.isNotN'), { n: String(fld.exc.length) }));
     return { text: parts.join(' · ') || t('board.filter.any'), active: fld.inc.length + fld.exc.length > 0 };
   };
 
@@ -133,8 +142,8 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
         {o.color && <span style={{ width: 8, height: 8, borderRadius: '50%', background: o.color, flex: '0 0 auto' }} />}
         <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.label}</span>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{o.count}</span>
-        <span role="button" tabIndex={0} aria-pressed={incOn} onClick={() => s.cycleFilter(section, o.value, 'inc')} title={t('board.filter.include')} aria-label={`${t('board.filter.include')}: ${o.label}`} style={incBtn(incOn)}>✓</span>
-        <span role="button" tabIndex={0} aria-pressed={excOn} onClick={() => s.cycleFilter(section, o.value, 'exc')} title={t('board.filter.exclude')} aria-label={`${t('board.filter.exclude')}: ${o.label}`} style={excBtn(excOn)}>✕</span>
+        <button type="button" aria-pressed={incOn} onClick={() => s.cycleFilter(section, o.value, 'inc')} title={t('board.filter.include')} aria-label={`${t('board.filter.include')}: ${o.label}`} style={{ ...btn, ...incBtn(incOn) }}>✓</button>
+        <button type="button" aria-pressed={excOn} onClick={() => s.cycleFilter(section, o.value, 'exc')} title={t('board.filter.exclude')} aria-label={`${t('board.filter.exclude')}: ${o.label}`} style={{ ...btn, ...excBtn(excOn) }}>✕</button>
       </div>
     );
   };
@@ -206,10 +215,10 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
     <>
       <div style={sectionLabel}>{t('board.toolbar.viewType')}</div>
       {VIEW_TYPES.map((vt) => { const active = s.layout === vt.v; return (
-        <div key={vt.v} className="bd-row" onClick={() => { s.setLayout(vt.v); setOpenMenu(null); setMoreOpen(false); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 9px', borderRadius: 7, cursor: 'pointer', fontSize: 13, color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)', background: active ? 'var(--color-accent-soft)' : 'transparent' }}>
+        <button type="button" key={vt.v} className="bd-row" aria-pressed={active} onClick={() => { s.setLayout(vt.v); setOpenMenu(null); setMoreOpen(false); }} style={{ ...rowBtn, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 9px', borderRadius: 7, cursor: 'pointer', fontSize: 13, color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)', background: active ? 'var(--color-accent-soft)' : 'transparent' }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={active ? 'var(--color-accent)' : 'currentColor'} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d={vt.icon} /></svg>
           <span style={{ flex: 1 }}>{layoutLabel(vt.v)}</span>
-        </div>
+        </button>
       ); })}
     </>
   );
@@ -217,21 +226,21 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
     <>
       <div style={sectionLabel}>{t('board.toolbar.groupBy')}</div>
       {DIMS.map((d) => (
-        <div key={d} className="bd-row" role="menuitemradio" aria-checked={s.groupBy === d} onClick={() => s.setGroupBy(d)} style={optRow}>
+        <button type="button" key={d} className="bd-row" role="menuitemradio" aria-checked={s.groupBy === d} onClick={() => s.setGroupBy(d)} style={{ ...rowBtn, ...optRow }}>
           <span style={radioBox(s.groupBy === d)}>{s.groupBy === d ? '●' : ''}</span>
           <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{dimLabel(d)}</span>
-        </div>
+        </button>
       ))}
       <div style={{ ...sectionLabel, marginTop: 3, borderTop: '1px solid var(--color-border)', paddingTop: 8 }}>{t('board.toolbar.thenBy')}</div>
-      <div className="bd-row" role="menuitemradio" aria-checked={s.subGroupBy === 'none'} onClick={() => s.setSubGroupBy('none')} style={optRow}>
+      <button type="button" className="bd-row" role="menuitemradio" aria-checked={s.subGroupBy === 'none'} onClick={() => s.setSubGroupBy('none')} style={{ ...rowBtn, ...optRow }}>
         <span style={radioBox(s.subGroupBy === 'none')}>{s.subGroupBy === 'none' ? '●' : ''}</span>
         <span style={{ flex: 1 }}>{t('board.toolbar.none')}</span>
-      </div>
+      </button>
       {DIMS.filter((d) => d !== s.groupBy && d !== 'order').map((d) => (
-        <div key={d} className="bd-row" role="menuitemradio" aria-checked={s.subGroupBy === d} onClick={() => s.setSubGroupBy(d)} style={optRow}>
+        <button type="button" key={d} className="bd-row" role="menuitemradio" aria-checked={s.subGroupBy === d} onClick={() => s.setSubGroupBy(d)} style={{ ...rowBtn, ...optRow }}>
           <span style={radioBox(s.subGroupBy === d)}>{s.subGroupBy === d ? '●' : ''}</span>
           <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{dimLabel(d)}</span>
-        </div>
+        </button>
       ))}
     </>
   );
@@ -239,10 +248,10 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
     <>
       <div style={{ ...sectionLabel, padding: '6px 8px 8px' }}>{t('board.toolbar.shownOnCards')}</div>
       {PROP_DEFS.map((k) => (
-        <div key={k} className="bd-row" onClick={() => s.toggleCardProp(k)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 7, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
+        <button type="button" key={k} className="bd-row" aria-pressed={s.cardProps[k]} onClick={() => s.toggleCardProp(k)} style={{ ...rowBtn, display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 7, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
           <span style={checkBox(s.cardProps[k])}>{s.cardProps[k] ? '✓' : ''}</span>
           <span style={{ flex: 1 }}>{t(`board.prop.${k}`)}</span>
-        </div>
+        </button>
       ))}
     </>
   );
@@ -264,31 +273,31 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   const collapsibleChip = (id: CollKey) => {
     if (id === 'viewtype') return (
       <Chip key="viewtype">
-        <div className="bd-chip" onClick={() => toggle('viewtype')} style={chipTrigger(false)}>
+        <button type="button" className="bd-chip" aria-expanded={openMenu === 'viewtype'} onClick={() => toggle('viewtype')} style={{ ...btn, ...chipTrigger(false) }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d={curVT.icon} /></svg>
           <span>{layoutLabel(curVT.v)}</span>
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'viewtype' ? '▲' : '▼'}</span>
-        </div>
+        </button>
         {openMenu === 'viewtype' && inlinePopover('viewtype')}
       </Chip>
     );
     if (id === 'group') return (
       <Chip key="group">
-        <div className="bd-chip" onClick={() => toggle('group')} style={chipTrigger(s.subGroupBy !== 'none' || s.groupBy !== 'order')}>
+        <button type="button" className="bd-chip" aria-expanded={openMenu === 'group'} onClick={() => toggle('group')} style={{ ...btn, ...chipTrigger(s.subGroupBy !== 'none' || s.groupBy !== 'order') }}>
           <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>{t('board.toolbar.group')}</span>
           <span>{groupSummary}</span>
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'group' ? '▲' : '▼'}</span>
-        </div>
+        </button>
         {openMenu === 'group' && inlinePopover('group')}
       </Chip>
     );
     return (
       <Chip key="props">
-        <div className="bd-chip" onClick={() => toggle('props')} title={t('board.toolbar.propertiesHint')} style={{ ...chipTrigger(false), gap: 5, padding: '0 10px' }}>
+        <button type="button" className="bd-chip" aria-expanded={openMenu === 'props'} onClick={() => toggle('props')} title={t('board.toolbar.propertiesHint')} style={{ ...btn, ...chipTrigger(false), gap: 5, padding: '0 10px' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><circle cx="8" cy="7" r="2.4" /><path d="M13 7h7" /><circle cx="16" cy="17" r="2.4" /><path d="M4 17h7" /></svg>
           <span style={{ fontSize: 12.5 }}>{t('board.toolbar.properties')}</span>
           <span style={{ fontSize: 9, opacity: 0.7 }}>⌄</span>
-        </div>
+        </button>
         {openMenu === 'props' && inlinePopover('props')}
       </Chip>
     );
@@ -305,37 +314,37 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
 
       {/* Filter combined menu */}
       <div style={{ position: 'relative', flex: '0 0 auto' }}>
-        <div className="bd-chip" onClick={() => toggle('filter')} style={chipTrigger(activeCount > 0)}>
+        <button type="button" className="bd-chip" aria-expanded={openMenu === 'filter'} onClick={() => toggle('filter')} style={{ ...btn, ...chipTrigger(activeCount > 0) }}>
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ flex: '0 0 auto' }}><path d="M2 3.2h12L9.2 8.6V13L6.8 14V8.6L2 3.2Z" fill="currentColor" /></svg>
           <span>{t('board.toolbar.filter')}</span>
           {activeCount > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)' }}>{activeCount}</span>}
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'filter' ? '▲' : '▼'}</span>
-        </div>
+        </button>
         {openMenu === 'filter' && (
           <div className="bd-pop bd-scroll" style={{ ...popBase, left: 0, width: 300, maxHeight: 'min(468px,72vh)', overflowY: 'auto' }}>
             {!activeSection ? (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px 9px', margin: '-6px -6px 5px', background: 'var(--color-bg-elevated)', borderBottom: '1px solid var(--color-border)', borderRadius: '11px 11px 0 0' }}>
                   <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-text)', flex: 1 }}>{t('board.filter.by')}</span>
-                  {activeCount > 0 && <span className="bd-danger" onClick={s.clearAllFilters} style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>{t('board.filter.clearAll')}</span>}
+                  {activeCount > 0 && <button type="button" className="bd-danger" onClick={s.clearAllFilters} style={{ ...btn, fontSize: 11.5, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>{t('board.filter.clearAll')}</button>}
                 </div>
                 {FIELD_DEFS.map((fd) => { const sum = fieldSummary(fd.key); return (
-                  <div key={fd.key} className="bd-row" onClick={() => setFilterPane(fd.key)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                  <button type="button" key={fd.key} className="bd-row" onClick={() => setFilterPane(fd.key)} style={{ ...rowBtn, display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
                     <span style={{ flex: 1, fontWeight: 500 }}>{fd.label}</span>
                     <span style={{ fontSize: 11.5, color: sum.active ? 'var(--color-accent)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{sum.text}</span>
                     <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>›</span>
-                  </div>
+                  </button>
                 ); })}
-                <div className="bd-row" onClick={() => setFilterPane('due')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                <button type="button" className="bd-row" onClick={() => setFilterPane('due')} style={{ ...rowBtn, display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
                   <span style={{ flex: 1, fontWeight: 500 }}>{t('board.filter.due')}</span>
                   <span style={{ fontSize: 11.5, color: f.due !== 'all' ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>{f.due === 'all' ? t('board.filter.any') : t(`board.due.${f.due}`)}</span>
                   <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>›</span>
-                </div>
+                </button>
               </div>
             ) : (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 6px 9px', margin: '-6px -6px 5px', background: 'var(--color-bg-elevated)', borderBottom: '1px solid var(--color-border)', borderRadius: '11px 11px 0 0' }}>
-                  <span className="bd-hover bd-hover-text" role="button" tabIndex={0} onClick={() => setFilterPane(null)} title={t('board.filter.back')} aria-label={t('board.filter.back')} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 15, flex: '0 0 auto' }}>‹</span>
+                  <button type="button" className="bd-hover bd-hover-text" onClick={() => setFilterPane(null)} title={t('board.filter.back')} aria-label={t('board.filter.back')} style={{ ...btn, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 15, flex: '0 0 auto' }}>‹</button>
                   <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-text)', flex: 1 }}>{activeSection === 'due' ? t('board.filter.due') : sectionDef?.label}</span>
                   {isToggleField && (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
@@ -343,14 +352,14 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
                       <span style={{ display: 'inline-flex', width: 14, height: 14, borderRadius: 5, alignItems: 'center', justifyContent: 'center', background: 'var(--color-error)', color: '#fff', fontSize: 8, marginLeft: 3 }}>✕</span>{t('board.filter.not')}
                     </span>
                   )}
-                  <span className="bd-danger" onClick={() => s.clearField(activeSection)} style={{ fontSize: 11, color: 'var(--color-text-tertiary)', cursor: 'pointer', flex: '0 0 auto' }}>{t('board.filter.clear')}</span>
+                  <button type="button" className="bd-danger" onClick={() => s.clearField(activeSection)} style={{ ...btn, fontSize: 11, color: 'var(--color-text-tertiary)', cursor: 'pointer', flex: '0 0 auto' }}>{t('board.filter.clear')}</button>
                 </div>
 
                 {activeSection === 'due' && DUE_OPTS.map((o) => (
-                  <div key={o} className="bd-row" role="menuitemradio" aria-checked={f.due === o} onClick={() => s.setDue(o)} style={optRow}>
+                  <button type="button" key={o} className="bd-row" role="menuitemradio" aria-checked={f.due === o} onClick={() => s.setDue(o)} style={{ ...rowBtn, ...optRow }}>
                     <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{t(`board.due.${o}`)}</span>
                     <span style={radioBox(f.due === o)}>{f.due === o ? '●' : ''}</span>
-                  </div>
+                  </button>
                 ))}
                 {isToggleField && activeSection === 'version' && (
                   <>
@@ -374,7 +383,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       {/* The board's two groupings, one click apart: the "when?" axis or the status pipeline. */}
       <div role="group" aria-label={t('board.toolbar.groupBy')} style={{ display: 'flex', flex: '0 0 auto', gap: 4 }}>
         {(['order', 'status'] as const).map((d) => (
-          <button key={d} type="button" className="bd-chip bd-seg-btn" aria-pressed={s.groupBy === d} onClick={() => s.setGroupBy(d)} style={{ ...chipTrigger(s.groupBy === d), minHeight: 34 }}>
+          <button key={d} type="button" className="bd-chip bd-seg-btn" aria-pressed={s.groupBy === d} onClick={() => s.setGroupBy(d)} style={chipTrigger(s.groupBy === d)}>
             {dimLabel(d)}
           </button>
         ))}
@@ -382,24 +391,24 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
 
       {/* sort — sits beside Filter on the left */}
       <Chip>
-        <div className="bd-chip" onClick={() => toggle('sort')} style={chipTrigger(s.sortBy !== 'manual')}>
+        <button type="button" className="bd-chip" aria-expanded={openMenu === 'sort'} onClick={() => toggle('sort')} style={{ ...btn, ...chipTrigger(s.sortBy !== 'manual') }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3" /></svg>
           <span>{t(`board.sort.${s.sortBy}`)}</span>
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'sort' ? '▲' : '▼'}</span>
-        </div>
+        </button>
         {openMenu === 'sort' && (
           <div className="bd-pop" style={{ ...popBase, left: 0, width: 190 }}>
             <div style={sectionLabel}>{t('board.toolbar.sortBy')}</div>
             {SORT_KEYS.map((k) => (
-              <div key={k} className="bd-row" role="menuitemradio" aria-checked={s.sortBy === k} onClick={() => s.setSort(k)} style={optRow}>
+              <button type="button" key={k} className="bd-row" role="menuitemradio" aria-checked={s.sortBy === k} onClick={() => s.setSort(k)} style={{ ...rowBtn, ...optRow }}>
                 <span style={radioBox(s.sortBy === k)}>{s.sortBy === k ? '●' : ''}</span>
                 <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{t(`board.sort.${k}`)}</span>
-              </div>
+              </button>
             ))}
-            <div onClick={s.sortBy === 'manual' ? undefined : s.toggleSortDir} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4, padding: '8px 9px', borderTop: '1px solid var(--color-border)', cursor: s.sortBy === 'manual' ? 'default' : 'pointer', fontSize: 12, color: s.sortBy === 'manual' ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)', opacity: s.sortBy === 'manual' ? 0.5 : 1 }}>
+            <button type="button" disabled={s.sortBy === 'manual'} onClick={s.toggleSortDir} style={{ ...rowBtn, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4, padding: '8px 9px', borderTop: '1px solid var(--color-border)', cursor: s.sortBy === 'manual' ? 'default' : 'pointer', fontSize: 12, color: s.sortBy === 'manual' ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)', opacity: s.sortBy === 'manual' ? 0.5 : 1 }}>
               <span>{s.sortDir === 'asc' ? t('board.sort.asc') : t('board.sort.desc')}</span>
               <span style={{ fontSize: 13 }}>{s.sortDir === 'asc' ? '↑' : '↓'}</span>
-            </div>
+            </button>
           </div>
         )}
       </Chip>
@@ -420,23 +429,23 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       {/* overflow "More" menu — holds the collapsed controls */}
       {overflow.length > 0 && (
         <div style={{ position: 'relative', flex: '0 0 auto' }}>
-          <div className="bd-chip" onClick={() => { setMoreOpen((o) => !o); setOpenMenu(null); }} title={t('board.toolbar.moreControls')} style={chipTrigger(moreOpen)}>
+          <button type="button" className="bd-chip" aria-expanded={moreOpen} onClick={() => { setMoreOpen((o) => !o); setOpenMenu(null); }} title={t('board.toolbar.moreControls')} style={{ ...btn, ...chipTrigger(moreOpen) }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flex: '0 0 auto' }}><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg>
             <span>{t('board.toolbar.more')}</span>
             <span style={{ fontSize: 9, opacity: 0.7 }}>{moreOpen ? '▲' : '▼'}</span>
-          </div>
+          </button>
           {moreOpen && (
             <>
-              <div onClick={() => { setMoreOpen(false); setOpenMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 44 }} />
+              <div aria-hidden="true" data-backdrop onClick={() => { setMoreOpen(false); setOpenMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 44 }} />
               <div className="bd-pop" style={{ ...popBase, right: 0, width: 230, zIndex: 46 }}>
                 <div style={{ ...sectionLabel, padding: '6px 8px 6px' }}>{t('board.toolbar.moreControls')}</div>
                 {overflow.map((id) => (
                   <div key={id} style={{ position: 'relative' }}>
-                    <div className="bd-row" onClick={() => setOpenMenu(openMenu === id ? null : id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: openMenu === id ? 'var(--color-text)' : 'var(--color-text-secondary)', background: openMenu === id ? 'var(--color-bg-secondary)' : 'transparent' }}>
+                    <button type="button" className="bd-row" aria-expanded={openMenu === id} onClick={() => setOpenMenu(openMenu === id ? null : id)} style={{ ...rowBtn, display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: openMenu === id ? 'var(--color-text)' : 'var(--color-text-secondary)', background: openMenu === id ? 'var(--color-bg-secondary)' : 'transparent' }}>
                       <span style={{ flex: 1, fontWeight: 500 }}>{COLL_LABEL[id]}</span>
                       {COLL_SUMMARY[id] && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis' }}>{COLL_SUMMARY[id]}</span>}
                       <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>‹</span>
-                    </div>
+                    </button>
                     {openMenu === id && flyoutPopover(id)}
                   </div>
                 ))}
@@ -451,33 +460,33 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
           writing it with an agent (the door's `author` choice) alongside it. */}
       {agentReady ? (
         <div style={{ position: 'relative', flex: '0 0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'stretch', height: 34, borderRadius: 9, overflow: 'hidden', boxShadow: '0 4px 12px -4px var(--color-accent)' }}>
-            <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600 }}>{t('board.toolbar.newTask')}</div>
-            <div onClick={() => toggle('newtask')} title={t('board.toolbar.newTaskMore')} aria-label={t('board.toolbar.newTaskMore')} className="bd-chip" style={{ display: 'flex', alignItems: 'center', padding: '0 8px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', borderLeft: '1px solid rgba(255,255,255,0.28)' }}>
+          <div style={{ display: 'flex', alignItems: 'stretch', minHeight: 34, borderRadius: 9, overflow: 'hidden', boxShadow: '0 4px 12px -4px var(--color-accent)' }}>
+            <button type="button" onClick={onNewTask} className="bd-chip" style={{ ...btn, display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600 }}>{t('board.toolbar.newTask')}</button>
+            <button type="button" aria-expanded={openMenu === 'newtask'} onClick={() => toggle('newtask')} title={t('board.toolbar.newTaskMore')} aria-label={t('board.toolbar.newTaskMore')} className="bd-chip" style={{ ...btn, display: 'flex', alignItems: 'center', padding: '0 8px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', borderLeft: '1px solid rgba(255,255,255,0.28)' }}>
               <span style={{ fontSize: 9, opacity: 0.9, transform: openMenu === 'newtask' ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }}>▼</span>
-            </div>
+            </button>
           </div>
           {openMenu === 'newtask' && (
             <div className="bd-pop" style={{ ...popBase, right: 0, width: 246 }}>
-              <div className="bd-row" onClick={() => { setOpenMenu(null); onNewTask(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              <button type="button" className="bd-row" onClick={() => { setOpenMenu(null); onNewTask(); }} style={{ ...rowBtn, display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M14 3v4a1 1 0 0 0 1 1h4M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /></svg>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                   <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>{t('board.toolbar.blankForm')}</span>
                   <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{t('board.toolbar.blankFormHint')}</span>
                 </span>
-              </div>
-              <div className="bd-row" onClick={() => { setOpenMenu(null); onAuthorWithAgent(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-accent)' }}>
+              </button>
+              <button type="button" className="bd-row" onClick={() => { setOpenMenu(null); onAuthorWithAgent(); }} style={{ ...rowBtn, display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-accent)' }}>
                 <span style={{ display: 'inline-flex', flex: '0 0 auto' }}><SparkIcon size={15} /></span>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                   <span style={{ fontWeight: 600 }}>{t('board.toolbar.author')}</span>
                   <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{t('board.toolbar.authorHint')}</span>
                 </span>
-              </div>
+              </button>
             </div>
           )}
         </div>
       ) : (
-        <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>{t('board.toolbar.newTask')}</div>
+        <button type="button" onClick={onNewTask} className="bd-chip" style={{ ...btn, display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>{t('board.toolbar.newTask')}</button>
       )}
     </div>
   );

@@ -7,6 +7,7 @@ import { ChartEmpty, DeltaMark, latestPoint, type ChartBodyProps } from './chart
 import { OTHER_COLOR, colorScale, formatNumber, unitSuffix, type ChartFormat } from './chart';
 import { elementFont, textWidth } from './textMeasure';
 import './MetricTable.css';
+import { fill } from '../../lib/fill';
 
 /**
  * The lab's two tables, on one look and one set of options:
@@ -417,7 +418,7 @@ export function MetricTable({
     const last = latestPoint(s);
     const prev = s.points.length >= 2 ? s.points[s.points.length - 2] : null;
     return {
-      name: s.other !== undefined ? t('lab.blocks.otherCount').replace('{n}', String(s.other)) : s.name,
+      name: s.other !== undefined ? fill(t('lab.blocks.otherCount'), { n: String(s.other) }) : s.name,
       latest: last ? last.v : null,
       delta: last && prev ? last.v - prev.v : null,
       points: s.points,
@@ -518,7 +519,7 @@ export function MetricTable({
           ))}
           {hidden > 0 && (
             <tr className="lab-table-more">
-              <td colSpan={Math.max(1, view.length)}>{t('lab.blocks.table.more').replace('{n}', String(hidden))}</td>
+              <td colSpan={Math.max(1, view.length)}>{fill(t('lab.blocks.table.more'), { n: String(hidden) })}</td>
             </tr>
           )}
         </tbody>
@@ -636,7 +637,7 @@ export function FrameTable({
   const fmtCount = (n: number, compact = false) => formatNumber(n, { format: countFormat(compact), locale, maxDecimals: 0 }, mag.n);
   const fmtAbs = (v: number, compact = false) => formatNumber(v, opts(compact), mag.delta);
   const signed = (d: number | null, compact = false) => (d === null ? '-' : `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmtAbs(Math.abs(d), compact)}`);
-  const otherLabel = (row: FrameTableRow) => t('lab.blocks.otherCount').replace('{n}', String(row.other));
+  const otherLabel = (row: FrameTableRow) => fill(t('lab.blocks.otherCount'), { n: String(row.other) });
   const totalLabel = total ? `${L.total} (${coveredRows(total.count, rows).toLocaleString(locale)} ${L.rows})` : '';
 
   /** A cell as plain text (the fit measures it, the tooltip quotes it). */

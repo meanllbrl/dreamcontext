@@ -3,6 +3,7 @@ import type { LearnedItem } from '../../hooks/useInbox';
 import { useRevertLearned } from '../../hooks/useInbox';
 import { confirmAction } from '../../lib/desktop';
 import { useI18n } from '../../context/I18nContext';
+import { fill } from '../../lib/fill';
 
 /**
  * What sleep learned: a rule from the owner's repeated corrections, or a task-filing rule
@@ -20,7 +21,7 @@ export function InboxLearned({ items, onOpenPattern }: { items: LearnedItem[]; o
   const onRevert = async (item: LearnedItem) => {
     setError(null);
     const ok = await confirmAction({
-      title: t('inbox.learned.revertTitle').replace('{title}', item.title),
+      title: fill(t('inbox.learned.revertTitle'), { title: item.title }),
       body: t('inbox.learned.revertBody'),
       confirmLabel: t('inbox.learned.revert'),
       destructive: true,
@@ -44,7 +45,7 @@ export function InboxLearned({ items, onOpenPattern }: { items: LearnedItem[]; o
             </div>
             {item.source === 'correction' && item.pattern && (
               <button type="button" className="ibx-link" onClick={() => onOpenPattern(item.pattern)}>
-                {t('inbox.learned.pattern').replace('{pattern}', item.pattern)}
+                {fill(t('inbox.learned.pattern'), { pattern: item.pattern })}
               </button>
             )}
             {item.quotes.length > 0 && (
@@ -58,7 +59,7 @@ export function InboxLearned({ items, onOpenPattern }: { items: LearnedItem[]; o
               </ul>
             )}
             {item.reverted ? (
-              <p className="ibx-meta">{t('inbox.learned.reverted').replace('{date}', item.reverted.at.slice(0, 10)).replace('{by}', item.reverted.by)}</p>
+              <p className="ibx-meta">{fill(t('inbox.learned.reverted'), { date: item.reverted.at.slice(0, 10), by: item.reverted.by })}</p>
             ) : (
               <div>
                 <button type="button" className="ibx-btn" disabled={revert.isPending} onClick={() => void onRevert(item)}>

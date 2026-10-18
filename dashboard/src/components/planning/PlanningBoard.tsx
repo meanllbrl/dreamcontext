@@ -5,6 +5,7 @@ import type { CycleListEntry } from '../../hooks/useCycles';
 import { useI18n } from '../../context/I18nContext';
 import { byRank, taskName } from '../tasks/boardModel';
 import { cycleOfCard } from '../tasks/taskOrder';
+import { fill } from '../../lib/fill';
 
 /** A leaf is a card with no sub-tasks: what a cycle's capacity is counted in. */
 function isLeaf(t: Task): boolean {
@@ -37,7 +38,7 @@ export function PlanningBoard({ tasks, cycles, cycle, capacityHint, onOpenTask }
   const inCycle = useMemo(() => byRank(tasks.filter((x) => cycleOfCard(x) === cycle.id && x.status !== 'cancelled' && !sm.isCancelled(x.status))), [tasks, cycle.id, sm]);
   const leaves = inCycle.filter(isLeaf).length;
   const targets = cycles.filter((c) => c.status !== 'closed');
-  const cycleLabel = (c: CycleListEntry) => t('taskPage.header.cycleN').replace('{n}', String(c.number));
+  const cycleLabel = (c: CycleListEntry) => fill(t('taskPage.header.cycleN'), { n: String(c.number) });
 
   const moveTo = (slug: string, target: string) => { setError(null); plan.mutate({ slug, target }, { onError }); };
   const rankRelative = (list: Task[], i: number, dir: -1 | 1) => {
@@ -76,11 +77,11 @@ export function PlanningBoard({ tasks, cycles, cycle, capacityHint, onOpenTask }
             <button type="button" className="pln-link" onClick={() => onOpenTask(x.slug)} lang="und">{taskName(x)}</button>
             {x.children && x.children.total > 0 && <span className="pln-meta">{`${x.children.done}/${x.children.total}`}</span>}
             <span className="pln-item-actions">
-              <button type="button" className="pln-icon-btn" aria-label={t('planning.board.up').replace('{name}', taskName(x))} disabled={i === 0 || rank.isPending} onClick={() => rankRelative(items, i, -1)}>↑</button>
-              <button type="button" className="pln-icon-btn" aria-label={t('planning.board.down').replace('{name}', taskName(x))} disabled={i === items.length - 1 || rank.isPending} onClick={() => rankRelative(items, i, 1)}>↓</button>
+              <button type="button" className="pln-icon-btn" aria-label={fill(t('planning.board.up'), { name: taskName(x) })} disabled={i === 0 || rank.isPending} onClick={() => rankRelative(items, i, -1)}>↑</button>
+              <button type="button" className="pln-icon-btn" aria-label={fill(t('planning.board.down'), { name: taskName(x) })} disabled={i === items.length - 1 || rank.isPending} onClick={() => rankRelative(items, i, 1)}>↓</button>
               <select
                 className="pln-select"
-                aria-label={t('planning.board.moveTo').replace('{name}', taskName(x))}
+                aria-label={fill(t('planning.board.moveTo'), { name: taskName(x) })}
                 value=""
                 onChange={(e) => { if (e.target.value) moveTo(x.slug, e.target.value); }}
               >
@@ -100,8 +101,8 @@ export function PlanningBoard({ tasks, cycles, cycle, capacityHint, onOpenTask }
     <div className="pln-board" data-planning-board={cycle.id}>
       <p className="pln-capacity" data-capacity>
         {capacityHint === null
-          ? t('planning.board.capacityNoHint').replace('{n}', String(leaves))
-          : t('planning.board.capacity').replace('{n}', String(leaves)).replace('{hint}', String(capacityHint))}
+          ? fill(t('planning.board.capacityNoHint'), { n: String(leaves) })
+          : fill(t('planning.board.capacity'), { n: String(leaves), hint: String(capacityHint) })}
       </p>
       <div className="pln-lanes">
         {list(next, 'next', t('board.order.next'))}

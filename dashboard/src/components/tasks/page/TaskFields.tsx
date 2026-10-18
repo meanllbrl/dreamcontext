@@ -14,6 +14,7 @@ import { taskAgent } from '../boardModel';
 import { tr } from '../../../lib/assignToAgent';
 import { TaskSection, TaskField, EmptyField, RequiredField } from '../detail/TaskSection';
 import type { SectionCollapse } from '../detail/useSectionCollapse';
+import { fill } from '../../../lib/fill';
 
 type Updates = Parameters<ReturnType<typeof useUpdateTask>['mutate']>[0]['updates'];
 
@@ -53,7 +54,7 @@ function TaskDateField(
   if (!value && !revealed) {
     return (
       <TaskField label={label}>
-        <EmptyField label={t('taskPage.fields.addDate').replace('{field}', label)} onClick={() => setRevealed(true)} />
+        <EmptyField label={fill(t('taskPage.fields.addDate'), { field: label })} onClick={() => setRevealed(true)} />
       </TaskField>
     );
   }
@@ -73,7 +74,7 @@ function TaskDateField(
           <button
             type="button"
             className="prop-clear"
-            aria-label={t('taskPage.fields.clearDate').replace('{field}', label)}
+            aria-label={fill(t('taskPage.fields.clearDate'), { field: label })}
             title={t('taskPage.fields.clear')}
             onClick={() => { onChange(''); setRevealed(false); }}
           >
@@ -269,7 +270,7 @@ export function TaskFields({ task, collapse, onError, onGiveToAgent }: {
                     <span
                       key={slug}
                       className={`assignee-chip${unmapped ? ' assignee-chip--unmapped' : ''}`}
-                      title={unmapped ? t('taskPage.fields.notMember').replace('{slug}', slug) : undefined}
+                      title={unmapped ? fill(t('taskPage.fields.notMember'), { slug }) : undefined}
                     >
                       {m?.name ?? slug}
                       {unmapped && <span className="assignee-chip__warn" aria-hidden="true">⚠</span>}
@@ -277,7 +278,7 @@ export function TaskFields({ task, collapse, onError, onGiveToAgent }: {
                       <button
                         type="button"
                         className="assignee-chip__remove"
-                        aria-label={t('taskPage.fields.remove').replace('{name}', m?.name ?? slug)}
+                        aria-label={fill(t('taskPage.fields.remove'), { name: m?.name ?? slug })}
                         onClick={() => removeAssignee(slug)}
                       >
                         ×
@@ -325,14 +326,14 @@ export function TaskFields({ task, collapse, onError, onGiveToAgent }: {
                     <span
                       key={slug}
                       className={`assignee-chip${missing ? ' assignee-chip--unmapped' : ''}`}
-                      title={missing ? t('taskPage.fields.unknownObjective').replace('{slug}', slug) : slug}
+                      title={missing ? fill(t('taskPage.fields.unknownObjective'), { slug }) : slug}
                     >
                       {o?.title ?? slug}
                       {missing && <span className="assignee-chip__warn" aria-hidden="true">⚠</span>}
                       <button
                         type="button"
                         className="assignee-chip__remove"
-                        aria-label={t('taskPage.fields.remove').replace('{name}', o?.title ?? slug)}
+                        aria-label={fill(t('taskPage.fields.remove'), { name: o?.title ?? slug })}
                         onClick={() => removeObjective(slug)}
                       >
                         ×
@@ -365,7 +366,7 @@ export function TaskFields({ task, collapse, onError, onGiveToAgent }: {
                 <button
                   type="button"
                   className="task-tag-remove"
-                  aria-label={t('taskPage.fields.removeTag').replace('{tag}', tag)}
+                  aria-label={fill(t('taskPage.fields.removeTag'), { tag })}
                   onClick={() => handleTagsChange(task.tags.filter(x => x !== tag))}
                 >
                   ×

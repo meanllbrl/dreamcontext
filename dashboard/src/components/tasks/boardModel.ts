@@ -588,21 +588,37 @@ export type ColumnItem =
  * Nest sub-tasks under their parent when both are in the same column (the parent's card
  * expands to show them). Sub-tasks whose parent is not in the column are grouped under a header
  * that names the parent. Order follows the column's own order.
+ *
+ * A deeper chain in one column (A → B → C: a remote sync or a hand edit can make one) nests
+ * every level under its nearest top-level ancestor here, so C is drawn under A next to B and
+ * the card count matches what is drawn. A parent cycle stops the walk: its cards stand alone.
  */
 export function nestByParent(cards: Task[], all: Task[]): ColumnItem[] {
-  const here = new Set(cards.map((t) => t.slug));
+  const bySlug = new Map(cards.map((t) => [t.slug, t]));
+  /** The top-level card `t` is drawn under: itself, or its highest ancestor in this column. */
+  const rootOf = (t: Task): Task => {
+    let cur = t;
+    const seen = new Set([t.slug]);
+    while (cur.parent_task && bySlug.has(cur.parent_task)) {
+      if (seen.has(cur.parent_task)) return t;
+      seen.add(cur.parent_task);
+      cur = bySlug.get(cur.parent_task)!;
+    }
+    return cur;
+  };
+  const roots = new Map(cards.map((t) => [t.slug, rootOf(t)]));
   const byParent = new Map<string, Task[]>();
   for (const t of cards) {
-    const p = t.parent_task;
-    if (p && here.has(p)) byParent.set(p, [...(byParent.get(p) ?? []), t]);
+    const r = roots.get(t.slug)!;
+    if (r !== t) byParent.set(r.slug, [...(byParent.get(r.slug) ?? []), t]);
   }
   const items: ColumnItem[] = [];
   const orphanGroups = new Map<string, Extract<ColumnItem, { kind: 'orphans' }>>();
   for (const t of cards) {
+    if (roots.get(t.slug) !== t) continue;
     const p = t.parent_task;
-    if (p && here.has(p)) continue;
     const node: CardNode = { task: t, children: byParent.get(t.slug) ?? [] };
-    if (p) {
+    if (p && !bySlug.has(p)) {
       let group = orphanGroups.get(p);
       if (!group) {
         const parent = all.find((x) => x.slug === p);

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useCloseCycle, useClosePlan, type CloseAction } from '../../hooks/useCycles';
 import { confirmAction } from '../../lib/desktop';
 import { useI18n } from '../../context/I18nContext';
+import { fill } from '../../lib/fill';
 
 const ACTIONS: CloseAction[] = ['carry', 'back', 'cancel'];
 
@@ -42,7 +43,7 @@ export function CloseDeck({ cycleId, onDone, onCancel }: { cycleId: string; onDo
     const cancels = Object.values(decisions).filter((a) => a === 'cancel').length;
     if (cancels > 0 && !plan.resuming) {
       const ok = await confirmAction({
-        title: t('closeDeck.confirmTitle').replace('{n}', String(cancels)),
+        title: fill(t('closeDeck.confirmTitle'), { n: String(cancels) }),
         body: t('closeDeck.confirmBody'),
         confirmLabel: t('closeDeck.confirmLabel'),
         destructive: true,
@@ -58,10 +59,10 @@ export function CloseDeck({ cycleId, onDone, onCancel }: { cycleId: string; onDo
 
   return (
     <section className="cld-deck" aria-labelledby="cld-title" data-close-deck={cycleId}>
-      <h2 className="cld-title" id="cld-title">{t('closeDeck.title').replace('{n}', String(plan.cycle.number))}</h2>
+      <h2 className="cld-title" id="cld-title">{fill(t('closeDeck.title'), { n: String(plan.cycle.number) })}</h2>
       <p className="pln-meta">
         {plan.into
-          ? t('closeDeck.into').replace('{n}', String(plan.into.number))
+          ? fill(t('closeDeck.into'), { n: String(plan.into.number) })
           : t('closeDeck.noInto')}
       </p>
       {plan.resuming && <p className="cld-note" role="status">{t('closeDeck.resuming')}</p>}
@@ -75,9 +76,9 @@ export function CloseDeck({ cycleId, onDone, onCancel }: { cycleId: string; onDo
               <li key={l.slug} className="cld-leaf" data-close-leaf={l.slug}>
                 <div className="cld-leaf-head">
                   <span className="cld-leaf-name" lang="und">{l.name || l.slug}</span>
-                  {l.carried > 0 && <span className="pln-tag">{t('closeDeck.carried').replace('{n}', String(l.carried))}</span>}
+                  {l.carried > 0 && <span className="pln-tag">{fill(t('closeDeck.carried'), { n: String(l.carried) })}</span>}
                 </div>
-                <div className="cld-choices" role="radiogroup" aria-label={t('closeDeck.decide').replace('{name}', l.name || l.slug)}>
+                <div className="cld-choices" role="radiogroup" aria-label={fill(t('closeDeck.decide'), { name: l.name || l.slug })}>
                   {ACTIONS.map((a) => (
                     <button
                       key={a}
@@ -101,7 +102,7 @@ export function CloseDeck({ cycleId, onDone, onCancel }: { cycleId: string; onDo
       {!plan.resuming && undecided.length > 0 && (
         <div className="cld-rest">
           <label className="pln-field">
-            <span className="pln-label">{t('closeDeck.restLabel').replace('{n}', String(undecided.length))}</span>
+            <span className="pln-label">{fill(t('closeDeck.restLabel'), { n: String(undecided.length) })}</span>
             <select className="pln-select" value={rest} onChange={(e) => setRest(e.target.value as CloseAction)}>
               {ACTIONS.filter((a) => a !== 'carry' || plan.into).map((a) => <option key={a} value={a}>{t(`closeDeck.action.${a}`)}</option>)}
             </select>

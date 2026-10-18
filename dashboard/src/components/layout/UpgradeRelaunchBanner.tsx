@@ -4,6 +4,7 @@ import { useI18n } from '../../context/I18nContext';
 import { useApi } from '../../context/VaultContext';
 import { isDesktop, quitApp } from '../../lib/desktop';
 import './UpgradeRelaunchBanner.css';
+import { fill } from '../../lib/fill';
 
 /**
  * UpgradeRelaunchBanner — the desktop app's automatic self-heal.
@@ -103,10 +104,8 @@ export function UpgradeRelaunchBanner() {
     : failed
       ? t('upgradeRelaunch.failed')
       : deferred
-        ? t('upgradeRelaunch.deferred').replace('{version}', version)
-        : t('upgradeRelaunch.countdown')
-            .replace('{version}', version)
-            .replace('{seconds}', String(secondsLeft));
+        ? fill(t('upgradeRelaunch.deferred'), { version })
+        : fill(t('upgradeRelaunch.countdown'), { version, seconds: String(secondsLeft) });
 
   return (
     <div className="upgrade-relaunch-banner" role="status" aria-live="polite">

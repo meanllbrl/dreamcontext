@@ -1,5 +1,6 @@
 import type { AuditEntry } from '../../hooks/useInbox';
 import { useI18n } from '../../context/I18nContext';
+import { fill } from '../../lib/fill';
 
 /**
  * The records of every owner override the task system kept: approvals, send-backs, accepts,
@@ -22,7 +23,7 @@ export function InboxRecords({ records, onOpenTask }: { records: AuditEntry[]; o
               <span className="ibx-meta">{r.at.slice(0, 16).replace('T', ' ')}</span>
             </div>
             <p className="ibx-meta">
-              {t('inbox.records.by').replace('{actor}', r.actor).replace('{via}', t(`inbox.records.via.${r.via}`))}
+              {fill(t('inbox.records.by'), { actor: r.actor, via: t(`inbox.records.via.${r.via}`) })}
             </p>
             {noOrigin && <p className="ibx-warn-label">{t('inbox.records.noOrigin')}</p>}
             {r.note && <p className="ibx-text">{r.note}</p>}

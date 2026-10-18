@@ -22,6 +22,7 @@ import { AutomationsDispatcherBar } from '../components/automations/AutomationsD
 import { useI18n } from '../context/I18nContext';
 import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
 import './AutomationsPage.css';
+import { fill } from '../lib/fill';
 
 /** The page's three views. `messages` is the channel — the feed of what the
  *  agents did — and it is where the page OPENS. `agents` is the roster behind
@@ -209,7 +210,7 @@ export function AutomationsPage({
     ? t('automations.head.count.none')
     : agents.length === 1
       ? t('automations.head.count.one')
-      : t('automations.head.count.many').replace('{n}', String(agents.length));
+      : fill(t('automations.head.count.many'), { n: String(agents.length) });
 
   // The zero-state replaces the whole page: with nothing created, a channel
   // header over an empty channel and an empty roster is two dead ends where
@@ -319,8 +320,8 @@ export function AutomationsPage({
               <span className="agents-needyou-text">
                 <strong>
                   {needYou.length === 1
-                    ? t('agents.needYou.one').replace('{name}', needYou[0].title)
-                    : t('agents.needYou.many').replace('{n}', String(needYou.length))}
+                    ? fill(t('agents.needYou.one'), { name: needYou[0].title })
+                    : fill(t('agents.needYou.many'), { n: String(needYou.length) })}
                 </strong>
                 <span>{t(needYou.length === 1 ? 'agents.needYou.openOne' : 'agents.needYou.openMany')}</span>
               </span>

@@ -7,6 +7,7 @@ import { claudeAuthRow, requestClaudeSignIn } from '../../lib/claudeAuth';
 import { claudeUpdateRow, shouldWarnInChat } from '../../lib/claudeUpdate';
 import type { Capabilities } from '../sleepy/agentSession';
 import './SystemDependencies.css';
+import { fill } from '../../lib/fill';
 
 /**
  * The dependency doctor (Settings → This machine). One row per piece of external
@@ -236,7 +237,7 @@ function ClaudeVersionRow({ caps }: { caps: Capabilities }) {
   const { install, running, error } = useSystemInstall();
   const row = claudeUpdateRow(caps.claudeUpdate);
   if (!row) return null;
-  const fill = (key: string) => t(key).replace('{installed}', row.vars.installed).replace('{latest}', row.vars.latest);
+  const fill = (key: string) => fill(t(key), { installed: row.vars.installed, latest: row.vars.latest });
   const updating = running === 'claude-update';
 
   return (
@@ -264,7 +265,7 @@ function ClaudeVersionRow({ caps }: { caps: Capabilities }) {
           </span>
         )
       )}
-      {row.disabledBy && <p className="sysdep-note">{t('system.update.autoOff').replace('{source}', row.disabledBy)}</p>}
+      {row.disabledBy && <p className="sysdep-note">{fill(t('system.update.autoOff'), { source: row.disabledBy })}</p>}
       {row.detail && !updating && <p className="sysdep-error">{row.detail}</p>}
       {error && running === null && <p className="sysdep-error">{t('system.update.failed')}: {error}</p>}
     </div>
@@ -293,9 +294,7 @@ export function FeatureDepsNotice({ feature, onOpenMachine }: { feature: string;
 
   return (
     <p className="sysdep-notice">
-      {t('system.notice.blocked')
-        .replace('{feature}', t(meta.titleKey))
-        .replace('{deps}', missing.map((d) => t(DEPS[d].nameKey)).join(', '))}
+      {fill(t('system.notice.blocked'), { feature: t(meta.titleKey), deps: missing.map((d) => t(DEPS[d].nameKey)).join(', ') })}
       {onOpenMachine && (
         <button type="button" className="sysdep-notice-link" onClick={onOpenMachine}>
           {t('system.notice.open')}
@@ -319,9 +318,7 @@ export function ClaudeUpdateChatNotice() {
   const { data: caps } = useAgentCapabilities();
   const u = caps?.claudeUpdate;
   if (!u || !shouldWarnInChat(u)) return null;
-  const text = (u.state === 'failed' ? t('chat.update.failed') : t('chat.update.outdated'))
-    .replace('{installed}', u.installed ?? '?')
-    .replace('{latest}', u.latest ?? '?');
+  const text = fill((u.state === 'failed' ? t('chat.update.failed') : t('chat.update.outdated')), { installed: u.installed ?? '?', latest: u.latest ?? '?' });
 
   return (
     <p className="sysdep-notice sysdep-notice--chat" role="status">

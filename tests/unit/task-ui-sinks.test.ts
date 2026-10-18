@@ -69,20 +69,23 @@ describe('the task screens have no raw HTML sink', () => {
     expect(fn).toMatch(/if \(!text\) return '';/);
   });
 
-  // End review, finding 6: no form controls, and no image that loads from another origin.
-  it('the sanitizer forbids form controls and drops a remote image src, on its own instance', () => {
+  // End review, finding 6, and the second pass's Minor 3: no form controls, no `style`, and no
+  // attribute on ANY element that loads from another origin.
+  it('the sanitizer forbids form controls and style, and its hook checks every element, on its own instance', () => {
     const src = code(read(join(SRC, 'components/tasks/page/taskMarkdown.ts')));
-    expect(src).toMatch(/const SANITIZE_CONFIG = \{ FORBID_TAGS: \['form', 'input', 'button', 'iframe'\] \};/);
+    expect(src).toMatch(/FORBID_TAGS: \['form', 'input', 'button', 'iframe'\]/);
+    expect(src).toMatch(/FORBID_ATTR: \['style', 'srcset'\]/);
     // A private instance: the hook must not change the other DOMPurify callers.
     expect(src).toMatch(/const purify = DOMPurify\(\);/);
     expect(src).not.toMatch(/DOMPurify\.addHook/);
     const hook = /purify\.addHook\('afterSanitizeAttributes', \(node\) => \{[\s\S]*?\n\}\);/.exec(src)?.[0] ?? '';
-    expect(hook).toMatch(/node\.nodeName !== 'IMG'/);
-    expect(hook).toMatch(/removeAttribute\('srcset'\)/);
-    expect(hook).toMatch(/!imageSourceAllowed\(src, window\.location\.href\)\) el\.removeAttribute\('src'\)/);
+    // Not only <img>: every element's every attribute goes through dropsRemoteLoad.
+    expect(hook).not.toMatch(/nodeName !== 'IMG'/);
+    expect(hook).toMatch(/for \(const name of el\.getAttributeNames\(\)\)/);
+    expect(hook).toMatch(/dropsRemoteLoad\(el\.nodeName, name, value, window\.location\.href\)\) el\.removeAttribute\(name\)/);
   });
 
-  it('imageSourceAllowed keeps data: and same-origin images and drops the rest', async () => {
+  it('imageSourceAllowed keeps data: and same-origin sources and drops the rest', async () => {
     const { imageSourceAllowed } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
     const base = 'http://localhost:4173/tasks/fix-login';
     expect(imageSourceAllowed('data:image/png;base64,AAAA', base)).toBe(true);
@@ -91,6 +94,31 @@ describe('the task screens have no raw HTML sink', () => {
     expect(imageSourceAllowed('https://tracker.example/p.gif?u=1', base)).toBe(false);
     expect(imageSourceAllowed('//tracker.example/p.gif', base)).toBe(false);
     expect(imageSourceAllowed('http://localhost:9999/a.png', base)).toBe(false);
+  });
+
+  it('a <video poster>, an <audio src>, an SVG <image href> or xlink:href from elsewhere is dropped; a link is not', async () => {
+    const { dropsRemoteLoad } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
+    const base = 'http://localhost:4173/tasks/fix-login';
+    const remote = 'https://tracker.example/beacon.gif?u=owner';
+    expect(dropsRemoteLoad('VIDEO', 'poster', remote, base)).toBe(true);
+    expect(dropsRemoteLoad('VIDEO', 'src', remote, base)).toBe(true);
+    expect(dropsRemoteLoad('SOURCE', 'src', remote, base)).toBe(true);
+    expect(dropsRemoteLoad('AUDIO', 'src', remote, base)).toBe(true);
+    expect(dropsRemoteLoad('image', 'href', remote, base)).toBe(true);
+    expect(dropsRemoteLoad('image', 'xlink:href', remote, base)).toBe(true);
+    expect(dropsRemoteLoad('TABLE', 'background', remote, base)).toBe(true);
+    expect(dropsRemoteLoad('IMG', 'src', remote, base)).toBe(true);
+    // Kept: this app's own files, inline data, and a link (it loads nothing until clicked).
+    expect(dropsRemoteLoad('VIDEO', 'poster', '/api/files/poster.png', base)).toBe(false);
+    expect(dropsRemoteLoad('image', 'href', 'data:image/png;base64,AAAA', base)).toBe(false);
+    expect(dropsRemoteLoad('A', 'href', 'https://example.com/docs', base)).toBe(false);
+    expect(dropsRemoteLoad('a', 'xlink:href', 'https://example.com/docs', base)).toBe(false);
+    expect(dropsRemoteLoad('IMG', 'alt', remote, base)).toBe(false);
+  });
+
+  it('a style="background-image:url(…)" never survives: style is a forbidden attribute', async () => {
+    const { SANITIZE_CONFIG } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
+    expect(SANITIZE_CONFIG.FORBID_ATTR).toContain('style');
   });
 
   it('mermaid is reached only through lib/mermaidRender (securityLevel strict)', () => {

@@ -1,6 +1,7 @@
 import type { Task } from '../../../hooks/useTasks';
 import { useStatusModel } from '../../../hooks/useTasks';
 import { useI18n } from '../../../context/I18nContext';
+import { fill } from '../../../lib/fill';
 
 /**
  * The sub-tasks: the n/m roll-up (cancelled ones left out, as the server counts) and one row
@@ -16,7 +17,7 @@ export function TaskChildren({ items, onOpen }: { items: Task[]; onOpen: (slug: 
     <section className="tkp-block" aria-labelledby="tkp-children-title">
       <h2 className="tkp-block-title" id="tkp-children-title">
         {t('taskPage.children.title')}
-        <span className="tkp-count">{t('taskPage.children.rollup').replace('{done}', String(done)).replace('{total}', String(counted.length))}</span>
+        <span className="tkp-count">{fill(t('taskPage.children.rollup'), { done: String(done), total: String(counted.length) })}</span>
       </h2>
       <ul className="tkp-children">
         {items.map((c) => (

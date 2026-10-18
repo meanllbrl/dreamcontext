@@ -116,7 +116,9 @@ describe('the door works from the keyboard', () => {
   });
 
   it('Escape closes the chooser and the Develop panel, and skips only the composers', () => {
-    expect(dialog).toContain("COMPOSER_CHOICES: readonly GiveToAgentPreset[] = ['agent', 'custom', 'author']");
+    // Second-pass review, Minor 5: a named-agent or custom preset owns the keyboard only once
+    // its task has loaded and the composer is drawn; while loading (or on a 404) it is the door's.
+    expect(dialog).toContain("const composerOwnsKeyboard = choice === 'author' || ((choice === 'agent' || choice === 'custom') && !!task);");
     expect(dialog).toMatch(/if \(!open \|\| composerOwnsKeyboard\) return;\s*const onKey/);
     expect(dialog).not.toMatch(/if \(!open \|\| choice\) return/);
   });

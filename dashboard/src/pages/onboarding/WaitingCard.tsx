@@ -3,6 +3,7 @@ import { useI18n } from '../../context/I18nContext';
 import { copyPreservingUnicode } from '../../lib/clipboard';
 import { openExternalUrl } from '../../lib/desktop';
 import type { DeviceCode } from '../../lib/onboardingTypes';
+import { fill } from '../../lib/fill';
 
 /**
  * The inline card a checklist row opens while it waits on the person.
@@ -95,7 +96,7 @@ export function WaitingCard({ variant, onCancel, onOpenAgain }: Props) {
       </p>
       <p className="ob-wait-code" aria-label={code.userCode}>{code.userCode}</p>
       <p className="ob-wait-body">
-        {t('onboarding.wait.code.expires').replace('{minutes}', String(minutesLeft(code.expiresAt)))}
+        {fill(t('onboarding.wait.code.expires'), { minutes: String(minutesLeft(code.expiresAt)) })}
       </p>
       <div className="ob-wait-actions">
         <button type="button" className="ob-btn ob-btn--secondary" onClick={() => void copyCode()}>

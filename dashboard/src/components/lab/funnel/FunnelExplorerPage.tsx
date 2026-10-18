@@ -12,6 +12,7 @@ import { replaceLabPath, useLabSearchParams } from './labRoute';
 import '../board/board.css';
 import '../board/lab-shell.css';
 import './FunnelOverviewPage.css';
+import { fill } from '../../../lib/fill';
 
 /**
  * `/lab/<slug>` and `/lab/<slug>/f/<funnelId>` for a `preset: funnel-explorer` insight: the
@@ -87,7 +88,7 @@ export function FunnelExplorerPage({ slug, funnelId, title, onBack, onToast }: {
         {message ? ` (${message})` : ''}
         <button
           className="funnel-ovw-syncbtn"
-          onClick={() => sync.mutate(slug, { onError: (e) => onToast(t('lab.explorerPage.syncFailed').replace('{error}', (e as Error).message)) })}
+          onClick={() => sync.mutate(slug, { onError: (e) => onToast(fill(t('lab.explorerPage.syncFailed'), { error: (e as Error).message })) })}
           disabled={sync.isPending}
         >
           {sync.isPending ? t('lab.explorerPage.syncing') : t('lab.explorerPage.sync')}

@@ -8,6 +8,7 @@ import {
   useLogoutGitHub,
 } from '../../hooks/useBrainStatus';
 import './GitHubLogin.css';
+import { fill } from '../../lib/fill';
 
 /** The GitHub octocat mark — reused by the Sidebar CTA so both surfaces read as one brand. */
 export function GitHubMark({ size = 16 }: { size?: number }) {
@@ -238,7 +239,7 @@ export function GitHubLogin() {
       <div className="gh-login gh-login--connected">
         <span className="gh-login-badge">
           <GitHubMark size={15} />
-          {authStatus.login ? t('brain.auth.signedInAs').replace('{login}', authStatus.login) : t('brain.auth.signedIn')}
+          {authStatus.login ? fill(t('brain.auth.signedInAs'), { login: authStatus.login }) : t('brain.auth.signedIn')}
         </span>
         <button
           type="button"
@@ -262,7 +263,7 @@ export function GitHubLogin() {
         <span className="gh-login-badge gh-login-badge--expired">
           <GitHubMark size={15} />
           {authStatus.login
-            ? t('brain.auth.expiredAs').replace('{login}', authStatus.login)
+            ? fill(t('brain.auth.expiredAs'), { login: authStatus.login })
             : t('brain.auth.expired')}
         </span>
         <p className="settings-field-hint gh-login-expired-hint">{t('brain.auth.expiredHint')}</p>

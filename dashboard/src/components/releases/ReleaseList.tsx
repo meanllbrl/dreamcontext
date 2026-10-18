@@ -1,5 +1,6 @@
 import type { UnreleasedPayload, Version } from '../../hooks/useVersions';
 import { useI18n } from '../../context/I18nContext';
+import { fill } from '../../lib/fill';
 
 /** The work that is done but in no release yet: tasks, features and changelog entries. */
 export function UnreleasedBlock({ data, onOpenTask }: { data: UnreleasedPayload; onOpenTask: (slug: string) => void }) {
@@ -10,7 +11,7 @@ export function UnreleasedBlock({ data, onOpenTask }: { data: UnreleasedPayload;
     <div className="rel-unreleased">
       {data.tasks.length > 0 && (
         <div className="rel-group">
-          <h3 className="rel-group-title">{t('releases.tasks').replace('{n}', String(data.tasks.length))}</h3>
+          <h3 className="rel-group-title">{fill(t('releases.tasks'), { n: String(data.tasks.length) })}</h3>
           <ul className="rel-items">
             {data.tasks.map((x) => (
               <li key={x.slug}>
@@ -22,7 +23,7 @@ export function UnreleasedBlock({ data, onOpenTask }: { data: UnreleasedPayload;
       )}
       {data.features.length > 0 && (
         <div className="rel-group">
-          <h3 className="rel-group-title">{t('releases.features').replace('{n}', String(data.features.length))}</h3>
+          <h3 className="rel-group-title">{fill(t('releases.features'), { n: String(data.features.length) })}</h3>
           <ul className="rel-items">
             {data.features.map((f) => <li key={f.slug} className="rel-text">{`${f.slug} · ${f.status}`}</li>)}
           </ul>
@@ -30,7 +31,7 @@ export function UnreleasedBlock({ data, onOpenTask }: { data: UnreleasedPayload;
       )}
       {data.changelog.length > 0 && (
         <div className="rel-group">
-          <h3 className="rel-group-title">{t('releases.changelog').replace('{n}', String(data.changelog.length))}</h3>
+          <h3 className="rel-group-title">{fill(t('releases.changelog'), { n: String(data.changelog.length) })}</h3>
           <ul className="rel-items">
             {data.changelog.map((c) => (
               <li key={c.index} className="rel-text">
@@ -66,7 +67,7 @@ export function ReleaseList({ releases }: { releases: Version[] }) {
           </div>
           {r.summary && <p className="rel-text">{r.summary}</p>}
           <p className="rel-meta">
-            {t('releases.counts').replace('{tasks}', String(r.tasks?.length ?? 0)).replace('{features}', String(r.features?.length ?? 0))}
+            {fill(t('releases.counts'), { tasks: String(r.tasks?.length ?? 0), features: String(r.features?.length ?? 0) })}
           </p>
         </li>
       ))}

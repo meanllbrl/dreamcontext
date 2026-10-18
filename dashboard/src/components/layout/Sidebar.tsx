@@ -20,6 +20,7 @@ import type { ProjectRollup } from '../sleepy/agentStatus';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useInboxCount } from '../../hooks/useInbox';
 import './Sidebar.css';
+import { fill } from '../../lib/fill';
 
 export type Page = 'tasks' | 'task' | 'inbox' | 'planning' | 'releases' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
 
@@ -371,7 +372,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                     {(badgeCount > 0 || level) && (
                       <span className="sidebar-item-end">
                         {badgeCount > 0 && (
-                          <span className="sidebar-badge" {...(page === 'inbox' ? { title: t('nav.inbox.waitingBadge').replace('{n}', String(badgeCount)) } : {})}>{badgeCount}</span>
+                          <span className="sidebar-badge" {...(page === 'inbox' ? { title: fill(t('nav.inbox.waitingBadge'), { n: String(badgeCount) }) } : {})}>{badgeCount}</span>
                         )}
                         <MaturityTag level={level} className="sidebar-maturity" />
                       </span>

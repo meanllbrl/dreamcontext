@@ -27,6 +27,7 @@ import {
   type LauncherView,
 } from '../lib/launcherPrefs';
 import './LauncherPage.css';
+import { fill } from '../lib/fill';
 
 /**
  * `space` IS the launcher — projects in orbit, with federation drawn in the same
@@ -266,7 +267,7 @@ export function LauncherPage() {
       {onboardingMode === 'bar' && onboarding === null && (
         <button type="button" className="launcher-finish-bar" data-no-drag onClick={() => openOnboarding()}>
           <span className="launcher-finish-dot" aria-hidden="true" />
-          {t('onboarding.launcher.finishBar').replace('{n}', String(setupLeft))}
+          {fill(t('onboarding.launcher.finishBar'), { n: String(setupLeft) })}
         </button>
       )}
 

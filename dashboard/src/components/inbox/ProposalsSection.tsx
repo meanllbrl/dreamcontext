@@ -17,6 +17,7 @@ import {
   type WeekTrend,
 } from '../../hooks/useTaskProposals';
 import './ProposalsSection.css';
+import { fill } from '../../lib/fill';
 
 /**
  * The Proposals section of the Inbox (owner decision 8; it moved off the Tasks board in
@@ -71,9 +72,9 @@ export function ProposalsSection() {
           {waiting > 0 && <span className="tp-count">{waiting}</span>}
         </button>
         <span className="tp-summary">
-          {waiting > 0 ? t('proposals.waiting').replace('{n}', String(waiting)) : t('proposals.nothingWaiting')}
+          {waiting > 0 ? fill(t('proposals.waiting'), { n: String(waiting) }) : t('proposals.nothingWaiting')}
           {thisWeek && thisWeek.rate !== null && (
-            <> · {t('proposals.keptThisWeek').replace('{pct}', String(Math.round(thisWeek.rate * 100)))}</>
+            <> · {fill(t('proposals.keptThisWeek'), { pct: String(Math.round(thisWeek.rate * 100)) })}</>
           )}
         </span>
         {!data.brake.open && (
@@ -125,7 +126,7 @@ function CardBody({ name, why, quote, parentName }: { name: string; why: string;
           “{quote}”
         </blockquote>
       )}
-      {parentName && <p className="tp-parent">↳ {t('proposals.under').replace('{parent}', parentName)}</p>}
+      {parentName && <p className="tp-parent">↳ {fill(t('proposals.under'), { parent: parentName })}</p>}
     </>
   );
 }
@@ -167,7 +168,7 @@ function ProposalCard({ proposal, reasons }: { proposal: TaskProposal; reasons: 
           {proposal.parentName && (
             <label className="tp-check">
               <input type="checkbox" checked={underParent} onChange={(e) => setUnderParent(e.target.checked)} disabled={busy} />
-              {t('proposals.under').replace('{parent}', proposal.parentName)}
+              {fill(t('proposals.under'), { parent: proposal.parentName })}
             </label>
           )}
           <div className="tp-actions">
@@ -241,7 +242,7 @@ function ChangeCard({ suggestion }: { suggestion: ChangeSuggestion }) {
         <span className="tp-chip">{t('proposals.label.change')}</span>
       </div>
       <h3 className="tp-name">{suggestion.name}</h3>
-      <p className="tp-change">{t(`proposals.change.${suggestion.change}`).replace('{target}', target)}</p>
+      <p className="tp-change">{fill(t(`proposals.change.${suggestion.change}`), { target })}</p>
       <p className="tp-why">{suggestion.why}</p>
       <div className="tp-actions">
         <button type="button" className="btn btn--primary btn--sm" disabled={busy}
@@ -294,7 +295,7 @@ function TrendBars({ trend }: { trend: WeekTrend[] }) {
         <span
           key={w.week}
           className={`tp-bar${w.rate === null ? ' tp-bar--none' : ''}`}
-          title={t('proposals.trendWeek').replace('{week}', w.week).replace('{kept}', String(w.kept)).replace('{rejected}', String(w.rejected))}
+          title={fill(t('proposals.trendWeek'), { week: w.week, kept: String(w.kept), rejected: String(w.rejected) })}
         >
           <span className="tp-bar-fill" style={{ height: `${w.rate ? Math.max(8, Math.round(w.rate * 100)) : 0}%` }} />
         </span>
@@ -318,7 +319,7 @@ function RulesStrip({ rules, ruleCount }: { rules: RuleChangeRow[]; ruleCount: n
             <span className="tp-rule-id">{r.id}</span>
             <span className={`tp-rule-title${r.removed ? ' tp-rule-title--gone' : ''}`}>{r.title}</span>
             <span className="tp-rule-meta">
-              {t(`proposals.rules.action.${r.action}`)} · {t(`proposals.rules.by.${r.by}`)} · {t('proposals.rules.rests').replace('{n}', String(r.restsOn))}
+              {t(`proposals.rules.action.${r.action}`)} · {t(`proposals.rules.by.${r.by}`)} · {fill(t('proposals.rules.rests'), { n: String(r.restsOn) })}
             </span>
             {/* Undo of the latest change: on a reverted row that brings the rule back. */}
             <button type="button" className="btn btn--ghost btn--sm" disabled={revert.isPending} onClick={() => revert.mutate({ id: r.id, at: r.at })}>

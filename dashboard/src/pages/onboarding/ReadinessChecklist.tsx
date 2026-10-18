@@ -16,6 +16,7 @@ import {
 } from '../../lib/onboardingTypes';
 import { CheckRow, rowWait } from './CheckRow';
 import './ReadinessChecklist.css';
+import { fill } from '../../lib/fill';
 
 /**
  * The readiness checklist: what this Mac (or, in a project, what Claude) still needs, and one
@@ -287,7 +288,7 @@ export function ReadinessChecklist({ scope, onReady, showSkip = true, onBusyChan
             {running ? t('onboarding.checklist.settingUp') : t('onboarding.checklist.setEverythingUp')}
           </button>
           {openCount > 0 && !running && (
-            <span className="ob-checklist-left">{t('onboarding.checklist.left').replace('{n}', String(openCount))}</span>
+            <span className="ob-checklist-left">{fill(t('onboarding.checklist.left'), { n: String(openCount) })}</span>
           )}
         </div>
       )}

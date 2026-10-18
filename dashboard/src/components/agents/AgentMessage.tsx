@@ -22,6 +22,7 @@ import { runDuration, useNow } from './agentRunState';
 import {
   useAutomation, useAutomationSession, useReplyToAgentThread, type FeedMessage, type FeedStatus,
 } from '../../hooks/useAutomations';
+import { fill } from '../../lib/fill';
 
 /**
  * ONE RUN, AS ONE MESSAGE — the shape this whole step exists to get approved.
@@ -485,7 +486,7 @@ function ThreadBar({
               The hover label is hidden from the accessible name: it is the same action the
               button already is, and reading both said it twice. */}
           {lastAt && (
-            <span className="agent-thread-bar-last">{t('agents.thread.lastReply').replace('{time}', hhmm(lastAt))}</span>
+            <span className="agent-thread-bar-last">{fill(t('agents.thread.lastReply'), { time: hhmm(lastAt) })}</span>
           )}
           <span className="agent-thread-bar-go" aria-hidden="true">
             {t('agents.thread.view')}
@@ -605,7 +606,7 @@ export function AgentMessage({
             type="button"
             className={`agent-reply-preview${message.status === 'running' ? ' agent-reply-preview--running' : ''}`}
             onClick={(e) => onOpenThread(message, e.currentTarget)}
-            aria-label={t('agents.preview.open').replace('{name}', face.title)}
+            aria-label={fill(t('agents.preview.open'), { name: face.title })}
           >
             <span className="agent-reply-preview-head">
               <AgentAvatar slug={face.slug} title={face.title} hasPhoto={message.hasPhoto} of={face.of} size={20} version={message.runId} />
@@ -622,7 +623,7 @@ export function AgentMessage({
                 // When it started, not only that it is working: with the timer in the head, a
                 // run that has been "working" since this morning says so.
                 ? (Number.isFinite(startedAt)
-                  ? t('agents.run.startedAt').replace('{time}', hhmm(new Date(startedAt).toISOString()))
+                  ? fill(t('agents.run.startedAt'), { time: hhmm(new Date(startedAt).toISOString()) })
                   : t('agents.thread.working'))
                 : message.text ? markdownToText(message.text) : t('agents.nothingToReport')}
             </span>

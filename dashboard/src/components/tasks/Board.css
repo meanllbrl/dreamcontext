@@ -200,6 +200,22 @@
   .bd-col-add { min-width: var(--space-11); justify-content: center; }
 }
 
+/* In the toolbar the Order / Status pair is a desktop chip (its inline 34px height); the 44px
+   segment size is the phone's, below. */
+.bd-toolbar .bd-seg-btn { min-height: 0; }
+
+/* At a phone's width every toolbar and view-tab control is a 44px target: chips, the
+   include / exclude toggles, Back, the view "⋯" and "+ New view". min-* wins over the inline
+   desktop sizes. */
+@media (max-width: 640px) {
+  .bd-toolbar button,
+  .bd-toolbar .bd-seg-btn,
+  .bd-viewtabs button {
+    min-height: var(--space-11);
+    min-width: var(--space-11);
+  }
+}
+
 /* On a phone the toolbar wraps onto a second row instead of running off the screen (the
    inline `nowrap` is the desktop shape, where the collapse logic folds controls into More). */
 @media (max-width: 640px) {

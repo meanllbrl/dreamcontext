@@ -19,6 +19,7 @@ import { requestTalkToAgent } from '../../lib/talkToAgent';
 import { AgentAvatar } from './AgentAvatar';
 import { APPROVAL_STATE_KEY, approvalChips, stateHasDot, tx } from './AgentRosterCard';
 import './AgentProfilePanel.css';
+import { fill } from '../../lib/fill';
 
 /**
  * The review text (`AgentDetail.review`, the same `field: value` lines the CLI prints) as a map.
@@ -131,7 +132,7 @@ function automationWhen(a: AgentUsageAutomation, t: (k: string) => string, local
   const when = new Date(a.nextFireAt).toLocaleString(locale, {
     weekday: 'short', hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric',
   });
-  return t('agents.profile.usage.next').replace('{time}', when);
+  return fill(t('agents.profile.usage.next'), { time: when });
 }
 
 /**
@@ -216,9 +217,9 @@ export function AgentProfilePanel({
     approve.mutate(slug, {
       onSuccess: (fresh) => {
         setReviewing(false);
-        onToast(t('agents.approval.approved').replace('{name}', fresh.title));
+        onToast(fill(t('agents.approval.approved'), { name: fresh.title }));
       },
-      onError: (err) => setApproveError(t('agents.approval.failed').replace('{name}', name).replace('{reason}', (err as Error).message)),
+      onError: (err) => setApproveError(fill(t('agents.approval.failed'), { name, reason: (err as Error).message })),
     });
   };
 
@@ -238,15 +239,15 @@ export function AgentProfilePanel({
     if (deleteAction(armed) === 'arm') { setDeleteError(null); setArmed(true); return; }
     remove.mutate(slug, {
       onSuccess: () => {
-        onToast(t('agents.profile.deleted').replace('{name}', name));
+        onToast(fill(t('agents.profile.deleted'), { name }));
         onDeleted(slug);
       },
       onError: (err) => {
         setArmed(false);
         if (isAgentInUse(err)) {
-          setDeleteError(t('agents.profile.deleteInUse').replace('{name}', name).replace('{list}', inUseNames(agent).join(', ')));
+          setDeleteError(fill(t('agents.profile.deleteInUse'), { name, list: inUseNames(agent).join(', ') }));
         } else {
-          setDeleteError(t('agents.profile.deleteFailed').replace('{name}', name).replace('{reason}', (err as Error).message));
+          setDeleteError(fill(t('agents.profile.deleteFailed'), { name, reason: (err as Error).message }));
         }
       },
     });
@@ -268,7 +269,7 @@ export function AgentProfilePanel({
   };
 
   return (
-    <aside ref={panelRef} className="agp-panel" aria-label={t('agents.profile.aria').replace('{name}', name)} data-agent-profile={slug}>
+    <aside ref={panelRef} className="agp-panel" aria-label={fill(t('agents.profile.aria'), { name })} data-agent-profile={slug}>
       <div className="agp-panel-top">
         <AgentAvatar of="agent" slug={agent.slug} title={name} hasPhoto={agent.hasPhoto} size={72} version={agent.hasPhoto ? detail.dataUpdatedAt : undefined} />
         <div className="agp-ident">
@@ -307,7 +308,7 @@ export function AgentProfilePanel({
           className="agp-btn agp-btn--primary"
           onClick={talk}
           disabled={!agent.approvedForChat || talking}
-          title={agent.approvedForChat ? t('agents.profile.talkHint').replace('{name}', name) : t('agents.approval.chatNo')}
+          title={agent.approvedForChat ? fill(t('agents.profile.talkHint'), { name }) : t('agents.approval.chatNo')}
         >
           {t('agents.profile.talk')}
         </button>
@@ -378,7 +379,7 @@ export function AgentProfilePanel({
                 </ol>
                 {lessons.length > LESSONS_SHOWN && !lessonsOpen && (
                   <button type="button" className="agp-textbtn" onClick={() => setLessonsOpen(true)}>
-                    {t('agents.profile.lessonsMore').replace('{n}', String(lessons.length))}
+                    {fill(t('agents.profile.lessonsMore'), { n: String(lessons.length) })}
                   </button>
                 )}
               </div>
@@ -513,7 +514,7 @@ export function AgentProfilePanel({
           disabled={remove.isPending}
           data-delete-armed={armed}
         >
-          {armed ? t('agents.profile.deleteConfirm').replace('{name}', name) : t('agents.profile.delete')}
+          {armed ? fill(t('agents.profile.deleteConfirm'), { name }) : t('agents.profile.delete')}
         </button>
         {deleteError && <p className="agp-error" role="alert">{deleteError}</p>}
       </section>
@@ -540,7 +541,7 @@ function CallSettingFact({ row, t }: { row: CallSettingRow; t: (k: string) => st
   switch (row.key) {
     case 'timeout':
       label = t('agents.profile.timeout');
-      value = row.value ? t('agents.profile.timeoutValue').replace('{n}', row.value) : none;
+      value = row.value ? fill(t('agents.profile.timeoutValue'), { n: row.value }) : none;
       break;
     case 'outputDir':
       label = t('agents.profile.outputDir');

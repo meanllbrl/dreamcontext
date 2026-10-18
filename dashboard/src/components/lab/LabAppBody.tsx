@@ -3,6 +3,8 @@ import { useI18n } from '../../context/I18nContext';
 import { ChartEmpty, type ChartBodyProps } from './chartBody';
 import { LabAppFrame } from './LabAppFrame';
 import './lab-app-card-nav.css';
+// `fill` is also a prop of this component, so the placeholder helper is imported as fillText.
+import { fill as fillText } from '../../lib/fill';
 
 /**
  * The board card's body for `render: app` (chartRegistry.ts's `app` entry,
@@ -59,7 +61,7 @@ export function LabAppBody({ summary, cache, emptyHint, pageId = null, nav = fal
   };
   const missing = !known && want ? (
     <p className="lab-app-card-note" data-lab-app-page-missing={want}>
-      {t('lab.blocks.insight.pageMissing').replace('{page}', want)}
+      {fillText(t('lab.blocks.insight.pageMissing'), { page: want })}
     </p>
   ) : null;
 

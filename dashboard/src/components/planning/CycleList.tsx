@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { CycleListEntry } from '../../hooks/useCycles';
 import { useStartCycle } from '../../hooks/useCycles';
 import { useI18n } from '../../context/I18nContext';
+import { fill } from '../../lib/fill';
 
 /**
  * Every cycle, newest first: its number, goal, dates, status and progress. A planned cycle can
@@ -25,16 +26,16 @@ export function CycleList({ cycles, active, selected, onSelect, onClose }: {
         {ordered.map((c) => (
           <li key={c.id} className="pln-cycle" data-cycle={c.id} data-status={c.status} aria-current={selected === c.id || undefined}>
             <div className="pln-cycle-head">
-              <span className="pln-cycle-title">{t('taskPage.header.cycleN').replace('{n}', String(c.number))}</span>
+              <span className="pln-cycle-title">{fill(t('taskPage.header.cycleN'), { n: String(c.number) })}</span>
               <span className="pln-tag">{t(`planning.status.${c.status}`)}</span>
               <span className="pln-meta">{`${c.start} – ${c.end}`}</span>
             </div>
             {c.goal && <p className="pln-text" lang="und">{c.goal}</p>}
             <p className="pln-meta">
               {c.status === 'closed' && c.result
-                ? t('planning.cycles.result').replace('{done}', String(c.result.done)).replace('{total}', String(c.result.total))
-                : t('board.cycle.progress').replace('{done}', String(c.progress.done)).replace('{total}', String(c.progress.total))}
-              {c.id === active && ` · ${t('board.cycle.daysLeft').replace('{n}', String(Math.max(0, c.daysLeft)))}`}
+                ? fill(t('planning.cycles.result'), { done: String(c.result.done), total: String(c.result.total) })
+                : fill(t('board.cycle.progress'), { done: String(c.progress.done), total: String(c.progress.total) })}
+              {c.id === active && ` · ${fill(t('board.cycle.daysLeft'), { n: String(Math.max(0, c.daysLeft)) })}`}
             </p>
             <div className="pln-actions">
               {c.status !== 'closed' && (

@@ -107,11 +107,11 @@ export function TrendBlock({ frame, options, selection, block }: BlockViewProps)
   if (unknownFunnel) {
     notes.push({
       key: 'funnel',
-      text: t('lab.blocks.explorer.unknownFunnel').replace('{id}', unknownFunnel).replace('{name}', slice.funnelName),
+      text: fill(t('lab.blocks.explorer.unknownFunnel'), { id: unknownFunnel, name: slice.funnelName }),
     });
   }
   if (slice.ignored.length > 0) {
-    notes.push({ key: 'split', text: t('lab.blocks.explorer.notSplit').replace('{dims}', slice.ignored.map(dimLabel).join(', ')) });
+    notes.push({ key: 'split', text: fill(t('lab.blocks.explorer.notSplit'), { dims: slice.ignored.map(dimLabel).join(', ') }) });
   }
 
   const shell = (body: ReactNode, attrs: Record<string, string> = {}) => (
@@ -127,7 +127,7 @@ export function TrendBlock({ frame, options, selection, block }: BlockViewProps)
     const sel = selectionLabel(slice.selection, dimOrder) ?? t('lab.blocks.breakdown.all');
     return shell(
       <div className="lab-explorer-state" data-lab-not-measured="">
-        {t('lab.blocks.explorer.notMeasured').replace('{sel}', sel).replace('{reason}', slice.reason ?? noPath)}
+        {fill(t('lab.blocks.explorer.notMeasured'), { sel, reason: slice.reason ?? noPath })}
       </div>,
       { 'data-state': 'unmeasured' },
     );
@@ -139,18 +139,16 @@ export function TrendBlock({ frame, options, selection, block }: BlockViewProps)
   if (slice.daily.length === 0) return noDaily();
 
   const { keys, unknown } = pickMetrics(trendKeys(slice), stringListOption(options, 'metrics'));
-  if (unknown.length > 0) notes.push({ key: 'metrics', text: t('lab.blocks.explorer.unknownMetrics').replace('{keys}', unknown.join(', ')) });
+  if (unknown.length > 0) notes.push({ key: 'metrics', text: fill(t('lab.blocks.explorer.unknownMetrics'), { keys: unknown.join(', ') }) });
   if (slice.lowSample) {
-    notes.push({ key: 'low', text: t('lab.blocks.explorer.lowSample').replace('{n}', fmtCount(slice.users, locale)) });
+    notes.push({ key: 'low', text: fill(t('lab.blocks.explorer.lowSample'), { n: fmtCount(slice.users, locale) }) });
   }
   if (keys.length === 0) return noDaily();
 
   const labelOf = (k: string) => slice.metrics[k]?.label ?? k;
   // Why a metric draws no line: its own not-measured reason, else the days simply do not carry it.
   const reasonOf = (k: string) => slice.metrics[k]?.reason ?? t('lab.blocks.trend.noDaily');
-  const whyNot = (k: string) => t('lab.blocks.trend.metricNotMeasured')
-    .replace('{metric}', labelOf(k))
-    .replace('{reason}', reasonOf(k));
+  const whyNot = (k: string) => fill(t('lab.blocks.trend.metricNotMeasured'), { metric: labelOf(k), reason: reasonOf(k) });
   // The metrics with no daily values, grouped by reason: said ONCE under the switch, never as a
   // row of struck-through chips that leave the reader guessing.
   const silent = keys.filter((k) => !hasTrend(slice, k));
@@ -166,7 +164,7 @@ export function TrendBlock({ frame, options, selection, block }: BlockViewProps)
     <div className="lab-trend-unmeasured" data-lab-trend-unmeasured={silent.join(',')} role="note">
       {[...silentGroups.entries()].map(([reason, labels]) => (
         <span key={reason} className="lab-trend-unmeasured-group">
-          {labels.join(', ')} · {t('lab.explorer.notMeasuredWhy').replace('{reason}', reason)}
+          {labels.join(', ')} · {fill(t('lab.explorer.notMeasuredWhy'), { reason })}
         </span>
       ))}
     </div>
@@ -193,7 +191,7 @@ export function TrendBlock({ frame, options, selection, block }: BlockViewProps)
     >
       {keys.map((k) => (
         <option key={k} value={k} data-lab-trend-metric={k}>
-          {hasTrend(slice, k) ? labelOf(k) : t('lab.blocks.breakdown.optionUnmeasured').replace('{value}', labelOf(k))}
+          {hasTrend(slice, k) ? labelOf(k) : fill(t('lab.blocks.breakdown.optionUnmeasured'), { value: labelOf(k) })}
         </option>
       ))}
     </select>

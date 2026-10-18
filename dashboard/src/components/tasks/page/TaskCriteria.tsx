@@ -3,6 +3,7 @@ import type { CriterionView, TaskDetail } from '../../../hooks/useTasks';
 import { useUpdateTask } from '../../../hooks/useTasks';
 import { useI18n } from '../../../context/I18nContext';
 import { toggleCriterion, updateMermaidNodeStatus } from './criteriaEdit';
+import { fill } from '../../../lib/fill';
 
 /**
  * Acceptance criteria as the server parsed them (`CriterionView[]`), as React text: each with
@@ -34,7 +35,7 @@ export function TaskCriteria({ task, onError }: { task: TaskDetail; onError: (er
   const done = task.criteria.filter((c) => c.checked).length;
   return (
     <div className="tkp-criteria">
-      <p className="tkp-meta">{t('taskPage.criteria.count').replace('{done}', String(done)).replace('{total}', String(task.criteria.length))}</p>
+      <p className="tkp-meta">{fill(t('taskPage.criteria.count'), { done: String(done), total: String(task.criteria.length) })}</p>
       <ol className="tkp-criteria-list">
         {task.criteria.map((c) => {
           const id = `tkp-crit-${task.slug}-${c.n}`;

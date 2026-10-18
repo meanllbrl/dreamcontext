@@ -44,6 +44,7 @@ import type {
 } from './boardTypes';
 import './board.css';
 import './lab-shell.css';
+import { fill } from '../../../lib/fill';
 
 /**
  * THE INSIGHTS PAGE: one board at a time, a switcher over all of them.
@@ -417,11 +418,10 @@ export function BoardPage({
     reported.current = running.id;
     void queryClient.invalidateQueries({ queryKey: ['lab'] });
     if (running.force === null) return;
-    if (running.status === 'error') say('info', t('lab.board.toast.syncFailed').replace('{error}', running.error ?? ''));
+    if (running.status === 'error') say('info', fill(t('lab.board.toast.syncFailed'), { error: running.error ?? '' }));
     else if (running.failed.length > 0) {
-      say('info', t('lab.board.toast.syncSomeFailed')
-        .replace('{n}', String(running.failed.length)).replace('{total}', String(running.results.length)));
-    } else say('info', t('lab.board.toast.synced').replace('{n}', String(running.results.length)));
+      say('info', fill(t('lab.board.toast.syncSomeFailed'), { n: String(running.failed.length), total: String(running.results.length) }));
+    } else say('info', fill(t('lab.board.toast.synced'), { n: String(running.results.length) }));
   }, [running, queryClient, say, t]);
 
   /** The most recent job result per slug (the skip reason a card shows). */
@@ -436,7 +436,7 @@ export function BoardPage({
     if (slugs.length === 0) return;
     startSync.mutate({ force: 'user', slugs }, {
       onSuccess: (d) => { if (d.queued) say('queued', t('lab.board.toast.queued')); },
-      onError: (err) => say('info', t('lab.board.toast.syncFailed').replace('{error}', (err as Error).message)),
+      onError: (err) => say('info', fill(t('lab.board.toast.syncFailed'), { error: (err as Error).message })),
     });
   }, [summaries, startSync, say, t]);
 
@@ -444,8 +444,8 @@ export function BoardPage({
 
   const newBoard = useCallback((title: string) => {
     createBoard.mutate(title, {
-      onSuccess: (r) => { choose(r.board.slug); say('info', t('lab.board.toast.created').replace('{title}', r.board.title)); },
-      onError: (err) => say('info', t('lab.board.toast.createFailed').replace('{error}', (err as Error).message)),
+      onSuccess: (r) => { choose(r.board.slug); say('info', fill(t('lab.board.toast.created'), { title: r.board.title })); },
+      onError: (err) => say('info', fill(t('lab.board.toast.createFailed'), { error: (err as Error).message })),
     });
   }, [createBoard, choose, say, t]);
 
@@ -462,13 +462,13 @@ export function BoardPage({
       onSuccess: () => {
         if (next) choose(next.slug);
         else setPicked(null);
-        say('info', t('lab.board.toast.deleted').replace('{title}', boardTitle(board)));
+        say('info', fill(t('lab.board.toast.deleted'), { title: boardTitle(board) }));
       },
       onError: (err) => say(
         err instanceof RequestError && err.status === 409 ? 'conflict' : 'info',
         err instanceof RequestError && err.status === 409
           ? t('lab.board.conflict')
-          : t('lab.board.toast.deleteFailed').replace('{error}', (err as Error).message),
+          : fill(t('lab.board.toast.deleteFailed'), { error: (err as Error).message }),
       ),
     });
   }, [board, boards, deleteBoard, choose, say, t, boardTitle]);
@@ -503,17 +503,17 @@ export function BoardPage({
       writer.saveAndWait(from, moved.sourceSpec, moved.sourceRev).catch(() => {
         // Conflict and failure already reach the page through the save signals (toast + Retry).
       });
-      say('info', t('lab.board.toast.moved').replace('{title}', boardTitle(moved.target)));
+      say('info', fill(t('lab.board.toast.moved'), { title: boardTitle(moved.target) }));
     } catch (err) {
       if (err instanceof MoveBlockedError) {
         const blocked = boards.find((b) => b.slug === err.slug);
         say('info', err.slug === from || !blocked
           ? t('lab.board.toast.moveBlocked')
-          : t('lab.board.toast.moveBlockedTarget').replace('{title}', boardTitle(blocked)));
+          : fill(t('lab.board.toast.moveBlockedTarget'), { title: boardTitle(blocked) }));
         return;
       }
       if (err instanceof RequestError && err.status === 409) return; // the conflict toast already said it
-      say('info', t('lab.board.toast.moveFailed').replace('{error}', (err as Error).message));
+      say('info', fill(t('lab.board.toast.moveFailed'), { error: (err as Error).message }));
     }
   }, [board, boards, fetchBoard, writer, say, t, boardTitle]);
 
@@ -742,14 +742,14 @@ export function BoardPage({
   const boardJob = running?.status === 'running' && Object.keys(summaries).some((s) => cardSyncState(s, running, null) === 'syncing');
   let sentence: string | null = null;
   if (boardJob && running) {
-    sentence = t('lab.board.freshness.syncing').replace('{done}', String(running.done)).replace('{total}', String(running.total || running.done));
+    sentence = fill(t('lab.board.freshness.syncing'), { done: String(running.done), total: String(running.total || running.done) });
   } else if (fresh && fresh.total > 0) {
     if (fresh.failed > 0) {
-      sentence = t('lab.board.freshness.failed').replace('{n}', String(fresh.failed)).replace('{total}', String(fresh.total));
+      sentence = fill(t('lab.board.freshness.failed'), { n: String(fresh.failed), total: String(fresh.total) });
     } else if (fresh.stale > 0) {
-      sentence = t('lab.board.freshness.stale').replace('{n}', String(fresh.stale)).replace('{total}', String(fresh.total));
+      sentence = fill(t('lab.board.freshness.stale'), { n: String(fresh.stale), total: String(fresh.total) });
     } else if (fresh.newest) {
-      sentence = t('lab.board.freshness.fresh').replace('{total}', String(fresh.total)).replace('{ago}', agoText(fresh.newest, locale));
+      sentence = fill(t('lab.board.freshness.fresh'), { total: String(fresh.total), ago: agoText(fresh.newest, locale) });
     }
   }
 
@@ -796,7 +796,7 @@ export function BoardPage({
       {sentence && <p className="board-freshness" data-lab-board-freshness>{sentence}</p>}
       {writable && unplaced.length > 0 && (
         <p className="board-notice" data-lab-unplaced={unplaced.length}>
-          <span>{t('lab.board.unplaced').replace('{n}', String(unplaced.length))}</span>
+          <span>{fill(t('lab.board.unplaced'), { n: String(unplaced.length) })}</span>
           <button
             type="button"
             className="board-btn board-btn--quiet"
@@ -976,7 +976,7 @@ function BoardTabs({
   const fitted = visibleTabs(boards, fit, active);
   const hidden = boards.filter((b) => !fitted.includes(b));
   const visible = measuring ? boards : fitted;
-  const moreLabel = (n: number) => t('lab.board.more').replace('{n}', String(n));
+  const moreLabel = (n: number) => fill(t('lab.board.more'), { n: String(n) });
 
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);

@@ -5,6 +5,7 @@ import { RangeControl, nonWindowTweaks } from '../RangeControl';
 import { TweakEditor } from '../TweakEditor';
 import { chartEntry } from '../chartRegistry';
 import { BoardPopover, MenuItem } from './BoardPopover';
+import { fill } from '../../../lib/fill';
 
 /**
  * A card's ⋯ menu: Edit blocks, Open detail, Full screen, Refresh, Force full
@@ -71,14 +72,14 @@ export function CardMenu({
       onSuccess: (data) => {
         const result = data.results[0];
         if (result?.status === 'failed') {
-          onToast(t('lab.board.toast.refreshFailed').replace('{title}', title).replace('{error}', result.error ?? ''));
+          onToast(fill(t('lab.board.toast.refreshFailed'), { title, error: result.error ?? '' }));
         } else if (result?.status === 'fresh' && result.reason === 'upstream-unchanged') {
-          onToast(t('lab.board.toast.upstreamUnchanged').replace('{title}', title));
+          onToast(fill(t('lab.board.toast.upstreamUnchanged'), { title }));
         } else {
-          onToast(t('lab.board.toast.refreshed').replace('{title}', title));
+          onToast(fill(t('lab.board.toast.refreshed'), { title }));
         }
       },
-      onError: (err) => onToast(t('lab.board.toast.refreshFailed').replace('{title}', title).replace('{error}', (err as Error).message)),
+      onError: (err) => onToast(fill(t('lab.board.toast.refreshFailed'), { title, error: (err as Error).message })),
     });
   };
 
@@ -87,9 +88,9 @@ export function CardMenu({
     setLevel(null);
     applyTweaks.mutate({ slug: summary.slug, tweaks: values }, {
       onSuccess: ({ synced, error }) => onToast(synced
-        ? t('lab.board.toast.tweaksApplied').replace('{title}', title)
-        : t('lab.board.toast.tweaksSyncFailed').replace('{title}', title).replace('{error}', error ?? '')),
-      onError: (err) => onToast(t('lab.board.toast.tweaksFailed').replace('{title}', title).replace('{error}', (err as Error).message)),
+        ? fill(t('lab.board.toast.tweaksApplied'), { title })
+        : fill(t('lab.board.toast.tweaksSyncFailed'), { title, error: error ?? '' })),
+      onError: (err) => onToast(fill(t('lab.board.toast.tweaksFailed'), { title, error: (err as Error).message })),
     });
   };
 

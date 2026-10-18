@@ -16,6 +16,7 @@ import {
 import { fmtCount, fmtMetric, fmtMetricDelta } from '../explorer/explorerFormat';
 import { BlockEmpty, boolOption, drawableFrame, stringListOption, stringOption, type BlockViewProps } from './blockCommon';
 import './benchmark.css';
+import { fill } from '../../../lib/fill';
 
 type Translate = (key: string) => string;
 
@@ -37,7 +38,7 @@ export function formatMetric(v: number, format: FunnelMetricFormat, locale?: str
 
 /** "Not measured: {reason}", or the sentence without its reason clause when none was given. */
 export function notMeasuredText(t: Translate, reason: string | null): string {
-  return t('lab.blocks.benchmark.notMeasured').replace('{reason}', reason ?? t('lab.blocks.breakdown.noPath'));
+  return fill(t('lab.blocks.benchmark.notMeasured'), { reason: reason ?? t('lab.blocks.breakdown.noPath') });
 }
 
 type Tone = 'below' | 'between' | 'above';
@@ -259,12 +260,12 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
 
   const notes: { key: string; text: string; attr: string }[] = [];
   if (pick && slice.funnelId !== pick) {
-    notes.push({ key: 'funnel', attr: 'data-lab-unknown-funnel', text: t('lab.blocks.explorer.unknownFunnel').replace('{id}', pick).replace('{name}', slice.funnelName) });
+    notes.push({ key: 'funnel', attr: 'data-lab-unknown-funnel', text: fill(t('lab.blocks.explorer.unknownFunnel'), { id: pick, name: slice.funnelName }) });
   }
-  if (unknown.length > 0) notes.push({ key: 'metrics', attr: 'data-lab-unknown-metrics', text: t('lab.blocks.explorer.unknownMetrics').replace('{keys}', unknown.join(', ')) });
-  if (slice.ignored.length > 0) notes.push({ key: 'split', attr: 'data-lab-not-split', text: t('lab.blocks.explorer.notSplit').replace('{dims}', slice.ignored.join(', ')) });
+  if (unknown.length > 0) notes.push({ key: 'metrics', attr: 'data-lab-unknown-metrics', text: fill(t('lab.blocks.explorer.unknownMetrics'), { keys: unknown.join(', ') }) });
+  if (slice.ignored.length > 0) notes.push({ key: 'split', attr: 'data-lab-not-split', text: fill(t('lab.blocks.explorer.notSplit'), { dims: slice.ignored.join(', ') }) });
   if (slice.measured && slice.lowSample) {
-    notes.push({ key: 'low', attr: 'data-lab-low-sample', text: t('lab.blocks.explorer.lowSample').replace('{n}', fmtCount(slice.users, locale)) });
+    notes.push({ key: 'low', attr: 'data-lab-low-sample', text: fill(t('lab.blocks.explorer.lowSample'), { n: fmtCount(slice.users, locale) }) });
   }
   const inherited = allRowsInherit(rows) && !f.ladder;
   const notesOf = notesByKey(orderedNotes(f, slice.funnelId));
@@ -329,7 +330,7 @@ export function BenchmarkBlock({ frame, options, selection }: BlockViewProps) {
           />
         ))}
       </ul>
-      {more > 0 && <div className="lab-bench-more">{t('lab.blocks.benchmark.more').replace('{n}', String(more))}</div>}
+      {more > 0 && <div className="lab-bench-more">{fill(t('lab.blocks.benchmark.more'), { n: String(more) })}</div>}
       {inherited && <div className="lab-bench-note lab-bench-inherited" data-lab-bench-inherited="">{inheritedText}</div>}
     </div>
   );
@@ -366,18 +367,18 @@ export function bandSourceParts(row: BenchmarkRow, t: Translate): string[] {
   const floorWord = (from: 'book' | 'own') => t(from === 'book' ? 'lab.explorer.bandBook' : 'lab.explorer.bandOwnFloor');
   const targetWord = (from: 'book' | 'own') => t(from === 'book' ? 'lab.explorer.bandBook' : 'lab.explorer.bandOwnTarget');
   const authored = (bound: 'floor' | 'target', source: string) =>
-    t('lab.blocks.benchmark.source').replace('{bound}', t(`lab.blocks.benchmark.${bound}`)).replace('{source}', source);
+    fill(t('lab.blocks.benchmark.source'), { bound: t(`lab.blocks.benchmark.${bound}`), source });
   const parts: string[] = [];
   if (row.floor !== null) {
-    if (row.floorFrom) parts.push(t('lab.explorer.bandFloorFrom').replace('{src}', floorWord(row.floorFrom)));
+    if (row.floorFrom) parts.push(fill(t('lab.explorer.bandFloorFrom'), { src: floorWord(row.floorFrom) }));
     else if (row.floorSource) parts.push(authored('floor', row.floorSource));
   }
   if (row.target !== null) {
-    if (row.targetFrom) parts.push(t('lab.explorer.bandTargetFrom').replace('{src}', targetWord(row.targetFrom)));
+    if (row.targetFrom) parts.push(fill(t('lab.explorer.bandTargetFrom'), { src: targetWord(row.targetFrom) }));
     else if (row.targetSource) parts.push(authored('target', row.targetSource));
   }
   if (row.weeks !== null && (row.floorFrom === 'own' || row.targetFrom === 'own')) {
-    parts.push(t('lab.explorer.bandWeeks').replace('{n}', String(row.weeks)));
+    parts.push(fill(t('lab.explorer.bandWeeks'), { n: String(row.weeks) }));
   }
   return parts;
 }
@@ -415,7 +416,7 @@ export function notesByKey(notes: readonly FunnelFrameNote[]): Map<string, Funne
 export function NoteMark({ markKey, notes, t }: { markKey: string; notes: readonly FunnelFrameNote[]; t: Translate }) {
   if (notes.length === 0) return null;
   const level = notes.some((n) => n.level !== 'info') ? 'trap' : 'info';
-  const text = notes.map((n) => t('lab.explorer.noteMark').replace('{text}', n.code ? `${n.code}: ${n.text}` : n.text)).join('\n');
+  const text = notes.map((n) => fill(t('lab.explorer.noteMark'), { text: n.code ? `${n.code}: ${n.text}` : n.text })).join('\n');
   return (
     <span
       className="lab-x-note-mark"
@@ -481,7 +482,7 @@ function BenchRowView({ row, labels, showSources, comparePrev, sources, ladder, 
           {/* Primary: the current value. Secondary: one quiet run for the change, the previous window and the trend. */}
           <span className="lab-bench-value" data-lab-bench-value="">{fmt(row.current as number)}</span>
           {showDelta && (
-            <span className="lab-bench-delta" data-lab-bench-delta="" title={t('lab.blocks.benchmark.delta').replace('{delta}', signed)}>
+            <span className="lab-bench-delta" data-lab-bench-delta="" title={fill(t('lab.blocks.benchmark.delta'), { delta: signed })}>
               <span className="lab-bench-change" data-trend={row.trend ?? undefined}>
                 <span aria-hidden="true">{glyph}</span> <span className="lab-bench-delta-text">{signed}</span>
               </span>

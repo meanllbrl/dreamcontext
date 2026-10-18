@@ -4,6 +4,7 @@ import { useCycles } from '../../../hooks/useCycles';
 import { useI18n } from '../../../context/I18nContext';
 import { cycleOfCard, orderOf } from '../taskOrder';
 import { TaskVerdictBar } from './TaskVerdictBar';
+import { fill } from '../../../lib/fill';
 
 /**
  * The task page's header: back to the board, the name exactly as written (React text, no case
@@ -31,7 +32,7 @@ export function TaskHeader({ task, onBack, onOpenTask, onGiveToAgent, onError }:
   const planned = (cycles?.cycles ?? []).filter((c) => c.status === 'planned');
   const cycleLabel = (id: string) => {
     const c = cycles?.cycles.find((x) => x.id === id);
-    return c ? t('taskPage.header.cycleN').replace('{n}', String(c.number)) : id;
+    return c ? fill(t('taskPage.header.cycleN'), { n: String(c.number) }) : id;
   };
 
   const statuses = sm.order.includes(task.status) ? sm.order : [...sm.order, task.status];

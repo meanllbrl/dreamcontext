@@ -38,6 +38,10 @@ const CASES: [string, string][] = [
   ['components/tasks/Board.css', '.bd-rollup'],
   ['components/planning/Planning.css', '.pln-icon-btn'],
   ['components/agent-door/GiveToAgentDialog.css', '.gta-close'],
+  // Second-pass review, Minor 8: the board toolbar's chips and toggles, and the view tabs.
+  ['components/tasks/Board.css', '.bd-toolbar button'],
+  ['components/tasks/Board.css', '.bd-toolbar .bd-seg-btn'],
+  ['components/tasks/Board.css', '.bd-viewtabs button'],
 ];
 
 describe('task-screen touch targets are 44px at a phone width', () => {
@@ -48,6 +52,24 @@ describe('task-screen touch targets are 44px at a phone width', () => {
       expect(sets(rules, selector, 'min-width'), `${selector} min-width`).toBe(true);
     });
   }
+
+  // Second-pass review, owner question (c): .tkp-child, .task-section-head and .gta-choice are
+  // full-width 44px rows at every size. A criterion's checkbox is 20px, so its label fills a
+  // 44px row on a phone and takes the tap.
+  it('a criterion label is the 44px tap target of its checkbox at a phone width', () => {
+    const rules = phoneRules(read('components/tasks/page/TaskPage.css'));
+    expect(sets(rules, '.tkp-criterion-text', 'min-height')).toBe(true);
+    expect(read('components/tasks/page/TaskCriteria.tsx')).toMatch(/<label htmlFor=\{id\} className="tkp-criterion-text">/);
+    for (const [file, selector] of [
+      ['components/tasks/page/TaskPage.css', '.tkp-child'],
+      ['components/tasks/page/TaskPage.css', '.task-section-head'],
+      ['components/agent-door/GiveToAgentDialog.css', '.gta-choice'],
+    ] as const) {
+      const block = new RegExp(`\\n\\${selector} \\{[^}]*\\}`).exec(read(file))?.[0] ?? '';
+      expect(block, selector).toMatch(/min-height: var\(--space-11\)/);
+      expect(block, selector).toMatch(/width: 100%/);
+    }
+  });
 
   it('the column "+" keeps its 24px desktop square, which the phone min-width overrides', () => {
     expect(read('components/tasks/BoardColumn.tsx')).toMatch(/className="bd-hover bd-hover-text bd-col-add"[^>]*style=\{\{ width: 24, height: 24,/);

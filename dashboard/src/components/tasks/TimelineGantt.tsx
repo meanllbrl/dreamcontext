@@ -9,6 +9,7 @@ import {
   formatISO, todayISO, parseISO, addDays, diffDays, taskSpan,
 } from './calendar-utils';
 import './TimelineGantt.css';
+import { fill } from '../../lib/fill';
 
 interface TimelineGanttProps {
   tasks: Task[];
@@ -264,7 +265,7 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
           <p className="gantt-empty-title">{t('board.timeline.emptyTitle')}</p>
           <p className="gantt-empty-sub">
             {t('board.timeline.emptyBody')}
-            {unscheduled.length > 0 && ` ${t('board.timeline.waiting').replace('{n}', String(unscheduled.length))}`}
+            {unscheduled.length > 0 && ` ${fill(t('board.timeline.waiting'), { n: String(unscheduled.length) })}`}
           </p>
         </div>
         {unscheduled.length > 0 && (
@@ -434,7 +435,7 @@ function UnscheduledTray({
   return (
     <div className={`gantt-unscheduled ${open ? 'gantt-unscheduled--open' : ''}`}>
       <button type="button" className="gantt-unscheduled-toggle" onClick={onToggle} aria-expanded={open}>
-        <span>{t('board.timeline.unscheduled').replace('{n}', String(tasks.length))}</span>
+        <span>{fill(t('board.timeline.unscheduled'), { n: String(tasks.length) })}</span>
         <svg className={`gantt-chevron ${open ? 'gantt-chevron--open' : ''}`} width="12" height="12" viewBox="0 0 12 12" fill="none">
           <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

@@ -6,6 +6,7 @@ import {
   libraryDraftFrom, libraryDraftProblems, libraryPutRequest, slugSuggestion, type LibraryDraft,
 } from './editorModel';
 import { librarySaveError, useSaveLibraryBlock, type LibrarySaveError } from './useSaveLibraryBlock';
+import { fill } from '../../../lib/fill';
 
 /**
  * "Save HTML to library": an inline html block becomes a vault library entry
@@ -101,7 +102,7 @@ export function SaveToLibraryDialog({ block, library, onSaved, onClose }: SaveTo
           />
           {show('slug') && <span className="lab-editor-problem">{t('lab.editor.library.slugInvalid')}</span>}
           {existing && !show('slug') && (
-            <span className="lab-editor-hint">{t('lab.editor.library.replaces').replace('{title}', existing.title)}</span>
+            <span className="lab-editor-hint">{fill(t('lab.editor.library.replaces'), { title: existing.title })}</span>
           )}
         </label>
 

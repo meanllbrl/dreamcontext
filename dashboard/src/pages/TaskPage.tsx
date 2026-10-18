@@ -14,6 +14,7 @@ import { TaskFields } from '../components/tasks/page/TaskFields';
 import { TaskJournalTimeline } from '../components/tasks/page/TaskJournalTimeline';
 import { useGiveToAgent } from '../lib/giveToAgent';
 import '../components/tasks/page/TaskPage.css';
+import { fill } from '../lib/fill';
 
 interface TaskPageProps {
   /** The task to show (the Shell's focus id). Null after a reload: the page goes back to the board. */
@@ -67,7 +68,7 @@ export function TaskPage({ slug, onNavigate }: TaskPageProps) {
   const handleDelete = async () => {
     if (!task) return;
     const ok = await confirmAction({
-      title: t('taskPage.delete.title').replace('{name}', task.name || task.slug),
+      title: fill(t('taskPage.delete.title'), { name: task.name || task.slug }),
       body: t('taskPage.delete.body'),
       confirmLabel: t('taskPage.delete.confirm'),
       destructive: true,

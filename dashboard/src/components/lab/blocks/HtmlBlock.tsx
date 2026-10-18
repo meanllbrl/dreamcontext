@@ -10,6 +10,7 @@ import { stringOption, type BlockViewProps } from './blockCommon';
 import {
   buildHtmlBlockSrcdoc, createHtmlBlockHost, currentInputs, declaredInputNames, htmlBlockHash, inputsCurrent, inputsFingerprint,
 } from './htmlBlockBridge';
+import { fill } from '../../../lib/fill';
 
 /**
  * `html`: the author's own markup in the network-less sandbox, with the full
@@ -29,7 +30,7 @@ export function HtmlBlock({ block, inputs }: BlockViewProps) {
 
   if (ref && library.status === 'loading') return <div className="lab-block-empty">{t('lab.blocks.html.loading')}</div>;
   if (ref && library.status !== 'ready') {
-    return <div className="lab-block-empty">{t('lab.blocks.html.missingRef').replace('{ref}', ref)}</div>;
+    return <div className="lab-block-empty">{fill(t('lab.blocks.html.missingRef'), { ref })}</div>;
   }
   const html = ref ? library.entry?.html ?? '' : typeof block.options.html === 'string' ? block.options.html : '';
   if (!html.trim()) return <div className="lab-block-empty">{t('lab.blocks.html.empty')}</div>;

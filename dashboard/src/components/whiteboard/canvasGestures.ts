@@ -20,6 +20,7 @@ import { pointOverPanel, panelLandingOf, showAgentInPanel, type DropTarget } fro
 import { flyChip } from './dropFlight';
 import { newElementId, readWidgetPayload } from './widgetModel';
 import { isPresetBox, placeSizePicker, resizeInPlace, snapAfterGesture, widgetSizeOf, type WidgetGeometry } from './widgetSize';
+import { fill } from '../../lib/fill';
 
 export interface SizePickerState {
   id: string;
@@ -347,7 +348,7 @@ export function dropOnAgentCard(api: ExcalidrawImperativeAPI, drag: DragEnd, ctx
       captureUpdate: CaptureUpdateAction.NEVER,
     });
     if (!agent.approved) {
-      ctx.toast(ctx.tx('whiteboard.agent.dropUnapproved', '{name} is not approved yet, so nothing was added.').replace('{name}', agent.title));
+      ctx.toast(fill(ctx.tx('whiteboard.agent.dropUnapproved', '{name} is not approved yet, so nothing was added.'), { name: agent.title }));
       return true;
     }
     addAttachments(cardScratchId(ctx.vault, ctx.board, target.agent), chips);
@@ -355,8 +356,8 @@ export function dropOnAgentCard(api: ExcalidrawImperativeAPI, drag: DragEnd, ctx
     const first = chips[0]!.name;
     flyChip(drag.client, chipsLabel(chips), () => panelLandingOf(ctx.vault));
     ctx.toast(chips.length > 1
-      ? ctx.tx('whiteboard.agent.droppedMany', '{n} items added to the chat with {name}.').replace('{n}', String(chips.length)).replace('{name}', agent.title)
-      : ctx.tx('whiteboard.agent.dropped', '{what} added to the chat with {name}.').replace('{what}', first).replace('{name}', agent.title));
+      ? fill(ctx.tx('whiteboard.agent.droppedMany', '{n} items added to the chat with {name}.'), { n: String(chips.length), name: agent.title })
+      : fill(ctx.tx('whiteboard.agent.dropped', '{what} added to the chat with {name}.'), { what: first, name: agent.title }));
     return true;
 }
 

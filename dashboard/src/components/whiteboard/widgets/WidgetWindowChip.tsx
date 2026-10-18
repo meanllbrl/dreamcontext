@@ -8,6 +8,7 @@ import { useWbText, useWhiteboardHost } from '../whiteboardHost';
 import { dataWindow, formatWindow } from './windowModel';
 import '../../lab/board/board.css';
 import './labCardWidget.css';
+import { fill } from '../../../lib/fill';
 
 /**
  * The date window on an insight or Lab card widget: always printed ("6 Tem – 4 Eki"), and a
@@ -36,10 +37,9 @@ export function WidgetWindowChip({ slug }: { slug: string }) {
     setOpen(false);
     apply.mutate({ slug, tweaks: values }, {
       onSuccess: ({ synced, error }) => host.toast(synced
-        ? tx('whiteboard.window.applied', 'Date range updated: {title}').replace('{title}', title)
-        : tx('whiteboard.window.syncFailed', 'Saved the range, but {title} did not refresh: {error}').replace('{title}', title).replace('{error}', error ?? '')),
-      onError: (err) => host.toast(tx('whiteboard.window.failed', 'Could not change the range of {title}: {error}')
-        .replace('{title}', title).replace('{error}', (err as Error).message)),
+        ? fill(tx('whiteboard.window.applied', 'Date range updated: {title}'), { title })
+        : fill(tx('whiteboard.window.syncFailed', 'Saved the range, but {title} did not refresh: {error}'), { title, error: error ?? '' })),
+      onError: (err) => host.toast(fill(tx('whiteboard.window.failed', 'Could not change the range of {title}: {error}'), { title, error: (err as Error).message })),
     });
   };
 

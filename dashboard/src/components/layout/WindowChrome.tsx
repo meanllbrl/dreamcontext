@@ -31,6 +31,7 @@ import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
 import './ProjectTabs.css';
 import './Header.css';
+import { fill } from '../../lib/fill';
 
 /**
  * The window-level shell: everything that belongs to the WINDOW rather than to any one
@@ -168,7 +169,7 @@ function StaleServerBanner() {
   if (compareVersions(health.version, __DC_VERSION__) === 1) {
     return (
       <div className="stale-server-banner" data-testid="stale-page-banner">
-        {t('staleServer.olderPage').replace('{page}', __DC_VERSION__).replace('{server}', String(health.version))}
+        {fill(t('staleServer.olderPage'), { page: __DC_VERSION__, server: String(health.version) })}
       </div>
     );
   }
