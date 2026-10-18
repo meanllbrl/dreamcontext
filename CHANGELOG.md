@@ -4,6 +4,30 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+### The task screens are rebuilt around the card, the cycle and the owner's verdict (2026-10-18)
+
+A task is a page now, the board asks "when?" before "how important?", and what waits for the
+owner has one place. Plan r3 § W5 (C5).
+
+#### Removed (and why)
+
+- **The Eisenhower matrix, the RICE scatter, the Calendar and the Activity heatmap views.**
+  Priority and urgency are no longer how the board is read (decision 3): importance is a card's
+  rank inside its cycle or queue, and the four views only showed priority, urgency or RICE again
+  under other names (decision 10). The fields stay readable on the card, in the CLI and in sync.
+  Board, List and Timeline remain.
+- **The Versions popover.** Releases has its own read-only page, and the CLI still sets the
+  current version and marks one complete.
+- **The task detail drawer.** A task opens as its own page. Its fields moved there unchanged,
+  except priority, urgency, version and RICE, which the dashboard no longer edits.
+- **"Send to backlog" on the board.** "Later" is a place on the Now / Next / Later axis, so the
+  context menu's **Move to Later** plans the card into the Later queue instead of writing a tag.
+- **Dead components** that nothing rendered any more (the old filter bar, mini calendar, version
+  filter and manager, the old column and sub-group components).
+- **Saved views fall back to the Board.** A view that named a retired layout opens on the Board,
+  and one grouped or sorted by priority or urgency opens grouped by Now / Next / Later and sorted
+  by rank. Their priority, urgency and RICE filters are dropped (views move to `configVersion: 2`).
+
 ### Sleep learns a pattern from a correction the owner keeps repeating (2026-10-18)
 
 Before this, a style the owner set had to be said again every day. The awake agent was supposed

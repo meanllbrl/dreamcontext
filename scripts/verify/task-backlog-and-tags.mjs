@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * "Send to backlog" and the tag picker, proven against the real server.
+ * "Move to Later" and the tag picker, proven against the real server.
  *
- *   node scripts/verify/task-backlog-and-tags.mjs
+ *   node scripts/verify/task-backlog-and-tags.mjs   (npm run verify:task-backlog)
  *
- * WHY: backlog is a TAG, not a status, so putting a task there meant typing
- * `backlog` by hand into a free-text box — and typing tags by hand is exactly
- * how this vault ended up with both `decisions` and `decision` in its
- * vocabulary. Two things are checked, and the second is the one a unit test
- * cannot reach: that the tag the button writes actually triggers the BACKEND's
- * "backlog ⇒ undated" rule, rather than the UI keeping its own private copy of
- * that rule.
+ * WHY: the board's old "Send to backlog" wrote a `backlog` TAG. Since the task
+ * rebuild (plan r3 § 5b/5c) "later" is a place on the "when?" axis: the context
+ * menu's "Move to Later" plans the card into the Later queue through
+ * `POST /api/tasks/:slug/plan`, so the card file says `queue: later`, carries
+ * no backlog tag, and the board shows it in the Later column. The tag picker
+ * still offers the tags the vault already uses (typing tags by hand is how a
+ * vocabulary ends up with both `decisions` and `decision`), now on the task page.
  *
  * Runs against an ISOLATED scratch HOME — it mutates tasks.
  *
@@ -52,7 +52,7 @@ const seed = (slug, name, tags) => writeFileSync(
 );
 // The second task exists to put a REAL tag in the vault's vocabulary, so the
 // picker has something pre-existing to offer.
-seed('shelve-me', 'Shelve me', []);
+seed('shelve-me', 'Shelve me', ['ux']);
 seed('other-task', 'Other task', ['layer:frontend']);
 
 const frontmatter = (slug) => readFileSync(join(stateDir, `${slug}.md`), 'utf8').split('---')[1] ?? '';
@@ -94,64 +94,60 @@ try {
 
     const openBoard = async () => {
       await page.goto(`${URL}/?vault=scratch`, { waitUntil: 'networkidle' });
-      await page.waitForTimeout(1200);
       await dismissAnnouncements();
       await page.locator('.sidebar-item', { hasText: 'Tasks' }).first().click();
-      await page.waitForTimeout(1200);
+      await page.locator('.bd-card', { hasText: 'Shelve me' }).first().waitFor({ state: 'visible', timeout: 15000 });
     };
+    const laterColumn = () => page.locator('[data-board-column="later"]').first();
 
-    // B1 — the quick action exists and writes the tag.
+    // B1 — the quick action exists and plans the card into Later.
     await openBoard();
     await page.locator('.bd-card', { hasText: 'Shelve me' }).first().click({ button: 'right' });
-    await page.waitForTimeout(700);
-    const row = page.locator('.bd-row', { hasText: 'Send to backlog' }).first();
-    check('B1 the context menu offers "Send to backlog"', (await row.count()) > 0);
+    const row = page.locator('.bd-row', { hasText: 'Move to Later' }).first();
+    await row.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+    check('B1 the context menu offers "Move to Later"', (await row.count()) > 0);
     await row.click();
-    await page.waitForTimeout(1800);
+    await laterColumn().locator('.bd-card', { hasText: 'Shelve me' }).first().waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
 
     const fm = frontmatter('shelve-me');
-    check('B2 the backlog tag was written', /backlog/.test(fm), fm.match(/tags:.*/)?.[0]);
-    // B3 is the real point: the UI wrote only a tag, and the BACKEND undated it.
-    check(
-      'B3 the backend cleared both dates (backlog ⇒ undated)',
-      !/due_date: '2026/.test(fm) && !/start_date: '2026/.test(fm),
-      fm.match(/due_date:.*/)?.[0],
-    );
+    check('B2 the card is planned into Later (queue: later)', /\nqueue: later\b/.test(fm), fm.match(/queue:.*/)?.[0] ?? '(no queue)');
+    // B3: Later is a place on the axis, not a tag, so nothing else on the card moves.
+    check('B3 no backlog tag is written and the dates stay', !/backlog/.test(fm) && /due_date: '2026-08-25'/.test(fm), fm.match(/tags:.*/)?.[0]);
+    check('B4 the board shows it in the Later column', (await laterColumn().locator('.bd-card', { hasText: 'Shelve me' }).count()) > 0);
 
-    // B4 — the row is gone once the task is already there, rather than a no-op.
+    // B5 — the row is gone once the task is already there, rather than a no-op.
     await openBoard();
     await page.locator('.bd-card', { hasText: 'Shelve me' }).first().click({ button: 'right' });
-    await page.waitForTimeout(700);
+    await page.locator('.bd-row', { hasText: 'Open task' }).first().waitFor({ state: 'visible', timeout: 5000 });
     check(
-      'B4 the row hides for a task already in backlog',
-      (await page.locator('.bd-row', { hasText: 'Send to backlog' }).count()) === 0,
+      'B5 the row hides for a task already in Later',
+      (await page.locator('.bd-row', { hasText: 'Move to Later' }).count()) === 0,
     );
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
 
-    // T1/T2 — the tag picker lists what the vault already knows, and can create.
+    // T1/T2 — on the task page, the tag picker lists what the vault already knows, and can create.
     await openBoard();
     await page.locator('.bd-card', { hasText: 'Other task' }).first().click();
-    await page.waitForTimeout(1400);
-    const labels = page.locator('.task-section-header, .task-section', { hasText: 'Labels' }).first();
-    if (await labels.count()) { await labels.click().catch(() => {}); await page.waitForTimeout(500); }
+    await page.locator('[data-task-ready="other-task"]').waitFor({ timeout: 10000 });
+    const labels = page.locator('.task-section-head', { hasText: 'Labels' }).first();
+    if ((await labels.getAttribute('aria-expanded')) !== 'true') await labels.click();
     const picker = page.locator('.task-tag-picker .ss-trigger').first();
     await picker.waitFor({ state: 'visible', timeout: 8000 });
     await picker.click();
-    await page.waitForTimeout(600);
+    await page.locator('.task-tag-picker .ss-item').first().waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
     const offered = await page.locator('.task-tag-picker .ss-item').allTextContents();
     check(
       'T1 the picker offers tags the vault already uses',
-      offered.some((t) => t.includes('backlog')),
+      offered.some((t) => t.includes('ux')),
       offered.slice(0, 6).join(' | ') || '(none)',
     );
 
     await page.locator('.task-tag-picker .ss-search').fill('brand-new-tag');
-    await page.waitForTimeout(500);
     const custom = page.locator('.task-tag-picker .ss-item', { hasText: 'Use' }).first();
+    await custom.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
     check('T2 an unknown tag can still be created', (await custom.count()) > 0);
     await custom.click();
-    await page.waitForTimeout(1800);
+    await page.locator('.task-tag', { hasText: 'brand-new-tag' }).first().waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
     check(
       'T3 the created tag was saved',
       /brand-new-tag/.test(frontmatter('other-task')),

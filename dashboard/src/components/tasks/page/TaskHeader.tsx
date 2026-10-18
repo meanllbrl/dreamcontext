@@ -63,6 +63,7 @@ export function TaskHeader({ task, onBack, onOpenTask, onGiveToAgent, onError }:
         <label className="tp-control">
           <span className="tp-label">{t('taskPage.header.status')}</span>
           <select
+            id="tp-status"
             className="tp-select"
             value={task.status}
             disabled={updateTask.isPending}
@@ -74,6 +75,7 @@ export function TaskHeader({ task, onBack, onOpenTask, onGiveToAgent, onError }:
         <label className="tp-control">
           <span className="tp-label">{t('taskPage.header.placement')}</span>
           <select
+            id="tp-placement"
             className="tp-select"
             value={placement}
             disabled={plan.isPending}

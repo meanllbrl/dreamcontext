@@ -815,7 +815,6 @@ const translations: Record<string, Record<string, string>> = {
     'rice.tooltip.effort': 'Person-weeks (0.5–8 typical, max 52)',
     'rice.empty': 'Not rated',
     'sort.rice': 'RICE score',
-    'filter.min_rice': 'Min RICE',
     'priority.critical': 'Critical',
     'priority.high': 'High',
     'priority.medium': 'Medium',

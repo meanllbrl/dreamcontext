@@ -89,8 +89,6 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/sleepy/chat/overlays.css::.chat-working-dots span': 'working dots',
   'components/sleepy/chat/cards.css::.chat-msg-caret': 'typing caret',
   'components/sleepy/chat/atoms.css::.chat-a-glyph-brand': 'brand glyph square',
-  'components/tasks/ActivityHeatmap.css::.heatmap-cell--l4': 'heatmap cell',
-  'components/tasks/MiniCalendar.css::.mini-cal-day--today::after': 'today dot',
   'components/tasks/TimelineGantt.css::.gantt-today-rule': 'today rule',
   'pages/onboarding/Onboarding.css::.ob-step--current .ob-step-dot': 'step dot',
   'pages/onboarding/ReadinessChecklist.css::.ob-rail-fill': 'progress bar (2px rail)',

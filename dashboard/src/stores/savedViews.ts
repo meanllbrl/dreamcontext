@@ -6,7 +6,34 @@
  * listeners atomically.
  */
 import { useSyncExternalStore } from 'react';
-import type { FilterState } from '../components/tasks/TaskFilters';
+
+/**
+ * The filter shape of the old Kanban presets (moved here from the retired TaskFilters.tsx,
+ * plan r3 § 5c). Kept so a stored preset still parses; the board itself saves views through
+ * `hooks/useBoard.ts`.
+ */
+export type SortField = 'updated_at' | 'created_at' | 'priority' | 'urgency' | 'name' | 'rice';
+export type GroupBy = 'status' | 'priority' | 'urgency' | 'tags' | 'version' | 'none';
+export type ViewMode = 'kanban' | 'eisenhower' | 'scatter' | 'list' | 'timeline' | 'calendar' | 'heatmap';
+export type DateField = 'created_at' | 'updated_at';
+
+export interface FilterState {
+  priorityFilter: string[];
+  statusFilter: string[];
+  urgencyFilter: string[];
+  tagFilter: string[];
+  versionFilter: string[];
+  assigneeFilter: string[];
+  searchQuery: string;
+  dateField: DateField;
+  dateFrom: string;
+  dateTo: string;
+  minRice: number | null;
+  sortField: SortField;
+  groupBy: GroupBy;
+  subGroupBy: GroupBy;
+  viewMode: ViewMode;
+}
 
 export interface SavedView {
   id: string;
