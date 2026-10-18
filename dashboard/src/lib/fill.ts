@@ -1,7 +1,7 @@
 /**
  * Fill the `{key}` placeholders of a translated string: `fill(t('x.y'), { name, n: String(n) })`.
  *
- * A value goes in LITERALLY and in ONE pass. `String.replace('{name}', value)` reads `$&`,
+ * A value goes in LITERALLY and in ONE pass. A string replace with a value string reads `$&`,
  * `` $` ``, `$'` and `$$` in the value as patterns, so a task named "Fix $' rounding" or an
  * actor "Save $$" was drawn wrong; and a value holding `{other}` was filled again by the next
  * `.replace` in the chain. Every placeholder of a key is filled; one with no value stays as is.
