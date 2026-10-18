@@ -100,6 +100,38 @@ card('review-partial', { name: 'Half proven', status: 'in_review', queue: 'next'
 card('xss-card', { name: 'Payload card', status: 'todo', queue: 'next', rank: 50 },
   why(`Plain why. ${XSS_LINE}`, [`- [ ] Criterion with ${XSS_LINE}`], `## Notes\n\n${XSS_LINE}\n\n## Constraints & Decisions\n\n${XSS_LINE}`));
 appendJournalEntry(stateDir, 'xss-card', { kind: 'log', actor: 'agent', body: `- a remote comment: ${XSS_LINE}` });
+
+// Task markdown, allow-list (owner decision 2026-10-19): the payloads that loaded or restyled
+// under the old block-list, and the media real bodies use (synced GitHub and Firebase images,
+// a relative path, inline data, video, details, a task list, a fenced block, a table).
+// scripts/verify/task-ui.mjs blocks x.test, github.com and firebasestorage in the browser.
+const MEDIA_PAYLOADS = [
+  'Text before the style. <style>button{display:none}</style> Text after.',
+  '<span style="background:url(https://x.test/a)">styled span</span>',
+  '<svg><image href="https://x.test/b"/><rect mask="url(https://x.test/m#m)"/></svg>',
+  '<video poster="http://x.test/p.png"></video>',
+  '<iframe src="https://x.test/f"></iframe>',
+  '<form action="https://x.test/form"><input name="q"></form>',
+  '<object data="https://x.test/o"></object>',
+  '<embed src="https://x.test/e">',
+  '<link rel=stylesheet href="https://x.test/s.css">',
+  '<meta http-equiv=refresh content="0;url=https://x.test/r">',
+  '<a href="javascript:window.__xss=1">a script link</a>',
+  '<img src=x onerror="window.__xss=1">',
+].join('\n\n');
+const MEDIA_LIST = [
+  '![a GitHub attachment](https://github.com/user-attachments/assets/x.png)',
+  '<img src="https://firebasestorage.googleapis.com/x.png" alt="a Firebase image">',
+  '![a relative image](verify-media/local.png)',
+  '<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" alt="inline">',
+  '<video controls src="https://x.test/v.mp4"><source src="https://x.test/v.webm" type="video/webm"></video>',
+  '<details><summary>More detail</summary>\n\nHidden until opened.\n\n</details>',
+  '- [x] a done task-list item\n- [ ] an open one',
+  '```ts\nconst answer = 42;\n```',
+  '| Field | Value |\n| --- | --- |\n| a | 1 |',
+].join('\n\n');
+card('media-card', { name: 'Media and payloads', status: 'todo', queue: 'later', rank: 900 },
+  why('Synced bodies carry images and video.', ['- [ ] Media shows'], `## Notes\n\n${MEDIA_PAYLOADS}\n\n${MEDIA_LIST}`));
 appendJournalEntry(stateDir, 'legacy-giant', { kind: 'log', actor: 'owner', body: '- moved to the new journal' });
 
 // A task for a change card, and one to accept a proposal into.

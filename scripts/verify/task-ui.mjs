@@ -26,6 +26,8 @@
  *
  * It OUTPUTS a screenshot of every page × width × theme (read them), and the 300 KB task's time
  * from the click to `[data-task-ready]`: the median of three, which must stay under 1000 ms.
+ * A media card proves the task-markdown allow-list (no payload survives or loads, synced images
+ * and video render; x.test, github.com and firebasestorage are aborted, never fetched).
  * Then it runs the owner's flows once, each through the UI (so each request carries the
  * browser's Origin, as the real UI's do): send back, approve, plan by select and by drag, rank,
  * the Close deck, revert a learned rule, accept a proposal.
@@ -427,6 +429,74 @@ async function flows(browser, base, ids) {
   await context.close();
 }
 
+// ── task markdown: the allow-list, in a real browser ─────────────────────────
+// Owner decision 2026-10-19: the payloads that loaded or restyled under the old block-list are
+// gone, and the media real task bodies use still renders. The network never leaves this
+// machine: x.test, github.com and firebasestorage are aborted (each attempted URL recorded),
+// and the same-origin images get a 1×1 PNG.
+const BLOCKED_HOSTS = ['x.test', 'github.com', 'firebasestorage.googleapis.com'];
+const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+/** The x.test loads the media list asks for (https video and its source); anything else from x.test is a payload. */
+const ALLOWED_X_TEST = new Set(['https://x.test/v.mp4', 'https://x.test/v.webm']);
+
+async function markdownMedia(browser, base) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const attempted = [];
+  const blocked = (url) => { try { return BLOCKED_HOSTS.includes(new URL(url).hostname); } catch { return false; } };
+  await context.route((url) => blocked(url.href), (route) => { attempted.push(route.request().url()); return route.abort(); });
+  await context.route((url) => url.origin === base && (url.pathname === '/x' || url.pathname.startsWith('/verify-media/')),
+    (route) => route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1PX }));
+  const page = await context.newPage();
+  const watcher = watch(page, 'markdown');
+  try {
+    await openTaskFromBoard(page, base, 'media-card');
+    await openAllSections(page);
+    await page.locator('[data-task-page] .markdown-body img').first().waitFor({ timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(500);
+    const dom = await page.evaluate(() => {
+      const bodies = [...document.querySelectorAll('[data-task-page] .markdown-body')];
+      const all = (sel) => bodies.flatMap((b) => [...b.querySelectorAll(sel)]);
+      const banned = 'style, svg, image, rect, iframe, form, object, embed, link, meta, base, script, button, picture, track, math';
+      const attrs = '[style], [onerror], [onload], [mask], [srcset], [target], a[href^="javascript:" i], video[poster]';
+      const head = document.querySelector('[data-task-page] .task-section-head');
+      return {
+        xss: window.__xss ?? null,
+        bannedEls: all(banned).map((n) => n.outerHTML.slice(0, 80)),
+        bannedAttrs: all(attrs).map((n) => n.outerHTML.slice(0, 80)),
+        nonCheckboxInputs: all('input').filter((n) => !(n.type === 'checkbox' && n.disabled)).map((n) => n.outerHTML),
+        sectionHeadDisplay: head ? getComputedStyle(head).display : 'missing',
+        imgs: all('img').map((n) => n.getAttribute('src')),
+        video: all('video').map((n) => ({ src: n.getAttribute('src'), controls: n.hasAttribute('controls'), sources: [...n.querySelectorAll('source')].map((x) => `${x.getAttribute('src')}|${x.getAttribute('type')}`) })),
+        details: all('details > summary').length,
+        taskBoxes: all('input[type="checkbox"][disabled]').length,
+        code: all('pre > code.language-ts').length,
+        tables: all('table th').length,
+      };
+    });
+    check('markdown: no payload executes (window.__xss unset)', dom.xss === null, String(dom.xss));
+    check('markdown: no payload element survives (style, svg, iframe, form, object, embed, link, meta, …)', dom.bannedEls.length === 0, dom.bannedEls.join(' | '));
+    check('markdown: no payload attribute survives (style, on*, mask, srcset, javascript:, an http poster)', dom.bannedAttrs.length === 0, dom.bannedAttrs.join(' | '));
+    check('markdown: an input survives only as a disabled task-list checkbox', dom.nonCheckboxInputs.length === 0, dom.nonCheckboxInputs.join(' | '));
+    check('markdown: no page-wide style change (a real dashboard button stays visible)', dom.sectionHeadDisplay !== 'none' && dom.sectionHeadDisplay !== 'missing', dom.sectionHeadDisplay);
+    const xTest = attempted.filter((u) => new URL(u).hostname === 'x.test');
+    check('markdown: x.test is reached only by the https media', xTest.every((u) => ALLOWED_X_TEST.has(u)), xTest.join(' '));
+    for (const src of ['https://github.com/user-attachments/assets/x.png', 'https://firebasestorage.googleapis.com/x.png', 'verify-media/local.png']) {
+      check(`markdown: the image ${src} renders with its src`, dom.imgs.includes(src), dom.imgs.join(' '));
+    }
+    check('markdown: the data:image img renders', dom.imgs.some((x) => x?.startsWith('data:image/png;base64,')), dom.imgs.join(' ').slice(0, 200));
+    check('markdown: the video renders with controls, its src and its source', dom.video.some((v) => v.src === 'https://x.test/v.mp4' && v.controls && v.sources.includes('https://x.test/v.webm|video/webm')), JSON.stringify(dom.video));
+    check('markdown: details/summary, the task list, the fenced block and the table render', dom.details > 0 && dom.taskBoxes >= 2 && dom.code > 0 && dom.tables >= 2, JSON.stringify({ details: dom.details, taskBoxes: dom.taskBoxes, code: dom.code, tables: dom.tables }));
+    info(`markdown: attempted blocked loads: ${attempted.join(' ') || '(none)'}`);
+    await page.screenshot({ path: join(SHOTS, 'markdown-media-1440.png'), fullPage: true });
+  } catch (err) {
+    check('markdown: the media card opened', false, err instanceof Error ? err.message : String(err));
+  }
+  // The blocked hosts are aborted on purpose: their failed loads are not the page's problems.
+  const problems = watcher.take().filter((p) => !BLOCKED_HOSTS.some((h) => p.includes(h)) && !/Failed to load resource: net::ERR_FAILED/.test(p));
+  check('markdown: no console error, page error or failed request', problems.length === 0, problems.join('\n      '));
+  await context.close();
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 let server = null;
 let browser = null;
@@ -446,6 +516,7 @@ try {
   await grid(browser, base, ids);
   if (SCRATCH_MODE) {
     await timing(browser, base);
+    await markdownMedia(browser, base);
     await flows(browser, base, ids);
   }
 } catch (err) {

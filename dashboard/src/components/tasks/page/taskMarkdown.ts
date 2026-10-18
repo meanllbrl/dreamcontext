@@ -8,9 +8,8 @@ import DOMPurify from 'dompurify';
  * THE RENDERING RULE (plan r3 S4): every task-authored string on the task surfaces renders as
  * React text or through this function. A card section, a criterion, a journal body, a proposal
  * and a learned quote are all written by an agent or pulled from a remote, so they are data:
- * `marked` turns them into HTML and DOMPurify takes out scripts, event handlers, iframes and
- * `javascript:` URLs (and, below, form controls, `style` and every remote load) before any of
- * it reaches the document.
+ * `marked` turns them into HTML and DOMPurify keeps only an allow-list of tags and attributes
+ * (below) before any of it reaches the document.
  *
  * `tests/unit/task-ui-sinks.test.ts` pins this: the only `dangerouslySetInnerHTML` on the task
  * surfaces is fed by this function, and this function sanitizes what `marked.parse` returns.
@@ -22,52 +21,104 @@ export function renderMarkdown(text: string): string {
 }
 
 /**
- * The task surfaces' own sanitizer: a private instance, so its hook never reaches the other
- * DOMPurify callers (core preview, whiteboard notes, agent profiles). On top of the defaults it
- * takes out form controls (a card can't draw a fake "Approve" button or a login form), every
- * `style` attribute (a `background-image: url(…)` loads too) and `srcset`, and any attribute
- * that would load from another origin the moment the owner opens the card: an `<img src>`, a
- * `<video poster>`, an `<audio src>`, an SVG `<image href>` are all tracking beacons. A `data:`
- * source or one this app serves stays; a link's `href` stays (it loads nothing until clicked).
+ * The task surfaces' own sanitizer: an ALLOW-list on a private DOMPurify instance (its hook never
+ * reaches the other DOMPurify callers: core preview, whiteboard notes, agent profiles). Only what
+ * `marked` emits plus the few tags real task bodies use (synced GitHub and Firebase images,
+ * `<video>`, `<details>`, `<span>`/`<div>`) is kept; everything else goes, with no exceptions to
+ * remember: no `style` (element or attribute: `@import`, `url()` and page-wide rules), no SVG or
+ * MathML (`<image href>`, `mask="url(…)"`), no frames, forms, buttons, objects, embeds, links,
+ * metas, bases, pictures, tracks; no `on*`, `srcset`, `target`, `data-*` or `aria-*` attributes.
+ *
+ * Media: an `https:` image or video from another host DOES load, by the owner's choice (2026-10-19,
+ * "tasklerde görseller videolar vs. de olabilir"): a synced GitHub attachment or a Firebase
+ * Storage picture must show. That tells the image's host the viewer's IP when the card opens;
+ * accepted. `http:` from elsewhere and every other scheme are removed (see {@link sourceAllowed}).
  */
 export const SANITIZE_CONFIG = {
-  FORBID_TAGS: ['form', 'input', 'button', 'iframe'],
-  FORBID_ATTR: ['style', 'srcset'],
+  ALLOWED_TAGS: [
+    // what marked emits (GFM, task lists, tables, ==mark==)
+    'p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'b', 'em', 'i', 'del', 's',
+    'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'a', 'img', 'table', 'thead', 'tbody', 'tr',
+    'th', 'td', 'input',
+    // what task bodies write by hand
+    'details', 'summary', 'kbd', 'sub', 'sup', 'mark', 'span', 'div', 'figure', 'figcaption',
+    'video', 'audio', 'source',
+  ],
+  ALLOWED_ATTR: [
+    'href', 'title', 'alt', 'src', 'poster', 'width', 'height', 'controls', 'loop', 'muted',
+    'playsinline', 'preload', 'type', 'checked', 'disabled', 'open', 'start', 'align', 'colspan',
+    'rowspan', 'lang', 'dir', 'class',
+  ],
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
 };
 const purify = DOMPurify();
 
-/** Whether a source may load: inline `data:`, or this app's own origin. */
-export function imageSourceAllowed(src: string, base: string): boolean {
-  const trimmed = src.trim();
-  if (/^data:/i.test(trimmed)) return true;
+/**
+ * A URL's own scheme (`https`, `mailto`, …), or null for a relative one (`a.png`, `/x`, `#y`).
+ * Control characters and spaces are dropped first, as a browser does: `java\tscript:` is a scheme.
+ */
+function schemeOf(url: string): string | null {
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(url.replace(/[\u0000-\u0020\u007f]/g, ''));
+  return m ? m[1].toLowerCase() : null;
+}
+
+/** A link may go to: `http(s):`, `mailto:`, or a relative path / `#anchor` (a relative URL has no scheme). */
+export function hrefAllowed(href: string): boolean {
+  const scheme = schemeOf(href);
+  return scheme === null || scheme === 'http' || scheme === 'https' || scheme === 'mailto';
+}
+
+/**
+ * Whether a media source (`src`, `poster`) may load: `https:` from anywhere (the owner's choice
+ * above), this app's own origin, a relative path, and `data:image/*` on an `<img>` only. `http:`
+ * from another host, `javascript:`, `blob:`, `file:` and every other scheme are removed.
+ */
+export function sourceAllowed(tag: string, value: string, base: string): boolean {
+  const trimmed = value.trim();
+  const scheme = schemeOf(trimmed);
+  if (scheme !== null && scheme !== 'https' && scheme !== 'http' && scheme !== 'data') return false;
+  if (scheme === 'data') return tag.toLowerCase() === 'img' && /^data:image\/[a-z0-9.+-]+[;,]/i.test(trimmed);
+  let url: URL;
   try {
-    return new URL(trimmed, base).origin === new URL(base).origin;
+    url = new URL(trimmed, base);
   } catch {
     return false;
   }
+  if (url.protocol === 'https:') return true;
+  return url.origin === new URL(base).origin;
 }
 
-/** The attributes a browser fetches as soon as the element is drawn, on any element. */
-const LOADING_ATTRS = new Set(['src', 'poster', 'href', 'xlink:href', 'background']);
+/** A `class` keeps only `language-*` tokens (a fenced block's language, for highlighting and mermaid). */
+export function keptClasses(value: string): string {
+  return value.split(/\s+/).filter((c) => /^language-[\w#+.-]+$/.test(c)).join(' ');
+}
 
-/**
- * Whether the sanitizer drops `attr` from a `tag` element: it loads a URL from another origin.
- * A link (`<a>`, HTML or SVG) only navigates when clicked, so its `href` is not a load.
- */
-export function dropsRemoteLoad(tag: string, attr: string, value: string, base: string): boolean {
-  const name = attr.toLowerCase();
-  if (!LOADING_ATTRS.has(name)) return false;
-  if (tag.toLowerCase() === 'a' && (name === 'href' || name === 'xlink:href')) return false;
-  return !imageSourceAllowed(value, base);
+/** `type` on a `<source>` is a media type and nothing else. */
+export function mediaTypeAllowed(value: string): boolean {
+  return /^(video|audio)\/[a-z0-9.+-]+$/i.test(value.trim());
 }
 
 // `isSupported` is false only without a DOM (the root test suite importing the pure helpers).
 if (purify.isSupported) purify.addHook('afterSanitizeAttributes', (node) => {
   const el = node as Element;
   if (typeof el.getAttributeNames !== 'function') return;
+  const tag = el.nodeName.toLowerCase();
+  // An input survives only as a GFM task-list box: a disabled checkbox.
+  if (tag === 'input' && !(el.getAttribute('type') === 'checkbox' && el.hasAttribute('disabled'))) {
+    el.remove();
+    return;
+  }
   for (const name of el.getAttributeNames()) {
-    const value = el.getAttribute(name);
-    if (value !== null && dropsRemoteLoad(el.nodeName, name, value, window.location.href)) el.removeAttribute(name);
+    const value = el.getAttribute(name) ?? '';
+    if (name === 'href' && !(tag === 'a' && hrefAllowed(value))) el.removeAttribute(name);
+    else if ((name === 'src' || name === 'poster') && !sourceAllowed(tag, value, window.location.href)) el.removeAttribute(name);
+    else if (name === 'type' && !(tag === 'input' || (tag === 'source' && mediaTypeAllowed(value)))) el.removeAttribute(name);
+    else if (name === 'class') {
+      const kept = keptClasses(value);
+      if (kept) el.setAttribute('class', kept);
+      else el.removeAttribute('class');
+    }
   }
 });
 

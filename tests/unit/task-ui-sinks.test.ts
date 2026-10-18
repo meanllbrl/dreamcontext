@@ -69,56 +69,89 @@ describe('the task screens have no raw HTML sink', () => {
     expect(fn).toMatch(/if \(!text\) return '';/);
   });
 
-  // End review, finding 6, and the second pass's Minor 3: no form controls, no `style`, and no
-  // attribute on ANY element that loads from another origin.
-  it('the sanitizer forbids form controls and style, and its hook checks every element, on its own instance', () => {
+  // Owner decision 2026-10-19 (the third pass's third flag): an ALLOW-list, and media keeps
+  // working. What it does to a real payload is driven in Chromium by scripts/verify/task-ui.mjs.
+  it('the sanitizer is an allow-list on its own instance: exactly these tags and attributes', async () => {
     const src = code(read(join(SRC, 'components/tasks/page/taskMarkdown.ts')));
-    expect(src).toMatch(/FORBID_TAGS: \['form', 'input', 'button', 'iframe'\]/);
-    expect(src).toMatch(/FORBID_ATTR: \['style', 'srcset'\]/);
-    // A private instance: the hook must not change the other DOMPurify callers.
     expect(src).toMatch(/const purify = DOMPurify\(\);/);
     expect(src).not.toMatch(/DOMPurify\.addHook/);
-    const hook = /purify\.addHook\('afterSanitizeAttributes', \(node\) => \{[\s\S]*?\n\}\);/.exec(src)?.[0] ?? '';
-    // Not only <img>: every element's every attribute goes through dropsRemoteLoad.
-    expect(hook).not.toMatch(/nodeName !== 'IMG'/);
-    expect(hook).toMatch(/for \(const name of el\.getAttributeNames\(\)\)/);
-    expect(hook).toMatch(/dropsRemoteLoad\(el\.nodeName, name, value, window\.location\.href\)\) el\.removeAttribute\(name\)/);
-  });
-
-  it('imageSourceAllowed keeps data: and same-origin sources and drops the rest', async () => {
-    const { imageSourceAllowed } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
-    const base = 'http://localhost:4173/tasks/fix-login';
-    expect(imageSourceAllowed('data:image/png;base64,AAAA', base)).toBe(true);
-    expect(imageSourceAllowed('/api/files/shot.png', base)).toBe(true);
-    expect(imageSourceAllowed('http://localhost:4173/a.png', base)).toBe(true);
-    expect(imageSourceAllowed('https://tracker.example/p.gif?u=1', base)).toBe(false);
-    expect(imageSourceAllowed('//tracker.example/p.gif', base)).toBe(false);
-    expect(imageSourceAllowed('http://localhost:9999/a.png', base)).toBe(false);
-  });
-
-  it('a <video poster>, an <audio src>, an SVG <image href> or xlink:href from elsewhere is dropped; a link is not', async () => {
-    const { dropsRemoteLoad } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
-    const base = 'http://localhost:4173/tasks/fix-login';
-    const remote = 'https://tracker.example/beacon.gif?u=owner';
-    expect(dropsRemoteLoad('VIDEO', 'poster', remote, base)).toBe(true);
-    expect(dropsRemoteLoad('VIDEO', 'src', remote, base)).toBe(true);
-    expect(dropsRemoteLoad('SOURCE', 'src', remote, base)).toBe(true);
-    expect(dropsRemoteLoad('AUDIO', 'src', remote, base)).toBe(true);
-    expect(dropsRemoteLoad('image', 'href', remote, base)).toBe(true);
-    expect(dropsRemoteLoad('image', 'xlink:href', remote, base)).toBe(true);
-    expect(dropsRemoteLoad('TABLE', 'background', remote, base)).toBe(true);
-    expect(dropsRemoteLoad('IMG', 'src', remote, base)).toBe(true);
-    // Kept: this app's own files, inline data, and a link (it loads nothing until clicked).
-    expect(dropsRemoteLoad('VIDEO', 'poster', '/api/files/poster.png', base)).toBe(false);
-    expect(dropsRemoteLoad('image', 'href', 'data:image/png;base64,AAAA', base)).toBe(false);
-    expect(dropsRemoteLoad('A', 'href', 'https://example.com/docs', base)).toBe(false);
-    expect(dropsRemoteLoad('a', 'xlink:href', 'https://example.com/docs', base)).toBe(false);
-    expect(dropsRemoteLoad('IMG', 'alt', remote, base)).toBe(false);
-  });
-
-  it('a style="background-image:url(…)" never survives: style is a forbidden attribute', async () => {
+    expect(src).not.toMatch(/FORBID_TAGS|FORBID_ATTR|ADD_TAGS|ADD_ATTR/);
     const { SANITIZE_CONFIG } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
-    expect(SANITIZE_CONFIG.FORBID_ATTR).toContain('style');
+    expect([...SANITIZE_CONFIG.ALLOWED_TAGS].sort()).toEqual([
+      'a', 'audio', 'b', 'blockquote', 'br', 'code', 'del', 'details', 'div', 'em', 'figcaption', 'figure',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'input', 'kbd', 'li', 'mark', 'ol', 'p', 'pre',
+      's', 'source', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr',
+      'ul', 'video',
+    ]);
+    for (const banned of ['style', 'svg', 'math', 'iframe', 'form', 'button', 'object', 'embed', 'link', 'meta', 'base', 'picture', 'track', 'script', 'image']) {
+      expect(SANITIZE_CONFIG.ALLOWED_TAGS, banned).not.toContain(banned);
+    }
+    expect([...SANITIZE_CONFIG.ALLOWED_ATTR].sort()).toEqual([
+      'align', 'alt', 'checked', 'class', 'colspan', 'controls', 'dir', 'disabled', 'height', 'href', 'lang',
+      'loop', 'muted', 'open', 'playsinline', 'poster', 'preload', 'rowspan', 'src', 'start', 'title', 'type', 'width',
+    ]);
+    for (const banned of ['style', 'srcset', 'target', 'onerror', 'onclick', 'xlink:href', 'background', 'mask']) {
+      expect(SANITIZE_CONFIG.ALLOWED_ATTR, banned).not.toContain(banned);
+    }
+    expect(SANITIZE_CONFIG.ALLOW_DATA_ATTR).toBe(false);
+    expect(SANITIZE_CONFIG.ALLOW_ARIA_ATTR).toBe(false);
+  });
+
+  it('the hook applies the predicates: inputs, href, src/poster, type and class', () => {
+    const src = code(read(join(SRC, 'components/tasks/page/taskMarkdown.ts')));
+    const hook = /purify\.addHook\('afterSanitizeAttributes', \(node\) => \{[\s\S]*?\n\}\);/.exec(src)?.[0] ?? '';
+    expect(hook).toMatch(/tag === 'input' && !\(el\.getAttribute\('type'\) === 'checkbox' && el\.hasAttribute\('disabled'\)\)/);
+    expect(hook).toMatch(/el\.remove\(\)/);
+    expect(hook).toMatch(/name === 'href' && !\(tag === 'a' && hrefAllowed\(value\)\)/);
+    expect(hook).toMatch(/\(name === 'src' \|\| name === 'poster'\) && !sourceAllowed\(tag, value, window\.location\.href\)/);
+    expect(hook).toMatch(/name === 'type' && !\(tag === 'input' \|\| \(tag === 'source' && mediaTypeAllowed\(value\)\)\)/);
+    expect(hook).toMatch(/keptClasses\(value\)/);
+  });
+
+  it('hrefAllowed: http(s), mailto, relative and #; nothing else', async () => {
+    const { hrefAllowed } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
+    for (const ok of ['https://github.com/x', 'http://example.com', 'mailto:owner@example.com', '/tasks/a', 'docs/a.md', '#criteria', '?q=1']) {
+      expect(hrefAllowed(ok), ok).toBe(true);
+    }
+    for (const bad of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'java\tscript:alert(1)', ' javascript:x', 'data:text/html,x', 'vbscript:x', 'file:///etc/passwd', 'blob:https://x/y']) {
+      expect(hrefAllowed(bad), bad).toBe(false);
+    }
+  });
+
+  it('sourceAllowed: https, same-origin, relative, and data:image on img only', async () => {
+    const { sourceAllowed } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
+    const base = 'http://127.0.0.1:4173/tasks/fix-login';
+    // Synced media loads by the owner's choice: GitHub attachments, Firebase Storage, any https.
+    expect(sourceAllowed('img', 'https://github.com/user-attachments/assets/x.png', base)).toBe(true);
+    expect(sourceAllowed('img', 'https://firebasestorage.googleapis.com/v0/b/x/o/a.png?alt=media', base)).toBe(true);
+    expect(sourceAllowed('video', 'https://x.test/v.mp4', base)).toBe(true);
+    expect(sourceAllowed('source', 'https://x.test/v.webm', base)).toBe(true);
+    // This app's own files and relative paths.
+    expect(sourceAllowed('img', 'shots/a.png', base)).toBe(true);
+    expect(sourceAllowed('img', '/api/files/a.png', base)).toBe(true);
+    expect(sourceAllowed('img', 'http://127.0.0.1:4173/a.png', base)).toBe(true);
+    // data:image on <img> only.
+    expect(sourceAllowed('img', 'data:image/png;base64,AAAA', base)).toBe(true);
+    expect(sourceAllowed('video', 'data:image/png;base64,AAAA', base)).toBe(false);
+    expect(sourceAllowed('img', 'data:text/html,<script>x</script>', base)).toBe(false);
+    // http from elsewhere, protocol-relative to http, and every other scheme.
+    expect(sourceAllowed('video', 'http://x.test/p.png', base)).toBe(false);
+    expect(sourceAllowed('img', '//x.test/a.png', base)).toBe(false);
+    for (const bad of ['javascript:alert(1)', 'blob:https://x.test/1', 'file:///etc/passwd', 'ftp://x.test/a.png', 'java\nscript:x']) {
+      expect(sourceAllowed('img', bad, base), bad).toBe(false);
+    }
+  });
+
+  it('class keeps only language-*; a <source> type is a media type', async () => {
+    const { keptClasses, mediaTypeAllowed } = await import('../../dashboard/src/components/tasks/page/taskMarkdown');
+    expect(keptClasses('language-ts')).toBe('language-ts');
+    expect(keptClasses('language-mermaid hljs')).toBe('language-mermaid');
+    expect(keptClasses('btn btn--primary')).toBe('');
+    expect(keptClasses('sidebar-badge language-')).toBe('');
+    expect(mediaTypeAllowed('video/mp4')).toBe(true);
+    expect(mediaTypeAllowed('audio/ogg')).toBe(true);
+    expect(mediaTypeAllowed('text/html')).toBe(false);
+    expect(mediaTypeAllowed('image/svg+xml')).toBe(false);
   });
 
   it('mermaid is reached only through lib/mermaidRender (securityLevel strict)', () => {
