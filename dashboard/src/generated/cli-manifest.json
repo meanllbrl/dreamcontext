@@ -3606,6 +3606,16 @@
       ]
     },
     {
+      "path": "tasks send-back",
+      "desc": "Send a task in review back to work with a note: the owner's verdict, recorded in the journal (never from an agent)",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--note"
+      ]
+    },
+    {
       "path": "tasks show",
       "desc": "Print the task's context packet: its parent's card and siblings first, then its card, then its latest journal entries (what an agent reads before working it)",
       "args": [
