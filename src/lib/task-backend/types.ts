@@ -50,6 +50,12 @@ export interface TaskFrontmatter {
    * preserves it.
    */
   agent?: string | null;
+  /**
+   * The sleep proposal (`tp_…`) this card was accepted from, written in the SAME write as the
+   * card so a crash after the create still leaves it (task-proposals.ts finishes that accept
+   * only when this matches). LOCAL-ONLY, like `agent`: no backend maps it, every pull keeps it.
+   */
+  from_proposal?: string | null;
   created_by?: string | null;
   updated_by?: string | null;
   /**
@@ -96,6 +102,8 @@ export interface TaskData {
   agent?: string;
   /** User-defined custom-field values (override-declared). Empty when none. */
   custom_fields: Record<string, string | number | null>;
+  /** The proposal this card was accepted from (see TaskFrontmatter.from_proposal). Absent otherwise. */
+  from_proposal?: string;
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -199,6 +207,8 @@ export interface CreateTaskInput {
   cycle?: string | null;
   /** The queue it waits in when it is in no cycle (`next` | `later`). */
   queue?: 'next' | 'later' | null;
+  /** Written into the card's first write (provenance of a proposal accept); absent: no line. */
+  from_proposal?: string;
   /**
    * Which historical template produced the file. The CLI and the dashboard
    * have always written different task skeletons (full template with Workflow

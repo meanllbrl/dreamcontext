@@ -17,7 +17,8 @@ import {
 import type { TaskBackend } from './task-backend/types.js';
 import { TaskFileBusyError, withTaskFileLock } from './task-file-lock.js';
 import { checkParentLink, loadFamily } from './task-parent.js';
-import type { StatusDef } from './task-status.js';
+import { isCancelled, normalizeStatusKey, type StatusDef } from './task-status.js';
+import { readFrontmatter } from './frontmatter.js';
 
 /**
  * task-proposals — what sleep wants on the board but may not put there itself.
@@ -261,11 +262,34 @@ function claimFresh(claim: { at: string } | undefined): boolean {
   return !!claim && Date.now() - Date.parse(claim.at) < CLAIM_TTL_MS;
 }
 
+/**
+ * The proposal a card says it was accepted from (`from_proposal`, written in the card's first
+ * write), read from disk; null when the card is missing or carries none.
+ */
+function provenanceOf(contextRoot: string, slug: string): string | null {
+  try {
+    const path = safeResolveInside(contextRoot, `state/${slug}.md`);
+    if (!existsSync(path)) return null;
+    const v = readFrontmatter<Record<string, unknown>>(path).data.from_proposal;
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Drop a claim nothing is working on any more (past CLAIM_TTL_MS), if it is still the same one. */
+function clearStaleClaim(contextRoot: string, id: string, claimAt: string): void {
+  mutateProposals(contextRoot, (store) => {
+    const live = store.proposals.find((x) => x.id === id);
+    if (live?.claim && live.claim.at === claimAt && !claimFresh(live.claim)) delete live.claim;
+  });
+}
+
 /** A proposal the owner can still act on: pending, and no accept in flight. */
 function assertProposalOpen(p: TaskProposal | undefined, id: string): TaskProposal {
   if (!p) throw new ProposalError('not_found', `No proposal ${id}.`);
   if (p.status !== 'pending') throw new ProposalError('resolved', `Proposal ${id} was already ${p.status}.`);
-  if (claimFresh(p.claim)) throw new ProposalError('resolved', `Proposal ${id} is being accepted right now.`);
+  if (claimFresh(p.claim)) throw new ProposalError('resolved', `Proposal ${id} is being accepted right now; try again shortly.`);
   return p;
 }
 
@@ -403,12 +427,18 @@ export async function acceptProposal(
   edits: AcceptEdits,
   variant: 'cli' | 'dashboard',
 ): Promise<AcceptResult> {
-  const stored = storeForAction(contextRoot).proposals.find((x) => x.id === id);
-  // An earlier accept that created the task and then could not mark the proposal (its store was
-  // busy, or the process died) left its claim behind. The task is on the board: finish that
-  // accept instead of refusing it as `exists` (and leaving reject as the only way out).
-  if (stored?.status === 'pending' && stored.claim && (await backend.get(stored.claim.slug)) !== null) {
-    return finishLeftoverAccept(contextRoot, backend, id, stored.claim.slug);
+  let stored = storeForAction(contextRoot).proposals.find((x) => x.id === id);
+  // A claim left behind by an earlier accept (its store was busy, or the process died). It is
+  // finished here ONLY when it is stale and the card on its slug says it came from THIS proposal
+  // (`from_proposal`, written with the card): a fresh claim is an accept still in flight, and a
+  // card without the marker is someone else's task. Any other stale claim is dropped, and this
+  // accept runs as new (a same-slug task then refuses as `exists`).
+  if (stored?.status === 'pending' && stored.claim && !claimFresh(stored.claim)) {
+    if (provenanceOf(contextRoot, stored.claim.slug) === id) {
+      return finishLeftoverAccept(contextRoot, backend, id, stored.claim.slug);
+    }
+    clearStaleClaim(contextRoot, id, stored.claim.at);
+    stored = storeForAction(contextRoot).proposals.find((x) => x.id === id);
   }
   const seen = assertProposalOpen(stored, id);
 
@@ -446,13 +476,21 @@ export async function acceptProposal(
       why,
       queue: 'next',
       ...(parent ? { parent_task: parent } : {}),
+      // Provenance, in the card's first write: a crash after the create still leaves it.
+      from_proposal: p.id,
       variant,
     });
   } catch (err) {
-    mutateProposals(contextRoot, (store) => {
-      const live = store.proposals.find((x) => x.id === id);
-      if (live?.claim?.slug === slug) delete live.claim;
-    });
+    // Release the claim, but a release that fails (a busy store) must not hide WHY the create
+    // failed: the claim then expires on its own (CLAIM_TTL_MS), and the create's error surfaces.
+    try {
+      mutateProposals(contextRoot, (store) => {
+        const live = store.proposals.find((x) => x.id === id);
+        if (live?.claim?.slug === slug) delete live.claim;
+      });
+    } catch (releaseErr) {
+      console.error(`[task-proposals] ${id}: the claim was not released (${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}); it expires on its own.`);
+    }
     throw err;
   }
 
@@ -492,8 +530,11 @@ export async function acceptProposal(
       add(`The task "${slug}" was created, but proposal ${id} changed while it was being accepted (it is now ${outcome}).`);
     }
   } catch (err) {
-    if (!(err instanceof TaskFileBusyError)) throw err;
-    add(`The task "${slug}" was created, but the proposal could not be marked accepted (its store is busy); accept it again to finish.`);
+    // ANY failure here (a busy store, an unwritable file, a feedback store that cannot be read):
+    // the task exists, so it is a warning on the result, logged, never a refusal.
+    const why = err instanceof TaskFileBusyError ? 'its store is busy' : err instanceof Error ? err.message : String(err);
+    console.error(`[task-proposals] ${id}: "${slug}" was created, but the proposal was not marked accepted (${why}).`);
+    add(`The task "${slug}" was created, but the proposal could not be marked accepted (${why}); accept it again in a few minutes to finish.`);
   }
   return { slug, parent, ...(parentDropped ? { parentDropped } : {}), ...(warning ? { warning } : {}) };
 }
@@ -507,6 +548,8 @@ function markAccepted(
 ): void {
   delete live.claim;
   Object.assign(live, { status: 'accepted', resolvedAt: new Date().toISOString(), slug });
+  // One keep per proposal: an earlier write that recorded it and then failed is not counted twice.
+  if (readFeedbackStrict(contextRoot).some((e) => e.id === live.id && e.source === 'proposal' && e.verdict === 'keep')) return;
   appendFeedback(contextRoot, {
     id: live.id,
     source: 'proposal',
@@ -561,10 +604,14 @@ function declineFor(contextRoot: string, name: string, input: RejectInput, sessi
 export function rejectProposal(contextRoot: string, id: string, input: RejectInput): TaskProposal {
   return mutateProposals(contextRoot, (store) => {
     const p = assertProposalOpen(store.proposals.find((x) => x.id === id), id);
-    // A leftover accept claim whose task is on the board: the owner already kept this one. A
-    // reject would record a "no" (and a declined entry) for a task they have.
-    if (p.claim && taskOnBoard(contextRoot)(p.claim.slug)) {
-      throw new ProposalError('exists', `The task "${p.claim.slug}" was already created from proposal ${id}; accept it to finish, or delete the task.`);
+    if (p.claim) {
+      // A stale accept claim whose card says it came from THIS proposal: the owner already kept
+      // it, and a reject would record a "no" (and a declined entry) for a task they have.
+      if (provenanceOf(contextRoot, p.claim.slug) === id) {
+        throw new ProposalError('exists', `The task "${p.claim.slug}" was already created from proposal ${id}; accept it to finish, or delete the task.`);
+      }
+      // Any other stale claim (no card, or someone else's card on that slug) is dropped.
+      delete p.claim;
     }
     p.status = 'rejected';
     p.resolvedAt = new Date().toISOString();
@@ -600,7 +647,7 @@ export async function rejectFiled(
   slug: string,
   input: RejectInput,
 ): Promise<FiledRecord & { warning?: string }> {
-  assertFiledOpen(filedRecord(storeForAction(contextRoot), slug), slug);
+  const seenClaim = assertFiledOpen(filedRecord(storeForAction(contextRoot), slug), slug).claim;
   const cancelKey = defs.find((d) => d.kind === 'cancelled')?.key ?? null;
   if (!cancelKey) {
     throw new ProposalError('no_cancel_status',
@@ -613,17 +660,27 @@ export async function rejectFiled(
     live.claim = { at: new Date().toISOString() };
     return live.claim.at;
   });
+  // A reject that cancelled the card and then stopped before the store's record (it left its
+  // claim, now stale): the card already sits at the cancelled status, so only the record is
+  // finished, with no second status write and no second journal note.
+  const card = await backend.get(slug);
+  const leftover = !!card && isCancelled(defs, card.status) && !!seenClaim && !claimFresh(seenClaim);
   let onBoard = false;
   try {
-    if (await backend.get(slug)) {
+    if (card && !leftover) {
       await backend.updateFields(slug, { status: cancelKey, updated_at: today() });
       onBoard = true;
     }
   } catch (err) {
-    mutateProposals(contextRoot, (store) => {
-      const live = filedRecord(store, slug);
-      if (live?.claim?.at === claimedAt) delete live.claim;
-    });
+    // As in an accept: a release that fails never hides the status write's own error.
+    try {
+      mutateProposals(contextRoot, (store) => {
+        const live = filedRecord(store, slug);
+        if (live?.claim?.at === claimedAt) delete live.claim;
+      });
+    } catch (releaseErr) {
+      console.error(`[task-proposals] ${slug}: the reject claim was not released (${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}); it expires on its own.`);
+    }
     throw err;
   }
   const warnings: string[] = [];
@@ -643,11 +700,13 @@ export async function rejectFiled(
   try {
     record = recordFiledReject(contextRoot, slug, claimedAt, input);
   } catch (err) {
-    if (!(err instanceof TaskFileBusyError) && !(err instanceof ProposalError && err.code === 'resolved')) throw err;
-    console.error(`[task-proposals] ${slug}: rejected, but not recorded as rejected (${err.message}).`);
-    warnings.push(`"${slug}" was cancelled, but the reject was not recorded for sleep (${err.message}).`);
+    // The card is cancelled already: any failure of the record is a warning, never a refusal.
+    // The record stays open with a claim that goes stale; the next reject finishes it.
+    const why = err instanceof Error ? err.message : String(err);
+    console.error(`[task-proposals] ${slug}: rejected, but not recorded as rejected (${why}).`);
+    warnings.push(`"${slug}" was cancelled, but the reject was not recorded for sleep (${why}); reject it again in a few minutes to finish.`);
   }
-  const base: FiledRecord = record ?? { ...filedRecord(readProposals(contextRoot), slug)!, outcome: 'rejected' };
+  const base: FiledRecord = record ?? { ...(filedRecord(readProposals(contextRoot), slug) as FiledRecord), slug, outcome: 'rejected' };
   return { ...base, ...(warnings.length > 0 ? { warning: warnings.join(' ') } : {}) };
 }
 
@@ -677,8 +736,20 @@ function recordFiledReject(contextRoot: string, slug: string, claimedAt: string,
   });
 }
 
-/** Keep a task sleep filed: it leaves the section and counts as a good filing. */
-export function keepFiled(contextRoot: string, slug: string): FiledRecord {
+/**
+ * Keep a task sleep filed: it leaves the section and counts as a good filing. A card already at
+ * a cancelled-kind status is refused: it was rejected (a reject that stopped before its record),
+ * and "keep" would count a cancelled task as a good filing.
+ */
+export function keepFiled(contextRoot: string, slug: string, defs: readonly StatusDef[]): FiledRecord {
+  let status: unknown = null;
+  try {
+    const path = safeResolveInside(contextRoot, `state/${slug}.md`);
+    if (existsSync(path)) status = readFrontmatter<Record<string, unknown>>(path).data.status;
+  } catch { /* unreadable reads as no card */ }
+  if (typeof status === 'string' && isCancelled(defs, normalizeStatusKey(status))) {
+    throw new ProposalError('resolved', `"${slug}" is cancelled; reject it to finish, or reopen it first.`);
+  }
   return mutateProposals(contextRoot, (store) => {
     const live = assertFiledOpen(filedRecord(store, slug), slug);
     live.outcome = 'kept';

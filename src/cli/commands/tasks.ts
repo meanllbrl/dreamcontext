@@ -572,12 +572,26 @@ function actorOf(): string | null {
   }
 }
 
+/** A `--force` that passed the gate and waits for the status write before it is recorded. */
+interface PendingForce {
+  slug: string;
+  newStatus: string;
+  reason: string;
+  /** The criteria it passes over, `n. text; …`. */
+  open: string;
+}
+
 /**
  * The evidence gate (code, not prose): a review- or done-kind status needs every
  * criterion ticked with an evidence ref; done directly also needs cmd:/commit:/
  * owner: refs only and nothing (observed). `--force --reason` passes it, never
- * from an agent's environment, and is journaled with its reason. Returns true
- * when the move is BLOCKED.
+ * from an agent's environment. Returns `'blocked'` when the move is refused, a
+ * {@link PendingForce} when `--force` passed it, null when the gate holds.
+ *
+ * A force is RECORDED (audit + journal) only after the status write succeeded, by
+ * {@link recordForce}: a busy or failed write records nothing (the force was not applied),
+ * and a retry records it once. The audit's preflight runs here, before anything is written,
+ * so a force that could never be audited is refused up front.
  */
 async function blockOnEvidence(
   backend: TaskBackend,
@@ -585,56 +599,70 @@ async function blockOnEvidence(
   newStatus: string,
   defs: StatusDef[],
   force: { force?: boolean; reason?: string },
-): Promise<boolean> {
+): Promise<'blocked' | PendingForce | null> {
   const target = isDone(defs, newStatus) ? 'done' : isReview(defs, newStatus) ? 'review' : null;
-  if (!target) return false;
+  if (!target) return null;
   const cur = await backend.get(slug);
+  // Already there: nothing moves, so there is nothing to gate or to force (a retry after a
+  // close that went through records no second force).
+  if (cur && cur.status === newStatus) return null;
   const gate = gateStatus(cur?.rawBody ?? '', target);
-  if (gate.ok) return false;
+  if (gate.ok) return null;
   if (force.force) {
-    if (refuseSelfApproval(process.env)) return true;
+    if (refuseSelfApproval(process.env)) return 'blocked';
     if (!force.reason?.trim()) {
       error('--force needs --reason "<why the evidence gate does not apply>".');
       process.exitCode = 1;
-      return true;
+      return 'blocked';
     }
-    const open = [...gate.unproven, ...gate.reviewOnly].map((c) => `${c.n}. ${c.text}`).join('; ');
-    // Every --force is listed on the Inbox (A7/E9). The audit is written first, under
-    // the journal entry's id: a force that cannot be audited is refused before it is
-    // journaled, so nothing passes the gate unaudited.
-    const root = ensureContextRoot();
-    const journalId = newJournalEntryId();
     try {
-      ensureLocalStateIgnored(root);
-      recordAudit(root, { kind: 'force', slug, actor: actorOf() ?? 'owner', via: 'cli', note: force.reason.trim(), journalId });
+      ensureLocalStateIgnored(ensureContextRoot());
     } catch (err) {
       error(`Refusing --force: it cannot be recorded in the task audit (${err instanceof Error ? err.message : String(err)}).`);
       process.exitCode = 1;
-      return true;
+      return 'blocked';
     }
-    try {
-      await backend.addJournal(slug, {
-        id: journalId,
-        kind: 'status',
-        label: `forced → ${newStatus}`,
-        actor: actorOf(),
-        body: `- forced past the evidence gate: ${force.reason.trim()}\n- unproven: ${open}`,
-      });
-    } catch (err) {
-      // Nothing on the card changed: the status write comes after this. The audit lists the
-      // attempt (it is written first, so no force can pass unaudited).
-      const why = err instanceof TaskFileBusyError
-        ? `the task is busy (another writer holds it); try again in a moment`
-        : `its journal entry could not be written (${err instanceof Error ? err.message : String(err)})`;
-      error(`--force was not applied: ${why}. The status of "${slug}" is unchanged; the task audit lists this attempt.`);
-      process.exitCode = 1;
-      return true;
-    }
-    return false;
+    const open = [...gate.unproven, ...gate.reviewOnly].map((c) => `${c.n}. ${c.text}`).join('; ');
+    return { slug, newStatus, reason: force.reason.trim(), open };
   }
   error(describeGate(slug, newStatus, gate));
   process.exitCode = 1;
-  return true;
+  return 'blocked';
+}
+
+/** The status write a `--force` waited on did not happen: nothing is recorded, and it says so. */
+function forceNotApplied(pending: PendingForce, err: unknown): void {
+  const why = err instanceof TaskFileBusyError
+    ? 'the task is busy (another writer holds it); try again in a moment'
+    : `the status could not be written (${err instanceof Error ? err.message : String(err)})`;
+  error(`--force was not applied: ${why}. "${pending.slug}" is unchanged, and no force was recorded.`);
+  process.exitCode = 1;
+}
+
+/**
+ * Record a force whose status write succeeded: every `--force` is listed on the Inbox (A7/E9),
+ * as an audit record under the journal entry's id, and journaled with its reason. The move has
+ * happened, so a failure here is a warning, never a refusal.
+ */
+async function recordForce(backend: TaskBackend, pending: PendingForce): Promise<void> {
+  const root = ensureContextRoot();
+  const journalId = newJournalEntryId();
+  try {
+    recordAudit(root, { kind: 'force', slug: pending.slug, actor: actorOf() ?? 'owner', via: 'cli', note: pending.reason, journalId });
+  } catch (err) {
+    warn(`The force on ${pending.slug} is applied, but not recorded in the task audit (${err instanceof Error ? err.message : String(err)}).`);
+  }
+  try {
+    await backend.addJournal(pending.slug, {
+      id: journalId,
+      kind: 'status',
+      label: `forced → ${pending.newStatus}`,
+      actor: actorOf(),
+      body: `- forced past the evidence gate: ${pending.reason}\n- unproven: ${pending.open}`,
+    });
+  } catch (err) {
+    warn(`The force on ${pending.slug} is applied, but its journal entry was not written (${err instanceof Error ? err.message : String(err)}).`);
+  }
 }
 
 /**
@@ -1680,8 +1708,9 @@ export function registerTasksCommand(program: Command): void {
           success(`Rejected proposal ${p.id} (${reasonLabel(opts.reason)}); sleep will not propose it again.`);
         } else {
           const f = await rejectFiled(root, getTaskBackend(), statusSet(), item, { reason: opts.reason, note: opts.note });
-          success(`Rejected ${f.slug} (${reasonLabel(opts.reason)}): cancelled, and sleep will not file it again.`);
+          // The success line only when every write went through; otherwise what did not.
           if (f.warning) warn(f.warning);
+          else success(`Rejected ${f.slug} (${reasonLabel(opts.reason)}): cancelled, and sleep will not file it again.`);
         }
       } catch (err) {
         if (err instanceof ProposalError) { error(err.message); process.exitCode = 1; return; }
@@ -1804,7 +1833,7 @@ export function registerTasksCommand(program: Command): void {
     .action((slug: string) => {
       if (refuseSelfApproval(process.env)) return;
       try {
-        const f = keepFiled(ensureContextRoot(), slug);
+        const f = keepFiled(ensureContextRoot(), slug, statusSet());
         success(`Kept ${f.slug}.`);
       } catch (err) {
         if (err instanceof ProposalError) { error(err.message); process.exitCode = 1; return; }
@@ -2202,13 +2231,20 @@ export function registerTasksCommand(program: Command): void {
       if (blockOnMissingRequired('complete', slug, current?.custom_fields, ensureContextRoot(),
           (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
       if (blockOnOpenChildren(slug, 'completed', statusSet())) return;
-      // The sleep-eval gate runs BEFORE the evidence gate: `--force` journals its
-      // "forced" entry as it passes, so a later refusal would leave that entry
-      // behind for a close that never happened.
+      // The sleep-eval gate runs BEFORE the evidence gate, so nothing that can still refuse
+      // comes after a force has passed.
       if (await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
-      if (await blockOnEvidence(backend, slug, 'completed', statusSet(), opts)) return;
+      const gated = await blockOnEvidence(backend, slug, 'completed', statusSet(), opts);
+      if (gated === 'blocked') return;
 
-      await backend.complete(slug, summary);
+      try {
+        await backend.complete(slug, summary);
+      } catch (err) {
+        if (!gated) throw err;
+        forceNotApplied(gated, err);
+        return;
+      }
+      if (gated) await recordForce(backend, gated);
       success(`Task completed: ${slug}`);
       // `complete()` stamps the real end of the window (and the start too, when a
       // task went straight from not-started to done). Report it, so this verb is
@@ -2240,6 +2276,7 @@ export function registerTasksCommand(program: Command): void {
       if (!slug) return;
 
       if (blockOnOpenChildren(slug, newStatus, defs)) return;
+      let pendingForce: PendingForce | null = null;
       // Cancelling a parent: every open sub-task gets its decision before anything moves.
       let decisions: Map<string, ChildDecision> | null = null;
       if (isCancelled(defs, newStatus)) {
@@ -2267,10 +2304,12 @@ export function registerTasksCommand(program: Command): void {
         const cur = await backend.get(slug);
         if (blockOnMissingRequired(isDone(defs, newStatus) ? 'complete' : `move to ${newStatus}`, slug, cur?.custom_fields, ensureContextRoot(),
             (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
-        // Sleep-eval gate before the evidence gate (see `complete`): a forced pass
-        // journals as it goes, so nothing that can still refuse may come after it.
+        // Sleep-eval gate before the evidence gate (see `complete`): nothing that can still
+        // refuse may come after a force has passed.
         if (isDone(defs, newStatus) && await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
-        if (await blockOnEvidence(backend, slug, newStatus, defs, opts)) return;
+        const gated = await blockOnEvidence(backend, slug, newStatus, defs, opts);
+        if (gated === 'blocked') return;
+        pendingForce = gated;
       }
 
       const reason = reasonParts.join(' ').trim();
@@ -2298,8 +2337,6 @@ export function registerTasksCommand(program: Command): void {
         ? `### ${today()} - ${headerLabel}\n- ${reason}`
         : `### ${today()} - ${headerLabel}`;
 
-      await backend.addChangelog(slug, logContent, { fallbackAppend: true });
-
       // Stamp real-world timing onto the date window: `in_progress` records when
       // work actually began, `completed` records when it actually ended (see
       // dateUpdatesForStatus). Only fetch the task on the transitions that can
@@ -2308,7 +2345,17 @@ export function registerTasksCommand(program: Command): void {
       const stamping = isActive(defs, newStatus) || isDone(defs, newStatus);
       const before = stamping ? await backend.get(slug) : null;
       const dates = stamping ? dateUpdatesForStatus(newStatus, before, now, defs) : {};
-      await backend.updateFields(slug, { status: newStatus, updated_at: now, ...dates });
+      // A pending --force is recorded only once the status is written: a busy card at the
+      // changelog or the status write records no force.
+      try {
+        await backend.addChangelog(slug, logContent, { fallbackAppend: true });
+        await backend.updateFields(slug, { status: newStatus, updated_at: now, ...dates });
+      } catch (err) {
+        if (!pendingForce) throw err;
+        forceNotApplied(pendingForce, err);
+        return;
+      }
+      if (pendingForce) await recordForce(backend, pendingForce);
       success(`Task ${slug} → ${newStatus}`);
       reportDateStamps(newStatus, dates, before?.due_date);
     });

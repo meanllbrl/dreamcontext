@@ -9,19 +9,24 @@
  * LOCK_WAIT_MS (3 s), so the busy cases take that long.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { handleTaskVerdict, handleTasksUpdate } from '../../src/server/routes/tasks.js';
 import {
   handleFiledTaskKeep, handleTaskChangeApply, handleTaskChangeKeep, handleTaskProposalAccept, handleTaskProposalReject,
 } from '../../src/server/routes/task-proposals.js';
-import { addProposal, mutateProposals, readProposals, recordFiled } from '../../src/lib/task-proposals.js';
+import {
+  acceptProposal, addProposal, keepFiled, mutateProposals, readProposals, recordFiled, rejectFiled, ProposalError,
+} from '../../src/lib/task-proposals.js';
+import { DEFAULT_STATUSES, type StatusDef } from '../../src/lib/task-status.js';
+import { Command } from 'commander';
+import { registerTasksCommand } from '../../src/cli/commands/tasks.js';
 import { readFeedback } from '../../src/lib/task-feedback.js';
 import { readDeclined } from '../../src/lib/task-declined.js';
 import { readSleepState } from '../../src/cli/commands/sleep.js';
 import { runBacklogStep, suggestChange } from '../../src/lib/backlog-migration.js';
-import { LocalTaskBackend, resetTaskReadMemo } from '../../src/lib/task-backend/local.js';
+import { LocalTaskBackend, readTaskFile, resetTaskReadMemo } from '../../src/lib/task-backend/local.js';
 import { listAudit } from '../../src/lib/task-audit.js';
 import { readJournal } from '../../src/lib/task-journal.js';
 import { call } from '../helpers/fake-http.js';
@@ -286,4 +291,189 @@ describe('the keep routes need the browser Origin', () => {
     expect(r.code).toBe(403);
     expect((await call(handleTaskChangeKeep, ctx, { slug: 'park-me' }, { body: { id } })).code).toBe(200);
   });
+});
+
+/**
+ * Owner decision 2026-10-19 (the third pass's third flag on the accept path): a provenance
+ * marker. The card an accept creates carries `from_proposal: <id>` in its first write, and a
+ * leftover claim is finished ONLY for that card, and only once the claim is stale. Any other
+ * card on the slug is someone else's: the stale claim goes, the accept is `exists`, a reject
+ * goes through.
+ */
+describe('the provenance marker', () => {
+  const NAME = 'Add a CSV export';
+  const SLUG = 'add-a-csv-export';
+  const TTL = 5 * 60_000;
+  const propose = () => addProposal(ctx, { name: NAME, why: 'The owner asked for it.', quote: 'can we export this as csv', basis: 'ask' });
+  const staleAt = () => new Date(Date.now() - TTL - 60_000).toISOString();
+  function claim(id: string, at: string): void {
+    mutateProposals(ctx, (store) => { store.proposals.find((x) => x.id === id)!.claim = { slug: SLUG, at }; });
+  }
+  /** A card on the proposal's slug, with or without the marker. */
+  function cardOnSlug(marker: string | null): void {
+    seed(SLUG, 'todo', ['- [ ] Something']);
+    if (marker) {
+      const path = join(stateDir, `${SLUG}.md`);
+      writeFileSync(path, readFileSync(path, 'utf-8').replace('\nstatus: todo\n', `\nstatus: todo\nfrom_proposal: "${marker}"\n`));
+    }
+  }
+  const declined = () => readDeclined(ctx);
+  const keeps = (id: string) => readFeedback(ctx).filter((e) => e.id === id && e.verdict === 'keep');
+
+  it('an accept writes the proposal id onto the card in the create itself', async () => {
+    const p = propose();
+    let atCreate = '';
+    const create = LocalTaskBackend.prototype.create;
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
+      const task = await create.call(this, input);
+      atCreate = readFileSync(join(stateDir, `${SLUG}.md`), 'utf-8');
+      return task;
+    });
+    expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+    expect(atCreate).toContain(`from_proposal: "${p.id}"`);
+    expect(readTaskFile(join(stateDir, `${SLUG}.md`)).from_proposal).toBe(p.id);
+  });
+
+  it('a stale claim and a hand-made card on the slug (no marker): accept is `exists`, reject goes through', async () => {
+    const p = propose();
+    claim(p.id, staleAt());
+    cardOnSlug(null);
+    const r = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
+    expect(r.code).toBe(409);
+    expect(r.body.error).toBe('exists');
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)?.claim).toBeUndefined();
+    const rej = await call(handleTaskProposalReject, ctx, { id: p.id }, { body: { reason: 'already-exists' } });
+    expect(rej.code).toBe(200);
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)?.status).toBe('rejected');
+  });
+
+  it('a stale claim on a card that carries the marker: accept finishes it (accepted, one keep, nothing declined)', async () => {
+    const p = propose();
+    claim(p.id, staleAt());
+    cardOnSlug(p.id);
+    const r = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
+    expect(r.code).toBe(200);
+    expect(String(r.body.warning)).toMatch(/earlier accept/);
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)).toMatchObject({ status: 'accepted', slug: SLUG });
+    expect(keeps(p.id)).toHaveLength(1);
+    expect(declined()).toEqual([]);
+  });
+
+  it('a fresh claim on a card that carries the marker: refused, being accepted right now', async () => {
+    const p = propose();
+    claim(p.id, new Date().toISOString());
+    cardOnSlug(p.id);
+    const r = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
+    expect(r.code).toBe(409);
+    expect(String(r.body.message)).toMatch(/being accepted right now; try again shortly/);
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)?.status).toBe('pending');
+  });
+
+  it('a create that throws, with a busy store for the release: the create\'s own error surfaces', async () => {
+    const p = propose();
+    let release = () => {};
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async () => {
+      release = hold('.task-proposals');
+      throw new Error('disk full while creating the card');
+    });
+    const accepting = acceptProposal(ctx, new LocalTaskBackend(stateDir), DEFAULT_STATUSES, p.id, {}, 'dashboard');
+    await expect(accepting).rejects.toThrow('disk full while creating the card');
+    release();
+  }, 20_000);
+
+  it('a final write that fails (EACCES): 200 with the warning, and the audit and the dashboard change are recorded', async () => {
+    const p = propose();
+    // The feedback store's temp file is unwritable, so the final store write throws EACCES.
+    const tmp = join(stateDir, `.task-feedback.json.${process.pid}.tmp`);
+    const create = LocalTaskBackend.prototype.create;
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
+      const task = await create.call(this, input);
+      writeFileSync(tmp, '');
+      chmodSync(tmp, 0o444);
+      return task;
+    });
+    try {
+      const r = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
+      expect(r.code).toBe(200);
+      expect(String(r.body.warning)).toMatch(/could not be marked accepted \(.*(EACCES|permission denied)/i);
+      expect(existsSync(join(stateDir, `${SLUG}.md`))).toBe(true);
+      expect(listAudit(ctx).filter((e) => e.kind === 'accept' && e.slug === SLUG)).toHaveLength(1);
+      expect((readSleepState(ctx).dashboard_changes ?? []).some((c) => c.target === SLUG && c.action === 'create')).toBe(true);
+    } finally {
+      chmodSync(tmp, 0o644);
+      rmSync(tmp, { force: true });
+    }
+  });
+});
+
+describe('a filed reject that stopped before its record', () => {
+  const DEFS: StatusDef[] = [...DEFAULT_STATUSES, { key: 'cancelled', label: 'Cancelled', kind: 'cancelled', order: 99 }];
+  const SLUG = 'filed-cancelled';
+  function leftoverFiled(): void {
+    seed(SLUG, 'cancelled', ['- [ ] Something']);
+    recordFiled(ctx, { slug: SLUG, name: 'Filed cancelled', why: 'Because.', quote: 'q q q q', basis: 'ask', parent: null });
+    mutateProposals(ctx, (store) => { store.filed.find((f) => f.slug === SLUG)!.claim = { at: new Date(Date.now() - 6 * 60_000).toISOString() }; });
+  }
+
+  it('a reject finishes the record: rejected, no second status write or journal note', async () => {
+    leftoverFiled();
+    const before = snapshot(SLUG);
+    const f = await rejectFiled(ctx, new LocalTaskBackend(stateDir), DEFS, SLUG, { reason: 'not-work' });
+    expect(f).toMatchObject({ slug: SLUG, outcome: 'rejected' });
+    expect(f.warning).toBeUndefined();
+    expect(snapshot(SLUG)).toEqual(before);
+    expect(readFeedback(ctx).filter((e) => e.source === 'sleep-filed' && e.verdict === 'reject')).toHaveLength(1);
+  });
+
+  it('keep is refused for a card already at the cancelled status', () => {
+    leftoverFiled();
+    expect(() => keepFiled(ctx, SLUG, DEFS)).toThrow(ProposalError);
+    expect(() => keepFiled(ctx, SLUG, DEFS)).toThrow(/cancelled/);
+    expect(readProposals(ctx).filed.find((f) => f.slug === SLUG)?.outcome).toBe('open');
+  });
+});
+
+/**
+ * `--force` (the second flag of the same write-order rule): recorded only after the status
+ * write. A busy card records no force and says the force was not applied; a retry records one.
+ */
+describe('tasks complete --force', () => {
+  const AGENT_ENVS = ['CLAUDECODE', 'DREAMCONTEXT_AGENT_SELF', 'DREAMCONTEXT_AUTOMATION_RUN'];
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => { for (const k of AGENT_ENVS) { saved[k] = process.env[k]; delete process.env[k]; } });
+  afterEach(() => { for (const k of AGENT_ENVS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+
+  async function cli(...argv: string[]): Promise<number> {
+    process.exitCode = undefined;
+    const program = new Command();
+    program.exitOverride();
+    registerTasksCommand(program);
+    await program.parseAsync(['node', 'dreamcontext', ...argv]);
+    const code = Number(process.exitCode ?? 0);
+    process.exitCode = undefined;
+    return code;
+  }
+  const forces = () => listAudit(ctx).filter((e) => e.kind === 'force' && e.slug === 'force-me');
+  const forcedEntries = () => readJournal(stateDir, 'force-me').filter((e) => e.label.startsWith('forced'));
+
+  it('a busy card records no force; the retry records exactly one, and a second retry none', async () => {
+    seed('force-me', 'in_progress', ['- [ ] Unproven']);
+    const release = hold('force-me');
+    expect(await cli('tasks', 'complete', 'force-me', 'Done.', '--force', '--reason', 'a spike, no tests')).toBe(1);
+    release();
+    expect(statusOf('force-me')).toBe('in_progress');
+    expect(forces()).toEqual([]);
+    expect(forcedEntries()).toEqual([]);
+
+    expect(await cli('tasks', 'complete', 'force-me', 'Done.', '--force', '--reason', 'a spike, no tests')).toBe(0);
+    expect(statusOf('force-me')).toBe('completed');
+    expect(forces()).toHaveLength(1);
+    expect(forcedEntries()).toHaveLength(1);
+    expect(forcedEntries()[0].id).toBe(forces()[0].journalId);
+
+    // Already completed: nothing moves, so nothing is forced again.
+    await cli('tasks', 'complete', 'force-me', 'Done.', '--force', '--reason', 'a spike, no tests');
+    expect(forces()).toHaveLength(1);
+    expect(forcedEntries()).toHaveLength(1);
+  }, 20_000);
 });

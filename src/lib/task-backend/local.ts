@@ -169,6 +169,17 @@ function resolveScaffoldTemplate(overrideTemplate?: string | null): string {
 }
 
 /**
+ * The card with its provenance line (`from_proposal: "<id>"`) inside the frontmatter, so the
+ * marker lands in the card's FIRST write. No id: the content unchanged (golden-pinned bytes).
+ */
+function withProvenance(content: string, fromProposal: string | undefined): string {
+  if (!fromProposal) return content;
+  const close = content.indexOf('\n---', 3);
+  if (!content.startsWith('---') || close < 0) return content;
+  return `${content.slice(0, close)}\nfrom_proposal: ${JSON.stringify(fromProposal)}${content.slice(close)}`;
+}
+
+/**
  * Substitute a task template's `{{TOKEN}}` placeholders. Shared by the CLI and
  * the dashboard create paths so a project override (`overrides/task.md`) renders
  * IDENTICALLY from both surfaces — only the no-override fallback differs per
@@ -299,6 +310,8 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
       data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
         ? (data.custom_fields as Record<string, string | number | null>)
         : {},
+    // Absent unless set, so a task that came from no proposal is the exact object it always was.
+    ...(typeof data.from_proposal === 'string' && data.from_proposal.trim() ? { from_proposal: data.from_proposal.trim() } : {}),
     why: readSectionSafe(filePath, 'Why'),
     user_stories: readSectionSafe(filePath, 'User Stories'),
     acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
@@ -580,7 +593,7 @@ export class LocalTaskBackend implements TaskBackend {
         description: input.description ?? input.name,
       });
 
-      writeFileSync(filePath, content, 'utf-8');
+      writeFileSync(filePath, withProvenance(content, input.from_proposal), 'utf-8');
       layerLegacyOrderFields(filePath, input);
       if (input.rice) {
         updateFrontmatterFields(filePath, { rice: input.rice });
@@ -607,7 +620,7 @@ export class LocalTaskBackend implements TaskBackend {
         status: 'todo',
         description: input.description ?? '',
       });
-      writeFileSync(filePath, content, 'utf-8');
+      writeFileSync(filePath, withProvenance(content, input.from_proposal), 'utf-8');
       layerLegacyOrderFields(filePath, input);
       if (input.rice) {
         updateFrontmatterFields(filePath, { rice: input.rice });
@@ -645,7 +658,7 @@ updated_at: "${dateStr}"
 tags: ${tagsYaml}
 parent_task: null
 related_feature: null
-version: ${versionYaml}${riceYaml}
+version: ${versionYaml}${riceYaml}${input.from_proposal ? `\nfrom_proposal: ${q(input.from_proposal)}` : ''}
 ---
 
 ## Why

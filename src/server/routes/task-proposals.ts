@@ -295,7 +295,7 @@ export async function handleFiledTaskKeep(
   const { slug } = params;
   if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid', `Invalid task slug: ${slug}`); return; }
   try {
-    const f = keepFiled(contextRoot, slug);
+    const f = keepFiled(contextRoot, slug, loadStatuses(contextRoot));
     sendJson(res, 200, { slug: f.slug, outcome: f.outcome });
   } catch (err) {
     fail(res, err);
