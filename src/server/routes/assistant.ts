@@ -27,7 +27,7 @@ import { dismissDelegation, listDelegations, recordDelegation } from '../../lib/
 import { notifyAssistantAutonomy } from './agent-chat.js';
 import { captureScreens } from '../../lib/assistant/screen.js';
 import {
-  dismissNotchEvent, listNotchEvents, lookingAt, readMutedAutomations, setAutomationMuted, setPresence,
+  dismissNotchEvent, listNotchEvents, lookingAt, lookingAtSession, readMutedAutomations, setAutomationMuted, setPresence,
   syncAccountRejections, wireNotchInbox,
 } from '../../lib/assistant/notch-inbox.js';
 import { markThreadRead, plainPostText } from '../../lib/automations/threads.js';
@@ -765,6 +765,7 @@ export async function handleAssistantInbox(req: IncomingMessage, res: ServerResp
   const vaultOf = new Map(listVaults().map((v) => [v.path, v.name]));
   sendJson(res, 200, {
     lookingAt: lookingAt(),
+    lookingAtSession: lookingAtSession(),
     events,
     posts: posts.map((p) => ({
       ...p,
@@ -832,9 +833,10 @@ export async function handleAssistantInboxMute(req: IncomingMessage, res: Server
 }
 
 /**
- * POST /api/assistant/presence {label, vault|null} — a project window says which project it is
- * showing while it has focus (`null` when it lost focus). Decides whether a finished turn is
- * news, and tells the Assistant what the owner is looking at.
+ * POST /api/assistant/presence {label, vault|null, sessionId?} — a project window says which
+ * project it is showing while it has focus (`null` when it lost focus), and which chat has the
+ * focus when the chat surface is open. Decides whether a finished turn or a prompt is news, and
+ * tells the Assistant what the owner is looking at.
  */
 export async function handleAssistantPresence(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!ownerGate(req, res)) return;
@@ -842,8 +844,9 @@ export async function handleAssistantPresence(req: IncomingMessage, res: ServerR
   const label = typeof b.label === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(b.label) ? b.label : '';
   if (!label) { sendError(res, 400, 'invalid_args', 'label is required'); return; }
   const vault = typeof b.vault === 'string' && listVaults().some((v) => v.name === b.vault) ? b.vault : null;
+  const sessionId = vault && typeof b.sessionId === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(b.sessionId) ? b.sessionId : null;
   wireNotchInbox();
-  setPresence(label, vault);
+  setPresence(label, vault, sessionId);
   sendJson(res, 200, { ok: true });
 }
 

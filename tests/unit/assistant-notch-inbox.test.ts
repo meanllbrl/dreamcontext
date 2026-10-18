@@ -122,17 +122,31 @@ describe('finished chats (notch-inbox.ts)', () => {
     expect(e).toMatchObject({ vault: 'acme', sessionId: h.sessionId, title: 'make the tests pass', lastText: 'All 12 tests pass.' });
   });
 
-  it('no notice while the owner is looking at that project; looking later clears one', () => {
-    inbox.setPresence('vault-acme', 'acme');
-    runTurn(chat('acme'));
+  it('no notice for the chat the owner is focused on; another chat in the same project is one', () => {
+    const focused = chat('acme');
+    const beside = chat('acme');
+    inbox.setPresence('vault-acme', 'acme', focused.sessionId);
+    runTurn(focused);
+    runTurn(beside);
     vi.advanceTimersByTime(inbox.FINISH_DEBOUNCE_MS + 10);
-    expect(finished()).toHaveLength(0);
+    expect(finished().map((e) => e.sessionId)).toEqual([beside.sessionId]);
+    expect(inbox.lookingAtSession()).toBe(focused.sessionId);
+  });
 
+  it('focusing a chat clears its finish at once; looking at the project clears the rest after the grace', () => {
     inbox.setPresence('vault-acme', null);
-    runTurn(chat('acme'));
+    const a = chat('acme');
+    const b = chat('acme');
+    runTurn(a);
+    runTurn(b);
     vi.advanceTimersByTime(inbox.FINISH_DEBOUNCE_MS + 10);
-    expect(finished()).toHaveLength(1);
-    inbox.setPresence('vault-main', 'acme');
+    expect(finished()).toHaveLength(2);
+    // The owner comes into acme with chat a focused: a is seen, b is too new to clear (its peek).
+    inbox.setPresence('vault-main', 'acme', a.sessionId);
+    expect(finished().map((e) => e.sessionId)).toEqual([b.sessionId]);
+    // Still looking at acme once the grace is over (the 20 s heartbeat): b is seen too.
+    vi.advanceTimersByTime(inbox.SEEN_GRACE_MS + 1);
+    inbox.setPresence('vault-main', 'acme', a.sessionId);
     expect(finished()).toHaveLength(0);
   });
 
@@ -311,6 +325,7 @@ describe('owner routes: /api/assistant/inbox, /presence, /inbox/dismiss', () => 
     r = makeRes();
     await routes.handleAssistantInbox(req('GET', '/api/assistant/inbox'), r.res);
     expect(r.body().lookingAt).toBe('beta');
+    expect(r.body().lookingAtSession).toBeNull();
     // (an account notice from the suite above may ride along: only the finish is asserted)
     const events = (r.body().events as Array<Record<string, unknown>>).filter((e) => e.kind === 'finished');
     expect(events).toHaveLength(1);
@@ -319,6 +334,22 @@ describe('owner routes: /api/assistant/inbox, /presence, /inbox/dismiss', () => 
     await routes.handleAssistantInboxDismiss(req('POST', '/api/assistant/inbox/dismiss', { id: events[0].id }), r.res);
     expect(r.body().ok).toBe(true);
     expect(inbox.listNotchEvents(HOME).filter((e) => e.kind === 'finished')).toHaveLength(0);
+  });
+
+  it('presence names the focused chat; a malformed id is dropped, and no project means no chat', async () => {
+    let r = makeRes();
+    await routes.handleAssistantPresence(req('POST', '/api/assistant/presence', { label: 'vault-beta', vault: 'beta', sessionId: 'chat-uuid-1' }), r.res);
+    r = makeRes();
+    await routes.handleAssistantInbox(req('GET', '/api/assistant/inbox'), r.res);
+    expect(r.body()).toMatchObject({ lookingAt: 'beta', lookingAtSession: 'chat-uuid-1' });
+    await routes.handleAssistantPresence(req('POST', '/api/assistant/presence', { label: 'vault-beta', vault: 'beta', sessionId: '../../etc' }), makeRes().res);
+    r = makeRes();
+    await routes.handleAssistantInbox(req('GET', '/api/assistant/inbox'), r.res);
+    expect(r.body()).toMatchObject({ lookingAt: 'beta', lookingAtSession: null });
+    await routes.handleAssistantPresence(req('POST', '/api/assistant/presence', { label: 'vault-beta', vault: 'nope', sessionId: 'chat-uuid-1' }), makeRes().res);
+    r = makeRes();
+    await routes.handleAssistantInbox(req('GET', '/api/assistant/inbox'), r.res);
+    expect(r.body()).toMatchObject({ lookingAt: null, lookingAtSession: null });
   });
 
   it('refuses a remote caller and an unknown automation', async () => {

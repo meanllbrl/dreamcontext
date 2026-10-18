@@ -40,6 +40,7 @@ import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '..
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSession';
+import { setFocusedChat } from '../../lib/focusedChat';
 import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
@@ -2627,6 +2628,16 @@ export function AgentSurface() {
     const s = sessions.current.get(sid);
     return s && s.status !== 'closed' ? s : undefined;
   }, [sessionList]);
+
+  // The chat the owner is focused on, for the window's presence report (lib/focusedChat.ts):
+  // the focused pane's visible tab, only while the surface is open on a desktop. Its id is the
+  // conversation the chat was spawned on (`claudeId`), which the server's chat registry keys by.
+  const focusedLive = liveSession(focusedSessionId);
+  const focusedChatId = expanded && !isMobile && focusedLive?.kind === 'chat' ? focusedLive.claudeId : '';
+  useEffect(() => {
+    if (vault) setFocusedChat(vault, focusedChatId || null);
+  }, [vault, focusedChatId]);
+  useEffect(() => () => { if (vault) setFocusedChat(vault, null); }, [vault]);
 
   /**
    * A tab's TRANSPORT kind — which object actually runs it — as opposed to the display kind

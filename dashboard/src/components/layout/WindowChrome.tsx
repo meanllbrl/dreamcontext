@@ -5,6 +5,7 @@ import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
 import { trackPresence } from '../../lib/presence';
+import { focusedChatFor, onFocusedChat } from '../../lib/focusedChat';
 import { armFocusDiag, healUnfocusedPresses } from '../../lib/focusDiag';
 import { setActiveOverlayScope } from '../../lib/overlayStack';
 import {
@@ -445,13 +446,18 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
    * Tell the server which project the owner is looking at while this window is in front
    * (`lib/presence.ts`): the notch only announces a finished chat from a project that is NOT
    * on screen, and the Assistant knows where the owner is. Reads `activeRef` for the same
-   * reason the probe above does; a chip switch pokes it.
+   * reason the probe above does; a chip switch pokes it, and so does a chat taking the focus
+   * in the project's surface (lib/focusedChat.ts): only THAT chat is on the owner's screen.
    */
   const presenceRef = useRef<ReturnType<typeof trackPresence> | null>(null);
   useEffect(() => {
-    const p = trackPresence(() => activeRef.current || null);
+    const p = trackPresence(() => {
+      const vault = activeRef.current || null;
+      return vault ? { vault, sessionId: focusedChatFor(vault) } : null;
+    });
     presenceRef.current = p;
-    return () => { p.dispose(); presenceRef.current = null; };
+    const off = onFocusedChat(() => p.poke());
+    return () => { off(); p.dispose(); presenceRef.current = null; };
   }, []);
   useEffect(() => { presenceRef.current?.poke(); }, [activeVault]);
   // A press in this page while it believes it is unfocused activates the app (lib/focusDiag.ts).
