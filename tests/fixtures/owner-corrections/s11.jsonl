@@ -1,0 +1,1 @@
+{"type": "user", "sessionId": "s11-larkspur", "uuid": "u-s11-1", "timestamp": "2026-10-15T09:00:00.000Z", "message": {"role": "user", "content": "Stop using default exports for components, named exports only."}}

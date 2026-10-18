@@ -1,0 +1,3 @@
+{"type": "user", "sessionId": "s1-larkspur", "uuid": "u-s1-1", "timestamp": "2026-10-12T09:00:00.000Z", "message": {"role": "user", "content": "Let us look at the recipe sync next."}}
+{"type": "assistant", "sessionId": "s1-larkspur", "uuid": "a-s1-1", "timestamp": "2026-10-12T09:00:05.000Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "Sure, opening the sync module."}]}}
+{"type": "user", "sessionId": "s1-larkspur", "uuid": "u-s1-2", "timestamp": "2026-10-12T09:10:00.000Z", "message": {"role": "user", "content": "No, never use default exports; always use named exports."}}

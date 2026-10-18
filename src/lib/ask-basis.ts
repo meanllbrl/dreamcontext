@@ -203,6 +203,43 @@ function* records(path: string): Generator<Record<string, unknown>> {
   }
 }
 
+export interface OwnerTurn {
+  /** What the owner typed, with injected blocks (reminders, hook tags, pasted content, the task fence) removed. */
+  text: string;
+  /** The record's timestamp, when it carries one. */
+  at: string | null;
+  /** The record's uuid, when it carries one (an idempotency handle for callers). */
+  uuid: string | null;
+}
+
+/**
+ * The owner's own turns in one transcript, in order: exactly the records this
+ * module's classifier calls a human turn (so never a tool result, hook context,
+ * a sub-agent notification, skill-loader text or a sub-agent transcript), with
+ * the blocks a program writes into a typed turn stripped out. A transcript past
+ * {@link MAX_TRANSCRIPT_BYTES}, or one that cannot be read, yields nothing.
+ */
+export function ownerTurns(path: string): OwnerTurn[] {
+  const out: OwnerTurn[] = [];
+  try {
+    if (statSync(path).size > MAX_TRANSCRIPT_BYTES) return out;
+    for (const rec of records(path)) {
+      const c = classify(rec);
+      if (!c.human) continue;
+      const text = c.human.trim();
+      if (!text) continue;
+      out.push({
+        text,
+        at: typeof rec.timestamp === 'string' ? rec.timestamp : null,
+        uuid: typeof rec.uuid === 'string' ? rec.uuid : null,
+      });
+    }
+  } catch {
+    return [];
+  }
+  return out;
+}
+
 /** `needle` (already in match form) appears in `text` as whole words, never inside one. */
 function hasWords(text: string, needle: string): boolean {
   return ` ${matchForm(text)} `.includes(` ${needle} `);

@@ -123,7 +123,7 @@ Two different gates, by whether the target file describes user intent or code re
 
 #### B0a. Two-observation gate (preferences & decisions)
 
-Applies to `people/<slug>.md` (a person's preferences) and `2.memory.md` (**Technical Decisions** and **Known Issues** only). Scan for **recurring** signals (a preference enforced 2+ times, a decision concluded, a new constraint, a footgun solved). **The default is no change.** One observation is data; two is a pattern. A recurring reusable SOLUTION SHAPE is not a core-file entry: report it as a pattern signal for `sleep-product`.
+Applies to `people/<slug>.md` (a person's preferences) and `2.memory.md` (**Technical Decisions** and **Known Issues** only). Scan for **recurring** signals (a preference enforced 2+ times, a decision concluded, a new constraint, a footgun solved). **The default is no change.** One observation is data; two is a pattern. A recurring reusable SOLUTION SHAPE is not a core-file entry: report it as a pattern signal for `sleep-product`. A correction about HOW work must be done (a style or rule the owner repeats) is not a person preference: do not write it to `people/<slug>.md`; report it as a pattern signal for sleep-product (the CLI ledger already carries it).
 
 `2.memory.md` has no LIFO ship-narrative section: ship events live in `CHANGELOG.json`. Do NOT re-create a LIFO/session-log section; write a changelog entry instead.
 

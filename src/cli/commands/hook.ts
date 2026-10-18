@@ -2771,9 +2771,11 @@ export function registerHookCommand(program: Command): void {
               // pattern that the user has just contradicted is worse than no
               // pattern: it will keep being injected, keep being obeyed, and the
               // same correction will keep being typed. Folding the correction
-              // back in is therefore part of THIS task, not a sleep chore — by
-              // the time sleep runs, the reasoning that produced the correction
-              // is gone and only its conclusion survives.
+              // back in is therefore part of THIS task: this is the fast path,
+              // while the reasoning that produced the correction is still here.
+              // Sleep catches only what the owner REPEATED (2+ sessions), through
+              // `patterns learn` (lib/learned-patterns.ts), and never over an
+              // awake edit; a single correction is this agent's to fold.
               lines.push(
                 '  ⛔ AND KEEP THEM TRUE: if the user contradicts, narrows, or extends one of these ' +
                   'patterns — or the two of you settle on something it does not say — you MUST update ' +

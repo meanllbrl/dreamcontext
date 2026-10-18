@@ -4,6 +4,26 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+### Sleep learns a pattern from a correction the owner keeps repeating (2026-10-18)
+
+Before this, a style the owner set had to be said again every day. The awake agent was supposed
+to fold a correction into a pattern, often did not, and sleep was forbidden to. That ban was
+never the owner's decision. Now the awake agent's fast path stays, and sleep adds the other half.
+
+- **`sleep start` reads the owner's own turns** (the transcript classifier: never tool output,
+  hook context, sub-agent notices or skill-loader text) into a machine-local ledger, with secrets
+  redacted. `dreamcontext patterns corrections --recurring` groups what one person said in two or
+  more sessions. `--backfill <days>` (default 7) reads the last days once and skips sessions
+  registered as spawned.
+- **`dreamcontext patterns learn`** writes a group's rule into a pattern, with its quotes and dates.
+  A contradiction edits the old text (`--edits` for a paragraph, `--replaces` for a learned block)
+  after archiving the file to `knowledge/.archive/`. Text the awake agent changed is never
+  overwritten, and the ~150-line limit holds.
+- **`sleep done` lists what was learned this sleep.** `patterns learned` shows the history.
+  `patterns revert <id>` (owner only) undoes a change, including a task-filing rule change.
+- The three task-system state files (owner quotes, learned-pattern history, the task audit) are
+  git-ignored before their first write, in full-repo sync and by a 0.33.0 step on every vault.
+
 ### A funnel explorer's own page is the explorer, not the old table (2026-10-12)
 
 An insight made with `lab create --preset funnel-explorer` had two faces that disagreed. Its board

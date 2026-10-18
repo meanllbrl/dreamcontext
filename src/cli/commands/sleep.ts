@@ -59,6 +59,10 @@ import { activeCycle, cycleProgress, daysLeft, readCycles } from '../../lib/cycl
 import { loadFamily } from '../../lib/task-parent.js';
 import { cycleCounts, filingBrake, readProposals } from '../../lib/task-proposals.js';
 import { rulesForBrief } from '../../lib/task-filing-rules.js';
+import { ingestSessions } from '../../lib/owner-corrections.js';
+import { listLearnedItems, recurringCorrectionsBrief } from '../../lib/learned-patterns.js';
+import { basisSessions, sessionsFromSleepState } from '../../lib/ask-basis.js';
+import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-log.js';
 import { scanDigests, planDigestGc, runDigestGc } from '../../lib/session-digest.js';
 import { collectBrainDirty, renderBrainDirtyWarning } from '../../lib/brain-dirty.js';
@@ -544,6 +548,21 @@ export function registerSleepCommand(program: Command): void {
         const filingRules = rulesForBrief(root);
         say.info(`${filingRules}\nPass these to sleep-tasks verbatim; it must run \`dreamcontext tasks rules\` before filing or proposing (the CLI refuses until it has).`);
 
+        // C7 — the owner's corrections of this sleep's sessions go into the ledger,
+        // read through the owner-turn classifier. A failure here (an ignore entry
+        // that cannot be written) skips the write with a warning: nothing is written
+        // without its ignore, and the sleep is not aborted.
+        try {
+          let person: string | null = null;
+          try { person = resolveActivePerson(root).slug; } catch { /* unresolved: stored as null */ }
+          ingestSessions(root, basisSessions(sessionsFromSleepState(root)), person, 'epoch');
+        } catch (err) {
+          say.warn(`Owner corrections: not recorded this sleep — ${(err as Error).message ?? err}`);
+        }
+        const corrections = recurringCorrectionsBrief(root);
+        say.info(`Recurring owner corrections: ${corrections.count} group(s)${corrections.count > 0 ? ' → sleep-product (`dreamcontext patterns corrections --recurring`)' : ''}`);
+        if (corrections.text) say.info(`${corrections.text}\nPass this block to sleep-product verbatim.`);
+
         // Change C — a NEW cycle supersedes any previous cycle's pending
         // private-derivation disclosure. This is the one genuine wedge (a
         // marker stranded by a crashed cycle, with no `sleep done` ever
@@ -590,6 +609,8 @@ export function registerSleepCommand(program: Command): void {
             migrations: codeNotices,
             automationOutputs,
             filingRules,
+            recurringCorrections: corrections.count,
+            recurringCorrectionsBrief: corrections.text,
           }, null, 2));
         }
       } finally {
@@ -716,6 +737,18 @@ export function registerSleepCommand(program: Command): void {
         if (ending) warn(ending);
       } catch (err) {
         warn(`Task filing counts: skipped — ${(err as Error).message ?? err}`);
+      }
+
+      // C7 — what sleep learned this cycle (rules from repeated owner corrections
+      // and task-filing rule changes). Reverting is the owner's, from the Inbox.
+      try {
+        const learned = epoch ? listLearnedItems(root, { since: epoch }) : [];
+        if (learned.length > 0) {
+          info(`Learned this sleep (${learned.length}) — the owner can revert any of them from the Inbox:`);
+          for (const l of learned) info(`  ${l.title} (${l.pattern}, ${l.id})${l.reverted ? ' — reverted' : ''}`);
+        }
+      } catch (err) {
+        warn(`Learned this sleep: skipped — ${(err as Error).message ?? err}`);
       }
 
       // AC6 (1/2) — recidivism escalation: reconcile this cycle's --flag

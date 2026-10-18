@@ -209,6 +209,10 @@ describe('lock and sidecar paths never sync', () => {
     '_dream_context/state/.locks/',
     '_dream_context/state/.auto-sleep.lock',
     '_dream_context/state/.auto-sleep.json',
+    // Machine-local task-system state: owner quotes, learned-pattern history, the task audit.
+    '_dream_context/state/.owner-corrections.json',
+    '_dream_context/state/.learned-patterns.json',
+    '_dream_context/state/.task-audit.json',
   ])('the full-repo gitignore excludes %s', (entry) => {
     expect(FULL_REPO_LOCAL_GITIGNORE_ENTRIES).toContain(entry);
   });

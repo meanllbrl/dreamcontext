@@ -85,6 +85,10 @@ export interface SleepHistoryEntry {
   sessions_processed: number;
   bookmarks_processed: number;
   session_ids: string[];
+  /** The subset of `session_ids` an orchestrator or the app spawned (absent on entries
+   *  written before it existed). Read by the owner-corrections backfill, so a builder's
+   *  prompt is never counted as the owner's words. */
+  spawned_session_ids?: string[];
 }
 
 export interface CompactionRecord {
@@ -688,6 +692,8 @@ export interface ConsolidationResult {
   sessionsProcessed: number;
   bookmarksProcessed: number;
   processedSessionIds: string[];
+  /** The processed sessions that carry a spawn marker (see `SessionRecord.spawn`). */
+  processedSpawnedSessionIds: string[];
 }
 
 /**
@@ -713,11 +719,13 @@ export function applyConsolidation(state: SleepState, epoch: string | null): Con
   let sessionsProcessed = 0;
   let bookmarksProcessed = 0;
   let processedSessionIds: string[] = [];
+  let processedSpawnedSessionIds: string[] = [];
 
   if (epoch) {
     const processedSessions = next.sessions.filter(s => !s.stopped_at || s.stopped_at <= epoch);
     sessionsProcessed = processedSessions.length;
     processedSessionIds = processedSessions.map(s => s.session_id);
+    processedSpawnedSessionIds = processedSessions.filter(s => s.spawn).map(s => s.session_id);
     bookmarksProcessed = next.bookmarks.filter(b => b.created_at <= epoch).length;
 
     // Survivors: only sessions with a stopped_at strictly after the epoch.
@@ -732,6 +740,7 @@ export function applyConsolidation(state: SleepState, epoch: string | null): Con
   } else {
     sessionsProcessed = next.sessions.length;
     processedSessionIds = next.sessions.map(s => s.session_id);
+    processedSpawnedSessionIds = next.sessions.filter(s => s.spawn).map(s => s.session_id);
     bookmarksProcessed = next.bookmarks.length;
     next.sessions = [];
     next.bookmarks = [];
@@ -742,7 +751,7 @@ export function applyConsolidation(state: SleepState, epoch: string | null): Con
   // Expire triggers past their fire budget.
   next.triggers = next.triggers.filter(t => t.fired_count < t.max_fires);
 
-  return { state: next, sessionsProcessed, bookmarksProcessed, processedSessionIds };
+  return { state: next, sessionsProcessed, bookmarksProcessed, processedSessionIds, processedSpawnedSessionIds };
 }
 
 // ─── Stop-hook re-stop dedupe (pure) ─────────────────────────────────────────
@@ -1006,6 +1015,7 @@ export function buildHistoryEntry(
     sessions_processed: result.sessionsProcessed,
     bookmarks_processed: result.bookmarksProcessed,
     session_ids: result.processedSessionIds,
+    spawned_session_ids: result.processedSpawnedSessionIds,
   };
 }
 
