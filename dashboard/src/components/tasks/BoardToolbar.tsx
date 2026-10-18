@@ -3,17 +3,17 @@ import type { Task } from '../../hooks/useTasks';
 import { useStatusModel } from '../../hooks/useTasks';
 import { HardRefreshChip, SyncChip, useCloudSync } from './SyncChip';
 import type { BoardState } from '../../hooks/useBoard';
-import { VersionsPopover } from './VersionsPopover';
+import { useI18n } from '../../context/I18nContext';
 import { SparkIcon } from '../sleepy/TypeIcons';
 import {
-  type BoardFilters, type CardProps, type Dim, type DueFilter, type Layout, type SortKey,
-  DIMS, DIM_LABEL, PRIO_ORDER, SORT_LABEL, URG_ORDER,
+  type BoardFilters, type CardProps, type Dim, type DueFilter, type Layout,
+  DIMS, SORT_KEYS,
   BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
-  dimGet, levelLabel, prioColor, taskAssignees, taskVersion, urgColor,
+  dimGet, taskAssignees, taskVersion,
 } from './boardModel';
 import { type BarFit, fitOnLayout, fitOnResize, fitRetest, initialFit, menusToClose } from './toolbarCollapse';
 
-export type MenuKey = 'filter' | 'viewtype' | 'group' | 'sort' | 'versions' | 'props' | 'newtask' | null;
+export type MenuKey = 'filter' | 'viewtype' | 'group' | 'sort' | 'props' | 'newtask' | null;
 
 interface AssigneeOpt { value: string; label: string; color: string }
 
@@ -30,7 +30,7 @@ interface BoardToolbarProps {
   openMenu: MenuKey;
   setOpenMenu: (m: MenuKey) => void;
   onNewTask: () => void;
-  /** Open the "Author with agent" composer. Offered only when {@link agentReady}. */
+  /** Write a new task with an agent (the door's `author` preset). Offered only when {@link agentReady}. */
   onAuthorWithAgent: () => void;
   /** Desktop + Agents-enabled: reveals the "Author with agent" path in the New-task split
    *  button. When false the button is the plain manual-create button it has always been (A6). */
@@ -38,27 +38,16 @@ interface BoardToolbarProps {
   flash: (msg: string) => void;
 }
 
-// ── view types (Kanban + List ship; advanced views are preserved, NOT "coming soon") ──
-const VIEW_TYPES: { v: Layout; label: string; icon: string }[] = [
-  { v: 'board', label: 'Kanban', icon: 'M3 4h4v12H3zM10 4h4v9h-4zM17 4h4v6h-4z' },
-  { v: 'list', label: 'List', icon: 'M4 5h16M4 10h16M4 15h16' },
-  { v: 'eisenhower', label: 'Eisenhower', icon: 'M4 4h16v16H4zM12 4v16M4 12h16' },
-  { v: 'timeline', label: 'Timeline', icon: 'M4 6h10M8 11h11M4 16h7' },
-  { v: 'calendar', label: 'Calendar', icon: 'M4 5h16v15H4zM4 9h16M8 3v4M16 3v4' },
-  { v: 'heatmap', label: 'Heatmap', icon: 'M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4z' },
-  { v: 'scatter', label: 'RICE', icon: 'M4 20V4M4 20h16M8 14a1 1 0 100-2 1 1 0 000 2zM13 9a1 1 0 100-2 1 1 0 000 2zM17 15a1 1 0 100-2 1 1 0 000 2z' },
+// ── view types: Board, List and Timeline (plan r3 § 5b; the others were retired in § 5c) ──
+const VIEW_TYPES: { v: Layout; icon: string }[] = [
+  { v: 'board', icon: 'M3 4h4v12H3zM10 4h4v9h-4zM17 4h4v6h-4z' },
+  { v: 'list', icon: 'M4 5h16M4 10h16M4 15h16' },
+  { v: 'timeline', icon: 'M4 6h10M8 11h11M4 16h7' },
 ];
 
-const DUE_OPTS: { v: DueFilter; l: string }[] = [
-  { v: 'all', l: 'All dates' }, { v: 'overdue', l: 'Overdue' }, { v: 'today', l: 'Due today' },
-  { v: 'risk', l: 'At risk (≤7d)' }, { v: 'has', l: 'Has due date' }, { v: 'none', l: 'No due date' },
-];
-const RICE_OPTS = [{ v: 0, l: 'Any RICE' }, { v: 4, l: '≥ 4' }, { v: 6, l: '≥ 6' }, { v: 8, l: '≥ 8' }];
+const DUE_OPTS: DueFilter[] = ['all', 'overdue', 'today', 'risk', 'has', 'none'];
 
-const PROP_DEFS: [keyof CardProps, string][] = [
-  ['description', 'Description'], ['tags', 'Tags'], ['priority', 'Priority dot'], ['urgency', 'Urgency bar'],
-  ['due', 'Due date'], ['rice', 'RICE score'], ['assignee', 'Assignee'], ['version', 'Version'],
-];
+const PROP_DEFS: (keyof CardProps)[] = ['description', 'tags', 'due', 'assignee', 'version'];
 
 const chipTrigger = (active: boolean): CSSProperties => ({
   display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 11px', borderRadius: 9, cursor: 'pointer',
@@ -82,7 +71,9 @@ const excBtn = (on: boolean): CSSProperties => ({ flex: '0 0 auto', width: 22, h
 interface FieldOpt { value: string; label: string; color: string | null; count: number }
 
 export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilter, activeVersion, releasedVersions, openMenu, setOpenMenu, onNewTask, onAuthorWithAgent, agentReady, flash }: BoardToolbarProps) {
+  const { t } = useI18n();
   const sm = useStatusModel();
+  const dimLabel = (d: Dim) => t(`board.dim.${d}`);
   const [filterPane, setFilterPane] = useState<keyof BoardFilters | null>(null);
   const f = s.filters;
   const toggle = (m: MenuKey) => { setOpenMenu(openMenu === m ? null : m); if (m !== 'filter') setFilterPane(null); };
@@ -103,27 +94,25 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
 
   const fieldOpts = (key: keyof BoardFilters): FieldOpt[] => {
     if (key === 'status') return sm.order.map((k) => ({ value: k, label: sm.labelOf(k), color: sm.colorOf(k), count: countBy('status', k) }));
-    if (key === 'priority') return PRIO_ORDER.map((k) => ({ value: k, label: levelLabel(k), color: prioColor(k), count: countBy('priority', k) }));
-    if (key === 'urgency') return URG_ORDER.map((k) => ({ value: k, label: levelLabel(k), color: urgColor(k), count: countBy('urgency', k) }));
     if (key === 'version') return [...versionsForFilter, 'none']
       .filter((v, i, a) => a.indexOf(v) === i)
       .filter((v) => v === 'none' || !BACKLOG_RE.test(v)) // backlog is offered as the "Backlog" smart bucket above
-      .map((k) => ({ value: k, label: k === 'none' ? 'No version' : k, color: null, count: countBy('version', k) }));
+      .map((k) => ({ value: k, label: k === 'none' ? t('board.filter.noVersion') : k, color: null, count: countBy('version', k) }));
     if (key === 'assignee') return assignees.map((a) => ({ value: a.value, label: a.label, color: a.value === 'none' ? null : a.color, count: countAssignee(a.value) }));
     return allTags.map((tg) => ({ value: tg, label: tg, color: null, count: allTasks.filter((t) => t.tags.includes(tg)).length }));
   };
 
   const FIELD_DEFS: { key: keyof BoardFilters; label: string }[] = [
-    { key: 'status', label: 'Status' }, { key: 'priority', label: 'Priority' }, { key: 'urgency', label: 'Urgency' },
-    { key: 'assignee', label: 'Assignee' }, { key: 'version', label: 'Version' }, { key: 'tags', label: 'Tags' },
+    { key: 'status', label: t('board.dim.status') }, { key: 'assignee', label: t('board.dim.assignee') },
+    { key: 'version', label: t('board.dim.version') }, { key: 'tags', label: t('board.filter.tags') },
   ];
 
   const fieldSummary = (key: keyof BoardFilters): { text: string; active: boolean } => {
     const fld = f[key] as { inc: string[]; exc: string[] };
     const parts: string[] = [];
-    if (fld.inc.length) parts.push(`${fld.inc.length} is`);
-    if (fld.exc.length) parts.push(`${fld.exc.length} is not`);
-    return { text: parts.join(' · ') || 'Any', active: fld.inc.length + fld.exc.length > 0 };
+    if (fld.inc.length) parts.push(t('board.filter.isN').replace('{n}', String(fld.inc.length)));
+    if (fld.exc.length) parts.push(t('board.filter.isNotN').replace('{n}', String(fld.exc.length)));
+    return { text: parts.join(' · ') || t('board.filter.any'), active: fld.inc.length + fld.exc.length > 0 };
   };
 
   // Virtual ("smart") version buckets, shown above the literal version list. Each is
@@ -131,9 +120,9 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   // when any task sits in the backlog, Completed when a released version exists.
   const releasedSet = new Set(releasedVersions);
   const versionVirtuals: FieldOpt[] = [];
-  if (activeVersion) versionVirtuals.push({ value: VV_CURRENT, label: 'Current', color: 'var(--color-accent)', count: allTasks.filter((t) => taskVersion(t) === activeVersion).length });
-  if (allTasks.some((t) => BACKLOG_RE.test(taskVersion(t)))) versionVirtuals.push({ value: VV_BACKLOG, label: 'Backlog', color: 'var(--color-text-tertiary)', count: allTasks.filter((t) => BACKLOG_RE.test(taskVersion(t))).length });
-  if (releasedSet.size) versionVirtuals.push({ value: VV_COMPLETED, label: 'Completed', color: 'var(--color-status-completed)', count: allTasks.filter((t) => releasedSet.has(taskVersion(t))).length });
+  if (activeVersion) versionVirtuals.push({ value: VV_CURRENT, label: t('board.filter.current'), color: 'var(--color-accent)', count: allTasks.filter((t) => taskVersion(t) === activeVersion).length });
+  if (allTasks.some((t) => BACKLOG_RE.test(taskVersion(t)))) versionVirtuals.push({ value: VV_BACKLOG, label: t('board.filter.backlog'), color: 'var(--color-text-tertiary)', count: allTasks.filter((t) => BACKLOG_RE.test(taskVersion(t))).length });
+  if (releasedSet.size) versionVirtuals.push({ value: VV_COMPLETED, label: t('board.filter.completed'), color: 'var(--color-status-completed)', count: allTasks.filter((t) => releasedSet.has(taskVersion(t))).length });
 
   // One include/exclude option row, shared by the literal options and the smart buckets.
   const toggleRow = (section: keyof BoardFilters, o: FieldOpt) => {
@@ -144,30 +133,31 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
         {o.color && <span style={{ width: 8, height: 8, borderRadius: '50%', background: o.color, flex: '0 0 auto' }} />}
         <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.label}</span>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{o.count}</span>
-        <span onClick={() => s.cycleFilter(section, o.value, 'inc')} title="Include" style={incBtn(incOn)}>✓</span>
-        <span onClick={() => s.cycleFilter(section, o.value, 'exc')} title="Exclude" style={excBtn(excOn)}>✕</span>
+        <span role="button" tabIndex={0} aria-pressed={incOn} onClick={() => s.cycleFilter(section, o.value, 'inc')} title={t('board.filter.include')} aria-label={`${t('board.filter.include')}: ${o.label}`} style={incBtn(incOn)}>✓</span>
+        <span role="button" tabIndex={0} aria-pressed={excOn} onClick={() => s.cycleFilter(section, o.value, 'exc')} title={t('board.filter.exclude')} aria-label={`${t('board.filter.exclude')}: ${o.label}`} style={excBtn(excOn)}>✕</span>
       </div>
     );
   };
 
   const activeCount =
     FIELD_DEFS.reduce((n, fd) => { const fld = f[fd.key] as { inc: string[]; exc: string[] }; return n + fld.inc.length + fld.exc.length; }, 0)
-    + (f.due !== 'all' ? 1 : 0) + (f.minRice > 0 ? 1 : 0);
+    + (f.due !== 'all' ? 1 : 0);
 
   const curVT = VIEW_TYPES.find((x) => x.v === s.layout) || VIEW_TYPES[0];
-  const groupSummary = DIM_LABEL[s.groupBy] + (s.subGroupBy !== 'none' ? ` → ${DIM_LABEL[s.subGroupBy as Dim]}` : '');
+  const layoutLabel = (l: Layout) => t(`board.layout.${l}`);
+  const groupSummary = dimLabel(s.groupBy) + (s.subGroupBy !== 'none' ? ` → ${dimLabel(s.subGroupBy as Dim)}` : '');
 
   const activeSection = filterPane;
   const sectionDef = activeSection ? FIELD_DEFS.find((d) => d.key === activeSection) : null;
-  const isToggleField = activeSection && activeSection !== 'due' && activeSection !== 'minRice';
+  const isToggleField = activeSection && activeSection !== 'due';
 
   // ── responsive overflow ──────────────────────────────────────────────────────
   // The right-hand controls collapse into a "More" menu when the toolbar can't fit
   // them on one row. Order is display order; we hide from the END (Properties first,
-  // then Versions, Group, View). Measurement is a shrink-to-fit loop on the real
+  // then Group, View). Measurement is a shrink-to-fit loop on the real
   // layout (scrollWidth > clientWidth) rather than per-item width math — robust, and
   // it lets the search input shrink fully before anything collapses.
-  const COLLAPSIBLE = ['viewtype', 'group', 'versions', 'props'] as const;
+  const COLLAPSIBLE = ['viewtype', 'group', 'props'] as const;
   type CollKey = (typeof COLLAPSIBLE)[number];
   const barRef = useRef<HTMLDivElement>(null);
   const [fit, setFit] = useState<BarFit>(() => initialFit(COLLAPSIBLE.length));
@@ -209,63 +199,61 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   useEffect(() => { if (!overflow.length && moreOpen) setMoreOpen(false); }, [overflow.length, moreOpen]);
 
   // ── popover bodies (shared by the inline chip popover and the More flyout) ──────
-  const COLL_LABEL: Record<CollKey, string> = { viewtype: 'View', group: 'Group', versions: 'Versions', props: 'Properties' };
-  const COLL_SUMMARY: Record<CollKey, string> = { viewtype: curVT.label, group: groupSummary, versions: '', props: '' };
+  const COLL_LABEL: Record<CollKey, string> = { viewtype: t('board.toolbar.view'), group: t('board.toolbar.group'), props: t('board.toolbar.properties') };
+  const COLL_SUMMARY: Record<CollKey, string> = { viewtype: layoutLabel(curVT.v), group: groupSummary, props: '' };
 
   const viewTypeBody = (
     <>
-      <div style={sectionLabel}>View type</div>
+      <div style={sectionLabel}>{t('board.toolbar.viewType')}</div>
       {VIEW_TYPES.map((vt) => { const active = s.layout === vt.v; return (
         <div key={vt.v} className="bd-row" onClick={() => { s.setLayout(vt.v); setOpenMenu(null); setMoreOpen(false); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 9px', borderRadius: 7, cursor: 'pointer', fontSize: 13, color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)', background: active ? 'var(--color-accent-soft)' : 'transparent' }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={active ? 'var(--color-accent)' : 'currentColor'} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d={vt.icon} /></svg>
-          <span style={{ flex: 1 }}>{vt.label}</span>
+          <span style={{ flex: 1 }}>{layoutLabel(vt.v)}</span>
         </div>
       ); })}
     </>
   );
   const groupBody = (
     <>
-      <div style={sectionLabel}>Group by</div>
+      <div style={sectionLabel}>{t('board.toolbar.groupBy')}</div>
       {DIMS.map((d) => (
-        <div key={d} className="bd-row" onClick={() => s.setGroupBy(d)} style={optRow}>
+        <div key={d} className="bd-row" role="menuitemradio" aria-checked={s.groupBy === d} onClick={() => s.setGroupBy(d)} style={optRow}>
           <span style={radioBox(s.groupBy === d)}>{s.groupBy === d ? '●' : ''}</span>
-          <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{DIM_LABEL[d]}</span>
+          <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{dimLabel(d)}</span>
         </div>
       ))}
-      <div style={{ ...sectionLabel, marginTop: 3, borderTop: '1px solid var(--color-border)', paddingTop: 8 }}>Then by</div>
-      <div className="bd-row" onClick={() => s.setSubGroupBy('none')} style={optRow}>
+      <div style={{ ...sectionLabel, marginTop: 3, borderTop: '1px solid var(--color-border)', paddingTop: 8 }}>{t('board.toolbar.thenBy')}</div>
+      <div className="bd-row" role="menuitemradio" aria-checked={s.subGroupBy === 'none'} onClick={() => s.setSubGroupBy('none')} style={optRow}>
         <span style={radioBox(s.subGroupBy === 'none')}>{s.subGroupBy === 'none' ? '●' : ''}</span>
-        <span style={{ flex: 1 }}>None</span>
+        <span style={{ flex: 1 }}>{t('board.toolbar.none')}</span>
       </div>
-      {DIMS.filter((d) => d !== s.groupBy).map((d) => (
-        <div key={d} className="bd-row" onClick={() => s.setSubGroupBy(d)} style={optRow}>
+      {DIMS.filter((d) => d !== s.groupBy && d !== 'order').map((d) => (
+        <div key={d} className="bd-row" role="menuitemradio" aria-checked={s.subGroupBy === d} onClick={() => s.setSubGroupBy(d)} style={optRow}>
           <span style={radioBox(s.subGroupBy === d)}>{s.subGroupBy === d ? '●' : ''}</span>
-          <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{DIM_LABEL[d]}</span>
+          <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{dimLabel(d)}</span>
         </div>
       ))}
     </>
   );
   const propsBody = (
     <>
-      <div style={{ ...sectionLabel, padding: '6px 8px 8px' }}>Shown on cards</div>
-      {PROP_DEFS.map(([k, l]) => (
+      <div style={{ ...sectionLabel, padding: '6px 8px 8px' }}>{t('board.toolbar.shownOnCards')}</div>
+      {PROP_DEFS.map((k) => (
         <div key={k} className="bd-row" onClick={() => s.toggleCardProp(k)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 7, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
           <span style={checkBox(s.cardProps[k])}>{s.cardProps[k] ? '✓' : ''}</span>
-          <span style={{ flex: 1 }}>{l}</span>
+          <span style={{ flex: 1 }}>{t(`board.prop.${k}`)}</span>
         </div>
       ))}
     </>
   );
-  const collWidth: Record<CollKey, number> = { viewtype: 196, group: 210, versions: 320, props: 204 };
+  const collWidth: Record<CollKey, number> = { viewtype: 196, group: 210, props: 204 };
   const inlinePopover = (id: CollKey) => {
-    if (id === 'versions') return <VersionsPopover tasks={allTasks} />;
     const body = id === 'viewtype' ? viewTypeBody : id === 'group' ? groupBody : propsBody;
     return <div className="bd-pop" style={{ ...popBase, right: 0, width: collWidth[id] }}>{body}</div>;
   };
   // A collapsed control's body, flown out to the LEFT of the More panel.
   const flyoutAnchor: CSSProperties = { position: 'absolute', top: 0, right: '100%', marginRight: 6 };
   const flyoutPopover = (id: CollKey) => {
-    if (id === 'versions') return <VersionsPopover tasks={allTasks} style={{ ...flyoutAnchor, top: 0, right: '100%', zIndex: 50 }} />;
     const body = id === 'viewtype' ? viewTypeBody : id === 'group' ? groupBody : propsBody;
     return (
       <div className="bd-pop bd-scroll" style={{ ...flyoutAnchor, width: collWidth[id], maxHeight: 'min(520px,72vh)', overflowY: 'auto', background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, boxShadow: 'var(--shadow-lg)', padding: 6, zIndex: 50 }}>{body}</div>
@@ -278,7 +266,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       <Chip key="viewtype">
         <div className="bd-chip" onClick={() => toggle('viewtype')} style={chipTrigger(false)}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d={curVT.icon} /></svg>
-          <span>{curVT.label}</span>
+          <span>{layoutLabel(curVT.v)}</span>
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'viewtype' ? '▲' : '▼'}</span>
         </div>
         {openMenu === 'viewtype' && inlinePopover('viewtype')}
@@ -286,28 +274,19 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
     );
     if (id === 'group') return (
       <Chip key="group">
-        <div className="bd-chip" onClick={() => toggle('group')} style={chipTrigger(s.subGroupBy !== 'none' || s.groupBy !== 'status')}>
-          <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>Group</span>
+        <div className="bd-chip" onClick={() => toggle('group')} style={chipTrigger(s.subGroupBy !== 'none' || s.groupBy !== 'order')}>
+          <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>{t('board.toolbar.group')}</span>
           <span>{groupSummary}</span>
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'group' ? '▲' : '▼'}</span>
         </div>
         {openMenu === 'group' && inlinePopover('group')}
       </Chip>
     );
-    if (id === 'versions') return (
-      <Chip key="versions">
-        <div className="bd-chip" onClick={() => toggle('versions')} title="Manage versions" style={chipTrigger(false)}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M4 7h16M4 12h16M4 17h10" /><circle cx="18" cy="17" r="2.5" /></svg>
-          <span>Versions</span>
-        </div>
-        {openMenu === 'versions' && inlinePopover('versions')}
-      </Chip>
-    );
     return (
       <Chip key="props">
-        <div className="bd-chip" onClick={() => toggle('props')} title="Choose which properties show on cards" style={{ ...chipTrigger(false), gap: 5, padding: '0 10px' }}>
+        <div className="bd-chip" onClick={() => toggle('props')} title={t('board.toolbar.propertiesHint')} style={{ ...chipTrigger(false), gap: 5, padding: '0 10px' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><circle cx="8" cy="7" r="2.4" /><path d="M13 7h7" /><circle cx="16" cy="17" r="2.4" /><path d="M4 17h7" /></svg>
-          <span style={{ fontSize: 12.5 }}>Properties</span>
+          <span style={{ fontSize: 12.5 }}>{t('board.toolbar.properties')}</span>
           <span style={{ fontSize: 9, opacity: 0.7 }}>⌄</span>
         </div>
         {openMenu === 'props' && inlinePopover('props')}
@@ -320,7 +299,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       {/* search — shrinks first so the toolbar stays a single row on narrower widths */}
       <div style={{ position: 'relative', flex: '0 1 212px', minWidth: 130 }}>
         <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>⌕</span>
-        <input className="bd-input" value={s.search} onChange={(e) => s.setSearch(e.target.value)} placeholder="Search tasks…" spellCheck={false}
+        <input className="bd-input" value={s.search} onChange={(e) => s.setSearch(e.target.value)} placeholder={t('board.toolbar.search')} aria-label={t('board.toolbar.search')} spellCheck={false}
           style={{ width: '100%', height: 34, padding: '0 12px 0 32px', borderRadius: 9, border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'var(--color-text)', fontSize: 13, fontFamily: 'var(--font-family-text)', outline: 'none' }} />
       </div>
 
@@ -328,7 +307,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       <div style={{ position: 'relative', flex: '0 0 auto' }}>
         <div className="bd-chip" onClick={() => toggle('filter')} style={chipTrigger(activeCount > 0)}>
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ flex: '0 0 auto' }}><path d="M2 3.2h12L9.2 8.6V13L6.8 14V8.6L2 3.2Z" fill="currentColor" /></svg>
-          <span>Filter</span>
+          <span>{t('board.toolbar.filter')}</span>
           {activeCount > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)' }}>{activeCount}</span>}
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'filter' ? '▲' : '▼'}</span>
         </div>
@@ -337,8 +316,8 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
             {!activeSection ? (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px 9px', margin: '-6px -6px 5px', background: 'var(--color-bg-elevated)', borderBottom: '1px solid var(--color-border)', borderRadius: '11px 11px 0 0' }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-text)', flex: 1 }}>Filter by</span>
-                  {activeCount > 0 && <span className="bd-danger" onClick={s.clearAllFilters} style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>Clear all</span>}
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-text)', flex: 1 }}>{t('board.filter.by')}</span>
+                  {activeCount > 0 && <span className="bd-danger" onClick={s.clearAllFilters} style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>{t('board.filter.clearAll')}</span>}
                 </div>
                 {FIELD_DEFS.map((fd) => { const sum = fieldSummary(fd.key); return (
                   <div key={fd.key} className="bd-row" onClick={() => setFilterPane(fd.key)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
@@ -348,49 +327,38 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
                   </div>
                 ); })}
                 <div className="bd-row" onClick={() => setFilterPane('due')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                  <span style={{ flex: 1, fontWeight: 500 }}>Due date</span>
-                  <span style={{ fontSize: 11.5, color: f.due !== 'all' ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>{f.due === 'all' ? 'Any' : (DUE_OPTS.find((o) => o.v === f.due)?.l ?? 'Any')}</span>
-                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>›</span>
-                </div>
-                <div className="bd-row" onClick={() => setFilterPane('minRice')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                  <span style={{ flex: 1, fontWeight: 500 }}>Min RICE</span>
-                  <span style={{ fontSize: 11.5, color: f.minRice > 0 ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>{f.minRice > 0 ? `≥ ${f.minRice}` : 'Any'}</span>
+                  <span style={{ flex: 1, fontWeight: 500 }}>{t('board.filter.due')}</span>
+                  <span style={{ fontSize: 11.5, color: f.due !== 'all' ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>{f.due === 'all' ? t('board.filter.any') : t(`board.due.${f.due}`)}</span>
                   <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>›</span>
                 </div>
               </div>
             ) : (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 6px 9px', margin: '-6px -6px 5px', background: 'var(--color-bg-elevated)', borderBottom: '1px solid var(--color-border)', borderRadius: '11px 11px 0 0' }}>
-                  <span className="bd-hover bd-hover-text" onClick={() => setFilterPane(null)} title="Back" style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 15, flex: '0 0 auto' }}>‹</span>
-                  <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-text)', flex: 1 }}>{activeSection === 'due' ? 'Due date' : activeSection === 'minRice' ? 'Min RICE' : sectionDef?.label}</span>
+                  <span className="bd-hover bd-hover-text" role="button" tabIndex={0} onClick={() => setFilterPane(null)} title={t('board.filter.back')} aria-label={t('board.filter.back')} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 15, flex: '0 0 auto' }}>‹</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-text)', flex: 1 }}>{activeSection === 'due' ? t('board.filter.due') : sectionDef?.label}</span>
                   {isToggleField && (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
-                      <span style={{ display: 'inline-flex', width: 14, height: 14, borderRadius: 5, alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: '#fff', fontSize: 8 }}>✓</span>is
-                      <span style={{ display: 'inline-flex', width: 14, height: 14, borderRadius: 5, alignItems: 'center', justifyContent: 'center', background: 'var(--color-error)', color: '#fff', fontSize: 8, marginLeft: 3 }}>✕</span>not
+                      <span style={{ display: 'inline-flex', width: 14, height: 14, borderRadius: 5, alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: '#fff', fontSize: 8 }}>✓</span>{t('board.filter.is')}
+                      <span style={{ display: 'inline-flex', width: 14, height: 14, borderRadius: 5, alignItems: 'center', justifyContent: 'center', background: 'var(--color-error)', color: '#fff', fontSize: 8, marginLeft: 3 }}>✕</span>{t('board.filter.not')}
                     </span>
                   )}
-                  <span className="bd-danger" onClick={() => s.clearField(activeSection)} style={{ fontSize: 11, color: 'var(--color-text-tertiary)', cursor: 'pointer', flex: '0 0 auto' }}>Clear</span>
+                  <span className="bd-danger" onClick={() => s.clearField(activeSection)} style={{ fontSize: 11, color: 'var(--color-text-tertiary)', cursor: 'pointer', flex: '0 0 auto' }}>{t('board.filter.clear')}</span>
                 </div>
 
                 {activeSection === 'due' && DUE_OPTS.map((o) => (
-                  <div key={o.v} className="bd-row" onClick={() => s.setDue(o.v)} style={optRow}>
-                    <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{o.l}</span>
-                    <span style={radioBox(f.due === o.v)}>{f.due === o.v ? '●' : ''}</span>
-                  </div>
-                ))}
-                {activeSection === 'minRice' && RICE_OPTS.map((o) => (
-                  <div key={o.v} className="bd-row" onClick={() => s.setMinRice(o.v)} style={optRow}>
-                    <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{o.l}</span>
-                    <span style={radioBox(f.minRice === o.v)}>{f.minRice === o.v ? '●' : ''}</span>
+                  <div key={o} className="bd-row" role="menuitemradio" aria-checked={f.due === o} onClick={() => s.setDue(o)} style={optRow}>
+                    <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{t(`board.due.${o}`)}</span>
+                    <span style={radioBox(f.due === o)}>{f.due === o ? '●' : ''}</span>
                   </div>
                 ))}
                 {isToggleField && activeSection === 'version' && (
                   <>
                     {versionVirtuals.length > 0 && (
                       <>
-                        <div style={{ ...sectionLabel, padding: '4px 8px 3px' }}>Smart</div>
+                        <div style={{ ...sectionLabel, padding: '4px 8px 3px' }}>{t('board.filter.smart')}</div>
                         {versionVirtuals.map((o) => toggleRow('version', o))}
-                        <div style={{ ...sectionLabel, padding: '9px 8px 3px', marginTop: 2, borderTop: '1px solid var(--color-border)' }}>Versions</div>
+                        <div style={{ ...sectionLabel, padding: '9px 8px 3px', marginTop: 2, borderTop: '1px solid var(--color-border)' }}>{t('board.filter.versions')}</div>
                       </>
                     )}
                     {fieldOpts('version').map((o) => toggleRow('version', o))}
@@ -403,24 +371,33 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
         )}
       </div>
 
+      {/* The board's two groupings, one click apart: the "when?" axis or the status pipeline. */}
+      <div role="group" aria-label={t('board.toolbar.groupBy')} style={{ display: 'flex', flex: '0 0 auto', gap: 4 }}>
+        {(['order', 'status'] as const).map((d) => (
+          <button key={d} type="button" className="bd-chip bd-seg-btn" aria-pressed={s.groupBy === d} onClick={() => s.setGroupBy(d)} style={{ ...chipTrigger(s.groupBy === d), minHeight: 34 }}>
+            {dimLabel(d)}
+          </button>
+        ))}
+      </div>
+
       {/* sort — sits beside Filter on the left */}
       <Chip>
         <div className="bd-chip" onClick={() => toggle('sort')} style={chipTrigger(s.sortBy !== 'manual')}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3" /></svg>
-          <span>{SORT_LABEL[s.sortBy]}</span>
+          <span>{t(`board.sort.${s.sortBy}`)}</span>
           <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'sort' ? '▲' : '▼'}</span>
         </div>
         {openMenu === 'sort' && (
           <div className="bd-pop" style={{ ...popBase, left: 0, width: 190 }}>
-            <div style={sectionLabel}>Sort by</div>
-            {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
-              <div key={k} className="bd-row" onClick={() => s.setSort(k)} style={optRow}>
+            <div style={sectionLabel}>{t('board.toolbar.sortBy')}</div>
+            {SORT_KEYS.map((k) => (
+              <div key={k} className="bd-row" role="menuitemradio" aria-checked={s.sortBy === k} onClick={() => s.setSort(k)} style={optRow}>
                 <span style={radioBox(s.sortBy === k)}>{s.sortBy === k ? '●' : ''}</span>
-                <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{SORT_LABEL[k]}</span>
+                <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{t(`board.sort.${k}`)}</span>
               </div>
             ))}
             <div onClick={s.sortBy === 'manual' ? undefined : s.toggleSortDir} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4, padding: '8px 9px', borderTop: '1px solid var(--color-border)', cursor: s.sortBy === 'manual' ? 'default' : 'pointer', fontSize: 12, color: s.sortBy === 'manual' ? 'var(--color-text-tertiary)' : 'var(--color-text-secondary)', opacity: s.sortBy === 'manual' ? 0.5 : 1 }}>
-              <span>{s.sortDir === 'asc' ? 'Ascending' : 'Descending'}</span>
+              <span>{s.sortDir === 'asc' ? t('board.sort.asc') : t('board.sort.desc')}</span>
               <span style={{ fontSize: 13 }}>{s.sortDir === 'asc' ? '↑' : '↓'}</span>
             </div>
           </div>
@@ -436,23 +413,23 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       {/* hard refresh — wipe local mirrors + ledger, re-pull everything from the remote */}
       {cloudEnabled && !cloudSync.syncing && <HardRefreshChip cs={cloudSync} chipStyle={chipTrigger(false)} />}
 
-      {/* collapsible controls — View / Group / Versions / Properties.
+      {/* collapsible controls — View / Group / Properties.
           Whatever doesn't fit moves into the "More" menu (see below). */}
       {visible.map((id) => collapsibleChip(id))}
 
       {/* overflow "More" menu — holds the collapsed controls */}
       {overflow.length > 0 && (
         <div style={{ position: 'relative', flex: '0 0 auto' }}>
-          <div className="bd-chip" onClick={() => { setMoreOpen((o) => !o); setOpenMenu(null); }} title="More controls" style={chipTrigger(moreOpen)}>
+          <div className="bd-chip" onClick={() => { setMoreOpen((o) => !o); setOpenMenu(null); }} title={t('board.toolbar.moreControls')} style={chipTrigger(moreOpen)}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flex: '0 0 auto' }}><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg>
-            <span>More</span>
+            <span>{t('board.toolbar.more')}</span>
             <span style={{ fontSize: 9, opacity: 0.7 }}>{moreOpen ? '▲' : '▼'}</span>
           </div>
           {moreOpen && (
             <>
               <div onClick={() => { setMoreOpen(false); setOpenMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 44 }} />
               <div className="bd-pop" style={{ ...popBase, right: 0, width: 230, zIndex: 46 }}>
-                <div style={{ ...sectionLabel, padding: '6px 8px 6px' }}>More controls</div>
+                <div style={{ ...sectionLabel, padding: '6px 8px 6px' }}>{t('board.toolbar.moreControls')}</div>
                 {overflow.map((id) => (
                   <div key={id} style={{ position: 'relative' }}>
                     <div className="bd-row" onClick={() => setOpenMenu(openMenu === id ? null : id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: openMenu === id ? 'var(--color-text)' : 'var(--color-text-secondary)', background: openMenu === id ? 'var(--color-bg-secondary)' : 'transparent' }}>
@@ -471,12 +448,12 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
 
       {/* new task — plain button on web; a split button on desktop where an agent can author.
           The primary click always opens the manual form (least surprise, A1); the caret reveals
-          the "Author with agent" power path alongside it. */}
+          writing it with an agent (the door's `author` choice) alongside it. */}
       {agentReady ? (
         <div style={{ position: 'relative', flex: '0 0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', height: 34, borderRadius: 9, overflow: 'hidden', boxShadow: '0 4px 12px -4px var(--color-accent)' }}>
-            <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600 }}>+ New Task</div>
-            <div onClick={() => toggle('newtask')} title="More ways to create a task" className="bd-chip" style={{ display: 'flex', alignItems: 'center', padding: '0 8px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', borderLeft: '1px solid rgba(255,255,255,0.28)' }}>
+            <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600 }}>{t('board.toolbar.newTask')}</div>
+            <div onClick={() => toggle('newtask')} title={t('board.toolbar.newTaskMore')} aria-label={t('board.toolbar.newTaskMore')} className="bd-chip" style={{ display: 'flex', alignItems: 'center', padding: '0 8px', cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', borderLeft: '1px solid rgba(255,255,255,0.28)' }}>
               <span style={{ fontSize: 9, opacity: 0.9, transform: openMenu === 'newtask' ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }}>▼</span>
             </div>
           </div>
@@ -485,22 +462,22 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
               <div className="bd-row" onClick={() => { setOpenMenu(null); onNewTask(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M14 3v4a1 1 0 0 0 1 1h4M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /></svg>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Blank form</span>
-                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Fill in the fields yourself</span>
+                  <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>{t('board.toolbar.blankForm')}</span>
+                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{t('board.toolbar.blankFormHint')}</span>
                 </span>
               </div>
               <div className="bd-row" onClick={() => { setOpenMenu(null); onAuthorWithAgent(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-accent)' }}>
                 <span style={{ display: 'inline-flex', flex: '0 0 auto' }}><SparkIcon size={15} /></span>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <span style={{ fontWeight: 600 }}>Author with agent</span>
-                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Describe it; Claude specs &amp; creates it</span>
+                  <span style={{ fontWeight: 600 }}>{t('board.toolbar.author')}</span>
+                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{t('board.toolbar.authorHint')}</span>
                 </span>
               </div>
             </div>
           )}
         </div>
       ) : (
-        <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Task</div>
+        <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>{t('board.toolbar.newTask')}</div>
       )}
     </div>
   );

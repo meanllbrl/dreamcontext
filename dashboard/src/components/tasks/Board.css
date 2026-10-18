@@ -111,3 +111,87 @@
   background-clip: padding-box;
 }
 .bd-scroll::-webkit-scrollbar-thumb:hover { background: var(--color-border-hover); background-clip: padding-box; }
+
+/* ── The order board (plan r3 § 5b) ── */
+
+/* Keyboard focus is visible on every board control. */
+.bd-card:focus-visible,
+.bd-col-head:focus-visible,
+.bd-col-add:focus-visible,
+.bd-rollup:focus-visible,
+.bd-seg-btn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+/* A parent card's n/m roll-up, which opens its sub-tasks in place. */
+.bd-rollup {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--space-6);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.bd-rollup:disabled { cursor: default; }
+
+.bd-node { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.bd-nested {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-left: var(--space-4);
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--color-border);
+}
+
+.bd-orphans { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.bd-orphans-head {
+  padding: 0 var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+/* Below 640 px the board shows one column at a time, picked with a segmented control. */
+.bd-seg {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) 0;
+  overflow-x: auto;
+}
+
+.bd-seg-btn {
+  flex: 1 0 auto;
+  min-height: var(--space-11);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.bd-seg-btn[aria-pressed='true'] {
+  border-color: var(--color-accent-strong);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+}
+
+@media (max-width: 640px) {
+  .bd-card,
+  .bd-rollup,
+  .bd-col-add { min-height: var(--space-11); }
+}

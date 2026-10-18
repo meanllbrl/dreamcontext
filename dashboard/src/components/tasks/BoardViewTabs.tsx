@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { BoardView } from './boardModel';
+import { useI18n } from '../../context/I18nContext';
 
 interface BoardViewTabsProps {
   views: BoardView[];
@@ -20,6 +21,7 @@ interface BoardViewTabsProps {
 }
 
 export function BoardViewTabs(p: BoardViewTabsProps) {
+  const { t } = useI18n();
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState('');
   // The kebab menu must escape the tab bar's overflow-x:auto clipping, so it
@@ -40,7 +42,7 @@ export function BoardViewTabs(p: BoardViewTabsProps) {
   useEffect(() => { if (renamingId) { renameRef.current?.focus(); renameRef.current?.select(); } }, [renamingId]);
 
   // "+ New view" → create a blank view straight away, then enter rename mode on it.
-  const startCreate = () => { const id = p.onCreateBlank(); setRenameVal('New view'); setRenamingId(id); };
+  const startCreate = () => { const id = p.onCreateBlank(); setRenameVal(t('board.view.new')); setRenamingId(id); };
   const startRename = (v: BoardView) => { setRenameVal(v.name); setRenamingId(v.id); p.onMenuToggle(null); };
   const confirmRename = () => {
     if (renamingId && renameVal.trim()) p.onRename(renamingId, renameVal.trim());
@@ -63,6 +65,7 @@ export function BoardViewTabs(p: BoardViewTabsProps) {
               onChange={(e) => setRenameVal(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') confirmRename(); else if (e.key === 'Escape') setRenamingId(null); }}
               onBlur={confirmRename}
+              aria-label={t('board.view.rename')}
               spellCheck={false}
               style={{ width: 130, height: 30, padding: '0 10px', borderRadius: 9, border: '1px solid var(--color-accent)', background: 'var(--color-bg-secondary)', color: 'var(--color-text)', fontSize: 13, fontFamily: 'var(--font-family-text)', outline: 'none', flex: '0 0 auto' }}
             />
@@ -84,12 +87,14 @@ export function BoardViewTabs(p: BoardViewTabsProps) {
           >
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: active ? 'var(--color-accent)' : 'var(--color-text-tertiary)', flex: '0 0 auto' }} />
             <span style={{ whiteSpace: 'nowrap' }}>{v.name}</span>
-            {v.hasLocalOverride && <span title="You have a private override of this shared view" style={{ fontSize: 10, color: 'var(--color-accent)' }}>•yours</span>}
+            {v.hasLocalOverride && <span title={t('board.view.yoursHint')} style={{ fontSize: 10, color: 'var(--color-accent)' }}>{t('board.view.yours')}</span>}
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: active ? 'var(--color-accent)' : 'var(--color-text-tertiary)', background: active ? 'transparent' : 'var(--color-bg-tertiary)', padding: '0 6px', borderRadius: 20 }}>{p.counts[v.id] ?? 0}</span>
             <span
               className="bd-hover bd-hover-text"
               onClick={(e) => openMenu(e, v.id)}
-              title="View options"
+              title={t('board.view.options')}
+              aria-label={t('board.view.options')}
+              role="button"
               style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, fontSize: 13, color: 'var(--color-text-tertiary)', flex: '0 0 auto' }}
             >⋯</span>
           </div>
@@ -101,27 +106,27 @@ export function BoardViewTabs(p: BoardViewTabsProps) {
         <>
           <div onClick={closeMenu} style={{ position: 'fixed', inset: 0, zIndex: 110 }} />
           <div className="bd-pop" style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, width: 156, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', borderRadius: 9, boxShadow: 'var(--shadow-lg)', padding: 5, zIndex: 120 }}>
-            <div className="bd-row" onClick={() => { setMenuPos(null); startRename(openView); }} style={menuItem()}><span style={menuGlyph}>✎</span>Rename</div>
-            <div className="bd-row" onClick={() => { p.onDuplicate(openView.id); closeMenu(); }} style={menuItem()}><span style={menuGlyph}>⧉</span>Duplicate</div>
+            <div className="bd-row" onClick={() => { setMenuPos(null); startRename(openView); }} style={menuItem()}><span style={menuGlyph}>✎</span>{t('board.view.rename')}</div>
+            <div className="bd-row" onClick={() => { p.onDuplicate(openView.id); closeMenu(); }} style={menuItem()}><span style={menuGlyph}>⧉</span>{t('board.view.duplicate')}</div>
             {openView.removable ? (
-              <div className="bd-danger" onClick={() => { p.onDelete(openView.id); closeMenu(); }} style={menuItem('var(--color-error)')}><span style={menuGlyph}>🗑</span>Delete</div>
+              <div className="bd-danger" onClick={() => { p.onDelete(openView.id); closeMenu(); }} style={menuItem('var(--color-error)')}><span style={menuGlyph}>🗑</span>{t('board.view.delete')}</div>
             ) : (
-              <div style={{ ...menuItem('var(--color-text-tertiary)'), cursor: 'default' }}><span style={menuGlyph}>🔒</span>Default view</div>
+              <div style={{ ...menuItem('var(--color-text-tertiary)'), cursor: 'default' }}><span style={menuGlyph}>🔒</span>{t('board.view.default')}</div>
             )}
           </div>
         </>,
         document.body,
       )}
 
-      <div className="bd-hover bd-hover-text" onClick={startCreate} title="Create a new blank view (Kanban, no filters)" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', color: 'var(--color-text-tertiary)', fontSize: 12.5, fontWeight: 500, flex: '0 0 auto' }}>+ New view</div>
+      <div className="bd-hover bd-hover-text" onClick={startCreate} title={t('board.view.newHint')} role="button" tabIndex={0} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', color: 'var(--color-text-tertiary)', fontSize: 12.5, fontWeight: 500, flex: '0 0 auto' }}>{t('board.view.newButton')}</div>
 
       <div style={{ flex: 1, minWidth: 8 }} />
 
       {p.isDirty && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: '0 0 auto' }}>
-          <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-family-text)' }}>Unsaved changes</span>
-          <span className="bd-hover" onClick={p.onReset} title="Revert to saved" style={{ padding: '5px 10px', borderRadius: 8, cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 12, border: '1px solid var(--color-border)' }}>Reset</span>
-          <span className="bd-chip" onClick={p.onRequestSave} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 8, cursor: 'pointer', background: 'var(--color-accent-soft)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 600, border: '1px solid var(--color-accent)' }}>Save view</span>
+          <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-family-text)' }}>{t('board.view.unsaved')}</span>
+          <span className="bd-hover" onClick={p.onReset} title={t('board.view.resetHint')} style={{ padding: '5px 10px', borderRadius: 8, cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 12, border: '1px solid var(--color-border)' }}>{t('board.view.reset')}</span>
+          <span className="bd-chip" onClick={p.onRequestSave} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 8, cursor: 'pointer', background: 'var(--color-accent-soft)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 600, border: '1px solid var(--color-accent)' }}>{t('board.view.save')}</span>
         </div>
       )}
     </div>

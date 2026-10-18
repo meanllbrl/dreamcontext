@@ -13,12 +13,19 @@
  */
 import type { Task, TaskBase } from '../../hooks/useTasks';
 import { DEFAULT_STATUS_MODEL, type StatusModel } from '../../lib/statusModel';
+import { orderOf, type Order } from './taskOrder';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────────
 
-export type Layout = 'board' | 'list' | 'eisenhower' | 'scatter' | 'timeline' | 'calendar' | 'heatmap';
-export type Dim = 'status' | 'priority' | 'urgency' | 'version' | 'assignee';
-export type SortKey = 'manual' | 'priority' | 'urgency' | 'due' | 'rice' | 'updated' | 'created' | 'name';
+/**
+ * Board, List and Timeline. Eisenhower, RICE, Calendar and Heatmap were retired (plan r3 § 5c,
+ * decisions 3 and 10): a saved view that named one opens on the Board.
+ */
+export type Layout = 'board' | 'list' | 'timeline';
+export const LAYOUTS: readonly Layout[] = ['board', 'list', 'timeline'];
+/** `order` is the "when?" axis (Now / Next / Later); importance is the rank inside it. */
+export type Dim = 'order' | 'status' | 'version' | 'assignee';
+export type SortKey = 'manual' | 'rank' | 'due' | 'updated' | 'created' | 'name';
 export type SortDir = 'asc' | 'desc';
 export type DueFilter = 'all' | 'overdue' | 'today' | 'risk' | 'has' | 'none';
 export type SaveScope = 'shared' | 'local';
@@ -30,9 +37,10 @@ export type SaveScope = 'shared' | 'local';
  * pure helpers' defaults and for callers outside React.
  */
 export const STATUS_ORDER = ['todo', 'in_progress', 'in_review', 'completed'] as const;
+/** The priority levels a new task may be authored with (the field stays readable on old cards). */
 export const PRIO_ORDER = ['critical', 'high', 'medium', 'low'] as const;
-export const URG_ORDER = ['critical', 'high', 'medium', 'low'] as const;
-export const DIMS: Dim[] = ['status', 'priority', 'urgency', 'version', 'assignee'];
+export const DIMS: Dim[] = ['order', 'status', 'version', 'assignee'];
+export const SORT_KEYS: readonly SortKey[] = ['manual', 'rank', 'due', 'updated', 'created', 'name'];
 
 export const STATUS_META: Record<string, { label: string; color: string }> = {
   todo: { label: 'To Do', color: 'var(--color-status-todo)' },
@@ -40,30 +48,19 @@ export const STATUS_META: Record<string, { label: string; color: string }> = {
   in_review: { label: 'In Review', color: 'var(--color-status-in-review)' },
   completed: { label: 'Completed', color: 'var(--color-status-completed)' },
 };
-const LEVEL_META: Record<string, { label: string; prio: string; urg: string }> = {
-  critical: { label: 'Critical', prio: 'var(--color-priority-critical)', urg: 'var(--color-urgency-critical)' },
-  high: { label: 'High', prio: 'var(--color-priority-high)', urg: 'var(--color-urgency-high)' },
-  medium: { label: 'Medium', prio: 'var(--color-priority-medium)', urg: 'var(--color-urgency-medium)' },
-  low: { label: 'Low', prio: 'var(--color-priority-low)', urg: 'var(--color-urgency-low)' },
-};
-
-export const DIM_LABEL: Record<Dim, string> = {
-  status: 'Status', priority: 'Priority', urgency: 'Urgency', version: 'Version', assignee: 'Assignee',
-};
-export const SORT_LABEL: Record<SortKey, string> = {
-  manual: 'Manual', priority: 'Priority', urgency: 'Urgency', due: 'Due date',
-  rice: 'RICE score', updated: 'Last updated', created: 'Created', name: 'Name',
-};
+const LEVEL_LABEL: Record<string, string> = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
 
 // ─── Config shapes ───────────────────────────────────────────────────────────────
 
 export interface FieldFilter { inc: string[]; exc: string[]; }
 export interface BoardFilters {
-  status: FieldFilter; priority: FieldFilter; urgency: FieldFilter;
-  tags: FieldFilter; version: FieldFilter; assignee: FieldFilter;
-  due: DueFilter; minRice: number;
+  status: FieldFilter; tags: FieldFilter; version: FieldFilter; assignee: FieldFilter;
+  due: DueFilter;
 }
+/** The saved-view shape this build writes. A stored view without it is migrated on read. */
+export const CONFIG_VERSION = 2;
 export interface ViewConfig {
+  configVersion: typeof CONFIG_VERSION;
   filters: BoardFilters;
   groupBy: Dim;
   subGroupBy: Dim | 'none';
@@ -83,8 +80,7 @@ export interface BoardView {
   hasLocalOverride?: boolean;
 }
 export interface CardProps {
-  description: boolean; tags: boolean; priority: boolean; urgency: boolean;
-  due: boolean; rice: boolean; assignee: boolean; version: boolean;
+  description: boolean; tags: boolean; due: boolean; assignee: boolean; version: boolean;
 }
 
 export interface SharedBoard {
@@ -104,24 +100,23 @@ export interface LocalBoard {
 
 // ─── Defaults ────────────────────────────────────────────────────────────────────
 
-export const FILTER_FIELDS: (keyof BoardFilters)[] = ['status', 'priority', 'urgency', 'tags', 'version', 'assignee'];
+export const FILTER_FIELDS: (keyof BoardFilters)[] = ['status', 'tags', 'version', 'assignee'];
 
 export function emptyFieldFilter(): FieldFilter { return { inc: [], exc: [] }; }
 export function emptyFilters(): BoardFilters {
   return {
-    status: emptyFieldFilter(), priority: emptyFieldFilter(), urgency: emptyFieldFilter(),
-    tags: emptyFieldFilter(), version: emptyFieldFilter(), assignee: emptyFieldFilter(),
-    due: 'all', minRice: 0,
+    status: emptyFieldFilter(), tags: emptyFieldFilter(), version: emptyFieldFilter(), assignee: emptyFieldFilter(),
+    due: 'all',
   };
 }
 export const DEFAULT_CARD_PROPS: CardProps = {
-  description: true, tags: true, priority: true, urgency: true,
-  due: true, rice: false, assignee: true, version: false,
+  description: true, tags: true, due: true, assignee: true, version: false,
 };
 
 export function emptyConfig(over: Partial<ViewConfig> = {}): ViewConfig {
   return {
-    filters: emptyFilters(), groupBy: 'status', subGroupBy: 'none',
+    configVersion: CONFIG_VERSION,
+    filters: emptyFilters(), groupBy: 'order', subGroupBy: 'none',
     layout: 'board', sortBy: 'manual', sortDir: 'desc', search: '', ...over,
   };
 }
@@ -135,7 +130,7 @@ export function defaultViews(): BoardView[] {
     { id: 'all', name: 'All Tasks', removable: false, config: emptyConfig() },
     {
       id: 'atrisk', name: 'At Risk', removable: true,
-      config: emptyConfig({ filters: { ...emptyFilters(), due: 'risk' }, groupBy: 'priority', sortBy: 'due', sortDir: 'asc' }),
+      config: emptyConfig({ filters: { ...emptyFilters(), due: 'risk' }, groupBy: 'order', sortBy: 'due', sortDir: 'asc' }),
     },
   ];
 }
@@ -177,23 +172,47 @@ function normVersionFilter(fld: FieldFilter): FieldFilter {
   };
   return { inc: migrate(fld.inc), exc: migrate(fld.exc) };
 }
+/** Priority, urgency and the RICE floor are no longer filters (decision 3): a stored one is dropped. */
 function normFilters(v: unknown): BoardFilters {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   return {
-    status: asFieldFilter(o.status), priority: asFieldFilter(o.priority), urgency: asFieldFilter(o.urgency),
+    status: asFieldFilter(o.status),
     tags: asFieldFilter(o.tags), version: normVersionFilter(asFieldFilter(o.version)), assignee: asFieldFilter(o.assignee),
     due: (typeof o.due === 'string' ? o.due : 'all') as DueFilter,
-    minRice: typeof o.minRice === 'number' ? o.minRice : 0,
   };
 }
-function normConfig(v: unknown): ViewConfig {
+
+/** The built-in views, whose shipped grouping changed with configVersion 2. */
+const BUILT_IN_REGROUP: Record<string, string> = { all: 'status', atrisk: 'priority' };
+/** Dims and sorts that left the board, and where a stored view that used one goes. */
+const RETIRED_DIM: Record<string, Dim> = { priority: 'order', urgency: 'order' };
+const RETIRED_SORT: Record<string, SortKey> = { priority: 'rank', urgency: 'rank', rice: 'rank' };
+
+/**
+ * One stored view config, normalised to configVersion 2 (plan r3 § 5b):
+ *  - a retired layout (eisenhower, scatter, calendar, heatmap) opens on the Board;
+ *  - the built-in `all` view's `status` grouping and `atrisk`'s `priority` grouping become `order`;
+ *  - any view grouped or sorted by priority or urgency (or sorted by RICE) moves to order / rank;
+ *  - priority, urgency and RICE filters are dropped.
+ * A user view grouped by status keeps it. A config already at version 2 is only validated.
+ */
+export function normConfig(v: unknown, viewId?: string): ViewConfig {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const migrate = o.configVersion !== CONFIG_VERSION;
+  let groupBy = typeof o.groupBy === 'string' ? o.groupBy : migrate ? 'status' : 'order';
+  if (RETIRED_DIM[groupBy]) groupBy = RETIRED_DIM[groupBy];
+  if (migrate && viewId && BUILT_IN_REGROUP[viewId] !== undefined && (o.groupBy === undefined || o.groupBy === BUILT_IN_REGROUP[viewId])) groupBy = 'order';
+  let subGroupBy = typeof o.subGroupBy === 'string' ? o.subGroupBy : 'none';
+  if (RETIRED_DIM[subGroupBy] || subGroupBy === 'order' || subGroupBy === groupBy) subGroupBy = 'none';
+  let sortBy = typeof o.sortBy === 'string' ? o.sortBy : 'manual';
+  if (RETIRED_SORT[sortBy]) sortBy = RETIRED_SORT[sortBy];
+  const layout = typeof o.layout === 'string' && (LAYOUTS as readonly string[]).includes(o.layout) ? o.layout as Layout : 'board';
   return emptyConfig({
     filters: normFilters(o.filters),
-    groupBy: (DIMS.includes(o.groupBy as Dim) ? o.groupBy : 'status') as Dim,
-    subGroupBy: (o.subGroupBy === 'none' || DIMS.includes(o.subGroupBy as Dim) ? o.subGroupBy : 'none') as Dim | 'none',
-    layout: (typeof o.layout === 'string' ? o.layout : 'board') as Layout,
-    sortBy: (typeof o.sortBy === 'string' ? o.sortBy : 'manual') as SortKey,
+    groupBy: (DIMS.includes(groupBy as Dim) ? groupBy : 'order') as Dim,
+    subGroupBy: (subGroupBy === 'none' || DIMS.includes(subGroupBy as Dim) ? subGroupBy : 'none') as Dim | 'none',
+    layout,
+    sortBy: (SORT_KEYS.includes(sortBy as SortKey) ? sortBy : 'manual') as SortKey,
     sortDir: (o.sortDir === 'asc' ? 'asc' : 'desc') as SortDir,
     search: typeof o.search === 'string' ? o.search : '',
   });
@@ -201,7 +220,7 @@ function normConfig(v: unknown): ViewConfig {
 function normView(v: unknown): BoardView | null {
   const o = (v && typeof v === 'object' ? v : null) as Record<string, unknown> | null;
   if (!o || typeof o.id !== 'string' || typeof o.name !== 'string') return null;
-  return { id: o.id, name: o.name, removable: o.removable !== false, config: normConfig(o.config) };
+  return { id: o.id, name: o.name, removable: o.removable !== false, config: normConfig(o.config, o.id) };
 }
 function normCardProps(v: unknown): CardProps | null {
   if (!v || typeof v !== 'object') return null;
@@ -225,7 +244,7 @@ export function normLocalBoard(raw: unknown): LocalBoard {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const overrides: Record<string, ViewConfig> = {};
   if (o.overrides && typeof o.overrides === 'object') {
-    for (const [k, val] of Object.entries(o.overrides as Record<string, unknown>)) overrides[k] = normConfig(val);
+    for (const [k, val] of Object.entries(o.overrides as Record<string, unknown>)) overrides[k] = normConfig(val, k);
   }
   return {
     schema: 1,
@@ -265,9 +284,6 @@ export function taskName(t: TaskBase): string {
   return t.name && t.name.trim() ? t.name : t.slug.replace(/-/g, ' ');
 }
 export function taskDue(t: Task): string | null { return t.due_date ?? null; }
-export function taskRice(t: Task): number | null {
-  return t.rice && typeof t.rice.score === 'number' ? t.rice.score : null;
-}
 const PERSON_TAG = 'person:';
 /**
  * Every assignee on a task, as person-slugs. Assignment lives in `person:<slug>`
@@ -307,9 +323,7 @@ export function taskAgent(t: TaskBase): string | null {
 }
 export function taskVersion(t: Task): string { return t.version && t.version.trim() ? t.version : 'none'; }
 
-export function levelLabel(k: string): string { return LEVEL_META[k]?.label ?? k; }
-export function prioColor(k: string): string { return LEVEL_META[k]?.prio ?? 'var(--color-text-tertiary)'; }
-export function urgColor(k: string): string { return LEVEL_META[k]?.urg ?? 'var(--color-text-tertiary)'; }
+export function levelLabel(k: string): string { return LEVEL_LABEL[k] ?? k; }
 
 export function assigneeInitials(slug: string, name?: string): string {
   if (slug === 'none') return '–';
@@ -378,11 +392,11 @@ export function fmtUpdated(s: string | undefined): string {
 
 // ─── Dim accessor + filtering + sorting + grouping ───────────────────────────────
 
-export function dimGet(t: Task, dim: Dim): string {
+export function dimGet(t: Task, dim: Dim, activeCycleId: string | null = null): string {
   if (dim === 'status') return t.status;
   if (dim === 'version') return taskVersion(t);
   if (dim === 'assignee') return taskAssignee(t);
-  return t[dim] as string;
+  return orderOf(t, activeCycleId);
 }
 
 function matchField(val: string, fld: FieldFilter | undefined): boolean {
@@ -473,13 +487,10 @@ export function filterTasks(tasks: Task[], f: BoardFilters, search: string, vers
   const q = (search || '').trim().toLowerCase();
   return tasks.filter((t) => {
     if (!matchField(t.status, f.status)) return false;
-    if (!matchField(t.priority, f.priority)) return false;
-    if (!matchField(t.urgency, f.urgency)) return false;
     if (!matchAssignee(t, f.assignee)) return false;
     if (!matchVersionField(taskVersion(t), f.version, versionMeta)) return false;
     if (f.tags.inc.length && !f.tags.inc.some((tg) => t.tags.includes(tg))) return false;
     if (f.tags.exc.length && f.tags.exc.some((tg) => t.tags.includes(tg))) return false;
-    if (f.minRice) { const r = taskRice(t); if (!(r != null && r >= f.minRice)) return false; }
     if (f.due !== 'all') {
       const di = dueInfo(t, sm);
       if (f.due === 'overdue' && !(di && di.kind === 'overdue')) return false;
@@ -498,13 +509,9 @@ export function filterTasks(tasks: Task[], f: BoardFilters, search: string, vers
 
 export function sortTasks(tasks: Task[], by: SortKey, dir: SortDir): Task[] {
   if (by === 'manual') return tasks;
+  if (by === 'rank') return byRank(tasks);
   const d = dir === 'asc' ? 1 : -1;
-  const pIdx = (k: string) => PRIO_ORDER.indexOf(k as typeof PRIO_ORDER[number]);
-  const uIdx = (k: string) => URG_ORDER.indexOf(k as typeof URG_ORDER[number]);
   const key = (t: Task): number | string => {
-    if (by === 'priority') return -pIdx(t.priority);
-    if (by === 'urgency') return -uIdx(t.urgency);
-    if (by === 'rice') return taskRice(t) ?? 0;
     if (by === 'due') { const due = taskDue(t); return due ? new Date(due + 'T00:00:00').getTime() : 8.64e15; }
     if (by === 'updated') return new Date((t.updated_at || '').slice(0, 10) + 'T00:00:00').getTime() || 0;
     if (by === 'created') return new Date((t.created_at || '').slice(0, 10) + 'T00:00:00').getTime() || 0;
@@ -521,6 +528,96 @@ export function sortTasks(tasks: Task[], by: SortKey, dir: SortDir): Task[] {
 
 export interface DimGroup { key: string; label: string; color: string; tasks: Task[]; }
 
+/** Rank order inside one bucket: ranked cards first by rank, then the unranked by name. */
+export function byRank(tasks: Task[]): Task[] {
+  return tasks.slice().sort((a, b) => {
+    const ra = typeof a.rank === 'number' ? a.rank : null;
+    const rb = typeof b.rank === 'number' ? b.rank : null;
+    if (ra !== null && rb !== null && ra !== rb) return ra - rb;
+    if (ra !== null && rb === null) return -1;
+    if (ra === null && rb !== null) return 1;
+    return taskName(a).localeCompare(taskName(b));
+  });
+}
+
+export type OrderLane = Order | 'done';
+export const ORDER_LANES: readonly OrderLane[] = ['now', 'next', 'later', 'done'];
+const ORDER_LABEL: Record<OrderLane, string> = { now: 'Now', next: 'Next', later: 'Later', done: 'Done' };
+const ORDER_COLOR: Record<OrderLane, string> = {
+  now: 'var(--color-status-in-progress)', next: 'var(--color-status-todo)',
+  later: 'var(--color-text-tertiary)', done: 'var(--color-status-completed)',
+};
+
+/** Cancelled by KIND, or by the conventional key on a machine that has not declared it. */
+function isCancelledStatus(status: string, sm: StatusModel): boolean {
+  return sm.isCancelled(status) || status === 'cancelled';
+}
+
+/**
+ * The board's Now / Next / Later columns (plan r3 § 5b, with the C4 critic fix):
+ *  - a cancelled-kind card is not on the board;
+ *  - a done-kind card shows in Now only while it is in the ACTIVE cycle (the cycle strip counts
+ *    it); every other done card goes to the Done lane, which the board keeps closed by default;
+ *  - every open card goes to Now / Next / Later by `orderOf` (the server's axis), by rank.
+ * So a finished or cancelled card that was never planned can never sit in Next or Later.
+ */
+export function groupByOrder(
+  tasks: Task[],
+  activeCycleId: string | null,
+  sm: StatusModel = DEFAULT_STATUS_MODEL,
+  labels: Partial<Record<OrderLane, string>> = {},
+): DimGroup[] {
+  const lanes: Record<OrderLane, Task[]> = { now: [], next: [], later: [], done: [] };
+  for (const t of tasks) {
+    if (isCancelledStatus(t.status, sm)) continue;
+    const order = orderOf(t, activeCycleId);
+    if (sm.isDone(t.status)) lanes[order === 'now' ? 'now' : 'done'].push(t);
+    else lanes[order].push(t);
+  }
+  return ORDER_LANES.map((k) => ({ key: k, label: labels[k] ?? ORDER_LABEL[k], color: ORDER_COLOR[k], tasks: byRank(lanes[k]) }));
+}
+
+/** One card on a column, with the sub-tasks that sit in the same column nested under it. */
+export interface CardNode { task: Task; children: Task[] }
+/** A column's items: a card (with its nested children), or sub-tasks whose parent is elsewhere. */
+export type ColumnItem =
+  | { kind: 'card'; node: CardNode }
+  | { kind: 'orphans'; parent: { slug: string; name: string }; nodes: CardNode[] };
+
+/**
+ * Nest sub-tasks under their parent when both are in the same column (the parent's card
+ * expands to show them). Sub-tasks whose parent is not in the column are grouped under a header
+ * that names the parent. Order follows the column's own order.
+ */
+export function nestByParent(cards: Task[], all: Task[]): ColumnItem[] {
+  const here = new Set(cards.map((t) => t.slug));
+  const byParent = new Map<string, Task[]>();
+  for (const t of cards) {
+    const p = t.parent_task;
+    if (p && here.has(p)) byParent.set(p, [...(byParent.get(p) ?? []), t]);
+  }
+  const items: ColumnItem[] = [];
+  const orphanGroups = new Map<string, Extract<ColumnItem, { kind: 'orphans' }>>();
+  for (const t of cards) {
+    const p = t.parent_task;
+    if (p && here.has(p)) continue;
+    const node: CardNode = { task: t, children: byParent.get(t.slug) ?? [] };
+    if (p) {
+      let group = orphanGroups.get(p);
+      if (!group) {
+        const parent = all.find((x) => x.slug === p);
+        group = { kind: 'orphans', parent: { slug: p, name: parent ? taskName(parent) : p }, nodes: [] };
+        orphanGroups.set(p, group);
+        items.push(group);
+      }
+      group.nodes.push(node);
+    } else {
+      items.push({ kind: 'card', node });
+    }
+  }
+  return items;
+}
+
 /**
  * Partition `tasks` by `dim`. `versionOrder` / `assignees` supply the dynamic
  * column ordering the design hard-coded for its mock data.
@@ -528,8 +625,15 @@ export interface DimGroup { key: string; label: string; color: string; tasks: Ta
 export function dimGroups(
   dim: Dim,
   tasks: Task[],
-  opts: { versionOrder: string[]; assignees: { value: string; label: string; color: string }[]; statuses?: StatusModel },
+  opts: {
+    versionOrder: string[];
+    assignees: { value: string; label: string; color: string }[];
+    statuses?: StatusModel;
+    activeCycleId?: string | null;
+    orderLabels?: Partial<Record<OrderLane, string>>;
+  },
 ): DimGroup[] {
+  if (dim === 'order') return groupByOrder(tasks, opts.activeCycleId ?? null, opts.statuses ?? DEFAULT_STATUS_MODEL, opts.orderLabels);
   if (dim === 'status') {
     const sm = opts.statuses ?? DEFAULT_STATUS_MODEL;
     const cols = sm.order.map((k) => ({ key: k, label: sm.labelOf(k), color: sm.colorOf(k), tasks: tasks.filter((t) => t.status === k) }));
@@ -542,12 +646,6 @@ export function dimGroups(
       cols.push({ key: t.status, label: t.status, color: 'var(--color-text-tertiary)', tasks: tasks.filter((x) => x.status === t.status) });
     }
     return cols;
-  }
-  if (dim === 'priority') {
-    return PRIO_ORDER.map((k) => ({ key: k, label: levelLabel(k), color: prioColor(k), tasks: tasks.filter((t) => t.priority === k) }));
-  }
-  if (dim === 'urgency') {
-    return URG_ORDER.map((k) => ({ key: k, label: levelLabel(k), color: urgColor(k), tasks: tasks.filter((t) => t.urgency === k) }));
   }
   if (dim === 'version') {
     const order = [...opts.versionOrder.filter((v) => v !== 'none'), 'none'];
