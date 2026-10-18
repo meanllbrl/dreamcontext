@@ -106,7 +106,12 @@ export async function handleCycleStart(
   }
 }
 
-/** GET /api/cycles/:id/close-plan — what the Close deck shows. */
+/**
+ * GET /api/cycles/:id/close-plan — what the Close deck shows. A cycle that is unknown OR
+ * already closed has no close plan: both answer 404 (the pinned route table), the closed one
+ * with the code `closed` so a caller can tell them apart. Closing a closed cycle again is a
+ * conflict, so `POST …/close` keeps its 409.
+ */
 export async function handleCycleClosePlan(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -119,7 +124,7 @@ export async function handleCycleClosePlan(
     const plan = closePlanView(contextRoot, id);
     sendJson(res, 200, { cycle: plan.cycle, into: plan.into, groups: plan.groups, resuming: plan.resuming });
   } catch (err) {
-    if (err instanceof CloseError) { sendError(res, err.code === 'closed' ? 409 : 404, err.code, err.message); return; }
+    if (err instanceof CloseError) { sendError(res, 404, err.code, err.message); return; }
     throw err;
   }
 }

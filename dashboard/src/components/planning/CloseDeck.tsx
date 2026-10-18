@@ -14,7 +14,10 @@ const ACTIONS: CloseAction[] = ['carry', 'back', 'cancel'];
  */
 export function CloseDeck({ cycleId, onDone, onCancel }: { cycleId: string; onDone: () => void; onCancel: () => void }) {
   const { t } = useI18n();
-  const { data: plan, isLoading, error: loadError } = useClosePlan(cycleId);
+  // Off once the close is submitted (and back on if it fails): the plan of a closed cycle is
+  // never read again.
+  const [submitted, setSubmitted] = useState(false);
+  const { data: plan, isLoading, error: loadError } = useClosePlan(cycleId, !submitted);
   const close = useCloseCycle();
   const [decisions, setDecisions] = useState<Record<string, CloseAction>>({});
   const [rest, setRest] = useState<CloseAction>('back');
@@ -46,9 +49,10 @@ export function CloseDeck({ cycleId, onDone, onCancel }: { cycleId: string; onDo
       });
       if (!ok) return;
     }
+    setSubmitted(true);
     close.mutate(
       { id: cycleId, decisions, ...(plan.into ? { into: plan.into.id } : {}) },
-      { onSuccess: onDone, onError: (err: Error) => setError(err.message) },
+      { onSuccess: onDone, onError: (err: Error) => { setSubmitted(false); setError(err.message); } },
     );
   };
 

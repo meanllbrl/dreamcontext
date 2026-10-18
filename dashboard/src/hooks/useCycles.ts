@@ -94,23 +94,35 @@ export function useStartCycle() {
   });
 }
 
-/** What the Close deck shows for one cycle: its unfinished leaves, grouped by parent. */
-export function useClosePlan(id: string | null) {
+/**
+ * What the Close deck shows for one cycle: its unfinished leaves, grouped by parent. The deck
+ * turns it off (`enabled: false`) the moment it submits the close: a closed cycle has no plan,
+ * and reading one after the close would only meet a 404.
+ */
+export function useClosePlan(id: string | null, enabled = true) {
   const api = useApi();
   return useQuery({
     queryKey: [...KEY, id, 'close-plan'],
     queryFn: () => api.get<ClosePlanPayload>(`/cycles/${encodeURIComponent(id ?? '')}/close-plan`),
-    enabled: !!id,
+    enabled: !!id && enabled,
   });
 }
 
-/** Close a cycle with a decision for every unfinished leaf (a 400 `undecided` names the rest). */
+/**
+ * Close a cycle with a decision for every unfinished leaf (a 400 `undecided` names the rest).
+ * On success the cycles and the cards refresh, but the closed cycle's close plan is dropped,
+ * never refetched: it no longer exists.
+ */
 export function useCloseCycle() {
   const api = useApi();
-  const invalidate = useInvalidateCycles();
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, decisions, into }: { id: string; decisions: Record<string, CloseAction>; into?: string }) =>
       api.post<CloseResultPayload>(`/cycles/${encodeURIComponent(id)}/close`, { decisions, ...(into ? { into } : {}) }),
-    onSuccess: invalidate,
+    onSuccess: (_data, v) => {
+      queryClient.removeQueries({ queryKey: [...KEY, v.id, 'close-plan'], exact: true });
+      queryClient.invalidateQueries({ queryKey: KEY, predicate: (q) => q.queryKey[2] !== 'close-plan' });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
   });
 }

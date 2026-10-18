@@ -170,6 +170,11 @@ describe('the close plan and the close', () => {
     const { active } = closingFixture();
     await call(handleCycleClose, ctx, { id: active.id }, { body: { decisions: { 'carry-me': 'carry', 'back-me': 'back', 'cancel-me': 'cancel' } } });
     expect((await call(handleCycleClose, ctx, { id: active.id }, { body: { decisions: {} } })).code).toBe(409);
+    // A closed cycle has no close plan: 404 like an unknown one (the code says which), so the
+    // Close deck never meets a 409 when it reads a plan after the close.
+    const plan = await call(handleCycleClosePlan, ctx, { id: active.id }, { method: 'GET' });
+    expect(plan.code).toBe(404);
+    expect(plan.body.error).toBe('closed');
     expect((await call(handleCycleClosePlan, ctx, { id: 'cy_missing01' }, { method: 'GET' })).code).toBe(404);
   });
 });
