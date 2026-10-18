@@ -190,8 +190,6 @@
   animation: var(--dc-motion-status-name, chat-notice-sweep) 1.4s ease-in-out infinite;
   animation-play-state: var(--dc-motion-play, running);
 }
-/* Light mode removes the sweep: a dim full span (as under reduced motion), not a 30 % one parked at the left edge. */
-:root[data-light='true'] .chat-notice-ctx-bar[data-pending]::after { width: 100%; opacity: 0.5; }
 @keyframes chat-notice-sweep {
   from { transform: translateX(-100%); }
   to { transform: translateX(340%); }

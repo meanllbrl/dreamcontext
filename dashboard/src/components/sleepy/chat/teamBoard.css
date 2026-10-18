@@ -186,9 +186,7 @@
 .chat-team-board-chip-mark[data-tone='bad'] { color: var(--color-warning-ink); }
 
 @keyframes chat-team-board-spin { to { transform: rotate(360deg); } }
-/* At rest (Light mode, reduced motion) a running mark is a closed accent ring with no glyph:
-   apart from a landed one (a glyph in a ring) and not a spinner stopped mid-turn. */
-:root[data-light='true'] .chat-team-board-chip-mark[data-tone='running'] { border-color: var(--color-accent); }
+/* Light mode keeps status motion: a running mark spins there too (stepped by lib/motionClock). */
 @keyframes chat-team-board-pulse { 50% { opacity: 0; transform: scale(1.3); } }
 
 /* Narrow panes shed the line from the least needed end, so the phase at work and the one on

@@ -536,7 +536,6 @@ html:has(.dc-notch) #root {
   animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes dc-agent-spin { to { transform: rotate(360deg); } }
-:root[data-light='true'] .dc-agent-avatar.is-working::after { border-right-color: var(--color-success); }
 @media (prefers-reduced-motion: reduce) { .dc-agent-avatar.is-working::after { animation: none; border-right-color: var(--color-success); } }
 
 /* The pill's right ear: running automations' faces, and how much waits in the inbox. */

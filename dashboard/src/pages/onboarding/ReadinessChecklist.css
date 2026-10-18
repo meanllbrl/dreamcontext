@@ -188,10 +188,6 @@
   animation: var(--dc-motion-status-name, ob-slide) var(--motion-breath) var(--ease-out) infinite;
   animation-play-state: var(--dc-motion-play, running);
 }
-/* Light mode removes the slide: rest as a dim full rail, never as "30 % done". */
-:root[data-light='true'] .ob-rail--indeterminate .ob-rail-fill { width: 100%; opacity: 0.4; }
-/* And the working glyph closes its ring instead of holding a quarter arc still. */
-:root[data-light='true'] .ob-glyph--working .ob-glyph-track { stroke: currentColor; }
 .ob-rail-label { display: block; font-size: var(--font-size-xs); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 
 /* ─── Waiting card ────────────────────────────────────────────────────────── */

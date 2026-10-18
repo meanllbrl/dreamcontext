@@ -314,3 +314,31 @@ describe('CSS motion contract', () => {
     }
   });
 });
+
+// Light mode keeps STATUS motion (it removes only ambient decoration): a `:root[data-light='true']`
+// rule that restyles an element whose animation is a status animation was written for the old
+// Light mode that stopped it. With the animation running again it freezes the look (a spinner
+// whose whole border is one colour turns with nothing visibly moving) or breaks it (an
+// indeterminate bar forced to full width that still sweeps off its track).
+describe('Light mode leaves status animations alone', () => {
+  it('no Light-mode rule restyles an element that runs a status animation', () => {
+    const offenders: string[] = [];
+    for (const file of walk(SRC, ['.css'])) {
+      const root = postcss.parse(readFileSync(file, 'utf-8'), { from: file });
+      const statusSelectors = new Set<string>();
+      root.walkRules((rule) => {
+        const animated = rule.nodes?.some((n) => n.type === 'decl'
+          && /^animation(-name)?$/.test((n as Declaration).prop)
+          && /--dc-motion-status-name/.test((n as Declaration).value));
+        if (animated) for (const s of rule.selectors) statusSelectors.add(s.replace(/\s+/g, ' ').trim());
+      });
+      root.walkRules((rule) => {
+        for (const s of rule.selectors) {
+          const m = s.replace(/\s+/g, ' ').trim().match(/^:root\[data-light=['"]true['"]\] (.+)$/);
+          if (m && statusSelectors.has(m[1])) offenders.push(`${relative(SRC, file)}: ${s}`);
+        }
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+});
