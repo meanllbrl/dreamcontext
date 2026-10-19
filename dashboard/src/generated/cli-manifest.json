@@ -3165,7 +3165,7 @@
     },
     {
       "path": "super shape",
-      "desc": "Make a card square (1:1) or tall (9:16)",
+      "desc": "Make a card square (1:1) or tall (3:4)",
       "args": [
         "<card>",
         "<shape>"

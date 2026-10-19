@@ -14,7 +14,8 @@ export const SUPER_STATE_VERSION = 1 as const;
 export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
 
-/** A floating card is square (1:1) or tall (9:16) — owner decision 2026-10-18 (plan-r8 F1). */
+/** A floating card is square (1:1) or tall (3:4): owner decisions 2026-10-18 (plan-r8 F1) and
+ *  2026-10-19 (stage v2: 3:4, not 9:16; drawn anywhere between 1:1 and 3:4 to keep the rhythm). */
 export const CONTAINER_SHAPES = ['square', 'tall'] as const;
 export type ContainerShape = typeof CONTAINER_SHAPES[number];
 
