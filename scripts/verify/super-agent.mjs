@@ -1009,6 +1009,14 @@ async function motion(engineName, browserType, base) {
   const paneRects0 = await rectsOf(page, '.agent-pane');
   // The page behind the chat (the seeded board), scrolled: covered while handed over, it must
   // come back at this position when the chat is collapsed (checked at the end).
+  //
+  // On the task board the scrollers are its COLUMNS (the page itself does not scroll), and a
+  // column reflows with its width: the rail folds while the Super Agent has the screen, so the
+  // page comes back wider, card titles wrap onto fewer lines, and Chromium's scroll anchoring
+  // keeps the same cards in view by moving scrollTop (900 → 882 on the seeded board; WebKit has
+  // no anchoring and keeps 900). "Where it was" is then the same card at the top, not the same
+  // pixel: the check takes the card at the column's top edge and its offset, and accepts either
+  // the same scrollTop or, after a width change, that same card still at the top.
   const pageScroll0 = await page.evaluate(() => {
     const main = document.querySelector('.shell-main');
     const sc = main && [main, ...main.querySelectorAll('*')].find((e) => e.scrollHeight > e.clientHeight + 200 && /(auto|scroll)/.test(getComputedStyle(e).overflowY));
@@ -1017,6 +1025,15 @@ async function motion(engineName, browserType, base) {
     sc.scrollTop = Math.min(900, sc.scrollHeight - sc.clientHeight);
     return sc.scrollTop;
   });
+  /** The card at the scroller's top edge (the first whose bottom is below it), its offset, and the width. */
+  const topOf = () => page.evaluate(() => {
+    const sc = document.querySelector('[data-verify-scroller]');
+    if (!sc) return null;
+    const top = sc.getBoundingClientRect().top;
+    const card = [...sc.querySelectorAll('[data-task-card]')].find((c) => c.getBoundingClientRect().bottom > top + 1) ?? null;
+    return { card: card?.getAttribute('data-task-card') ?? null, offset: card ? Math.round(card.getBoundingClientRect().top - top) : null, width: sc.clientWidth };
+  });
+  const pageTop0 = await topOf();
   const coverOf = () => page.evaluate(() => {
     const m = document.querySelector('.shell-main');
     return { attr: !!document.querySelector('.project-instance[data-super-cover]'), cv: m ? getComputedStyle(m).contentVisibility : null, scroll: document.querySelector('[data-verify-scroller]')?.scrollTop ?? null };
@@ -1237,7 +1254,11 @@ async function motion(engineName, browserType, base) {
   await page.locator('.agent-overlay-collapse').first().click();
   await page.waitForTimeout(800);
   const shown = await coverOf();
-  ok(`${engineName}: collapsed, the page behind shows again where it was scrolled (${pageScroll0} px)`, pageScroll0 > 0 && !shown.attr && shown.cv !== 'hidden' && shown.scroll === pageScroll0, JSON.stringify({ ...shown, before: pageScroll0 }));
+  const pageTop1 = await topOf();
+  // Same pixel, or (the column reflowed to a new width) the same card at the top edge.
+  const sameSpot = shown.scroll === pageScroll0
+    || (!!pageTop0?.card && pageTop1?.width !== pageTop0.width && pageTop1?.card === pageTop0.card && shown.scroll > 0);
+  ok(`${engineName}: collapsed, the page behind shows again where it was scrolled (${pageScroll0} px)`, pageScroll0 > 0 && !shown.attr && shown.cv !== 'hidden' && sameSpot, JSON.stringify({ ...shown, before: pageScroll0, top0: pageTop0, top1: pageTop1 }));
   // Re-opened while still handed over: the page shows around the surface's zoom-in and is
   // covered only once the zoom has landed (never a blank page behind a small fading overlay).
   await page.evaluate(() => {
