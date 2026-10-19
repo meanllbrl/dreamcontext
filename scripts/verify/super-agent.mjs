@@ -24,7 +24,8 @@
  * every card in Others and side by side opens as a sheet.
  *
  * THE STAGE (plan-r8, owner decisions O1-O11): the centre centred in both axes with >= 24 px to
- * every card; 9:16 chat and web cards, 1:1 the rest; a card dragged with the mouse lands where it
+ * every card; every card between 1:1 and 3:4 on one rhythm (one width, one gap, full columns
+ * spanning the centre, the centre >= 55%: stage v2); a card dragged with the mouse lands where it
  * was dropped and stays there after a reload (and, at the very end, a server restart); dropped in
  * the bottom-right corner it joins Others; clicked there it is side by side; minimize floats it;
  * the agent's half / present / present --off; a card dropped on the centre (or "Ask about this")
@@ -38,8 +39,8 @@
  * stage, mid-flight reverse; a float → half → float switch by the owner, and agent verbs 150 ms
  * apart (half → present, present --off) with the centre and its composer at opacity 1 in every
  * frame and the draft, focus and caret kept; nothing moves for 500 ms after; a resize snaps;
- * reduced motion = crossfade; a filmstrip, a recording and screenshots at 1280 and 1920 in light
- * and dark with the queue pill and the Others stack.
+ * reduced motion = crossfade; a filmstrip, a recording and screenshots at 1280, 1440 and 1920 in
+ * light and dark with the queue pill and the Others stack, each checked for stage v2's rhythm.
  *
  * Collect, don't fail fast: every check prints ✓/✗ and the run continues. Exit 0 iff all pass.
  */
@@ -52,7 +53,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const SCRATCH = join(tmpdir(), 'dreamcontext-verify-super-agent');
+// One scratch vault per run: two sessions verifying at once must never wipe each other's.
+const SCRATCH = join(tmpdir(), `dreamcontext-verify-super-agent-${process.pid}`);
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'acme-app');
 const CODE = join(SCRATCH, 'acme-code');
@@ -331,7 +333,9 @@ const report = {
   },
   note(msg) { this.notes.push(msg); console.log(`  · ${msg}`); },
 };
-const ok = (l, c, d) => report.check(l, c, d);
+/** The last check run: a console error names it, so a red 'no console errors' says WHERE. */
+let LAST_CHECK = 'start';
+const ok = (l, c, d) => { LAST_CHECK = l; return report.check(l, c, d); };
 
 /** Open the project's Chat surface in a page. */
 async function openChat(page, base) {
@@ -396,6 +400,33 @@ const geo = (page) => page.evaluate(() => {
   };
 });
 const cardIn = (g, id) => g.cards.find((c) => c.id === id);
+/** Stage v2's rhythm, read off the drawn stage: every auto-placed card one width, one 24 px gap
+ *  down a column, a full column spanning the centre's top to bottom and a shorter one on its
+ *  midline, the outer margins mirrored, the centre >= 55% of the stage. An owner-placed card and
+ *  the columns it crosses are the owner's arrangement, not the stage's. */
+function rhythmOf(g) {
+  const owned = g.cards.filter((c) => c.where === 'float' && c.owner).map((c) => c.r);
+  const crosses = (r) => owned.some((o) => o.x < r.x + r.w && r.x < o.x + o.w);
+  const autos = g.cards.filter((c) => c.where === 'float' && !c.owner && !crosses(c.r)).map((c) => c.r);
+  const cols = new Map();
+  for (const r of autos) { const k = Math.round(r.x); cols.set(k, [...(cols.get(k) ?? []), r]); }
+  const list = [...cols.values()].map((col) => col.sort((a, b) => a.y - b.y));
+  const mid = g.c.y + g.c.h / 2;
+  const oneWidth = autos.every((r) => Math.abs(r.w - autos[0].w) <= 1);
+  const oneGap = list.every((col) => col.every((r, i) => i === 0 || Math.abs(r.y - (col[i - 1].y + col[i - 1].h) - 24) <= 1));
+  const columns = list.map((col) => {
+    const top = col[0].y;
+    const bottom = col[col.length - 1].y + col[col.length - 1].h;
+    return { n: col.length, top: Math.round(top - g.c.y), bottom: Math.round(g.c.y + g.c.h - bottom), spans: Math.abs(top - g.c.y) <= 1 && Math.abs(bottom - (g.c.y + g.c.h)) <= 1, midline: Math.abs((top + bottom) / 2 - mid) <= 1 };
+  });
+  const aligned = columns.every((c) => c.spans || c.midline);
+  const L = autos.filter((r) => r.x < g.c.x);
+  const R = autos.filter((r) => r.x > g.c.x);
+  const margins = L.length && R.length ? [Math.round(Math.min(...L.map((r) => r.x)) - g.s.x), Math.round(g.s.x + g.s.w - Math.max(...R.map((r) => r.x + r.w)))] : null;
+  const mirror = owned.length > 0 || !margins || Math.abs(margins[0] - margins[1]) <= 1;
+  const share = g.c.w / g.s.w;
+  return { ok: autos.length > 0 && oneWidth && oneGap && aligned && mirror && share >= 0.55 - 1 / g.s.w, detail: { oneWidth, oneGap, aligned, mirror, share: Number(share.toFixed(4)), columns, margins, owned: owned.length } };
+}
 /** Two rects at least `gap` apart on some axis. */
 const apart = (a, b, gap = 23.5) => a.x + a.w + gap <= b.x || b.x + b.w + gap <= a.x || a.y + a.h + gap <= b.y || b.y + b.h + gap <= a.y;
 const near1 = (a, b, tol = 1) => !!a && !!b && Math.abs(a.x - b.x) <= tol && Math.abs(a.y - b.y) <= tol && Math.abs(a.w - b.w) <= tol && Math.abs(a.h - b.h) <= tol;
@@ -459,7 +490,9 @@ async function stage(page, base, adopted = []) {
   ok('>= 24 px between the centre and every floating card', floats.every((c) => apart(c.r, g.c)), JSON.stringify(floats.map((c) => c.r)));
   const autos = floats.filter((c) => !c.owner);
   ok('>= 24 px between auto-placed cards', autos.every((a, i) => autos.every((b, j) => j <= i || apart(a.r, b.r))), JSON.stringify(autos.map((c) => c.r)));
-  ok('each floating card is drawn 9:16 or 1:1, as its shape says', floats.every((c) => Math.abs(c.r.h / c.r.w - (c.shape === 'tall' ? 16 / 9 : 1)) <= 0.02), JSON.stringify(floats.map((c) => [c.kind, c.shape, c.r.w, c.r.h])));
+  ok('each floating card is drawn between 1:1 and 3:4, never taller (stage v2)', floats.every((c) => c.r.h / c.r.w >= 0.99 && c.r.h / c.r.w <= 4 / 3 + 0.01), JSON.stringify(floats.map((c) => [c.kind, c.shape, c.r.w, c.r.h])));
+  const rh = rhythmOf(g);
+  ok('one rhythm: one card width and gap, full columns span the centre, margins mirror, the centre >= 55% (stage v2)', rh.ok, JSON.stringify(rh.detail));
   ok('the record: chat and web cards tall, the rest square', rec0.containers.length > 0 && rec0.containers.every((c) => c.shape === (c.kind === 'chat' || c.kind === 'web' ? 'tall' : 'square')), JSON.stringify(rec0.containers.map((c) => [c.kind, c.shape])));
   ok('>= 4 cards float around the centre', floats.length >= 4, `${floats.length} floating, ${g.others} in Others`);
   ok('a card the stage cannot fit is drawn in Others, its record still float', g.others === rec0.containers.length - g.cards.length && rec0.containers.every((c) => c.place === 'float'), JSON.stringify({ drawn: g.cards.length, others: g.others, record: rec0.containers.map((c) => c.place) }));
@@ -991,8 +1024,8 @@ async function motion(engineName, browserType, base) {
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, colorScheme: 'dark', recordVideo: { dir: vids, size: { width: 1600, height: 1000 } } });
   const page = await context.newPage();
   const errors = [];
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(`${m.text()} (after: ${LAST_CHECK})`); });
+  page.on('pageerror', (e) => errors.push(`${String(e)} (after: ${LAST_CHECK})`));
   await openChat(page, base);
   await page.bringToFront();
   // Start taken back, with the five chats as tabs.
@@ -1170,8 +1203,18 @@ async function motion(engineName, browserType, base) {
     if (askChild) await sayToSuper(page, `GO-ASK ${askChild}`);
     ok('chromium: a question waits in the queue pill for the screenshots', await until(page, async () => (await page.getByTestId('super-queue-head').count()) > 0, 60000));
     ok('chromium: the Others stack holds a card for the screenshots', (await page.getByTestId('super-others-stack').count()) === 1);
+    // The owner judges the STAGE's composition: his drops are cleared for the shots (the owner's
+    // own route, as a drop writes it) and the dragged card's put back after, for the restart check.
+    const layout = (patch) => page.evaluate(async (p) => (await fetch('/api/super/layout', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify(p),
+    })).status, patch);
+    const placed = record().containers.filter((c) => c.pos).map((c) => ({ id: c.id, pos: c.pos }));
+    if (placed.length) {
+      const st = await layout({ cards: placed.map((c) => ({ id: c.id, pos: null })) });
+      ok('chromium: the owner\'s drops cleared for the screenshots', st === 200 && !record().containers.some((c) => c.pos), `status ${st}`);
+    }
     await page.waitForTimeout(800);
-    for (const [w, h] of [[1280, 800], [1920, 1080]]) {
+    for (const [w, h] of [[1280, 800], [1440, 900], [1920, 1080]]) {
       for (const scheme of ['light', 'dark']) {
         await page.setViewportSize({ width: w, height: h });
         await page.emulateMedia({ colorScheme: scheme });
@@ -1181,6 +1224,10 @@ async function motion(engineName, browserType, base) {
           const gw = await geo(page);
           ok(`chromium ${w}x${h}: >= 4 cards float, the centre centred (<= 1 px)`, gw.cards.filter((c) => c.where === 'float').length >= 4
             && Math.abs((gw.c.x - gw.s.x) - (gw.s.x + gw.s.w - gw.c.x - gw.c.w)) <= 1, JSON.stringify({ floating: gw.cards.filter((c) => c.where === 'float').length, s: gw.s, c: gw.c }));
+          const rw = rhythmOf(gw);
+          ok(`chromium ${w}x${h}: one rhythm, the centre >= 55% (stage v2)`, rw.ok, JSON.stringify(rw.detail));
+          ok(`chromium ${w}x${h}: every floating card between 1:1 and 3:4`, gw.cards.filter((c) => c.where === 'float').every((c) => c.r.h / c.r.w >= 0.99 && c.r.h / c.r.w <= 4 / 3 + 0.01),
+            JSON.stringify(gw.cards.filter((c) => c.where === 'float').map((c) => [c.r.w, c.r.h])));
           // At rest the pill keeps one row in its band: it never half-covers the centre's header.
           const pill = await page.getByTestId('super-queue-head').boundingBox();
           ok(`chromium ${w}x${h}: the queue pill at rest stays in its band, clear of the centre`, !!pill && pill.y + pill.height <= gw.c.y + 0.5, JSON.stringify({ pill, centreTop: gw.c.y }));
@@ -1230,8 +1277,39 @@ async function motion(engineName, browserType, base) {
         }
       }
     }
+    // The amended Layout clause, OBSERVED (stage v2 end review r1): five chats and two other cards
+    // at the four windows: six float and the seventh is drawn in Others at 1280 and 1440, all seven
+    // float at 1600 and 1920, on one rhythm, every chat on the stage.
+    const rec = record().containers;
+    const chats = rec.filter((c) => c.kind === 'chat');
+    const rest = rec.filter((c) => c.kind !== 'chat');
+    const keep = rest.slice(0, 2);
+    const was = new Map(rec.map((c) => [c.id, c.place]));
+    const st5 = await layout({ cards: [...[...chats, ...keep].map((c) => ({ id: c.id, place: 'float' })), ...rest.slice(2).map((c) => ({ id: c.id, place: 'others' }))] });
+    ok('chromium: the stage holds five chats and two other cards for the shape check', st5 === 200 && chats.length === 5 && keep.length === 2, JSON.stringify({ st5, chats: chats.length, keep: keep.length }));
+    const seven = new Set([...chats, ...keep].map((c) => c.id));
+    await page.emulateMedia({ colorScheme: 'light' });
+    for (const [w, h, want] of [[1280, 800, 6], [1440, 900, 6], [1600, 1000, 7], [1920, 1080, 7]]) {
+      await page.setViewportSize({ width: w, height: h });
+      await page.waitForTimeout(700);
+      const g5 = await geo(page);
+      const floats = g5.cards.filter((c) => c.where === 'float');
+      const drawnOthers = [...seven].filter((id) => !floats.some((c) => c.id === id)).length;
+      await page.screenshot({ path: join(OUT, `stage-v2-5t2s-${w}.png`) });
+      const r5 = rhythmOf(g5);
+      ok(`chromium ${w}x${h}: 5 tall + 2 square: ${want} float, ${7 - want} drawn in Others, on one rhythm`, floats.length === want && drawnOthers === 7 - want && floats.every((c) => seven.has(c.id)) && r5.ok,
+        JSON.stringify({ floating: floats.length, drawnOthers, rhythm: r5.detail }));
+      ok(`chromium ${w}x${h}: 5 tall + 2 square: every chat floats (the other cards go to Others first)`, chats.every((c) => floats.some((f) => f.id === c.id)), JSON.stringify(floats.map((c) => c.kind)));
+    }
+    await layout({ cards: rec.map((c) => ({ id: c.id, place: was.get(c.id) })) });
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.emulateMedia({ colorScheme: 'dark' });
+    const back = placed.find((c) => c.id === DRAGGED);
+    if (back) {
+      const st = await layout({ cards: [back] });
+      ok('chromium: the dragged card\'s drop is put back after the screenshots', st === 200 && JSON.stringify(record().containers.find((c) => c.id === DRAGGED)?.pos) === JSON.stringify(back.pos), `status ${st}`);
+      await page.waitForTimeout(800);
+    }
   }
   // Collapsed while handed over: the page shows again, at the scroll position it had.
   await page.locator('.agent-overlay-collapse').first().click();
@@ -1356,4 +1434,7 @@ try {
 console.log(`\n${report.fails.length === 0 ? '✅' : '❌'} ${report.pass} passed, ${report.fails.length} failed`);
 report.fails.forEach((f) => console.log('   ✗', f));
 console.log(`artifacts: ${OUT}`);
+// A failed run keeps its scratch vault to look into; a clean one leaves nothing behind.
+if (report.fails.length) console.log(`scratch: ${SCRATCH}`);
+else { try { rmSync(SCRATCH, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* a dying server still writing: left for the OS */ } }
 process.exit(report.fails.length ? 1 : 0);
