@@ -70,12 +70,13 @@ const GLANCE_ACTIVITIES = new Set(['asking', 'working', 'starting', 'stale']);
 
 /**
  * The route wraps every project string in `<untrusted-project-output …>` for the assistant's
- * sake; the notch only DRAWS it (as text, never as markup), so the wrapper comes off here.
+ * sake; the notch only DRAWS it (as text, never as markup), so the wrapper comes off here, and
+ * the `<` the wrapper turned into `‹` reads as `<` again.
  */
 export function unwrapUntrusted(s: unknown): string {
   if (typeof s !== 'string') return '';
   const m = /^<untrusted-project-output[^>]*>([\s\S]*)<\/untrusted-project-output>$/.exec(s);
-  return (m ? m[1] : s).trim();
+  return (m ? m[1].replace(/‹/g, '<') : s).trim();
 }
 
 /** The glance body through a forward-compatible cast: a junk row is dropped, never drawn. */

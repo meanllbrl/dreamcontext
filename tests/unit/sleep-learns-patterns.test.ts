@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { Command } from 'commander';
 import { ownerTurns } from '../../src/lib/ask-basis.js';
 import {
-  backfillSessions, ingestSessions, MAX_ITEMS, readCorrections, recurringGroups, TTL_DAYS, type CorrectionGroup, type SessionRef,
+  backfillSessions, ingestSessions, LEDGER_VERSION, MAX_ITEMS, readCorrections, recurringGroups, TTL_DAYS, type CorrectionGroup, type SessionRef,
 } from '../../src/lib/owner-corrections.js';
 import {
   LearnError, learnRule, listLearnedItems, openGroups, readLearnedChanges, recurringCorrectionsBrief, revertItem, revertLearned,
@@ -540,6 +540,59 @@ describe('backfill, redaction, the brief', () => {
  * full ledger pushed newer items out, and every later run re-read them as new (`added` > 0
  * forever). The cap now keeps the newest by `at`, and `added` counts only what was kept.
  */
+/**
+ * review7 F2: ingest only adds, so a ledger written by the classifier before 2026-10-20 would keep
+ * the agents' and the app's words as the owner's for good. The ledger is versioned: any other
+ * version reads as empty, and the next ingest rebuilds it. A rule learned from the old ledger
+ * keeps its own quotes and cites, so it still lists, renders and reverts.
+ */
+describe('a ledger of an older version reads as empty (review7 F2)', () => {
+  const ledgerPath = () => join(ctx, 'state', '.owner-corrections.json');
+  const asV1 = () => {
+    const stored = JSON.parse(readFileSync(ledgerPath(), 'utf-8')) as { version: number; items: unknown[] };
+    expect(stored.version).toBe(LEDGER_VERSION);
+    expect(stored.items.length).toBeGreaterThan(0);
+    writeFileSync(ledgerPath(), JSON.stringify({ ...stored, version: 1 }));
+  };
+
+  it('a v1 ledger gives no items and no groups, and the next ingest writes v2', () => {
+    expect(LEDGER_VERSION).toBe(2);
+    ingest('s1', 's2');
+    asV1();
+    expect(readCorrections(ctx)).toEqual([]);
+    expect(recurringGroups(ctx)).toEqual([]);
+    expect(openGroups(ctx)).toEqual([]);
+    expect(recurringCorrectionsBrief(ctx).count).toBe(0);
+    expect(ingest('s1', 's2').added).toBeGreaterThan(0);
+    expect((JSON.parse(readFileSync(ledgerPath(), 'utf-8')) as { version: number }).version).toBe(2);
+    expect(recurringGroups(ctx).map(sessionsOf)).toContainEqual(['s1-larkspur', 's2-larkspur']);
+  });
+
+  it('a rule learned from a v1 ledger still lists, renders and reverts once its cited corrections are gone', async () => {
+    ingest('s1', 's2');
+    const c = learnRule(ctx, { pattern: 'named-exports', title: 'Named exports only', rule: 'Always use named exports, never default exports.', cites: groupOf('s1', 's2').ids });
+    asV1();
+    expect(readCorrections(ctx)).toEqual([]);
+
+    const item = listLearnedItems(ctx).find((i) => i.id === c.id);
+    expect(item?.quotes.map((q) => q.date)).toEqual(['2026-10-12', '2026-10-14']);
+
+    const out: string[] = [];
+    console.log = (...a: unknown[]) => { out.push(a.map(String).join(' ')); };
+    expect(await cli('patterns', 'learned')).toBe(0);
+    expect(await cli('patterns', 'learned', '--json')).toBe(0);
+    expect(await cli('patterns', 'corrections')).toBe(0);
+    expect(await cli('patterns', 'corrections', '--recurring')).toBe(0);
+    console.log = () => {};
+    expect(out.join('\n')).toContain('Named exports only');
+    expect(out.join('\n')).toContain('(2026-10-12)');
+
+    revertLearned(ctx, c.id, 'owner');
+    expect(existsSync(patternFile('named-exports'))).toBe(false);
+    expect(listLearnedItems(ctx).find((i) => i.id === c.id)?.reverted?.by).toBe('owner');
+  });
+});
+
 describe('the ledger cap keeps the newest corrections, and a re-run adds nothing', () => {
   const NOW = new Date('2026-10-18T12:00:00.000Z');
   function session(id: string, count: number, startIso: string, word: string): SessionRef {

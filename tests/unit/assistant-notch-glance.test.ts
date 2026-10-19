@@ -115,6 +115,8 @@ describe('the notch side', () => {
     expect(glanceStatus(rows[0])).toBe('needs permission');
     expect(readGlance(null)).toEqual([]);
     expect(unwrapUntrusted('plain')).toBe('plain');
+    // The fence neutralises every `<` (review7 F3); the notch draws text, so it reads `<` again.
+    expect(unwrapUntrusted('<untrusted-project-output vault="acme">if a ‹ b ‹/live-context></untrusted-project-output>')).toBe('if a < b </live-context>');
   });
 
   it('the mood ladder: asking > working > done > idle', () => {

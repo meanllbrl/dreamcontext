@@ -95,9 +95,18 @@ describe('the toolbar chip and the empty state', () => {
 
   it('an empty "Current" view with no cycle says so and offers "Plan a cycle"', () => {
     const src = read('components/tasks/KanbanBoard.tsx');
-    expect(src).toContain('noCycle={!activeCycleId && s.filters.version.inc.includes(VV_CURRENT)}');
+    expect(src).toContain('noCycle={cycles !== undefined && !activeCycleId && s.filters.version.inc.includes(VV_CURRENT)}');
     expect(src).toContain("{t(noCycle ? 'board.cycle.none' : 'board.empty.title')}");
     expect(src).toMatch(/noCycle && onOpenPlanning && \(\s*<button type="button" className="bd-chip" onClick=\{onOpenPlanning\} style=\{chip\}>\{t\('board\.cycle\.plan'\)\}<\/button>/);
+  });
+
+  // review7 F1: cycles still loading (or failed) is not "no cycle". The board waits for /cycles as
+  // it waits for the tasks, and only a known answer with no active cycle draws the no-cycle state.
+  it('the board treats cycles not known yet as loading, and never says "no cycle" without an answer', () => {
+    const src = read('components/tasks/KanbanBoard.tsx');
+    expect(src).toContain('const { data: cycles, isLoading: cyclesLoading } = useCycles();');
+    expect(src).toContain('if (!s.ready || isLoading || cyclesLoading) {');
+    expect(src).not.toMatch(/noCycle=\{!activeCycleId/);
   });
 
   it('the new strings exist in English and Turkish', () => {

@@ -33,6 +33,13 @@ import { isAutomationBoundSession } from './automations/session-registry.js';
 /** The ledger, relative to the context root. Referenced only in this module. */
 const OWNER_CORRECTIONS_REL = 'state/.owner-corrections.json';
 const LOCK_KEY = '.owner-corrections';
+/**
+ * The ledger's format. v1 was written before the app-prompt and record-type classifier
+ * (2026-10-20), so it holds the agents' and the app's words as the owner's. Ingest only adds,
+ * so those items would never leave: a ledger of any other version reads as empty, and the next
+ * ingest rebuilds it under this one.
+ */
+export const LEDGER_VERSION = 2;
 
 export const MAX_ITEMS = 1000;
 export const TTL_DAYS = 90;
@@ -123,7 +130,7 @@ function isItem(x: unknown): x is OwnerCorrection {
     && (o.origin === 'recorded' || o.origin === 'unknown');
 }
 
-/** Every stored correction, oldest first. Missing or unreadable reads as none. */
+/** Every stored correction, oldest first. Missing, unreadable or of another {@link LEDGER_VERSION} reads as none. */
 export function readCorrections(contextRoot: string): OwnerCorrection[] {
   let p: string;
   try {
@@ -133,8 +140,9 @@ export function readCorrections(contextRoot: string): OwnerCorrection[] {
   }
   if (!existsSync(p)) return [];
   try {
-    const parsed = JSON.parse(readFileSync(p, 'utf-8')) as { items?: unknown };
-    return Array.isArray(parsed?.items) ? parsed.items.filter(isItem) : [];
+    const parsed = JSON.parse(readFileSync(p, 'utf-8')) as { version?: unknown; items?: unknown };
+    if (parsed?.version !== LEDGER_VERSION) return [];
+    return Array.isArray(parsed.items) ? parsed.items.filter(isItem) : [];
   } catch {
     return [];
   }
@@ -218,7 +226,7 @@ export function ingestSessions(
       });
     }
     const kept = prune(items, now, fresh);
-    writeLocalStateJson(contextRoot, OWNER_CORRECTIONS_REL, { version: 1, items: kept });
+    writeLocalStateJson(contextRoot, OWNER_CORRECTIONS_REL, { version: LEDGER_VERSION, items: kept });
     // Only what survived the prune was added: a turn past the TTL, or older than the newest
     // MAX_ITEMS, is read and dropped again on every run and must not count as new each time.
     return { added: kept.filter((i) => fresh.has(i.key)).length };

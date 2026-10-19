@@ -100,27 +100,41 @@ export function matchForm(text: string): string {
 /** A tag block, with or without attributes (`<system-reminder id="…">`): the tag and all inside it. */
 const tagBlock = (tag: string): RegExp => new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi');
 
-const INJECTED_BLOCKS: readonly RegExp[] = [
+const INJECTED_TAGS = [
+  // FIRST: another project's text, fenced by `wrapUntrusted`. It sits INSIDE the blocks below
+  // (a chat topic in `<live-context>`), and a fence written before every `<` in it was
+  // neutralised may hold a forged `</live-context>`: stripped first, the forgery goes with it.
+  'untrusted-project-output',
   // The harness's own.
-  tagBlock('system-reminder'),
-  tagBlock('user-prompt-submit-hook'),
-  tagBlock('pasted_content'),
-  tagBlock('local-command-stdout'),
-  tagBlock('local-command-caveat'),
-  tagBlock('bash-stdout'),
-  tagBlock('bash-stderr'),
-  tagBlock('agent-message'),
-  tagBlock('task-notification'),
+  'system-reminder',
+  'user-prompt-submit-hook',
+  'pasted_content',
+  'local-command-stdout',
+  'local-command-caveat',
+  'bash-stdout',
+  'bash-stderr',
+  'agent-message',
+  'task-notification',
   // A slash command's name: what the harness records for `/clear` or `/effort low`.
-  tagBlock('command-name'),
-  tagBlock('command-message'),
+  'command-name',
+  'command-message',
   // Blocks dreamcontext's server adds to an owner turn (agent-chat.ts).
-  tagBlock('live-context'),
-  tagBlock('super-agent-note'),
-  tagBlock('untrusted-project-output'),
+  'live-context',
+  'super-agent-note',
+] as const;
+
+const INJECTED_BLOCKS: readonly RegExp[] = [
+  ...INJECTED_TAGS.map(tagBlock),
   // `tasks show` / the Read hook / a Develop kickoff: the fenced task packet.
   /--- TASK CONTEXT (\S+) ---[\s\S]*?--- END OF TASK CONTEXT \1 ---/g,
 ];
+
+/**
+ * Fail closed: an injected block's opening tag still there once every whole block is gone has
+ * lost its close (cut short, or a forged closer ended it early). All from the opener to the
+ * end of the turn is the block's, never the owner's.
+ */
+const UNCLOSED_OPENER = new RegExp(`<(?:${INJECTED_TAGS.join('|')})\\b[^>]*>[\\s\\S]*$`, 'i');
 
 /** A slash command's arguments ARE what the owner typed after it: the wrapper goes, the words stay. */
 const COMMAND_ARGS = /<command-args\b[^>]*>([\s\S]*?)<\/command-args>/gi;
@@ -128,6 +142,7 @@ const COMMAND_ARGS = /<command-args\b[^>]*>([\s\S]*?)<\/command-args>/gi;
 export function stripInjected(text: string): string {
   let out = text;
   for (const re of INJECTED_BLOCKS) out = out.replace(re, ' ');
+  out = out.replace(UNCLOSED_OPENER, ' ');
   return out.replace(COMMAND_ARGS, ' $1 ');
 }
 
@@ -208,11 +223,12 @@ function classify(rec: Record<string, unknown>): Classified {
     return { human: null, other };
   }
   // A whole turn the server writes (an Assistant or Super Agent event) is never the owner's.
-  if (isServerTurn(typed)) {
+  // A server turn's header may follow an injected block (a reminder before it): checked both ways.
+  const injected = stripInjected(typed);
+  if (isServerTurn(typed) || isServerTurn(injected)) {
     other.push({ source: 'dreamcontext prompt', text: typed });
     return { human: null, other };
   }
-  const injected = stripInjected(typed);
   if (injected.length < typed.length) other.push({ source: 'task data or injected block inside a turn', text: typed });
   // Every prompt dreamcontext types as a user turn (a kickoff, a delegate draft, the usage-limit
   // continue) is dropped sentence by sentence; what the owner typed around it stays.

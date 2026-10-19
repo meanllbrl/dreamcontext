@@ -60,7 +60,8 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
   const { data: tasks = [], isLoading } = useTasks();
   const { data: members = [] } = useTaskMembers();
   const { data: realVersions = [] } = useVersions();
-  const { data: cycles } = useCycles();
+  // Not known yet (loading) is not "no cycle": the board waits for it, like the tasks.
+  const { data: cycles, isLoading: cyclesLoading } = useCycles();
   const activeCycleId = cycles?.active ?? null;
   const updateTask = useUpdateTask();
   const planTask = usePlanTask();
@@ -279,7 +280,7 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
     setPendingSave(null);
   }, [pendingSave, s, flash, t]);
 
-  if (!s.ready || isLoading) {
+  if (!s.ready || isLoading || cyclesLoading) {
     return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>{t('board.loading')}</div>;
   }
 
@@ -345,7 +346,8 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
           <EmptyState
             onClear={s.clearAllFilters}
             // A "Current" view with no cycle running is empty because of the cycle, not the filters.
-            noCycle={!activeCycleId && s.filters.version.inc.includes(VV_CURRENT)}
+            // Only a KNOWN "no cycle": a failed /cycles request gets the generic empty state.
+            noCycle={cycles !== undefined && !activeCycleId && s.filters.version.inc.includes(VV_CURRENT)}
             onOpenPlanning={onOpenPlanning}
           />
         ) : s.layout === 'board' ? (

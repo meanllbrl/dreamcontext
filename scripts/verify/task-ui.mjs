@@ -601,8 +601,8 @@ try {
 if (READ_ONLY) {
   // The writes the run would have made, answered here instead (guardReadOnly): the list is the point.
   const held = [...HELD.entries()].sort((x, y) => y[1] - x[1]);
-  info(`read-only: writes held back: ${held.length ? held.map(([k, n]) => `${k} ×${n}`).join(', ') : 'none'}`);
-  check('read-only: no write reached the brain', true, held.map(([k, n]) => `${k} ×${n}`).join(', '));
+  // A listing, not a check: the guard sees HTTP only, so it cannot prove no write got through.
+  info(`read-only: held-back writes listed (HTTP only; WebSocket frames are not intercepted): ${held.length ? held.map(([k, n]) => `${k} ×${n}`).join(', ') : 'none'}`);
 }
 console.log(`\n${report.pass} passed, ${report.fail} failed · screenshots: ${SHOTS}`);
 process.exit(report.fail ? 1 : 0);
