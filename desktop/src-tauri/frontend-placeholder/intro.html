@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>dreamcontext</title>
+<!--
+  The one-time intro: the opening screen's first act, played once per Mac (src/splash.rs opens
+  this page instead of splash.html while its `intro-played` marker is missing).
+
+  The mark sits upside down, a button asks for the fix. On the click the mark backs into the
+  ramp on the right, the curl turns it the right way up, it leaves the lip and its compressed-air
+  jets brake it (the jets at its leading tip) and set it down (belly jets) on its own spot, in a
+  cloud of air, after Tesla's "The Ramp" Roadster film. The camera then pushes in until the mark sits exactly where the
+  opening clip shows it, crossfades into that very frame (intro-handoff*.jpg), and the page
+  hands over to splash.html?after=intro, which plays the clip on from that frame: the wordmark
+  arrives, and the app opens as on every launch.
+
+  The page talks to the shell twice: `intro_hold` once it is on screen (the person may take
+  their time, so the splash deadline steps back) and `intro_seen` on the click or Skip (the
+  marker is written, so it never plays again, and the deadline is re-armed for the rest).
+  Self-contained like splash.html: no bundler, no fetch, no remote URL. Sound is synthesised
+  with Web Audio after the click, so there is no asset to load and no autoplay to ask for.
+-->
+<style>
+  /* tokens: gem colours mirrored from marketing/remotion/src/splash/geometry.ts (GEM_COLORS) */
+  :root {
+    --gem-body-hi: #c3a5ff;
+    --gem-body-lo: #bb9dff;
+    --gem-chevron-hi: #c2a3ff;
+    --gem-chevron-lo: #ad8fff;
+    --gem-dark: #7562df;
+    --gem-dark-lo: #6d59da;
+    --gem-dark-edge: #5142cb;
+    --gem-hairline: rgba(110, 84, 232, 0.5);
+    --gem-ring: #b696ff;
+  }
+  /* tokens: page-local stage (dark is the night of the film; the sky ends as the clip begins) */
+  :root {
+    --sky-hi: #1b1530;
+    --sky-mid: #110e1c;
+    --sky-lo: #09080f;
+    --floor-hi: #15121f;
+    --floor-lo: #050409;
+    --ramp-hi: #858196;
+    --ramp-lo: #34313f;
+    --truss: rgba(150, 146, 170, 0.32);
+    --led-red: #ff3d57;
+    --led-white: #f2efff;
+    --led-off: rgba(150, 146, 170, 0.14);
+    --puff: #f4f1ff;
+    --jet: #e6ddff;
+    --glow: rgba(157, 140, 255, 0.55);
+    --pool: rgba(157, 140, 255, 0.22);
+    --ink: #f5f6fa;
+    --ink-soft: rgba(200, 204, 217, 0.62);
+    --btn-bg: rgba(157, 140, 255, 0.16);
+    --btn-bg-hover: rgba(157, 140, 255, 0.26);
+    --btn-edge: rgba(182, 150, 255, 0.5);
+    --btn-ring: rgba(182, 150, 255, 0.9);
+    --btn-glow: rgba(157, 140, 255, 0.35);
+  }
+  .light {
+    --sky-hi: #ffffff;
+    --sky-mid: #f6f4fd;
+    --sky-lo: #e9e5f6;
+    --floor-hi: #e6e2f3;
+    --floor-lo: #d3cde6;
+    --ramp-hi: #fbfaff;
+    --ramp-lo: #d9d5e6;
+    --truss: rgba(90, 84, 120, 0.3);
+    --led-red: #ff3d57;
+    --led-white: #8f7cf0;
+    --led-off: rgba(90, 84, 120, 0.16);
+    --puff: #b9b0dc;
+    --jet: #a08ff0;
+    --glow: rgba(157, 140, 255, 0.42);
+    --pool: rgba(117, 98, 223, 0.16);
+    --ink: #221d3d;
+    --ink-soft: rgba(70, 76, 100, 0.62);
+    --btn-bg: rgba(117, 98, 223, 0.1);
+    --btn-bg-hover: rgba(117, 98, 223, 0.18);
+    --btn-edge: rgba(117, 98, 223, 0.42);
+    --btn-ring: rgba(117, 98, 223, 0.85);
+    --btn-glow: rgba(117, 98, 223, 0.22);
+  }
+
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; cursor: default; -webkit-user-select: none; user-select: none; }
+  /* The window is transparent: this rounded card IS its shape, as on the splash. */
+  .card {
+    position: fixed; inset: 0; border-radius: 14px; overflow: hidden;
+    background: radial-gradient(ellipse 75% 85% at 50% 50%, var(--sky-hi) 0%, var(--sky-mid) 52%, var(--sky-lo) 100%);
+    opacity: 0; transition: opacity 160ms ease-out;
+    font-family: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card.in { opacity: 1; }
+  svg.stage { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #handoff { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 340ms ease-in-out; }
+  #handoff.on { opacity: 1; }
+
+  /* ─── The stage ─── */
+  .s-sky-hi { stop-color: var(--sky-hi); }
+  .s-sky-mid { stop-color: var(--sky-mid); }
+  .s-sky-lo { stop-color: var(--sky-lo); }
+  .s-floor-hi { stop-color: var(--floor-hi); }
+  .s-floor-lo { stop-color: var(--floor-lo); }
+  .s-ramp-hi { stop-color: var(--ramp-hi); }
+  .s-ramp-lo { stop-color: var(--ramp-lo); }
+  .s-puff { stop-color: var(--puff); }
+  .s-jet { stop-color: var(--jet); }
+  .s-glow { stop-color: var(--glow); }
+  .s-pool { stop-color: var(--pool); }
+  .s-clear { stop-color: var(--sky-lo); stop-opacity: 0; }
+  .floor { fill: url(#g-floor); }
+  .pool { fill: url(#g-pool); }
+  .ramp { fill: url(#g-ramp); }
+  .truss line { stroke: var(--truss); stroke-width: 3; }
+  .led { fill: none; stroke-width: 5; stroke-linecap: round; }
+  .led-off { stroke: var(--led-off); }
+  .led-red { stroke: var(--led-red); }
+  .led-white { stroke: var(--led-white); }
+  .led-on { stroke-dasharray: 1 1; stroke-dashoffset: 1; filter: drop-shadow(0 0 6px var(--led-red)); }
+  .led-white.led-on { filter: drop-shadow(0 0 5px var(--led-white)); }
+  .runway { fill: none; stroke: var(--led-red); stroke-width: 4; stroke-dasharray: 1 1; stroke-dashoffset: 1; filter: drop-shadow(0 0 6px var(--led-red)); }
+  .puff { fill: url(#g-puff); }
+  .jet { fill: url(#g-jet); }
+  .glow { fill: url(#g-glow); }
+  .reflection { opacity: 0.13; }
+
+  /* ─── The gem (paths mirrored from dashboard/src/components/brand/gemPieces.ts) ─── */
+  .ring { fill: none; stroke: var(--gem-ring); stroke-width: 26; stroke-linecap: round; }
+  .s-body-hi { stop-color: var(--gem-body-hi); }
+  .s-body-lo { stop-color: var(--gem-body-lo); }
+  .s-chev-hi { stop-color: var(--gem-chevron-hi); }
+  .s-chev-lo { stop-color: var(--gem-chevron-lo); }
+  .s-dark-hi { stop-color: var(--gem-dark); }
+  .s-dark-lo { stop-color: var(--gem-dark-lo); }
+  .f-body { fill: url(#g-body); }
+  .f-chev { fill: url(#g-chev); }
+  .f-dark { fill: url(#g-dark); }
+  .rhombus-edge { stroke: var(--gem-dark-edge); stroke-width: 3; }
+  .hairlines { fill: none; stroke: var(--gem-hairline); stroke-width: 3; }
+
+  /* ─── The ask ─── */
+  .ask {
+    position: absolute; left: 0; right: 0; top: 75%; display: flex; justify-content: center;
+    opacity: 0; transform: translateY(6px); transition: opacity 420ms ease-out, transform 420ms ease-out;
+  }
+  .ask.on { opacity: 1; transform: none; }
+  .ask.gone { opacity: 0; transform: translateY(4px) scale(0.97); transition: opacity 220ms ease-in, transform 220ms ease-in; pointer-events: none; }
+  #flip {
+    font-family: inherit; font-size: 15px; font-weight: 600; line-height: 1; letter-spacing: 0.01em; color: var(--ink);
+    padding: 13px 22px; border-radius: 999px; border: 1px solid var(--btn-edge);
+    background: var(--btn-bg); cursor: pointer; outline: none;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    box-shadow: 0 0 0 0 var(--btn-glow);
+    animation: beckon 2.4s ease-in-out 1.2s infinite;
+    transition: background 160ms ease-out, transform 160ms ease-out;
+  }
+  #flip:hover { background: var(--btn-bg-hover); }
+  #flip:active { transform: scale(0.97); }
+  #flip:focus-visible { box-shadow: 0 0 0 3px var(--btn-ring); animation: none; }
+  @keyframes beckon { 0%, 100% { box-shadow: 0 0 0 0 var(--btn-glow); } 50% { box-shadow: 0 0 0 9px transparent; } }
+  #skip {
+    position: absolute; top: 14px; right: 16px; font-family: inherit; font-size: 12px; font-weight: 500; line-height: 1;
+    letter-spacing: 0.02em; color: var(--ink-soft); background: none; border: 0; padding: 6px 8px;
+    cursor: pointer; border-radius: 6px; outline: none; transition: color 160ms ease-out, opacity 220ms ease-in;
+  }
+  #skip:hover { color: var(--ink); }
+  #skip:focus-visible { box-shadow: 0 0 0 2px var(--btn-ring); }
+  #skip.gone { opacity: 0; pointer-events: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card, .ask, #flip, #handoff { transition: none; animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <svg class="stage" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="g-floor" x1="0" y1="760" x2="0" y2="1000" gradientUnits="userSpaceOnUse">
+        <stop offset="0" class="s-floor-hi" /><stop offset="1" class="s-floor-lo" />
+      </linearGradient>
+      <linearGradient id="g-ramp" x1="1350" y1="0" x2="1200" y2="0" gradientUnits="userSpaceOnUse">
+        <stop offset="0" class="s-ramp-lo" /><stop offset="1" class="s-ramp-hi" />
+      </linearGradient>
+      <radialGradient id="g-puff">
+        <stop offset="0" class="s-puff" stop-opacity="0.85" />
+        <stop offset="0.5" class="s-puff" stop-opacity="0.45" />
+        <stop offset="1" class="s-puff" stop-opacity="0" />
+      </radialGradient>
+      <linearGradient id="g-jet" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" class="s-jet" stop-opacity="1" />
+        <stop offset="0.35" class="s-jet" stop-opacity="0.7" />
+        <stop offset="1" class="s-jet" stop-opacity="0" />
+      </linearGradient>
+      <radialGradient id="g-glow">
+        <stop offset="0" class="s-glow" /><stop offset="1" class="s-clear" />
+      </radialGradient>
+      <radialGradient id="g-pool">
+        <stop offset="0" class="s-pool" /><stop offset="1" class="s-clear" />
+      </radialGradient>
+      <clipPath id="below-floor"><rect x="-2000" y="760" width="6000" height="2000" /></clipPath>
+      <clipPath id="gem-clip" clipPathUnits="userSpaceOnUse">
+        <path d="M204.69 542.58 Q169.00 497.50 203.25 451.32 L340.09 266.81 Q380.00 213.00 437.99 246.56 L759.93 432.88 Q878.50 501.50 760.10 570.43 L451.17 750.30 Q395.00 783.00 354.66 732.04 Z" />
+      </clipPath>
+      <linearGradient id="g-body" x1="300" y1="230" x2="420" y2="780" gradientUnits="userSpaceOnUse">
+        <stop offset="0" class="s-body-hi" /><stop offset="1" class="s-body-lo" />
+      </linearGradient>
+      <linearGradient id="g-chev" x1="500" y1="250" x2="470" y2="770" gradientUnits="userSpaceOnUse">
+        <stop offset="0" class="s-chev-hi" /><stop offset="0.45" class="s-chev-hi" /><stop offset="1" class="s-chev-lo" />
+      </linearGradient>
+      <linearGradient id="g-dark" x1="400" y1="330" x2="780" y2="680" gradientUnits="userSpaceOnUse">
+        <stop offset="0" class="s-dark-hi" /><stop offset="1" class="s-dark-lo" />
+      </linearGradient>
+    </defs>
+
+    <g id="world">
+      <!-- Scenery: fades out as the camera pushes in, leaving the mark on the clip's sky. -->
+      <g id="scenery">
+        <rect class="floor" x="-2000" y="760" width="6000" height="2000" />
+        <ellipse id="pool" class="pool" cx="800" cy="764" rx="420" ry="46" />
+        <!-- The ramp, on the right as in the film: a tall curl whose inner face takes the mark
+             from the floor (moving right) up the wall and over (moving left), turning it half a
+             turn. Inner face: bottom arc r200 about (1080,560), wall at x1280 up to y410, top arc
+             r150 about (1130,410), lip at (1130,260). The band is 34 thick on the outside. -->
+        <g class="truss" id="truss"></g>
+        <path class="ramp" d="M1040 760 L1080 760 A200 200 0 0 0 1280 560 L1280 410 A150 150 0 0 0 1130 260 L1130 226 A184 184 0 0 1 1314 410 L1314 560 A234 234 0 0 1 1201.5 760 Z" />
+        <path id="led-inner-off" class="led led-off" d="M1040 760 L1080 760 A200 200 0 0 0 1280 560 L1280 410 A150 150 0 0 0 1130 260" />
+        <path id="led-outer-off" class="led led-off" d="M1201.5 760 A234 234 0 0 0 1314 560 L1314 410 A184 184 0 0 0 1130 226" />
+        <path id="led-inner" class="led led-white led-on" pathLength="1" d="M1040 760 L1080 760 A200 200 0 0 0 1280 560 L1280 410 A150 150 0 0 0 1130 260" />
+        <path id="led-outer" class="led led-red led-on" pathLength="1" d="M1201.5 760 A234 234 0 0 0 1314 560 L1314 410 A184 184 0 0 0 1130 226" />
+        <!-- The red line the mark runs along, from the left edge into the ramp. -->
+        <path id="runway" class="runway" pathLength="1" d="M-600 778 L1040 778" />
+        <g clip-path="url(#below-floor)">
+          <g class="reflection" transform="translate(0 1520) scale(1 -1)"><use href="#car" /></g>
+        </g>
+      </g>
+      <ellipse id="glow" class="glow" cx="800" cy="693" rx="215" ry="180" opacity="0" />
+      <g id="smoke-back"></g>
+      <g id="ghosts"></g>
+      <g id="car" transform="translate(800 693) rotate(180)">
+        <g id="jets"></g>
+        <g id="squash">
+          <g id="gem-art" transform="scale(0.2) translate(-508 -499)">
+            <path id="gem-ring" class="ring" d="M168.22 559.74 Q118.50 496.75 166.95 432.77 L320.08 230.56 Q371.25 163.00 444.33 205.92 L809.61 420.47 Q948.00 501.75 809.72 583.22 L454.93 792.25 Q384.50 833.75 333.85 769.58 Z" />
+            <g clip-path="url(#gem-clip)">
+              <path class="f-body" d="M353.69 248.47 Q353.69 248.47 353.69 248.47 L429.50 350.00 Q429.50 350.00 429.50 350.00 L507.99 455.13 Q540.00 498.00 508.79 541.46 L433.00 647.00 Q433.00 647.00 433.00 647.00 L363.72 743.48 Q363.72 743.48 363.72 743.48 L40.00 980.00 Q40.00 980.00 40.00 980.00 L40.00 20.00 Q40.00 20.00 40.00 20.00 Z" />
+            </g>
+            <g clip-path="url(#gem-clip)">
+              <path class="f-chev" d="M353.69 248.47 Q353.69 248.47 353.69 248.47 L333.69 60.00 Q333.69 60.00 333.69 60.00 L632.00 120.00 Q632.00 120.00 632.00 120.00 L564.60 315.94 Q562.00 323.50 566.84 329.87 L662.76 456.18 Q693.00 496.00 663.57 536.42 L549.35 693.27 Q547.00 696.50 548.35 700.27 L627.00 920.00 Q627.00 920.00 627.00 920.00 L333.72 960.00 Q333.72 960.00 333.72 960.00 L363.72 743.48 Q363.72 743.48 363.72 743.48 L433.00 647.00 Q433.00 647.00 433.00 647.00 L508.79 541.46 Q540.00 498.00 507.99 455.13 L429.50 350.00 Q429.50 350.00 429.50 350.00 Z" />
+            </g>
+            <g clip-path="url(#gem-clip)">
+              <path class="f-dark" d="M561.94 315.50 Q562.00 323.50 566.84 329.87 L662.76 456.18 Q693.00 496.00 663.57 536.42 L549.35 693.27 Q547.00 696.50 547.21 700.49 L560.00 940.00 Q560.00 940.00 560.00 940.00 L1010.00 500.00 Q1010.00 500.00 1010.00 500.00 L560.00 60.00 Q560.00 60.00 560.00 60.00 Z" />
+            </g>
+            <path class="f-dark rhombus-edge" d="M420.90 361.68 Q429.50 350.00 438.17 361.62 L507.99 455.13 Q540.00 498.00 508.79 541.46 L442.33 634.00 Q433.00 647.00 423.52 634.11 L351.91 536.69 Q322.00 496.00 351.94 455.33 Z" />
+            <path class="hairlines" d="M353.69 248.47 L429.50 350.00 M433.00 647.00 L363.72 743.48" />
+          </g>
+        </g>
+      </g>
+      <g id="smoke-front"></g>
+    </g>
+  </svg>
+  <img id="handoff" src="intro-handoff.jpg" alt="">
+  <div class="ask" id="ask"><button type="button" id="flip">Click to flip the logo</button></div>
+  <button type="button" id="skip">Skip</button>
+</div>
+<script>
+(function () {
+  'use strict';
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  var card = document.getElementById('card');
+  var world = document.getElementById('world');
+  var scenery = document.getElementById('scenery');
+  var car = document.getElementById('car');
+  var squash = document.getElementById('squash');
+  var jetsLayer = document.getElementById('jets');
+  var ghostsLayer = document.getElementById('ghosts');
+  var smokeBack = document.getElementById('smoke-back');
+  var smokeFront = document.getElementById('smoke-front');
+  var glow = document.getElementById('glow');
+  var pool = document.getElementById('pool');
+  var ledInner = document.getElementById('led-inner');
+  var ledOuter = document.getElementById('led-outer');
+  var runway = document.getElementById('runway');
+  var handoff = document.getElementById('handoff');
+  var ask = document.getElementById('ask');
+  var flip = document.getElementById('flip');
+  var skip = document.getElementById('skip');
+
+  // Same appearance rule as splash.html: the dashboard's theme lives on an origin this page
+  // cannot read, so the intro follows macOS, and so does the clip it hands over to.
+  var light = !matchMedia('(prefers-color-scheme: dark)').matches;
+  if (light) {
+    document.documentElement.classList.add('light');
+    handoff.src = 'intro-handoff-light.jpg';
+  }
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // The page cannot read the dashboard's language either: Turkish Macs get Turkish copy.
+  if (/^tr\b/i.test(navigator.language || '')) {
+    document.documentElement.lang = 'tr';
+    flip.textContent = 'Logoyu düzeltmek için tıkla';
+    skip.textContent = 'Atla';
+  }
+
+  function invoke(cmd) {
+    try {
+      var tauri = window.__TAURI_INTERNALS__;
+      if (tauri && typeof tauri.invoke === 'function') tauri.invoke(cmd).catch(function () {});
+    } catch (e) { /* no shell (a plain browser): the page still plays */ }
+  }
+
+  // ─── Geometry (stage units, viewBox 1600 x 900) ───────────────────────────────────────────
+  var FLOOR = 760;
+  var HALF = 67;                         // the mark's half height at scale 0.2: it rests at FLOOR - HALF
+  var HOME = { x: 800, y: FLOOR - HALF }; // its own spot, the centre of the floor
+  // The centre path through the ramp is the inner face offset by HALF (see the ramp comment).
+  var C1 = { x: 1080, y: 560 }, P1 = 200 - HALF;  // bottom arc
+  var WALL_X = 1280 - HALF, WALL_TOP = 410;       // the wall, from y 560 up to 410
+  var C2 = { x: 1130, y: 410 }, P2 = 150 - HALF;  // top arc; the lip is straight above C2
+  var LIP = { x: C2.x, y: C2.y - P2 };
+  var L_FLOOR = C1.x - HOME.x;
+  var L_ARC1 = P1 * Math.PI / 2, L_WALL = 560 - WALL_TOP, L_ARC2 = P2 * Math.PI / 2;
+  var L_RAMP = L_ARC1 + L_WALL + L_ARC2;
+  var DEG = 180 / Math.PI;
+
+  /**
+   * Where the mark is, and which way it points, after `s` units of drive. Upside down it points
+   * left, away from the ramp, so it backs in; the curl turns it with its path (half a turn
+   * anticlockwise) and it leaves the lip moving left, the right way up: r 180 -> 90 -> 0.
+   */
+  function along(s) {
+    if (s <= L_FLOOR) return { x: HOME.x + s, y: HOME.y, r: 180 };
+    s -= L_FLOOR;
+    if (s <= L_ARC1) {
+      var a = Math.PI / 2 - s / P1;
+      return { x: C1.x + P1 * Math.cos(a), y: C1.y + P1 * Math.sin(a), r: a * DEG + 90 };
+    }
+    s -= L_ARC1;
+    if (s <= L_WALL) return { x: WALL_X, y: 560 - s, r: 90 };
+    s -= L_WALL;
+    var b = -Math.min(s, L_ARC2) / P2;
+    return { x: C2.x + P2 * Math.cos(b), y: C2.y + P2 * Math.sin(b), r: b * DEG + 90 };
+  }
+
+  // ─── Timeline (seconds from the click) ────────────────────────────────────────────────────
+  var T_REV = 0.12;          // a short shiver, as if the motor caught
+  var T_GO = 0.35;           // it pulls away
+  var D_FLOOR = 0.55;        // floor run, accelerating: s = L * u^2
+  var D_FLIGHT = 1.25;       // lip to touchdown
+  var V_LIP = 2 * (LIP.x - HOME.x) / D_FLIGHT;     // so the brake jets stop it right on HOME
+  var V_FLOOR = 2 * L_FLOOR / D_FLOOR;
+  var D_RAMP = 2 * L_RAMP / (V_FLOOR + V_LIP);     // decelerating up the curl to V_LIP
+  var T_RAMP = T_GO + D_FLOOR;
+  var T_LIP = T_RAMP + D_RAMP;
+  var T_LAND = T_LIP + D_FLIGHT;
+  var T_PUSH = T_LAND + 0.75, D_PUSH = 1.25;
+  var T_HANDOFF = T_PUSH + D_PUSH - 0.1;
+  var T_LEAVE = T_HANDOFF + 0.4;
+
+  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+  function lerp(a, b, u) { return a + (b - a) * u; }
+  function smooth(u) { u = clamp01(u); return u * u * (3 - 2 * u); }
+  function easeInOut(u) { u = clamp01(u); return u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2; }
+
+  /** The mark at time t: position, rotation, speed (units/s). */
+  function markAt(t) {
+    if (t < T_GO) {
+      var shiver = t > T_REV ? Math.sin(t * 140) * 1.4 * (1 - (t - T_REV) / (T_GO - T_REV)) : 0;
+      return { x: HOME.x + shiver, y: HOME.y, r: 180, v: 0 };
+    }
+    if (t < T_RAMP) {
+      var u = (t - T_GO) / D_FLOOR;
+      var p = along(L_FLOOR * u * u);
+      p.v = V_FLOOR * u;
+      return p;
+    }
+    if (t < T_LIP) {
+      var tau = t - T_RAMP;
+      var acc = (V_LIP - V_FLOOR) / D_RAMP;
+      var q = along(L_FLOOR + V_FLOOR * tau + 0.5 * acc * tau * tau);
+      q.v = V_FLOOR + acc * tau;
+      return q;
+    }
+    if (t < T_LAND) {
+      var f = (t - T_LIP) / D_FLIGHT;
+      var dx = HOME.x - LIP.x, dy = HOME.y - LIP.y;
+      // The brake jets stop it over HOME; gravity drops it and the belly jets catch it,
+      // so it touches down firmly but not hard.
+      var x = LIP.x + dx * (1 - (1 - f) * (1 - f));
+      var y = LIP.y + dy * (0.82 * smooth(f) + 0.18 * f * f);
+      // Pitch: the braking lifts its leading (left) edge, then it levels for the landing.
+      var r = f < 0.25 ? lerp(0, 9, smooth(f / 0.25)) : f < 0.72 ? lerp(9, -3, smooth((f - 0.25) / 0.47)) : lerp(-3, 0, smooth((f - 0.72) / 0.28));
+      return { x: x, y: y, r: r, v: V_LIP * (1 - f) };
+    }
+    return { x: HOME.x, y: HOME.y, r: 0, v: 0 };
+  }
+
+  // ─── Camera ───────────────────────────────────────────────────────────────────────────────
+  var CAM_IDLE = { x: 800, y: 640, z: 1.55 };
+  var CAM_WIDE = { x: 990, y: 492, z: 1.4 };
+  // The final framing puts the mark's ring exactly where the opening clip shows it at the
+  // handoff frame: 406 x 343 px at (721, 404.5) in the clip's 1440 x 810, measured from
+  // intro-handoff.jpg. Computed from the ring's own box once the page has laid out.
+  var CAM_END = { x: 800, y: 693, z: 2.6 };
+  function fitEndCamera() {
+    var bb = document.getElementById('gem-ring').getBBox();
+    var k = 0.2, half = 13;      // the art's scale, half the ring's stroke
+    var w = (bb.width + 2 * half) * k;
+    var cx = (bb.x + bb.width / 2 - 508) * k, cy = (bb.y + bb.height / 2 - 499) * k;
+    var S = 1600 / 1440;          // clip pixels to stage units
+    var z = (406 * S) / w;
+    CAM_END = { x: HOME.x + cx - ((721 * S) - 800) / z, y: HOME.y + cy - ((404.5 * S) - 450) / z, z: z };
+  }
+
+  function camAt(t, mark) {
+    if (t <= 0) return CAM_IDLE;
+    if (t < T_PUSH) {
+      var u = easeInOut(t / 1.0);
+      // A little tilt with the mark, the way a camera operator follows the climb.
+      var follow = (mark.y - HOME.y) * 0.12 * smooth((t - T_GO) / 0.6) * (1 - smooth((t - T_LAND) / 0.6));
+      return { x: lerp(CAM_IDLE.x, CAM_WIDE.x, u), y: lerp(CAM_IDLE.y, CAM_WIDE.y, u) + follow, z: lerp(CAM_IDLE.z, CAM_WIDE.z, u) };
+    }
+    var p = easeInOut((t - T_PUSH) / D_PUSH);
+    return { x: lerp(CAM_WIDE.x, CAM_END.x, p), y: lerp(CAM_WIDE.y, CAM_END.y, p), z: lerp(CAM_WIDE.z, CAM_END.z, p) };
+  }
+
+  // ─── Scenery bits ─────────────────────────────────────────────────────────────────────────
+  (function buildTruss() {
+    var truss = document.getElementById('truss');
+    function line(x1, y1, x2, y2) {
+      var l = document.createElementNS(SVGNS, 'line');
+      l.setAttribute('x1', x1); l.setAttribute('y1', y1); l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+      truss.appendChild(l);
+    }
+    // The tower stands behind the ramp's outer face, on the right.
+    var OUT = 1364, IN = 1314, TOP = 240;
+    line(OUT, TOP, OUT, FLOOR); line(IN, TOP + 20, IN, FLOOR);
+    for (var y = TOP; y < FLOOR - 1; y += 52) {
+      line(OUT, y, IN, y);
+      line(OUT, y, IN, Math.min(y + 52, FLOOR));
+      line(IN, y, OUT, Math.min(y + 52, FLOOR));
+    }
+    line(OUT, TOP, 1130, 214); line(OUT - 30, TOP + 40, 1180, 220);
+  })();
+
+  // Jets, in the mark's own frame (it is drawn at scale 0.2 around its centre): two at its left
+  // tip, which leads off the lip (it comes off the curl travelling left), pointing the way it
+  // goes: the brakes; three along the belly pointing down, the landing cushion.
+  var JETS = [
+    { x: -72, y: -7, a: 194, kind: 'brake' },
+    { x: -72, y: 7, a: 166, kind: 'brake' },
+    { x: -52, y: 33, a: 112, kind: 'belly' },
+    { x: -25, y: 64, a: 90, kind: 'belly' },
+    { x: 12, y: 45, a: 72, kind: 'belly' },
+  ];
+  JETS.forEach(function (j) {
+    var g = document.createElementNS(SVGNS, 'g');
+    g.setAttribute('transform', 'translate(' + j.x + ' ' + j.y + ') rotate(' + j.a + ')');
+    var p = document.createElementNS(SVGNS, 'path');
+    p.setAttribute('class', 'jet');
+    p.setAttribute('d', 'M0 -4 Q40 -7 100 0 Q40 7 0 4 Z');
+    p.setAttribute('transform', 'scale(0 1)');
+    g.appendChild(p);
+    jetsLayer.appendChild(g);
+    j.el = p;
+  });
+
+  // Motion trail: three faded copies of the mark a few frames behind it.
+  var GHOSTS = [];
+  for (var gi = 0; gi < 3; gi++) {
+    var gg = document.createElementNS(SVGNS, 'g');
+    var use = document.createElementNS(SVGNS, 'use');
+    use.setAttribute('href', '#gem-art');
+    gg.appendChild(use);
+    gg.setAttribute('opacity', '0');
+    ghostsLayer.appendChild(gg);
+    GHOSTS.push({ el: gg, lag: (gi + 1) * 0.018, alpha: 0.26 - gi * 0.07 });
+  }
+
+  // ─── Air: puffs that expand, slow down and fade ───────────────────────────────────────────
+  var puffs = [];
+  function puff(layer, x, y, vx, vy, r0, r1, life, a0, drag) {
+    if (puffs.length > 170) return;
+    var c = document.createElementNS(SVGNS, 'circle');
+    c.setAttribute('class', 'puff');
+    layer.appendChild(c);
+    puffs.push({ el: c, x: x, y: y, vx: vx, vy: vy, r0: r0, r1: r1, life: life, a0: a0, drag: drag, age: 0 });
+  }
+  function stepPuffs(dt) {
+    for (var i = puffs.length - 1; i >= 0; i--) {
+      var p = puffs[i];
+      p.age += dt;
+      var u = p.age / p.life;
+      if (u >= 1) { p.el.remove(); puffs.splice(i, 1); continue; }
+      var k = Math.exp(-p.drag * dt);
+      p.vx *= k; p.vy = p.vy * k - 14 * dt;      // air drifts up a little as it slows
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.y > FLOOR - 4) { p.y = FLOOR - 4; p.vy = -Math.abs(p.vy) * 0.2; }
+      var r = p.r0 + (p.r1 - p.r0) * (1 - (1 - u) * (1 - u));
+      var a = p.a0 * Math.min(1, u * 10) * Math.pow(1 - u, 1.6);
+      p.el.setAttribute('cx', p.x.toFixed(1));
+      p.el.setAttribute('cy', p.y.toFixed(1));
+      p.el.setAttribute('r', r.toFixed(1));
+      p.el.setAttribute('opacity', a.toFixed(3));
+    }
+  }
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  // The cloud the belly jets throw on touchdown, as in the film: a fast skirt along the floor,
+  // a slower billow that rises behind the mark, and a brief veil in front that clears first.
+  function landingCloud() {
+    var i, side;
+    for (i = 0; i < 26; i++) {
+      side = i % 2 ? 1 : -1;
+      puff(smokeBack, HOME.x + side * rand(10, 60), FLOOR - rand(4, 26), side * rand(260, 920), -rand(0, 60),
+        rand(14, 24), rand(60, 125), rand(1.0, 1.7), rand(0.35, 0.6), rand(2.6, 3.4));
+    }
+    for (i = 0; i < 20; i++) {
+      side = i % 2 ? 1 : -1;
+      puff(smokeBack, HOME.x + side * rand(0, 70), FLOOR - rand(10, 60), side * rand(40, 260), -rand(80, 270),
+        rand(20, 30), rand(90, 170), rand(1.2, 1.9), rand(0.25, 0.45), rand(1.8, 2.4));
+    }
+    for (i = 0; i < 12; i++) {
+      puff(smokeFront, HOME.x + rand(-70, 70), FLOOR - rand(8, 50), rand(-160, 160), -rand(20, 120),
+        rand(18, 26), rand(70, 110), rand(0.6, 1.0), rand(0.45, 0.7), 2.4);
+    }
+  }
+
+  // ─── Sound: synthesised after the click (Web Audio needs that gesture anyway) ─────────────
+  var audio = null;
+  function startSound() {
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      var ctx = new Ctx();
+      var master = ctx.createGain();
+      master.gain.value = 0.55;
+      master.connect(ctx.destination);
+      var noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      var data = noise.getChannelData(0);
+      for (var i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+      function noiseSource() {
+        var s = ctx.createBufferSource();
+        s.buffer = noise; s.loop = true;
+        return s;
+      }
+      var now = ctx.currentTime;
+      // The motor: a rising whine through the floor run and the climb.
+      var osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      var whineFilter = ctx.createBiquadFilter();
+      whineFilter.type = 'lowpass'; whineFilter.frequency.value = 1400;
+      var whine = ctx.createGain();
+      whine.gain.value = 0;
+      osc.connect(whineFilter); whineFilter.connect(whine); whine.connect(master);
+      osc.frequency.setValueAtTime(70, now);
+      osc.frequency.linearRampToValueAtTime(110, now + T_GO);
+      osc.frequency.exponentialRampToValueAtTime(560, now + T_RAMP);
+      osc.frequency.exponentialRampToValueAtTime(820, now + T_LIP);
+      osc.frequency.exponentialRampToValueAtTime(300, now + T_LIP + 0.5);
+      whine.gain.linearRampToValueAtTime(0.012, now + T_GO);
+      whine.gain.linearRampToValueAtTime(0.085, now + T_RAMP);
+      whine.gain.linearRampToValueAtTime(0.075, now + T_LIP);
+      whine.gain.linearRampToValueAtTime(0, now + T_LIP + 0.45);
+      osc.start(now); osc.stop(now + T_LIP + 0.6);
+      // The jets: band-passed air, driven every frame from how hard they fire.
+      var air = noiseSource();
+      var airFilter = ctx.createBiquadFilter();
+      airFilter.type = 'bandpass'; airFilter.frequency.value = 2600; airFilter.Q.value = 0.6;
+      var hiss = ctx.createGain();
+      hiss.gain.value = 0;
+      air.connect(airFilter); airFilter.connect(hiss); hiss.connect(master);
+      air.start(now);
+      audio = { ctx: ctx, master: master, hiss: hiss, air: air, noiseSource: noiseSource };
+    } catch (e) { audio = null; }
+  }
+  function setHiss(level) {
+    if (!audio) return;
+    try { audio.hiss.gain.setTargetAtTime(level * 0.42, audio.ctx.currentTime, 0.03); } catch (e) { /* ignore */ }
+  }
+  function landingSound() {
+    if (!audio) return;
+    try {
+      var ctx = audio.ctx, now = ctx.currentTime;
+      var whoosh = audio.noiseSource();
+      var lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.setValueAtTime(1600, now); lp.frequency.exponentialRampToValueAtTime(300, now + 1.4);
+      var g = ctx.createGain();
+      // A hard hit, then a long tail that lasts as long as the cloud.
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(0.6, now + 0.02);
+      g.gain.setTargetAtTime(0, now + 0.05, 0.38);
+      whoosh.connect(lp); lp.connect(g); g.connect(audio.master);
+      whoosh.start(now); whoosh.stop(now + 2.2);
+      var thump = ctx.createOscillator();
+      thump.type = 'sine';
+      thump.frequency.setValueAtTime(90, now); thump.frequency.exponentialRampToValueAtTime(38, now + 0.3);
+      var tg = ctx.createGain();
+      tg.gain.setValueAtTime(0.0001, now);
+      tg.gain.exponentialRampToValueAtTime(0.6, now + 0.01);
+      tg.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+      thump.connect(tg); tg.connect(audio.master);
+      thump.start(now); thump.stop(now + 0.45);
+    } catch (e) { /* ignore */ }
+  }
+  function stopSound() {
+    if (!audio) return;
+    try {
+      audio.master.gain.setTargetAtTime(0, audio.ctx.currentTime, 0.08);
+      var a = audio;
+      setTimeout(function () { try { a.air.stop(); a.ctx.close(); } catch (e) { /* ignore */ } }, 400);
+    } catch (e) { /* ignore */ }
+    audio = null;
+  }
+
+  // ─── Rendering ────────────────────────────────────────────────────────────────────────────
+  function setCamera(c, shakeX, shakeY) {
+    world.setAttribute('transform', 'translate(' + (800 + shakeX) + ' ' + (450 + shakeY) + ') scale(' + c.z.toFixed(4) + ') translate(' + (-c.x).toFixed(2) + ' ' + (-c.y).toFixed(2) + ')');
+  }
+  function place(el, m) {
+    el.setAttribute('transform', 'translate(' + m.x.toFixed(2) + ' ' + m.y.toFixed(2) + ') rotate(' + m.r.toFixed(2) + ')');
+  }
+  function rotate(x, y, deg) {
+    var a = deg / DEG, c = Math.cos(a), s = Math.sin(a);
+    return { x: x * c - y * s, y: x * s + y * c };
+  }
+
+  var history = [];        // recent marks, for the ghosts
+  function markBefore(t, lag) {
+    for (var i = history.length - 1; i >= 0; i--) if (history[i].t <= t - lag) return history[i].m;
+    return null;
+  }
+
+  function jetLevels(t) {
+    var brake = 0, belly = 0;
+    if (t >= T_LIP && t < T_LAND) {
+      var f = (t - T_LIP) / D_FLIGHT;
+      brake = f < 0.06 ? f / 0.06 : f < 0.88 ? Math.pow(1 - (f - 0.06) / 0.82, 0.55) : 0;
+      belly = f < 0.45 ? 0 : smooth((f - 0.45) / 0.3);
+    } else if (t >= T_LAND && t < T_LAND + 0.14) {
+      belly = 1 - (t - T_LAND) / 0.14;
+    }
+    return { brake: brake, belly: belly };
+  }
+
+  var lastT = 0;
+  var landed = false;
+  function frame(t) {
+    var dt = Math.max(0, Math.min(0.05, t - lastT));
+    lastT = t;
+    var m = markAt(t);
+    history.push({ t: t, m: m });
+    if (history.length > 12) history.shift();
+    place(car, m);
+
+    // Trail while it is fast.
+    var fast = clamp01((m.v - 250) / 600);
+    GHOSTS.forEach(function (g) {
+      var gm = fast > 0 ? markBefore(t, g.lag) : null;
+      if (!gm) { g.el.setAttribute('opacity', '0'); return; }
+      place(g.el, gm);
+      g.el.setAttribute('opacity', (g.alpha * fast).toFixed(3));
+    });
+
+    // Jets and the air they throw.
+    var lv = jetLevels(t);
+    var spray = 0;
+    JETS.forEach(function (j) {
+      var level = j.kind === 'brake' ? lv.brake : lv.belly;
+      var flicker = level > 0 ? rand(0.82, 1.12) : 0;
+      var len = level * flicker * (j.kind === 'brake' ? 1.3 : 1.0);
+      j.el.setAttribute('transform', 'scale(' + len.toFixed(3) + ' ' + (0.7 + 0.5 * level).toFixed(3) + ')');
+      if (level > 0.05 && Math.random() < level * 0.9) {
+        var at = rotate(j.x, j.y, m.r);
+        var dir = (m.r + j.a) / DEG;
+        var sp = rand(380, 720) * level;
+        var near = j.kind === 'belly' ? clamp01(1 - (FLOOR - (m.y + at.y)) / 160) : 0;
+        puff(j.kind === 'brake' ? smokeFront : smokeBack,
+          m.x + at.x + Math.cos(dir) * 18, m.y + at.y + Math.sin(dir) * 18,
+          Math.cos(dir) * sp + (near ? rand(-260, 260) * near : 0), Math.sin(dir) * sp * (1 - near * 0.8),
+          rand(6, 10), rand(34, 64) + near * 50, rand(0.45, 0.8) + near * 0.5, rand(0.35, 0.6), 3.4);
+      }
+      spray += level;
+    });
+    setHiss(Math.min(1, spray / 2.2));
+
+    // Touchdown.
+    var shakeX = 0, shakeY = 0;
+    if (t >= T_LAND) {
+      if (!landed) { landed = true; landingCloud(); landingSound(); }
+      var since = t - T_LAND;
+      var e = Math.exp(-11 * since);
+      shakeY = 7 * e * Math.sin(since * 64);
+      shakeX = 3 * e * Math.sin(since * 47);
+      var sq = Math.exp(-9 * since) * Math.cos(since * 24);
+      squash.setAttribute('transform', 'translate(0 ' + HALF + ') scale(' + (1 + 0.05 * sq).toFixed(4) + ' ' + (1 - 0.1 * sq).toFixed(4) + ') translate(0 ' + (-HALF) + ')');
+    }
+    stepPuffs(dt);
+
+    // Lights: the edges and the runway light up on the click, then go down after the landing.
+    var on = smooth(t / 0.7);
+    var off = 1 - smooth((t - T_LAND - 0.3) / 0.9);
+    // Inline style, not the attribute: the class's CSS dash offset would win over an attribute.
+    ledInner.style.strokeDashoffset = (1 - on).toFixed(3);
+    ledOuter.style.strokeDashoffset = (1 - smooth((t - 0.08) / 0.7)).toFixed(3);
+    runway.style.strokeDashoffset = (1 - smooth((t - 0.1) / 0.6)).toFixed(3);
+    var lit = Math.min(on, off).toFixed(3);
+    ledInner.setAttribute('opacity', lit); ledOuter.setAttribute('opacity', lit); runway.setAttribute('opacity', lit);
+    pool.setAttribute('opacity', (0.6 + 0.4 * smooth((t - T_LAND + 0.2) / 0.3)).toFixed(3));
+
+    // The push-in: the scenery steps back and the mark takes the clip's glow.
+    var push = smooth((t - T_PUSH) / D_PUSH);
+    scenery.setAttribute('opacity', (1 - smooth((t - T_PUSH) / (D_PUSH * 0.7))).toFixed(3));
+    glow.setAttribute('opacity', (0.6 * push).toFixed(3));
+    var clear = (1 - smooth((t - T_PUSH) / 0.6)).toFixed(3);
+    smokeBack.setAttribute('opacity', clear); smokeFront.setAttribute('opacity', clear);
+    setCamera(camAt(t, m), shakeX, shakeY);
+  }
+
+  // ─── Idle: upside down, rocking a little, waiting for the fix ─────────────────────────────
+  var idleRaf = 0, idleStart = 0;
+  function idle(now) {
+    var s = (now - idleStart) / 1000;
+    // Every few seconds it tries to right itself and cannot.
+    var phase = s % 3.2;
+    var rock = phase < 0.9 ? Math.sin(phase / 0.9 * Math.PI * 3) * 3.2 * Math.sin(phase / 0.9 * Math.PI) : 0;
+    place(car, { x: HOME.x, y: HOME.y, r: 180 + rock });
+    idleRaf = requestAnimationFrame(idle);
+  }
+
+  var started = false, finished = false;
+  function leave(after) {
+    if (finished) return;
+    finished = true;
+    stopSound();
+    location.replace(after ? 'splash.html?after=intro' : 'splash.html');
+  }
+
+  function go() {
+    if (started) return;
+    started = true;
+    invoke('intro_seen');
+    cancelAnimationFrame(idleRaf);
+    ask.classList.add('gone');
+    skip.classList.add('gone');
+    if (reduced) {
+      // No ride under reduced motion: the mark is simply set right, then the app opens.
+      place(car, { x: HOME.x, y: HOME.y, r: 0 });
+      setTimeout(function () { leave(false); }, 700);
+      return;
+    }
+    startSound();
+    fitEndCamera();
+    var t0 = performance.now();
+    var handedOff = false;
+    (function tick(now) {
+      var t = (now - t0) / 1000;
+      frame(t);
+      if (t >= T_HANDOFF && !handedOff) { handedOff = true; handoff.classList.add('on'); }
+      if (t >= T_LEAVE) return leave(true);
+      nextFrame(tick);
+    })(t0);
+  }
+
+  // Frames come from requestAnimationFrame, but a window macOS reports as hidden (another
+  // Space, a locked screen) gets none: a timer then keeps the ride's clock and its hand-over
+  // on time instead of leaving it to the shell's deadline.
+  function nextFrame(fn) {
+    var fired = false, raf = 0, timer = 0;
+    function run() {
+      if (fired) return;
+      fired = true;
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+      fn(performance.now());
+    }
+    raf = requestAnimationFrame(run);
+    timer = setTimeout(run, 60);
+  }
+
+  // The shell calls this if it opens the app before the intro is done (its long wait ran out).
+  window.__dcSplashExit = function () {
+    card.style.transition = 'opacity 320ms ease-in';
+    card.classList.remove('in');
+    stopSound();
+  };
+
+  flip.addEventListener('click', go);
+  skip.addEventListener('click', function () {
+    if (started) return;
+    started = true;
+    invoke('intro_seen');
+    leave(false);
+  });
+  // Return or Space fixes it without aiming for the button (it is not focused, so no ring
+  // sits on it); Escape skips.
+  addEventListener('keydown', function (e) {
+    if (started || e.repeat) return;
+    if (e.key === 'Escape') { e.preventDefault(); skip.click(); }
+    else if ((e.key === 'Enter' || e.key === ' ') && e.target !== skip) { e.preventDefault(); go(); }
+  });
+
+  setCamera(CAM_IDLE, 0, 0);
+  place(car, { x: HOME.x, y: HOME.y, r: 180 });
+  // Said at once, not on the first frame: a window macOS reports as hidden gets no frames, and
+  // without the hold the shell's 8s deadline would open the app over a waiting intro.
+  invoke('intro_hold');
+  requestAnimationFrame(function () {
+    card.classList.add('in');
+    setTimeout(function () { ask.classList.add('on'); }, reduced ? 0 : 450);
+    if (!reduced) { idleStart = performance.now(); idleRaf = requestAnimationFrame(idle); }
+  });
+})();
+</script>
+</body>
+</html>
