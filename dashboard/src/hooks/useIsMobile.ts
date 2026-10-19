@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react';
+import { isMacPhoneSurface } from '../lib/phoneSurface';
 
 /**
  * "Is this a phone?" — the ONE definition, so every mobile branch agrees.
  *
- * Two conditions, and the second is the load-bearing one:
+ * Hands-free (Mac mode's phone listener) answers yes on ANY device: a tablet, a second
+ * computer, a phone. That page is the hands-free surface whatever screen it is drawn on, and the
+ * desktop chrome cannot work there (its project strip and launcher are laptop-only routes the
+ * phone listener refuses), so a wide or mouse-driven device that failed the queries below opened
+ * a dashboard with no chats and no projects (owner, 2026-10-19). The flag is the server's,
+ * present before the first render, and never changes for the life of the document.
+ *
+ * Elsewhere, two conditions, and the second is the load-bearing one:
  *
  *   `(max-width: 768px)`  — narrow enough that the desktop chrome does not fit.
  *   `(pointer: coarse)`   — the primary input is a finger, not a mouse.
@@ -25,6 +33,7 @@ export const COARSE_POINTER_QUERY = '(pointer: coarse)';
 
 /** The same answer, read once (for an initial state). */
 export function readIsMobile(): boolean {
+  if (isMacPhoneSurface()) return true;
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   return window.matchMedia(MOBILE_WIDTH_QUERY).matches
     && window.matchMedia(COARSE_POINTER_QUERY).matches;
