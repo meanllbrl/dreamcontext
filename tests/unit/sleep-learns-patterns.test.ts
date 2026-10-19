@@ -535,12 +535,6 @@ describe('backfill, redaction, the brief', () => {
 });
 
 /**
- * End review, open question (a): the ledger cap kept the LAST MAX_ITEMS by insertion order, and a
- * backfill appends sessions in registry order, not time order. An older session read after a
- * full ledger pushed newer items out, and every later run re-read them as new (`added` > 0
- * forever). The cap now keeps the newest by `at`, and `added` counts only what was kept.
- */
-/**
  * review7 F2: ingest only adds, so a ledger written by the classifier before 2026-10-20 would keep
  * the agents' and the app's words as the owner's for good. The ledger is versioned: any other
  * version reads as empty, and the next ingest rebuilds it. A rule learned from the old ledger
@@ -593,6 +587,108 @@ describe('a ledger of an older version reads as empty (review7 F2)', () => {
   });
 });
 
+/**
+ * review7r G1: ids were random and "already learned / the owner said no" is excluded by id. After
+ * the v1 -> v2 reset a backfill re-read the same turns under NEW ids, and a learned or reverted
+ * rule's group came back open. Ids now come from the stable key, and the rebuild carries over the
+ * v1 items a learned change cites (their keys stop the re-read from filing those turns again).
+ */
+describe('a re-read never makes new claims (review7r G1, G2)', () => {
+  const ledgerPath = () => join(ctx, 'state', '.owner-corrections.json');
+  /** As a v1 build left the brain: random ids in the ledger, and the learned change citing them. */
+  const resetToV1 = () => {
+    const stored = JSON.parse(readFileSync(ledgerPath(), 'utf-8')) as { items: Array<{ id: string }> };
+    const renamed = new Map(stored.items.map((i, n) => [i.id, `oc_v1rand${n}`]));
+    for (const i of stored.items) i.id = renamed.get(i.id)!;
+    writeFileSync(ledgerPath(), JSON.stringify({ version: 1, items: stored.items }));
+    const learnedPath = join(ctx, 'state', '.learned-patterns.json');
+    const learned = JSON.parse(readFileSync(learnedPath, 'utf-8')) as { changes: Array<{ cites: string[] }> };
+    for (const c of learned.changes) c.cites = c.cites.map((id) => renamed.get(id) ?? id);
+    writeFileSync(learnedPath, JSON.stringify(learned));
+  };
+  /** s1 and s2 where a backfill finds them: fresh copies, listed in the sleep state. */
+  const sessionsForBackfill = () => {
+    const sessions = ['s1', 's2'].map((n) => {
+      const path = join(projectRoot, `${n}.jsonl`);
+      writeFileSync(path, readFileSync(join(FIX, `${n}.jsonl`), 'utf-8'));
+      return { session_id: `${n}-larkspur`, transcript_path: path, stopped_at: new Date().toISOString(), task_slugs: [] };
+    });
+    writeFileSync(join(ctx, 'state', '.sleep.json'), JSON.stringify({ sessions }));
+  };
+  const backfillJson = async (): Promise<{ backfill: { added: number; sessions: number }; groups: unknown[] }> => {
+    const out: string[] = [];
+    console.log = (...a: unknown[]) => { out.push(a.map(String).join(' ')); };
+    try {
+      expect(await cli('patterns', 'corrections', '--backfill', '7', '--recurring', '--json')).toBe(0);
+    } finally {
+      console.log = () => {};
+    }
+    return JSON.parse(out.join('\n'));
+  };
+
+  it('the same turn and quote always get the same id', () => {
+    ingest('s1', 's2');
+    const first = readCorrections(ctx);
+    expect(first.every((i) => i.id === `oc_${i.key.slice(0, 12)}`)).toBe(true);
+    rmSync(ledgerPath());
+    ingest('s2', 's1');
+    expect(readCorrections(ctx).map((i) => i.id).sort()).toEqual(first.map((i) => i.id).sort());
+  });
+
+  for (const reverted of [true, false]) {
+    it(`a ${reverted ? 'reverted' : 'learned'} rule's group stays closed after the v1 reset and a backfill of the same sessions`, async () => {
+      ingest('s1', 's2');
+      const c = learnRule(ctx, { pattern: 'named-exports', title: 'Named exports only', rule: 'Always use named exports, never default exports.', cites: groupOf('s1', 's2').ids });
+      if (reverted) revertLearned(ctx, c.id, 'owner');
+      expect(openGroups(ctx)).toEqual([]);
+      resetToV1();
+      const cites = readLearnedChanges(ctx)[0].cites;
+      expect(cites.every((id) => id.startsWith('oc_v1rand'))).toBe(true);
+
+      sessionsForBackfill();
+      const r = await backfillJson();
+      expect(r.backfill.sessions).toBe(2);
+      expect(r.groups).toEqual([]);
+      expect(openGroups(ctx)).toEqual([]);
+      expect(recurringCorrectionsBrief(ctx).count).toBe(0);
+
+      const stored = JSON.parse(readFileSync(ledgerPath(), 'utf-8')) as { version: number };
+      expect(stored.version).toBe(LEDGER_VERSION);
+      const items = readCorrections(ctx);
+      // The cited items came over with their v1 ids, and no turn was filed twice.
+      for (const id of cites) expect(items.some((i) => i.id === id)).toBe(true);
+      expect(new Set(items.map((i) => i.key)).size).toBe(items.length);
+      // A second backfill finds nothing new and still opens nothing.
+      const again = await backfillJson();
+      expect(again.backfill.added).toBe(0);
+      expect(again.groups).toEqual([]);
+    });
+  }
+
+  // G2: a newer build's ledger is read as empty, but never written over.
+  it('a ledger of a NEWER version is left alone: a warning, nothing written, no throw', () => {
+    mkdirSync(join(ctx, 'state'), { recursive: true });
+    const newer = JSON.stringify({ version: LEDGER_VERSION + 1, items: [], shape: 'from a later build' });
+    writeFileSync(ledgerPath(), newer);
+    const errs: string[] = [];
+    console.error = (...a: unknown[]) => { errs.push(a.map(String).join(' ')); };
+    try {
+      expect(ingest('s1', 's2')).toEqual({ added: 0 });
+    } finally {
+      console.error = () => {};
+    }
+    expect(readFileSync(ledgerPath(), 'utf-8')).toBe(newer);
+    expect(errs.join('\n')).toMatch(/version 3, written by a newer dreamcontext/);
+    expect(readCorrections(ctx)).toEqual([]);
+  });
+});
+
+/**
+ * End review, open question (a): the ledger cap kept the LAST MAX_ITEMS by insertion order, and a
+ * backfill appends sessions in registry order, not time order. An older session read after a
+ * full ledger pushed newer items out, and every later run re-read them as new (`added` > 0
+ * forever). The cap now keeps the newest by `at`, and `added` counts only what was kept.
+ */
 describe('the ledger cap keeps the newest corrections, and a re-run adds nothing', () => {
   const NOW = new Date('2026-10-18T12:00:00.000Z');
   function session(id: string, count: number, startIso: string, word: string): SessionRef {

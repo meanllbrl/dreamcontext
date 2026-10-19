@@ -60,7 +60,7 @@ import { loadFamily } from '../../lib/task-parent.js';
 import { cycleCounts, filingBrake, readProposals } from '../../lib/task-proposals.js';
 import { rulesForBrief } from '../../lib/task-filing-rules.js';
 import { ingestSessions } from '../../lib/owner-corrections.js';
-import { listLearnedItems, recurringCorrectionsBrief } from '../../lib/learned-patterns.js';
+import { citedCorrectionIds, listLearnedItems, recurringCorrectionsBrief } from '../../lib/learned-patterns.js';
 import { basisSessions, sessionsFromSleepState } from '../../lib/ask-basis.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-log.js';
@@ -555,7 +555,7 @@ export function registerSleepCommand(program: Command): void {
         try {
           let person: string | null = null;
           try { person = resolveActivePerson(root).slug; } catch { /* unresolved: stored as null */ }
-          ingestSessions(root, basisSessions(sessionsFromSleepState(root)), person, 'epoch');
+          ingestSessions(root, basisSessions(sessionsFromSleepState(root)), person, 'epoch', new Date(), citedCorrectionIds(root));
         } catch (err) {
           say.warn(`Owner corrections: not recorded this sleep — ${(err as Error).message ?? err}`);
         }

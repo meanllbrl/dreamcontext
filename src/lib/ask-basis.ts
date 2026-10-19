@@ -136,6 +136,14 @@ const INJECTED_BLOCKS: readonly RegExp[] = [
  */
 const UNCLOSED_OPENER = new RegExp(`<(?:${INJECTED_TAGS.join('|')})\\b[^>]*>[\\s\\S]*$`, 'i');
 
+/**
+ * Fail closed the other way: a closing tag still there has lost its opener (a forged closer
+ * inside the block ended it early, and the real one is left over). Whatever carried the forgery,
+ * all from the start of the turn through the LAST such closer is the block's; only the text
+ * after it can be the owner's.
+ */
+const LONE_CLOSER = new RegExp(`<\\/(?:${INJECTED_TAGS.join('|')})\\b[^>]*>`, 'gi');
+
 /** A slash command's arguments ARE what the owner typed after it: the wrapper goes, the words stay. */
 const COMMAND_ARGS = /<command-args\b[^>]*>([\s\S]*?)<\/command-args>/gi;
 
@@ -143,6 +151,9 @@ export function stripInjected(text: string): string {
   let out = text;
   for (const re of INJECTED_BLOCKS) out = out.replace(re, ' ');
   out = out.replace(UNCLOSED_OPENER, ' ');
+  const closers = [...out.matchAll(LONE_CLOSER)];
+  const last = closers[closers.length - 1];
+  if (last) out = ` ${out.slice((last.index ?? 0) + last[0].length)}`;
   return out.replace(COMMAND_ARGS, ' $1 ');
 }
 

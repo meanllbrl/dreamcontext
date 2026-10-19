@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { generateId } from './id.js';
 import { matchForm, ownerTurns, sessionsFromSleepState } from './ask-basis.js';
 import { redactEvidenceTail } from './task-evidence.js';
 import { candidateSimilarity } from './task-feedback.js';
@@ -52,7 +51,11 @@ export const GROUP_SIMILARITY = 0.45;
 export type CorrectionSource = 'epoch' | 'backfill';
 
 export interface OwnerCorrection {
-  /** `oc_<nanoid8>` */
+  /**
+   * `oc_<first 12 of the key>`: the same turn and quote always get the same id, so re-reading a
+   * session never makes a new claim. Items carried over from a v1 ledger keep their random
+   * `oc_<nanoid8>`.
+   */
   id: string;
   /** sha1(session + record uuid or ordinal + quote): ingest is idempotent on it. */
   key: string;
@@ -130,22 +133,28 @@ function isItem(x: unknown): x is OwnerCorrection {
     && (o.origin === 'recorded' || o.origin === 'unknown');
 }
 
-/** Every stored correction, oldest first. Missing, unreadable or of another {@link LEDGER_VERSION} reads as none. */
-export function readCorrections(contextRoot: string): OwnerCorrection[] {
+/** The ledger as stored, whatever its version. Missing or unreadable reads as no version, no items. */
+function readLedger(contextRoot: string): { version: unknown; items: OwnerCorrection[] } {
+  const none = { version: undefined, items: [] };
   let p: string;
   try {
     p = safeResolveInside(contextRoot, OWNER_CORRECTIONS_REL);
   } catch {
-    return [];
+    return none;
   }
-  if (!existsSync(p)) return [];
+  if (!existsSync(p)) return none;
   try {
     const parsed = JSON.parse(readFileSync(p, 'utf-8')) as { version?: unknown; items?: unknown };
-    if (parsed?.version !== LEDGER_VERSION) return [];
-    return Array.isArray(parsed.items) ? parsed.items.filter(isItem) : [];
+    return { version: parsed?.version, items: Array.isArray(parsed?.items) ? parsed.items.filter(isItem) : [] };
   } catch {
-    return [];
+    return none;
   }
+}
+
+/** Every stored correction, oldest first. Missing, unreadable or of another {@link LEDGER_VERSION} reads as none. */
+export function readCorrections(contextRoot: string): OwnerCorrection[] {
+  const ledger = readLedger(contextRoot);
+  return ledger.version === LEDGER_VERSION ? ledger.items : [];
 }
 
 /**
@@ -178,6 +187,12 @@ function prune(items: OwnerCorrection[], now: Date, fresh: ReadonlySet<string> =
  * is identical across sessions (a dispatch brief pasted into several builders)
  * counts once; a short correction typed verbatim in two sessions counts twice,
  * because that is exactly the owner repeating themself.
+ *
+ * `cited`: the correction ids a learned change cites (`citedCorrectionIds`), passed in because
+ * learned-patterns.ts imports this module. On the one rebuild of an older ledger, the items they
+ * name are carried over: a learned or reverted rule stays excluded from every group, and their
+ * keys stop the re-read from filing the same turns again under new ids. A ledger of a NEWER
+ * version (a newer build on this machine) is left alone: a warning, nothing written.
  */
 export function ingestSessions(
   contextRoot: string,
@@ -185,10 +200,16 @@ export function ingestSessions(
   person: string | null,
   source: CorrectionSource,
   now: Date = new Date(),
+  cited: ReadonlySet<string> = new Set(),
 ): { added: number } {
   ensureLocalStateIgnored(contextRoot);
   return withTaskFileLock(contextRoot, LOCK_KEY, () => {
-    const items = readCorrections(contextRoot);
+    const ledger = readLedger(contextRoot);
+    if (typeof ledger.version === 'number' && ledger.version > LEDGER_VERSION) {
+      console.error(`Warning: owner corrections not recorded: the ledger is version ${ledger.version}, written by a newer dreamcontext (this one writes ${LEDGER_VERSION}). Left as it is.`);
+      return { added: 0 };
+    }
+    const items = ledger.version === LEDGER_VERSION ? ledger.items : ledger.items.filter((i) => cited.has(i.id));
     const keys = new Set(items.map((i) => i.key));
     const longTurnSession = new Map<string, string>();
     for (const i of items) if (i.turnHash && !longTurnSession.has(i.turnHash)) longTurnSession.set(i.turnHash, i.session);
@@ -211,7 +232,7 @@ export function ingestSessions(
           if (keys.has(key)) continue;
           keys.add(key);
           items.push({
-            id: generateId('oc'),
+            id: `oc_${key.slice(0, 12)}`,
             key,
             at: turn.at ?? now.toISOString(),
             session: s.id,

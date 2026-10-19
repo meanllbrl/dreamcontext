@@ -5,7 +5,7 @@ import { ensureContextRoot } from '../../lib/context-path.js';
 import { loadPatterns, loadPatternsReporting, matchPatterns, syncPatternShims } from '../../lib/patterns.js';
 import { success, error, info } from '../../lib/format.js';
 import { backfillSessions, ingestSessions, readCorrections } from '../../lib/owner-corrections.js';
-import { LearnError, learnRule, listLearnedItems, openGroups, revertItem } from '../../lib/learned-patterns.js';
+import { citedCorrectionIds, LearnError, learnRule, listLearnedItems, openGroups, revertItem } from '../../lib/learned-patterns.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { refuseSelfApproval } from './agents.js';
 
@@ -159,7 +159,7 @@ export function registerPatternsCommand(program: Command): void {
         try { person = resolveActivePerson(root).slug; } catch { /* unresolved: stored as null */ }
         const found = backfillSessions(root, days);
         try {
-          const r = ingestSessions(root, found.sessions, person, 'backfill');
+          const r = ingestSessions(root, found.sessions, person, 'backfill', new Date(), citedCorrectionIds(root));
           backfill = { added: r.added, sessions: found.sessions.length, excluded: { ...found.excluded } };
         } catch (e) {
           error(`Backfill refused: ${(e as Error).message}`);
