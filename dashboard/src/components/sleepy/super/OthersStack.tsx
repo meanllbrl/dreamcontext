@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent, type RefObject } from 'react';
 import { useI18n } from '../../../context/I18nContext';
+import { fill } from '../../../lib/fill';
 import type { ContainerKind } from '../../../lib/superTypes';
 import { KIND_GLYPH } from './SuperContainer';
 import type { Rect } from './superLayout';
@@ -69,7 +70,7 @@ export function OthersStack({ items, rect, onOpen, onPressItem, stackRef }: {
         data-asking={asking ? 'true' : undefined}
         aria-haspopup="true"
         aria-expanded={open}
-        aria-label={t('super.others.label').replace('{n}', String(items.length))}
+        aria-label={fill(t('super.others.label'), { n: String(items.length) })}
         onClick={() => setOpen((o) => !o)}
       >
         <span className="super-others-sheets" aria-hidden>

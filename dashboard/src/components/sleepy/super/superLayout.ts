@@ -169,7 +169,7 @@ function freeIntervals(input: SideInput, x: number, u: number): Array<[number, n
  * Fill the columns top-down, inner column first (§0 C1). A column with no blocks is centred
  * on the centre's midline. `partial` keeps going past a card that does not fit (it overflows).
  */
-function fill(input: SideInput, u: number, cols: number, squared: boolean, partial: boolean): SideFit | null {
+function packSide(input: SideInput, u: number, cols: number, squared: boolean, partial: boolean): SideFit | null {
   const { GAP } = STAGE;
   const rects: Rect[] = new Array(input.shapes.length);
   const overflow: number[] = [];
@@ -238,7 +238,7 @@ function fitSide(input: SideInput, squared: boolean): SideFit | null {
     const uMax = Math.min(STAGE.U_MAX, (w - (cols - 1) * STAGE.GAP) / cols);
     if (uMax < STAGE.U_MIN) continue;
     for (let u = uMax; u >= STAGE.U_MIN; u = u === uMax && u !== Math.floor(u) ? Math.floor(u) : u - 1) {
-      const f = fill(input, u, cols, squared, false);
+      const f = packSide(input, u, cols, squared, false);
       if (f) return f;
     }
   }
@@ -250,7 +250,7 @@ function overflowSide(input: SideInput): SideFit {
   const w = sideWidth(input);
   const cols = w >= 2 * STAGE.U_MIN + STAGE.GAP ? 2 : w >= STAGE.U_MIN ? 1 : 0;
   if (!cols) return { u: 0, cols: 0, squared: true, rects: [], overflow: input.shapes.map((_, i) => i) };
-  return fill(input, STAGE.U_MIN, cols, true, true) ?? { u: 0, cols: 0, squared: true, rects: [], overflow: input.shapes.map((_, i) => i) };
+  return packSide(input, STAGE.U_MIN, cols, true, true) ?? { u: 0, cols: 0, squared: true, rects: [], overflow: input.shapes.map((_, i) => i) };
 }
 
 // ─── Owner placement ────────────────────────────────────────────────────────────

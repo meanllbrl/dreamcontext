@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { raiseAskAttention } from '../../../lib/attention';
+import { fill } from '../../../lib/fill';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission, PendingQuestion } from '../chatSession';
 import {
@@ -129,7 +130,7 @@ export function QueueStrip({ head, waiting, vault, rect, sessionFor, titleFor, o
           {head.kind === 'permission'
             ? <PermissionHead item={head} child={child} locked={locked} answerOnce={answerOnce} />
             : <EscalatedHead item={head} child={child} locked={locked} answerOnce={answerOnce} onReplyToSuper={onReplyToSuper} showOptions={showOptions} />}
-          {waiting > 1 && <span className="super-queue-more">{t('super.queue.more').replace('{n}', String(waiting - 1))}</span>}
+          {waiting > 1 && <span className="super-queue-more">{fill(t('super.queue.more'), { n: String(waiting - 1) })}</span>}
         </div>
       )}
     </div>

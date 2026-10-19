@@ -1,6 +1,7 @@
 import { useEffect, useReducer } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { pollMs } from '../../../lib/windowActivity';
+import { fill } from '../../../lib/fill';
 import type { SuperChild } from '../../../lib/superTypes';
 import type { SessionStatusInfo } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
@@ -70,12 +71,12 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
 
 function doingText(t: (k: string) => string, d: DoingLine): string {
   const subject = d.subject || '…';
-  return t(`super.card.doing.${d.verb}`).replace('{x}', subject);
+  return fill(t(`super.card.doing.${d.verb}`), { x: subject });
 }
 
 function backgroundText(t: (k: string) => string, bg: { shells: number; agents: number }): string {
   const parts: string[] = [];
-  if (bg.shells) parts.push(t(bg.shells === 1 ? 'super.card.bg.shell' : 'super.card.bg.shells').replace('{n}', String(bg.shells)));
-  if (bg.agents) parts.push(t(bg.agents === 1 ? 'super.card.bg.agent' : 'super.card.bg.agents').replace('{n}', String(bg.agents)));
+  if (bg.shells) parts.push(fill(t(bg.shells === 1 ? 'super.card.bg.shell' : 'super.card.bg.shells'), { n: String(bg.shells) }));
+  if (bg.agents) parts.push(fill(t(bg.agents === 1 ? 'super.card.bg.agent' : 'super.card.bg.agents'), { n: String(bg.agents) }));
   return parts.join(' · ');
 }
