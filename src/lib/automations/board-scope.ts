@@ -76,6 +76,8 @@ export const BOARD_AGENT_READ_VERBS = [
   'lab show',
   'whiteboard list',
   'whiteboard show',
+  // Read-only: a free spot for --size; the write itself re-checks under the board lock.
+  'whiteboard place',
   'whiteboard nav list',
   'automations list',
   'automations show',
@@ -93,6 +95,8 @@ export const BOARD_AGENT_BOARD_VERBS = [
   'whiteboard update',
   'whiteboard remove',
   'whiteboard draw',
+  // Writes a PNG, and the CLI keeps `--out` inside the scratch or output folder.
+  'whiteboard render',
   'whiteboard nav add',
   'whiteboard nav remove',
   'whiteboard nav move',

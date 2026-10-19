@@ -3843,6 +3843,9 @@
         "--url",
         "--item",
         "--at",
+        "--below",
+        "--right-of",
+        "--align-left",
         "--size",
         "--tag",
         "--color"
@@ -3861,13 +3864,16 @@
     },
     {
       "path": "whiteboard draw",
-      "desc": "Import a drawing built by the excalidraw skill (.excalidraw.md or scene .json) onto a board",
+      "desc": "Import a drawing built by the excalidraw skill (.excalidraw.md or scene .json) onto a board; refused where it would cover live elements",
       "args": [
         "<slug>"
       ],
       "valueFlags": [
         "--file",
         "--at",
+        "--below",
+        "--right-of",
+        "--align-left",
         "--tag"
       ]
     },
@@ -3933,6 +3939,19 @@
       ]
     },
     {
+      "path": "whiteboard place",
+      "desc": "Find free space: a grid-aligned x,y (multiples of 196) where a box of --size covers nothing and keeps 16px clear; read-only",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--size",
+        "--below",
+        "--right-of",
+        "--align-left"
+      ]
+    },
+    {
       "path": "whiteboard remove",
       "desc": "Remove elements by id or by --tag; prints the removed group's bbox (x,y,w,h)",
       "args": [
@@ -3952,8 +3971,23 @@
       ]
     },
     {
+      "path": "whiteboard render",
+      "desc": "Draw a board, a tagged group or a region as a PNG, without a browser: shapes, arrows and text as laid out, widgets as titled cards, pictures as placeholders",
+      "args": [
+        "[slug]"
+      ],
+      "valueFlags": [
+        "--out",
+        "--tag",
+        "--region",
+        "--band",
+        "--file",
+        "--scale"
+      ]
+    },
+    {
       "path": "whiteboard show",
-      "desc": "Show a board's live elements (or one element with --full)",
+      "desc": "Show a board's live elements (or one element with --full); the board form opens with each tag's count and box, and what changed since this session last ran show",
       "args": [
         "<slug>",
         "[id]"

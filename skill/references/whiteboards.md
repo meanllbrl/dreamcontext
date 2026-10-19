@@ -63,7 +63,7 @@ Widgets are sized like Apple's widgets, on a grid of **180px cells with 16px gap
 
 - `--size s|m|l|xl` sets `dc.size` and the box. Without `--size` a widget gets its kind's default and records it. The one exception is `agent`: it comes in tall, **376×572** (2×3 cells), recording `l`; `--size` still picks a preset. The widget adapts to its size in the dashboard: an `s` insight shows just the number, `l` and up draw the chart; a bigger todo shows more items. The user can also pick a size on the widget, or drag a handle (it snaps to the nearest size).
 - `--size w,h` (back-compat) keeps an exact free-form box and leaves `dc.size` unset; the dashboard then shows the **nearest** preset, and `show` reports that nearest size. Prefer the presets.
-- **Placement without `--at`:** the widget lands on the grid pitch (196px = cell + gap), in the first grid row, from the top of the board's content down, where it fits to the right of what is already in that row within eight cells (1552px); otherwise it goes below all content at the left. It never overlaps a live element and keeps at least a 16px gap. With `--at`, use multiples of 196 to stay on the grid.
+- **Placement without `--at`:** the widget lands on the grid pitch (196px = cell + gap), in the first grid row, from the top of the board's content down, where it fits to the right of what is already in that row within eight cells (1552px); otherwise it goes below all content at the left. It never overlaps a live element and keeps at least a 16px gap. With `--at`, use multiples of 196 to stay on the grid; an `--at` that would cover a live element is refused (§ Placing without collisions).
 
 - A `ref` that does not exist yet is a **warning, not a failure**: the widget renders "not found" until the entity appears. The exception is `agent`: its `--ref` must name an existing agent (`dreamcontext agents list`), because an agent never appears on its own.
 - Validation on every write: a `lab-card` ref is exactly `<board-slug>/<card-id>` (both kebab-case); an insight or task `ref` matches `^[a-z0-9][a-z0-9-/]{0,200}$` with no `..` segment; a page (`knowledge`) ref is either such a slug or a project-relative path ending in `.md`/`.pdf`/`.html`/`.htm` (no leading `/` or `~`, no `\`, `:`, empty, `.` or `..` segment); a tag matches `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`; a todo holds at most 500 items; a text payload is at most 1M chars.
@@ -80,7 +80,9 @@ dreamcontext whiteboard show <slug> --json         # every live element
 dreamcontext whiteboard show <slug> <id> --full    # one element, payload untruncated
 ```
 
-`show --json` returns `{slug, name, description, elements: [...], wikis: [...], agents: [...]}`. Each element has `id`, `type`, `bbox {x,y,w,h}` and, where present, `text` (text elements), `tag`, and for widgets `kind`, `size` (`s|m|l|xl`: `dc.size`, or the nearest preset for a free-form box), `ref`, `title`, `items`, `url`, `markdown`, `html`, and a wiki card's `sections`. `wikis` lists every wiki card as `{id, title, size, sections}`. `agents` lists every agent card as `{id, slug, title, home, missing}`: `home: true` when the agent's manifest names this board as its home, `missing: true` when the agent no longer exists. Deleted elements (tombstones) are never listed.
+`show` opens with the board at a glance: one line per tag (`#tag  N elements  @x,y,w,h`, untagged last), then whether anyone else changed the board since **this session's** last `show` (another session, the user in the dashboard, a sync), e.g. `⚠ Changed by someone else since your last show (…): 79 added (#pricing-test 79)`. Your own writes are not counted. Run `show` before you place anything and again before you trust an old reading.
+
+`show --json` returns `{slug, name, description, summary, since, firstShow, elements: [...], wikis: [...], agents: [...]}`. `summary` is `{elements, content: {x,y,w,h} | null, groups: [{tag, count, bbox}]}` (`tag: null` = untagged). `since` is null when nothing changed (or on the session's first look, `firstShow: true`), else `{lastShow, added, changed, removed, byTag: [{tag, added, changed, removed}], ids: {added, changed, removed}}`. The note lives in `whiteboards/.locks/seen/` (machine-local, never synced), keyed by `CLAUDE_CODE_SESSION_ID`. Each element has `id`, `type`, `bbox {x,y,w,h}` and, where present, `text` (text elements), `tag`, and for widgets `kind`, `size` (`s|m|l|xl`: `dc.size`, or the nearest preset for a free-form box), `ref`, `title`, `items`, `url`, `markdown`, `html`, and a wiki card's `sections`. `wikis` lists every wiki card as `{id, title, size, sections}`. `agents` lists every agent card as `{id, slug, title, home, missing}`: `home: true` when the agent's manifest names this board as its home, `missing: true` when the agent no longer exists. Deleted elements (tombstones) are never listed.
 
 - **What the user ticked**: a todo item the user checked on the canvas reads back as `"done": true`. This is how an agent sees the user's progress. Nothing else needs to be asked.
 - `markdown` and `html` are cut to 500 chars with `"truncated": true`; fetch one in full with `show <slug> <id> --full`.
@@ -93,13 +95,41 @@ dreamcontext whiteboard update <slug> <id> --title "…" --text "…" --url http
   --item "append this" --check 2 --uncheck <item-id> --at x,y --size s|m|l|xl --color blue|none
 dreamcontext whiteboard rename <slug> "New name"       # display name only; the slug stays
 dreamcontext whiteboard remove <slug> <id>…          # or: remove <slug> --tag <tag>
-dreamcontext whiteboard draw <slug> --file x.excalidraw.md [--at x,y] [--tag t]
+dreamcontext whiteboard draw <slug> --file x.excalidraw.md [--at x,y | --below <tag> | --right-of <tag>] [--tag t]
 ```
 
 - `--check` / `--uncheck` take a **1-based position** or an item id, and repeat.
 - `update --text` on a plain text element replaces its text.
 - `update --size s|m|l|xl` resizes a widget to a preset (sets `dc.size`, width and height, bumps the version). `--size w,h` resizes any element freely and clears a widget's `dc.size`.
 - `remove` writes tombstones and prints the **removed group's bbox** (`bbox x,y,w,h`; `--json` → `{removed, bbox}`, `bbox: null` when nothing matched). Text bound inside a removed container goes with it.
+
+## Placing without collisions, and looking at the result
+
+**Never verify a whiteboard with Playwright or any browser, and never touch the user's open dashboard** (no opening it, no hiding its dialogs, no clicking its tabs). That window is the user's. Verify with `whiteboard show --json`, the overlap check every write runs, and `whiteboard render`, which draws a PNG in-process for you to read.
+
+**Every `draw` and `add` checks where it lands.** Under the board's lock, on the board as it is at that moment (so a section another session drew after your last `show` counts), the box of what you are writing (the whole group for `draw`) is compared with every live element. If it would cover any, the write is refused, nothing is written, the command exits non-zero and prints the overlapping elements, grouped by tag, each as `id  type  #tag  @x,y,w,h`, plus the `place` command that finds free space. `--json` prints `{error: "overlap", box, overlaps: [{id, type, kind, tag, bbox}], groups, hint}` on stdout. A frame that wholly contains the box does not count (its empty space is meant to be filled); what the frame holds does. `--allow-overlap` writes it anyway, for a deliberate layer (a note on top of a section). Auto-placement (no `--at`) never overlaps, so the check only ever refuses an `--at`.
+
+**Find free space instead of guessing coordinates:**
+
+```bash
+dreamcontext whiteboard place <slug> --size 1140,633 --below pricing-test     # → 980,2352 (first line), grid-aligned
+dreamcontext whiteboard place <slug> --size m --right-of panel                 # a widget size works too
+dreamcontext whiteboard place <slug> --size 400,300 --below pricing-test --align-left intro
+```
+
+`place` answers a top-left on the 196px grid where a box of `--size` (`w,h`, or `s|m|l|xl`) covers nothing and keeps 16px clear. `--below <tag>`: under that group, lined up with its left edge (or `--align-left <tag>`'s), walking down until clear. `--right-of <tag>`: beside it, top-aligned, walking right. `--align-left <tag>` alone: the first clear slot in that group's column. Nothing: the slot `add` takes without `--at`. It is a read, so another session can still take the spot: prefer **`draw|add --below <tag>` / `--right-of <tag>`** (same flags, `--align-left` too), which decide the spot under the board lock in the same step as the write. `--size` for a drawing is the `bbox` its `draw` printed, or the builder's own size.
+
+**Look at what you placed:**
+
+```bash
+dreamcontext whiteboard render <slug> --tag winback --out /tmp/winback.png     # the group, outlined in red, with its surroundings
+dreamcontext whiteboard render <slug> --out /tmp/board.png                     # the whole board
+dreamcontext whiteboard render <slug> --band 900,1900 --out /tmp/band.png      # one horizontal strip of a tall board
+dreamcontext whiteboard render <slug> --region 0,0,1600,900 --out /tmp/r.png   # an exact rectangle
+dreamcontext whiteboard render --file /tmp/flow.excalidraw.md --out /tmp/f.png # a built file, before it goes on a board
+```
+
+Then read the PNG. `render` needs no browser and no network: it draws shapes, arrows, frames, z-order and text where they are (text in a plain pixel font at each element's size and line breaks), widgets as cards with their title and kind (no live content), pictures as placeholder boxes. It shows **where things are and what covers what**, not typography. `--tag` also reports elements of other groups inside the tag's box (`overlaps` in `--json`). The longest side stays within 2000px unless `--scale <n>` says otherwise; on a tall board, walk it in `--band` strips. `--out` must be a `.png` (a board agent may write it only into `$DREAMCONTEXT_AGENT_SCRATCH` or its output folder). `draw` and `add` print the matching `render` line after they write.
 
 ## The wiki card
 
@@ -138,10 +168,10 @@ An `agent` widget is an ordinary agent (`agents/<slug>.md`, [automations.md](aut
 **Home or attached.** An agent is **at home** on a board when its agent file says `whiteboard: <board>`: create it with `dreamcontext agents create <slug> --title "…" --prompt "…" --whiteboard <board>` (or the canvas palette's **New agent**, which opens the Agents page with the board preset; a scheduled one: `automations create <slug> --title "…" --whiteboard <board>`, or an automation with `--agent` on the home agent), then put its card there with `dreamcontext whiteboard add <board> agent --ref <slug>`. The field is approval-hashed, the approval records which board was approved, it cannot be combined with an output directory, and nothing re-homes an agent later. Any other agent's card on a board is **attached**: it keeps its normal permissions and only borrows the board as context. `show --json` tells them apart (`agents[].home`).
 
 **A home-board agent acts only on its board.** Every spawn of one (a run, an account-switch continue, a reply, an answered question, a card conversation) runs under Claude Code's own permission rules instead of `bypassPermissions`: `--permission-mode dontAsk --setting-sources project` and an exact allowlist. Anything not on the list is denied.
-- **Reads:** `Read`, `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, and the read verbs `snapshot`, `memory recall`, `tasks list`, `knowledge index`, `lab list|show`, `whiteboard list|show|nav list`, `automations list|show|thread|pattern|flow`, `agents list|show`.
-- **Writes:** `whiteboard add|update|remove|draw|nav add|nav remove|nav move <its board>`, `automations post|learn|propose <itself>`, and files only under `automations/output/<itself>/` and its scratch folder `$DREAMCONTEXT_AGENT_SCRATCH`. Nothing else: no shell redirect into a file, no `Agent`, `Task` or `Workflow`, no skills, no MCP.
+- **Reads:** `Read`, `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, and the read verbs `snapshot`, `memory recall`, `tasks list`, `knowledge index`, `lab list|show`, `whiteboard list|show|place|nav list`, `automations list|show|thread|pattern|flow`, `agents list|show`.
+- **Writes:** `whiteboard add|update|remove|draw|render|nav add|nav remove|nav move <its board>`, `automations post|learn|propose <itself>`, and files only under `automations/output/<itself>/` and its scratch folder `$DREAMCONTEXT_AGENT_SCRATCH`. Nothing else: no shell redirect into a file, no `Agent`, `Task` or `Workflow`, no skills, no MCP.
 - **Never read:** `~/.ssh`, `~/.aws`, `~/.claude`, `~/.claude.json`, `~/.dreamcontext`, `~/.config/gh`, `~/.config/gcloud`, `~/.docker`, `~/.gnupg`, `~/.kube`, `~/.azure`, `~/.npmrc`, `~/.netrc`, `~/.git-credentials`, `~/.pypirc`, and anywhere any `.env*`, `*.pem`, `*.key`, `id_rsa*` or `id_ed25519*`.
-- **A second layer in the CLI:** the run carries `DREAMCONTEXT_AGENT_BOARD`, `DREAMCONTEXT_AGENT_SELF` and `DREAMCONTEXT_AGENT_SCRATCH`. While they are set, `whiteboard` write verbs refuse any other board (and `create`), `whiteboard add|update|draw --file` reads only from the agent's scratch folder (`$DREAMCONTEXT_AGENT_SCRATCH`) or `_dream_context/automations/output/<self>/`, compared by real path, and refuses any symlink, and `automations post|learn|propose` refuse any other agent's slug.
+- **A second layer in the CLI:** the run carries `DREAMCONTEXT_AGENT_BOARD`, `DREAMCONTEXT_AGENT_SELF` and `DREAMCONTEXT_AGENT_SCRATCH`. While they are set, `whiteboard` write verbs refuse any other board (and `create`), `whiteboard add|update|draw --file` reads only from the agent's scratch folder (`$DREAMCONTEXT_AGENT_SCRATCH`) or `_dream_context/automations/output/<self>/`, compared by real path, and refuses any symlink, `whiteboard render --out` writes only into those same two folders, and `automations post|learn|propose` refuse any other agent's slug.
 - **It fails closed.** Before each spawn the agent is checked again; a refusal means no spawn and a named reason (a run records "Could not limit <title> to its board: <reason>", a reply is refused). The reasons: not approved as it stands, the manifest's board differs from the approved one, a board together with an output directory, a missing board, a symlink in its output folder, or a real path with a character a permission rule cannot hold (`, ( ) * " ? [ ] { } ! \ #` or a control character).
 - Writing a home agent's prompt: it calls `dreamcontext` directly (never through `npx`), keeps scratch files in `$DREAMCONTEXT_AGENT_SCRATCH`, and puts its results on the board or in its channel.
 
@@ -200,10 +230,12 @@ Carry the unticked items into tomorrow's list; report the ticked ones as done (a
 Only for a drawing with no live data in it (a flow, a sketch, a wireframe); a metric is recipe (0). Build the diagram with the `excalidraw` skill's builder as usual (it writes an `.excalidraw.md` or a scene `.json`), then:
 
 ```bash
-dreamcontext whiteboard draw gunluk --file /tmp/funnel.excalidraw.md --at 0,400 --tag funnel
+dreamcontext whiteboard show gunluk                          # what is already there, by tag; did anyone else just draw?
+dreamcontext whiteboard draw gunluk --file /tmp/funnel.excalidraw.md --below daily --tag funnel
+dreamcontext whiteboard render gunluk --tag funnel --out /tmp/funnel.png   # look at it; never a browser
 ```
 
-`draw` re-ids every element and keeps bindings, containers, groups, frames and element links consistent, offsets the group so its top-left lands at `--at` (default: right of existing content), and prints the imported ids and bbox. A picture in the source comes along only when this board already holds its file (one `show` handed out); any other picture refuses the whole import: add it with `whiteboard add <slug> image --file`. Remove the drawing later with `remove --tag funnel`.
+`draw` re-ids every element and keeps bindings, containers, groups, frames and element links consistent, offsets the group so its top-left lands at `--at` (or the free spot `--below` / `--right-of` picks; default: right of existing content), refuses a spot that would cover live elements (§ Placing without collisions), and prints the imported ids and bbox. A picture in the source comes along only when this board already holds its file (one `show` handed out); any other picture refuses the whole import: add it with `whiteboard add <slug> image --file`. Remove the drawing later with `remove --tag funnel`.
 
 ## HTML blocks and web embeds: what runs
 

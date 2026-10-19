@@ -74,7 +74,8 @@ Everything downstream (the primitives, the auditors, the wrap-baking) exists to 
 > platitude: in practice most defects that reach a finished board are ones the audit cannot see —
 > a mis-scaled axis, an axis caption wrapping one glyph per line, a sentence torn across a gap,
 > content escaping a device bezel, a row label silently truncated. The audit catches geometry it can
-> measure; your eyes catch the rest. See **Verify** for the headless render command.
+> measure; your eyes catch the rest. See **Verify** for the render command. **Never look with Playwright
+> or any browser, and never touch the user's open dashboard or Obsidian window**: those are the user's.
 
 ## The one trick that makes images work
 An image element references `fileId` = **sha1 of the image file**. The `## Embedded Files` section
@@ -545,16 +546,29 @@ non-zero, so it can be wired into CI.
 Each build prints `overlaps=N buriedText=N longLines=N wallOfText=N` — a clean board reports **0 for all four**.
 
 **Then LOOK at the board.** A clean audit is necessary, not sufficient: it cannot see a mis-scaled
-axis, a sentence torn across a gap, or a layout that is simply ugly. Either open it in Obsidian
-(Excalidraw view), or render it headlessly and inspect the PNG:
+axis, a sentence torn across a gap, or a layout that is simply ugly. Render it to a PNG and read
+the PNG. The renderer ships with dreamcontext (the CLI this skill pack comes with); it draws
+in-process, with no browser and no network:
 ```bash
-node scripts/diagrams/render-excalidraw.mjs <board.excalidraw.md> /tmp/out.png 1              # whole board
-node scripts/diagrams/render-excalidraw.mjs <board.excalidraw.md> /tmp/band.png 1 900 1900    # one y band
+dreamcontext whiteboard render --file <board.excalidraw.md> --out /tmp/out.png                # whole board
+dreamcontext whiteboard render --file <board.excalidraw.md> --band 900,1900 --out /tmp/band.png  # one y band
+dreamcontext whiteboard render <whiteboard-slug> --tag <tag> --out /tmp/group.png             # after `whiteboard draw --tag`
 ```
 **Use the band form on anything tall.** A finished board is routinely 8–10k px high; one PNG of that
-is unreadable, and cropping it afterwards means working in the exported image's coordinate space
-rather than the board's. The last two arguments are BOARD y coordinates — walk the board down in
-~1000px strips and actually look at each one.
+is unreadable. `--band y0,y1` takes BOARD y coordinates: walk the board down in ~1000px strips and
+actually look at each one (`--region x,y,w,h` for an exact rectangle).
+
+The render is a **layout proof**: shapes, arrows, frames and z-order exactly where they are, text at
+each element's size and line breaks in a plain pixel font, pictures as placeholder boxes. It shows a
+torn sentence, a mis-scaled axis, content escaping a bezel and anything covering anything; it does
+not show the real typeface. Final typography is the user's eye in Obsidian, not yours.
+
+**Never verify with Playwright or any browser, and never touch the user's open dashboard or Obsidian
+window** (no opening it, no hiding its dialogs, no clicking its tabs). Your checks are the build
+audit, `dreamcontext whiteboard show --json`, the overlap check `whiteboard draw` runs, and the
+render above. Putting a drawing on a dreamcontext whiteboard: pick free space with
+`dreamcontext whiteboard place <slug> --size <w,h> --below <tag>` or let `whiteboard draw --below <tag>`
+place it; a `draw --at` that would cover live elements is refused and lists them.
 
 See `reference/format.md` for the exact `.excalidraw.md` anatomy reverse-engineered from this vault.
 

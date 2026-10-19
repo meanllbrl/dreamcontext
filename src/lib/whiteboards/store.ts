@@ -346,6 +346,8 @@ export interface MutateOptions {
 export interface MutateResult {
   board: Whiteboard;
   rev: string;
+  /** The rev of the bytes this write read under the lock, before its change. */
+  before: string;
   /** False when the serialized result equalled the bytes on disk and nothing was written. */
   changed: boolean;
 }
@@ -390,7 +392,8 @@ export async function mutateWhiteboard(
     next.elements = stripTombstones(next.elements);
 
     const out = serializeWhiteboard(next);
-    if (out === raw) return { board: current, rev: sha1(raw), changed: false };
+    const beforeRev = sha1(raw);
+    if (out === raw) return { board: current, rev: beforeRev, before: beforeRev, changed: false };
     // Guard against ever writing something this module cannot read back — or reads back as a
     // different board: a text label holding its own `## Drawing` + json fence is found ahead of
     // the real block (format.ts), so the parsed-back elements must be the ones being written.
@@ -416,7 +419,7 @@ export async function mutateWhiteboard(
       rmSync(tmp, { force: true });
       throw err;
     }
-    return { board: parseWhiteboard(out), rev: sha1(out), changed: true };
+    return { board: parseWhiteboard(out), rev: sha1(out), before: beforeRev, changed: true };
   } finally {
     releaseFileLock(lockPath);
   }

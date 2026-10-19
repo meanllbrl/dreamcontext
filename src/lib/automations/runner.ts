@@ -265,10 +265,11 @@ export function buildPreamble(
  */
 export function buildScopeLine(scope: BoardScope): string {
   return (
-    `SCOPE: you act only on your whiteboard "${scope.board}" (\`dreamcontext whiteboard add|update|remove|draw ${scope.board} …\`) ` +
+    `SCOPE: you act only on your whiteboard "${scope.board}" (\`dreamcontext whiteboard add|update|remove|draw|render ${scope.board} …\`) ` +
     `and as yourself (\`dreamcontext automations post|learn|propose ${scope.self} …\`); you may read anything. ` +
     'Call `dreamcontext` directly, never through `npx` or another program. Write files only into ' +
-    `\`_dream_context/automations/output/${scope.self}/\` or your scratch folder $DREAMCONTEXT_AGENT_SCRATCH; anything else is refused. `
+    `\`_dream_context/automations/output/${scope.self}/\` or your scratch folder $DREAMCONTEXT_AGENT_SCRATCH; anything else is refused. ` +
+    `To see what you placed, \`dreamcontext whiteboard render ${scope.board} --tag <tag> --out $DREAMCONTEXT_AGENT_SCRATCH/look.png\` and read the PNG; never a browser. `
   );
 }
 

@@ -90,7 +90,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Memory recall** | Hybrid (BM25 + embeddings), 3 tiers: local default; cloud-index/cloud via `recall cloud enable` (user only, agents never); auto-injected | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory — fire reminders when context matches | this file |
-| **Whiteboard** | live boards (`whiteboard`) with agent cards; default Control Panel | [whiteboards.md](references/whiteboards.md) |
+| **Whiteboard** | live boards (`whiteboard`) with agent cards; default Control Panel. Verify with `whiteboard render`, never a browser | [whiteboards.md](references/whiteboards.md) |
 | **Automations** | Scheduled headless `claude` jobs: dated output, learned pattern, a `## Flow` graph. A run that must ask hands over a **question** (chat, CLI or a **per-automation** Telegram bot); replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card). A usage-limited run publishes **nothing**. Disabled until approved here; private until `automations share <slug>` | [automations.md](references/automations.md) |
 | **Agents** | Who does the work (`agents/<slug>.md`, own **Agents** page, approved there): automations pick one, tasks are assigned to one (`tasks assign-agent`), Chat and boards talk to one | [automations.md](references/automations.md#agents-who-does-the-work) |
 | **Sleep / consolidation** | Multi-agent RemSleep cycle that folds changes back into the brain | [sleep.md](references/sleep.md) |
