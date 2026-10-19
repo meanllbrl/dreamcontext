@@ -90,6 +90,7 @@ export function BoardViewTabs(p: BoardViewTabsProps) {
               type="button"
               aria-pressed={active}
               onClick={() => p.onApply(v.id)}
+              data-view-tab={v.id}
               style={{ ...btn, display: 'flex', alignItems: 'center', gap: 7, padding: '6px 0 6px 11px', cursor: 'pointer', fontWeight: 'inherit' }}
             >
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: active ? 'var(--color-accent)' : 'var(--color-text-tertiary)', flex: '0 0 auto' }} />

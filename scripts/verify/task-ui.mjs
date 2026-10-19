@@ -192,8 +192,60 @@ async function openAllSections(page) {
   }
 }
 
+// ── read-only: nothing reaches the brain ──────────────────────────────────────
+/** Every write a read-only run held back: `METHOD pathname` → count. */
+const HELD = new Map();
+
+/**
+ * Read-only BY CODE: in a `--read-only` run every same-origin request that is not GET, HEAD or
+ * OPTIONS is answered here (200 `{}`) and recorded, so it never reaches the server: a view-tab
+ * switch, a grouping toggle, a seen-mark. Scratch mode is not guarded.
+ */
+async function guardReadOnly(context, base, held) {
+  const origin = new URL(base).origin;
+  await context.route((url) => url.origin === origin, (route) => {
+    const req = route.request();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method())) return route.continue();
+    const key = `${req.method()} ${new URL(req.url()).pathname}`;
+    held.set(key, (held.get(key) ?? 0) + 1);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+}
+
+/** Every browser context of this run, opened in one place (guarded when read-only). */
+async function newContext(browser, base, opts) {
+  const context = await browser.newContext(opts);
+  if (READ_ONLY) await guardReadOnly(context, base, HELD);
+  return context;
+}
+
+/** The tags whose saved view opened empty, screenshotted once each. */
+const EMPTY_SEEN = new Set();
+
+/**
+ * Open the board. Scratch mode: exactly `go(…, '[data-board-column]')`. Read-only, on a real
+ * brain: the saved view may open EMPTY (a "Current" view with no cycle running shows
+ * `[data-board-empty="no-cycle"]`). Then the empty state is evidence once per tag, and the run
+ * switches to the shared "All Tasks" view (`all`, always present); that switch's local-state PUT
+ * is held back by the guard.
+ */
+async function enterBoard(page, base, shot = null) {
+  if (!READ_ONLY) return go(page, base, 'tasks', '[data-board-column]');
+  await go(page, base, 'tasks', '[data-board-column], [data-board-empty]');
+  if (await page.locator('[data-board-column]').first().isVisible().catch(() => false)) return;
+  const empty = page.locator('[data-board-empty]').first();
+  const kind = await empty.getAttribute('data-board-empty').catch(() => null);
+  if (shot && !EMPTY_SEEN.has(shot.tag)) {
+    EMPTY_SEEN.add(shot.tag);
+    info(`${shot.tag} the saved view opened empty (data-board-empty="${kind ?? '?'}"); switching to All Tasks`);
+    await settle(page, shot.watcher, `board-empty-${shot.w}-${shot.theme}`, `${shot.tag} board (saved view, empty)`);
+  }
+  await page.locator('[data-view-tab="all"]').first().click();
+  await page.locator('[data-board-column]').first().waitFor({ timeout: 15000 });
+}
+
 async function openTaskFromBoard(page, base, slug) {
-  await go(page, base, 'tasks', '[data-board-column]');
+  await enterBoard(page, base);
   const card = page.locator(`[data-task-card="${slug}"]`).first();
   if (!(await card.isVisible().catch(() => false))) {
     // On a phone the board shows one column at a time: find the column that holds it.
@@ -212,14 +264,14 @@ async function grid(browser, base, ids) {
     for (const { w, h } of WIDTHS) {
       const tag = `${w}·${theme}`;
       console.log(`\n${tag}`);
-      const context = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: theme });
+      const context = await newContext(browser, base, { viewport: { width: w, height: h }, colorScheme: theme });
       await setTheme(context, theme);
       await markAnnouncementsSeen(context, base);
       const page = await context.newPage();
       const watcher = watch(page, tag);
 
       // Board, grouped by Now / Next / Later.
-      await go(page, base, 'tasks', '[data-board-column]');
+      await enterBoard(page, base, { tag, w, theme, watcher });
       if (SCRATCH_MODE) {
         const inColumn = async (col, slug) => page.locator(`[data-board-column="${col}"] [data-task-card="${slug}"]`).count();
         let leaked = [];
@@ -328,7 +380,7 @@ async function grid(browser, base, ids) {
 
 // ── the 300 KB task, click to ready ───────────────────────────────────────────
 async function timing(browser, base) {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await newContext(browser, base, { viewport: { width: 1440, height: 900 } });
   await setTheme(context, 'light');
   await markAnnouncementsSeen(context, base);
   const page = await context.newPage();
@@ -349,7 +401,7 @@ async function timing(browser, base) {
 // ── the owner's flows, through the UI ─────────────────────────────────────────
 async function flows(browser, base, ids) {
   console.log('\nflows');
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await newContext(browser, base, { viewport: { width: 1440, height: 900 } });
   await setTheme(context, 'light');
   await markAnnouncementsSeen(context, base);
   const page = await context.newPage();
@@ -440,7 +492,7 @@ const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0l
 const ALLOWED_X_TEST = new Set(['https://x.test/v.mp4', 'https://x.test/v.webm']);
 
 async function markdownMedia(browser, base) {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await newContext(browser, base, { viewport: { width: 1440, height: 900 } });
   const attempted = [];
   const blocked = (url) => { try { return BLOCKED_HOSTS.includes(new URL(url).hostname); } catch { return false; } };
   await context.route((url) => blocked(url.href), (route) => { attempted.push(route.request().url()); return route.abort(); });
@@ -531,6 +583,12 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   server?.kill();
+}
+if (READ_ONLY) {
+  // The writes the run would have made, answered here instead (guardReadOnly): the list is the point.
+  const held = [...HELD.entries()].sort((x, y) => y[1] - x[1]);
+  info(`read-only: writes held back: ${held.length ? held.map(([k, n]) => `${k} ×${n}`).join(', ') : 'none'}`);
+  check('read-only: no write reached the brain', true, held.map(([k, n]) => `${k} ×${n}`).join(', '));
 }
 console.log(`\n${report.pass} passed, ${report.fail} failed · screenshots: ${SHOTS}`);
 process.exit(report.fail ? 1 : 0);
