@@ -4,6 +4,8 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-19
+
 ### The task screens are rebuilt around the card, the cycle and the owner's verdict (2026-10-18)
 
 A task is a page now, the board asks "when?" before "how important?", and what waits for the
@@ -73,6 +75,8 @@ never the owner's decision. Now the awake agent's fast path stays, and sleep add
   `patterns revert <id>` (owner only) undoes a change, including a task-filing rule change.
 - The three task-system state files (owner quotes, learned-pattern history, the task audit) are
   git-ignored before their first write, in full-repo sync and by a 0.33.0 step on every vault.
+
+## [0.32.0] and earlier (not split by version)
 
 ### A funnel explorer's own page is the explorer, not the old table (2026-10-12)
 
