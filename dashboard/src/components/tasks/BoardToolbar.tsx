@@ -9,7 +9,7 @@ import {
   type BoardFilters, type CardProps, type Dim, type DueFilter, type Layout,
   DIMS, SORT_KEYS,
   BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
-  dimGet, taskAssignees, taskVersion,
+  dimGet, inActiveCycle, taskAssignees, taskVersion,
 } from './boardModel';
 import { type BarFit, fitOnLayout, fitOnResize, fitRetest, initialFit, menusToClose } from './toolbarCollapse';
 import { fill } from '../../lib/fill';
@@ -24,8 +24,8 @@ interface BoardToolbarProps {
   allTags: string[];
   assignees: AssigneeOpt[];
   versionsForFilter: string[];
-  /** The active planning version ("current sprint"), or null. Powers the "Current" smart bucket. */
-  activeVersion: string | null;
+  /** The active cycle's id, or null. Powers the "Current cycle" smart bucket (`@current`). */
+  activeCycleId: string | null;
   /** Version names with a released status. Powers the "Completed" smart bucket. */
   releasedVersions: string[];
   openMenu: MenuKey;
@@ -79,7 +79,7 @@ const excBtn = (on: boolean): CSSProperties => ({ flex: '0 0 auto', width: 22, h
 
 interface FieldOpt { value: string; label: string; color: string | null; count: number }
 
-export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilter, activeVersion, releasedVersions, openMenu, setOpenMenu, onNewTask, onAuthorWithAgent, agentReady, flash }: BoardToolbarProps) {
+export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilter, activeCycleId, releasedVersions, openMenu, setOpenMenu, onNewTask, onAuthorWithAgent, agentReady, flash }: BoardToolbarProps) {
   const { t } = useI18n();
   const sm = useStatusModel();
   const dimLabel = (d: Dim) => t(`board.dim.${d}`);
@@ -129,7 +129,8 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   // when any task sits in the backlog, Completed when a released version exists.
   const releasedSet = new Set(releasedVersions);
   const versionVirtuals: FieldOpt[] = [];
-  if (activeVersion) versionVirtuals.push({ value: VV_CURRENT, label: t('board.filter.current'), color: 'var(--color-accent)', count: allTasks.filter((t) => taskVersion(t) === activeVersion).length });
+  // `@current` is the current cycle: offered while a cycle runs, counted by the Now column's rule.
+  if (activeCycleId) versionVirtuals.push({ value: VV_CURRENT, label: t('board.filter.currentCycle'), color: 'var(--color-accent)', count: allTasks.filter((t) => inActiveCycle(t, activeCycleId)).length });
   if (allTasks.some((t) => BACKLOG_RE.test(taskVersion(t)))) versionVirtuals.push({ value: VV_BACKLOG, label: t('board.filter.backlog'), color: 'var(--color-text-tertiary)', count: allTasks.filter((t) => BACKLOG_RE.test(taskVersion(t))).length });
   if (releasedSet.size) versionVirtuals.push({ value: VV_COMPLETED, label: t('board.filter.completed'), color: 'var(--color-status-completed)', count: allTasks.filter((t) => releasedSet.has(taskVersion(t))).length });
 

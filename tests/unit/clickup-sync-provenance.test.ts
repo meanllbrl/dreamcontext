@@ -75,27 +75,22 @@ describe('tagsFromClickUp (pure)', () => {
 
 // ── pure: the board filter is the second line of defence (#179 defect 2) ─────
 
-describe('versionTokenMatches — sprint board filter (dashboard)', () => {
-  const meta = { active: 'S5 (Jul 13 - Jul 17)', released: ['v0.17.2'] };
+describe('versionTokenMatches — the version board filter folds (dashboard)', () => {
+  const meta = { activeCycle: null, released: ['v0.17.2'] };
 
-  it('a lowercased round-tripped version still matches its own sprint', () => {
-    // The exact-match filter is what made the task vanish from Current Sprint.
-    expect(versionTokenMatches('s5 (jul 13 - jul 17)', VV_CURRENT, meta)).toBe(true);
-    expect(versionTokenMatches('S5 (Jul 13 - Jul 17)', VV_CURRENT, meta)).toBe(true);
-  });
-
-  it('a genuinely different sprint still does not match', () => {
-    expect(versionTokenMatches('S4 (Jul 6 - Jul 10)', VV_CURRENT, meta)).toBe(false);
-  });
-
-  it('released + literal tokens fold too', () => {
+  it('released + literal tokens fold, so a lowercased round-tripped version still matches', () => {
+    // The exact-match filter is what made a task vanish from its own version bucket.
     expect(versionTokenMatches('V0.17.2', VV_COMPLETED, meta)).toBe(true);
+    expect(versionTokenMatches('s5 (jul 13 - jul 17)', 'S5 (Jul 13 - Jul 17)', meta)).toBe(true);
     expect(versionTokenMatches('v0.18.0', 'V0.18.0', meta)).toBe(true);
     expect(versionTokenMatches('v0.18.0', 'v0.19.0', meta)).toBe(false);
   });
 
-  it('no active sprint → @current matches nothing', () => {
-    expect(versionTokenMatches('s5', VV_CURRENT, { active: null, released: [] })).toBe(false);
+  // 0.33.0 retired planning versions: `@current` is the active CYCLE now (owner decision
+  // 2026-10-19; board-current-cycle.test.ts), so a version value never decides it.
+  it('@current reads the active cycle, never a planning version', () => {
+    expect(versionTokenMatches('S5 (Jul 13 - Jul 17)', VV_CURRENT, meta)).toBe(false);
+    expect(versionTokenMatches('S5 (Jul 13 - Jul 17)', VV_CURRENT, { activeCycle: 'cy_live0001', released: [] }, { cycle: 'cy_live0001' })).toBe(true);
   });
 });
 

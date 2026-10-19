@@ -3,12 +3,12 @@ import type { Task } from '../../hooks/useTasks';
 import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, usePlanTask, useRankTask } from '../../hooks/useTasks';
 import { useCycles } from '../../hooks/useCycles';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
-import { useVersions, useActiveVersion } from '../../hooks/useVersions';
+import { useVersions } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
 import { confirmAction } from '../../lib/desktop';
 import {
   type Dim, type OrderLane, type SaveScope,
-  dimGet, dimGroups, dueInfo, filterTasks, sortTasks, taskAssignees,
+  dimGet, dimGroups, dueInfo, filterTasks, sortTasks, taskAssignees, VV_CURRENT,
 } from './boardModel';
 import { orderOf } from './taskOrder';
 import { BoardViewTabs } from './BoardViewTabs';
@@ -60,7 +60,6 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
   const { data: tasks = [], isLoading } = useTasks();
   const { data: members = [] } = useTaskMembers();
   const { data: realVersions = [] } = useVersions();
-  const { data: activeVersion = null } = useActiveVersion();
   const { data: cycles } = useCycles();
   const activeCycleId = cycles?.active ?? null;
   const updateTask = useUpdateTask();
@@ -125,9 +124,10 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
     [realVersions],
   );
   // Resolves the version filter's virtual buckets (Current / Backlog / Completed).
+  // `@current` is the active cycle (boardModel.ts VV_CURRENT), by the Now column's own rule.
   const versionMeta = useMemo(
-    () => ({ active: activeVersion, released: releasedVersions }),
-    [activeVersion, releasedVersions],
+    () => ({ activeCycle: activeCycleId, released: releasedVersions }),
+    [activeCycleId, releasedVersions],
   );
 
   // ── filtering / grouping ──────────────────────────────────────────────────────
@@ -317,7 +317,7 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
         allTags={allTags}
         assignees={assignees}
         versionsForFilter={versionsForFilter}
-        activeVersion={activeVersion}
+        activeCycleId={activeCycleId}
         releasedVersions={releasedVersions}
         openMenu={openMenu}
         setOpenMenu={setOpenMenu}
@@ -342,7 +342,12 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
 
       <div className="bd-scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-bg)', overflow: isTimeline ? 'auto' : 'hidden' }}>
         {isEmpty && !isTimeline ? (
-          <EmptyState onClear={s.clearAllFilters} />
+          <EmptyState
+            onClear={s.clearAllFilters}
+            // A "Current" view with no cycle running is empty because of the cycle, not the filters.
+            noCycle={!activeCycleId && s.filters.version.inc.includes(VV_CURRENT)}
+            onOpenPlanning={onOpenPlanning}
+          />
         ) : s.layout === 'board' ? (
           <>
             {oneColumn && (
@@ -557,14 +562,25 @@ function TaskContextMenu({ menu, inLater, onClose, onOpen, onGiveToAgent, onSetS
   );
 }
 
-function EmptyState({ onClear }: { onClear: () => void }) {
+/**
+ * Nothing to draw. A view that filters by the current cycle while no cycle runs says THAT, and
+ * offers the CycleStrip's "Plan a cycle" (the filters are not the reason, so clearing them is
+ * the second choice there).
+ */
+function EmptyState({ onClear, noCycle = false, onOpenPlanning }: { onClear: () => void; noCycle?: boolean; onOpenPlanning?: () => void }) {
   const { t } = useI18n();
+  const chip: CSSProperties = { marginTop: 4, padding: '8px 16px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-soft)', color: 'var(--color-accent)', fontSize: 13, fontWeight: 600, border: '1px solid var(--color-accent)' };
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, textAlign: 'center', padding: 40 }}>
+    <div data-board-empty={noCycle ? 'no-cycle' : 'filters'} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, textAlign: 'center', padding: 40 }}>
       <div style={{ width: 60, height: 60, borderRadius: 16, background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, color: 'var(--color-text-tertiary)' }}>⌕</div>
-      <div style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 19, color: 'var(--color-text)' }}>{t('board.empty.title')}</div>
-      <div style={{ fontSize: 13.5, color: 'var(--color-text-tertiary)', maxWidth: 360, lineHeight: 1.5 }}>{t('board.empty.body')}</div>
-      <button type="button" className="bd-chip" onClick={onClear} style={{ marginTop: 4, padding: '8px 16px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-soft)', color: 'var(--color-accent)', fontSize: 13, fontWeight: 600, border: '1px solid var(--color-accent)' }}>{t('board.empty.clear')}</button>
+      <div style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 19, color: 'var(--color-text)' }}>{t(noCycle ? 'board.cycle.none' : 'board.empty.title')}</div>
+      <div style={{ fontSize: 13.5, color: 'var(--color-text-tertiary)', maxWidth: 360, lineHeight: 1.5 }}>{t(noCycle ? 'board.empty.noCycleBody' : 'board.empty.body')}</div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+        {noCycle && onOpenPlanning && (
+          <button type="button" className="bd-chip" onClick={onOpenPlanning} style={chip}>{t('board.cycle.plan')}</button>
+        )}
+        <button type="button" className="bd-chip" onClick={onClear} style={noCycle && onOpenPlanning ? { ...chip, background: 'transparent', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' } : chip}>{t('board.empty.clear')}</button>
+      </div>
     </div>
   );
 }

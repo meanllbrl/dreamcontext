@@ -13,7 +13,7 @@
  */
 import type { Task, TaskBase } from '../../hooks/useTasks';
 import { DEFAULT_STATUS_MODEL, type StatusModel } from '../../lib/statusModel';
-import { orderOf, type Order } from './taskOrder';
+import { orderOf, type Order, type Placed } from './taskOrder';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────────
 
@@ -424,9 +424,15 @@ function matchAssignee(t: Task, fld: FieldFilter | undefined): boolean {
 // Pseudo-version filter tokens that resolve dynamically against the active sprint
 // and the released-version set, rather than equalling a literal task `version:`
 // string. They give the version filter higher-level selections — the current
-// sprint, the backlog, and anything completed — and, because they resolve at
-// filter time, a saved view that filters by "Current" always tracks whatever sprint
+// cycle, the backlog, and anything completed — and, because they resolve at
+// filter time, a saved view that filters by "Current" always tracks whatever cycle
 // is active. The "@" prefix keeps them from ever colliding with a real version name.
+//
+// `@current` means the CURRENT CYCLE (owner decision 2026-10-19): 0.33.0 retired planning
+// versions, and the old "current sprint" is the active cycle now. A task matches when it sits
+// in the active cycle by the board's own rule (`orderOf(task, activeCycle) === 'now'`, the
+// Now column and the CycleStrip's membership); with no active cycle it matches nothing. A
+// legacy planning version, set or not, plays no part. Saved views keep their `@current` filter.
 export const VV_CURRENT = '@current';
 export const VV_BACKLOG = '@backlog';
 export const VV_COMPLETED = '@completed';
@@ -435,12 +441,12 @@ export const BACKLOG_RE = /^backlog$/i;
 
 /** Runtime metadata the version filter needs to resolve the virtual buckets. */
 export interface VersionMeta {
-  /** The active planning version ("current sprint"), or null if none is set. */
-  active: string | null;
+  /** The active cycle's id (`cy_…`), or null when no cycle is running: what `@current` means. */
+  activeCycle: string | null;
   /** Version names whose RELEASES.json status is 'released' (completed sprints). */
   released: readonly string[];
 }
-export const EMPTY_VERSION_META: VersionMeta = { active: null, released: [] };
+export const EMPTY_VERSION_META: VersionMeta = { activeCycle: null, released: [] };
 
 /**
  * Case/diacritic fold for version comparison — the second line of defence for
@@ -467,19 +473,28 @@ function foldVersion(s: string): string {
     .trim();
 }
 
-/** Does a task's version value satisfy a single filter token (literal or virtual)? */
-export function versionTokenMatches(version: string, token: string, meta: VersionMeta): boolean {
-  if (token === VV_CURRENT) return meta.active != null && foldVersion(version) === foldVersion(meta.active);
+/** Is this card in the active cycle? The board's own rule (the Now column); false with none running. */
+export function inActiveCycle(t: Placed, activeCycle: string | null): boolean {
+  return activeCycle != null && orderOf(t, activeCycle) === 'now';
+}
+
+/**
+ * Does a task satisfy a single version-filter token (literal or virtual)? `version` is the
+ * task's version value; `placed` its place on the "when?" axis, which `@current` reads.
+ */
+export function versionTokenMatches(version: string, token: string, meta: VersionMeta, placed: Placed = {}): boolean {
+  if (token === VV_CURRENT) return inActiveCycle(placed, meta.activeCycle);
   if (token === VV_COMPLETED) return meta.released.some((r) => foldVersion(r) === foldVersion(version));
   if (token === VV_BACKLOG) return BACKLOG_RE.test(version);
   return foldVersion(version) === foldVersion(token);
 }
 
 /** Version-aware include/exclude match — like matchField, but understands the virtual buckets. */
-function matchVersionField(version: string, fld: FieldFilter | undefined, meta: VersionMeta): boolean {
+function matchVersionField(t: Task, fld: FieldFilter | undefined, meta: VersionMeta): boolean {
   if (!fld) return true;
-  if (fld.inc.length && !fld.inc.some((tok) => versionTokenMatches(version, tok, meta))) return false;
-  if (fld.exc.length && fld.exc.some((tok) => versionTokenMatches(version, tok, meta))) return false;
+  const version = taskVersion(t);
+  if (fld.inc.length && !fld.inc.some((tok) => versionTokenMatches(version, tok, meta, t))) return false;
+  if (fld.exc.length && fld.exc.some((tok) => versionTokenMatches(version, tok, meta, t))) return false;
   return true;
 }
 
@@ -488,7 +503,7 @@ export function filterTasks(tasks: Task[], f: BoardFilters, search: string, vers
   return tasks.filter((t) => {
     if (!matchField(t.status, f.status)) return false;
     if (!matchAssignee(t, f.assignee)) return false;
-    if (!matchVersionField(taskVersion(t), f.version, versionMeta)) return false;
+    if (!matchVersionField(t, f.version, versionMeta)) return false;
     if (f.tags.inc.length && !f.tags.inc.some((tg) => t.tags.includes(tg))) return false;
     if (f.tags.exc.length && f.tags.exc.some((tg) => t.tags.includes(tg))) return false;
     if (f.due !== 'all') {
