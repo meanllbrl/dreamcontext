@@ -267,18 +267,35 @@ function filesUnder(dir: string, test: (name: string) => boolean, depth = 4): st
   return out;
 }
 
-/** Session ids the goal-skill wrote as `.sid` files, and the Develop builders' registries. */
+/**
+ * The roots a spawn registry can live under: the brain (`_dream_context/tmp/…`, where a headless
+ * run once wrote its `.sid`) and the PROJECT (its parent: goal-skill's `$RUN` is
+ * `<project>/tmp/goal/<run>/` and the Develop builders' registry is `developDir(repoToplevel(cwd),
+ * slug)` = `<project>/tmp/develop/<slug>/builders.json`). Owner-corrections backfill on the owner's
+ * brain (2026-10-19) searched only the first, so every exclusion counter read 0.
+ */
+function spawnRegistryRoots(contextRoot: string): string[] {
+  return [...new Set([contextRoot, dirname(contextRoot)])];
+}
+
+/** Session ids the goal-skill (and headless runs) wrote as `.sid` files, and the Develop builders' registries. */
 function registeredSpawnIds(contextRoot: string): { goalSid: Set<string>; builder: Set<string> } {
   const goalSid = new Set<string>();
-  for (const f of filesUnder(join(contextRoot, 'tmp', 'goal'), (n) => n.endsWith('.sid'))) {
-    try {
-      const id = readFileSync(f, 'utf-8').trim();
-      if (isSafeSessionId(id)) goalSid.add(id);
-    } catch { /* vanished */ }
-  }
   const builder = new Set<string>();
-  for (const f of filesUnder(join(contextRoot, 'tmp', 'develop'), (n) => n === 'builders.json', 1)) {
-    try { collectSids(JSON.parse(readFileSync(f, 'utf-8')), builder); } catch { /* unreadable registry */ }
+  for (const root of spawnRegistryRoots(contextRoot)) {
+    const sidFiles = [
+      ...filesUnder(join(root, 'tmp', 'goal'), (n) => n.endsWith('.sid')),
+      ...filesUnder(join(root, 'tmp', 'headless-impl'), (n) => n.endsWith('.sid'), 2),
+    ];
+    for (const f of sidFiles) {
+      try {
+        const id = readFileSync(f, 'utf-8').trim();
+        if (isSafeSessionId(id)) goalSid.add(id);
+      } catch { /* vanished */ }
+    }
+    for (const f of filesUnder(join(root, 'tmp', 'develop'), (n) => n === 'builders.json', 1)) {
+      try { collectSids(JSON.parse(readFileSync(f, 'utf-8')), builder); } catch { /* unreadable registry */ }
+    }
   }
   return { goalSid, builder };
 }

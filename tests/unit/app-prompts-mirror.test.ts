@@ -62,3 +62,31 @@ describe('the dashboard\'s prompts are mirrored in src/lib/app-prompts.ts', () =
     }
   }
 });
+
+/**
+ * r27: the sleep request and the secret receipt, pinned to the code that sends them (the module
+ * holds them as text so ask-basis does not import the task backend), and the LEGACY wordings:
+ * matched, never pinned, but each must really differ from the current one.
+ */
+describe('the sleep request and the secret receipt are the texts the app sends', async () => {
+  const { SLEEP_PROMPT_TEXT, SECRET_RECEIPT_TAIL, isServerTurn } = await import('../../src/lib/app-prompts.js');
+  const { SLEEP_AGENT_PROMPT: CLI_SLEEP } = await import('../../src/lib/sleep-prompt.js');
+  const { SLEEP_AGENT_PROMPT: DASH_SLEEP } = await import('../../dashboard/src/lib/sleepAgent');
+  const { secretReceipt } = await import('../../src/lib/env-secrets.js');
+
+  it('the sleep text is the CLI\'s and the dashboard\'s SLEEP_AGENT_PROMPT, and strips to nothing', () => {
+    expect(SLEEP_PROMPT_TEXT).toBe(CLI_SLEEP);
+    expect(SLEEP_PROMPT_TEXT).toBe(DASH_SLEEP);
+    expect(stripAppPrompts(DASH_SLEEP).rest.trim()).toBe('');
+  });
+
+  it('a real receipt opens with the server-turn header and ends with the pinned sentence', () => {
+    const receipt = secretReceipt({ file: '.env', written: [{ key: 'LARKSPUR_API_KEY', action: 'added', chars: 40, fingerprint: 'ab12cd34', duplicate: false }] } as never, 'Ledger API key');
+    expect(isServerTurn(receipt)).toBe(true);
+    expect(receipt.endsWith(SECRET_RECEIPT_TAIL)).toBe(true);
+  });
+
+  it('every legacy wording differs from every current one of its prompt', () => {
+    for (const p of APP_PROMPTS) for (const old of p.legacy ?? []) expect(p.sentences, p.id).not.toContain(old);
+  });
+});

@@ -441,6 +441,27 @@ describe('backfill, redaction, the brief', () => {
     }
   }
 
+  // r27: the owner's brain keeps goal-skill's `$RUN` and the Develop builders' registry in the
+  // PROJECT root (`<repo>/tmp/goal/<run>/*.sid`, `<repo>/tmp/develop/<slug>/builders.json`), and a
+  // headless run's `.sid` under the brain (`_dream_context/tmp/headless-impl/`). Each root, each kind.
+  it('10c. backfill finds spawn registries under the project root AND the brain, and counts each', () => {
+    const put = (path: string, body: string) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, body); };
+    put(join(projectRoot, 'tmp', 'goal', 'larkspur-run', 'planner.sid'), 'sid-proj-goal\n');
+    put(join(projectRoot, 'tmp', 'develop', 'larkspur-refunds', 'builders.json'), JSON.stringify({ version: 1, slug: 'larkspur-refunds', base: { sid: 'sid-proj-builder' }, lanes: {} }));
+    put(join(ctx, 'tmp', 'goal', 'ctx-run', 'impl.sid'), 'sid-ctx-goal\n');
+    put(join(ctx, 'tmp', 'headless-impl', 'planner.sid'), 'sid-ctx-headless\n');
+    put(join(ctx, 'tmp', 'develop', 'ctx-slug', 'builders.json'), JSON.stringify({ version: 1, slug: 'ctx-slug', base: { sid: 'sid-ctx-builder' }, lanes: {} }));
+    const spawned = ['sid-proj-goal', 'sid-proj-builder', 'sid-ctx-goal', 'sid-ctx-headless', 'sid-ctx-builder'];
+    transcripts(['sid-human-a', ...spawned]);
+    const now = new Date();
+    writeFileSync(join(ctx, 'state', '.sleep-history.json'), JSON.stringify([
+      { consolidated_at: new Date(now.getTime() - 86_400_000).toISOString(), session_ids: ['sid-human-a', ...spawned], spawned_session_ids: [] },
+    ]));
+    const found = backfillSessions(ctx, 7, now, home);
+    expect(found.sessions.map((s) => s.id)).toEqual(['sid-human-a']);
+    expect(found.excluded).toEqual({ spawnRecord: 0, goalLive: 0, goalSid: 3, builder: 2, automation: 0 });
+  });
+
   it('10. backfill excludes every registered spawn source and old sessions; items are origin unknown; a second run adds 0', () => {
     stubRegistries();
     const ids = ['sid-human-a', 'sid-human-b', 'sid-spawnrec', 'sid-hist-spawned', 'sid-goal', 'sid-builder', 'sid-goallive', 'sid-automation', 'sid-old'];

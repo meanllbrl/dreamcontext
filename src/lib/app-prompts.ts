@@ -39,8 +39,39 @@ export interface AppPrompt {
   id: string;
   /** Where the text is built (file and function), for a reader of this table. */
   source: string;
+  /** The CURRENT wording's fixed sentences (pinned by the mirror test). */
   sentences: readonly string[];
+  /**
+   * LEGACY: earlier wordings of the same prompt, still in the last weeks' transcripts (every
+   * wording since 2026-09-20), so a 7- or 30-day backfill is clean. Matched like `sentences`,
+   * never pinned: no code sends them any more. Each names the commit that retired it.
+   */
+  legacy?: readonly string[];
 }
+
+/** The sleep request (src/lib/sleep-prompt.ts SLEEP_AGENT_PROMPT, mirrored in
+ *  dashboard/src/lib/sleepAgent.ts). Held as text here (importing sleep-prompt.ts would pull the
+ *  task backend into ask-basis); `tests/unit/app-prompts-mirror.test.ts` pins it to both. */
+export const SLEEP_PROMPT_TEXT =
+  'Think hard. Run a full dreamcontext memory consolidation ("sleep") for THIS project '
+  + 'now, fully autonomously — do NOT ask any questions. Follow the project\'s dreamcontext '
+  + 'sleep flow: pin the epoch with `dreamcontext sleep start`, reconcile the task / changelog '
+  + '/ knowledge / feature files to current truth (prefer updating existing entities over '
+  + 'creating new ones), then close the cycle with `dreamcontext sleep done "<one-paragraph '
+  + 'summary>"` to reset the debt. I am explicitly requesting the sub-agent fan-out: dispatch '
+  + 'the sleep specialists as PARALLEL sub-agents via the Agent tool (sleep-tasks + sleep-state '
+  + 'always; sleep-product, sleep-migration and sleep-learn only when their signals fire '
+  + '(sleep-product: knowledge/feature/research signals; sleep-migration: `dreamcontext '
+  + 'migrations pending` has output; sleep-learn: learning is enabled and a thesis is due)) — '
+  + 'do NOT run those passes inline in your own '
+  + 'context. When finished, reply with a SHORT Markdown summary of what was consolidated.';
+
+/** The secret receipt's closing sentence (src/lib/env-secrets.ts secretReceipt); the whole
+ *  receipt opens with `[secret submitted` ({@link SERVER_TURN_HEADERS}). Pinned by the mirror test. */
+export const SECRET_RECEIPT_TAIL =
+  'The value was written to disk by the app. It was NOT sent to you and is not in this transcript: '
+  + 'use it by name (the environment / the file), never read the file back or echo the value, '
+  + 'and tell the user plainly that you cannot see it.';
 
 /** The delegate drafts' shared middle: the task's own fields, then the context-packet lead. */
 const TASK_BLOCK_AND_SHOW_LEAD = 'Task: {block} Run `dreamcontext tasks show {slug}` first and read it end to end: it prints the task\'s parent (the goal and decisions that bind it), then the full card (technical details, constraints, notes) and its newest journal entries. Its card is `{slug}`.';
@@ -56,6 +87,10 @@ export const APP_PROMPTS: readonly AppPrompt[] = [
       'Then implement it wave by wave, strictly against those acceptance criteria: build what they require, show the evidence, tick each criterion only when it is demonstrably true, and log progress with `dreamcontext tasks log {slug} "..."` as you go.',
       'Do not re-plan and do not widen the scope — the plan is already reviewed and agreed.',
       'If you find the plan is genuinely wrong, stop and say so rather than quietly redesigning it.',
+    ],
+    legacy: [
+      // LEGACY (retired by 215ea2e1, 2026-10-17): read the card file instead of `tasks show`.
+      'First read its document at `_dream_context/state/{slug}.md` end to end.',
     ],
   },
   {
@@ -91,6 +126,29 @@ export const APP_PROMPTS: readonly AppPrompt[] = [
     id: 'handoff-continue',
     source: 'src/lib/app-prompts.ts handoffContinuePrompt (sent by src/server/routes/agent-chat.ts after the handoff /clear)',
     sentences: [handoffContinuePrompt('{text}', '{slug}')],
+    legacy: [
+      // LEGACY (retired by 215ea2e1, 2026-10-17): the card and the journal file by path.
+      'Handoff: continue task {text} ({slug}). Read _dream_context/state/{slug}.md first, then carry on from the newest entry of _dream_context/state/journal/{slug}.md.',
+      // LEGACY (retired by 176a4707, 2026-10-17): before the journal, the card's changelog.
+      'Handoff: continue task {text} ({slug}). Read _dream_context/state/{slug}.md first, then carry on from its latest changelog entry.',
+    ],
+  },
+  {
+    id: 'sleep',
+    source: 'src/lib/sleep-prompt.ts SLEEP_AGENT_PROMPT (mirrored in dashboard/src/lib/sleepAgent.ts)',
+    sentences: [SLEEP_PROMPT_TEXT],
+    legacy: [
+      // LEGACY (retired by 6a1f86de, 2026-09-30): the roster before sleep-learn joined it.
+      SLEEP_PROMPT_TEXT.replace(
+        '(sleep-tasks + sleep-state always; sleep-product, sleep-migration and sleep-learn only when their signals fire (sleep-product: knowledge/feature/research signals; sleep-migration: `dreamcontext migrations pending` has output; sleep-learn: learning is enabled and a thesis is due))',
+        '(sleep-tasks + sleep-state always; sleep-product when knowledge/feature signals warrant; sleep-migration only if `dreamcontext migrations pending` has output)',
+      ),
+    ],
+  },
+  {
+    id: 'secret-receipt',
+    source: 'src/lib/env-secrets.ts secretReceipt (the receipt the Chat sends after a secret is written)',
+    sentences: [SECRET_RECEIPT_TAIL],
   },
   {
     id: 'delegate-autonomous',
@@ -100,6 +158,10 @@ export const APP_PROMPTS: readonly AppPrompt[] = [
       TASK_BLOCK_AND_SHOW_LEAD,
       'Log progress with `dreamcontext tasks log {slug} "<note>"` and tick acceptance criteria as you satisfy them.',
       'When everything is done and verified, reply with a SHORT Markdown summary of what you changed.',
+    ],
+    legacy: [
+      // LEGACY (retired by 215ea2e1, 2026-10-17): the card path instead of the context packet.
+      'Task: {block} The full task lives at `{slug}` — read that file for the complete spec (technical details, constraints, notes).',
     ],
   },
   {
@@ -113,6 +175,10 @@ export const APP_PROMPTS: readonly AppPrompt[] = [
       'Ask me the questions you genuinely need answered — do not guess past them.',
       'Keep the first message short enough to read in one go; we can go deep on whatever I pick up.',
     ],
+    legacy: [
+      // LEGACY (retired by 215ea2e1, 2026-10-17).
+      'Task: {block} Read `{slug}` for the complete spec (technical details, constraints, prior decisions), then read enough of the code it touches that your view is grounded in what the repo ACTUALLY does, not in what the task claims it does.',
+    ],
   },
   {
     id: 'delegate-verify',
@@ -125,6 +191,10 @@ export const APP_PROMPTS: readonly AppPrompt[] = [
       'Tick only the criteria you PROVED and record what you checked with `dreamcontext tasks log {slug} "<note>"`.',
       'Finish with a one-line verdict: is this task complete, and if not, what is left.',
     ],
+    legacy: [
+      // LEGACY (retired by 215ea2e1, 2026-10-17).
+      'Task: {block} Read `{slug}` for the complete spec, then go through the acceptance criteria ONE BY ONE and give each its own verdict: DONE (name the file/line or paste the command output that proves it), PARTIAL (say exactly what is missing), or NOT DONE.',
+    ],
   },
   {
     id: 'delegate-summarize',
@@ -135,6 +205,10 @@ export const APP_PROMPTS: readonly AppPrompt[] = [
       'Read the parent\'s and the card\'s Constraints & Decisions closely, and skim whatever code it points at.',
       'Then reply with a SHORT Markdown brief: what this task is and why it exists, where it stands right now, the decisions already made (including anything explicitly REJECTED and the reason), and the next concrete step.',
       'I want to be caught up in under a minute — do not hand the file back to me in longer words.',
+    ],
+    legacy: [
+      // LEGACY (retired by 215ea2e1, 2026-10-17).
+      'Task: {block} Read `{slug}` in full — including its Constraints & Decisions and its session log — and skim whatever code it points at.',
     ],
   },
 ];
@@ -147,6 +221,8 @@ export const APP_PROMPTS: readonly AppPrompt[] = [
 export const SERVER_TURN_HEADERS: readonly RegExp[] = [
   /^\s*\[delegated-session event\] session=/,
   /^\s*\[super (?:handover|recap|event)\] item=/,
+  // The secret receipt (env-secrets.ts secretReceipt): key names, file, size, fingerprint.
+  /^\s*\[secret submitted(?: · [^\]\n]*)?\]/,
 ];
 
 function escapeRe(s: string): string {
@@ -171,7 +247,7 @@ function sentenceRe(sentence: string): RegExp {
 const COMPILED: ReadonlyArray<{ id: string; res: RegExp[] }> = APP_PROMPTS.map((p) => ({
   id: p.id,
   // Longest first: a sentence that contains another is removed before its part.
-  res: [...p.sentences].sort((a, b) => b.length - a.length).map(sentenceRe),
+  res: [...p.sentences, ...(p.legacy ?? [])].sort((a, b) => b.length - a.length).map(sentenceRe),
 }));
 
 /**

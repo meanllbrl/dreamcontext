@@ -338,3 +338,34 @@ describe('C: dreamcontext\'s own prompts are not the owner\'s words', () => {
     });
   }
 });
+
+/**
+ * r27: the 7-day backfill on the owner's brain still counted the sleep request, the secret
+ * receipt and EARLIER wordings of the kickoff, handoff and delegate prompts (sessions of
+ * 2026-10-17/18 carry them). Each is a dreamcontext prompt now; synthetic text throughout.
+ */
+describe('r27: the sleep request, the secret receipt and earlier wordings', async () => {
+  const { SLEEP_PROMPT_TEXT, APP_PROMPTS } = await import('../../src/lib/app-prompts.js');
+  const SLUG = 'larkspur-refunds';
+  const sleepLegacy = APP_PROMPTS.find((p) => p.id === 'sleep')!.legacy![0];
+  const CASES: Array<[string, string]> = [
+    ['the sleep request', SLEEP_PROMPT_TEXT],
+    ['the sleep request (before 6a1f86de)', sleepLegacy],
+    ['the secret receipt', `[secret submitted · Ledger API key]\n- LARKSPUR_API_KEY → .env (added, 40 chars, sha256:ab12cd34)\nThe value was written to disk by the app. It was NOT sent to you and is not in this transcript: use it by name (the environment / the file), never read the file back or echo the value, and tell the user plainly that you cannot see it.`],
+    ['the Develop kickoff (before 215ea2e1)', `You are picking up the task \`${SLUG}\` from the planning session that just created it. First read its document at \`_dream_context/state/${SLUG}.md\` end to end. Then, before you write any code, restate the plan back to me in your own words — the goal, the waves, and what each acceptance criterion will actually take. Do not re-plan and do not widen the scope — the plan is already reviewed and agreed.`],
+    ['the handoff (176a4707..215ea2e1)', `Handoff: continue task Ledger refunds (${SLUG}). Read _dream_context/state/${SLUG}.md first, then carry on from the newest entry of _dream_context/state/journal/${SLUG}.md.`],
+    ['the handoff (before 176a4707)', `Handoff: continue task Ledger refunds (${SLUG}). Read _dream_context/state/${SLUG}.md first, then carry on from its latest changelog entry.`],
+    ['the autonomous delegate (before 215ea2e1)', `Work on this dreamcontext task and drive it to completion, fully autonomously — do NOT ask me questions (I am away). Think hard.\n\nTask: Ledger refunds\n\nWhy:\nRefunds vanish today.\n\nThe full task lives at \`_dream_context/state/${SLUG}.md\` — read that file for the complete spec (technical details, constraints, notes). Log progress with \`dreamcontext tasks log ${SLUG} "<note>"\` and tick acceptance criteria as you satisfy them. When everything is done and verified, reply with a SHORT Markdown summary of what you changed.`],
+    ['the discuss delegate (before 215ea2e1)', `Let's think this dreamcontext task through together before anything gets built. Do NOT edit files and do NOT implement it — this is a conversation, and I am here to answer.\n\nTask: Ledger refunds\n\nRead \`_dream_context/state/${SLUG}.md\` for the complete spec (technical details, constraints, prior decisions), then read enough of the code it touches that your view is grounded in what the repo ACTUALLY does, not in what the task claims it does. Ask me the questions you genuinely need answered — do not guess past them.`],
+    ['the verify delegate (before 215ea2e1)', `Check whether this dreamcontext task is actually DONE. Verify, do NOT build: read the code and run whatever proves it (the test suite, a build, the CLI), but do not implement the missing parts — report them.\n\nTask: Ledger refunds\n\nRead \`_dream_context/state/${SLUG}.md\` for the complete spec, then go through the acceptance criteria ONE BY ONE and give each its own verdict: DONE (name the file/line or paste the command output that proves it), PARTIAL (say exactly what is missing), or NOT DONE. Finish with a one-line verdict: is this task complete, and if not, what is left.`],
+    ['the summarize delegate (before 215ea2e1)', `Summarize this dreamcontext task for me. Read-only — do NOT edit files and do NOT write code.\n\nTask: Ledger refunds\n\nRead \`_dream_context/state/${SLUG}.md\` in full — including its Constraints & Decisions and its session log — and skim whatever code it points at. Then reply with a SHORT Markdown brief: what this task is and why it exists, where it stands right now, the decisions already made (including anything explicitly REJECTED and the reason), and the next concrete step.`],
+  ];
+  for (const [name, text] of CASES) {
+    it(`${name}: no owner turn; the owner's line beside it still counts`, () => {
+      expect(ownerTurns(session(human(text)).path)).toEqual([]);
+      const s = session(human(text), human(OWNER));
+      expect(ownerTurns(s.path).map((t) => t.text)).toEqual([OWNER]);
+      expect(verifyAskQuote([s], OWNER).ok).toBe(true);
+    });
+  }
+});
