@@ -405,7 +405,7 @@ async function sectionsOnMain(server, browser) {
     if (process.env.DIAG === '1') console.log('      DIAG vars:', JSON.stringify(await page.evaluate(() => { const f = document.querySelector('.sleep-tracker-face .smascot-face'); const cs = f ? getComputedStyle(f) : null; const rs = getComputedStyle(document.documentElement); return { ds: { ...document.documentElement.dataset }, rootAmbient: rs.getPropertyValue('--dc-motion-ambient-name'), rootPlay: rs.getPropertyValue('--dc-motion-play'), faceAmbient: cs?.getPropertyValue('--dc-motion-ambient-name'), faceName: cs?.animationName, faceAnim: cs?.animation }; })));
     if (process.env.DIAG === '1') console.log('      DIAG smascot:', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('.smascot, [class*="about-"]')].slice(0, 8).map((el) => { const cs = getComputedStyle(el); return [String(el.className).slice(0, 50), el.closest('[class]')?.parentElement?.className?.slice?.(0, 40), cs.animationName, cs.animationPlayState, el.getClientRects().length]; }))));
     const focused = await runningEndless(page);
-    // The 12 fps clock (lib/motionClock.ts, task: durum animasyonları WindowServer'ı yormaz): an
+    // The 15 fps clock (lib/motionClock.ts, task: durum animasyonları WindowServer'ı yormaz): an
     // endless animation is PAUSED and stepped, never left on the display link. Proof it still
     // moves, and how often: the distinct currentTime values of a held one over 1 s of frames.
     const stepped = await page.evaluate(async () => {
@@ -431,7 +431,7 @@ async function sectionsOnMain(server, browser) {
     check('AC7 hidden -> 0 running endless animations', hidden.length === 0, `${hidden.length}`);
     if (AFTER) {
       check('AC4 focused + unfocused -> 0 endless animations on the display link', focused.length === 0 && unfocused.length === 0, `${focused.length} / ${unfocused.length}`);
-      check('AC4 a held endless animation still moves, 20-34 times a second', stepped.held > 0 && stepped.movesPerSec >= 20 && stepped.movesPerSec <= 34, JSON.stringify(stepped));
+      check('AC4 a held endless animation still moves, 10-22 times a second', stepped.held > 0 && stepped.movesPerSec >= 10 && stepped.movesPerSec <= 22, JSON.stringify(stepped));
     }
   }
 

@@ -15,8 +15,10 @@
  *         shorthand) outside `@media (prefers-reduced-motion)`; in a rule that sets the
  *         shorthand, `animation-play-state` comes after it (the shorthand resets it);
  *   (v)   no endless animation set from TS/TSX (inline styles cannot be rested or paused);
- *   (vi)  every window starts lib/motionClock.ts at boot, so whatever runs is stepped at 24-30 fps
- *         and never left on the display link (task: durum animasyonları WindowServer'ı yormaz).
+ *   (vi)  every window starts lib/motionClock.ts at boot, so whatever runs is stepped at 15-20 fps
+ *         and never left on the display link (task: durum animasyonları WindowServer'ı yormaz);
+ *   (vii) a rule that pauses motion locally (`--dc-motion-play` outside global.css) depends only on
+ *         what the clock watches to read play-states again: classes, `:hover`, `:focus-within`.
  * And `global.css` carries the root rules that drive the variables.
  *
  * Runs over every file, so it is green only once every lane's CSS follows the contract.
@@ -289,7 +291,7 @@ describe('CSS motion contract', () => {
     expect(endlessText('pop 200ms ease-out both')).toBe(false);
   });
 
-  it('(vi) every window steps its endless animations at 24-30 fps, never on the display link', () => {
+  it('(vi) every window steps its endless animations at 15-20 fps, never on the display link', () => {
     // The contract's variables decide WHETHER an animation runs; lib/motionClock.ts decides how
     // often it moves (task: durum animasyonları WindowServer'ı yormaz, AC4). Every window boots
     // through main.tsx -> App.tsx, so the clock is started there, at module scope, unconditionally.
@@ -300,11 +302,35 @@ describe('CSS motion contract', () => {
     expect(app).toMatch(/^initMotionClock\(\);$/m);
     const clock = readFileSync(join(SRC, 'lib', 'motionClock.ts'), 'utf8');
     const fps = Number(/export const MOTION_FPS = (\d+);/.exec(clock)?.[1]);
-    expect(fps).toBeGreaterThanOrEqual(24);
-    expect(fps).toBeLessThanOrEqual(30);
+    expect(fps).toBeGreaterThanOrEqual(15);
+    expect(fps).toBeLessThanOrEqual(20);
     // It holds what the contract runs: endless by the same line this guard uses.
     expect(clock).toMatch(new RegExp(`export const ENDLESS_COUNT = ${ENDLESS_COUNT};`));
     expect(readFileSync(join(SRC, 'styles', 'global.css'), 'utf8')).toMatch(/lib\/motionClock\.ts/);
+  });
+
+  it('(vii) a local pause depends only on classes, :hover and :focus-within (what the clock watches)', () => {
+    // The clock reads a held animation's play-state again only where the pointer, the focus or a
+    // class changed (lib/motionClock.ts, watchDocument). A local pause keyed on anything else (an
+    // attribute, :checked, a sibling's state) would leave its animation frozen or running.
+    const WATCHED = /^(:hover|:focus-within|:not)$/;
+    const local: string[] = [];
+    const bad: string[] = [];
+    for (const { file, root } of parsed) {
+      if (file.endsWith(join('styles', 'global.css'))) continue;
+      root.walkDecls('--dc-motion-play', (decl) => {
+        const rule = decl.parent as Rule;
+        if (rule.type !== 'rule') return;
+        for (const sel of rule.selectors) {
+          local.push(`${relative(SRC, file)}: ${sel}`);
+          const pseudos = sel.match(/::?[a-z-]+/g) ?? [];
+          const stray = pseudos.filter((p) => !WATCHED.test(p));
+          if (/\[/.test(sel) || /[+~]/.test(sel) || stray.length) bad.push(`${relative(SRC, file)}: ${sel}`);
+        }
+      });
+    }
+    expect(local.length).toBeGreaterThan(0);
+    expect(bad).toEqual([]);
   });
 
   it('every allowlisted TS file still exists and says why', () => {
