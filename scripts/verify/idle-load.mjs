@@ -68,7 +68,7 @@ const PROJ_T = join(SCRATCH, 'term');
 const PROJ_F = join(SCRATCH, 'five');
 const OUT = shotsDir(REPO, 'idle-load');
 const AFTER = PHASE === 'after';
-const SECTIONS = new Set((process.env.SECTIONS || 'a,c,c3,d,e,f,g,h,i').split(',').map((s) => s.trim()));
+const SECTIONS = new Set((process.env.SECTIONS || 'a,c,c3,d,e,f,g,h,i,super').split(',').map((s) => s.trim()));
 const THROTTLE = Number(process.env.THROTTLE || 4);
 const ENGINES = (process.env.ENGINES || 'chromium,webkit').split(',').map((s) => s.trim()).filter(Boolean);
 const PANES = 10;
@@ -91,8 +91,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ─── the inert `claude` ─────────────────────────────────────────────────────────────────
 const STANDIN = `#!${process.execPath}
-/** Inert stand-in for \`claude\` — see scripts/verify/idle-load.mjs. */
+/** Inert stand-in for \`claude\` — see scripts/verify/idle-load.mjs. One cue: the Super Agent
+ *  told GO-SUPER-SETUP arranges its stage with its own verbs (two web cards, a half page). */
+import { spawnSync } from 'node:child_process';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+const cli = (...args) => {
+  const r = spawnSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(DIST_INDEX)}, ...args], { env: process.env, encoding: 'utf-8', timeout: 60000 });
+  let json = null; try { json = JSON.parse(r.stdout); } catch {}
+  return { status: r.status, json, out: (r.stdout || '') + (r.stderr || '') };
+};
+function setup() {
+  const st = cli('super', 'state').json;
+  const chat = (st?.containers ?? []).find((c) => c.kind === 'chat');
+  cli('super', 'open', 'web', 'https://example.com/a');
+  cli('super', 'open', 'web', 'https://example.org/b');
+  if (chat) cli('super', 'half', chat.id);
+}
 let buf = '';
 process.stdin.on('data', (c) => {
   buf += c.toString('utf-8');
@@ -103,6 +117,13 @@ process.stdin.on('data', (c) => {
     let o; try { o = JSON.parse(line); } catch { continue; }
     if (o.type === 'control_request') {
       out({ type: 'control_response', response: { subtype: 'success', request_id: o.request_id, response: {} } });
+    }
+    if (o.type === 'user' && JSON.stringify(o.message ?? '').includes('GO-SUPER-SETUP')) {
+      const sid = 'idle-super-' + process.pid;
+      out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] });
+      setup();
+      out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'arranged' }] } });
+      out({ type: 'result', subtype: 'success', is_error: false, result: 'arranged', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
     }
   }
 });
@@ -192,7 +213,7 @@ function writeAgentUi(lightMode, chatView) {
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
     enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, titleMigrated: true,
     hotkey: 'Ctrl+A', renderer: 'webgl', chatView, screenMigrated: true,
-    chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode,
+    chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode, superAgent: true,
   }, null, 2)}\n`);
 }
 
@@ -851,6 +872,88 @@ async function sectionShots(server, browser) {
   console.log(`      shots: ${dir} · console errors ${errors.length}${errors.length ? `: ${JSON.stringify(errors.slice(0, 5))}` : ''}`);
 }
 
+/**
+ * The Super Agent's phase (task chat-gets-a-super-agent-mode…, AC12): the main vault's ten live
+ * panes handed over (ten children ≥ the plan's 8), the stage filled to the 12-card cap by the
+ * agent's own verbs (two web cards, one chat as a half page: plan-r8), then idle. Server busy and per-handler time over 30 s; requests the agent
+ * cards make (0 — they read the live ChatSession); mounted chats, live iframes, live WebGL; and
+ * a hidden window's super requests over 2 minutes (0 — everything is pushed).
+ */
+async function sectionSuper(server, browser) {
+  const ctx = await browser.newContext({ viewport: { width: 2560, height: 1300 }, colorScheme: 'dark', reducedMotion: 'no-preference' });
+  await ctx.addInitScript(SPY);
+  const page = await ctx.newPage();
+  const reqs = requestCounter(page);
+  await openVault(page, server.base, 'proj');
+  await untilPanes(page, PANES);
+  await setFocused(page);
+  await page.waitForTimeout(5_000);
+  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  for (let i = 0; i < 60 && !(await page.locator('[data-testid="super-surface"]:visible').count()); i += 1) await page.waitForTimeout(250);
+  const owner = (path, body) => page.evaluate(async ([p, b]) => {
+    const r = await fetch(p, b ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': 'proj' }, body: JSON.stringify(b) } : { headers: { 'x-dreamcontext-vault': 'proj' } });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  }, [path, body]);
+  // The owner tells Claude to arrange the stage; it opens two web cards and puts a chat side
+  // by side with its own verbs (the owner's route only patches cards that exist).
+  for (let i = 0; i < 80 && !(await page.locator('[data-super-slot="centre"] .chat-cmp-input').count()); i += 1) await page.waitForTimeout(250);
+  const composer = page.locator('[data-super-slot="centre"] .chat-cmp-input').first();
+  await composer.click();
+  await composer.fill('GO-SUPER-SETUP');
+  await page.keyboard.press('Enter');
+  let st = null;
+  for (let i = 0; i < 120; i += 1) {
+    st = (await owner('/api/super/state')).body;
+    if ((st?.containers ?? []).filter((c) => c.kind === 'web').length >= 2 && st?.view?.mode === 'half') break;
+    await page.waitForTimeout(500);
+  }
+  const children = Object.keys(st?.children ?? {});
+  await page.waitForTimeout(20_000);
+  const containers = (st?.containers ?? []).length;
+  const drawn = await page.locator('[data-testid="super-container"]').count();
+  numbers.super = { children: children.length, containers, drawn, view: st?.view?.mode ?? null, webs: (st?.containers ?? []).filter((c) => c.kind === 'web').length };
+  console.log(`      super: handed over, ${children.length} children, ${containers} cards (${drawn} drawn, view ${numbers.super.view}, ${numbers.super.webs} web)`);
+  check('AC12 super: the stage is at the 12-card cap with 2 web cards and a half page', containers === 12 && numbers.super.webs === 2 && numbers.super.view === 'half', JSON.stringify(numbers.super));
+  await page.screenshot({ path: join(OUT, 'super-handed-over.png') });
+
+  const t0 = Date.now();
+  const prof = await cpuProfile(server.inspect, 30_000);
+  const during = reqs.since(t0);
+  const cardReqs = during.filter((x) => children.some((c) => x.path.includes(c)));
+  const superReqs = during.filter((x) => x.path.startsWith('/api/super/'));
+  const mounted = await page.evaluate(() => {
+    const surface = document.querySelector('[data-testid="super-surface"]');
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    return {
+      chatsShown: surface ? [...surface.querySelectorAll('.chat-scroll')].filter(vis).length : -1,
+      chatsInDom: document.querySelectorAll('.chat-scroll').length,
+      iframes: surface ? [...surface.querySelectorAll('iframe')].filter((f) => f.isConnected).length : -1,
+      webgl: window.__dcGl.filter(({ canvas, ctx: c }) => canvas.isConnected && !c.isContextLost()).length,
+      backdrop: [...document.querySelectorAll('[data-testid="super-surface"] *')].filter((el) => { const v = getComputedStyle(el).backdropFilter; return v && v !== 'none'; }).length,
+    };
+  });
+  Object.assign(numbers.super, { server: prof, idleRequests: byPath(during), cardRequests: cardReqs.length, superRequestsWhileIdle: superReqs.length, ...mounted });
+  console.log(`      super idle: busy ${prof.busyPct}% handlers ${JSON.stringify(prof.handlers)} requests ${JSON.stringify(byPath(during))} mounted ${JSON.stringify(mounted)}`);
+  const worst = Object.values(prof.handlers)[0] ?? 0;
+  check('AC12 super: server busy <= 10 % (handed over, idle 30 s)', prof.busyPct <= 10, `${prof.busyPct}%`);
+  check('AC12 super: no handler > 3 %', worst <= 3, JSON.stringify(prof.handlers));
+  check('AC12 super: 0 requests per agent container', cardReqs.length === 0, JSON.stringify(cardReqs.slice(0, 5)));
+  check('AC12 super: 0 super requests while idle (state is pushed)', superReqs.length === 0, JSON.stringify(byPath(superReqs)));
+  check('AC12 super: <= 1 mounted child chat besides the centre', mounted.chatsShown <= 2, JSON.stringify(mounted));
+  check('AC12 super: <= 2 live iframes', mounted.iframes <= 2, `${mounted.iframes}`);
+  check('AC12 super: WebGL contexts <= 2', mounted.webgl <= 2, `${mounted.webgl}`);
+  check('AC12 super: no backdrop-filter in the surface', mounted.backdrop === 0, `${mounted.backdrop}`);
+
+  await setHidden(page, true);
+  const h0 = Date.now();
+  await page.waitForTimeout(120_000);
+  const hidden = reqs.since(h0).filter((x) => x.path.startsWith('/api/super/'));
+  numbers.super.hiddenSuperRequests2min = hidden.length;
+  check('AC12 super: hidden window -> 0 super requests over 2 min', hidden.length === 0, JSON.stringify(byPath(hidden)));
+  await setHidden(page, false);
+  await ctx.close();
+}
+
 async function sectionWebgl(server, browser) {
   writeAgentUi('off', false);
   const ctx = await browser.newContext({ viewport: { width: 2000, height: 1100 }, colorScheme: 'dark' });
@@ -935,6 +1038,7 @@ try {
     if (SECTIONS.has('shots')) await sectionShots(server, browser);
     if (SECTIONS.has('h')) await sectionWebgl(server, browser);
     if (SECTIONS.has('i')) await sectionNotch(server, browser);
+    if (SECTIONS.has('super')) await sectionSuper(server, browser);
   } finally {
     await browser.close();
   }

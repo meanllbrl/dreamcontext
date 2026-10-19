@@ -275,13 +275,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
     [leftSlot, rightSlot],
   );
 
-  /**
-   * One rail width for the whole window. Hoisted out of `Shell` because N instances each
-   * running their own `useSidebarCollapse()` would read the shared key at mount and then
-   * diverge the moment one of them toggled — two rails of different widths in one window.
-   */
-  const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebarCollapse();
-
   /*
    * NO PERSISTENCE, deliberately. The window opens with exactly the one project the launcher
    * named in `?vault=`, every time. A restored tab list would resurrect N live agent surfaces
@@ -292,6 +285,15 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
     { vault: initialVault, instanceId: 'inst-1', cold: false, rollup: null },
   ]);
   const [activeVault, setActiveState] = useState(initialVault);
+  /**
+   * One rail width for the whole window. Hoisted out of `Shell` because N instances each
+   * running their own `useSidebarCollapse()` would read the shared key at mount and then
+   * diverge the moment one of them toggled — two rails of different widths in one window.
+   * It folds while the ACTIVE project is handed over to its Super Agent (plan-r8 F9).
+   */
+  const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebarCollapse(
+    open.find((p) => p.vault === activeVault)?.instanceId ?? null,
+  );
 
   /*
    * `addTab` has to READ the current tabs and DECIDE in one synchronous pass (is it already

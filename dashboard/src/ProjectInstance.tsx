@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
 import { VaultProvider, emitInstance, useInstanceEvent, useVault } from './context/VaultContext';
 import { ProjectProvider } from './context/ProjectContext';
@@ -330,7 +330,9 @@ function AppLinkBridge({
   return null;
 }
 
-function PageRouter({
+/** Memoized: its props change on a navigation or a focus request, not when the shell around it
+ *  re-renders (a rail fold, the palette), so the open page is left alone then. */
+const PageRouter = memo(function PageRouter({
   nav, automationFocus, onAutomationFocusDone, agentsFocus, onAgentsFocusDone,
 }: {
   nav: ShellNavigation;
@@ -398,7 +400,7 @@ function PageRouter({
     case 'whiteboards':
       return <WhiteboardsPage focus={focus} />;
   }
-}
+});
 
 export interface ProjectInstanceProps {
   /** Which project this subtree IS. Every request, storage key and session it owns is bound

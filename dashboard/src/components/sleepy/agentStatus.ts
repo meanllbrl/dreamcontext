@@ -60,6 +60,9 @@ export interface SessionRow {
    *  non-chat kind and for a chat that never left Basic, which is why it is optional rather
    *  than defaulted: `undefined` and `'basic'` must draw identically. */
   mode?: ChatMode;
+  /** A child of the handed-over Super Agent (plan-r7 D16): it never makes the project chip
+   *  bounce or turn magenta on its own — the Super Agent's queue head speaks for it. */
+  superChild?: boolean;
 }
 
 export interface SessionStatusInput {
@@ -267,13 +270,21 @@ export interface ProjectRollup {
  * {@link wantsALook} — the same call the dock tile makes. Nothing in this function re-states
  * the status taxonomy in its own words, because the two times it did, they drifted.
  */
-export function rollupProject(rows: SessionRow[]): ProjectRollup {
+export function rollupProject(rows: SessionRow[], opts: { superQueueHead?: boolean } = {}): ProjectRollup {
   let live = 0;
   let waiting = 0;
   let alive = 0;
   let flagged = 0;
   const bucket: Record<StatusBucket, number> = { asking: 0, working: 0, idle: 0 };
-  for (const r of rows) {
+  // A handed-over Super Agent's children are quiet (D16): a child blocked on a question is
+  // still a live, working conversation as far as the chip can tell, but it neither turns the
+  // chip magenta nor makes it bounce. Only the queue head the OWNER must answer (a permission,
+  // an escalation) does — once, below.
+  const quiet = (r: SessionRow): SessionRow => (r.superChild && r.info.kind === 'asking'
+    ? { ...r, info: { kind: 'working', label: 'working', mood: 'working' }, attention: false }
+    : r.superChild ? { ...r, attention: false } : r);
+  const view = rows.map(quiet);
+  for (const r of view) {
     // ONE read of the status, for all three decisions it drives — `null` means the row holds
     // no session at all, which is the same question `holdsSession` used to answer separately.
     const b = BUCKET_BY_KIND[r.info.kind];
@@ -291,5 +302,7 @@ export function rollupProject(rows: SessionRow[]): ProjectRollup {
     // its bell (a build finishing) is worth a jump even though it draws no bubble.
     if (r.info.kind === 'asking' || r.attention) waiting++;
   }
-  return { worst: rollupKind(rows), live, waiting, alive, flagged, ...bucket };
+  if (opts.superQueueHead) waiting++;
+  const worst: SessionStatusKind = opts.superQueueHead ? 'asking' : rollupKind(view);
+  return { worst, live, waiting, alive, flagged, ...bucket };
 }

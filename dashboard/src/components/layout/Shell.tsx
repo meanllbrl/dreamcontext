@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Header } from './Header';
 import { Sidebar, type Page } from './Sidebar';
 import { CommandPalette } from '../search/CommandPalette';
@@ -164,6 +164,15 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   // otherwise let Esc close the palette out from under a ⌘P switcher opened on top.
   const closePalette = useCallback(() => setPaletteOpen(false), []);
 
+  // One object per navigation, not per render: the page (a memoized router) re-renders when
+  // the owner navigates, never because the rail folded or the palette opened. A fold while
+  // the Super Agent takes the screen re-rendered the whole page behind it, and its layout
+  // reads forced a full layout in the hand-over's first frame.
+  const nav = useMemo<ShellNavigation>(
+    () => ({ page: activePage, focusId, nonce, navigate, clearFocus }),
+    [activePage, focusId, nonce, navigate, clearFocus],
+  );
+
   return (
     <div className="shell" ref={shellRef} data-phone={phone ? 'true' : undefined}>
       {phone && isActive && <PhoneBar page={activePage} menuOpen={phoneNavOpen} onMenu={() => setPhoneNavOpen((o) => !o)} />}
@@ -177,7 +186,7 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
         <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} phone={phone ? { open: phoneNavOpen, onClose: closePhoneNav } : undefined} />
         <div className="sidebar-glide" ref={glideRef} aria-hidden="true"><div className="sidebar-glide-slab" /></div>
         <main className="shell-main">
-          {children({ page: activePage, focusId, nonce, navigate, clearFocus })}
+          {children(nav)}
         </main>
       </div>
       <CommandPalette

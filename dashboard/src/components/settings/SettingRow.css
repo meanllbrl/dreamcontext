@@ -17,6 +17,12 @@
   color: var(--color-text-tertiary);
 }
 
+/* A badge beside an open group's title keeps its own case (the folded group renders it outside
+   the title, so it never inherits this). */
+.setting-group-title > .dc-maturity {
+  text-transform: none;
+}
+
 .setting-group-note {
   margin: 0 0 var(--space-2);
   max-width: 62ch;

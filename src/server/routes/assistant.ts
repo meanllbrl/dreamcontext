@@ -23,6 +23,8 @@ import {
   releaseWindowNonce, windowLabelsForVault,
 } from '../../lib/assistant/relay.js';
 import { listVaults } from '../../lib/vaults.js';
+import { isSuperChild } from '../../lib/super/store.js';
+import { isSuperManaged, superAttentionRows } from '../../lib/super/inbox.js';
 import { dismissDelegation, listDelegations, recordDelegation } from '../../lib/assistant/delegations.js';
 import { notifyAssistantAutonomy } from './agent-chat.js';
 import { captureScreens } from '../../lib/assistant/screen.js';
@@ -426,6 +428,9 @@ function pickUiArgs(verb: UiVerb, b: Record<string, unknown>): Record<string, un
   }
 }
 
+/** Why the Assistant leaves a chat alone: the owner handed its project to the Super Agent. */
+const SUPER_REFUSAL = 'that project is handed over to its Super Agent; it leads these chats until the owner takes it back';
+
 /** What `close` may filter on — every status but `gone`, which is already closed. */
 const CLOSABLE_STATUSES = CHAT_STATUSES.filter((s) => s !== 'gone');
 /** A chat mid-turn or waiting on a prompt: closing it cuts the turn off, so only with `--force`. */
@@ -449,6 +454,7 @@ async function closeChats(res: ServerResponse, args: Record<string, unknown>): P
     const chat = getChat(single);
     if (!chat) { sendError(res, 404, 'unknown_session', `No live chat "${single}".`); return null; }
     if (isAssistantVault(chat.vault)) { sendError(res, 400, 'invalid_args', 'the Assistant cannot close its own chat'); return null; }
+    if (isSuperManaged(chat.sessionId)) { sendError(res, 409, 'super_handed_over', SUPER_REFUSAL); return null; }
     if (!force && BUSY_STATUSES.includes(chat.status)) { sendError(res, 409, 'session_busy', `${chat.vault} · ${chat.sessionId} is ${busyReason(chat.status)}`); return null; }
     targets = [chat];
   } else {
@@ -458,10 +464,15 @@ async function closeChats(res: ServerResponse, args: Record<string, unknown>): P
     });
   }
   targets = targets.filter((c) => !isAssistantVault(c.vault) && c.status !== 'gone');
-  if (!targets.length) return { status: 200, body: { ok: true, closed: [], skipped: [], failed: [], summary: 'nothing to close' } };
+  // The Super Agent and its children, while handed over, are the Super Agent's (D16).
+  const superHeld = targets.filter((c) => isSuperManaged(c.sessionId));
+  targets = targets.filter((c) => !isSuperManaged(c.sessionId));
+  if (!targets.length && !superHeld.length) return { status: 200, body: { ok: true, closed: [], skipped: [], failed: [], summary: 'nothing to close' } };
 
   const closed: Array<{ sessionId: string; vault: string }> = [];
   const skipped: Array<{ sessionId: string; vault: string; status: ChatStatus; reason: string }> = [];
+  for (const c of superHeld) skipped.push({ sessionId: c.sessionId, vault: c.vault, status: c.status, reason: SUPER_REFUSAL });
+  if (!targets.length) return { status: 200, body: { ok: false, closed, skipped, failed: [], summary: 'closed 0 of 0' } };
   const failed: Array<{ sessionId: string; vault: string; error: string }> = [];
   const respond = (status = 200) => ({
     status,
@@ -574,6 +585,7 @@ export async function handleAssistantUi(req: IncomingMessage, res: ServerRespons
   if (verb === 'send' || verb === 'answer') {
     const chat = getChat(String(args.sessionId));
     if (!chat) { sendError(res, 404, 'unknown_session', `No live chat "${String(args.sessionId)}".`); return; }
+    if (isSuperManaged(chat.sessionId)) { sendError(res, 409, 'super_handed_over', SUPER_REFUSAL); return; }
     // FAIL CLOSED: the registry holds only the LATEST pending prompt, so a permission request
     // it no longer shows (a later question overwrote it, or was answered and cleared it) would
     // read as "not a permission". Only the plain question the registry names is treated as one.
@@ -676,9 +688,12 @@ export async function handleAssistantRollup(req: IncomingMessage, res: ServerRes
   const counts = { starting: 0, working: 0, stale: 0, asking: 0, idle: 0 };
   const now = Date.now();
   for (const c of listChats({})) {
+    // A Super Agent child is the Super Agent's to watch (D16): only its queue head counts.
+    if (isSuperChild(c.sessionId)) continue;
     const a = activityOf(c, now);
     if (a !== 'gone') counts[a] += 1;
   }
+  counts.asking += superAttentionRows().length;
   sendJson(res, 200, { ...counts, proposals: listProposals().length });
 }
 
@@ -700,6 +715,9 @@ export async function handleAssistantGlance(req: IncomingMessage, res: ServerRes
   const rank: Record<string, number> = { asking: 0, working: 1, starting: 2, stale: 3 };
   const clip = (s: string) => (s.length > GLANCE_TEXT_CAP ? `${s.slice(0, GLANCE_TEXT_CAP)}…` : s);
   const chats = listChats({})
+    // Handed over (D16): the Super Agent watches its children; the owner sees one row per
+    // project, its queue head, below.
+    .filter((c) => !isSuperChild(c.sessionId))
     .map((c) => ({ c, activity: activityOf(c, now) }))
     .filter(({ activity }) => activity in rank)
     .sort((a, b) => rank[a.activity] - rank[b.activity] || Date.parse(b.c.lastFrameAt) - Date.parse(a.c.lastFrameAt))
@@ -733,7 +751,35 @@ export async function handleAssistantGlance(req: IncomingMessage, res: ServerRes
       ? { id: d.pending.id, kind: d.pending.kind, tool: d.pending.tool, text: wrapUntrusted(d.vault, clip(d.pending.text)) }
       : null,
   }));
-  sendJson(res, 200, { chats, delegations });
+  sendJson(res, 200, { chats: [...superGlanceRows(clip), ...chats].slice(0, GLANCE_MAX), delegations });
+}
+
+/**
+ * At most ONE row per handed-over project (D16): its queue head, when that is a permission
+ * (drawn from the child's own pending request) or a question the Super Agent escalated (its
+ * words, fenced like project text: they may echo the child).
+ */
+function superGlanceRows(clip: (s: string) => string): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (const { vault, item } of superAttentionRows()) {
+    const c = getChat(item.sessionId);
+    if (item.kind === 'permission') {
+      const pq = c?.pendingQuestion;
+      if (!c || !pq || !pq.isPermission || pq.requestId !== item.requestId) continue;
+      rows.push({
+        sessionId: c.sessionId, vault, activity: 'asking', since: c.updatedAt, super: true,
+        title: c.title ? wrapUntrusted(vault, clip(c.title)) : '',
+        ask: { id: pq.requestId, kind: 'permission', tool: pq.toolName, text: wrapUntrusted(vault, clip(pq.text)) },
+      });
+    } else {
+      rows.push({
+        sessionId: item.sessionId, vault, activity: 'asking', since: new Date(item.createdAt).toISOString(), super: true,
+        title: c?.title ? wrapUntrusted(vault, clip(c.title)) : '',
+        ask: { id: item.requestId ?? item.id, kind: 'question', tool: 'AskUserQuestion', text: wrapUntrusted(vault, clip(item.ownerText ?? '')) },
+      });
+    }
+  }
+  return rows;
 }
 
 // ─── The notch inbox (owner) ─────────────────────────────────────────────────────────

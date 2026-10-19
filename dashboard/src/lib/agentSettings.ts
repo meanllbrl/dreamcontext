@@ -95,6 +95,10 @@ export interface AgentSettings {
   titleMigrated: boolean;
   /** Light mode: Auto / On / Off. Default `auto`; anything but `on` / `off` reads as `auto`. */
   lightMode: LightModeSetting;
+  /** The Super Agent's hand-over button in the Chat header (Settings → Chat, last row). OFF by
+   *  default for everyone while it is being tried: only an explicit `true` shows it. Off never
+   *  strands a hand-over already running: its Take back stays until the chats are back. */
+  superAgent: boolean;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -110,6 +114,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   chatDefaultModel: '',
   chatDefaultEffort: '',
   lightMode: 'auto',
+  superAgent: false,
 };
 
 /** MIRRORED from `sanitizeModel` in `src/server/routes/agent-spawn-shared.ts`. The dashboard
@@ -156,6 +161,8 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     chatDefaultEffort: typeof r.chatDefaultEffort === 'string' && CHAT_DEFAULT_EFFORT_LEVELS.includes(r.chatDefaultEffort)
       ? r.chatDefaultEffort : '',
     lightMode: r.lightMode === 'on' || r.lightMode === 'off' ? r.lightMode : 'auto',
+    // Default-FALSE: only an explicit `true` turns the Super Agent on.
+    superAgent: r.superAgent === true,
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };

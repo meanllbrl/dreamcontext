@@ -70,7 +70,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, idlePlaceholder,
+  signInCommand, bare, idlePlaceholder, readOnly,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -92,6 +92,9 @@ function ChatPaneHostInner({
   /** See ChatPane's `bare`: a host that fixes the agent's envelope (a whiteboard agent card). */
   bare?: boolean;
   idlePlaceholder?: string;
+  /** A handed-over Super Agent's child: the owner looks, never types (ChatPane's `readOnly`).
+   *  A primitive, so the memo boundary holds. */
+  readOnly?: boolean;
 }) {
   const onModelChange = useCallback((id: string) => actions.changeModel(session.id, id), [actions, session]);
   const onEffortChange = useCallback((level: string) => actions.changeEffort(session.id, level), [actions, session]);
@@ -135,6 +138,7 @@ function ChatPaneHostInner({
       signInCommand={signInCommand}
       bare={bare}
       idlePlaceholder={idlePlaceholder}
+      readOnly={readOnly}
     />
   );
 }

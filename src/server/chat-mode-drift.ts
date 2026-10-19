@@ -49,10 +49,11 @@ const MODE_HEADINGS: Array<[string, ChatMode]> = [
   ['# Mode: Develop', 'develop'],
   ['# Mode: Train Me', 'train'],
   ['# Mode: dreamcontext Assistant', 'assistant'],
+  ['# Mode: Super Agent', 'super'],
 ];
 
 const MODE_LABEL: Record<ChatMode, string> = {
-  basic: 'Basic', plan: 'Plan', develop: 'Develop', train: 'Train Me', assistant: 'Assistant',
+  basic: 'Basic', plan: 'Plan', develop: 'Develop', train: 'Train Me', assistant: 'Assistant', super: 'Super Agent',
 };
 
 /** The mode a system prompt was briefed with. A heading must open a line — a mode NAMED in
@@ -129,7 +130,10 @@ export function modeSwitchNote(from: HeldMode, to: ChatMode, brief: string): str
  * because a compaction drops our notes and falls back to it. `[]` = nothing to do.
  */
 export function modeNoteSources(state: { snapshot: HeldMode; held: HeldMode } | null, mode: ChatMode): Array<'resume' | 'compact'> {
+  // The Assistant and the Super Agent never switch modes mid-conversation: each is only ever
+  // spawned as itself, and a conversation born as one is never re-briefed as another.
   if (!state || mode === 'assistant' || state.snapshot === 'assistant') return [];
+  if (mode === 'super' || state.snapshot === 'super') return [];
   const sources: Array<'resume' | 'compact'> = [];
   if (state.held !== mode) sources.push('resume');
   if (state.snapshot !== mode) sources.push('compact');

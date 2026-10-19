@@ -33,3 +33,11 @@ body[data-phone] .window-chrome-bar { display: none; }
   padding: var(--space-4);
   background: transparent;
 }
+
+/* Covered by the Super Agent: AgentSurface sets `data-super-cover` on the project instance while
+   its expanded (opaque) surface covers the whole content area, and the page skips style and
+   layout until it shows again. Its scroll position comes back with it (Chromium and WebKit).
+   Not while the What's New popup is up: it renders inside the page, above the surface. */
+.project-instance[data-super-cover] .shell-main:not(:has(.announcements-modal)) {
+  content-visibility: hidden;
+}

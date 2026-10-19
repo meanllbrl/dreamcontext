@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useVault } from '../../context/VaultContext';
+import { useSidebarHeld } from '../../hooks/useSidebarCollapse';
 import { SearchIcon } from '../sleepy/TypeIcons';
 import { UpdateBadge } from './UpdateBadge';
 import { SleepDebtTracker } from './SleepDebtTracker';
@@ -36,8 +37,10 @@ interface HeaderProps {
  * has better things to hold.
  */
 export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSearch }: HeaderProps) {
-  const { isActive } = useVault();
+  const { isActive, instanceId } = useVault();
   const slots = useChromeSlots();
+  // Handed over to the Super Agent, the rail is held folded and the toggle does nothing (F9).
+  const held = useSidebarHeld(instanceId);
 
   if (!isActive) return null;
 
@@ -49,6 +52,7 @@ export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSe
             className="header-icon-btn"
             data-testid="sidebar-collapse"
             onClick={onToggleSidebar}
+            disabled={held}
             title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-expanded={!sidebarCollapsed}

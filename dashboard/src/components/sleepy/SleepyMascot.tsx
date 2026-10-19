@@ -18,10 +18,18 @@ export type SleepyMood = 'idle' | 'sleepy' | 'sleeps' | 'thinking' | 'working' |
  * The loop is what carries at every size: at 26px the detail is gone but the MOTION still
  * says which of the two you are looking at.
  *
+ * ONE COSTUME, asked for by name: the Super Agent (owner decision 11, 2026-10-17, task
+ * chat-gets-a-super-agent-mode…) wears a short cape fastened under the chin by the brand's
+ * folded-diamond dream gem — it has to read "superhero" at a glance, on brand, with no
+ * third-party mark. It keeps the rule's spirit: the cape goes on once (an entrance) and then
+ * its FLUTTER is the loop; at rest (window unfocused, Light mode) it hangs still.
+ *
  * The mouth is hidden while a mode is worn: the work happens where the smile was, and mood
- * still speaks through the eyes (plus, in the dock, the chip's own colour and "?" bubble).
+ * still speaks through the eyes (plus, in the dock, the chip's own colour and "?" bubble). The
+ * Super Agent keeps its smile: nothing is being worked on under the chin, only fastened.
  */
-export type SleepyGear = 'plan' | 'develop' | 'assistant';
+/** `super` is the Super Agent's cape (owner decision 11, task chat-gets-a-super-agent-mode…). */
+export type SleepyGear = 'plan' | 'develop' | 'assistant' | 'super';
 
 /** Which gear a mode wears, if any. Total over `ChatMode` so a new mode is a silent bare face
  *  rather than a crash.
@@ -33,7 +41,7 @@ export type SleepyGear = 'plan' | 'develop' | 'assistant';
  *  undecided. It is the owner's call that it gets one: Plan and Develop each have one, and a
  *  mode you TALK to is at least as distinct as a mode that plans. */
 export function gearForMode(mode: ChatMode | undefined): SleepyGear | null {
-  return mode === 'plan' || mode === 'develop' || mode === 'assistant' ? mode : null;
+  return mode === 'plan' || mode === 'develop' || mode === 'assistant' || mode === 'super' ? mode : null;
 }
 
 /** Base design size the mascot is drawn at; `size` scales the whole thing. */
@@ -51,6 +59,12 @@ interface SleepyMascotProps {
    *  bare face; Plan writes on paper, Develop works the forge, the Assistant listens and
    *  answers. See {@link gearForMode}. */
   mode?: ChatMode;
+  /** The Super Agent's cape goes ON with this face (the one-shot 400 ms entrance, D19). Only
+   *  the hand-over's centre asks for it, and only when it mounts mid-choreography, so the
+   *  entrance ends inside the choreography; every other face (the dock chip, the mode menu, a
+   *  reload into a handed-over screen) has the cape simply on. Light mode and reduced motion
+   *  drop the entrance in CSS. */
+  capeOn?: boolean;
 }
 
 /**
@@ -60,12 +74,12 @@ interface SleepyMascotProps {
  * whole face is drawn at a 92px base and uniformly scaled, so it's crisp at the
  * big in-panel size and the small on-perch size alike.
  */
-export function SleepyMascot({ mood = 'idle', size = BASE, compact = false, mode }: SleepyMascotProps) {
+export function SleepyMascot({ mood = 'idle', size = BASE, compact = false, mode, capeOn = false }: SleepyMascotProps) {
   const scale = size / BASE;
   const gear = gearForMode(mode);
   return (
     <div
-      className={`smascot smascot-${mood}${compact ? ' smascot-compact' : ''}${gear ? ` smascot-wears smascot-wears-${gear}` : ''}`}
+      className={`smascot smascot-${mood}${compact ? ' smascot-compact' : ''}${gear ? ` smascot-wears smascot-wears-${gear}` : ''}${gear === 'super' && capeOn ? ' smascot-cape-entering' : ''}`}
       style={{ width: size, height: size * 0.82 }}
       aria-hidden
     >
@@ -112,7 +126,26 @@ function Gear({ kind }: { kind: SleepyGear }) {
   return (
     <svg className="smascot-gear" width="92" height="112" viewBox="0 0 92 112" fill="none" aria-hidden>
       <g transform="translate(15,32)" className="smascot-gear-line" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-        {kind === 'assistant' ? (
+        {kind === 'super' ? (
+          /* SUPER AGENT — a short cape, fastened under the chin by the dream gem. Sleepy is a
+             face with no torso, so the clasp IS the chest emblem: the brand's folded diamond
+             (crown over pavilion, BrandMark's shape) in the brand accent, the one warm spot on
+             an ink-drawn cape. The two flaps swing out from the clasp; on the hand-over the cape
+             is put on once (`smascot-cape-on`, only with `capeOn`) and then flutters (the loop),
+             hanging still at rest. */
+          <g className="smascot-scene smascot-cape">
+            <g className="smascot-cape-cloth smascot-cape-cloth--l">
+              <path className="smascot-gear-fill-soft" d="M31 64 C20 62 6 60 -5 55 C-9 64 -11 72 -13 80 C-4 77 6 79 14 75 C21 71 26 67 31 64 Z" />
+            </g>
+            <g className="smascot-cape-cloth smascot-cape-cloth--r">
+              <path className="smascot-gear-fill-soft" d="M31 64 C42 62 56 60 67 55 C71 64 73 72 75 80 C66 77 56 79 48 75 C41 71 36 67 31 64 Z" />
+            </g>
+            <g className="smascot-gem">
+              <path className="smascot-gem-crown" d="M25 63 L28.5 58.5 H33.5 L37 63 Z" strokeWidth="1.6" />
+              <path className="smascot-gem-pavilion" d="M25 63 H37 L31 71 Z" strokeWidth="1.6" />
+            </g>
+          </g>
+        ) : kind === 'assistant' ? (
           /* The Assistant — listen, then answer. A microphone on the left and a row of level
              bars across the mouth. The bars ripple RIGHT-TO-LEFT and stay low while it is
              listening, then swell and sweep LEFT-TO-RIGHT out of the mic while it answers;
@@ -170,7 +203,7 @@ function Gear({ kind }: { kind: SleepyGear }) {
               </g>
             </g>
           </g>
-        ) : (
+        ) : kind === 'develop' ? (
           /* DEVELOP — the smithy. One iconic anvil silhouette (horn to the right), a torch
              from the upper-left, a chunky hammer pivoting from the right. It welds a little
              (the flame flickers, the joint glows, sparks fizz), the torch pulls back, the
@@ -206,7 +239,7 @@ function Gear({ kind }: { kind: SleepyGear }) {
             <circle className="smascot-spark smascot-spark--h2" cx="16" cy="35" r="1.9" stroke="none" />
             <circle className="smascot-spark smascot-spark--h3" cx="16" cy="35" r="1.6" stroke="none" />
           </g>
-        )}
+        ) : null}
       </g>
     </svg>
   );

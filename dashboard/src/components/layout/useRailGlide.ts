@@ -14,6 +14,7 @@
  * that is already laid out underneath. See `.sidebar-glide` in Sidebar.css.
  */
 import { useLayoutEffect, useRef, type RefObject } from 'react';
+import { isLightMode } from '../../lib/lightMode';
 
 /** `--transition-normal` (240ms ease) — what the rail's width transition ran at. */
 const GLIDE_MS = 240;
@@ -45,7 +46,9 @@ export function useRailGlide(
     const el = strip.current;
     const slab = el?.firstElementChild;
     const rail = shell.current?.querySelector('.sidebar');
-    if (!el || !(slab instanceof HTMLElement) || !rail || reducedMotion() || typeof slab.animate !== 'function') return;
+    // Light mode snaps too: the rail also folds with a Super Agent hand-over, whose Light mode is a
+    // crossfade only.
+    if (!el || !(slab instanceof HTMLElement) || !rail || reducedMotion() || isLightMode() || typeof slab.animate !== 'function') return;
     // A background project is `display: none` — it has no rail on screen to glide.
     const r = rail.getBoundingClientRect();
     if (!r.height) return;

@@ -2,7 +2,7 @@ import {
   useEffect, useMemo, useRef, useState, useReducer, useCallback, useLayoutEffect,
   type CSSProperties,
 } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import './AgentTerminal.css';
 import { api, RequestError } from '../../api/client';
 import { useVault, useApi, useInstanceEvent, emitInstance } from '../../context/VaultContext';
@@ -11,7 +11,7 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { createChatSession, type ChatSession } from './chatSession';
+import { createChatSession, type ChatSession, type SuperSignal } from './chatSession';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -82,6 +82,22 @@ import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
 import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire } from '../handsfree/macContract';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
+import { isLightMode } from '../../lib/lightMode';
+import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
+import { readSuperStateView, type SuperStateView } from '../../lib/superTypes';
+import { holdSidebarCollapsed } from '../../hooks/useSidebarCollapse';
+import type { PendingQuestion } from './chatSession';
+import { HandoverButton } from './super/HandoverButton';
+import { SuperSurface, prefersReducedMotion, runFlights, type FlightRun } from './super/SuperSurface';
+import type { TerminalRowItem } from './super/TerminalsRow';
+import {
+  actionGeneration, adoptionBody, cardReference, childMarks, delegateArgs, delegateExpired, delegateMarkUntil, hasOwnKey,
+  homedSessions, isSuperSession, markedChildren, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
+  windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
+} from './super/superHandover';
+import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperLayout, postSuperRecap } from './super/superApi';
+import { applyLayoutPatch, patchEchoed, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -285,6 +301,9 @@ interface SavedSurface {
  * the shape recurs; what changed is that it currently gates nothing.
  */
 function knownChatMode(v: unknown): ChatMode | undefined {
+  // `super` is no picker row, but a roster entry carrying it must stay `super` — never degrade
+  // to a Basic tab — so the Super Agent's session is recognised (and kept out of the panes).
+  if (v === 'super') return 'super';
   return CHAT_MODE_ROWS.some((r) => r.id === v && !r.disabled) ? (v as ChatMode) : undefined;
 }
 
@@ -366,7 +385,7 @@ export function AgentSurface() {
   // reach a WebSocket: a hidden instance stays mounted and fully live, its chat still
   // streaming, and the only thing a chip switch changes is what the pixels are measured
   // against (see HARD CONSTRAINT #2 in the project-tabs plan).
-  const { vault, isActive, bus } = useVault();
+  const { vault, instanceId, isActive, bus } = useVault();
   // A vault-scoped client for the PER-VAULT routes below (session roster, auto-title,
   // open-terminal) — none of these are on the server's `VAULT_AGNOSTIC_PREFIXES` list, so the
   // module `api` singleton would resolve them against whichever vault the server happens to be
@@ -584,6 +603,47 @@ export function AgentSurface() {
   // rebuilt every render so a verb always acts on the CURRENT layout. Assigned further down,
   // once every action it lends exists; `spawn` hands each chat a handler that reads it.
   const windowDepsRef = useRef<(self: string) => WindowVerbDeps | null>(() => null);
+
+  // ── The project's Super Agent (task chat-gets-a-super-agent-mode…, plan-r7 D5, D9, D16-D18) ──
+  //
+  // `superState` is the server's record (pushed as `super_state` down the Super Agent's own
+  // socket after every write, read once with GET after a reload); `superView` is which screen
+  // this window shows. They differ only while a flight runs: the view switches when the DOM
+  // does, the record when the server answers. The Super Agent's session is an ordinary chat
+  // session in `sessionList` (mode `super`) that is NEVER a tab: no pane holds it, the roster
+  // never saves it, the restore never places it, the reconcile never adopts it (D9's one
+  // predicate, `isSuperSession`). While handed over it is homed into the centre slot.
+  const [superState, setSuperState] = useState<SuperStateView | null>(null);
+  const superStateRef = useRef(superState);
+  superStateRef.current = superState;
+  /** The owner's layout edits not yet echoed by the server (F3): re-applied over every push. */
+  const pendingPatchesRef = useRef<LayoutPatch[]>([]);
+  const withPendingEdits = (st: SuperStateView): SuperStateView => {
+    pendingPatchesRef.current = pendingPatchesRef.current.filter((p) => !patchEchoed(st, p));
+    return pendingPatchesRef.current.reduce((acc, p) => applyLayoutPatch(acc, p), st);
+  };
+  const [superView, setSuperView] = useState<'panes' | 'super'>('panes');
+  const superViewRef = useRef(superView);
+  superViewRef.current = superView;
+  const [superMotion, setSuperMotion] = useState<'idle' | 'running'>('idle');
+  const [superPending, setSuperPending] = useState<ReadonlySet<string>>(() => new Set());
+  const [superBusy, setSuperBusy] = useState(false);
+  const superBusyRef = useRef(false);
+  const [superWidth, setSuperWidth] = useState(0);
+  const [superSlotEpoch, bumpSuperSlots] = useReducer((x: number) => x + 1, 0);
+  // Read by every chat `spawn` creates, so a respawned Super Agent (an account switch, a
+  // resume) keeps its wiring: the handlers are refs, rebuilt every render below.
+  const superCommandRef = useRef<(cmd: { verb: string; args: Record<string, unknown> }) =>
+    Promise<{ ok: true; result?: unknown } | { ok: false; error: string }>>(async () => ({ ok: false, error: 'no_window' }));
+  const superSignalRef = useRef<(signal: SuperSignal) => void>(() => {});
+  const superWindowGuardRef = useRef<(cs: ChatSession, verb: string, args: Record<string, unknown>) => string | null>(() => null);
+  const superLeaseRef = useRef<{ typed: () => void; dispose: () => void } | null>(null);
+  // Children this window just opened for a `delegate`, by pin id → until when they stay marked
+  // without the record naming them (`childMarks`, D16): quiet from the first frame, not only once
+  // the server's `super_state` push lands.
+  const [superDelegated, setSuperDelegated] = useState<ReadonlyMap<string, number>>(() => new Map());
+  // The owner's hand-over actions in order: a result belonging to one already reversed is dropped.
+  const superGenRef = useRef(actionGeneration());
 
   // Dispose every session when this surface unmounts.
   //
@@ -1149,6 +1209,10 @@ export function AgentSurface() {
           const activeIds = new Set<string>();
           restored.forEach((m, i) => {
             const saved = fresh[i];
+            // The Super Agent is never a tab (plan-r7 D9). Checked HERE, inside the
+            // index-aligned loop, because an unplaced entry would otherwise land in pane 0
+            // through `saved.pane ?? 0`; the hand-over binds the restored session by its id.
+            if (isSuperSession({ mode: m.mode ?? saved.mode, claudeId: saved.sessionId }, superStateRef.current?.session)) return;
             const idx = Math.max(0, Math.floor(saved.pane ?? 0));
             const bucket = groups.get(idx);
             if (bucket) bucket.push(m); else groups.set(idx, [m]);
@@ -1168,7 +1232,9 @@ export function AgentSurface() {
           // Was anything already on screen when the roster landed? Read from the roster ref
           // rather than from `panes` (which this effect deliberately does not close over, so
           // it can never re-run on a layout change) — a tab and its pane arrive together.
-          const cleanRestore = sessionListRef.current.length === 0;
+          // The Super Agent's session (re-bound after a reload while handed over) is no tab, so
+          // it does not make the restore any less clean.
+          const cleanRestore = sessionListRef.current.filter((m) => !isSuperSession(m, superStateRef.current?.session)).length === 0;
           setPanes((prev) => {
             if (prev.length === 0) return built;
             // Something opened a tab while the roster was in flight (the D7 race above). Its
@@ -1218,6 +1284,9 @@ export function AgentSurface() {
         ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
         sessions: [...sessionList
           .filter((m) => m.kind !== 'shell')
+          // The Super Agent is never a tab, so it is never saved as one: a relaunch after
+          // take-back shows no super tab, and a reload while handed over rebinds it by id.
+          .filter((m) => !isSuperSession(m, superStateRef.current?.session))
           .map((m) => ({
             title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
             ...(paneOf.has(m.id) ? { pane: paneOf.get(m.id) } : {}),
@@ -1320,9 +1389,21 @@ export function AgentSurface() {
       armAccountSwitch(cs);
       armAgentTitle(cs);
       cs.setWindowHandler(async ({ verb, args }) => {
+        // The browser's re-check of the server's D4b refusals while handed over.
+        const refusal = superWindowGuardRef.current(cs, verb, args);
+        if (refusal) return { ok: false, error: refusal };
         const deps = windowDepsRef.current(cs.id);
         return deps ? runWindowVerb(deps, verb, args) : { ok: false, error: 'no_window' };
       });
+      // A child of the handed-over Super Agent is quiet from its first frame (D16).
+      cs.setSuperChild(markedChildren(superStateRef.current).has(cs.claudeId));
+      if (mode === 'super') {
+        // The Super Agent's own chat: the window-side verbs, the pushed state, and the
+        // owner-activity lease (a keystroke in its composer, never the text).
+        cs.setSuperHandler((cmd) => superCommandRef.current(cmd));
+        cs.onSuper((signal) => superSignalRef.current(signal));
+        cs.setDraftListener(() => { if (superStateRef.current?.enabled) superLeaseRef.current?.typed(); });
+      }
       return cs;
     }
     // A shell has no permission model, so bypass is meaningless for it — force it off.
@@ -2014,6 +2095,9 @@ export function AgentSurface() {
   const resumePastSession = useCallback((past: PastSession, reattach: '' | '1' = '') => {
     setHistoryOpen(false);
     setExpanded(true);
+    // The Super Agent's conversation is never reopened as a tab: the hand-over button is its
+    // only way in (plan-r7 D1, D9).
+    if (past.id === superStateRef.current?.session) return;
     const existing = sessionList.find((m) => m.claudeId === past.id);
     if (existing) {
       if (existing.dormant) resumeSession(existing.id);
@@ -2636,9 +2720,19 @@ export function AgentSurface() {
   // what it owns: the live sessions, a spawn that lands revealed, and the reveal itself.
   // Sessions resolve by conversation id through `sessionList`, like the checklist bridge.
   const windowChrome = useChrome();
+  /** The Super Agent's own conversation, or (while handed over) one of its children. */
+  const claudeIdIsSuperGuarded = (claudeId: string): boolean => {
+    const st = superStateRef.current;
+    if (!st) return sessionListRef.current.some((m) => m.claudeId === claudeId && m.mode === 'super');
+    return claudeId === st.session || (st.enabled && hasOwnKey(st.children, claudeId))
+      || sessionListRef.current.some((m) => m.claudeId === claudeId && m.mode === 'super');
+  };
   useAssistantDoorbell({
     vault,
     findChat: (claudeId) => {
+      // The Assistant never reaches into the Super Agent or, while handed over, its children
+      // (plan-r7 D16: the server refuses too; this is the window's own re-check).
+      if (claudeIdIsSuperGuarded(claudeId)) return null;
       const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === claudeId);
       const session = entry ? sessions.current.get(entry.id) : undefined;
       return session && session.kind === 'chat' ? session as ChatSession : null;
@@ -2668,6 +2762,7 @@ export function AgentSurface() {
       onOpenAppPage(page, id);
     },
     closeChat: (claudeId) => {
+      if (claudeIdIsSuperGuarded(claudeId)) return false;
       const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === claudeId);
       if (!entry) return false;
       closeSessionById(entry.id);
@@ -2876,7 +2971,9 @@ export function AgentSurface() {
     self,
     panes,
     activePaneId,
-    tabs: sessionList.map((m) => {
+    // Never the Super Agent's session, and for a handed-over child never a sibling (D4b, the
+    // browser's re-check of what the server already refuses).
+    tabs: windowTabsFor(sessionList.map((m) => {
       const live = m.dormant ? undefined : sessions.current.get(m.id);
       const chat = live?.kind === 'chat' ? live as ChatSession : undefined;
       return {
@@ -2890,6 +2987,11 @@ export function AgentSurface() {
         asking: !!live?.asking,
         dormant: !live || live.status === 'closed',
       };
+    }), {
+      caller: superCallerOf(sessions.current.get(self)),
+      self: sessions.current.get(self)?.claudeId ?? '',
+      superSession: superState?.session ?? null,
+      children: markedChildren(superState),
     }),
     openNew: async (o) => {
       let inline = '';
@@ -2945,6 +3047,551 @@ export function AgentSurface() {
     },
     close: (sid) => closeSessionById(sid),
   });
+
+  // ── The Super Agent: who is who ───────────────────────────────────────────────────
+  // Which of this window's chats a window verb comes from (D4b's browser re-check).
+  function superCallerOf(s: Session | ChatSession | undefined): SuperCaller {
+    if (!s || s.kind !== 'chat') return 'other';
+    const cs = s as ChatSession;
+    if (cs.mode === 'super' || (!!superState?.session && cs.claudeId === superState.session)) return 'super';
+    return markedChildren(superState).has(cs.claudeId) ? 'child' : 'other';
+  }
+  superWindowGuardRef.current = (cs, verb, args) => {
+    const caller = superCallerOf(cs);
+    // The Super Agent's one window verb, `send` (its `super send`): resolve the tab it names by
+    // sid OR pin id, and hand the re-check all three ids (sid, pin, live conversation).
+    let target: SuperSendTarget | null = null;
+    if (caller === 'super' && verb === 'send' && typeof args.tab === 'string' && args.tab) {
+      const meta = sessionList.find((m) => m.id === args.tab || m.claudeId === args.tab);
+      const live = meta && !meta.dormant ? sessions.current.get(meta.id) : undefined;
+      if (meta) target = { sid: meta.id, pin: meta.claudeId, conversation: live && live.kind === 'chat' ? live.claudeId : null };
+    }
+    return superWindowRefusal(caller, verb, !!superState?.enabled, {
+      target, superSession: superState?.session ?? null, children: markedChildren(superState),
+    });
+  };
+  // The Super Agent's session in this window (its roster entry carries the recorded id).
+  const superMeta = sessionList.find((m) => !!superState?.session && m.claudeId === superState.session)
+    ?? sessionList.find((m) => m.mode === 'super');
+  const superSid = superMeta?.id ?? null;
+  const superChatSession = superSid ? sessions.current.get(superSid) as ChatSession | undefined : undefined;
+  // The record's children plus the ones this window just opened for a `delegate` (D16).
+  const marked = childMarks(superState, superDelegated, Date.now()).marked;
+  const handedOver = superView === 'super' && !!superState && !isMobile;
+  // Web containers hold a frame only while the window can be seen (webBudget.ts).
+  const windowActivity = useWindowActivity();
+  // The tabs a hand-over cannot adopt: terminals, in their own row.
+  const superTerminals: TerminalRowItem[] = terminalTabs(sessionList.map((m) => ({
+    id: m.id, claudeId: m.claudeId, title: m.title, kind: transportKind(m) ?? m.kind, mode: m.mode, dormant: m.dormant,
+  }))).map((tab) => {
+    const s = sessions.current.get(tab.id);
+    return {
+      id: tab.id, title: tab.title, kind: tab.kind,
+      status: deriveSessionStatus({ dormant: tab.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }).kind,
+    };
+  });
+  /** A child's live chat by its pin id (the record names children by it). */
+  const chatByClaudeId = useCallback((claudeId: string): ChatSession | undefined => {
+    const entry = sessionListRef.current.find((m) => m.claudeId === claudeId && !m.dormant);
+    const s = entry ? sessions.current.get(entry.id) : undefined;
+    return s && s.kind === 'chat' ? s as ChatSession : undefined;
+  }, []);
+  const superTitleFor = useCallback((claudeId: string): string => {
+    const st = superStateRef.current;
+    const brief = st && hasOwnKey(st.children, claudeId) ? st.children[claudeId].brief : '';
+    if (brief) return brief;
+    return sessionListRef.current.find((m) => m.claudeId === claudeId)?.title ?? claudeId.slice(0, 8);
+  }, []);
+
+  // ── First paint after a reload: the record, once. Afterwards only pushes. ──────────
+  useEffect(() => {
+    if (!caps?.desktop || isMacPhoneSurface()) return undefined;
+    let cancelled = false;
+    void fetchSuperState(scopedApi).then((st) => {
+      if (cancelled || !st) return;
+      // A push that landed first is newer; never overwrite it with the GET.
+      setSuperState((prev) => prev ?? withPendingEdits(st));
+      if (st.enabled) setSuperView('super');
+    });
+    return () => { cancelled = true; };
+  }, [caps?.desktop, scopedApi]);
+
+  // ── The Super Agent's own chat: opened (or re-bound) whenever the mode is on ────────
+  // Kind chat, mode `super`, pin = the recorded session. Resumed (`--resume`) unless the
+  // hand-over that minted it is the one asking, which starts it under that id. It follows the
+  // vault's permission switch like any chat (decision 14): `spawn`'s chat arm resolves it.
+  const superFreshRef = useRef<string | null>(null);
+  const ensureSuperSession = useCallback((session: string): ChatSession | null => {
+    const open = sessionListRef.current.find((m) => m.claudeId === session);
+    if (open) {
+      const live = sessions.current.get(open.id);
+      return live && live.kind === 'chat' ? live as ChatSession : null;
+    }
+    if (!canSpawn) return null;
+    const fresh = superFreshRef.current === session;
+    superFreshRef.current = null;
+    const s = spawn(false, session, !fresh, 'chat', '', '', true, '', false, '', false, 'super') as ChatSession;
+    // Registered in the roster (so it is portaled and homed) but NEVER in a pane.
+    const meta: SessionMeta = { id: s.id, title: 'Claude', kind: 'chat', bypass: s.bypass, claudeId: session, mode: 'super' };
+    sessionListRef.current = [...sessionListRef.current, meta];
+    setSessionList((prev) => (prev.some((m) => m.claudeId === session) ? prev : [...prev, meta]));
+    return s;
+  }, [canSpawn, spawn]);
+  useEffect(() => {
+    if (superState?.enabled && superState.session && canSpawn) ensureSuperSession(superState.session);
+  }, [superState?.enabled, superState?.session, canSpawn, ensureSuperSession]);
+
+  // ── What the server pushes down the Super Agent's socket ───────────────────────────
+  superSignalRef.current = (signal) => {
+    if (signal.kind !== 'state') return;
+    const st = readSuperStateView(signal.state);
+    if (st) setSuperState(withPendingEdits(st));
+  };
+
+  // ── Mark the children (D16): no alarm, no badge, no project-chip `waiting` ──────────
+  // A child just opened for a `delegate` stays marked until the record names it, its mark runs
+  // out (the server never recorded it), or the mode goes off — never unmarked in between.
+  useEffect(() => {
+    const now = Date.now();
+    const marks = childMarks(superState, superDelegated, now);
+    if (marks.delegated.size !== superDelegated.size) { setSuperDelegated(marks.delegated); return undefined; }
+    const set = marks.marked;
+    sessions.current.forEach((s) => {
+      if (s.kind === 'chat') (s as ChatSession).setSuperChild(set.has(s.claudeId));
+    });
+    if (marks.nextExpiry === null) return undefined;
+    const timer = setTimeout(() => setSuperDelegated((prev) => {
+      const next = childMarks(superStateRef.current, prev, Date.now()).delegated;
+      return next.size === prev.size ? prev : next;
+    }), Math.max(0, marks.nextExpiry - now) + 50);
+    return () => clearTimeout(timer);
+  }, [superState, sessionList, superDelegated]);
+
+  // ── The owner-activity lease: one POST per 5 s at most, and only while typing ─────────
+  useEffect(() => {
+    // Only while handed over; the pending trailing post dies with take-back or the unmount.
+    if (!superState?.enabled) return undefined;
+    const lease = createActivityLease(() => { void postSuperActivity(scopedApi).catch(() => undefined); });
+    superLeaseRef.current = lease;
+    return () => {
+      lease.dispose();
+      if (superLeaseRef.current === lease) superLeaseRef.current = null;
+    };
+  }, [scopedApi, superState?.enabled]);
+
+  // ── The return recap (D13): back after ≥ 10 min away, while handed over ────────────
+  useEffect(() => {
+    if (!superState?.enabled) return undefined;
+    return onWindowActivity((next, prev, change) => {
+      if (shouldRecap(prev.focused, next.focused, change.unfocusedMs, !!superStateRef.current?.enabled)) {
+        void postSuperRecap(scopedApi).catch(() => undefined);
+      }
+    });
+  }, [superState?.enabled, scopedApi]);
+
+  // ── The Super Agent's window-side verbs (`super delegate`, `super answer`) ───────────
+  // The server already checked the caller, the cap and (for answer) the child's pending
+  // request; the window re-checks what only it can see and does the work the way the owner's
+  // own click would.
+  superCommandRef.current = async ({ verb, args }) => {
+    const st = superStateRef.current;
+    if (!st?.enabled) return { ok: false, error: 'not_handed_over' };
+    if (verb === 'delegate') {
+      // Past the server's deadline: open NO child (the server would never record it).
+      if (delegateExpired(args)) return { ok: false, error: 'expired' };
+      const d = delegateArgs(args);
+      if (!d.ok) return d;
+      if (!canSpawn || !vault) return { ok: false, error: 'cannot_spawn' };
+      const prepared = await preparePrompt(vault, d.prompt);
+      // …checked again after the prompt is prepared: that wait can be what ran past it.
+      if (delegateExpired(args)) return { ok: false, error: 'expired' };
+      // Follows the vault's permission switch like any chat (decision 13): no explicit bypass.
+      const s = spawn(false, undefined, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, false, d.mode) as ChatSession;
+      s.setSuperChild(true);
+      // …and it STAYS marked until the server's push names it (the mark effect would otherwise
+      // unmark it on the next roster change, before the push lands).
+      const markUntil = delegateMarkUntil(args);
+      setSuperDelegated((prev) => new Map(prev).set(s.claudeId, markUntil));
+      setSessionList((prev) => [...prev, {
+        id: s.id, title: d.title || titleFor(s), kind: 'chat', bypass: s.bypass, claudeId: s.claudeId,
+        ...(d.mode !== DEFAULT_CHAT_MODE ? { mode: d.mode } : {}),
+      }]);
+      // A NON-active tab of the active pane (D5): take-back shows the owner's layout + it. With
+      // no pane at all it gets one (the "keep activePaneId real" effect then points at it).
+      setPanes((prev) => placeDelegatedChild(prev, activePaneId, s.id, nextPaneId).panes);
+      return { ok: true, result: { sessionId: s.claudeId } };
+    }
+    if (verb === 'answer') {
+      const child = typeof args.child === 'string' ? args.child : '';
+      const requestId = typeof args.requestId === 'string' ? args.requestId : '';
+      if (!hasOwnKey(st.children, child)) return { ok: false, error: 'not_a_child' };
+      const cs = chatByClaudeId(child);
+      if (!cs) return { ok: false, error: 'child_not_open' };
+      // Only an AskUserQuestion card — never a permission, never a plan approval.
+      const q = cs.getModel().pending.find((p): p is PendingQuestion => p.kind === 'question' && p.requestId === requestId);
+      if (!q) return { ok: false, error: 'no_such_question' };
+      const choices = Array.isArray(args.choices) ? args.choices.filter((c): c is string => typeof c === 'string') : [];
+      const picks = superAnswerPicks(q.questions, choices, typeof args.text === 'string' ? args.text : undefined);
+      if (!picks.ok) return picks;
+      // Exactly what the child's own card sends (`answerQuestion` builds the load-bearing
+      // `{questions, answers}` shape).
+      cs.answerQuestion(requestId, q.questions, picks.picked, picks.notes);
+      return { ok: true };
+    }
+    return { ok: false, error: 'unknown_verb' };
+  };
+
+  // ── The layout the owner edits: a drop, Others, side by side, minimize, close (F3, §0 C3) ──
+  // Applied at once (optimistic) and kept on top of every push until the server's state
+  // carries it, so a push that left before the POST landed never snaps the card back.
+  const editSuperLayout = useCallback((patch: LayoutPatch) => {
+    pendingPatchesRef.current = [...pendingPatchesRef.current, patch];
+    setSuperState((prev) => (prev ? applyLayoutPatch(prev, patch) : prev));
+    const settle = () => { pendingPatchesRef.current = pendingPatchesRef.current.filter((p) => p !== patch); };
+    // A save that did not land never stays on screen as if it had (end review r8): the patch
+    // goes and the record is read again, so the card returns to where the server has it. A
+    // server that is down pushes the record itself when the socket comes back.
+    const notSaved = (why: unknown) => {
+      settle();
+      console.warn('[super] the layout was not saved:', why);
+      void fetchSuperState(scopedApi).then((st) => { if (st) setSuperState(withPendingEdits(st)); });
+    };
+    void postSuperLayout(scopedApi, patch).then(
+      (st) => { if (!st) { notSaved('no state in the answer'); return; } settle(); setSuperState(withPendingEdits(st)); },
+      notSaved,
+    );
+  }, [scopedApi]);
+
+  // O11: a card dropped on the centre (or its "Ask about this") becomes the subject of the
+  // owner's next message: a reference appended to the Super Agent's draft once, focused.
+  // Nothing is written to the record; nothing happens while the Super Agent is dormant.
+  const askAboutCard = useCallback((id: string, title: string) => {
+    const cs = superChatRef.current;
+    if (!cs || cs.status === 'closed') return;
+    cs.sendText(cardReference(id, title, cs.getModel().draft));
+    requestAnimationFrame(() => cs.focus());
+  }, []);
+
+  // ── The hand-over and the take-back, with their flights (D17, D18) ─────────────────
+  const flightLayerRef = useRef<HTMLDivElement | null>(null);
+  const flightRunRef = useRef<{ run: FlightRun; dir: 'in' | 'out'; focusSid?: string } | null>(null);
+  const reverseQueuedRef = useRef(false);
+  const flightReqRef = useRef<{ dir: 'in' | 'out'; first: Map<string, { role: FlightRole; rect: Rect }>; focusSid?: string } | null>(null);
+  const [flightNonce, bumpFlight] = useReducer((x: number) => x + 1, 0);
+  const rectOf = (el: Element | null | undefined): Rect | null => {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left, y: r.top, width: r.width, height: r.height };
+  };
+  const q$ = (sel: string): HTMLElement | null => hostRef.current?.querySelector<HTMLElement>(sel) ?? null;
+  const esc = (v: string) => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(v) : v.replace(/["\\]/g, ''));
+  /** Where a child's card is on the stage: its card, or the Others stack it is drawn in. */
+  const containerElOf = (claudeId: string): HTMLElement | null => {
+    const c = superStateRef.current?.containers.find((x) => x.kind === 'chat' && x.ref === claudeId);
+    if (!c) return null;
+    return q$(`.super-card-frame[data-container-id="${esc(c.id)}"]`) ?? q$('[data-testid="super-others"]');
+  };
+  /** Where a child sits among the panes: the active pane's slot when it is that pane's visible
+   *  tab, else its tab chip. */
+  const paneRectOf = (sid: string): { role: FlightRole; rect: Rect | null } => {
+    const ap = panes.find((p) => p.id === activePaneId) ?? panes[0];
+    if (ap && ap.active === sid) return { role: 'pane', rect: rectOf(q$(`.agent-pane-slot[data-pane="${esc(ap.id)}"]`)) };
+    return { role: 'chip', rect: rectOf(q$(`.agent-tab[data-sid="${esc(sid)}"]`)) };
+  };
+  const sidOfClaude = (claudeId: string) => sessionListRef.current.find((m) => m.claudeId === claudeId)?.id ?? '';
+
+  const handOver = useCallback(async () => {
+    const live = flightRunRef.current;
+    if (live?.run.active) { live.run.reverse(); return; }
+    // Pressed again while the hand-over request is still out: the flight reverses the moment it
+    // starts (a slow server must not swallow the owner's "no, back").
+    if (superBusyRef.current) { reverseQueuedRef.current = !reverseQueuedRef.current; return; }
+    reverseQueuedRef.current = false;
+    superBusyRef.current = true;
+    setSuperBusy(true);
+    try {
+      const before = superStateRef.current;
+      // Every open chat of the project (minimized ones included), never the Super Agent.
+      const tabs: HandoverTab[] = sessionListRef.current.map((m) => {
+        const s = sessions.current.get(m.id);
+        return {
+          id: m.id,
+          claudeId: s?.claudeId ?? m.claudeId,
+          title: m.title,
+          kind: transportKind(m) === 'chat' ? 'chat' : m.kind,
+          mode: s?.kind === 'chat' ? (s as ChatSession).mode : m.mode,
+          dormant: m.dormant || !s || s.status === 'closed',
+        };
+      });
+      const body = adoptionBody(tabs, before?.session);
+      // FIRST rects, in ONE batch, before anything changes.
+      const first = new Map<string, { role: FlightRole; rect: Rect }>();
+      for (const cid of body.adopt) {
+        const at = paneRectOf(sidOfClaude(cid));
+        if (isVisibleRect(at.rect)) first.set(`child:${cid}`, { role: at.role, rect: at.rect });
+      }
+      const strip = rectOf(q$('.agent-overlay-tabs'));
+      if (isVisibleRect(strip)) first.set('strip', { role: 'strip', rect: strip });
+      const btn = rectOf(q$('[data-testid="super-handover-btn"]'));
+      if (isVisibleRect(btn)) first.set('centre', { role: 'centre', rect: btn });
+      setSuperWidth(hostRef.current?.clientWidth ?? 0);
+
+      // A late `disable` from an earlier take-back must not land on top of this hand-over.
+      const gen = superGenRef.current.begin();
+      const { session, state } = await enableSuper(scopedApi, body);
+      // Minted by THIS hand-over (the record knew none, or another): start it under that id.
+      if (before && before.session !== session) superFreshRef.current = session;
+      ensureSuperSession(session);
+      const st = state ?? (before ? { ...before, session, enabled: true } : null);
+      const landing = new Set<string>(['centre']);
+      for (const c of st?.containers ?? []) landing.add(c.id);
+      flightReqRef.current = { dir: 'in', first };
+      const host = hostRef.current;
+      if (host?.classList.contains('expanded') && !host.hasAttribute('data-mobile') && !zoomIn()) coverPage(true);
+      // ONE commit (FE4): the sidebar folds to its rail in the same batch as the switch, so the
+      // stage measures itself at the folded width; its stage-ready callback starts the flights.
+      flushSync(() => {
+        holdSidebarCollapsed(instanceId, true);
+        if (st && superGenRef.current.isCurrent(gen)) setSuperState(withPendingEdits(st));
+        setSuperPending(landing);
+        setSuperView('super');
+        setSuperMotion('running');
+      });
+      // The stage reports ready inside that commit; if it never could (no size), nothing flies
+      // and nothing is left waiting at opacity 0.
+      requestAnimationFrame(() => {
+        if (flightReqRef.current?.dir !== 'in') return;
+        flightReqRef.current = null;
+        setSuperPending(new Set());
+        setSuperMotion('idle');
+        // A "back" pressed while the request was out, with nothing flying to reverse: go back.
+        if (reverseQueuedRef.current) { reverseQueuedRef.current = false; settleReversedRef.current('in'); }
+      });
+    } catch (err) {
+      console.warn('[super] hand-over failed:', err);
+      void confirmAction({
+        title: t('super.error.handOver'),
+        body: err instanceof Error ? err.message : String(err),
+        confirmLabel: 'OK',
+        cancelLabel: t('super.error.close'),
+      });
+    } finally {
+      superBusyRef.current = false;
+      setSuperBusy(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopedApi, ensureSuperSession, panes, activePaneId, transportKind, t, instanceId]);
+
+  const takeBack = useCallback(async (focusSid?: string) => {
+    const live = flightRunRef.current;
+    if (live?.run.active) { live.run.reverse(); return; }
+    if (superViewRef.current !== 'super') return;
+    // FIRST rects (the containers and the centre), in one batch, before the switch.
+    const first = new Map<string, { role: FlightRole; rect: Rect }>();
+    for (const c of superStateRef.current?.containers ?? []) {
+      if (c.kind !== 'chat' || !hasOwnKey(superStateRef.current?.children, c.ref)) continue;
+      const rect = rectOf(containerElOf(c.ref));
+      if (isVisibleRect(rect)) first.set(`child:${c.ref}`, { role: 'chip', rect });
+    }
+    const centre = rectOf(q$('.super-centre'));
+    if (isVisibleRect(centre)) first.set('centre', { role: 'centre', rect: centre });
+    flightReqRef.current = { dir: 'out', first, focusSid };
+    // The rail hold goes in the same batch: the chips' last rects are measured after it.
+    flushSync(() => {
+      holdSidebarCollapsed(instanceId, false);
+      setSuperPending(new Set());
+      setSuperView('panes');
+      setSuperMotion('running');
+      bumpFlight();
+    });
+    // The owner may reverse this take-back mid-flight (`settleReversed` re-enables): the disable
+    // answer that lands after that belongs to an action already undone, and is dropped.
+    const gen = superGenRef.current.begin();
+    try {
+      const st = await disableSuper(scopedApi);
+      if (!superGenRef.current.isCurrent(gen)) return;
+      setSuperState((prev) => st ?? (prev ? { ...prev, enabled: false } : prev));
+    } catch (err) {
+      console.warn('[super] take-back was not recorded:', err);
+      if (!superGenRef.current.isCurrent(gen)) return;
+      setSuperState((prev) => (prev ? { ...prev, enabled: false } : prev));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopedApi, instanceId]);
+
+  /** A flight was reversed to its start: the screen goes back to where it came from, and the
+   *  server is told (the opposite route). */
+  const settleReversedRef = useRef<(dir: 'in' | 'out') => void>(() => {});
+  const settleReversed = useCallback((dir: 'in' | 'out') => {
+    // A new action: whatever the reversed one still has in flight is stale from here on.
+    const gen = superGenRef.current.begin();
+    const current = () => superGenRef.current.isCurrent(gen);
+    if (dir === 'in') {
+      flushSync(() => { holdSidebarCollapsed(instanceId, false); setSuperView('panes'); });
+      void disableSuper(scopedApi).then(
+        (st) => { if (current()) setSuperState((prev) => st ?? (prev ? { ...prev, enabled: false } : prev)); },
+        () => { if (current()) setSuperState((prev) => (prev ? { ...prev, enabled: false } : prev)); },
+      );
+    } else {
+      flushSync(() => { holdSidebarCollapsed(instanceId, true); setSuperView('super'); });
+      const tabs: HandoverTab[] = sessionListRef.current.map((m) => ({
+        id: m.id, claudeId: m.claudeId, title: m.title, kind: transportKind(m) === 'chat' ? 'chat' : m.kind, mode: m.mode, dormant: m.dormant,
+      }));
+      void enableSuper(scopedApi, adoptionBody(tabs, superStateRef.current?.session)).then(
+        ({ state }) => { if (state && current()) setSuperState(state); },
+        (err: unknown) => console.warn('[super] hand-over (after a reversed take-back) failed:', err),
+      );
+    }
+  }, [scopedApi, transportKind, instanceId]);
+  settleReversedRef.current = settleReversed;
+
+  // The rail is held folded exactly while this project is handed over (a reload while handed
+  // over included); released on take-back and on unmount. The owner's saved preference is
+  // never written (F9).
+  useLayoutEffect(() => { holdSidebarCollapsed(instanceId, handedOver); }, [instanceId, handedOver]);
+  useLayoutEffect(() => () => holdSidebarCollapsed(instanceId, false), [instanceId]);
+
+  // The page behind, covered. The expanded surface is opaque over the whole content area, so
+  // while the Super Agent has the screen the page skips style and layout (`data-super-cover`,
+  // Shell.css): the rail fold, a whiteboard card restyling the document, a drag never touch it.
+  // Measured with a 300-task board behind: a 43-106 ms first frame and a 35-54 ms restyle in
+  // mid-flight. Set BEFORE the hand-over's commit (its first layout must not include the page),
+  // kept through take-back (the panes still cover it), dropped the moment the surface stops
+  // covering it, so the page is laid out once, when it shows again (its scroll comes back).
+  const coverPage = useCallback((on: boolean) => {
+    const el = hostRef.current?.closest('.project-instance');
+    if (!(el instanceof HTMLElement)) return;
+    if (on) el.dataset.superCover = 'true';
+    else delete el.dataset.superCover;
+  }, []);
+  // The surface's own zoom-in (AgentTerminal.css) while it runs: the page still shows around it.
+  const zoomIn = useCallback(() => hostRef.current?.getAnimations?.()
+    .find((a) => (a as CSSAnimation).animationName === 'agent-surface-zoom-in' && a.playState !== 'finished'), []);
+  // Opened while handed over (re-open, or a reload: desktop opens it by itself): cover the page
+  // once the zoom lands, never under it. No zoom (reduced motion, already open) = at once.
+  useLayoutEffect(() => {
+    if (!expanded || !handedOver) return;
+    const zoom = zoomIn();
+    if (!zoom) { coverPage(true); return; }
+    let live = true;
+    zoom.finished.then(() => { if (live) coverPage(true); }, () => {});
+    return () => { live = false; };
+  }, [expanded, handedOver, coverPage, zoomIn]);
+  useLayoutEffect(() => { if (!expanded) coverPage(false); }, [expanded, coverPage]);
+  useLayoutEffect(() => () => coverPage(false), [coverPage]);
+
+  // The flight itself: the LAST rects are taken in one batch after the DOM switched, before the
+  // browser paints the new screen, so no frame shows it without its stand-ins. Hand-over: from
+  // the stage's own plan, once it measured itself at the folded width (`onStageReady`, FE4) —
+  // never from a width guessed at the press. Take-back: measured from the panes (the effect).
+  const startFlight = (stage?: { origin: DOMRect; plan: StagePlan }) => {
+    const req = flightReqRef.current;
+    if (!req || (req.dir === 'in') !== !!stage) return;
+    flightReqRef.current = null;
+    const layer = flightLayerRef.current;
+    const done = () => { setSuperMotion('idle'); setSuperPending(new Set()); };
+    if (!layer) { done(); return; }
+    const origin = layer.getBoundingClientRect();
+    const inputs: FlightInput[] = [];
+    if (stage) {
+      const onStage = (r: Rect): Rect => ({ x: stage.origin.left + r.x, y: stage.origin.top + r.y, width: r.width, height: r.height });
+      for (const [key, f] of req.first) {
+        let last: Rect | null = null;
+        if (key === 'strip') last = f.rect;
+        else if (key === 'centre') last = onStage(stage.plan.centre);
+        else {
+          const cid = key.slice('child:'.length);
+          const c = superStateRef.current?.containers.find((x) => x.kind === 'chat' && x.ref === cid);
+          const cp = c ? stage.plan.cards[c.id] : undefined;
+          last = cp ? onStage(cp.where === 'others' ? stage.plan.othersRect : cp.rect) : null;
+        }
+        if (isVisibleRect(last)) inputs.push({ key, role: f.role, first: relativeTo(f.rect, origin), last: relativeTo(last, origin) });
+      }
+    } else {
+      for (const [key, f] of req.first) {
+        let last: Rect | null = null;
+        let role: FlightRole = f.role;
+        if (key === 'centre') last = rectOf(q$('[data-testid="super-handover-btn"]'));
+        else {
+          const at = paneRectOf(sidOfClaude(key.slice('child:'.length)));
+          last = at.rect;
+          role = at.role;
+        }
+        if (isVisibleRect(last)) inputs.push({ key, role, first: relativeTo(f.rect, origin), last: relativeTo(last, origin) });
+      }
+      const strip = rectOf(q$('.agent-overlay-tabs'));
+      if (isVisibleRect(strip)) inputs.push({ key: 'strip', role: 'strip', first: relativeTo(strip, origin), last: relativeTo(strip, origin) });
+    }
+    const plan = planFlights(inputs, { direction: req.dir, reduced: prefersReducedMotion(), light: isLightMode() });
+    // A crossfade fades the whole screen; nothing waits on a landing.
+    if (plan.kind === 'crossfade') setSuperPending(new Set());
+    const incoming = req.dir === 'in'
+      ? [plan.kind === 'crossfade' ? q$('[data-testid="super-surface"]') : null]
+      : [panesRowRef.current, q$('.agent-overlay-tabs')];
+    const land = (step: FlightStep): Animation | null => {
+      if (req.dir !== 'in') return null;
+      const target = step.key === 'centre' ? 'centre' : (() => {
+        const cid = step.key.slice('child:'.length);
+        return superStateRef.current?.containers.find((c) => c.kind === 'chat' && c.ref === cid)?.id ?? '';
+      })();
+      setSuperPending((prev) => { if (!prev.has(target)) return prev; const next = new Set(prev); next.delete(target); return next; });
+      const el = target === 'centre' ? q$('.super-centre') : target ? q$(`.super-card-frame[data-container-id="${esc(target)}"]`) : null;
+      // The content fades in as its stand-in fades out (120 ms each, D18).
+      return el && typeof el.animate === 'function'
+        ? el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'linear', fill: 'both' })
+        : null;
+    };
+    const run = runFlights(layer, plan, { onLand: land, fadeIn: incoming });
+    flightRunRef.current = { run, dir: req.dir, focusSid: req.focusSid };
+    if (reverseQueuedRef.current) { reverseQueuedRef.current = false; run.reverse(); }
+    void run.finished.then((outcome) => {
+      const mine = flightRunRef.current?.run === run ? flightRunRef.current : null;
+      if (outcome === 'reversed') {
+        settleReversed(req.dir);
+        // The old screen comes back first; the stand-ins go once it is painted under them.
+        requestAnimationFrame(() => requestAnimationFrame(() => run.cleanup()));
+      } else {
+        setSuperPending(new Set());
+        // Cleared a frame later, once React has dropped the pending classes.
+        requestAnimationFrame(() => run.cleanup());
+        if (req.dir === 'in') {
+          requestAnimationFrame(() => superChatRef.current?.focus());
+        } else {
+          const sid = mine?.focusSid;
+          if (sid) focusSessionRef.current(sid);
+          else { const ap = panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0]; if (ap) requestAnimationFrame(() => sessions.current.get(ap.active)?.focus()); }
+        }
+      }
+      if (flightRunRef.current?.run === run) flightRunRef.current = null;
+      setSuperMotion('idle');
+    });
+  };
+  const startFlightRef = useRef(startFlight);
+  startFlightRef.current = startFlight;
+  useLayoutEffect(() => { startFlightRef.current(); }, [flightNonce]);
+  const onStageReady = useCallback((stage: { origin: DOMRect; plan: StagePlan }) => { startFlightRef.current(stage); }, []);
+  const superChatRef = useRef<ChatSession | undefined>(undefined);
+  superChatRef.current = superChatSession;
+  const superSidRef = useRef<string | null>(null);
+  superSidRef.current = superSid;
+  const panesRef = useRef(panes);
+  panesRef.current = panes;
+  const activePaneIdRef = useRef(activePaneId);
+  activePaneIdRef.current = activePaneId;
+  const focusSessionRef = useRef<(sid: string) => void>(() => {});
+  focusSessionRef.current = (sid) => {
+    if (minimizedIds.includes(sid)) restoreMinimized(sid);
+    else focusSession(sid);
+  };
+
+  /** The header button: one press, one direction — or, mid-flight, the reverse. */
+  const onHandoverButton = useCallback(() => {
+    if (superViewRef.current === 'super') void takeBack();
+    else void handOver();
+  }, [handOver, takeBack]);
+
+  /** A terminal in the Terminals row: take the screen back and focus that terminal. */
+  const openTerminalFromSuper = useCallback((sid: string) => { void takeBack(sid); }, [takeBack]);
 
   // Read each visible pane's agent CURRENT model from its transcript when the layout or
   // roster changes (a mid-session `/model` switch — ours or the user's own — is reflected
@@ -3126,10 +3773,17 @@ export function AgentSurface() {
   // that pane's slot (matched by `data-pane`), and park every other session in the hidden
   // garage. Raw-DOM moves, never a remount — a session moved between panes just lands in a
   // different slot. Runs on any layout (panes) or visibility (expanded) change.
+  // Handed over (plan-r7 D9), pane homing is SUSPENDED: only the Super Agent (the centre slot)
+  // and the shown child (the half card, else the first presented chat: plan-r8 F11) are homed,
+  // every other session goes to the garage.
+  const superShownSid = (() => {
+    const cid = shownChild(superState);
+    return cid ? sessionList.find((m) => m.claudeId === cid && !m.dormant)?.id ?? null : null;
+  })();
   useLayoutEffect(() => {
     // A session has a home when it is some pane's active tab — homed in the overlay's
     // `.agent-pane-slot[data-pane]`. Everything else lives in the garage.
-    const homed = new Set(panes.map((p) => p.active));
+    const homed = homedSessions({ handedOver, superSid, shownSid: superShownSid, paneActives: panes.map((p) => p.active) });
 
     // HOMED and FOREGROUND are different questions, and conflating them regresses the
     // persistence invariant. A collapsed overlay's panes are still homed (their slots merely go
@@ -3143,11 +3797,21 @@ export function AgentSurface() {
     hostRef.current?.querySelectorAll<HTMLElement>('.agent-pane-slot[data-pane]')
       .forEach((el) => { if (el.dataset.pane) slots.set(el.dataset.pane, el); });
 
-    panes.forEach((pane) => {
-      const s = sessions.current.get(pane.active);
-      const slot = slots.get(pane.id);
-      if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen({ focus: isActive }); }
-    });
+    if (handedOver) {
+      const place = (sid: string | null, name: 'centre' | 'shown') => {
+        const s = sid ? sessions.current.get(sid) : undefined;
+        const slot = hostRef.current?.querySelector<HTMLElement>(`[data-super-slot="${name}"]`);
+        if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen({ focus: isActive }); }
+      };
+      place(superSid, 'centre');
+      place(superShownSid, 'shown');
+    } else {
+      panes.forEach((pane) => {
+        const s = sessions.current.get(pane.active);
+        const slot = slots.get(pane.id);
+        if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen({ focus: isActive }); }
+      });
+    }
     sessions.current.forEach((s) => {
       if (!homed.has(s.id) && garageRef.current && s.container.parentElement !== garageRef.current) {
         garageRef.current.appendChild(s.container);
@@ -3163,8 +3827,9 @@ export function AgentSurface() {
     // render whose deps changed, so the flag read here is always the current one, and
     // re-running the whole placement pass on every chip switch would thrash the DOM for a
     // set of appendChild calls that are all no-ops.
+    // `superSlotEpoch` re-runs it when the hand-over screen recreates its slots.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panes, expanded]);
+  }, [panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch]);
 
   // Keep activePaneId pointing at a real pane (panes shrink as tabs close/move).
   useEffect(() => {
@@ -3181,8 +3846,11 @@ export function AgentSurface() {
     const placed = new Set(panes.flatMap((p) => p.tabs));
     const min = new Set(minimizedIds);
     // A minimized session intentionally lives in NO pane (it's a corner chip), so it is
-    // not an orphan — exclude it or the reconcile would yank it back into a pane.
-    const orphans = sessionList.filter((m) => !placed.has(m.id) && !min.has(m.id)).map((m) => m.id);
+    // not an orphan — exclude it or the reconcile would yank it back into a pane. Neither is
+    // the Super Agent: it is never a tab (plan-r7 D9), handed over or parked.
+    const orphans = sessionList
+      .filter((m) => !placed.has(m.id) && !min.has(m.id) && !isSuperSession(m, superStateRef.current?.session))
+      .map((m) => m.id);
     const hasDangling = panes.some((p) => p.tabs.some((id) => !known.has(id)));
     if (orphans.length === 0 && !hasDangling) return;
     setPanes((prev) => {
@@ -3528,6 +4196,9 @@ export function AgentSurface() {
       // Typing in the composer field must never trigger the ⌘D/⌘⇧D/⌘T/⌘W/⌃` session chords
       // (⌘W would close the focused session mid-compose).
       if ((document.activeElement as Element | null)?.closest('.agent-composer')) return;
+      // Handed over, the panes are not on screen: no chord may open, split or close one behind
+      // the owner's back (the owner writes only to the Super Agent).
+      if (superViewRef.current === 'super') return;
       // ⌃` → new TERMINAL tab (standard "toggle terminal" chord). This is the ONLY Ctrl combo
       // we claim: every OTHER Ctrl chord (⌃C SIGINT, ⌃D EOF, ⌃W delete-word) MUST reach the
       // PTY, or a shell session is unusable — so the ⌘D/⌘T/⌘W app chords below are gated on
@@ -3611,7 +4282,9 @@ export function AgentSurface() {
       const at = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const slot = (at?.closest('.agent-pane-slot[data-pane]') ?? null) as HTMLElement | null;
       const targetPane = panes.find((p) => p.id === slot?.dataset.pane);
-      const targetSid = targetPane?.active || focusedSessionId;
+      // Handed over, a file goes to the Super Agent: the panes it would otherwise reach are
+      // not on screen.
+      const targetSid = superViewRef.current === 'super' ? (superSidRef.current ?? '') : (targetPane?.active || focusedSessionId);
       if (!targetSid) return;
       if (targetPane && targetPane.id !== activePaneId) setActivePaneId(targetPane.id);
       // Move keyboard focus to the drop target NOW (its container is already in its slot —
@@ -3733,8 +4406,9 @@ export function AgentSurface() {
     const s = sessions.current.get(id);
     return s && s.kind === 'chat' ? (s as ChatSession) : undefined;
   }, []);
-  // Collapsed dock rows — one chip per session, in roster order.
-  const dockRows: SessionRow[] = sessionList.map((meta) => {
+  // Collapsed dock rows — one chip per session, in roster order. Never the Super Agent (it is
+  // not a tab; its queue speaks through the hand-over button's dot and the queue head).
+  const dockRows: SessionRow[] = sessionList.filter((meta) => !isSuperSession(meta, superState?.session)).map((meta) => {
     const s = sessions.current.get(meta.id);
     return {
       id: meta.id,
@@ -3747,6 +4421,7 @@ export function AgentSurface() {
       // writes the new mode onto the meta (`chatChangeModeFor`), and the meta is also what
       // survives a relaunch — so a dormant Develop tab is still at the anvil when it reopens.
       mode: meta.mode,
+      ...(marked.has(meta.claudeId) ? { superChild: true } : {}),
     };
   });
   /*
@@ -3772,7 +4447,9 @@ export function AgentSurface() {
    * `worst`/`live`/`waiting` can all sit unchanged while `alive` moves — the exact staleness
    * the ceiling rule cannot tolerate.
    */
-  const rollup: ProjectRollup = rollupProject(dockRows);
+  // Handed over, the marked children never bounce the chip; only the queue head the OWNER must
+  // answer (a permission, an escalation) does (plan-r7 D16).
+  const rollup: ProjectRollup = rollupProject(dockRows, { superQueueHead: !!superState?.enabled && !!queueHead(superState) });
   const {
     worst: rollupWorst, live: rollupLive, waiting: rollupWaiting, alive: rollupAlive,
     asking: rollupAsking, working: rollupWorking, idle: rollupIdle, flagged: rollupFlagged,
@@ -3855,6 +4532,34 @@ export function AgentSurface() {
             session the file — its path is written to the vault temp dir and injected
             (readline for a terminal, composer draft for a chat). The listeners live on
             the surface HOST as native DOM handlers — see the drag-drop effect above. */}
+        {/* Handed over to the Super Agent (plan-r7 D9): Claude in the cape in the centre, the
+            adopted chats as containers around it, the queue strip, the terminals row. The
+            panes are NOT unmounted — the row below is only `hidden` — so take-back shows
+            exactly the layout the owner left (plus the delegated children as tabs), and the
+            row's glide observer keeps its element. Never on a phone (`handedOver` needs a
+            desktop layout). */}
+        {handedOver && superState && (
+          <SuperSurface
+            state={superState}
+            initialWidth={superWidth || hostRef.current?.clientWidth || 0}
+            initialHeight={hostRef.current?.clientHeight || 0}
+            visible={expanded && !windowActivity.hidden}
+            pending={superPending}
+            motion={superMotion}
+            superSession={superChatSession}
+            vault={vault ?? ''}
+            sessionFor={chatByClaudeId}
+            titleFor={superTitleFor}
+            terminals={superTerminals}
+            onLayout={editSuperLayout}
+            onTerminal={openTerminalFromSuper}
+            onReplyToSuper={() => superChatSession?.focus()}
+            onOpenPage={onOpenAppPage}
+            onSlotsChanged={bumpSuperSlots}
+            onStageReady={onStageReady}
+            onAskAbout={askAboutCard}
+          />
+        )}
         {/* Mac mode's phone has two screens, the Sohbetler list and one chat (owner, 2026-10-17):
             the other open chats live on the list, not in a band above the chat. */}
         {isMobile && !macPhone && (
@@ -3873,6 +4578,7 @@ export function AgentSurface() {
           ref={panesRowRef}
           className={'agent-panes' + (panes.length > 1 ? ' split' : '')}
           data-swap={isMobile && swapFlip ? String(swapFlip) : undefined}
+          hidden={handedOver}
         >
           {/* The focused pane's top bar, ONE element that glides between panes on the
               compositor while the panes land in a single layout (usePaneFocusGlide.ts). */}
@@ -4080,7 +4786,8 @@ export function AgentSurface() {
             onClick={() => setExpanded(false)}
           >–</button>
           <div className="agent-overlay-tabs" data-split={paneVMs.length > 1 ? 'true' : undefined}>
-            {panesLive && paneVMs.map((paneVM) => (
+            {/* Handed over, the strip has left (D18): the panes are not on screen. */}
+            {panesLive && !handedOver && paneVMs.map((paneVM) => (
               <AgentTabs
                 key={paneVM.id}
                 pane={paneVM}
@@ -4105,7 +4812,18 @@ export function AgentSurface() {
             {/* Chat needs only the claude CLI (+ the Settings → Agents screen preference),
                 not node-pty — loosened so the control cluster is reachable on a
                 node-pty-broken machine that can still run Chat. */}
-            {started && (caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) && (
+            {/* The Super Agent's ONE button (owner decision 9): hand over every open chat, or
+                take it back. Chat screen only (the agent is a chat), desktop only, and only once
+                Settings → Chat → Super Agent is on (off by default); Take back never hides. */}
+            {panesLive && (handedOver || (chatMode && agentSettings.superAgent && !isMacPhoneSurface())) && (
+              <HandoverButton
+                handedOver={handedOver}
+                busy={superBusy || superMotion === 'running'}
+                queueDot={!handedOver && ownerQueueCount(superState) > 0}
+                onClick={onHandoverButton}
+              />
+            )}
+            {started && !handedOver && (caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) && (
               <>
                 {/* Split button: the main face opens a Claude session in the CHOSEN Agent
                     screen (Settings → Agents — terminal agent or chat, never both offered);
@@ -4205,6 +4923,8 @@ export function AgentSurface() {
         )}
         {/* Each pane renders its OWN composer strip (files + skills + that agent's live
             model & effort) pinned to its bottom — see the `composer` prop above. */}
+        {/* The hand-over's stand-ins fly here (D18): above everything, never hit-testable. */}
+        <div ref={flightLayerRef} className="super-flight-layer" aria-hidden />
       </div>
       {/* The phone's session drawer. A SIBLING for the same reason the picker below is one:
           `.agent-surface` declares `contain: layout paint`, which would make it the containing
@@ -4259,7 +4979,8 @@ export function AgentSurface() {
           OWN state; collapsible to a handle), click a chip to open + focus. With zero
           sessions: a single "Chat" FAB. */}
       {caps?.desktop && agentSettings.enabled && !expanded && (
-        sessionList.length === 0 ? (
+        // `dockRows`, not the roster: a parked Super Agent alone is no session the dock shows.
+        dockRows.length === 0 ? (
           <AgentFab
             status="idle"
             mood="idle"
@@ -4307,6 +5028,10 @@ export function AgentSurface() {
           permissionMode={chatPermissionMode}
           canSignInInApp={canSignInInApp}
           signInCommand={signInCommand}
+          // A handed-over Super Agent's child: the owner looks, and writes only to the Super
+          // Agent (owner decision 3). Back to a normal composer the moment it is taken back.
+          readOnly={marked.has(cs.claudeId)}
+          idlePlaceholder={cs.mode === 'super' ? t('super.centre.placeholder') : undefined}
         />,
         cs.container,
         `chat-${cs.id}`,

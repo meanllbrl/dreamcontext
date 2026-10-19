@@ -22,7 +22,9 @@ import {
   handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
 import { wireNotchInbox } from '../lib/assistant/notch-inbox.js';
+import { startSuperInbox } from '../lib/super/inbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
+import { handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperLayout, handleSuperRecap, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import {
@@ -514,6 +516,15 @@ export function buildRouter(): Router {
   router.post('/api/assistant/ui/:verb', handleAssistantUi);
   // A project chat's agent drives its own window (dreamcontext window …); token-gated per chat.
   router.post('/api/window/:verb', handleWindowCommand);
+  // The project's Super Agent (Chat hand-over). Its own verbs are token-gated to the vault's
+  // recorded super session; the owner's routes answer only this machine's desktop window.
+  router.post('/api/super/v/:verb', handleSuperVerb);
+  router.get('/api/super/state', handleSuperStateGet);
+  router.post('/api/super/enable', handleSuperEnable);
+  router.post('/api/super/disable', handleSuperDisable);
+  router.post('/api/super/layout', handleSuperLayout);
+  router.post('/api/super/activity', handleSuperActivity);
+  router.post('/api/super/recap', handleSuperRecap);
   router.post('/api/assistant/look', handleAssistantLook);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
@@ -930,8 +941,10 @@ export function buildRouter(): Router {
  * `/api/window` is here because its token, not a vault, names the target: it routes down ONE
  * chat's socket (lib/window-control.ts). The CLI sends no vault header and the desktop server
  * pins none, so gating it on a vault refused every `dreamcontext window …` with `no_vault`.
+ * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
+ * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1402,6 +1415,11 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // Headless claude spawns never run the CLI's TUI-only updater; this does. Self-gates to desktop.
       stopClaudeUpdate = startClaudeUpdateJob();
     };
-    server.listen(port, host, onListening);
+    // The Super Agent's in-memory index and inbox come up BEFORE the server listens, so before
+    // any chat can register (plan-r7 D16): a handed-over child's first question is already
+    // kept out of the notch, and children the window restores get their re-adoption grace.
+    void startSuperInbox(listVaults().map((v) => join(v.path, '_dream_context')))
+      .catch((err) => console.warn(`[super] boot failed: ${(err as Error).message}`))
+      .finally(() => server.listen(port, host, onListening));
   });
 }

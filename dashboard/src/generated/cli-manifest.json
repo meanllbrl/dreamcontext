@@ -3197,6 +3197,179 @@
       ]
     },
     {
+      "path": "super",
+      "desc": "The project's Super Agent: delegate to child chats, arrange their cards, answer the queue (only from the Super Agent chat)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super answer",
+      "desc": "Answer a child's QUESTION (never a permission) with its option label(s) or --text",
+      "args": [
+        "<child>",
+        "<requestId>",
+        "[choice...]"
+      ],
+      "valueFlags": [
+        "--text"
+      ]
+    },
+    {
+      "path": "super brief",
+      "desc": "Set the one-line reminder a child's card shows",
+      "args": [
+        "<child>",
+        "<line>"
+      ]
+    },
+    {
+      "path": "super close",
+      "desc": "Close a card (a child chat keeps running)",
+      "args": [
+        "<card>"
+      ]
+    },
+    {
+      "path": "super delegate",
+      "desc": "Start a child chat in THIS project and open its card; returns its session id",
+      "args": [],
+      "valueFlags": [
+        "--prompt",
+        "--brief",
+        "--mode",
+        "--model",
+        "--effort",
+        "--worktree",
+        "--slug",
+        "--base"
+      ]
+    },
+    {
+      "path": "super float",
+      "desc": "Bring a card from Others back to the floating cards (placed for you)",
+      "args": [
+        "<card>"
+      ]
+    },
+    {
+      "path": "super half",
+      "desc": "Show one card side by side with you (half page); --off returns to the floating cards",
+      "args": [
+        "[card]"
+      ]
+    },
+    {
+      "path": "super merge",
+      "desc": "Merge children's super/* branches into super/<topic> in its own worktree (never the default branch, never pushed)",
+      "args": [
+        "<children...>"
+      ],
+      "valueFlags": [
+        "--into"
+      ]
+    },
+    {
+      "path": "super open",
+      "desc": "Open a floating card: chat | insight | task | knowledge | whiteboard | board | web | image. ref = a session id, a slug, a URL or a project path",
+      "args": [
+        "<kind>",
+        "<ref>"
+      ],
+      "valueFlags": [
+        "--shape",
+        "--title"
+      ]
+    },
+    {
+      "path": "super present",
+      "desc": "Presentation: you move left, 1-4 cards fill the right; --off returns to the floating cards",
+      "args": [
+        "[cards...]"
+      ]
+    },
+    {
+      "path": "super queue",
+      "desc": "The one question queue",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super queue ask",
+      "desc": "Escalate a question to the owner with your words (never a permission)",
+      "args": [
+        "<item>",
+        "<text>"
+      ]
+    },
+    {
+      "path": "super queue done",
+      "desc": "Mark an item handled (never a permission)",
+      "args": [
+        "<item>"
+      ]
+    },
+    {
+      "path": "super queue list",
+      "desc": "Every queue item: what it is, whose, its state",
+      "args": []
+    },
+    {
+      "path": "super read",
+      "desc": "The end of a child's transcript (bounded), fenced as the child's text",
+      "args": [
+        "<child>"
+      ],
+      "valueFlags": [
+        "--bytes"
+      ]
+    },
+    {
+      "path": "super send",
+      "desc": "Send a message into a child chat (queued if it is busy)",
+      "args": [
+        "<child>",
+        "<text>"
+      ]
+    },
+    {
+      "path": "super shape",
+      "desc": "Make a card square (1:1) or tall (9:16)",
+      "args": [
+        "<card>",
+        "<shape>"
+      ]
+    },
+    {
+      "path": "super stack",
+      "desc": "Put a card in the Others stack (bottom right)",
+      "args": [
+        "<card>"
+      ]
+    },
+    {
+      "path": "super state",
+      "desc": "Children (status, brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
+      "args": []
+    },
+    {
+      "path": "super worktree",
+      "desc": "Your children's worktrees",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super worktree list",
+      "desc": "Each child's worktree, branch, dirty or clean, merged or not",
+      "args": []
+    },
+    {
+      "path": "super worktree remove",
+      "desc": "Remove a child's worktree; refuses one that is dirty or unmerged",
+      "args": [
+        "<child>"
+      ]
+    },
+    {
       "path": "tasks",
       "desc": "Create tasks, log progress, insert into sections, and mark complete",
       "args": [],

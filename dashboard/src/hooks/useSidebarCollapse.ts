@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useSyncExternalStore } from 'react';
 
 const COLLAPSE_STORAGE_KEY = 'dreamcontext.dashboard.sidebarCollapsed';
 
@@ -18,6 +18,35 @@ function readUserPref(): boolean {
   }
 }
 
+// ── The hold (plan-r8 F9): the rail folds while a project is handed over to its Super Agent ──
+// A module signal, not a preference: a project instance holds the rail collapsed while its
+// Super Agent has the screen, and releases it on take-back. The saved preference is never
+// written, so take-back restores exactly what the owner had.
+const holds = new Set<string>();
+const holdListeners = new Set<() => void>();
+
+/** Hold (or release) the rail collapsed for this project instance. Idempotent. */
+export function holdSidebarCollapsed(instanceId: string, on: boolean): void {
+  if (!instanceId || holds.has(instanceId) === on) return;
+  if (on) holds.add(instanceId);
+  else holds.delete(instanceId);
+  for (const l of [...holdListeners]) l();
+}
+
+export function isSidebarHeld(instanceId: string | null | undefined): boolean {
+  return !!instanceId && holds.has(instanceId);
+}
+
+const subscribeHolds = (cb: () => void) => {
+  holdListeners.add(cb);
+  return () => { holdListeners.delete(cb); };
+};
+
+/** Is the rail held collapsed for this instance? (The header disables its toggle while it is.) */
+export function useSidebarHeld(instanceId: string | null | undefined): boolean {
+  return useSyncExternalStore(subscribeHolds, () => isSidebarHeld(instanceId), () => false);
+}
+
 /**
  * Shared sidebar-collapse state. Lifted out of the Sidebar so the Header's
  * toggle button and the Sidebar render from the same source of truth (matches
@@ -33,8 +62,9 @@ function readUserPref(): boolean {
  * never hears about the first one's toggle, so N callers in one window silently diverge.
  * Scoping the key per vault would be the wrong fix for the same reason.
  */
-export function useSidebarCollapse() {
+export function useSidebarCollapse(activeInstanceId?: string | null) {
   const [userPref, setUserPref] = useState<boolean>(readUserPref);
+  const held = useSidebarHeld(activeInstanceId);
   const [forced, setForced] = useState<boolean>(NARROW_QUERY?.matches ?? false);
 
   useEffect(() => {
@@ -45,6 +75,8 @@ export function useSidebarCollapse() {
   }, []);
 
   const toggle = useCallback(() => {
+    // Held by a handed-over project: the toggle is a no-op, and the preference stays as it was.
+    if (isSidebarHeld(activeInstanceId)) return;
     setUserPref((prev) => {
       const next = !prev;
       try {
@@ -54,7 +86,7 @@ export function useSidebarCollapse() {
       }
       return next;
     });
-  }, []);
+  }, [activeInstanceId]);
 
-  return { collapsed: forced || userPref, toggle };
+  return { collapsed: forced || userPref || held, held, toggle };
 }
