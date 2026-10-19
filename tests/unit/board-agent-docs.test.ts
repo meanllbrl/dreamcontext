@@ -53,7 +53,7 @@ describe('skill/references/whiteboards.md: the agent card', () => {
       expect(covered, `whiteboards.md does not name the read verb "${verb}"`).toBe(true);
     }
     expect(BOARD_AGENT_BOARD_VERBS.length).toBeGreaterThan(0);
-    expect(WHITEBOARDS_MD).toContain('`whiteboard add|update|remove|draw|nav add|nav remove|nav move <its board>`');
+    expect(WHITEBOARDS_MD).toContain('`whiteboard add|update|remove|draw|render|nav add|nav remove|nav move <its board>`');
     expect(BOARD_AGENT_SELF_VERBS).toEqual(['automations post', 'automations learn', 'automations propose']);
     expect(WHITEBOARDS_MD).toContain('`automations post|learn|propose <itself>`');
   });

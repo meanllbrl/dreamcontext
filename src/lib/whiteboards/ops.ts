@@ -358,6 +358,16 @@ export function assertPicturesHeld(
   }
 }
 
+/** The live elements of an import source, in z-order: what `prepareImport` places. */
+function importable(source: readonly WhiteboardElement[]): WhiteboardElement[] {
+  return sortElements(source.filter((e) => e && typeof e.id === 'string' && e.isDeleted !== true));
+}
+
+/** The box an import source's live elements span, before it is placed; null when empty. */
+export function sourceBBox(source: readonly WhiteboardElement[]): BBox | null {
+  return unionBBox(importable(source).map(elementBBox));
+}
+
 /**
  * Prepare imported elements for a board: refuse a picture the board does not hold (`hasFile`
  * says which it does; without it every picture is refused), drop tombstones, give every
@@ -376,7 +386,7 @@ export function prepareImport(
   if (missing) {
     throw new WhiteboardValidationError('the file holds a picture this board does not have; add pictures with `dreamcontext whiteboard add <slug> image --file <path>`');
   }
-  const live = sortElements(source.filter((e) => e && typeof e.id === 'string' && e.isDeleted !== true));
+  const live = importable(source);
   if (live.length === 0) return { elements: [], bbox: null };
 
   const idMap = new Map<string, string>();
