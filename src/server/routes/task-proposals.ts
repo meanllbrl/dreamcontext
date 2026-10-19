@@ -28,7 +28,7 @@ import { recentRuleChanges, readRules, revertRule, RuleError } from '../../lib/t
 import { applySuggestion, BacklogError, keepAsIs, waitingSuggestions } from '../../lib/backlog-migration.js';
 import { recordDashboardChange } from '../change-tracker.js';
 import { parseJsonBody, requireBrowserOrigin, sendError, sendJson, writeVia } from '../middleware.js';
-import { ensureLocalStateIgnored, listAudit, recordAudit, type NewAuditEntry } from '../../lib/task-audit.js';
+import { ensureLocalStateIgnored, hasAcceptAudit, recordAudit, type NewAuditEntry } from '../../lib/task-audit.js';
 import { TaskFileBusyError } from '../../lib/task-file-lock.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 
@@ -222,12 +222,8 @@ export async function handleTaskProposalAccept(
   // The task exists from here: what follows is recorded, never refused. Once: a re-accept that
   // finished an interrupted one (the leftover path) is the same decision, already audited and
   // already a dashboard change.
-  let audited = false;
-  try {
-    audited = listAudit(contextRoot, { kinds: ['accept'] }).some((e) => e.note === `proposal ${id}`);
-  } catch { /* an unreadable audit reads as not recorded yet */ }
   let warnings: Array<'audit_not_recorded'> = [];
-  if (!audited) {
+  if (!hasAcceptAudit(contextRoot, id)) {
     recordDashboardChange(contextRoot, {
       entity: 'task',
       action: 'create',

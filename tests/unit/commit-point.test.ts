@@ -627,3 +627,45 @@ describe('tasks complete --force', () => {
     expect(childForced()).toHaveLength(1);
   }, 20_000);
 });
+
+/** r18: `tasks accept` audits an accept once per proposal, like the dashboard (task-audit.ts hasAcceptAudit). */
+describe('tasks accept audits a re-accept once', () => {
+  const AGENT_ENVS = ['CLAUDECODE', 'DREAMCONTEXT_AGENT_SELF', 'DREAMCONTEXT_AUTOMATION_RUN'];
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => { for (const k of AGENT_ENVS) { saved[k] = process.env[k]; delete process.env[k]; } });
+  afterEach(() => { for (const k of AGENT_ENVS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+
+  async function cli(...argv: string[]): Promise<number> {
+    process.exitCode = undefined;
+    const program = new Command();
+    program.exitOverride();
+    registerTasksCommand(program);
+    await program.parseAsync(['node', 'dreamcontext', ...argv]);
+    const code = Number(process.exitCode ?? 0);
+    process.exitCode = undefined;
+    return code;
+  }
+
+  it('an accept interrupted after the card write, then accepted again: exactly one accept audit', async () => {
+    const p = addProposal(ctx, { name: 'Add a CSV export', why: 'The owner asked for it.', quote: 'can we export this as csv', basis: 'ask' });
+    // The card is written, then the store is busy for the final mark: the proposal stays pending.
+    let release = () => {};
+    const create = LocalTaskBackend.prototype.create;
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
+      const task = await create.call(this, input);
+      release = hold('.task-proposals');
+      return task;
+    });
+    expect(await cli('tasks', 'accept', p.id)).toBe(0);
+    release();
+    vi.restoreAllMocks();
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)?.status).toBe('pending');
+    expect(listAudit(ctx).filter((e) => e.kind === 'accept' && e.note === `proposal ${p.id}`)).toHaveLength(1);
+
+    // Past the claim's TTL the leftover path finishes it: accepted, and no second audit.
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 5 * 60_000 + 60_000);
+    expect(await cli('tasks', 'accept', p.id)).toBe(0);
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)?.status).toBe('accepted');
+    expect(listAudit(ctx).filter((e) => e.kind === 'accept' && e.note === `proposal ${p.id}`)).toHaveLength(1);
+  }, 20_000);
+});

@@ -9,7 +9,7 @@ import { promptInput } from '../../lib/prompt.js';
 import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
-import { ensureLocalStateIgnored, recordAudit } from '../../lib/task-audit.js';
+import { ensureLocalStateIgnored, hasAcceptAudit, recordAudit } from '../../lib/task-audit.js';
 import { applyVerdict, VerdictPreflightError } from '../../lib/task-verdict.js';
 import { newJournalEntryId } from '../../lib/task-journal.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
@@ -1708,7 +1708,11 @@ export function registerTasksCommand(program: Command): void {
       }
       try {
         const r = await acceptProposal(root, backend, statusSet(), id, { name: opts.name, why: opts.why, parent }, 'cli');
-        recordAudit(root, { kind: 'accept', slug: r.slug, actor: actorOf() ?? 'owner', via: 'cli', note: `proposal ${id}`, journalId: null });
+        // Once per proposal, as the dashboard does: a re-accept that finished an interrupted one
+        // is the same decision, already audited.
+        if (!hasAcceptAudit(root, id)) {
+          recordAudit(root, { kind: 'accept', slug: r.slug, actor: actorOf() ?? 'owner', via: 'cli', note: `proposal ${id}`, journalId: null });
+        }
         success(`Accepted: ${r.slug} (in the Next queue${r.parent ? `, under ${r.parent}` : ''}).`);
         if (r.parentDropped) warn(`Filed top-level: ${r.parentDropped}`);
         if (r.warning) warn(r.warning);

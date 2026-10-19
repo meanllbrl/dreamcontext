@@ -190,6 +190,20 @@ export function listAudit(contextRoot: string, opts: ListAuditOptions = {}): Aud
   });
 }
 
+/**
+ * Whether proposal `proposalId`'s accept is already in the audit (`kind: 'accept'`, note
+ * `proposal <id>`). A re-accept that finished an interrupted one is the same decision: the CLI
+ * and the dashboard both ask this before recording, so the two never drift. An unreadable
+ * audit reads as not recorded yet.
+ */
+export function hasAcceptAudit(contextRoot: string, proposalId: string): boolean {
+  try {
+    return listAudit(contextRoot, { kinds: ['accept'] }).some((e) => e.note === `proposal ${proposalId}`);
+  } catch {
+    return false;
+  }
+}
+
 /** Mark one entry seen, recording who cleared it and through what. */
 export function markAuditSeen(contextRoot: string, id: string, actor: string, via: AuditVia, now: Date = new Date()): AuditEntry {
   ensureLocalStateIgnored(contextRoot);
