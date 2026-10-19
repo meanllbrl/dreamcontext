@@ -254,6 +254,7 @@ function buildFunnel(slug: string, cache: InsightCache): FunnelFrame | null {
             step.measured = false;
             step.reason = s.reason ?? null;
           }
+          if (Array.isArray(s.dims)) step.dims = [...s.dims];
           return step;
         }),
       };

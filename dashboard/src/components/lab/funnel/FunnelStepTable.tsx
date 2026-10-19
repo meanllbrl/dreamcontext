@@ -9,7 +9,8 @@ import './FunnelStepTable.css';
  * filtered steps they hand to the lane).
  */
 export function FunnelStepTable({ steps, caption, prevUsers }: {
-  steps: { key: string; label: string; users: number }[];
+  /** `measured: false` = a row that says "Not measured" (and why) and carries no figure. */
+  steps: { key: string; label: string; users: number; measured?: boolean; reason?: string | null }[];
   caption: string;
   /** Optional previous-period users per step key (renders a Prev column). */
   prevUsers?: Record<string, number | null>;
@@ -32,8 +33,15 @@ export function FunnelStepTable({ steps, caption, prevUsers }: {
         </tr>
       </thead>
       <tbody>
-        {rows.map((row, i) => (
-          <tr key={row.key} className={i === worst ? 'funnel-steptable-row--worst' : undefined}>
+        {rows.map((row, i) => row.measured === false ? (
+          <tr key={row.key} className="funnel-steptable-row--unmeasured" data-lab-step={row.key} data-measured="false">
+            <th scope="row">{row.label}</th>
+            <td className="funnel-steptable-unmeasured" colSpan={hasPrev ? 5 : 4} data-lab-not-measured={row.key}>
+              {notMeasuredText(steps.find((s) => s.key === row.key)?.reason ?? null)}
+            </td>
+          </tr>
+        ) : (
+          <tr key={row.key} className={i === worst ? 'funnel-steptable-row--worst' : undefined} data-lab-step={row.key} data-users={row.users}>
             <th scope="row">{row.label}</th>
             <td className="funnel-steptable-num">{row.users.toLocaleString('en-US')}</td>
             {hasPrev && (
@@ -46,13 +54,17 @@ export function FunnelStepTable({ steps, caption, prevUsers }: {
             <td className="funnel-steptable-num">{fmtPct(row.ofPrev)}</td>
             <td className="funnel-steptable-num">
               <DropText row={row} />
-              {i === worst && <span className="funnel-steptable-worst"> ◄ worst drop</span>}
+              {i === worst && <span className="funnel-steptable-worst" data-lab-worst-tag=""> ◄ worst drop</span>}
             </td>
           </tr>
         ))}
       </tbody>
     </table>
   );
+}
+
+function notMeasuredText(reason: string | null): string {
+  return `Not measured${reason ? `: ${reason}` : ''}`;
 }
 
 function fmtPct(v: number | null): string {

@@ -117,32 +117,65 @@ function fmtPct(v: number | null): string {
   return v === null ? '—' : `${v.toFixed(v >= 10 ? 0 : 1)}%`;
 }
 
-/** `lab show` funnel view: per-funnel step table with the worst drop highlighted. */
-function printFunnelSet(funnel: FunnelCacheEntry, history: InsightCache['funnelHistory']): void {
+/** One funnel's step table: users, % of top, % of prev, drop, the worst drop marked. A step that
+ *  is not measured prints "not measured (why)", never a 0, and the drop math skips it. */
+function printStepTable(steps: readonly { key: string; label: string; users: number; measured?: boolean; reason?: string | null }[]): void {
+  const rows = computeStepRows(steps.map((s) => ({ key: s.key, label: s.label, users: s.users, ...(s.measured === false ? { measured: false } : {}) })));
+  const worst = worstDropIndex(rows);
+  const labelWidth = Math.min(36, Math.max(8, ...rows.map((r) => r.label.length)));
+  console.log(chalk.dim(`    ${cell('step', labelWidth)}  ${cell('users', 8)}  ${cell('of top', 8)}  ${cell('of prev', 8)}  drop`));
+  rows.forEach((row, i) => {
+    const label = cell(row.label.slice(0, labelWidth), labelWidth);
+    if (row.measured === false) {
+      const reason = steps[i].reason;
+      console.log(chalk.yellow(`    ${label}  not measured${reason ? ` (${reason})` : ''}`));
+      return;
+    }
+    const drop = row.drop === null ? '—' : row.drop < 0 ? `↑${-row.drop}` : `−${row.drop}`;
+    const line = `    ${label}  ${cell(String(row.users), 8)}  ${cell(fmtPct(row.ofTop), 8)}  ${cell(fmtPct(row.ofPrev), 8)}  ${drop}`;
+    console.log(i === worst ? chalk.red(`${line}  ◄ worst drop`) : line);
+  });
+}
+
+/** `lab show` funnel view: per-funnel step table with the worst drop highlighted. With a
+ *  `selection` (`--select`), each funnel is the slice the dashboard draws for it (frameOps
+ *  `funnelSlice`: cells summed, lookup paths looked up, a step not split by a selected dim
+ *  not measured). */
+function printFunnelSet(
+  funnel: FunnelCacheEntry,
+  history: InsightCache['funnelHistory'],
+  selection: { sel: Selection; frame: FunnelFrame } | null = null,
+): void {
   const { set, notices, range } = funnel;
   const prev = computeFunnelPrev(funnel, history);
   console.log(`  range: ${range.fromISO} → ${range.toISO}`);
-  if (prev.source) console.log(chalk.dim(`  Δ vs snapshot ${prev.source.range.fromISO} → ${prev.source.range.toISO}`));
+  if (prev.source && !selection) console.log(chalk.dim(`  Δ vs snapshot ${prev.source.range.fromISO} → ${prev.source.range.toISO}`));
   for (const notice of notices) warn(notice);
+  if (selection) {
+    const sel = Object.entries(selection.sel).map(([k, v]) => `${k}=${v}`).join(', ');
+    console.log(`  selection: ${sel || 'all traffic'}`);
+  }
 
   for (const f of set.funnels) {
     console.log();
     console.log(`  ${chalk.magentaBright(f.id)} — ${f.name}`);
+    if (selection) {
+      const slice = funnelSlice(selection.frame, f.id, selection.sel);
+      if (slice.ignored.length > 0) console.log(chalk.dim(`    not split by ${slice.ignored.join(', ')} (not a dimension of this funnel set)`));
+      if (!slice.measured) {
+        console.log(`    ${notMeasuredLine(sliceReason(slice))}`);
+        continue;
+      }
+      if (slice.lowSample && Object.keys(slice.selection).length > 0) console.log(chalk.dim(`    low sample: ${slice.users} users`));
+      printStepTable(slice.steps);
+      continue;
+    }
     const metricBits = Object.entries(f.metrics).map(([key, m]) => {
       const v = m.v === null ? '—' : m.format === 'pct' ? `${m.v}%` : m.format === 'usd' ? `$${m.v}` : String(m.v);
       return `${m.label ?? key}=${v}`;
     });
     if (metricBits.length > 0) console.log(chalk.dim(`    ${metricBits.join(' · ')}`));
-
-    const rows = computeStepRows(f.steps);
-    const worst = worstDropIndex(rows);
-    const labelWidth = Math.min(36, Math.max(8, ...rows.map((r) => r.label.length)));
-    console.log(chalk.dim(`    ${cell('step', labelWidth)}  ${cell('users', 8)}  ${cell('of top', 8)}  ${cell('of prev', 8)}  drop`));
-    rows.forEach((row, i) => {
-      const drop = row.drop === null ? '—' : row.drop < 0 ? `↑${-row.drop}` : `−${row.drop}`;
-      const line = `    ${cell(row.label.slice(0, labelWidth), labelWidth)}  ${cell(String(row.users), 8)}  ${cell(fmtPct(row.ofTop), 8)}  ${cell(fmtPct(row.ofPrev), 8)}  ${drop}`;
-      console.log(i === worst ? chalk.red(`${line}  ◄ worst drop`) : line);
-    });
+    printStepTable(f.steps);
   }
 }
 
@@ -1144,8 +1177,9 @@ export function registerLabCommand(program: Command): void {
     .command('show')
     .argument('<slug>', 'Insight slug')
     .description('Show the cached snapshot for one insight (no fetch)')
+    .option('--select <dim=value,...>', 'Funnel insights: print each funnel as this breakdown selection sees it (the dashboard\'s filter), e.g. "channel=telegram"')
     .option('--json', 'Emit as JSON')
-    .action((slug: string, opts: { json?: boolean }) => {
+    .action((slug: string, opts: { json?: boolean; select?: string }) => {
       const root = ensureContextRoot();
       const manifest = getInsight(root, slug);
       if (!manifest) {
@@ -1154,8 +1188,24 @@ export function registerLabCommand(program: Command): void {
         return;
       }
       const cache = readCache(root, slug);
+      // --select: the funnel frame the dashboard slices, so the CLI prints the same steps.
+      let selection: { sel: Selection; frame: FunnelFrame } | null = null;
+      if (opts.select !== undefined) {
+        const frame = cache?.funnel ? resolveFrame(root, slug, ['funnel']) : null;
+        if (frame?.kind === 'funnel') selection = { sel: parseSelection(opts.select), frame };
+        else warn('--select applies to funnel insights only; ignored.');
+      }
       if (opts.json) {
-        console.log(JSON.stringify({ manifest, cache }, null, 2));
+        if (selection) {
+          const { sel, frame } = selection;
+          const slices = frame.funnels.map((f) => {
+            const { daily: _daily, metrics: _metrics, bands: _bands, ...slice } = funnelSlice(frame, f.id, sel);
+            return { ...slice, drops: slice.measured ? stepDrops(slice.steps) : [] };
+          });
+          console.log(JSON.stringify({ manifest, cache, selection: sel, slices }, null, 2));
+        } else {
+          console.log(JSON.stringify({ manifest, cache }, null, 2));
+        }
         return;
       }
       console.log(header(`Insight: ${slug}`));
@@ -1168,7 +1218,7 @@ export function registerLabCommand(program: Command): void {
         console.log(`  granularity: ${cache.granularity}`);
         console.log(`  fetchedAt: ${cache.fetchedAt || '(never)'}`);
         if (cache.error) console.log(chalk.red(`  error: ${cache.error}`));
-        if (cache.funnel) printFunnelSet(cache.funnel, cache.funnelHistory);
+        if (cache.funnel) printFunnelSet(cache.funnel, cache.funnelHistory, selection);
         if (cache.matrix) printMatrixSet(cache.matrix);
         if (cache.app) {
           console.log();

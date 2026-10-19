@@ -4,6 +4,7 @@ import {
   KN_THRESHOLD,
   type FunnelFrame,
   type FunnelMetricFormat,
+  type FunnelSlice,
   type Kn,
   type Selection,
   type SliceReasonCode,
@@ -216,6 +217,23 @@ export function minUsersFor(frame: FunnelFrame, sel: Selection): number | null {
  * reason, a funnel's `unmeasured` note); else "never pulled" or "under the
  * floor" from the reason code; else the generic no-path sentence.
  */
+/**
+ * A slice in the reader's words: a step the selection splits by a dim it is not
+ * broken down by (`notSplitBy`) says so in the UI language ("no Channel
+ * breakdown", "Kanal kırılımı yok"), in place of the engine's English reason.
+ * The dims are named by their declared labels. Other steps are untouched.
+ */
+export function localizeSplitReasons(t: Translate, slice: FunnelSlice, dims: readonly { key: string; label: string }[]): FunnelSlice {
+  if (!slice.steps.some((s) => s.notSplitBy && s.notSplitBy.length > 0)) return slice;
+  const labelOf = (key: string) => dims.find((d) => d.key === key)?.label ?? key;
+  return {
+    ...slice,
+    steps: slice.steps.map((s) => (s.notSplitBy && s.notSplitBy.length > 0
+      ? { ...s, reason: fill(t('lab.explorer.notSplitBy'), { dims: s.notSplitBy.map(labelOf).join(', ') }) }
+      : s)),
+  };
+}
+
 export function reasonText(t: Translate, reason: string | null | undefined, code: SliceReasonCode | null | undefined, minUsers: number | null): string {
   if (reason) return reason;
   if (code === 'not-pulled') return t('lab.explorer.reasonNotPulled');

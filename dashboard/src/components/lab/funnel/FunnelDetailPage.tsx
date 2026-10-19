@@ -10,15 +10,18 @@ import {
   formatDelta,
   formatMetricValue,
   isLowSample,
+  notSplitSteps,
   prettifyKey,
   readViewState,
   stepTableMarkdown,
   writeViewState,
   FUNNEL_COLORS,
   REMAINDER_VALUE,
+  type FilteredStep,
   type FunnelDimension,
   type FunnelViewState,
 } from './funnelModel';
+import { unsplitReason } from '../../../generated/frameOps';
 import { useLabSearchParams } from './labRoute';
 import { RangeControl, writeRangeParams } from '../RangeControl';
 import { FunnelFilterBar } from './FunnelFilterBar';
@@ -36,21 +39,29 @@ import './FunnelDetailPage.css';
 
 const COMPACT_BREAKPOINT = 560;
 
-type SpineStep = { key: string; label: string; users: number };
+type SpineStep = { key: string; label: string; users: number; measured?: false; reason?: string };
 
 /**
  * One breakdown lane's steps on the shared spine. In lookup mode a path that
  * skips a step has no number there: the step is listed in `missing` and left
  * out of the drawn lane (not measured, never 0). Cells mode keeps every step.
+ * A step in `notSplit` (its `dims` leaves out the breakdown dim) stays in the
+ * lane marked not measured with `notSplitReason`, in either mode.
  */
 export function laneStepsOf(
   spine: readonly SpineStep[],
   users: ReadonlyMap<string, number>,
   mode: 'cells' | 'lookup',
+  notSplit: ReadonlySet<string> = new Set(),
+  notSplitReason?: string,
 ): { steps: SpineStep[]; missing: SpineStep[] } {
   const steps: SpineStep[] = [];
   const missing: SpineStep[] = [];
   for (const s of spine) {
+    if (notSplit.has(s.key)) {
+      steps.push({ key: s.key, label: s.label, users: 0, measured: false, ...(notSplitReason ? { reason: notSplitReason } : {}) });
+      continue;
+    }
     const v = users.get(s.key);
     if (v === undefined && mode === 'lookup') missing.push(s);
     else steps.push({ key: s.key, label: s.label, users: v ?? 0 });
@@ -104,10 +115,10 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
   const activeClient = useMemo(() => set ? clientFilters(view.filters, set.dimensions) : {}, [set, view.filters]);
   const filtersActive = Object.keys(activeClient).length > 0;
   const filtered = useMemo(
-    () => funnel ? applyClientFilters(funnel, activeClient, segmentMode) : null,
-    [funnel, activeClient, segmentMode],
+    () => funnel && set ? applyClientFilters(funnel, activeClient, segmentMode, set.dimensions) : null,
+    [funnel, set, activeClient, segmentMode],
   );
-  const steps = filtered?.steps ?? funnel?.steps.map((s) => ({ key: s.key, label: s.label, users: s.users })) ?? [];
+  const steps: FilteredStep[] = filtered?.steps ?? funnel?.steps.map((s) => ({ key: s.key, label: s.label, users: s.users })) ?? [];
   const filtersUnavailable = filtersActive && filtered === null;
   /** The selection has no measured path: say so, draw nothing (not measured is not zero). */
   const notMeasured = filtered !== null && !filtered.measured;
@@ -120,7 +131,12 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     [JSON.stringify(steps), view.collapse],
   );
   const laneSteps = useMemo(
-    () => displaySteps.map((s) => ({ key: s.key, label: s.label, users: s.users })),
+    () => displaySteps.map((s): SpineStep => ({
+      key: s.key,
+      label: s.label,
+      users: s.users,
+      ...(s.measured === false ? { measured: false as const, ...(s.reason ? { reason: s.reason } : {}) } : {}),
+    })),
     [displaySteps],
   );
   const collapsedInfo = useMemo(() => {
@@ -131,8 +147,12 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     return map.size > 0 ? map : undefined;
   }, [displaySteps]);
 
-  // ── Pinned arcs: validate against DISPLAYED steps; swap so from = earlier. ──
-  const stepOrder = useMemo(() => new Map(laneSteps.map((s, i) => [s.key, i])), [laneSteps]);
+  // ── Pinned arcs: validate against DISPLAYED, MEASURED steps (a not-measured
+  // step has no count to convert from or to); swap so from = earlier. ──
+  const stepOrder = useMemo(
+    () => new Map(laneSteps.flatMap((s, i) => (s.measured === false ? [] : [[s.key, i] as const]))),
+    [laneSteps],
+  );
   const arcs: LaneArc[] = useMemo(
     () => view.arcs
       .filter(([a, b]) => stepOrder.has(a) && stepOrder.has(b))
@@ -141,6 +161,7 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
   );
 
   const handleNodeClick = (key: string) => {
+    if (!stepOrder.has(key)) return;
     if (!anchor) { setAnchor(key); return; }
     if (anchor === key) { setAnchor(null); return; }
     const ia = stepOrder.get(anchor) ?? 0;
@@ -186,23 +207,30 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     })),
     [lanes],
   );
+  /** Steps the breakdown dim cannot split (their `dims` leaves it out): not measured in every lane. */
+  const laneNotSplit = useMemo(
+    () => funnel && breakdownDim ? notSplitSteps(funnel, breakdownDim.key) : new Set<string>(),
+    [funnel, breakdownDim],
+  );
+  const laneNotSplitReason = breakdownDim ? unsplitReason([breakdownDim.label]) : undefined;
   /** A lookup path that skips a step has no number there: it is left out (not measured), never drawn as 0. */
   const hasStep = (lane: { steps: Map<string, number> }, key: string) => segmentMode !== 'lookup' || lane.steps.has(key);
   const bands = useMemo(() => {
     if (!breakdownDim || lanes.length === 0 || !funnel) return null;
     const map = new Map<string, { value: string; users: number }[]>();
     for (const step of funnel.steps) {
+      if (laneNotSplit.has(step.key)) { map.set(step.key, []); continue; }
       map.set(step.key, lanes
         .filter((lane) => lane.measured !== false && hasStep(lane, step.key))
         .map((lane) => ({ value: lane.value, users: lane.steps.get(step.key) ?? 0 })));
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [breakdownDim, lanes, funnel, segmentMode]);
+  }, [breakdownDim, lanes, funnel, segmentMode, laneNotSplit]);
 
   const arcDetail = useMemo(() => {
     if (!breakdownDim || lanes.length === 0) return undefined;
-    return (arc: LaneArc) => lanes
+    return (arc: LaneArc) => laneNotSplit.has(arc.from) || laneNotSplit.has(arc.to) ? [] : lanes
       .filter((lane) => lane.measured !== false && hasStep(lane, arc.from) && hasStep(lane, arc.to))
       .map((lane) => ({
         value: lane.value,
@@ -210,7 +238,7 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
         to: lane.steps.get(arc.to) ?? 0,
       }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [breakdownDim, lanes, segmentMode]);
+  }, [breakdownDim, lanes, segmentMode, laneNotSplit]);
 
   /** True while the lane on screen does not yet answer for the chosen window. */
   const applying = applyTweaks.isPending;
@@ -293,7 +321,7 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
   const laneMax = Math.max(1, ...lanes.map((l) => l.users), steps[0]?.users ?? 0);
 
   const copyStepTable = () => {
-    void copyPreservingUnicode(stepTableMarkdown(funnel.name, computeStepRows(steps)))
+    void copyPreservingUnicode(stepTableMarkdown(funnel.name, computeStepRows(steps), (key) => steps.find((s) => s.key === key)?.reason))
       .then((ok) => onToast(ok ? 'Step table copied as Markdown.' : 'Copy failed.'));
   };
   const copyDeepLink = () => {
@@ -418,7 +446,7 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
         ) : breakdownDim && view.breakdownMode === 'lanes' && lanes.length > 0 ? (
           <div className="funnel-det-multiples">
             {lanes.map((lane, i) => {
-              const own = laneStepsOf(laneSteps, lane.steps, segmentMode);
+              const own = laneStepsOf(laneSteps, lane.steps, segmentMode, laneNotSplit, laneNotSplitReason);
               return (
                 <div key={lane.value} className="funnel-det-multiple">
                   <div className="funnel-det-multiple-head">

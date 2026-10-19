@@ -97,6 +97,27 @@
   border-color: var(--color-error);
 }
 
+/* Not measured is not zero: no count, a recessive dashed node, nothing to click. */
+.funnel-node--unmeasured {
+  cursor: default;
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+}
+
+.funnel-node--unmeasured:hover {
+  border-color: var(--color-border);
+  box-shadow: none;
+  transform: none;
+}
+
+.funnel-node-users.funnel-node-unmeasured {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
 .funnel-node-label {
   font-size: 12px;
   font-weight: 600;

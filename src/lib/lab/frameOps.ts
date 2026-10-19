@@ -127,6 +127,10 @@ export interface FunnelFrameStep {
   /** False = not measured for this funnel: drawn "not measured", never 0, skipped by the drop math. */
   measured?: boolean;
   reason?: string | null;
+  /** The only dims this step can be broken down by (absent = every dim, [] = none). */
+  dims?: string[];
+  /** Set by a slice: the selected dims this step is not split by (why it is not measured there). */
+  notSplitBy?: string[];
 }
 
 export interface FunnelFrameMetric {
@@ -865,6 +869,10 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
 
   const stepOf = (key: string) => f.steps.find((s) => s.key === key);
   const segments = f.segments ?? [];
+  // A step the selection splits by a dim it does not carry is not measured here (never a summed 0).
+  const selected = declared.filter((k) => effective[k] !== undefined);
+  const labelOf = (key: string) => frame.dimensions?.find((d) => d.key === key)?.label ?? key;
+  const split = (step: FunnelFrameStep): FunnelFrameStep => splitStep(step, stepOf(step.key)?.dims, selected, labelOf);
 
   if (frame.segmentMode === 'lookup') {
     const seg = segments.find((s) => sameSelection(s.dims, effective));
@@ -880,7 +888,7 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
       measured: true,
       reason: null,
       users: seg.users,
-      steps: seg.steps.map((s) => pathStep(stepOf(s.key), s.key, s.users)),
+      steps: seg.steps.map((s) => split(pathStep(stepOf(s.key), s.key, s.users))),
       metrics: seg.metrics ?? {},
       bands,
       bandsInherited: own === null,
@@ -913,7 +921,7 @@ export function funnelSlice(frame: FunnelFrame, funnelId: string | null, sel: Se
     measured: true,
     reason: null,
     users,
-    steps: f.steps.map((s) => pathStep(s, s.key, byStep.get(s.key) ?? 0)),
+    steps: f.steps.map((s) => split(pathStep(s, s.key, byStep.get(s.key) ?? 0))),
     metrics: {},
     bands: levelBands,
     bandsInherited: true,
@@ -936,6 +944,37 @@ function pathStep(funnelStep: FunnelFrameStep | undefined, key: string, users: n
     out.users = 0;
   }
   return out;
+}
+
+/**
+ * The selected dims a step cannot be split by: those its `dims` list leaves
+ * out, in `selected` order. No list = splits by every dim (nothing returned).
+ */
+export function unsplitDims(stepDims: readonly string[] | undefined, selected: readonly string[]): string[] {
+  if (!Array.isArray(stepDims)) return [];
+  return selected.filter((k) => stepDims.indexOf(k) === -1);
+}
+
+/** The engine's own words for a step not split by `labels` (English; the dashboard words it from `notSplitBy`). */
+export function unsplitReason(labels: readonly string[]): string {
+  return `no ${labels.join(', ')} breakdown`;
+}
+
+/**
+ * A slice step under the dims rule: when the selection names a dim the step's
+ * `dims` leaves out, the step is not measured there (users 0 is not a count,
+ * no rate, never the worst). A step the payload already marks unmeasured keeps
+ * its own reason; a step without `dims` is returned as it is.
+ */
+export function splitStep(
+  step: FunnelFrameStep,
+  stepDims: readonly string[] | undefined,
+  selected: readonly string[],
+  labelOf: (key: string) => string,
+): FunnelFrameStep {
+  const missing = unsplitDims(stepDims, selected);
+  if (missing.length === 0 || step.measured === false) return step;
+  return { ...step, users: 0, measured: false, reason: unsplitReason(missing.map(labelOf)), notSplitBy: missing };
 }
 
 /** Why THIS funnel carries no path for a selection, from its `unmeasured` map: the axis, then the intersections, then all segments. */
