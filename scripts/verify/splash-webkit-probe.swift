@@ -19,6 +19,11 @@
 // Logs every play() call and its outcome, media events, currentTime and the card's class,
 // then exits 0 (PASS) or 1 (FAIL). PASS = a play() resolved with muted=false, `ended` fired,
 // the card never went `still`, and `splash_done` came only after `ended` (no timer cut the clip).
+//
+// Given intro.html it plays the one-time intro end to end: it presses the button 1.5s in
+// (through evaluateJavaScript, a gesture like a real click), lets the page ride and go on to
+// splash.html?after=intro, and also requires `intro_hold` then `intro_seen`, that hand-over
+// page, and the clip's first play() starting on the intro's frame (t 1.35).
 import Cocoa
 import WebKit
 
@@ -37,6 +42,11 @@ var endedMs = -1
 var doneMs = -1
 var maxT = 0.0
 var ranges = 0
+let intro = page.hasPrefix("intro")
+var holdMs = -1
+var seenMs = -1
+var handedOver = false
+var firstPlayT = -1.0
 
 class Scheme: NSObject, WKURLSchemeHandler {
   func webView(_ w: WKWebView, start task: WKURLSchemeTask) {
@@ -67,6 +77,12 @@ class Msg: NSObject, WKScriptMessageHandler {
       wvRef?.evaluateJavaScript("window.__dcSplashPlay && window.__dcSplashPlay()", completionHandler: nil)
     }
     if s == "invoke splash_done" && !done { done = true; doneMs = ms(); doneBeforeEnded = !ended }
+    if s == "invoke intro_hold" && holdMs < 0 { holdMs = ms() }
+    if s == "invoke intro_seen" && seenMs < 0 { seenMs = ms() }
+    if s == "page /splash.html?after=intro" { handedOver = true }
+    if s.hasPrefix("play() called") && firstPlayT < 0, let r = s.range(of: " at=") {
+      firstPlayT = Double(s[r.upperBound...].prefix { $0.isNumber || $0 == "." }) ?? -1
+    }
     if s.hasPrefix("play() resolved muted=false") { unmutedPlay = true }
     if s.hasPrefix("media ended") && !ended { ended = true; endedMs = ms() }
     if s.hasPrefix("card class=") && s.split(separator: " ").contains("still") { everStill = true }
@@ -80,11 +96,12 @@ class Msg: NSObject, WKScriptMessageHandler {
 let hook = """
 (function(){
   var post = function(s){ window.webkit.messageHandlers.probe.postMessage(String(s)); };
+  post('page ' + location.pathname + location.search);
   window.__TAURI_INTERNALS__ = { invoke: function(c){ post('invoke ' + c); return Promise.resolve(); } };
   var P = HTMLMediaElement.prototype, op = P.play;
   P.play = function(){
     var el = this;
-    post('play() called muted=' + el.muted + ' vol=' + el.volume);
+    post('play() called muted=' + el.muted + ' vol=' + el.volume + ' at=' + el.currentTime.toFixed(2));
     var r = op.apply(el, arguments);
     r.then(function(){ post('play() resolved muted=' + el.muted + ' vol=' + el.volume); },
       function(e){ post('play() REJECTED ' + e.name + ': ' + e.message); });
@@ -110,7 +127,8 @@ let ucc = WKUserContentController()
 ucc.add(Msg(), name: "probe")
 ucc.addUserScript(WKUserScript(source: hook, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 cfg.userContentController = ucc
-let win = NSWindow(contentRect: NSRect(x: 300, y: 300, width: 720, height: 405), styleMask: [.borderless], backing: .buffered, defer: false)
+// The shell's sizes (src/splash.rs): the intro's larger stage, or the clip's card.
+let win = NSWindow(contentRect: NSRect(x: 300, y: 300, width: intro ? 960 : 720, height: intro ? 540 : 405), styleMask: [.borderless], backing: .buffered, defer: false)
 win.isOpaque = false; win.backgroundColor = .clear; win.hasShadow = true; win.level = .floating
 let wv = WKWebView(frame: win.contentView!.bounds, configuration: cfg)
 wv.setValue(false, forKey: "drawsBackground")
@@ -120,8 +138,21 @@ win.makeKeyAndOrderFront(nil)
 say("load tauri://localhost/\(page) from \(root)")
 wv.load(URLRequest(url: URL(string: "tauri://localhost/" + page)!))
 
+if intro {
+  Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
+    say("press the intro's button")
+    wv.evaluateJavaScript("document.getElementById('flip').click()", completionHandler: nil)
+  }
+}
+
 func finish() {
-  let checks: [(String, Bool)] = [
+  let introChecks: [(String, Bool)] = !intro ? [] : [
+    ("intro_hold reported while it waits (@\(holdMs)ms)", holdMs >= 0),
+    ("intro_seen reported after it (@\(seenMs)ms)", seenMs > holdMs && holdMs >= 0),
+    ("handed over to splash.html?after=intro", handedOver),
+    ("the clip's first play() starts on the intro's frame (t=\(String(format: "%.2f", firstPlayT)))", abs(firstPlayT - 1.35) < 0.05),
+  ]
+  let checks: [(String, Bool)] = introChecks + [
     ("play() resolved with muted=false", unmutedPlay),
     ("ended fired (max t=\(String(format: "%.2f", maxT)))", ended),
     ("card never in still mode", !everStill),
@@ -139,9 +170,9 @@ func finish() {
   exit(pass ? 0 : 1)
 }
 // Stop once the page reported (after its clip ended, or after it fell back to the still), or
-// at the shell's own splash deadline.
+// at the shell's own splash deadline (for the intro: the button, the ride and INTRO_TAIL).
 Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-  if (ended && done) || (everStill && done) || ms() > 8000 { finish() }
+  if (ended && done) || (everStill && done) || ms() > (intro ? 16000 : 8000) { finish() }
 }
 app.activate(ignoringOtherApps: true)
 app.run()
