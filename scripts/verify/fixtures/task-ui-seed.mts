@@ -106,7 +106,7 @@ appendJournalEntry(stateDir, 'xss-card', { kind: 'log', actor: 'agent', body: `-
 // a relative path, inline data, video, details, a task list, a fenced block, a table).
 // scripts/verify/task-ui.mjs blocks x.test, github.com and firebasestorage in the browser.
 const MEDIA_PAYLOADS = [
-  'Text before the style. <style>button{display:none}</style> Text after.',
+  'Text before the style. <style>button{display:none!important}</style> Text after.',
   '<span style="background:url(https://x.test/a)">styled span</span>',
   '<svg><image href="https://x.test/b"/><rect mask="url(https://x.test/m#m)"/></svg>',
   '<video poster="http://x.test/p.png"></video>',

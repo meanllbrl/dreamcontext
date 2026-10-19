@@ -435,7 +435,7 @@ export async function acceptProposal(
   // accept runs as new (a same-slug task then refuses as `exists`).
   if (stored?.status === 'pending' && stored.claim && !claimFresh(stored.claim)) {
     if (provenanceOf(contextRoot, stored.claim.slug) === id) {
-      return finishLeftoverAccept(contextRoot, backend, id, stored.claim.slug);
+      return finishLeftoverAccept(contextRoot, backend, stored, stored.claim.slug);
     }
     clearStaleClaim(contextRoot, id, stored.claim.at);
     stored = storeForAction(contextRoot).proposals.find((x) => x.id === id);
@@ -467,6 +467,9 @@ export async function acceptProposal(
     return { ...live };
   });
 
+  // What did not go through once the task exists: warnings on the result, never a refusal.
+  let warning: string | undefined;
+  const add = (text: string) => { warning = `${warning ? `${warning} ` : ''}${text}`; };
   try {
     await backend.create({
       name,
@@ -481,47 +484,30 @@ export async function acceptProposal(
       variant,
     });
   } catch (err) {
+    // Nothing on disk: release the claim, and the create's error surfaces.
+    if (provenanceOf(contextRoot, slug) !== p.id) releaseClaimAndThrow(contextRoot, id, slug, err);
     // The create threw AFTER the card was written (a remote backend's push, a field layered
     // after the first write): the card with this proposal's marker is on disk, so the task
-    // exists. Keep the claim (it goes stale, and the next accept finishes it through the
-    // leftover path) and answer as an accept that happened, with a warning.
-    if (provenanceOf(contextRoot, slug) === p.id) {
-      const why = err instanceof Error ? err.message : String(err);
-      console.error(`[task-proposals] ${id}: "${slug}" was created, but the create did not finish (${why}).`);
-      return {
-        slug,
-        parent,
-        ...(parentDropped ? { parentDropped } : {}),
-        warning: `The task "${slug}" was created, but the create did not finish (${why}); accept it again in a few minutes to finish.`,
-      };
-    }
-    // Nothing on disk: release the claim. A release that fails (a busy store) must not hide WHY
-    // the create failed: the claim then expires on its own (CLAIM_TTL_MS), and the error surfaces.
-    try {
-      mutateProposals(contextRoot, (store) => {
-        const live = store.proposals.find((x) => x.id === id);
-        if (live?.claim?.slug === slug) delete live.claim;
-      });
-    } catch (releaseErr) {
-      console.error(`[task-proposals] ${id}: the claim was not released (${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}); it expires on its own.`);
-    }
-    throw err;
+    // exists. Owner decision 2026-10-19 ("normal adıma düşür"): the create's error is a warning,
+    // and the accept carries on into its normal step below (fields, journal, accepted).
+    const why = err instanceof Error ? err.message : String(err);
+    console.error(`[task-proposals] ${id}: "${slug}" was created, but the create did not finish (${why}).`);
+    add(`The task "${slug}" was created, but the create did not finish (${why}).`);
   }
 
   // The task exists from here, so the proposal IS accepted whatever follows: a
   // failed field or journal write is reported, never left as a pending proposal
   // whose task is already on the board.
-  let warning: string | undefined;
   try {
     // `queue` again here: the dashboard create skeleton does not layer it.
     await backend.updateFields(slug, { created_by: 'human', filing_basis: null, queue: 'next' });
     await backend.addJournal(slug, {
       kind: 'approval',
       label: 'accepted from a sleep proposal',
-      body: `- proposal ${p.id} (${p.basis}): "${storableQuote(p.quote, contextRoot)}"`,
+      body: approvalBody(p, contextRoot),
     });
   } catch (err) {
-    warning = `The task was created, but its fields or journal note were not written: ${err instanceof Error ? err.message : String(err)}`;
+    add(`The task was created, but its fields or journal note were not written: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const diff: { name?: { from: string; to: string }; why?: { from: string; to: string } } = {};
@@ -531,10 +517,9 @@ export async function acceptProposal(
   // After the create, nothing here refuses: the task exists, so a busy store or a proposal that
   // changed meanwhile is the result's warning (the route still records the change and the
   // audit), never an error that says "nothing was changed" over a task on the board.
-  const add = (text: string) => { warning = `${warning ? `${warning} ` : ''}${text}`; };
   try {
-    const outcome = mutateProposals(contextRoot, (s) => {
-      const live = s.proposals.find((x) => x.id === id);
+    const outcome = mutateProposals(contextRoot, (st) => {
+      const live = st.proposals.find((x) => x.id === id);
       if (live?.status === 'accepted' && live.slug === slug) return 'done';
       if (!live || live.status !== 'pending' || live.claim?.slug !== slug) return live ? live.status : 'gone';
       markAccepted(contextRoot, live, slug, Object.keys(diff).length > 0 ? diff : null);
@@ -551,6 +536,28 @@ export async function acceptProposal(
     add(`The task "${slug}" was created, but the proposal could not be marked accepted (${why}); accept it again in a few minutes to finish.`);
   }
   return { slug, parent, ...(parentDropped ? { parentDropped } : {}), ...(warning ? { warning } : {}) };
+}
+
+/** The approval journal entry an accept writes; the leftover path looks for `proposal <id>` in it. */
+function approvalBody(p: TaskProposal, contextRoot: string): string {
+  return `- proposal ${p.id} (${p.basis}): "${storableQuote(p.quote, contextRoot)}"`;
+}
+
+/**
+ * The create failed with nothing on disk: release the claim and rethrow the create's error. A
+ * release that fails (a busy store) must not hide WHY the create failed: the claim then expires
+ * on its own (CLAIM_TTL_MS), and the create's error surfaces.
+ */
+function releaseClaimAndThrow(contextRoot: string, id: string, slug: string, err: unknown): never {
+  try {
+    mutateProposals(contextRoot, (store) => {
+      const live = store.proposals.find((x) => x.id === id);
+      if (live?.claim?.slug === slug) delete live.claim;
+    });
+  } catch (releaseErr) {
+    console.error(`[task-proposals] ${id}: the claim was not released (${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}); it expires on its own.`);
+  }
+  throw err;
 }
 
 /** Mark a claimed proposal accepted as `slug` and record the keep. The caller holds the store lock. */
@@ -577,10 +584,29 @@ function markAccepted(
 }
 
 /**
- * Finish an accept that created its task but never marked the proposal: accepted, with the keep
- * feedback, and a warning that says so. A busy store refuses (nothing was written by this call).
+ * Finish an accept that created its task but never marked the proposal: the normal post-create
+ * step first (idempotent: fields only when one differs, the approval journal only when none
+ * names this proposal; its failures are warnings), then accepted with the keep feedback, and a
+ * warning that says so. A busy store refuses the mark; a retry repeats none of the step.
  */
-async function finishLeftoverAccept(contextRoot: string, backend: TaskBackend, id: string, slug: string): Promise<AcceptResult> {
+async function finishLeftoverAccept(contextRoot: string, backend: TaskBackend, proposal: TaskProposal, slug: string): Promise<AcceptResult> {
+  const id = proposal.id;
+  const warnings: string[] = [];
+  // The normal post-create step the interrupted accept may not have reached, done idempotently:
+  // the three fields only when one differs, the approval journal only when there is none yet.
+  try {
+    const before = await backend.get(slug);
+    const raw = before?.raw ?? {};
+    if (raw.created_by !== 'human' || (raw.filing_basis !== undefined && raw.filing_basis !== null) || before?.queue !== 'next') {
+      await backend.updateFields(slug, { created_by: 'human', filing_basis: null, queue: 'next' });
+    }
+    const journaled = (await backend.readJournal(slug)).some((e) => e.body.includes(`proposal ${id} `) || e.body.includes(`proposal ${id}:`));
+    if (!journaled) {
+      await backend.addJournal(slug, { kind: 'approval', label: 'accepted from a sleep proposal', body: approvalBody(proposal, contextRoot) });
+    }
+  } catch (err) {
+    warnings.push(`Its fields or journal note were not written: ${err instanceof Error ? err.message : String(err)}`);
+  }
   const task = await backend.get(slug);
   mutateProposals(contextRoot, (store) => {
     const live = store.proposals.find((x) => x.id === id);
@@ -599,7 +625,7 @@ async function finishLeftoverAccept(contextRoot: string, backend: TaskBackend, i
   return {
     slug,
     parent: task?.parent_task ?? null,
-    warning: `The task "${slug}" was already created by an earlier accept that did not finish; the proposal is now marked accepted.`,
+    warning: [`The task "${slug}" was already created by an earlier accept that did not finish; the proposal is now marked accepted.`, ...warnings].join(' '),
   };
 }
 

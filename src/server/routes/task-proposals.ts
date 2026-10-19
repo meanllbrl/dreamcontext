@@ -28,7 +28,7 @@ import { recentRuleChanges, readRules, revertRule, RuleError } from '../../lib/t
 import { applySuggestion, BacklogError, keepAsIs, waitingSuggestions } from '../../lib/backlog-migration.js';
 import { recordDashboardChange } from '../change-tracker.js';
 import { parseJsonBody, requireBrowserOrigin, sendError, sendJson, writeVia } from '../middleware.js';
-import { ensureLocalStateIgnored, recordAudit, type NewAuditEntry } from '../../lib/task-audit.js';
+import { ensureLocalStateIgnored, listAudit, recordAudit, type NewAuditEntry } from '../../lib/task-audit.js';
 import { TaskFileBusyError } from '../../lib/task-file-lock.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 
@@ -219,14 +219,23 @@ export async function handleTaskProposalAccept(
     fail(res, err);
     return;
   }
-  // The task exists from here: what follows is recorded, never refused.
-  recordDashboardChange(contextRoot, {
-    entity: 'task',
-    action: 'create',
-    target: r.slug,
-    summary: `Accepted sleep's proposal ${id} into the Next queue`,
-  });
-  const warnings = auditAfterCommit(contextRoot, { kind: 'accept', slug: r.slug, actor: actorOf(contextRoot), via: writeVia(req), note: `proposal ${id}`, journalId: null });
+  // The task exists from here: what follows is recorded, never refused. Once: a re-accept that
+  // finished an interrupted one (the leftover path) is the same decision, already audited and
+  // already a dashboard change.
+  let audited = false;
+  try {
+    audited = listAudit(contextRoot, { kinds: ['accept'] }).some((e) => e.note === `proposal ${id}`);
+  } catch { /* an unreadable audit reads as not recorded yet */ }
+  let warnings: Array<'audit_not_recorded'> = [];
+  if (!audited) {
+    recordDashboardChange(contextRoot, {
+      entity: 'task',
+      action: 'create',
+      target: r.slug,
+      summary: `Accepted sleep's proposal ${id} into the Next queue`,
+    });
+    warnings = auditAfterCommit(contextRoot, { kind: 'accept', slug: r.slug, actor: actorOf(contextRoot), via: writeVia(req), note: `proposal ${id}`, journalId: null });
+  }
   sendJson(res, 200, { ...r, ...(warnings.length > 0 ? { auditWarning: warnings[0], warnings } : {}) });
 }
 

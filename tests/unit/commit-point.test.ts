@@ -30,6 +30,7 @@ import { LocalTaskBackend, readTaskFile, resetTaskReadMemo } from '../../src/lib
 import { listAudit } from '../../src/lib/task-audit.js';
 import { readJournal } from '../../src/lib/task-journal.js';
 import { call } from '../helpers/fake-http.js';
+import { TaskFileBusyError } from '../../src/lib/task-file-lock.js';
 
 let projectRoot: string;
 let ctx: string;
@@ -383,10 +384,21 @@ describe('the provenance marker', () => {
     expect(keeps(p.id)[0].diff).toBeNull();
   });
 
-  // Fourth pass, Minor 1: a create that throws AFTER writing the marked card (a remote push
-  // failing) is an accept that happened: 200 with a warning, the claim kept, and the next
-  // accept past the TTL finishes it.
-  it('a create that throws after the card write: 200 with a warning, claim kept, the leftover finishes it later', async () => {
+  // Fifth pass, Major (owner decision 2026-10-19, "normal adıma düşür"): an interrupted create
+  // falls through into the normal post-create step. And the leftover finish does that step too,
+  // idempotently, so every way to an accepted proposal ends in the same card.
+  const approvals = () => readJournal(stateDir, SLUG).filter((e) => e.kind === 'approval');
+  function expectNormalEnd(id: string): void {
+    expect(readProposals(ctx).proposals.find((x) => x.id === id)).toMatchObject({ status: 'accepted', slug: SLUG });
+    const raw = readTaskFile(join(stateDir, `${SLUG}.md`)).raw;
+    expect(raw.created_by).toBe('human');
+    expect(raw.filing_basis ?? null).toBeNull();
+    expect(raw.queue).toBe('next');
+    expect(approvals()).toHaveLength(1);
+    expect(approvals()[0].body).toContain(`proposal ${id} `);
+  }
+
+  it('(a) a create that throws after the card write: 200 with the warning, and the normal end state', async () => {
     const p = propose();
     const create = LocalTaskBackend.prototype.create;
     vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
@@ -396,19 +408,59 @@ describe('the provenance marker', () => {
     const r = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
     vi.restoreAllMocks();
     expect(r.code).toBe(200);
-    expect(String(r.body.warning)).toMatch(/the remote push failed.*accept it again/);
-    expect(readTaskFile(join(stateDir, `${SLUG}.md`)).from_proposal).toBe(p.id);
-    const live = readProposals(ctx).proposals.find((x) => x.id === p.id)!;
-    expect(live.status).toBe('pending');
-    expect(live.claim?.slug).toBe(SLUG);
-    expect(listAudit(ctx).filter((e) => e.kind === 'accept' && e.slug === SLUG)).toHaveLength(1);
-
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + TTL + 60_000);
-    const again = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
-    expect(again.code).toBe(200);
-    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)).toMatchObject({ status: 'accepted', slug: SLUG });
+    expect(String(r.body.warning)).toContain(`The task "${SLUG}" was created, but the create did not finish (the remote push failed).`);
+    expectNormalEnd(p.id);
     expect(keeps(p.id)).toHaveLength(1);
   });
+
+  it('(b) a leftover finish on a card that never got the normal step: the same end state', async () => {
+    const p = propose();
+    claim(p.id, staleAt());
+    cardOnSlug(p.id); // a bare card: no created_by, no queue, no journal
+    expect(approvals()).toHaveLength(0);
+    expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+    expectNormalEnd(p.id);
+  });
+
+  it('(c) a leftover finish on a card that already had the normal step: still exactly one journal entry', async () => {
+    const p = propose();
+    // The first accept did its normal step and then could not mark the proposal (a busy store).
+    let release = () => {};
+    const create = LocalTaskBackend.prototype.create;
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
+      const task = await create.call(this, input);
+      release = hold('.task-proposals');
+      return task;
+    });
+    expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+    release();
+    vi.restoreAllMocks();
+    expect(approvals()).toHaveLength(1);
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)?.status).toBe('pending');
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + TTL + 60_000);
+    expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+    expectNormalEnd(p.id);
+  }, 20_000);
+
+  // Fifth pass, Minor: the re-accept that finished an interrupted one is the same decision.
+  it('an interrupted accept accepted again: one accept audit and one dashboard change', async () => {
+    const p = propose();
+    let release = () => {};
+    const create = LocalTaskBackend.prototype.create;
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
+      const task = await create.call(this, input);
+      release = hold('.task-proposals');
+      return task;
+    });
+    expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+    release();
+    vi.restoreAllMocks();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + TTL + 60_000);
+    expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)?.status).toBe('accepted');
+    expect(listAudit(ctx).filter((e) => e.kind === 'accept' && e.note === `proposal ${p.id}`)).toHaveLength(1);
+    expect((readSleepState(ctx).dashboard_changes ?? []).filter((c) => c.target === SLUG && c.action === 'create')).toHaveLength(1);
+  }, 20_000);
 
   it('a fresh claim on a card that carries the marker: refused, being accepted right now', async () => {
     const p = propose();
@@ -527,6 +579,25 @@ describe('tasks complete --force', () => {
     expect(forces()).toHaveLength(1);
     expect(forcedEntries()).toHaveLength(1);
   }, 20_000);
+  // Fifth pass, Minor: the card's OWN busy error means our status write never ran. Even when
+  // another writer has meanwhile put the card at the same status, the force is not recorded.
+  it('the card itself busy (another writer set the same status meanwhile): not applied, no force recorded', async () => {
+    seed('force-busy', 'in_progress', ['- [ ] Unproven']);
+    const path = join(stateDir, 'force-busy.md');
+    vi.spyOn(LocalTaskBackend.prototype, 'complete').mockImplementation(async () => {
+      writeFileSync(path, readFileSync(path, 'utf-8').replace('\nstatus: in_progress\n', '\nstatus: completed\n'));
+      throw new TaskFileBusyError('force-busy');
+    });
+    const lines: string[] = [];
+    console.log = (...a: unknown[]) => { lines.push(a.join(' ')); };
+    console.error = (...a: unknown[]) => { lines.push(a.join(' ')); };
+    expect(await cli('tasks', 'complete', 'force-busy', 'Done.', '--force', '--reason', 'a spike, no tests')).toBe(1);
+    expect(lines.join('\n')).toMatch(/--force was not applied: the task is busy/);
+    expect(lines.join('\n')).not.toMatch(/the force is recorded/);
+    expect(listAudit(ctx).filter((e) => e.kind === 'force' && e.slug === 'force-busy')).toEqual([]);
+    expect(readJournal(stateDir, 'force-busy').filter((e) => e.label.startsWith('forced'))).toEqual([]);
+  });
+
   // Fourth pass: the child's status write lands, then the PARENT's status re-sync (a follow-up
   // write) finds the parent busy. The force happened: it is recorded once, with a warning.
   it('a busy parent after the child\'s status landed: the force is recorded once, with a warning; a retry adds none', async () => {

@@ -646,6 +646,12 @@ function forceNotApplied(pending: PendingForce, err: unknown): void {
  * otherwise the force was not applied. Returns whether the status landed.
  */
 async function forceAfterFailedWrite(backend: TaskBackend, pending: PendingForce, err: unknown): Promise<boolean> {
+  // The card ITSELF was busy: our status write never ran. No re-read: another writer's identical
+  // status would read as ours landing, and record a force for a move this command did not make.
+  if (err instanceof TaskFileBusyError && err.slug === pending.slug) {
+    forceNotApplied(pending, err);
+    return false;
+  }
   let landed = false;
   try {
     landed = (await backend.get(pending.slug))?.status === pending.newStatus;
