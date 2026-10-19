@@ -12,7 +12,8 @@
  *    border, no text) from first to last; a 4–6× uneven scale of real content would stretch
  *    the text. The real container's content fades in (120 ms) as its flight lands.
  *  - Hand over: the active pane's stand-in shrinks into its container slot; every other adopted
- *    tab flies from its tab chip (30 ms stagger, 280 ms each, `cubic-bezier(0.2, 0, 0, 1)`); the
+ *    tab flies from its tab chip (30 ms stagger, 280 ms each, on the spring), landing in a ripple
+ *    outward from the centre: the card nearest the Super Agent first (stage v2); the
  *    tab strip leaves upward (200 ms); the centre grows in from the button (320 ms); the cape
  *    goes on once (400 ms, the mascot's own CSS entrance), started with the centre's grow-in so
  *    it ends inside the choreography: every flights plan is at least `centreDuration +
@@ -25,7 +26,8 @@
  * the flights and by `planLayoutMotion`, the motion of every layout change on the stage (float
  * ↔ half ↔ present, a drop settling, to and from Others, a card opening or closing): a card
  * that only MOVES translates its real element; one that changes SIZE flies a stand-in while its
- * content fades in on landing; the centre only ever translates (§0 FE3).
+ * content fades in on landing; the centre only ever translates (§0 FE3). Stage v2: the cards
+ * that arrive land in a short ripple outward from the centre (`LAYOUT.stagger`).
  */
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -116,17 +118,33 @@ export type FlightPlan =
   | { kind: 'flights'; direction: 'in' | 'out'; steps: FlightStep[]; total: number }
   | { kind: 'crossfade'; direction: 'in' | 'out'; duration: number; total: number };
 
-/** The forward (hand-over) timing of every input: delay and duration. */
-function forwardTiming(inputs: readonly FlightInput[]): Map<string, { delay: number; duration: number }> {
+const midOf = (r: Rect) => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
+const distance = (a: Rect, b: Rect) => { const p = midOf(a); const q = midOf(b); return Math.hypot(p.x - q.x, p.y - q.y); };
+
+/**
+ * Ranks for a staggered landing: nearest `centre` first (input order breaks ties), so the cards
+ * land in a ripple outward from the Super Agent. Without a centre, input order.
+ */
+export function rippleOrder(rects: ReadonlyArray<{ key: string; rect: Rect }>, centre: Rect | null): Map<string, number> {
+  const ranked = rects.map((x, i) => ({ ...x, i, d: centre ? distance(x.rect, centre) : i }));
+  ranked.sort((a, b) => a.d - b.d || a.i - b.i);
+  return new Map(ranked.map((x, rank) => [x.key, rank] as const));
+}
+
+/** The forward (hand-over) timing of every input: delay and duration. `in` lands on `last`;
+ *  `out` was measured the other way round, so its forward landing is `first`. */
+function forwardTiming(inputs: readonly FlightInput[], direction: 'in' | 'out'): Map<string, { delay: number; duration: number }> {
   const out = new Map<string, { delay: number; duration: number }>();
-  let chip = 0;
+  const landing = (f: FlightInput) => (direction === 'in' ? f.last : f.first);
+  const centre = inputs.find((f) => f.role === 'centre');
+  const rank = rippleOrder(inputs.filter((f) => f.role === 'chip').map((f) => ({ key: f.key, rect: landing(f) })), centre ? landing(centre) : null);
+  // The pane (when there is one) took slot 0's clock; chips stagger after it.
+  const after = inputs.some((x) => x.role === 'pane') ? 1 : 0;
   for (const f of inputs) {
     if (f.role === 'pane') out.set(f.key, { delay: 0, duration: HANDOVER.paneDuration });
     else if (f.role === 'chip') {
-      const slot = Math.min(chip, HANDOVER.maxStaggered - 1);
-      chip++;
-      // The pane (when there is one) took slot 0's clock; chips stagger after it.
-      out.set(f.key, { delay: (slot + (inputs.some((x) => x.role === 'pane') ? 1 : 0)) * HANDOVER.chipStagger, duration: HANDOVER.chipDuration });
+      const slot = Math.min(rank.get(f.key) ?? 0, HANDOVER.maxStaggered - 1);
+      out.set(f.key, { delay: (slot + after) * HANDOVER.chipStagger, duration: HANDOVER.chipDuration });
     } else if (f.role === 'strip') out.set(f.key, { delay: 0, duration: HANDOVER.stripDuration });
     else out.set(f.key, { delay: 0, duration: HANDOVER.centreDuration });
   }
@@ -152,7 +170,7 @@ export function planFlights(
   if (opts.reduced || opts.light || inputs.length === 0) {
     return { kind: 'crossfade', direction: opts.direction, duration: HANDOVER.crossfade, total: HANDOVER.crossfade };
   }
-  const timing = forwardTiming(inputs);
+  const timing = forwardTiming(inputs, opts.direction);
   const forwardEnd = Math.max(...inputs.map((f) => { const t = timing.get(f.key)!; return t.delay + t.duration; }));
   const steps: FlightStep[] = inputs.map((f) => {
     const t = timing.get(f.key)!;
@@ -255,6 +273,11 @@ export interface StageBox { rect: Rect; where: StageWhere }
 
 export const LAYOUT = {
   duration: SPRING.duration,
+  /** The staggered landing (stage v2): arrivals ripple outward from the centre, this far apart,
+   *  the first `maxStaggered` of them (the rest land with the last), so a switch reads as one
+   *  motion and ends at most 96 ms later. */
+  stagger: 24,
+  maxStaggered: 5,
   contentFade: 120,
   enter: 220,
   exit: 180,
@@ -337,6 +360,12 @@ export function planLayoutMotion(
   }
   const steps: LayoutStep[] = [];
   const D = LAYOUT.duration;
+  // Arrivals (a move, a resize, a card from Others, a new card) land in a ripple outward from the
+  // centre; what leaves (to Others, closed) and the centre itself go at once.
+  const arriving = changed.filter((k) => k !== 'centre' && onStage(after.get(k)?.where));
+  const centreAt = after.get('centre')?.rect ?? before.get('centre')?.rect ?? null;
+  const rank = rippleOrder(arriving.map((k) => ({ key: k, rect: after.get(k)!.rect })), centreAt);
+  const delayOf = (k: string) => Math.min(rank.get(k) ?? 0, LAYOUT.maxStaggered - 1) * LAYOUT.stagger;
   for (const k of changed) {
     const b = before.get(k);
     const a = after.get(k);
@@ -362,14 +391,14 @@ export function planLayoutMotion(
     if (bOn && aOn && b && a) {
       if (sameSize(b.rect, a.rect)) {
         steps.push({
-          key: k, kind: 'move', box: a.rect, from: b.rect, to: a.rect, delay: 0, duration: D, easing: 'spring', standIn: false,
+          key: k, kind: 'move', box: a.rect, from: b.rect, to: a.rect, delay: delayOf(k), duration: D, easing: 'spring', standIn: false,
           keyframes: [{ transform: transformOf(flipTransform(b.rect, a.rect)), opacity: 1 }, { transform: IDENTITY, opacity: 1 }],
         });
       } else {
         steps.push({
-          key: k, kind: 'resize', box: a.rect, from: b.rect, to: a.rect, delay: 0, duration: D, easing: 'spring', standIn: true,
+          key: k, kind: 'resize', box: a.rect, from: b.rect, to: a.rect, delay: delayOf(k), duration: D, easing: 'spring', standIn: true,
           keyframes: [{ transform: transformOf(flipTransform(b.rect, a.rect)), opacity: 1 }, { transform: IDENTITY, opacity: 1 }],
-          contentFadeAt: D,
+          contentFadeAt: delayOf(k) + D,
         });
       }
     } else if (bOn && b && a?.where === 'others') {
@@ -379,13 +408,13 @@ export function planLayoutMotion(
       });
     } else if (aOn && a && b?.where === 'others') {
       steps.push({
-        key: k, kind: 'fromOthers', box: a.rect, from: opts.othersRect, to: a.rect, delay: 0, duration: D, easing: 'spring', standIn: true,
+        key: k, kind: 'fromOthers', box: a.rect, from: opts.othersRect, to: a.rect, delay: delayOf(k), duration: D, easing: 'spring', standIn: true,
         keyframes: [{ transform: transformOf(flipTransform(opts.othersRect, a.rect)), opacity: 0.4 }, { transform: IDENTITY, opacity: 1 }],
-        contentFadeAt: D,
+        contentFadeAt: delayOf(k) + D,
       });
     } else if (aOn && a && !b) {
       steps.push({
-        key: k, kind: 'enter', box: a.rect, from: a.rect, to: a.rect, delay: 0, duration: LAYOUT.enter, easing: 'linear', standIn: false,
+        key: k, kind: 'enter', box: a.rect, from: a.rect, to: a.rect, delay: delayOf(k), duration: LAYOUT.enter, easing: 'linear', standIn: false,
         keyframes: [{ transform: 'translate(0px, 8px) scale(1, 1)', opacity: 0 }, { transform: IDENTITY, opacity: 1 }],
       });
     } else if (bOn && b && !a) {

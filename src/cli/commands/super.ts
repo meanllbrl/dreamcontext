@@ -86,13 +86,13 @@ export function registerSuperCommand(program: Command): void {
 
   s.command('open <kind> <ref>')
     .description(`Open a floating card: ${KINDS}. ref = a session id, a slug, a URL or a project path`)
-    .option('--shape <shape>', 'square (1:1) | tall (9:16); default: tall for chat and web, square for the rest')
+    .option('--shape <shape>', 'square (1:1) | tall (3:4); default: tall for chat and web, square for the rest')
     .option('--title <text>', 'Its label')
     .action((kind: string, ref: string, o: { shape?: string; title?: string }) =>
       run('open', { kind, ref, shape: o.shape, title: o.title }));
 
   s.command('shape <card> <shape>')
-    .description('Make a card square (1:1) or tall (9:16)')
+    .description('Make a card square (1:1) or tall (3:4)')
     .action((container: string, shape: string) => run('shape', { container, shape }));
 
   s.command('half [card]')

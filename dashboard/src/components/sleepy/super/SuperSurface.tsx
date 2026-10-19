@@ -93,7 +93,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const el = rootRef.current;
     if (!el) return undefined;
     const read = () => ({ width: el.clientWidth, height: el.clientHeight });
-    const differs = (m: { width: number; height: number }) => m.width !== sizeRef.current.width || m.height !== sizeRef.current.height;
+    // A hidden stage (the overlay collapsed: 0 x 0) keeps the size it was last seen at. Planned
+    // at 0 px, the centre's chat re-laid out at width 0 inside this observer's own pass (its
+    // transcript 16 000 px tall) and its observers fired in the same pass: WebKit reported
+    // "ResizeObserver loop completed with undelivered notifications". Shown again, it is at the
+    // same size, so nothing moves.
+    const differs = (m: { width: number; height: number }) =>
+      m.width > 0 && m.height > 0 && (m.width !== sizeRef.current.width || m.height !== sizeRef.current.height);
     const first = read();
     if (differs(first)) setSize(first);
     if (typeof ResizeObserver === 'undefined') return undefined;
@@ -117,14 +123,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
   );
 
   // ── The plan ──
-  const prevCentre = useRef<number | null>(null);
   const plan = useMemo(
-    () => planStage(state.containers, state.view, size, { dragging: pinned, prevCentre: prevCentre.current }),
+    () => planStage(state.containers, state.view, size, { dragging: pinned }),
     [state.containers, state.view, size, pinned],
   );
   const planRef = useRef(plan);
   planRef.current = plan;
-  useLayoutEffect(() => { prevCentre.current = plan.centreWidth; }, [plan]);
 
   // ── Stage ready: the flights land on THIS plan, measured at the folded width (FE4) ──
   const readyRef = useRef(false);
@@ -254,8 +258,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
     let origin = root.getBoundingClientRect();
     let ghost: HTMLElement | null = null;
     let last: Hot = null;
-    const u = Math.max(planRef.current.unit.left, planRef.current.unit.right) || STAGE.U_MAX;
-    const box = { width: u, height: heightOf(c.shape, u) };
+    // The ghost is the card the stage would draw once it floats again, never a guessed size.
+    const landed = planStage(stateRef.current.containers.map((k) => (k.id === id ? { ...k, place: 'float' as const } : k)), { mode: 'float' }, sizeRef.current).cards[id];
+    const u = Math.max(planRef.current.unit.left, planRef.current.unit.right) || STAGE.U_MIN;
+    const box = landed?.where === 'float' ? { width: landed.rect.width, height: landed.rect.height } : { width: u, height: heightOf(c.shape, u) };
     const at = (x: number, y: number): Rect => ({ x: x - origin.left - box.width / 2, y: y - origin.top - box.height / 2, ...box });
     armPointerDrag({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY }, el, {
       win: window,

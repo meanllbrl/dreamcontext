@@ -1,12 +1,13 @@
 /**
- * The hand-over stage (plan-r8 F4, §0 C1/C2/C3/D1, AC Layout): the Super Agent's window exactly
- * in the centre, cards floating around it at a fixed gap, half / present / narrow, the owner's
+ * The hand-over stage (plan-r8 F4, §0 C1/C2/C3/D1, AC Layout, stage v2): the Super Agent's
+ * window exactly in the centre and the larger share, cards on one rhythm around it (one width,
+ * one gap, full columns spanning the centre, 1:1 to 3:4), half / present / narrow, the owner's
  * drop kept, overflow DRAWN in Others without touching the record. Invariants, not pixels.
  */
 import { describe, it, expect } from 'vitest';
 import {
-  NARROW_STAGE_PX, STAGE, applyLayoutPatch, centreCandidates, overCentre, overOthersZone, patchEchoed, planStage,
-  posFromRect, rectFromPos, type Rect, type StagePlan,
+  NARROW_STAGE_PX, STAGE, applyLayoutPatch, centreFloor, columnHeights, overCentre, overOthersZone, patchEchoed, planStage,
+  posFromRect, preferredCentre, rectFromPos, type Rect, type StagePlan,
 } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import { MAX_CONTAINERS, type SuperContainer, type SuperView } from '../../dashboard/src/lib/superTypes.js';
 
@@ -15,12 +16,13 @@ const card = (id: string, shape: SuperContainer['shape'] = 'tall', extra: Partia
 const FLOAT: SuperView = { mode: 'float' };
 const EPS = 0.5;
 
-/** The stage a window of this size leaves (the rail, the header and the window chrome off). */
+/** The stage a window of this size leaves, as the app draws it handed over: the 56 px rail and
+ *  the 86 px of header (title bar + the Chat toolbar) off (measured in the verify's screenshots). */
 const STAGES = [
-  { width: 1224, height: 740 },   // a 1280 x 800 window
-  { width: 1384, height: 840 },   // 1440 x 900
-  { width: 1544, height: 940 },   // 1600 x 1000
-  { width: 1864, height: 1020 },  // 1920 x 1080
+  { width: 1224, height: 714 },   // a 1280 x 800 window
+  { width: 1384, height: 814 },   // 1440 x 900
+  { width: 1544, height: 914 },   // 1600 x 1000
+  { width: 1864, height: 994 },   // 1920 x 1080
 ];
 
 const fiveTallTwoSquare = () => [card('a'), card('b'), card('c'), card('d'), card('e'), card('s1', 'square'), card('s2', 'square')];
@@ -42,20 +44,26 @@ function expectCentred(p: StagePlan) {
   expect(Math.abs(top - bottom)).toBeLessThanOrEqual(1);
 }
 
-describe('floating cards (O1, O2, §0 C1)', () => {
+describe('floating cards (O1, O2, stage v2)', () => {
   for (const s of STAGES) {
-    it(`5 tall + 2 square all FLOAT at ${s.width}x${s.height}, centred, gaps >= 24`, () => {
+    it(`5 tall + 2 square at ${s.width}x${s.height}: centred, gaps >= 24, readable, 1:1 to 3:4`, () => {
       const p = planStage(fiveTallTwoSquare(), FLOAT, s);
       expect(p.narrow).toBe(false);
-      expect(p.others).toEqual([]);
       expectCentred(p);
-      const rects = Object.values(p.cards).map((c) => c.rect);
-      expect(rects).toHaveLength(7);
+      const floating = Object.values(p.cards).filter((c) => c.where === 'float');
+      // 1600 and 1920 hold four a side, all seven float; 1280 and 1440 hold three a side, the
+      // seventh in Others.
+      expect(floating.length + p.others.length).toBe(7);
+      expect(floating).toHaveLength(s.width >= 1500 ? 7 : 6);
+      const rects = floating.map((c) => c.rect);
       for (const r of rects) {
         expect(gapBetween(r, p.centre)).toBeGreaterThanOrEqual(STAGE.GAP - EPS);
         expect(inStage(p, r)).toBe(true);
         expect(r.y).toBeGreaterThanOrEqual(p.centre.y - EPS);
         expect(r.y + r.height).toBeLessThanOrEqual(p.centre.y + p.centre.height + EPS);
+        expect(r.width).toBeGreaterThanOrEqual(STAGE.U_MIN - EPS);
+        expect(r.height / r.width).toBeGreaterThanOrEqual(1 - 1e-6);
+        expect(r.height / r.width).toBeLessThanOrEqual(4 / 3 + 1e-6);
       }
       for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
         expect(gapBetween(rects[i], rects[j])).toBeGreaterThanOrEqual(STAGE.GAP - EPS);
@@ -63,12 +71,66 @@ describe('floating cards (O1, O2, §0 C1)', () => {
     });
   }
 
-  it('chat cards are 9:16 and the rest 1:1, unit width in [150, 232]', () => {
+  it('one calm rhythm: one card width, one gap, symmetric margins; full columns span the centre, shorter ones sit on its midline', () => {
+    const mixes: SuperContainer[][] = [];
+    for (let n = 1; n <= 9; n++) mixes.push(Array.from({ length: n }, (_, i) => card(`k${i}`, i % 3 === 2 ? 'square' : 'tall')));
+    for (const s of STAGES) for (const list of mixes) {
+      const p = planStage(list, FLOAT, s);
+      const label = `${list.length} cards at ${s.width}`;
+      const floating = Object.values(p.cards).filter((c) => c.where === 'float').map((c) => c.rect);
+      if (!floating.length) continue;
+      // One width for every card.
+      for (const r of floating) expect(Math.abs(r.width - floating[0].width), label).toBeLessThanOrEqual(EPS);
+      const cols = new Map<number, Rect[]>();
+      for (const r of floating) { const k = Math.round(r.x); cols.set(k, [...(cols.get(k) ?? []), r]); }
+      const sorted = [...cols.values()].map((c) => c.sort((a, b) => a.y - b.y));
+      const fullest = Math.max(...sorted.map((c) => c.length));
+      const mid = p.centre.y + p.centre.height / 2;
+      for (const col of sorted) {
+        // One gap between the cards of a column.
+        for (let i = 1; i < col.length; i++) expect(Math.abs(col[i].y - (col[i - 1].y + col[i - 1].height) - STAGE.GAP), label).toBeLessThanOrEqual(EPS);
+        const top = col[0].y;
+        const bottom = col[col.length - 1].y + col[col.length - 1].height;
+        if (col.length === fullest && fullest > 1 && Math.abs(top - p.centre.y) <= 1) {
+          expect(Math.abs(bottom - (p.centre.y + p.centre.height)), `${label}: a column that starts at the centre's top ends at its bottom`).toBeLessThanOrEqual(1);
+        } else {
+          expect(Math.abs((top + bottom) / 2 - mid), `${label}: a shorter column sits on the midline`).toBeLessThanOrEqual(1);
+        }
+      }
+      // The inner columns sit one gap from the centre; the outer margins mirror each other.
+      const lefts = floating.filter((r) => r.x < p.centre.x);
+      const rights = floating.filter((r) => r.x > p.centre.x);
+      if (lefts.length) expect(Math.abs(p.centre.x - Math.max(...lefts.map((r) => r.x + r.width)) - STAGE.GAP), label).toBeLessThanOrEqual(EPS);
+      if (rights.length) expect(Math.abs(Math.min(...rights.map((r) => r.x)) - (p.centre.x + p.centre.width) - STAGE.GAP), label).toBeLessThanOrEqual(EPS);
+      if (lefts.length && rights.length) {
+        const lm = Math.min(...lefts.map((r) => r.x));
+        const rm = p.width - Math.max(...rights.map((r) => r.x + r.width));
+        expect(Math.abs(lm - rm), label).toBeLessThanOrEqual(1);
+        expect(lm, label).toBeGreaterThanOrEqual(STAGE.MARGIN - EPS);
+      }
+    }
+  });
+
+  it('two cards a side span the centre at all four window sizes, at 3:4', () => {
+    for (const s of STAGES) {
+      const p = planStage([card('a'), card('b'), card('c'), card('d')], FLOAT, s);
+      for (const id of ['a', 'b', 'c', 'd']) expect(p.cards[id].where).toBe('float');
+      for (const [hi, lo] of [['a', 'c'], ['b', 'd']]) {
+        expect(Math.abs(p.cards[hi].rect.y - p.centre.y)).toBeLessThanOrEqual(1);
+        expect(Math.abs(p.cards[lo].rect.y + p.cards[lo].rect.height - (p.centre.y + p.centre.height))).toBeLessThanOrEqual(1);
+      }
+      for (const id of ['a', 'b', 'c', 'd']) expect(p.cards[id].rect.height / p.cards[id].rect.width).toBeCloseTo(4 / 3, 2);
+    }
+  });
+
+  it('a lone chat card is 3:4 and a lone square card 1:1, centred on the midline', () => {
     const p = planStage([card('a'), card('s', 'square')], FLOAT, STAGES[1]);
     const a = p.cards.a.rect;
     const s = p.cards.s.rect;
-    expect(a.height / a.width).toBeCloseTo(16 / 9, 5);
+    expect(a.height / a.width).toBeCloseTo(4 / 3, 5);
     expect(s.height).toBeCloseTo(s.width, 5);
+    expect(p.cards.a.shape).toBe('tall');
+    expect(p.cards.s.shape).toBe('square');
     for (const r of [a, s]) {
       expect(r.width).toBeGreaterThanOrEqual(STAGE.U_MIN - EPS);
       expect(r.width).toBeLessThanOrEqual(STAGE.U_MAX + EPS);
@@ -86,7 +148,7 @@ describe('floating cards (O1, O2, §0 C1)', () => {
   it('an empty stage is just the centre, at its preferred width', () => {
     const p = planStage([], FLOAT, STAGES[3]);
     expectCentred(p);
-    expect(p.centre.width).toBeCloseTo(centreCandidates(STAGES[3].width)[0], 5);
+    expect(p.centre.width).toBeCloseTo(preferredCentre(STAGES[3].width), 5);
   });
 
   it('a card that fits nowhere is DRAWN in Others; the record stays float', () => {
@@ -101,12 +163,29 @@ describe('floating cards (O1, O2, §0 C1)', () => {
     }
   });
 
-  it('before overflowing, tall cards are DRAWN square (the record keeps tall)', () => {
+  it('what does not fit goes to Others before a card gets unreadably small (the record keeps every shape)', () => {
     const many = Array.from({ length: MAX_CONTAINERS }, (_, i) => card(`k${i}`));
-    const p = planStage(many, FLOAT, STAGES[0]);
-    expect(p.others).toEqual([]);
-    expect(Object.values(p.cards).every((c) => c.shape === 'square')).toBe(true);
+    for (const s of STAGES) {
+      const p = planStage(many, FLOAT, s);
+      const floating = Object.values(p.cards).filter((c) => c.where === 'float');
+      expect(p.others.length).toBeGreaterThan(0);
+      for (const c of floating) expect(c.rect.width).toBeGreaterThanOrEqual(STAGE.U_MIN - EPS);
+      // The last cards go: what is drawn is the start of the record on each side.
+      expect(p.others).toEqual(many.map((c) => c.id).filter((id) => p.others.includes(id)));
+      expect(p.others).toContain(`k${MAX_CONTAINERS - 1}`);
+    }
     expect(many.every((c) => c.shape === 'tall')).toBe(true);
+  });
+
+  it('chats stay on the stage longest: other cards go to Others first', () => {
+    // Five other cards opened first, then five chats delegated: the chats are last in the record.
+    const list = [...['t', 'k', 'w', 'i', 'b2'].map((id) => card(id, 'square')), ...['a', 'b', 'c', 'd', 'e'].map((id) => card(id))];
+    for (const s of STAGES) {
+      const p = planStage(list, FLOAT, s);
+      const floating = Object.values(p.cards).filter((c) => c.where === 'float').map((c) => c.id);
+      expect(floating.length).toBeGreaterThanOrEqual(5);
+      for (const id of ['a', 'b', 'c', 'd', 'e']) expect(floating, `${id} at ${s.width}`).toContain(id);
+    }
   });
 
   it('a card the record stacks in Others is drawn there', () => {
@@ -121,32 +200,53 @@ describe('floating cards (O1, O2, §0 C1)', () => {
   });
 });
 
-describe('the centre steps with hysteresis (round 2)', () => {
-  it('narrows through the fixed steps to make room', () => {
-    const p = planStage(fiveTallTwoSquare(), FLOAT, STAGES[0]);
-    expect(centreCandidates(STAGES[0].width)).toContain(p.centreWidth);
-    expect(p.centreWidth).toBeLessThan(centreCandidates(STAGES[0].width)[0]);
+describe('the centre takes the larger share and stays put (stage v2)', () => {
+  it('>= 55% of the stage at every window size and every card count', () => {
+    for (const s of STAGES) for (let n = 0; n <= MAX_CONTAINERS; n++) {
+      const p = planStage(Array.from({ length: n }, (_, i) => card(`k${i}`, i % 2 ? 'square' : 'tall')), FLOAT, s);
+      expect(p.centre.width / s.width, `${n} cards at ${s.width}`).toBeGreaterThanOrEqual(0.55 - 1e-9);
+      expectCentred(p);
+    }
   });
 
-  it('one card opening and closing never makes the centre wobble', () => {
-    const n = (k: number) => Array.from({ length: k }, (_, i) => card(`k${i}`));
-    const s = STAGES[1];
-    const wide = planStage(n(8), FLOAT, s).centreWidth;
-    const nine = planStage(n(9), FLOAT, s, { prevCentre: wide });
-    expect(nine.centreWidth).toBeLessThan(wide);
-    // Back to 8: the wider step would fit, but not with a card to spare, so it stays.
-    const eight = planStage(n(8), FLOAT, s, { prevCentre: nine.centreWidth });
-    expect(eight.centreWidth).toBe(nine.centreWidth);
-    expectCentred(eight);
-    // Back to 7: now it widens.
-    expect(planStage(n(7), FLOAT, s, { prevCentre: eight.centreWidth }).centreWidth).toBe(wide);
+  it('a card opening or closing moves the centre by at most 1% of the stage', () => {
+    for (const s of STAGES) {
+      const widths = Array.from({ length: MAX_CONTAINERS + 1 }, (_, n) =>
+        planStage(Array.from({ length: n }, (_, i) => card(`k${i}`)), FLOAT, s).centreWidth);
+      for (const w of widths) {
+        expect(w).toBeLessThanOrEqual(preferredCentre(s.width) + EPS);
+        expect(w).toBeGreaterThanOrEqual(centreFloor(s.width) - EPS);
+        expect(preferredCentre(s.width) - w).toBeLessThanOrEqual(0.01 * s.width + EPS);
+      }
+    }
+  });
+});
+
+describe('a column\'s heights (stage v2)', () => {
+  it('span the room exactly when they can, each between 1:1 and 3:4, nearest their own shapes', () => {
+    const u = 200;
+    const span = 3 * 250 + 2 * STAGE.GAP;
+    const { heights, short } = columnHeights([4 / 3, 1, 4 / 3], u, span);
+    expect(short).toBe(false);
+    expect(heights.reduce((a, b) => a + b, 0) + 2 * STAGE.GAP).toBeCloseTo(span, 6);
+    for (const h of heights) { expect(h).toBeGreaterThanOrEqual(u - 1e-6); expect(h).toBeLessThanOrEqual((4 / 3) * u + 1e-6); }
+    // The square card grows, the chat cards keep 3:4 (they have no room to grow).
+    expect(heights[0]).toBeCloseTo((4 / 3) * u, 6);
+    expect(heights[1]).toBeGreaterThan(u);
+  });
+
+  it('keep their own shapes when too few to span (the column is short)', () => {
+    const { heights, short } = columnHeights([4 / 3, 1], 200, 900);
+    expect(short).toBe(true);
+    expect(heights).toEqual([(4 / 3) * 200, 200]);
   });
 });
 
 describe('the owner\'s drop (O3, §0 C-minors, D1)', () => {
   it('a dropped card is drawn where it was dropped, and pos round-trips through the free area', () => {
     const p0 = planStage([card('a'), card('b', 'square')], FLOAT, STAGES[2]);
-    const r = { x: 40, y: p0.free.y + 30, width: p0.cards.b.rect.width, height: p0.cards.b.rect.height };
+    // Flush with the left margin: the side is one card wide, so the gap to the centre stays clear.
+    const r = { x: p0.free.x, y: p0.free.y + 30, width: p0.cards.b.rect.width, height: p0.cards.b.rect.height };
     const pos = posFromRect(p0.free, r);
     const p = planStage([card('a'), card('b', 'square', { pos })], FLOAT, STAGES[2]);
     expect(p.cards.b.owner).toBe(true);
@@ -225,11 +325,15 @@ describe('the owner\'s drop (O3, §0 C-minors, D1)', () => {
         // …and back: every card where it was.
         expect(sides(to(out, [id], 'float'), st)).toEqual(before);
       }
-      // Two cards off the same side: the stage rebalances by moving exactly one card.
-      const lopsided = sides(to(list, ['a', 'c'], 'others'), st);
+      // Two cards off the same side: the stage rebalances by moving exactly one card (six cards,
+      // so every one of them floats at every size).
+      const six = list.slice(0, 6);
+      const six0 = sides(six, st);
+      expect(six0.size).toBe(6);
+      const lopsided = sides(to(six, ['a', 'c'], 'others'), st);
       const count = (m: Map<string, string>, s: string) => [...m.values()].filter((v) => v === s).length;
       expect(Math.abs(count(lopsided, 'L') - count(lopsided, 'R'))).toBeLessThanOrEqual(1);
-      expect([...lopsided].filter(([k, s]) => before.get(k) !== s)).toHaveLength(1);
+      expect([...lopsided].filter(([k, s]) => six0.get(k) !== s)).toHaveLength(1);
     }
   });
 
@@ -331,6 +435,16 @@ describe('bands and hit tests (F7, F12, FE1)', () => {
         if (view.mode === 'float') expect(Math.abs(p.queue.x + p.queue.width / 2 - (p.centre.x + p.centre.width / 2))).toBeLessThanOrEqual(1);
       }
     }
+  });
+
+  it('the queue band keeps one width when the stage resizes (no re-fit of the pill mid-resize, stage v2)', () => {
+    const widths = new Set<number>();
+    for (const width of [1100, 1224, 1384, 1424, 1544, 1864, 2400]) {
+      for (const view of [FLOAT, { mode: 'half' as const, card: 'a' }]) {
+        widths.add(planStage([card('a'), card('b')], view, { width, height: 900 }).queue.width);
+      }
+    }
+    expect([...widths]).toEqual([STAGE.QUEUE_MAX]);
   });
 
   it('the Others zone is a 168 x 128 target in the bottom-right corner; the centre is the ask target', () => {
