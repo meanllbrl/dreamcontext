@@ -4,6 +4,7 @@
 #
 #   bash scripts/verify/splash-webkit.sh          # the working-tree splash.html: MUST PASS
 #   bash scripts/verify/splash-webkit.sh --old    # the pre-fix splash.html: MUST FAIL (with Low Power Mode on)
+#   bash scripts/verify/splash-webkit.sh --intro  # the one-time intro, pressed, into the clip: MUST PASS
 #
 # Compiles scripts/verify/splash-webkit-probe.swift, wraps it in a minimal ad-hoc-signed .app
 # (an unbundled binary is not treated like an app by WebKit/AppKit, so it might not hit the
@@ -18,12 +19,14 @@ PAGES="$REPO/desktop/src-tauri/frontend-placeholder"
 OUT="$REPO/tmp/verify/splash-webkit"
 APP="$OUT/SplashProbe.app"
 OLD=0
+PAGE=splash.html
 # The last commit whose splash.html still played the clip itself; HEAD holds the fixed page once committed.
 OLD_PAGE_COMMIT=55c6ff92
 for arg in "$@"; do
   case "$arg" in
     --old) OLD=1 ;;
-    *) echo "splash-webkit: unknown argument \"$arg\" (expected --old)" >&2; exit 2 ;;
+    --intro) PAGE=intro.html ;;
+    *) echo "splash-webkit: unknown argument \"$arg\" (expected --old or --intro)" >&2; exit 2 ;;
   esac
 done
 
@@ -66,10 +69,10 @@ if [ "$OLD" = 1 ]; then
   LABEL="$OLD_PAGE_COMMIT"
 fi
 
-LOG="$OUT/$([ "$OLD" = 1 ] && echo old || echo new).log"
-echo "page: $LABEL splash.html   log: $LOG"
+LOG="$OUT/$([ "$OLD" = 1 ] && echo old || echo new)-${PAGE%.html}.log"
+echo "page: $LABEL $PAGE   log: $LOG"
 set +e
-"$BIN" "$ROOT" splash.html | tee "$LOG"
+"$BIN" "$ROOT" "$PAGE" | tee "$LOG"
 STATUS=${PIPESTATUS[0]}
 set -e
 exit "$STATUS"

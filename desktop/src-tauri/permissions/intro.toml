@@ -1,0 +1,15 @@
+"$schema" = "schemas/schema.json"
+
+# The one-time intro (frontend-placeholder/intro.html), the opening screen's first act until
+# this Mac has played it. It reports that it waits for a person, so the splash deadline steps
+# back, and that it was played or skipped, so the shell records it and never shows it again.
+# See `intro_hold` and `intro_seen` in src/splash.rs.
+[[permission]]
+identifier = "allow-intro-hold"
+description = "Tell the shell the one-time intro is on screen and waits for its click, so the opening screen's deadline steps back."
+commands.allow = ["intro_hold"]
+
+[[permission]]
+identifier = "allow-intro-seen"
+description = "Tell the shell the one-time intro was played or skipped, so it records that and never plays it again."
+commands.allow = ["intro_seen"]
