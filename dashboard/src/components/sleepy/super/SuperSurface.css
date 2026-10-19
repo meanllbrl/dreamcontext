@@ -512,7 +512,7 @@
 }
 .super-queue-btn:hover { border-color: var(--color-border-hover); }
 .super-queue-btn--option { max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
-.super-queue-btn--allow { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-text); }
+.super-queue-btn--allow { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
 
 .super-empty-hint {
   position: absolute;
