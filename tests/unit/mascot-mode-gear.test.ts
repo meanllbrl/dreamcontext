@@ -40,10 +40,14 @@ describe('gearForMode', () => {
     expect(gearForMode('assistant')).toBe('assistant');
   });
 
+  it('the Super Agent wears the cape (owner decision 11)', () => {
+    expect(gearForMode('super')).toBe('super');
+  });
+
   it('is total over every mode the server accepts', () => {
     for (const mode of CHAT_MODES) {
       const gear = gearForMode(mode);
-      expect(gear === null || gear === 'plan' || gear === 'develop' || gear === 'assistant').toBe(true);
+      expect(gear === null || gear === 'plan' || gear === 'develop' || gear === 'assistant' || gear === 'super').toBe(true);
     }
   });
 });
@@ -64,8 +68,8 @@ describe('the gear reaches the surfaces that draw a chat', () => {
     const src = sleepy('SleepyMascot.tsx');
     const css = sleepy('SleepyMascot.css');
     const jarvis = src.slice(src.indexOf("kind === 'assistant' ?"), src.indexOf("kind === 'plan' ?"));
-    const plan = src.slice(src.indexOf("kind === 'plan' ?"), src.indexOf(') : ('));
-    const develop = src.slice(src.indexOf(') : ('));
+    const plan = src.slice(src.indexOf("kind === 'plan' ?"), src.indexOf("kind === 'develop' ?"));
+    const develop = src.slice(src.indexOf("kind === 'develop' ?"));
     // Plan writes: a pencil and the ink it lays down. Develop forges: a hammer and the joint
     // it beats. J.A.R.V.I.S converses: a microphone and a level meter. Motion is what carries
     // the difference at the 24px dock size, where the detail is gone — so the animated parts
@@ -87,6 +91,60 @@ describe('the gear reaches the surfaces that draw a chat', () => {
     expect((css.match(loop('vu|mic|say\\d', '3.2')) ?? []).length).toBeGreaterThanOrEqual(4);
   });
 
+  it('the Super Agent wears ONE costume, asked for by name: a cape fastened by the dream gem (decision 11)', () => {
+    const src = sleepy('SleepyMascot.tsx');
+    const css = sleepy('SleepyMascot.css');
+    const cape = src.slice(src.indexOf("kind === 'super' ?"), src.indexOf("kind === 'assistant' ?"));
+    // The cape (two flaps) and the clasp — the brand's folded diamond, crown over pavilion.
+    expect(cape).toMatch(/smascot-cape-cloth--l/);
+    expect(cape).toMatch(/smascot-cape-cloth--r/);
+    expect(cape).toMatch(/smascot-gem-crown/);
+    expect(cape).toMatch(/smascot-gem-pavilion/);
+    // The rule's comment records the exception rather than contradicting it.
+    expect(src).toMatch(/ONE COSTUME, asked for by name/);
+    // Put on ONCE (a one-shot entrance, not on the contract's variables)…
+    expect(css).toMatch(/\.smascot-cape-entering \.smascot-cape \{[^}]*animation: smascot-cape-on 400ms [^;]*;/);
+    expect(css).not.toMatch(/animation: smascot-cape-on[^;]*infinite/);
+    // …then the flutter is the loop: AMBIENT, so it stops unfocused and in Light mode.
+    const loop = /animation: var\(--dc-motion-ambient-name, smascot-cape-flutter-[lr]\) 3\.2s[^;]*infinite;/g;
+    expect((css.match(loop) ?? []).length).toBe(2);
+  });
+
+  it('the cape at rest is the cape hanging still: every flutter frame starts and ends at identity', () => {
+    const css = sleepy('SleepyMascot.css');
+    for (const name of ['smascot-cape-flutter-l', 'smascot-cape-flutter-r', 'smascot-cape-on']) {
+      const kf = css.slice(css.indexOf(`@keyframes ${name}`));
+      const body = kf.slice(0, kf.indexOf('}\n}') + 3);
+      expect(body, name).toMatch(/100%[^{]*\{[^}]*(rotate\(0deg\) scale\(1, 1\)|translateY\(0\) scale\(1, 1\))/);
+      expect(body, name).not.toMatch(/\b(width|height|top|left|fill|stroke)\s*:/);
+    }
+  });
+
+  it('the cape goes on only when the hand-over asks (capeOn); everywhere else it is simply on', () => {
+    const src = sleepy('SleepyMascot.tsx');
+    const css = sleepy('SleepyMascot.css');
+    // Opt-in, default off: the dock chip, the mode menu and a reload never play the entrance.
+    expect(src).toMatch(/capeOn = false/);
+    expect(src).toMatch(/gear === 'super' && capeOn \? ' smascot-cape-entering' : ''/);
+    // The bare cape rule carries no animation: the entrance lives only on the opted-in face.
+    const bare = css.slice(css.indexOf('.smascot-cape {'));
+    expect(bare.slice(0, bare.indexOf('}'))).not.toMatch(/animation/);
+  });
+
+  it('Light mode and reduced motion: no cape entrance, no transform — the cape is simply on (D18)', () => {
+    const css = sleepy('SleepyMascot.css');
+    expect(css).toMatch(/:root\[data-light='true'\] \.smascot-cape-entering \.smascot-cape \{ animation: none; \}/);
+    const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(reduced.slice(0, reduced.indexOf('}'))).toMatch(/\.smascot-cape,[\s\S]*animation: none !important;/);
+    // The SuperSurface gate decides it once at mount, and never in the crossfade's two cases.
+    const surface = sleepy('super', 'SuperSurface.tsx');
+    expect(surface).toMatch(/useState\(\(\) => motion === 'running' && !prefersReducedMotion\(\) && !isLightMode\(\)\)/);
+  });
+
+  it('the Super Agent keeps its smile: nothing is worked on under the chin, only fastened', () => {
+    expect(sleepy('SleepyMascot.css')).toMatch(/\.smascot-wears-super \.smascot-smile \{ visibility: visible; \}/);
+  });
+
   it('J.A.R.V.I.S\'s loop is a CONVERSATION — it listens, then it answers', () => {
     // The two beats are the whole idea, and they live in the amplitude of one keyframe: low
     // while listening, tall while answering. That is what survives at 26px once the mic is
@@ -101,7 +159,7 @@ describe('the gear reaches the surfaces that draw a chat', () => {
   it('every moving part stands down under prefers-reduced-motion', () => {
     const css = sleepy('SleepyMascot.css');
     const block = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
-    for (const part of ['.smascot-pencil', '.smascot-ink', '.smascot-weld', '.smascot-flame', '.smascot-hammer', '.smascot-spark', '.smascot-vu-bar', '.smascot-mic', '.smascot-say']) {
+    for (const part of ['.smascot-pencil', '.smascot-ink', '.smascot-weld', '.smascot-flame', '.smascot-hammer', '.smascot-spark', '.smascot-vu-bar', '.smascot-mic', '.smascot-say', '.smascot-cape', '.smascot-cape-cloth']) {
       expect(block).toContain(part);
     }
   });

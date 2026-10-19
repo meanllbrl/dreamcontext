@@ -18,6 +18,7 @@ import { runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } fro
 import * as queue from './chat/chatQueue';
 import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
+import { superEventText } from './super/superHandover';
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -74,6 +75,10 @@ export interface ChatUserItem {
    *  CLI only folds it in at the next tool boundary, so the tool calls rendered just below it
    *  were decided before it was read. */
   steered?: true;
+  /** A turn the Super Agent's inbox injected (`super_event`), drawn as a small event chip. The
+   *  server wrote the real text into the process; this item stands for it live, so it never
+   *  matches a transcript row and the uuid backfill skips it. */
+  superEvent?: string;
 }
 export interface ChatTextItem { kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number }
 /** One Assistant text block as the notch should show it (`ChatSession.onPresent`). A block with
@@ -183,6 +188,16 @@ export type AssistantCommandHandler = (cmd: { id: string; verb: string; args: Re
 /** Runs one window-control verb this chat's own agent issued (`dreamcontext window …`). */
 export type WindowCommandHandler = (cmd: { verb: string; args: Record<string, unknown> }) =>
   Promise<{ ok: true; result?: unknown } | { ok: false; error: string }>;
+
+/** Runs one Super Agent verb only the window can run (`delegate`, `answer`) — sent down the
+ *  SUPER chat's own socket as `super_command`, answered with `super_command_result`. */
+export type SuperCommandHandler = WindowCommandHandler;
+
+/** What the server pushes about the Super Agent down its own socket: the whole state after
+ *  every store write, and the kind of each turn its inbox opens. Never conversation state. */
+export type SuperSignal =
+  | { kind: 'state'; state: Record<string, unknown> }
+  | { kind: 'event'; eventKind: string; child: string };
 
 export interface ChatResultInfo {
   success: boolean;
@@ -550,6 +565,21 @@ export interface ChatSession {
   /** The surface that draws this chat runs the window verbs its agent sends
    *  (`dreamcontext window …`). Without one, every verb answers `no_window`. */
   setWindowHandler: (fn: WindowCommandHandler | null) => void;
+  /** The Super Agent's window-side verbs (`delegate`, `answer`). Only the super chat gets one;
+   *  without it every `super_command` answers `no_window`. */
+  setSuperHandler: (fn: SuperCommandHandler | null) => void;
+  /** Follow the `super_state` / `super_event` pushes on this socket. Returns the unsubscribe. */
+  onSuper: (fn: (signal: SuperSignal) => void) => () => void;
+  /**
+   * A child of a handed-over Super Agent (D16): its question raises NO alarm — no chime, no
+   * banner, no Dock bounce, no attention badge — because the Super Agent's queue decides what
+   * reaches the owner, and raises the one alarm itself. Set from every `super_state`.
+   */
+  superChild: boolean;
+  setSuperChild: (on: boolean) => void;
+  /** Called with the composer's text on every keystroke (`syncDraft`). The Super Agent's chat
+   *  uses it for the owner-activity lease; the text itself never leaves the window. */
+  setDraftListener: (fn: ((text: string) => void) | null) => void;
   /** Answer a pending permission request (or a plain non-question `can_use_tool` prompt). */
   answer: (requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }) => void;
   /** Answer a pending AskUserQuestion card — builds the load-bearing `{questions, answers}`
@@ -1041,6 +1071,7 @@ export function createChatSession(
 
   let focusTarget: HTMLElement | null = null;
   let transcriptRepin: (() => void) | null = null;
+  let draftListener: ((text: string) => void) | null = null;
   let disposed = false;
 
   // ── Phone: is this chat on screen (the server's push suppression, D2) ──────────────────
@@ -1065,6 +1096,7 @@ export function createChatSession(
     // "don't inject into a busy session" guards must all see it (a spawn with no prompt
     // stays idle — it is genuinely waiting for the user).
     busy: serverSubmitsPrompt, asking: false, attention: false, agentsWorking: false, minimized: false,
+    superChild: false,
     capabilities: [],
     model,
     effort,
@@ -1099,6 +1131,10 @@ export function createChatSession(
     answerQuestion,
     setCommandHandler,
     setWindowHandler,
+    setSuperHandler,
+    onSuper,
+    setSuperChild: (on: boolean) => { session.superChild = on; },
+    setDraftListener: (fn) => { draftListener = fn; },
     interrupt,
     bargeInSpeech,
     onSpeaking,
@@ -1169,7 +1205,9 @@ export function createChatSession(
     const hadAskBefore = conv.pending.some((p) => p.kind === 'question' || p.kind === 'plan');
     conv = { ...conv, pending: [...others, entry] };
     session.asking = conv.pending.length > 0;
-    if (!hadAskBefore) {
+    // A handed-over Super Agent's child is quiet (D16): its queue decides what reaches the
+    // owner and raises the ONE alarm itself, so nothing here chimes, banners, bounces or badges.
+    if (!hadAskBefore && !session.superChild) {
       session.attention = true;
       // Chat is the one surface that can put the actual words in the banner: the ask
       // arrives as structured JSON, so what the notification shows is what the card shows.
@@ -1198,6 +1236,7 @@ export function createChatSession(
     // Mirror only — no subscriber fire (a per-keystroke transcript re-render buys nothing)
     // and no epoch bump (the textarea already shows this text; adoption would be a no-op).
     conv = { ...conv, draft: text };
+    try { draftListener?.(text); } catch { /* a listener never breaks typing */ }
   }
 
   function dismissHandoff(): void {
@@ -2002,6 +2041,22 @@ export function createChatSession(
     if (ev.kind === 'assistant-command') { void runCommand(ev); return; }
     // Nor is a window verb: the surface runs it and the answer goes back up the socket.
     if (ev.kind === 'window-command') { void runWindowCommand(ev); return; }
+    // The Super Agent's window-side verbs, the same way (their own subtype and result frame).
+    if (ev.kind === 'super-command') { void runSuperCommand(ev); return; }
+    // The Super Agent's state is the surface's, never this conversation's.
+    if (ev.kind === 'super-state') { emitSuper({ kind: 'state', state: ev.state }); return; }
+    // An inbox-opened turn: the server is about to write it; stand for it with a chip.
+    if (ev.kind === 'super-event') {
+      applyAndNotify(() => {
+        const item: ChatUserItem = {
+          kind: 'user', id: `super-${id}-${++superEventSeq}`, text: superEventText(ev.eventKind, ev.child),
+          ts: Date.now(), superEvent: ev.eventKind,
+        };
+        conv = { ...conv, items: [...conv.items, item] };
+      });
+      emitSuper({ kind: 'event', eventKind: ev.eventKind, child: ev.child });
+      return;
+    }
     // Nor is a browser frame: it feeds the small live window in the browser step and nothing else,
     // so six frames a second never re-render the transcript (chat/browserLiveStore.ts).
     if (ev.kind === 'browser-frame') { pushBrowserFrame(session.id, ev.frame); return; }
@@ -2325,6 +2380,32 @@ export function createChatSession(
       : { type: 'window_command_result', id: cmd.id, ok: false, error: out.error });
   }
 
+  // ── The Super Agent (its own chat only: the server sends these frames nowhere else) ──
+  let superHandler: SuperCommandHandler | null = null;
+  let superEventSeq = 0;
+  const superListeners = new Set<(signal: SuperSignal) => void>();
+  function setSuperHandler(fn: SuperCommandHandler | null): void { superHandler = fn; }
+  function onSuper(fn: (signal: SuperSignal) => void): () => void {
+    superListeners.add(fn);
+    return () => { superListeners.delete(fn); };
+  }
+  function emitSuper(signal: SuperSignal): void {
+    for (const fn of [...superListeners]) {
+      try { fn(signal); } catch (err) { console.warn('[chat] super listener failed:', err); }
+    }
+  }
+  async function runSuperCommand(cmd: { id: string; verb: string; args: Record<string, unknown> }): Promise<void> {
+    let out: Awaited<ReturnType<SuperCommandHandler>>;
+    try {
+      out = superHandler ? await superHandler({ verb: cmd.verb, args: cmd.args }) : { ok: false, error: 'no_window' };
+    } catch (err) {
+      out = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    sendControl(out.ok
+      ? { type: 'super_command_result', id: cmd.id, ok: true, result: out.result ?? null }
+      : { type: 'super_command_result', id: cmd.id, ok: false, error: out.error });
+  }
+
   function sendControl(frame: ClientControl): boolean {
     if (ws.readyState !== WebSocket.OPEN) return false;
     try { ws.send(JSON.stringify(frame)); return true; } catch { return false; }
@@ -2590,7 +2671,9 @@ export function createChatSession(
         let e = entries.length - 1;
         for (let i = items.length - 1; i >= 0 && e >= 0; i--) {
           const it = items[i];
-          if (it.kind !== 'user') continue;
+          // A super event chip stands for text the server wrote; it matches no row, and a
+          // search for it would run past every older row and stop the backfill there.
+          if (it.kind !== 'user' || it.superEvent) continue;
           while (e >= 0 && entries[e].text !== it.text) e--;
           if (e < 0) break;
           if (!it.uuid) { items[i] = { ...it, uuid: entries[e].uuid }; changed = true; }

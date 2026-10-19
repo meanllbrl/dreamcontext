@@ -576,6 +576,25 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               agent, not while auditing what is installed. The card's own text still says
               where the key lives. */}
           <VoiceSettings />
+
+          {/* The Super Agent, the very last row (owner, 2026-10-19): OFF by default for everyone
+              while it is being tried; on, the Chat header shows the hand-over button. */}
+          {agentCfg && agentCfg.enabled && (
+            <SettingGroup title={t('settings.agents.super.title')} badge={<MaturityTag level="beta" />}>
+              <SettingRow
+                title={t('settings.agents.super')}
+                hint={t('settings.agents.super_hint')}
+                more={t('settings.agents.super_more')}
+                control={
+                  <Toggle
+                    label={t('settings.agents.super')}
+                    checked={agentCfg.superAgent}
+                    onChange={(next) => updateAgentCfg({ superAgent: next })}
+                  />
+                }
+              />
+            </SettingGroup>
+          )}
         </section>
       )}
       {activeSection === 'memory' && (

@@ -946,6 +946,9 @@ interface AgentUiSettings {
   /** Light mode (Settings → Performance): 'auto' (on for ≤ 8 GB or on battery), 'on', 'off'.
    *  Mirrors dashboard/src/lib/agentSettings (the effective value is computed client-side). */
   lightMode: 'auto' | 'on' | 'off';
+  /** The Super Agent's hand-over button (Settings → Chat, last row): OFF by default, only an
+   *  explicit `true` shows it. Mirrors dashboard/src/lib/agentSettings. */
+  superAgent: boolean;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -961,6 +964,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   chatDefaultModel: '',
   chatDefaultEffort: '',
   lightMode: 'auto',
+  superAgent: false,
 };
 
 function agentSettingsPath(): string {
@@ -1012,6 +1016,8 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     chatDefaultEffort: sanitizeEffort(typeof raw.chatDefaultEffort === 'string' ? raw.chatDefaultEffort : null),
     // Only an explicit 'on' / 'off' pins Light mode; anything else is Auto.
     lightMode: raw.lightMode === 'on' || raw.lightMode === 'off' ? raw.lightMode : 'auto',
+    // Default-FALSE: only an explicit `true` turns the Super Agent on.
+    superAgent: raw.superAgent === true,
   };
 }
 

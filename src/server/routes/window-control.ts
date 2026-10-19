@@ -2,7 +2,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isLoopback } from './agent-spawn-shared.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
-import { WINDOW_TOKEN_HEADER, channelFor, sendWindowCommand } from '../../lib/window-control.js';
+import { WINDOW_TOKEN_HEADER, channelFor, identityOf, sendWindowCommand } from '../../lib/window-control.js';
+import { superIndex } from '../../lib/super/store.js';
+import { getChat } from '../../lib/assistant/chat-registry.js';
 
 /**
  * `/api/window/:verb` — a project chat's agent drives the chat surface it is drawn in
@@ -91,6 +93,72 @@ export function pickWindowArgs(verb: WindowVerb, b: Record<string, unknown>): Re
   }
 }
 
+// ─── The Super Agent's boundaries on window verbs (plan-r7 D4b) ─────────────────
+
+/** The tab ids that name `sessionId`'s chat: its pin id and its live conversation id. */
+function tabIdsOf(sessionId: string): Set<string> {
+  const ids = new Set([sessionId]);
+  const conv = getChat(sessionId)?.conversationId;
+  if (conv) ids.add(conv);
+  return ids;
+}
+
+/**
+ * Why the caller may not run `verb` with `args`, or null. Every tab argument (`tab`, and `into`
+ * for `join`) is matched against the super session by pin id AND conversation id:
+ *  - `mode` on the super tab is refused for EVERY token, the super's own included (only the
+ *    owner's button leaves `super`);
+ *  - no token but the super session's own may target the super tab;
+ *  - the super session's token reaches only its recorded children and its own tab, and calls no
+ *    `new`/`split` while handed over (`super delegate` is the one spawn path, so the cap sees
+ *    every child);
+ *  - a recorded child's token, while handed over, reaches no sibling and calls no `new`/`split`.
+ * A channel minted with no identity (tests) is nobody and gets no super rule. The browser
+ * executor re-checks what it can (its own tab ids).
+ */
+export function superWindowRefusal(token: string, verb: WindowVerb, args: Record<string, unknown>): string | null {
+  const who = identityOf(token);
+  if (!who) return null;
+  const idx = superIndex(who.contextRoot);
+  if (!idx.session) return null;
+  const superTabs = tabIdsOf(idx.session);
+  const callerIsSuper = who.sessionId === idx.session && who.mode === 'super';
+  const callerTabs = tabIdsOf(who.sessionId);
+  const named = [args.tab, args.into].filter((t): t is string => typeof t === 'string' && !!t);
+  const targetsSelfImplicitly = verb !== 'state' && verb !== 'new' && args.tab === undefined;
+  const isSuperTab = (t: string) => superTabs.has(t);
+  const childTabs = new Set<string>();
+  for (const sid of idx.children) for (const id of tabIdsOf(sid)) childTabs.add(id);
+
+  if (verb === 'mode' && (named.some(isSuperTab) || (targetsSelfImplicitly && (callerIsSuper || who.sessionId === idx.session)))) {
+    return 'the Super Agent\'s mode changes only with the owner\'s Take back button';
+  }
+  if (!callerIsSuper && named.some(isSuperTab)) return 'the Super Agent\'s tab is not yours to drive';
+  if (callerIsSuper) {
+    if (idx.enabled && (verb === 'new' || verb === 'split')) return 'use `dreamcontext super delegate` to start a child (it counts against the cap)';
+    for (const t of named) if (!isSuperTab(t) && !childTabs.has(t)) return 'you drive only your own children (`dreamcontext super state` lists them)';
+    return null;
+  }
+  if (idx.enabled && idx.children.has(who.sessionId)) {
+    if (verb === 'new' || verb === 'split') return 'while the Super Agent leads this project, only it starts chats';
+    for (const t of named) if (childTabs.has(t) && !callerTabs.has(t)) return 'a sibling chat is not yours to drive; ask the Super Agent';
+  }
+  return null;
+}
+
+/** A `state` result without the super tab (what every caller but the super itself sees). */
+export function omitSuperTabs(result: unknown, superTabs: ReadonlySet<string>): unknown {
+  if (Array.isArray(result)) {
+    return result
+      .filter((x) => !(x && typeof x === 'object' && typeof (x as { tab?: unknown }).tab === 'string' && superTabs.has((x as { tab: string }).tab)))
+      .map((x) => omitSuperTabs(x, superTabs));
+  }
+  if (result && typeof result === 'object') {
+    return Object.fromEntries(Object.entries(result as Record<string, unknown>).map(([k, v]) => [k, omitSuperTabs(v, superTabs)]));
+  }
+  return result;
+}
+
 /** POST /api/window/:verb */
 export async function handleWindowCommand(req: IncomingMessage, res: ServerResponse, params: Params): Promise<void> {
   if (!isLoopback(req)) { sendError(res, 403, 'window_local_only', 'Window control is only reachable from this machine.'); return; }
@@ -100,7 +168,17 @@ export async function handleWindowCommand(req: IncomingMessage, res: ServerRespo
   if (!(WINDOW_VERBS as readonly string[]).includes(verb)) { sendError(res, 404, 'unknown_verb', `No window verb "${params.verb}". Verbs: ${WINDOW_VERBS.join(', ')}.`); return; }
   const args = pickWindowArgs(verb, (await parseJsonBody(req)) ?? {});
   if (typeof args === 'string') { sendError(res, 400, 'invalid_args', args); return; }
+  const refusal = superWindowRefusal(token, verb, args);
+  if (refusal) { sendError(res, 403, 'super_refused', refusal); return; }
   const r = await sendWindowCommand(token, verb, args);
+  if (r.ok && verb === 'state') {
+    const who = identityOf(token);
+    const session = who ? superIndex(who.contextRoot).session : null;
+    if (session && who && who.sessionId !== session) {
+      sendJson(res, 200, { ok: true, result: omitSuperTabs(r.result, tabIdsOf(session)) });
+      return;
+    }
+  }
   if (r.ok) { sendJson(res, 200, { ok: true, result: r.result }); return; }
   sendJson(res, r.error === 'no_window' ? 409 : 200, {
     ok: false,

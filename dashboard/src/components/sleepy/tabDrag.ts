@@ -225,13 +225,38 @@ export interface TabDragOptions {
 
 interface PointerLike { pointerId: number; clientX: number; clientY: number }
 
+/** What a gesture built on {@link armPointerDrag} can do once it has begun. */
+export interface PointerDragControl {
+  /** Something under the drag moved (a scroll, a resize, a layout change): the next frame re-measures. */
+  remeasure: () => void;
+  /** Stop without acting (the dragged thing went away, or the store was cleared from outside). */
+  cancel: () => void;
+}
+
+export interface PointerDragOptions {
+  /** Window-level events: Escape, blur, resize, scroll, and the post-drop click. */
+  win: TabDragOptions['win'];
+  raf?: (cb: () => void) => unknown;
+  /** The pointer moved past the threshold: the drag starts. */
+  onBegin: (ctl: PointerDragControl) => void;
+  /** At most once per frame while dragging: the pointer at (x, y), (dx, dy) from the press. */
+  onFrame: (x: number, y: number, dx: number, dy: number) => void;
+  /** A scroll or resize under the drag; the next `onFrame` follows. */
+  onRemeasure?: () => void;
+  /** Once, when a drag that BEGAN ends: `drop` on a release, false on any cancel. */
+  onEnd: (drop: boolean, x: number, y: number) => void;
+}
+
 /**
- * A press on a tab. Returns the disarm (the caller rarely needs it: the gesture tears itself
- * down on release / cancel). Nothing happens until the pointer has moved
- * {@link TAB_DRAG_THRESHOLD_PX}; a release before that is a plain click and is left alone.
+ * The pointer gesture under every drag in the surface (tabs, and the Super Agent's cards), on
+ * pointer events. A press ARMS; a {@link TAB_DRAG_THRESHOLD_PX} move begins it and captures
+ * the pointer; frames are coalesced to one per animation frame; Escape, a window blur, a lost
+ * capture, a pointercancel or the pressed element leaving the DOM cancel it; no text selection
+ * may start while it is held; the click that follows a drop is swallowed. A release before the
+ * threshold is a plain click and is left alone. Returns the disarm.
  */
-export function armTabDrag(down: PointerLike, el: TabDragElement, sid: string, opts: TabDragOptions): () => void {
-  const { store, win } = opts;
+export function armPointerDrag(down: PointerLike, el: TabDragElement, opts: PointerDragOptions): () => void {
+  const { win } = opts;
   const raf = opts.raf ?? ((cb: () => void) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(cb) : win.setTimeout(cb, 16)));
   const id = down.pointerId;
   const x0 = down.clientX, y0 = down.clientY;
@@ -239,12 +264,6 @@ export function armTabDrag(down: PointerLike, el: TabDragElement, sid: string, o
   let dragging = false;
   let done = false;
   let framePending = false;
-  // Scroll fires per scrolled element (every streaming transcript); measure once per frame.
-  let geomDirty = false;
-  let geom: DragGeometry = { groups: [], panes: [] };
-  let ghost: TabGhost | null = null;
-  let offStore: (() => void) | null = null;
-  let offLayout: (() => void) | null = null;
 
   const frame = () => {
     framePending = false;
@@ -252,37 +271,33 @@ export function armTabDrag(down: PointerLike, el: TabDragElement, sid: string, o
     // Unmounted mid-drag (the overlay folded, the strip re-mounted at a breakpoint): its
     // capture went to the document, so no release may ever reach it. Stop without acting.
     if (el.isConnected === false) { finish(false); return; }
-    if (geomDirty) { geomDirty = false; geom = opts.measure(); }
-    ghost?.move(x - x0, y - y0);
-    store.setTarget(hitTestTabDrop(geom, x, y, sid));
+    opts.onFrame(x, y, x - x0, y - y0);
   };
   const schedule = () => {
     if (framePending) return;
     framePending = true;
     raf(frame);
   };
+  // Scroll fires per scrolled element (every streaming transcript); measure once per frame.
+  function onRemeasure() {
+    if (!dragging || done) return;
+    opts.onRemeasure?.();
+    schedule();
+  }
 
   const begin = () => {
     dragging = true;
-    // A selection anchored before the threshold (a press beside the tab's text) would grow
-    // over every pane the drag crosses; drop it once, as the drag begins.
+    // A selection anchored before the threshold (a press beside the text) would grow over
+    // everything the drag crosses; drop it once, as the drag begins.
     try { win.getSelection?.()?.removeAllRanges(); } catch { /* no selection API */ }
-    geom = opts.measure();
-    ghost = opts.ghost();
-    store.start(sid);
-    // Cleared from outside (the dragged tab's pane closed): stop without acting.
-    offStore = store.subscribe(() => {
-      const s = store.get();
-      if (!s || s.sid !== sid) finish(false, false);
-    });
-    offLayout = store.onLayout(onRemeasure);
+    opts.onBegin({ remeasure: onRemeasure, cancel: () => finish(false) });
     win.addEventListener('scroll', onRemeasure, CAPTURE);
     win.addEventListener('resize', onRemeasure);
     schedule();
   };
 
-  /** Tear down; on `drop`, run the executor with the target under the release point. */
-  const finish = (drop: boolean, endStore = true) => {
+  /** Tear down; a drag that began hears `onEnd` once. */
+  const finish = (drop: boolean) => {
     if (done) return;
     done = true;
     el.removeEventListener('pointermove', moveL);
@@ -296,20 +311,11 @@ export function armTabDrag(down: PointerLike, el: TabDragElement, sid: string, o
     win.removeEventListener('selectstart', noSelect, CAPTURE);
     win.removeEventListener('scroll', onRemeasure, CAPTURE);
     win.removeEventListener('resize', onRemeasure);
-    offStore?.();
-    offStore = null;
-    offLayout?.();
-    offLayout = null;
-    ghost?.remove();
-    ghost = null;
     if (!dragging) return;
     try { if (el.hasPointerCapture?.(id)) el.releasePointerCapture?.(id); } catch { /* released */ }
-    if (drop && geomDirty) geom = opts.measure();
-    const target = drop ? hitTestTabDrop(geom, x, y, sid) : null;
-    if (endStore) store.end();
     // The click the browser dispatches right after this release belongs to the drag.
     if (drop) swallowNextClick(win);
-    if (target) opts.onDrop(sid, target);
+    opts.onEnd(drop, x, y);
   };
 
   function onMove(e: PointerLike) {
@@ -332,31 +338,26 @@ export function armTabDrag(down: PointerLike, el: TabDragElement, sid: string, o
     if (e.pointerId === id) finish(false);
   }
   // Capture is released on every pointerup too, AFTER it — by then `done` is set, so only a
-  // capture lost mid-gesture (the tab unmounted, the OS took the pointer) cancels.
+  // capture lost mid-gesture (the element unmounted, the OS took the pointer) cancels.
   function onLost() { finish(false); }
   function onKey(e: KeyboardEvent) {
     if (e.key !== 'Escape') return;
     if (dragging) { e.preventDefault(); e.stopPropagation(); }
     finish(false);
   }
-  function onRemeasure() {
-    if (!dragging || done) return;
-    geomDirty = true;
-    schedule();
-  }
 
   const moveL = onMove as unknown as EventListener;
   const upL = onUp as unknown as EventListener;
   const keyL = onKey as unknown as EventListener;
   const cancelL = onCancelPointer as unknown as EventListener;
-  // Captured from the press, so a fast first move that leaves the tab is still seen (and the
-  // plain click that follows a press without a drag still lands on the tab).
+  // Captured from the press, so a fast first move that leaves the element is still seen (and
+  // the plain click that follows a press without a drag still lands on it).
   try { el.setPointerCapture?.(id); } catch { /* the pointer is already gone */ }
   el.addEventListener('pointermove', moveL);
   el.addEventListener('pointerup', upL);
   el.addEventListener('pointercancel', onCancel);
   el.addEventListener('lostpointercapture', onLost);
-  // The tab can unmount while held (its session closed elsewhere): its capture and its own
+  // The element can unmount while held (its session closed elsewhere): its capture and its own
   // listeners go with it, and without these the selectstart guard below would outlive the
   // press until the next Escape or blur. The first of the two copies to fire wins.
   win.addEventListener('pointerup', upL, CAPTURE);
@@ -364,11 +365,59 @@ export function armTabDrag(down: PointerLike, el: TabDragElement, sid: string, o
   win.addEventListener('keydown', keyL, CAPTURE);
   win.addEventListener('blur', onCancel);
   // WebKit starts a text selection when the held pointer reaches selectable text, whatever
-  // the tab's own user-select says; across long transcripts that selection is the whole
+  // the element's own user-select says; across long transcripts that selection is the whole
   // frame budget (measured 2026-10-17: 206k characters, 130 ms frames). No selection may
-  // start while a tab is held.
+  // start while something is held.
   win.addEventListener('selectstart', noSelect, CAPTURE);
   return () => finish(false);
+}
+
+/**
+ * A press on a tab. Returns the disarm (the caller rarely needs it: the gesture tears itself
+ * down on release / cancel). Nothing happens until the pointer has moved
+ * {@link TAB_DRAG_THRESHOLD_PX}; a release before that is a plain click and is left alone.
+ */
+export function armTabDrag(down: PointerLike, el: TabDragElement, sid: string, opts: TabDragOptions): () => void {
+  const { store } = opts;
+  let geomDirty = false;
+  let geom: DragGeometry = { groups: [], panes: [] };
+  let ghost: TabGhost | null = null;
+  let offStore: (() => void) | null = null;
+  let offLayout: (() => void) | null = null;
+  // The store was cleared from outside (the dragged tab's pane closed): it is already ended.
+  let cleared = false;
+  return armPointerDrag(down, el, {
+    win: opts.win,
+    raf: opts.raf,
+    onBegin: (ctl) => {
+      geom = opts.measure();
+      ghost = opts.ghost();
+      store.start(sid);
+      offStore = store.subscribe(() => {
+        const s = store.get();
+        if (!s || s.sid !== sid) { cleared = true; ctl.cancel(); }
+      });
+      offLayout = store.onLayout(ctl.remeasure);
+    },
+    onRemeasure: () => { geomDirty = true; },
+    onFrame: (x, y, dx, dy) => {
+      if (geomDirty) { geomDirty = false; geom = opts.measure(); }
+      ghost?.move(dx, dy);
+      store.setTarget(hitTestTabDrop(geom, x, y, sid));
+    },
+    onEnd: (drop, x, y) => {
+      offStore?.();
+      offStore = null;
+      offLayout?.();
+      offLayout = null;
+      ghost?.remove();
+      ghost = null;
+      if (drop && geomDirty) geom = opts.measure();
+      const target = drop ? hitTestTabDrop(geom, x, y, sid) : null;
+      if (!cleared) store.end();
+      if (target) opts.onDrop(sid, target);
+    },
+  });
 }
 
 function noSelect(e: Event): void {

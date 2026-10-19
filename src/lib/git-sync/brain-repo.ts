@@ -212,6 +212,8 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     'state/.brain-local.json',
     'state/.lab-prefs.json',
     'state/.whiteboard-prefs.json',
+    // The Super Agent's hand-over state: this machine's live sessions, layout and queue.
+    'state/.super-agent.json',
     // Lab freshness checks are per machine (an unchanged probe must never dirty
     // the synced cache), and a board materialize staging dir is transient.
     'state/.lab-freshness.json',
@@ -290,6 +292,7 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   '_dream_context/state/.auto-upgrade.json',
   '_dream_context/state/.lab-prefs.json',
   '_dream_context/state/.whiteboard-prefs.json',
+  '_dream_context/state/.super-agent.json',
   '_dream_context/state/.lab-freshness.json',
   '_dream_context/lab/.boards-staging-*/',
   '_dream_context/state/.tasks-sync.lock',

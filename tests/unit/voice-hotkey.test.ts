@@ -180,11 +180,16 @@ describe('the Voice card is a folded ALPHA group at the bottom of the AGENT sect
     expect(at).toBeLessThan(nextSection);         // inside the agents block, before the next
   });
 
-  it('is the LAST thing in that section', () => {
+  it('is the LAST thing in that section, but for the Super Agent switch under it', () => {
     const at = page.indexOf('<VoiceSettings />');
     const close = page.indexOf('</section>', at);
-    // Nothing but the closing tags between the card and the end of the section.
-    expect(page.slice(at + '<VoiceSettings />'.length, close).trim()).toBe('');
+    const rest = page.slice(at + '<VoiceSettings />'.length, close);
+    // The owner put the Super Agent switch at the very bottom (2026-10-19): one group after the
+    // card, and nothing else between the card and the end of the section.
+    expect((rest.match(/<SettingGroup/g) ?? []).length).toBe(1);
+    expect(rest).toMatch(/settings\.agents\.super\.title/);
+    const withoutSuper = rest.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\{agentCfg && agentCfg\.enabled && \([\s\S]*\)\}/, '');
+    expect(withoutSuper.trim()).toBe('');
   });
 
   it('renders folded, with an ALPHA chip', () => {

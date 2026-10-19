@@ -1,0 +1,283 @@
+import { useEffect, useReducer, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { useI18n } from '../../../context/I18nContext';
+import type { SuperChild, SuperContainer as Container } from '../../../lib/superTypes';
+import type { WidgetSize } from '../../../lib/whiteboardWidgets';
+import { InsightView } from '../chat/InsightView';
+import { BoardEmbed, BoardFullscreen } from '../chat/BoardEmbed';
+import { DocumentReader } from '../../appLink/DocumentReader';
+import { KnowledgeWidget } from '../../whiteboard/widgets/KnowledgeWidget';
+import { TaskWidget } from '../../whiteboard/widgets/TaskWidget';
+import { WebWidget } from '../../whiteboard/widgets/WebWidget';
+import '../../whiteboard/widgets/widgets.css';
+import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
+import type { ChatSession } from '../chatSession';
+import { AgentCard } from './AgentCard';
+import type { CardPlan } from './superLayout';
+
+export const KIND_GLYPH: Record<Container['kind'], string> = {
+  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣',
+};
+
+/** A whiteboard's board file, from its slug (`whiteboards/<slug>/<slug>.excalidraw.md`). */
+export function whiteboardPath(slug: string): string | null {
+  return /^[a-z0-9][a-z0-9-]{0,80}$/.test(slug) ? `_dream_context/whiteboards/${slug}/${slug}.excalidraw.md` : null;
+}
+
+/**
+ * Re-render on the child's session events at most once a frame (a token storm costs one
+ * render per frame, never one per token). The card reads the live session; 0 requests.
+ */
+export function useLiveSession(session: ChatSession | undefined): void {
+  const [, force] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!session) return undefined;
+    let raf = 0;
+    const off = session.subscribe(() => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; force(); });
+    });
+    return () => { off(); if (raf) cancelAnimationFrame(raf); };
+  }, [session]);
+}
+
+export function chatStatus(session: ChatSession | undefined): SessionStatusInfo {
+  return deriveSessionStatus({
+    dormant: !session, status: session?.status, busy: session?.busy, asking: session?.asking,
+    agentsWorking: session?.agentsWorking,
+  });
+}
+
+export interface SuperCardActions {
+  onSideBySide: (id: string) => void;
+  onToOthers: (id: string) => void;
+  onAskAbout: (id: string) => void;
+  onClose: (id: string) => void;
+  onMinimize: (id: string) => void;
+  onLoadWeb: (id: string) => void;
+  onOpenPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
+}
+
+export interface SuperContainerProps extends SuperCardActions {
+  container: Container;
+  plan: CardPlan;
+  /** The child behind a `chat` card (its ref is the child's session id). */
+  child?: SuperChild;
+  session?: ChatSession;
+  title: string;
+  /** Pending its hand-over flight: drawn at opacity 0 so no empty stage ever flashes (D18). */
+  pending: boolean;
+  /** `web`: may hold a live iframe right now (webBudget.ts). */
+  webLive: boolean;
+  /** The hand-over has landed: a non-chat card may mount its view (SuperSurface). */
+  viewReady: boolean;
+  asksOwner: boolean;
+  /** This card hosts the shown chat's slot (the half card, or the first presented chat). */
+  shownSlot: boolean;
+  /** A press on a FLOATING card arms its drag (the card is one grab handle; F6, FE1). */
+  onPress: (e: PointerEvent<HTMLDivElement>, id: string) => void;
+}
+
+/**
+ * One card on the stage (plan-r8 F5, F6, F11; owner decisions O1-O6, O10). Look, move, put
+ * aside, close, ask about — never type. Two layers (§0 FE5): the outer FRAME is positioned from
+ * the plan and carries the motion transform, the two glow layers (accent while working, the
+ * waiting colour while asking, each fading its own opacity) and the lift shadow; the inner CLIP
+ * rounds and clips the content. A floating card is one grab handle: its body is inert, a click
+ * shows it side by side; content is interactive only in half and present.
+ */
+export function SuperContainer(props: SuperContainerProps) {
+  const { container: c, plan, pending, session } = props;
+  const { t } = useI18n();
+  useLiveSession(c.kind === 'chat' ? session : undefined);
+  const status = c.kind === 'chat' ? chatStatus(session) : null;
+  const floating = plan.where === 'float';
+  const large = plan.where === 'half' || plan.where === 'present' || plan.where === 'sheet';
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget || !floating) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onSideBySide(c.id); }
+  };
+  return (
+    <div
+      className={`super-card-frame${pending ? ' super-card-frame--pending' : ''}`}
+      data-testid="super-container"
+      data-stage-key={c.id}
+      data-container-id={c.id}
+      data-kind={c.kind}
+      data-where={plan.where}
+      data-shape={plan.shape}
+      data-owner={plan.owner ? 'true' : undefined}
+      data-status={status ? glowOf(status) : undefined}
+      role="group"
+      aria-label={props.title}
+      tabIndex={floating ? 0 : -1}
+      style={{ left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: 10 + plan.z }}
+      onPointerDown={floating ? (e) => props.onPress(e, c.id) : undefined}
+      onClick={floating ? (e) => { if (!(e.target as HTMLElement).closest('button')) props.onSideBySide(c.id); } : undefined}
+      onKeyDown={onKeyDown}
+    >
+      <div className="super-card-lift" aria-hidden />
+      <div className="super-card-clip">
+        {large ? <LargeBody {...props} status={status} /> : <FloatBody {...props} status={status} />}
+      </div>
+      <div className="super-card-actions">
+        {floating ? (
+          <>
+            <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} />
+            <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />
+            <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
+            <IconButton icon="close" label={t('super.container.close')} onClick={() => props.onClose(c.id)} />
+          </>
+        ) : (
+          <>
+            <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
+            <IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" />
+            <IconButton icon="close" label={t('super.container.close')} onClick={() => props.onClose(c.id)} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** working → the accent glow rises; asking → the waiting glow; anything else fades (F5). */
+function glowOf(s: SessionStatusInfo): 'working' | 'asking' | 'idle' {
+  return s.kind === 'asking' ? 'asking' : s.kind === 'working' ? 'working' : 'idle';
+}
+
+type IconName = 'side' | 'others' | 'ask' | 'close' | 'minimize';
+
+const ICONS: Record<IconName, ReactNode> = {
+  side: <><rect x="2" y="3" width="5" height="10" rx="1.4" /><rect x="9" y="3" width="5" height="10" rx="1.4" /></>,
+  others: <><path d="M3.5 3.5l6 6" /><path d="M10 5v5H5" /><path d="M3 13h10" /></>,
+  ask: <><path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v5A1.5 1.5 0 0 1 11.5 11H7l-3 2.4V11h0A1 1 0 0 1 3 10z" /></>,
+  close: <><path d="M4.5 4.5l7 7" /><path d="M11.5 4.5l-7 7" /></>,
+  minimize: <><path d="M9.5 3.5v3h3" /><path d="M6.5 12.5v-3h-3" /><path d="M9.5 6.5l3.5-3.5" /><path d="M6.5 9.5L3 13" /></>,
+};
+
+export function IconButton({ icon, label, onClick, testId }: { icon: IconName; label: string; onClick: () => void; testId?: string }) {
+  return (
+    <button
+      type="button"
+      className="super-icon-btn"
+      data-testid={testId}
+      aria-label={label}
+      title={label}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        {ICONS[icon]}
+      </svg>
+    </button>
+  );
+}
+
+type BodyProps = SuperContainerProps & { status: SessionStatusInfo | null };
+
+const widgetSize = (p: CardPlan): WidgetSize => {
+  if (p.where !== 'float') return p.rect.width >= 520 ? 'xl' : 'l';
+  return p.rect.width >= 200 ? 'm' : 's';
+};
+
+/** A floating card: what it is at a glance; the body is inert (the card is a grab handle). */
+function FloatBody(p: BodyProps): ReactNode {
+  const c = p.container;
+  return (
+    <div className="super-card-body" data-inert="true">
+      {c.kind === 'chat'
+        ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall={p.plan.shape === 'tall'} />
+        : <><CardHead kind={c.kind} title={p.title} />{viewFor(p)}</>}
+    </div>
+  );
+}
+
+/** Half page, presented or a narrow sheet: the large view, interactive. A shown chat mounts its
+ *  full read-only chat in the shown slot (homed by AgentSurface, the same mechanics as a pane). */
+function LargeBody(p: BodyProps): ReactNode {
+  const { t } = useI18n();
+  const c = p.container;
+  if (c.kind === 'chat' && p.shownSlot) {
+    return (
+      <div className="super-card-large" data-testid="super-shown">
+        <div className="super-card-large-head">
+          <span className="super-card-glyph" aria-hidden>{KIND_GLYPH.chat}</span>
+          <span className="super-card-large-title">{p.title}</span>
+          <span className="super-card-large-note">{t('super.focus.readOnly')}</span>
+        </div>
+        <div className="super-slot" data-super-slot="shown" />
+      </div>
+    );
+  }
+  return (
+    <div className="super-card-large" data-testid={c.kind === 'chat' ? 'super-shown-card' : undefined}>
+      <CardHead kind={c.kind} title={p.title} />
+      <div className="super-card-large-body">
+        {c.kind === 'chat'
+          ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
+          : viewFor(p)}
+      </div>
+    </div>
+  );
+}
+
+function CardHead({ kind, title }: { kind: Container['kind']; title: string }) {
+  return (
+    <div className="super-card-head">
+      <span className="super-card-glyph" aria-hidden>{KIND_GLYPH[kind]}</span>
+      <span className="super-card-title" title={title}>{title}</span>
+    </div>
+  );
+}
+
+function viewFor(p: BodyProps): ReactNode {
+  const c = p.container;
+  if (!p.viewReady) return null;
+  const size = widgetSize(p.plan);
+  switch (c.kind) {
+    case 'insight':
+      return <div className="super-card-view"><InsightView spec={{ type: 'insight', id: c.ref }} /></div>;
+    case 'task':
+      return <div className="super-card-view"><TaskWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'task', ref: c.ref, title: c.title }} active={false} size={size} /></div>;
+    case 'knowledge':
+      return <div className="super-card-view"><KnowledgeWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'knowledge', ref: c.ref, title: c.title }} active={false} size={size} /></div>;
+    case 'web':
+      return p.webLive
+        ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={size} /></div>
+        : <WebPlaceholder title={c.title || c.ref} onLoad={() => p.onLoadWeb(c.id)} />;
+    case 'image':
+      return <div className="super-card-view"><DocumentReader path={c.ref} onOpen={() => { /* read-only: links stay closed */ }} embedded /></div>;
+    case 'board':
+      return <div className="super-card-view super-card-view--board"><BoardContainer path={c.ref} /></div>;
+    case 'whiteboard': {
+      const path = whiteboardPath(c.ref);
+      return path ? <div className="super-card-view super-card-view--board"><BoardEmbed path={path} onOpenBoard={() => p.onOpenPage('whiteboards', c.ref)} /></div> : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Past the iframe budget: the page's title and a Load button (which makes it the most
+ *  recently focused, so another web card gives up its frame). Live even on a floating card. */
+function WebPlaceholder({ title, onLoad }: { title: string; onLoad: () => void }) {
+  const { t } = useI18n();
+  return (
+    <div className="super-web-placeholder">
+      <span className="super-web-title">{title}</span>
+      <button type="button" className="super-queue-btn super-web-load" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onLoad(); }}>
+        {t('super.container.loadWeb')}
+      </button>
+    </div>
+  );
+}
+
+/** A board by path: the read-only preview, and its own full screen. */
+function BoardContainer({ path }: { path: string }) {
+  const [full, setFull] = useState(false);
+  return (
+    <>
+      <BoardEmbed path={path} onOpenBoard={() => setFull(true)} />
+      {full && <BoardFullscreen path={path} onClose={() => setFull(false)} />}
+    </>
+  );
+}

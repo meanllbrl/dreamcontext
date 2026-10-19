@@ -354,6 +354,15 @@ export type ChatEvent =
    *  its socket for the pane holding it to run against the surface (src/lib/window-control.ts).
    *  Answered with a `window_command_result` frame. */
   | { kind: 'window-command'; id: string; verb: string; args: Record<string, unknown> }
+  /** A Super Agent verb only the window can run (`delegate`, `answer`), sent down the SUPER
+   *  chat's own socket (src/lib/window-control.ts `sendSuperCommand`). Answered with a
+   *  `super_command_result` frame. */
+  | { kind: 'super-command'; id: string; verb: string; args: Record<string, unknown> }
+  /** The vault's Super Agent state, pushed by the server on every change (never polled). The
+   *  payload is read with `readSuperStateView` (lib/superTypes.ts) where it is used. */
+  | { kind: 'super-state'; state: Record<string, unknown> }
+  /** The turn that just opened was injected by the super inbox: render it as an event chip. */
+  | { kind: 'super-event'; eventKind: string; child: string }
   /** The server's fresh-session branch guard reporting what it did to the working tree.
    *  `warn` for a refusal, `info` for a move it made. See `fromMeta`. */
   | { kind: 'branch-start'; tone: 'info' | 'warn'; message: string }
@@ -442,7 +451,9 @@ export type ClientControl =
   /** The notch's answer to one relayed `assistant-command`. */
   | { type: 'assistant_command_result'; id: string; ok: boolean; result?: unknown; error?: string }
   /** The window's answer to one `window-command`. */
-  | { type: 'window_command_result'; id: string; ok: boolean; result?: unknown; error?: string };
+  | { type: 'window_command_result'; id: string; ok: boolean; result?: unknown; error?: string }
+  /** The window's answer to one `super-command`. */
+  | { type: 'super_command_result'; id: string; ok: boolean; result?: unknown; error?: string };
 
 // ─── Small object-shape helpers (kept local — this module takes no dependencies) ───
 
@@ -1144,6 +1155,20 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     const verb = str(obj.verb);
     if (!id || !verb) return ignored('_meta:window_command');
     return { kind: 'window-command', id, verb, args: isRecord(obj.args) ? obj.args : {} };
+  }
+  if (subtype === 'super_command') {
+    const id = str(obj.id);
+    const verb = str(obj.verb);
+    if (!id || !verb) return ignored('_meta:super_command');
+    return { kind: 'super-command', id, verb, args: isRecord(obj.args) ? obj.args : {} };
+  }
+  if (subtype === 'super_state') {
+    return isRecord(obj.state) ? { kind: 'super-state', state: obj.state } : ignored('_meta:super_state');
+  }
+  if (subtype === 'super_event') {
+    const eventKind = str(obj.kind);
+    if (!eventKind) return ignored('_meta:super_event');
+    return { kind: 'super-event', eventKind, child: str(obj.child) ?? '' };
   }
   if (subtype === 'assistant_command') {
     const id = str(obj.id);
