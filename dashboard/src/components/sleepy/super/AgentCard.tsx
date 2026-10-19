@@ -10,7 +10,8 @@ import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, type Doin
  * A child chat's card (plan-r8 F11, owner decision O10): its TITLE, ONE line of what it is
  * doing now (the tool in flight while busy, else the last thing it wrote), its live state with
  * how long it has been at it, a chip while it runs a shell or an agent in the background, its
- * worktree branch and an "asks you" badge. A tall card adds the last few lines it wrote.
+ * worktree branch and an "asks you" badge. A tall card adds the last few lines it wrote. The
+ * title and the line sit at the top, the state at the foot, so a quiet card still reads whole.
  *
  * Everything comes from the child's LIVE `ChatSession` in this window: 0 network requests per
  * card. The card frame (SuperContainer) re-renders it at most once a frame on a token; the
@@ -23,7 +24,7 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
   /** The queue holds an item about this child that the OWNER must answer. */
   asksOwner: boolean;
   status: SessionStatusInfo;
-  /** Drawn 9:16: room for the last few lines under the doing-line. */
+  /** Drawn taller than wide: room for the last few lines under the doing-line. */
   tall: boolean;
 }) {
   const { t } = useI18n();
@@ -46,24 +47,27 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
         <span className="super-card-brief" title={title}>{title}</span>
       </div>
       <div className="super-card-line" data-testid="super-card-doing">{line || t(`super.card.state.${status.kind}`)}</div>
-      <div className="super-card-meta">
-        <span className="super-card-state">{t(`super.card.state.${status.kind}`)}</span>
-        {since ? <span>· {elapsedLabel(Date.now() - since)}</span> : null}
-        {(bg.shells > 0 || bg.agents > 0) && (
-          <span className="super-card-bg" data-testid="super-card-bg">{backgroundText(t, bg)}</span>
-        )}
-      </div>
-      {(asksOwner || child?.branch) && (
-        <div className="super-card-tags">
-          {asksOwner && <span className="super-card-asks">{t('super.card.asksYou')}</span>}
-          {child?.branch && <span className="super-card-branch" title={child.worktree}>{child.branch}</span>}
-        </div>
-      )}
       {lines.length > 0 && (
         <div className="super-card-lines" aria-hidden>
           {lines.map((l, i) => <div key={i} className="super-card-lines-row">{l}</div>)}
         </div>
       )}
+      {/* Anchored to the card's foot, like a widget: what state it is in, for how long, what it holds. */}
+      <div className="super-card-foot">
+        {(asksOwner || child?.branch) && (
+          <div className="super-card-tags">
+            {asksOwner && <span className="super-card-asks">{t('super.card.asksYou')}</span>}
+            {child?.branch && <span className="super-card-branch" title={child.worktree}>{child.branch}</span>}
+          </div>
+        )}
+        <div className="super-card-meta">
+          <span className="super-card-state">{t(`super.card.state.${status.kind}`)}</span>
+          {since ? <span>· {elapsedLabel(Date.now() - since)}</span> : null}
+          {(bg.shells > 0 || bg.agents > 0) && (
+            <span className="super-card-bg" data-testid="super-card-bg">{backgroundText(t, bg)}</span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

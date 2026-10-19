@@ -102,6 +102,27 @@ describe('hand over: the timings', () => {
     expect(plan.total).toBeLessThanOrEqual(560);
   });
 
+  it('the chips land in a ripple outward from the centre: the card nearest the Super Agent first (stage v2)', () => {
+    const nearSlot = r(1200, 400, 280, 160);
+    const farSlot = r(40, 120, 280, 160);
+    const p = planFlights([
+      { key: 'child:far', role: 'chip', first: chipA, last: farSlot },
+      { key: 'child:near', role: 'chip', first: chipB, last: nearSlot },
+      { key: 'centre', role: 'centre', first: button, last: centre },
+    ], { direction: 'in', reduced: false, light: false });
+    if (p.kind !== 'flights') throw new Error('expected flights');
+    expect(p.steps.find((s) => s.key === 'child:near')!.delay).toBe(0);
+    expect(p.steps.find((s) => s.key === 'child:far')!.delay).toBe(HANDOVER.chipStagger);
+    // Take-back, measured the other way round, mirrors the same order: the far card leaves first.
+    const back = planFlights([
+      { key: 'child:far', role: 'chip', first: farSlot, last: chipA },
+      { key: 'child:near', role: 'chip', first: nearSlot, last: chipB },
+      { key: 'centre', role: 'centre', first: centre, last: button },
+    ], { direction: 'out', reduced: false, light: false });
+    if (back.kind !== 'flights') throw new Error('expected flights');
+    expect(back.steps.find((s) => s.key === 'child:far')!.delay).toBeLessThan(back.steps.find((s) => s.key === 'child:near')!.delay);
+  });
+
   it('many chats stay near the nominal length: the stagger stops after five', () => {
     const many: FlightInput[] = Array.from({ length: 12 }, (_, i) => ({ key: `child:${i}`, role: 'chip', first: chipA, last: slotA }));
     const p = planFlights(many, { direction: 'in', reduced: false, light: false });
@@ -345,6 +366,34 @@ describe('layout motion (plan-r8 F8, §0 FE2/FE3)', () => {
       );
       expect(m).toEqual({ kind: 'crossfade', keys: ['a'], duration: LAYOUT.crossfade, total: LAYOUT.crossfade });
     }
+  });
+
+  it('arrivals land in a ripple outward from the centre (stage v2); what leaves, and the centre, go at once', () => {
+    const near = r(1414, 300, 232, 300);
+    const mid = r(1414, 20, 232, 260);
+    const far = r(40, 20, 232, 260);
+    const m = plan(
+      [['centre', box(centreA, 'centre')], ['far', box(r(40, 600, 232, 260), 'float')], ['near', box(r(1414, 620, 232, 300), 'float')], ['gone', box(card, 'float')], ['mid', box(others, 'others')]],
+      [['centre', box(r(560, 64, 820, 892), 'centre')], ['far', box(far, 'float')], ['near', box(near, 'float')], ['gone', box(others, 'others')], ['mid', box(mid, 'float')]],
+    );
+    if (m.kind !== 'spring') throw new Error('expected spring');
+    const at = (k: string, kind?: string) => m.steps.find((s) => s.key === k && (!kind || s.kind === kind))!;
+    expect(at('near').delay).toBe(0);
+    expect(at('mid').delay).toBe(LAYOUT.stagger);
+    expect(at('far').delay).toBe(2 * LAYOUT.stagger);
+    expect(at('mid').contentFadeAt).toBe(LAYOUT.stagger + LAYOUT.duration);
+    expect(at('gone').delay).toBe(0);
+    expect(at('centre', 'centre').delay).toBe(0);
+    expect(m.total).toBe(Math.max(...m.steps.map((s) => s.delay + s.duration + (s.contentFadeAt !== undefined ? LAYOUT.contentFade : 0))));
+  });
+
+  it('the ripple stops after five: a switch of many cards ends at most 96 ms later', () => {
+    const many = Array.from({ length: 10 }, (_, i) => [`k${i}`, box(r(40, 20 + i * 10, 200, 200), 'float')] as [string, StageBox]);
+    const moved = many.map(([k, b]) => [k, box({ ...b.rect, x: 1500 }, 'float')] as [string, StageBox]);
+    const m = plan([['centre', box(centreA, 'centre')], ...many], [['centre', box(centreA, 'centre')], ...moved]);
+    if (m.kind !== 'spring') throw new Error('expected spring');
+    expect(Math.max(...m.steps.map((s) => s.delay))).toBe((LAYOUT.maxStaggered - 1) * LAYOUT.stagger);
+    expect((LAYOUT.maxStaggered - 1) * LAYOUT.stagger).toBeLessThanOrEqual(96);
   });
 
   it('animates only transform and opacity', () => {
