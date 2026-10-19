@@ -5,7 +5,7 @@
  * of memory, in macOS Low Power Mode, or on battery at 20 % or below. When it is on:
  *   - decorative endless animations are removed and every `backdrop-filter` is off, both
  *     through `data-light` on <html> (styles/global.css); status indicators keep moving on the
- *     30 fps clock (lib/motionClock.ts): still, a working ring read as stuck (owner, 2026-10-18);
+ *     15 fps clock (lib/motionClock.ts): still, a working ring read as stuck (owner, 2026-10-18);
  *   - terminals render on DOM (components/sleepy/webglBudget.ts);
  *   - every poll runs at half the rate (`pollMs` ×2, lib/windowActivity.ts).
  *

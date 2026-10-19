@@ -334,16 +334,31 @@
 }
 
 .chat-m-thinking-body {
-  margin-top: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-tertiary);
+  /* A quiet rail under the line, indented to the label: rendered markdown in secondary ink,
+     so the reasoning reads as an aside of the step, not a card competing with the answer. */
+  margin: var(--space-1) 0 var(--space-2) calc(var(--space-4) + var(--space-3));
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
+  border-left: 2px solid var(--color-border);
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
-  white-space: pre-wrap;
 }
+/* MarkdownPreview is a document surface of its own — flattened here, as in an answer card. */
+.chat-m-thinking-body .md-preview {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+.chat-m-thinking-body .md-preview .markdown-body { font-size: var(--font-size-sm); color: inherit; }
+.chat-m-thinking-body .md-preview .markdown-body :is(p, li, h1, h2, h3, h4, blockquote) {
+  color: inherit;
+  font-size: inherit;
+}
+.chat-m-thinking-body .md-preview .markdown-body :is(p, ul, ol) { margin: 0 0 var(--space-2); }
+.chat-m-thinking-body .md-preview .markdown-body > :last-child { margin-bottom: 0; }
+.chat-m-thinking[data-streaming] .chat-m-thinking-body { border-left-color: var(--color-border-focus); }
 
 /* ── Compaction divider ──────────────────────────────────────────────────────────── */
 

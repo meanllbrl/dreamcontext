@@ -632,7 +632,7 @@ async function runEngine(engineName, base) {
         const sr = s.getBoundingClientRect();
         const heads = [...s.querySelectorAll('.chat-m-thinking-head')].filter((h) => {
           const r = h.getBoundingClientRect();
-          return r.top >= sr.top && r.bottom <= sr.bottom && h.getAttribute('aria-expanded') === 'false';
+          return r.top >= sr.top && r.bottom <= sr.bottom;
         });
         const h = heads[heads.length - 1];
         if (!h) return null;
@@ -641,7 +641,16 @@ async function runEngine(engineName, base) {
         const r = h.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
       });
-      if (!target) { check(`${tag} T #${r + 1}: a closed thinking row is on screen to open`, false); break; }
+      if (!target) { check(`${tag} T #${r + 1}: a thinking row is on screen to open`, false); break; }
+      // Thinking rows open by default: fold the target first (unmeasured) so the click opens it.
+      const tHead = page.locator('[data-smooth-t] .chat-m-thinking-head');
+      if ((await tHead.getAttribute('aria-expanded')) === 'true') {
+        await tHead.click();
+        await page.waitForTimeout(400);
+        // A pinned transcript shrinks from the bottom, so the head moved: re-read where it is.
+        const bb = await tHead.boundingBox();
+        if (bb) { target.x = bb.x + bb.width / 2; target.y = bb.y + bb.height / 2; }
+      }
       const res = await measure(page, cdp, () => page.mouse.click(target.x, target.y));
       tRes.push(res);
       await page.waitForTimeout(300);

@@ -1,10 +1,11 @@
 /**
- * lib/motionClock.ts: every endless CSS animation is stepped at 12 fps from one interval instead
- * of running on the display link (task: durum animasyonları WindowServer'ı yormaz, AC4).
+ * lib/motionClock.ts: every endless CSS animation is taken off the render server and stepped from
+ * one interval instead of running on the display link (task: durum animasyonları WindowServer'ı
+ * yormaz, AC4).
  *
  * Driven with fake Animation objects and a fake document under plain Node: the clock only reads
  * `getAnimations()`, `animationstart`, the document timeline and each animation's timing, and
- * only writes `pause()`, `currentTime` and (on dispose) `play()`.
+ * only writes `cancel()`, `play()`, `pause()` and `currentTime`.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
@@ -14,6 +15,7 @@ import {
   isEndless,
   MOTION_FPS,
   RESCAN_DELAY_MS,
+  REHOLD_DELAY_MS,
   type MotionClockEnv,
 } from '../../dashboard/src/lib/motionClock';
 import type { WindowActivity } from '../../dashboard/src/lib/windowActivity';
@@ -21,29 +23,41 @@ import type { WindowActivity } from '../../dashboard/src/lib/windowActivity';
 interface FakeAnim {
   playState: 'running' | 'paused' | 'idle' | 'finished';
   currentTime: number | null;
-  effect: { getComputedTiming: () => { iterations: number } };
+  effect: { getComputedTiming: () => { iterations: number }; target?: object; pseudoElement?: string | null };
+  animationName?: string;
+  cancel: () => void;
   pause: () => void;
   play: () => void;
   writes: number[];
+  /** Every call the clock made, in order; `|` marks where a task ended (see host().task). */
+  ops: string[];
   /** The play-state CSS gives it (what `playStateOf` reads from the computed style). */
-  cssState: 'running' | 'paused';
+  cssState: 'running' | 'paused' | 'gone';
 }
 
-function anim(iterations: number, currentTime = 0): FakeAnim {
+const log: FakeAnim[] = [];
+
+/** A fake CSS animation. `css` = { target, name } makes it one of an element's CSS animations. */
+function anim(iterations: number, currentTime = 0, css?: { target: object; name: string; pseudo?: string }): FakeAnim {
+  let ct: number | null = currentTime;
   const a: FakeAnim = {
     playState: 'running',
     currentTime,
-    effect: { getComputedTiming: () => ({ iterations }) },
-    pause() { a.playState = 'paused'; },
-    play() { a.playState = 'running'; },
+    effect: { getComputedTiming: () => ({ iterations }), target: css?.target, pseudoElement: css?.pseudo ?? null },
+    animationName: css?.name,
+    cancel() { a.ops.push('cancel'); a.playState = 'idle'; ct = null; },
+    pause() { a.ops.push('pause'); a.playState = 'paused'; },
+    // Web Animations: play() on an idle animation starts it from 0.
+    play() { a.ops.push('play'); if (a.playState === 'idle') ct = 0; a.playState = 'running'; },
     writes: [],
+    ops: [],
     cssState: 'running',
   };
-  let ct = currentTime;
   Object.defineProperty(a, 'currentTime', {
     get: () => ct,
-    set: (v: number) => { ct = v; a.writes.push(v); },
+    set: (v: number) => { ct = v; a.writes.push(v); a.ops.push(`time:${v}`); },
   });
+  log.push(a);
   return a;
 }
 
@@ -52,7 +66,8 @@ function host() {
   let animations: FakeAnim[] = [];
   let t = 1000;
   Object.assign(doc, {
-    getAnimations: () => animations as unknown as Animation[],
+    // Like the real list: a cancelled (idle) animation is not in it.
+    getAnimations: () => animations.filter((a) => a.playState !== 'idle') as unknown as Animation[],
     timeline: { get currentTime() { return t; } },
   });
   let intervalFn: (() => void) | null = null;
@@ -62,17 +77,25 @@ function host() {
   const timeouts: Array<{ fn: () => void; ms: number }> = [];
   let activity: WindowActivity = { visible: true, focused: true, hidden: false };
   const activityListeners = new Set<(a: WindowActivity) => void>();
+  /** Each timer callback is a task of its own: mark the boundary in every animation's ops. */
+  const task = (fn: () => void) => () => { for (const a of log) a.ops.push('|'); fn(); };
+  const frameQueue: Array<() => void> = [];
+  let watcher: ((scope: Node) => void) | null = null;
+  let reads = 0;
   const env: Partial<MotionClockEnv> = {
     doc,
-    setInterval: (fn, ms) => { intervalFn = fn; intervalMs = ms; intervals += 1; return 1 as unknown as ReturnType<typeof setInterval>; },
+    setInterval: (fn, ms) => { intervalFn = task(fn); intervalMs = ms; intervals += 1; return 1 as unknown as ReturnType<typeof setInterval>; },
     clearInterval: () => { intervalFn = null; },
     queueMicrotask: (fn) => { micro.push(fn); },
-    setTimeout: (fn, ms) => { timeouts.push({ fn, ms }); return timeouts.length as unknown as ReturnType<typeof setTimeout>; },
+    setTimeout: (fn, ms) => { timeouts.push({ fn: task(fn), ms }); return timeouts.length as unknown as ReturnType<typeof setTimeout>; },
     clearTimeout: () => { timeouts.length = 0; },
     getActivity: () => activity,
     onActivity: (cb) => { activityListeners.add(cb); return () => activityListeners.delete(cb); },
-    playStateOf: (a) => (a as unknown as FakeAnim).cssState,
+    playStateOf: (a) => { reads += 1; return (a as unknown as FakeAnim).cssState; },
+    watchPlayState: (cb) => { watcher = cb; return () => { watcher = null; }; },
+    requestFrame: (cb) => { frameQueue.push(cb); },
   };
+  const runFrames = () => { const due = frameQueue.splice(0); for (const f of due) f(); };
   return {
     env,
     set animations(v: FakeAnim[]) { animations = v; },
@@ -85,7 +108,18 @@ function host() {
     flush() { while (micro.length) micro.shift()!(); },
     get queued() { return micro.length; },
     get timeouts() { return timeouts; },
-    runTimeouts() { while (timeouts.length) timeouts.shift()!.fn(); },
+    /** Every timer due, but no frame drawn meanwhile (a long task holding the frame back). */
+    runTimeouts() { for (let i = 0; i < 50 && timeouts.length; i++) timeouts.shift()!.fn(); },
+    /** One timer. */
+    runTimeout() { timeouts.shift()?.fn(); },
+    /** Draw a frame: every requestAnimationFrame callback runs. */
+    frame: runFrames,
+    get framesAsked() { return frameQueue.length; },
+    /** Frames and timers in turn until nothing is pending, the way a page that draws runs. */
+    settle() { for (let i = 0; i < 50 && (timeouts.length || frameQueue.length); i++) { runFrames(); timeouts.shift()?.fn(); } },
+    /** The pointer, the focus or a class changed at `scope` (what watchPlayState reports). */
+    signal(scope: object) { watcher?.(scope as Node); },
+    get reads() { return reads; },
     setHidden(hidden: boolean) {
       activity = { visible: !hidden, focused: !hidden, hidden };
       for (const l of activityListeners) l(activity);
@@ -94,11 +128,12 @@ function host() {
 }
 
 describe('motion clock', () => {
-  beforeEach(() => resetMotionClockForTests());
+  beforeEach(() => { resetMotionClockForTests(); log.length = 0; });
 
-  it('runs at 24-30 fps: smooth enough for a turning ring, far below the display link', () => {
-    expect(MOTION_FPS).toBeGreaterThanOrEqual(24);
-    expect(MOTION_FPS).toBeLessThanOrEqual(30);
+  it('runs at 15-20 fps: a ring that does not read as stuck, WindowServer under 20 %', () => {
+    // Real app, owner's M1 Pro: 15 fps 14-15 %, 20 fps 18-22 %, 30 fps 25-31 %; 12 read as stuck.
+    expect(MOTION_FPS).toBeGreaterThanOrEqual(15);
+    expect(MOTION_FPS).toBeLessThanOrEqual(20);
   });
 
   it('holds every endless animation already running at install, and leaves finite ones alone', () => {
@@ -108,12 +143,45 @@ describe('motion clock', () => {
     const huge = anim(9999);
     h.animations = [ring, entrance, huge];
     initMotionClock(h.env);
+    h.settle();
     expect(ring.playState).toBe('paused');
     expect(huge.playState).toBe('paused');
     expect(entrance.playState).toBe('running');
+    expect(entrance.ops).not.toContain('cancel');
     expect(heldAnimationCount()).toBe(2);
     expect(h.running).toBe(true);
     expect(h.intervalMs).toBeCloseTo(1000 / MOTION_FPS);
+  });
+
+  it('takes a running animation off the render server first, and pauses it only in a later task', () => {
+    // Paused where it runs, an animation keeps WindowServer compositing every display frame;
+    // cancelled and re-played in one task, both land in one commit and nothing changes.
+    const h = host();
+    const ring = anim(Infinity, 250);
+    h.animations = [ring];
+    initMotionClock(h.env);
+    expect(ring.ops).toEqual(['cancel']);
+    expect(ring.playState).toBe('idle');
+    expect(heldAnimationCount()).toBe(0);
+    expect(h.running).toBe(false);
+    expect(h.timeouts.map((t) => t.ms)).toEqual([REHOLD_DELAY_MS]);
+    expect(h.framesAsked).toBe(1);
+    h.frame();
+    h.runTimeout();
+    expect(ring.ops).toEqual(['cancel', '|', 'play', 'pause', 'time:250']);
+    expect(heldAnimationCount()).toBe(1);
+    expect(h.running).toBe(true);
+  });
+
+  it('one wait for a whole burst: every animation cancelled in it comes back in one later task', () => {
+    const h = host();
+    const a = anim(Infinity);
+    const b = anim(Infinity, 300);
+    h.animations = [a, b];
+    initMotionClock(h.env);
+    expect(h.timeouts).toHaveLength(1);
+    h.settle();
+    expect(heldAnimationCount()).toBe(2);
   });
 
   it('steps each held animation along the timeline, keeping its phase', () => {
@@ -122,14 +190,27 @@ describe('motion clock', () => {
     const b = anim(Infinity, 300); // a staggered sibling, 300 ms ahead
     h.animations = [a, b];
     initMotionClock(h.env);
+    h.settle();
     h.advance(83);
     h.tick();
     h.advance(83);
     h.tick();
-    expect(a.writes).toEqual([83, 166]);
-    expect(b.writes).toEqual([383, 466]);
+    expect(a.writes).toEqual([0, 83, 166]);
+    expect(b.writes).toEqual([300, 383, 466]);
     // Still paused between steps: nothing runs on the display link.
     expect(a.playState).toBe('paused');
+  });
+
+  it('keeps time through the wait: the first step after it lands where the animation would be', () => {
+    const h = host();
+    const a = anim(Infinity, 100);
+    h.animations = [a];
+    initMotionClock(h.env);
+    h.advance(REHOLD_DELAY_MS);
+    h.settle();
+    h.advance(10);
+    h.tick();
+    expect(a.writes).toEqual([100, 100 + REHOLD_DELAY_MS + 10]);
   });
 
   it('finds an animation that starts later through one coalesced scan per burst of animationstart', () => {
@@ -144,8 +225,206 @@ describe('motion clock', () => {
     h.start();
     expect(h.queued).toBe(1);
     h.flush();
+    expect(dot.playState).toBe('idle');
+    h.settle();
     expect(dot.playState).toBe('paused');
     expect(h.running).toBe(true);
+    // Its replay fires animationstart again: the scan finds it held and leaves it alone.
+    h.start();
+    h.flush();
+    expect(dot.ops.filter((o) => o === 'cancel')).toHaveLength(1);
+  });
+
+  it('waits for a drawn frame too: a long task that holds the frame back past the timer holds the hold back', () => {
+    const h = host();
+    const ring = anim(Infinity, 250);
+    h.animations = [ring];
+    initMotionClock(h.env);
+    h.runTimeout(); // the timer is due, but no rendering update has run since the cancel
+    expect(ring.playState).toBe('idle');
+    expect(h.timeouts.map((t) => t.ms)).toEqual([REHOLD_DELAY_MS]);
+    h.frame();
+    h.runTimeout();
+    expect(ring.playState).toBe('paused');
+    expect(heldAnimationCount()).toBe(1);
+  });
+
+  it('a hidden window draws no frames: there the timer alone lets it go back', () => {
+    const h = host();
+    const ring = anim(Infinity, 250);
+    h.animations = [ring];
+    initMotionClock(h.env);
+    h.setHidden(true);
+    h.runTimeout();
+    expect(ring.playState).toBe('paused');
+    expect(heldAnimationCount()).toBe(1);
+  });
+
+  it('a late joiner gets its own full wait, not the rest of the armed one', () => {
+    const h = host();
+    const first = anim(Infinity);
+    h.animations = [first];
+    initMotionClock(h.env);
+    const late = anim(Infinity);
+    h.animations = [first, late];
+    h.start();
+    h.flush(); // cancelled while the first one's timer is armed
+    expect(late.playState).toBe('idle');
+    h.frame();
+    h.runTimeout();
+    expect(first.playState).toBe('paused');
+    expect(late.playState).toBe('idle'); // its cancel may share the frame just drawn
+    expect(h.timeouts.map((t) => t.ms)).toEqual([REHOLD_DELAY_MS]);
+    h.frame();
+    h.runTimeout();
+    expect(late.playState).toBe('paused');
+  });
+
+  it('reads no style on a step when nothing that can change a play-state happened', () => {
+    // A composer's mascots are held next to its input: typing must not cost a style read a step.
+    const h = host();
+    h.animations = [anim(Infinity), anim(Infinity), anim(Infinity)];
+    initMotionClock(h.env);
+    h.settle();
+    const atHold = h.reads;
+    expect(atHold).toBe(3); // one each, when held
+    for (let i = 0; i < 10; i++) { h.advance(66); h.tick(); }
+    expect(h.reads).toBe(atHold);
+  });
+
+  it('reads again only the ones under where the pointer, the focus or a class changed', () => {
+    const h = host();
+    const root = { parentNode: null };
+    const picker = { parentNode: root };
+    const face = { parentNode: picker };
+    const tabs = { parentNode: root };
+    const mascot = anim(Infinity, 0, { target: face, name: 'smascot-bob' });
+    const ring = anim(Infinity, 0, { target: tabs, name: 'projectTabRing' });
+    mascot.cssState = 'paused'; // a picker row's mascot rests until the row is highlighted
+    h.animations = [mascot, ring];
+    initMotionClock(h.env);
+    h.settle();
+    h.advance(66);
+    h.tick();
+    expect(mascot.writes).toEqual([0]);
+    mascot.cssState = 'running';
+    h.signal(picker); // the row got `.is-active` (or the pointer)
+    const before = h.reads;
+    h.advance(66);
+    h.tick();
+    expect(h.reads).toBe(before + 1); // the mascot only, not the ring
+    expect(mascot.writes).toEqual([0, 66]);
+  });
+
+  it('a held animation whose element left the document is cancelled without a style read', () => {
+    const h = host();
+    const el = { parentNode: null, isConnected: true };
+    const a = anim(Infinity, 0, { target: el, name: 'spin' });
+    h.animations = [a];
+    initMotionClock(h.env);
+    h.settle();
+    const before = h.reads;
+    el.isConnected = false;
+    h.tick();
+    expect(a.playState).toBe('idle');
+    expect(heldAnimationCount()).toBe(0);
+    expect(h.reads).toBe(before);
+  });
+
+  it('back in view, every play-state is read again (hidden, CSS paused the whole page)', () => {
+    const h = host();
+    h.animations = [anim(Infinity), anim(Infinity)];
+    initMotionClock(h.env);
+    h.settle();
+    h.setHidden(true);
+    h.setHidden(false);
+    const before = h.reads;
+    h.advance(66);
+    h.tick();
+    expect(h.reads).toBe(before + 2);
+  });
+
+  it('one hidden during its wait keeps time: it does not jump the hidden stretch ahead', () => {
+    const h = host();
+    const a = anim(Infinity, 100);
+    h.animations = [a];
+    initMotionClock(h.env);
+    h.setHidden(true);
+    h.advance(60_000);
+    h.setHidden(false);
+    h.settle();
+    h.advance(10);
+    h.tick();
+    expect(a.writes).toEqual([100, 110]);
+  });
+
+  it('one CSS dropped during the wait stays cancelled: re-played, nothing could stop it', () => {
+    const h = host();
+    const ring = anim(Infinity, 0, { target: {}, name: 'projectTabRing' });
+    h.animations = [ring];
+    initMotionClock(h.env);
+    ring.cssState = 'gone'; // the work ended: its name left the element
+    h.settle();
+    expect(ring.playState).toBe('idle');
+    expect(ring.ops).not.toContain('play');
+    expect(heldAnimationCount()).toBe(0);
+    expect(h.running).toBe(false);
+  });
+
+  it('one CSS replaced during the wait stays cancelled, and the new one is held instead', () => {
+    // The name went and came back (or the element was hidden and shown again) inside the wait:
+    // CSS made a new animation and let go of the cancelled one.
+    const h = host();
+    const el = {};
+    const old = anim(Infinity, 0, { target: el, name: 'agentDotPulse' });
+    h.animations = [old];
+    initMotionClock(h.env);
+    const fresh = anim(Infinity, 0, { target: el, name: 'agentDotPulse' });
+    h.animations = [old, fresh]; // its animationstart has not reached the clock yet
+    h.settle();
+    expect(old.playState).toBe('idle');
+    expect(old.ops).not.toContain('play');
+    h.start();
+    h.flush();
+    h.settle();
+    expect(fresh.playState).toBe('paused');
+    expect(heldAnimationCount()).toBe(1);
+  });
+
+  it('a newer animation of the same element and name retires an older one the clock still holds', () => {
+    const h = host();
+    const el = {};
+    const stale = anim(Infinity, 0, { target: el, name: 'projectTabRing', pseudo: '::before' });
+    const other = anim(Infinity, 0, { target: el, name: 'projectTabRingClosed', pseudo: '::after' });
+    h.animations = [stale, other];
+    initMotionClock(h.env);
+    h.settle();
+    expect(heldAnimationCount()).toBe(2);
+    const fresh = anim(Infinity, 0, { target: el, name: 'projectTabRing', pseudo: '::before' });
+    h.animations = [stale, other, fresh];
+    h.start();
+    h.flush();
+    expect(stale.playState).toBe('idle');
+    expect(other.playState).toBe('paused'); // another name on the same element: untouched
+    h.settle();
+    expect(fresh.playState).toBe('paused');
+    expect(heldAnimationCount()).toBe(2);
+  });
+
+  it('a held animation CSS no longer gives is cancelled at the next step', () => {
+    const h = host();
+    const a = anim(Infinity);
+    h.animations = [a];
+    initMotionClock(h.env);
+    h.settle();
+    a.cssState = 'gone';
+    h.signal({}); // e.g. the class that named it changed
+    h.advance(33);
+    h.tick();
+    expect(a.playState).toBe('idle');
+    expect(a.writes).toEqual([0]); // no step written to it
+    expect(heldAnimationCount()).toBe(0);
+    expect(h.running).toBe(false);
   });
 
   it('drops a cancelled animation and stops the interval when nothing is left', () => {
@@ -153,6 +432,7 @@ describe('motion clock', () => {
     const a = anim(Infinity);
     h.animations = [a];
     initMotionClock(h.env);
+    h.settle();
     a.playState = 'idle'; // animation-name went none (Light mode, unmount)
     h.tick();
     expect(heldAnimationCount()).toBe(0);
@@ -164,6 +444,7 @@ describe('motion clock', () => {
     const a = anim(Infinity, 0);
     h.animations = [a];
     initMotionClock(h.env);
+    h.settle();
     h.advance(100);
     h.tick();
     h.setHidden(true);
@@ -173,7 +454,7 @@ describe('motion clock', () => {
     expect(h.running).toBe(true);
     h.advance(50);
     h.tick();
-    expect(a.writes).toEqual([100, 150]);
+    expect(a.writes).toEqual([0, 100, 150]);
   });
 
   it('holds an animation that started paused while hidden, once the window is visible again', () => {
@@ -192,7 +473,7 @@ describe('motion clock', () => {
     expect(heldAnimationCount()).toBe(0);
     expect(h.timeouts.map((t) => t.ms)).toEqual([RESCAN_DELAY_MS]);
     // ...but a moment later.
-    h.runTimeouts();
+    h.settle();
     expect(late.playState).toBe('paused');
     expect(heldAnimationCount()).toBe(1);
     expect(h.running).toBe(true);
@@ -205,14 +486,16 @@ describe('motion clock', () => {
     diagram.cssState = 'paused';
     h.animations = [diagram];
     initMotionClock(h.env);
+    h.settle();
     expect(heldAnimationCount()).toBe(1);
     h.advance(83);
     h.tick();
-    expect(diagram.writes).toEqual([]); // still paused by CSS: it holds its frame
-    diagram.cssState = 'running'; // scrolled back into view: no animationstart fires
+    expect(diagram.writes).toEqual([40]); // still paused by CSS: it holds its frame
+    diagram.cssState = 'running'; // scrolled back into view: no animationstart fires,
+    h.signal({}); // but its panel's class changed
     h.advance(83);
     h.tick();
-    expect(diagram.writes).toEqual([123]); // moves on from 40, never on the display link
+    expect(diagram.writes).toEqual([40, 123]); // moves on from 40, never on the display link
     expect(diagram.playState).toBe('paused');
   });
 
@@ -221,18 +504,21 @@ describe('motion clock', () => {
     const marquee = anim(Infinity, 0);
     h.animations = [marquee];
     initMotionClock(h.env);
+    h.settle();
     h.advance(100);
     h.tick();
     marquee.cssState = 'paused'; // pointer over the marquee
+    h.signal({});
     h.advance(5_000);
     h.tick();
     h.advance(5_000);
     h.tick();
-    expect(marquee.writes).toEqual([100]);
+    expect(marquee.writes).toEqual([0, 100]);
     marquee.cssState = 'running'; // pointer gone
+    h.signal({});
     h.advance(50);
     h.tick();
-    expect(marquee.writes).toEqual([100, 150]);
+    expect(marquee.writes).toEqual([0, 100, 150]);
   });
 
   it('dispose hands every held animation back to the display link', () => {
@@ -240,10 +526,22 @@ describe('motion clock', () => {
     const a = anim(Infinity);
     h.animations = [a];
     const dispose = initMotionClock(h.env);
+    h.settle();
     expect(initMotionClock(h.env)).toBe(dispose);
     dispose();
     expect(a.playState).toBe('running');
     expect(h.running).toBe(false);
+    expect(heldAnimationCount()).toBe(0);
+  });
+
+  it('dispose during the wait hands the cancelled ones back too, and nothing is held after', () => {
+    const h = host();
+    const a = anim(Infinity);
+    h.animations = [a];
+    const dispose = initMotionClock(h.env);
+    dispose();
+    expect(a.playState).toBe('running');
+    expect(h.timeouts).toHaveLength(0);
     expect(heldAnimationCount()).toBe(0);
   });
 

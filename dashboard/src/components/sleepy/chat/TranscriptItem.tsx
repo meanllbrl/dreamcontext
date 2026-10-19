@@ -371,7 +371,8 @@ function AssistantMessage({
 // ─── Thinking ───────────────────────────────────────────────────────────────────────
 
 function ThinkingBlock({ item, stretch }: { item: ChatThinkingItem; stretch: StepStretch }) {
-  const [open, setOpen] = useState(false);
+  // Open by default: the reasoning is worth reading in place; a click folds it away.
+  const [open, setOpen] = useState(true);
   if (!item.text) return null;
   return (
     <ThinkingPill
@@ -379,7 +380,7 @@ function ThinkingBlock({ item, stretch }: { item: ChatThinkingItem; stretch: Ste
       tokens={estimateTokens(item.text)}
       open={open}
       onToggle={() => setOpen((v) => !v)}
-      body={item.text}
+      body={<MarkdownPreview content={item.text} />}
       {...stretch}
     />
   );
