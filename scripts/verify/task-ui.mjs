@@ -244,6 +244,18 @@ async function enterBoard(page, base, shot = null) {
   await page.locator('[data-board-column]').first().waitFor({ timeout: 15000 });
 }
 
+/** Click the first card on screen; on a phone, step through the column segments to find one. */
+async function clickFirstVisibleCard(page) {
+  const visible = page.locator('.bd-card:visible').first();
+  if (!(await visible.count())) {
+    for (const btn of await page.locator('.bd-seg[role="group"] .bd-seg-btn').all()) {
+      await btn.click();
+      if (await visible.count()) break;
+    }
+  }
+  await visible.click();
+}
+
 async function openTaskFromBoard(page, base, slug) {
   await enterBoard(page, base);
   const card = page.locator(`[data-task-card="${slug}"]`).first();
@@ -310,7 +322,9 @@ async function grid(browser, base, ids) {
         check(`${tag} task page: the name as written`, (await page.locator('.tkp-title').innerText()) === 'Gölge İşleri: ığdır şubesi ödemesi', await page.locator('.tkp-title').innerText());
         await settle(page, watcher, `task-turkish-${w}-${theme}`, `${tag} task page (Turkish)`);
       } else {
-        await page.locator('.bd-card').first().click();
+        // The first VISIBLE card: at a phone's width the board shows one column at a time, and
+        // with no cycle running Now is empty, so the first card in the DOM sits in a hidden column.
+        await clickFirstVisibleCard(page);
         await page.locator('[data-task-ready]').first().waitFor({ timeout: 15000 });
         await settle(page, watcher, `task-${w}-${theme}`, `${tag} task page`);
       }

@@ -26,6 +26,7 @@ import {
 import { loadPatternsReporting } from '../../src/lib/patterns.js';
 import { applyConsolidation, buildHistoryEntry, type SleepState } from '../../src/lib/sleep-consolidation.js';
 import { registerPatternsCommand } from '../../src/cli/commands/patterns.js';
+import { LIMIT_CONTINUE_TEXT as LIMIT_CONTINUE } from '../../src/lib/app-prompts.js';
 
 const FIX = join(__dirname, '..', 'fixtures', 'owner-corrections');
 const PERSON = 'owner-fixture';
@@ -563,5 +564,44 @@ describe('the ledger cap keeps the newest corrections, and a re-run adds nothing
     expect(ingestSessions(ctx, [stale], PERSON, 'backfill', NOW).added).toBe(0);
     expect(ingestSessions(ctx, [stale], PERSON, 'backfill', NOW).added).toBe(0);
     expect(readCorrections(ctx)).toEqual([]);
+  });
+});
+
+/**
+ * F10 (2026-10-19): a backfill on the owner's real brain wrote 1000 "corrections" over 93 sessions,
+ * practically none the owner's words: raw API request copies, reminders with an id carrying a
+ * sub-agent's report, and dreamcontext's own kickoff prompts. ingestSessions reads ownerTurns
+ * (ask-basis.ts); only what the owner typed is a correction. Synthetic fixtures throughout.
+ */
+describe('only the owner\'s typed words become corrections (F10)', () => {
+  const REPORT = 'Such a widget can never grant a refund without the ledger owner.';
+  const OWNED = 'Never use default exports; always use named exports.';
+  const KICKOFF = 'Do not re-plan and do not widen the scope — the plan is already reviewed and agreed.';
+  function transcript(id: string, records: object[]): SessionRef {
+    const path = join(projectRoot, `${id}.jsonl`);
+    writeFileSync(path, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    return { id, path };
+  }
+  const typed = (uuid: string, text: string) => ({ type: 'user', uuid, timestamp: '2026-10-17T09:00:00.000Z', message: { role: 'user', content: [{ type: 'text', text }] } });
+  const blob = (text: string) => ({ type: 'api-request-blob', hash: 'h1', sessionId: 'x', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }, { type: 'text', text }] } });
+  const reminder = `<system-reminder id="6d8b11aa">Another Claude session sent a message while you were working:\n<agent-message from="a8de">[Subagent hand-back] ${REPORT}</agent-message></system-reminder>`;
+
+  it('a raw API request copy, an id reminder with a hand-back and a Develop kickoff add nothing; the owner\'s line does', () => {
+    const ref = transcript('f10-larkspur', [
+      blob(`${reminder}\n${REPORT}`),
+      typed('u1', `${reminder}\n${OWNED}`),
+      typed('u2', `You are picking up the task \`larkspur-refunds\` from the planning session that just created it. ${KICKOFF} If you find the plan is genuinely wrong, stop and say so rather than quietly redesigning it.`),
+      typed('u3', LIMIT_CONTINUE),
+    ]);
+    ingestSessions(ctx, [ref], PERSON, 'backfill');
+    const quotes = readCorrections(ctx).map((i) => i.quote);
+    expect(quotes).toEqual([OWNED]);
+    expect(quotes.some((q) => q.includes('widget') || q.includes('re-plan') || q.includes('usage limit'))).toBe(false);
+  });
+
+  it('owner text typed after a kickoff is still the owner\'s', () => {
+    const ref = transcript('f10b-larkspur', [typed('u1', `${KICKOFF}\n\n${OWNED}`)]);
+    ingestSessions(ctx, [ref], PERSON, 'backfill');
+    expect(readCorrections(ctx).map((i) => i.quote)).toEqual([OWNED]);
   });
 });

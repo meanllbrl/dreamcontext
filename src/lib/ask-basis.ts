@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { foldAscii } from './fold-ascii.js';
 import type { SessionRecord } from './sleep-consolidation.js';
 import { humanTurnText, isInjectedUserRecord, isSystemNoiseMessage } from './transcript-records.js';
+import { isEmptyOfWords, isServerTurn, stripAppPrompts } from './app-prompts.js';
 
 /**
  * ask-basis — proof that a task sleep files directly rests on something real.
@@ -19,7 +20,13 @@ import { humanTurnText, isInjectedUserRecord, isSystemNoiseMessage } from './tra
  *           output and any other harness-injected text do not count — the
  *           classifier is `humanTurnText` (transcript-records.ts), plus the
  *           blocks this module strips out of a typed turn (system reminders,
- *           hook tags, the task-context fence, pasted content, shell output).
+ *           hook tags, the task-context fence, pasted content, shell output, the
+ *           harness's command and agent-message wrappers, the server's
+ *           `<live-context>` and `<super-agent-note>`), and minus every prompt
+ *           dreamcontext itself types as a user turn (app-prompts.ts). Only a
+ *           record whose `type` is "user" can be a human turn: the raw API
+ *           request copy (`api-request-blob`) repeats reminders, sub-agent
+ *           hand-backs and tool results under `role: "user"`.
  *   defect  the excerpt must appear in a tool result (a failing test, an error)
  *           or in a human turn. The assistant saying "there is a bug" is not
  *           evidence.
@@ -49,7 +56,9 @@ export type BasisSource =
   | 'sub-agent notification or skill-loader text'
   | 'task data or injected block inside a turn'
   | 'assistant text'
-  | 'sub-agent transcript';
+  | 'sub-agent transcript'
+  | 'raw API request copy'
+  | 'dreamcontext prompt';
 
 export interface BasisSession {
   id: string;
@@ -88,21 +97,38 @@ export function matchForm(text: string): string {
  * Blocks the harness or a program writes INTO a typed turn. Removed before an
  * ask quote is matched: the owner did not say what they contain.
  */
+/** A tag block, with or without attributes (`<system-reminder id="…">`): the tag and all inside it. */
+const tagBlock = (tag: string): RegExp => new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi');
+
 const INJECTED_BLOCKS: readonly RegExp[] = [
-  /<system-reminder>[\s\S]*?<\/system-reminder>/gi,
-  /<user-prompt-submit-hook>[\s\S]*?<\/user-prompt-submit-hook>/gi,
-  /<pasted_content\b[^>]*>[\s\S]*?<\/pasted_content>/gi,
-  /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/gi,
-  /<bash-stdout>[\s\S]*?<\/bash-stdout>/gi,
-  /<bash-stderr>[\s\S]*?<\/bash-stderr>/gi,
+  // The harness's own.
+  tagBlock('system-reminder'),
+  tagBlock('user-prompt-submit-hook'),
+  tagBlock('pasted_content'),
+  tagBlock('local-command-stdout'),
+  tagBlock('local-command-caveat'),
+  tagBlock('bash-stdout'),
+  tagBlock('bash-stderr'),
+  tagBlock('agent-message'),
+  tagBlock('task-notification'),
+  // A slash command's name: what the harness records for `/clear` or `/effort low`.
+  tagBlock('command-name'),
+  tagBlock('command-message'),
+  // Blocks dreamcontext's server adds to an owner turn (agent-chat.ts).
+  tagBlock('live-context'),
+  tagBlock('super-agent-note'),
+  tagBlock('untrusted-project-output'),
   // `tasks show` / the Read hook / a Develop kickoff: the fenced task packet.
   /--- TASK CONTEXT (\S+) ---[\s\S]*?--- END OF TASK CONTEXT \1 ---/g,
 ];
 
+/** A slash command's arguments ARE what the owner typed after it: the wrapper goes, the words stay. */
+const COMMAND_ARGS = /<command-args\b[^>]*>([\s\S]*?)<\/command-args>/gi;
+
 export function stripInjected(text: string): string {
   let out = text;
   for (const re of INJECTED_BLOCKS) out = out.replace(re, ' ');
-  return out;
+  return out.replace(COMMAND_ARGS, ' $1 ');
 }
 
 function blockTexts(content: unknown, type: string): string[] {
@@ -150,6 +176,14 @@ function classify(rec: Record<string, unknown>): Classified {
   const msg = (rec.message ?? rec) as { role?: unknown; content?: unknown };
   const role = typeof msg.role === 'string' ? msg.role : rec.type;
   const content = msg.content;
+  // Only a `type: "user"` record can be a human turn. Claude Code also writes the raw API request
+  // (`api-request-blob`, role user): reminders, sub-agent hand-backs and tool results, copied.
+  // Any other typed record that carries a message is the same: text, never a turn.
+  if (typeof rec.type === 'string' && rec.type !== 'user' && rec.type !== 'assistant') {
+    const text = typeof content === 'string' ? content : allText(content);
+    if (text.trim()) other.push({ source: rec.type === 'api-request-blob' ? 'raw API request copy' : 'injected message', text });
+    return { human: null, other };
+  }
   if (role === 'assistant') {
     other.push({ source: 'assistant text', text: typeof content === 'string' ? content : blockTexts(content, 'text').join('\n') });
     return { human: null, other };
@@ -173,9 +207,19 @@ function classify(rec: Record<string, unknown>): Classified {
     }
     return { human: null, other };
   }
-  const human = stripInjected(typed);
-  if (human.length < typed.length) other.push({ source: 'task data or injected block inside a turn', text: typed });
-  return { human, other };
+  // A whole turn the server writes (an Assistant or Super Agent event) is never the owner's.
+  if (isServerTurn(typed)) {
+    other.push({ source: 'dreamcontext prompt', text: typed });
+    return { human: null, other };
+  }
+  const injected = stripInjected(typed);
+  if (injected.length < typed.length) other.push({ source: 'task data or injected block inside a turn', text: typed });
+  // Every prompt dreamcontext types as a user turn (a kickoff, a delegate draft, the usage-limit
+  // continue) is dropped sentence by sentence; what the owner typed around it stays.
+  const { rest, matched } = stripAppPrompts(injected);
+  if (matched.length > 0) other.push({ source: 'dreamcontext prompt', text: injected });
+  if (isEmptyOfWords(rest)) return { human: null, other };
+  return { human: rest, other };
 }
 
 export interface BasisMatch {
