@@ -1890,6 +1890,9 @@
       "desc": "Show the cached snapshot for one insight (no fetch)",
       "args": [
         "<slug>"
+      ],
+      "valueFlags": [
+        "--select"
       ]
     },
     {

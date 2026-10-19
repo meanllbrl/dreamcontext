@@ -333,6 +333,10 @@ export interface FunnelStep {
   measured?: boolean;
   /** Why the step is not measured (<= 200 chars). */
   reason?: string;
+  /** The only dimensions this step can be broken down by (declared dimension
+   *  keys). A filter on any other dimension makes the step not measured there,
+   *  never 0. Absent = every dimension; `[]` = none (the total only). */
+  dims?: string[];
 }
 
 /** A reading trap or note, shown once on screen, one line each. */

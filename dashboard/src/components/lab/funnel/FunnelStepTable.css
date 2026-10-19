@@ -45,3 +45,10 @@
 .funnel-steptable-up {
   color: var(--color-accent);
 }
+
+/* Not measured is not zero: the row names why and carries no figure. */
+.funnel-steptable-unmeasured {
+  color: var(--color-text-tertiary) !important;
+  font-style: italic;
+  text-align: right !important;
+}

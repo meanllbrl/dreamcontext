@@ -229,7 +229,24 @@ function parseDaily(raw: unknown, metricKeys: ReadonlySet<string>, where: string
   return days.length > 0 ? days : undefined;
 }
 
-function parseStep(raw: unknown, where: string, notices: string[]): FunnelStep | null {
+/** A step's `dims`: the declared dimension keys it can be broken down by. An
+ *  undeclared key is dropped with a notice; a list that loses every key stays
+ *  `[]` (the step splits by nothing), so a typo never widens what it claims. */
+function parseStepDims(raw: unknown, declared: ReadonlySet<string>, where: string, notices: string[]): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    notices.push(`${where}: dims is not a list of dimension keys, ignored.`);
+    return undefined;
+  }
+  const cleaned = raw.map(cleanKey);
+  if (cleaned.some((k) => k === null)) notices.push(`${where}: dims entries that are not dimension keys dropped.`);
+  const keys = [...new Set(cleaned.filter((k): k is string => k !== null))];
+  const unknown = keys.filter((k) => !declared.has(k));
+  if (unknown.length > 0) notices.push(`${where}: dims ${unknown.map((k) => `"${k}"`).join(', ')} are not declared dimensions, dropped.`);
+  return keys.filter((k) => declared.has(k));
+}
+
+function parseStep(raw: unknown, where: string, notices: string[], declaredDims: ReadonlySet<string>): FunnelStep | null {
   if (!isRecord(raw)) return null;
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!key) return null;
@@ -251,6 +268,8 @@ function parseStep(raw: unknown, where: string, notices: string[]): FunnelStep |
     const reason = cleanText(raw.reason, MAX_REASON_CHARS, `${where} step "${key}" reason`, notices);
     if (reason) step.reason = reason;
   }
+  const dims = parseStepDims(raw.dims, declaredDims, `${where} step "${key}"`, notices);
+  if (dims) step.dims = dims;
   return step;
 }
 
@@ -815,9 +834,10 @@ function parseFunnel(
 
   const steps: FunnelStep[] = [];
   const seenKeys = new Set<string>();
+  const declaredDims = new Set(dimensions.map((d) => d.key));
   if (Array.isArray(raw.steps)) {
     for (const s of raw.steps) {
-      const step = parseStep(s, `funnel ${id}`, notices);
+      const step = parseStep(s, `funnel ${id}`, notices, declaredDims);
       if (!step) continue;
       if (seenKeys.has(step.key)) {
         notices.push(`funnel ${id}: duplicate step key "${step.key}" — later occurrence dropped.`);

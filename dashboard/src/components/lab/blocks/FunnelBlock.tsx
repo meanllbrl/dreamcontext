@@ -5,7 +5,7 @@ import {
   type FunnelFrame, type FunnelFrameNote, type FunnelSlice, type Selection, type StepDrop,
 } from '../../../generated/frameOps';
 import { useMeasured } from '../chartBody';
-import { fill, fmtCount, fmtDrop, formatShare } from '../explorer/explorerFormat';
+import { fill, fmtCount, fmtDrop, formatShare, localizeSplitReasons } from '../explorer/explorerFormat';
 import { FunnelBars, type FunnelStepCopy, type FunnelStepMode } from '../funnel/FunnelBars';
 import { FunnelFlow } from '../funnel/FunnelFlow';
 import { FunnelLanes, MAX_DRAWN_LANES } from '../funnel/FunnelLanes';
@@ -198,10 +198,12 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
   box: { width: number; height: number };
 }) {
   const { t, locale } = useI18n();
-  const slice = funnelSlice(frame, view.pick, view.selection);
+  const dims = frame.dimensions ?? [];
+  // A step the selection splits by a dim it is not broken down by reads "not measured" in the UI language.
+  const sliceOf = (funnelId: string | null, sel: Selection) => localizeSplitReasons(t, funnelSlice(frame, funnelId, sel), dims);
+  const slice = sliceOf(view.pick, view.selection);
   const funnel = frame.funnels.find((f) => f.id === slice.funnelId) ?? frame.funnels[0];
   if (!funnel) return <BlockEmpty />;
-  const dims = frame.dimensions ?? [];
   const nameOf = (sel: Selection) => selectionLabel(sel, dims) ?? t('lab.blocks.breakdown.all');
   const notes: { key: string; text: string; tone?: 'caution'; attr: Record<string, string> }[] = [];
   if (view.pick !== null && view.pick !== slice.funnelId) {
@@ -236,7 +238,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
     );
   } else if (view.lanes.length > 0) {
     const laneInputs = view.lanes.map((sel) => {
-      const s = funnelSlice(frame, slice.funnelId, sel);
+      const s = sliceOf(slice.funnelId, sel);
       return { slice: s, label: nameOf(s.selection) };
     });
     body = <FunnelLanes lanes={laneInputs} base={funnel.steps} markWorst={view.markWorst} dense={dense} />;

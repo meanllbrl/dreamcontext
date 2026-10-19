@@ -42,8 +42,9 @@ export function FunnelLane({
   collapsedInfo,
   arcDetail,
 }: {
-  steps: { key: string; label: string; users: number }[];
-  /** Pinned arcs (validated by the caller — both endpoints exist). */
+  /** `measured: false` = no count here: the node says "Not measured" (and why), never 0. */
+  steps: { key: string; label: string; users: number; measured?: boolean; reason?: string | null }[];
+  /** Pinned arcs (validated by the caller — both endpoints exist and are measured). */
   arcs?: LaneArc[];
   /** The armed first-click node key. */
   anchor?: string | null;
@@ -220,6 +221,33 @@ export function FunnelLane({
             const severity = dropSeverity(row.ofPrev);
             const isAnchor = anchor === row.key;
             const inArc = arcs.some((a) => a.from === row.key || a.to === row.key);
+            if (row.measured === false) {
+              // Not measured is not zero: no count, no share, no volume, no drop into it.
+              const reason = steps.find((s) => s.key === row.key)?.reason ?? null;
+              const why = `Not measured${reason ? `: ${reason}` : ''}`;
+              return (
+                <div className="funnel-lane-cell" key={row.key}>
+                  {i > 0 && (
+                    <div className="funnel-conn" aria-hidden>
+                      <span className="funnel-conn-rate">—</span>
+                      <span className="funnel-conn-line" />
+                    </div>
+                  )}
+                  <div
+                    className="funnel-node funnel-node--unmeasured"
+                    data-measured="false"
+                    data-lab-not-measured={row.key}
+                    role="group"
+                    aria-label={`${row.label}: ${why}`}
+                    title={why}
+                  >
+                    <span className="funnel-node-label">{row.label}</span>
+                    <span className="funnel-node-users funnel-node-unmeasured">Not measured</span>
+                    {reason && <span className="funnel-node-oftop">{reason}</span>}
+                  </div>
+                </div>
+              );
+            }
             return (
               <div className="funnel-lane-cell" key={row.key}>
                 {i > 0 && (

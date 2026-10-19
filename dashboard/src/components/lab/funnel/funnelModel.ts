@@ -7,6 +7,7 @@
  * No React, no fetch — keep this importable from any component.
  */
 
+import { unsplitDims, unsplitReason } from '../../../generated/frameOps';
 import { CHART_COLORS } from '../chartColors';
 
 // ─── Types (mirror src/lib/lab/types.ts — the API returns these shapes) ─────
@@ -35,6 +36,8 @@ export interface FunnelStep {
   users: number;
   prev?: number | null;
   median_seconds?: number | null;
+  /** The only dimensions this step can be broken down by (absent = every one, [] = none). */
+  dims?: string[];
 }
 
 export interface FunnelSegment {
@@ -299,11 +302,23 @@ export function clientFilters(filters: FilterState, dimensions: FunnelDimension[
   return out;
 }
 
+/** A step as a filter sees it. `measured: false` = the filter splits it by a
+ *  dim its `dims` leaves out: no count (users 0 is not one), no rate. */
+export interface FilteredStep {
+  key: string;
+  label: string;
+  users: number;
+  measured?: false;
+  reason?: string;
+  /** The selected dims the step is not split by (dim keys). */
+  notSplitBy?: string[];
+}
+
 export interface FilteredFunnel {
   /** Steps with users summed over the matching segment cells (cells), or the one
    *  looked-up path (lookup). Empty when the selection is not measured. */
-  steps: { key: string; label: string; users: number }[];
-  /** Top-step users after filtering. */
+  steps: FilteredStep[];
+  /** Users of the first MEASURED step after filtering. */
   users: number;
   /** False = no measured path answers this selection: not zero, nothing to draw. */
   measured: boolean;
@@ -320,8 +335,18 @@ export interface FilteredFunnel {
  * segment whose dims equal them exactly answers; nothing is ever summed.
  * Null when the funnel carries no segments (client filtering impossible) —
  * callers must surface that, not silently show unfiltered data.
+ *
+ * A step with `dims` that the filters split by a dim it leaves out is not
+ * measured for this selection (the frameOps rule `funnelSlice` applies too):
+ * no 0, no rate, never the worst drop. A step without `dims` is untouched.
+ * `dimensions` orders and labels the dims its reason names.
  */
-export function applyClientFilters(funnel: FunnelDef, filters: FilterState, mode: FunnelSegmentMode = 'cells'): FilteredFunnel | null {
+export function applyClientFilters(
+  funnel: FunnelDef,
+  filters: FilterState,
+  mode: FunnelSegmentMode = 'cells',
+  dimensions: readonly Pick<FunnelDimension, 'key' | 'label'>[] = [],
+): FilteredFunnel | null {
   const active = Object.entries(filters).filter(([, values]) => values.length > 0);
   if (active.length === 0) {
     return { steps: funnel.steps.map((s) => ({ key: s.key, label: s.label, users: s.users })), users: funnel.steps[0]?.users ?? 0, measured: true, reason: null };
@@ -330,14 +355,25 @@ export function applyClientFilters(funnel: FunnelDef, filters: FilterState, mode
   const unmeasured = (reason: string | null, multiValue = false): FilteredFunnel =>
     ({ steps: [], users: 0, measured: false, reason, ...(multiValue ? { multiValue } : {}) });
 
+  // The dims rule, in the declared dimension order (then any undeclared filter dim).
+  const order = dimensions.map((d) => d.key);
+  const selected = active.map(([dim]) => dim).sort((a, b) => rank(order, a) - rank(order, b));
+  const labelOf = (key: string) => dimensions.find((d) => d.key === key)?.label ?? key;
+  const stepDims = (key: string) => funnel.steps.find((s) => s.key === key)?.dims;
+  const split = (step: FilteredStep): FilteredStep => {
+    const missing = unsplitDims(stepDims(step.key), selected);
+    return missing.length === 0 ? step : { ...step, users: 0, measured: false, reason: unsplitReason(missing.map(labelOf)), notSplitBy: missing };
+  };
+  const firstMeasured = (steps: FilteredStep[]) => steps.find((s) => s.measured !== false)?.users;
+
   if (mode === 'lookup') {
     if (active.some(([, values]) => values.length > 1)) return unmeasured(null, true);
     const want = Object.fromEntries(active.map(([dim, values]) => [dim, values[0]]));
     const seg = funnel.segments.find((s) => sameDims(s.dims, want));
     if (!seg || seg.measured === false) return unmeasured(seg?.reason ?? null);
     const label = (key: string) => funnel.steps.find((s) => s.key === key)?.label ?? key;
-    const steps = seg.steps.map((s) => ({ key: s.key, label: label(s.key), users: s.users }));
-    return { steps, users: steps[0]?.users ?? seg.users, measured: true, reason: null };
+    const steps = seg.steps.map((s) => split({ key: s.key, label: label(s.key), users: s.users }));
+    return { steps, users: firstMeasured(steps) ?? (steps.length > 0 ? 0 : seg.users), measured: true, reason: null };
   }
 
   const matching = funnel.segments.filter((seg) =>
@@ -352,8 +388,14 @@ export function applyClientFilters(funnel: FunnelDef, filters: FilterState, mode
   for (const seg of counted) {
     for (const s of seg.steps) byStep.set(s.key, (byStep.get(s.key) ?? 0) + s.users);
   }
-  const steps = funnel.steps.map((s) => ({ key: s.key, label: s.label, users: byStep.get(s.key) ?? 0 }));
-  return { steps, users: steps[0]?.users ?? 0, measured: true, reason: null };
+  const steps = funnel.steps.map((s) => split({ key: s.key, label: s.label, users: byStep.get(s.key) ?? 0 }));
+  return { steps, users: firstMeasured(steps) ?? 0, measured: true, reason: null };
+}
+
+/** Position of `key` in `order`; an unlisted key sorts after every listed one. */
+function rank(order: readonly string[], key: string): number {
+  const i = order.indexOf(key);
+  return i === -1 ? order.length : i;
 }
 
 /** Two dim maps name exactly the same selection (same keys, same values). */
@@ -405,9 +447,14 @@ export interface BreakdownLane {
  * (the segment whose dims are `{dimKey: value}` alone): intersections are other
  * paths and are never summed in, nothing folds into "Other", no remainder is
  * derived, and an unmeasured path is a lane marked `measured: false`.
+ * A step whose `dims` leaves out `dimKey` is in no lane and in no remainder:
+ * it is not split by this dim (`notSplitSteps`), so every lane reads it as
+ * not measured rather than 0.
  */
 export function breakdownLanes(funnel: FunnelDef, dimKey: string, topN: number = BREAKDOWN_TOP_N, mode: FunnelSegmentMode = 'cells'): BreakdownLane[] {
   if (!funnel.segments || funnel.segments.length === 0) return [];
+  const unsplit = notSplitSteps(funnel, dimKey);
+  const splitSteps = (steps: { key: string; users: number }[]) => steps.filter((s) => !unsplit.has(s.key));
 
   if (mode === 'lookup') {
     const lanes: BreakdownLane[] = [];
@@ -420,7 +467,7 @@ export function breakdownLanes(funnel: FunnelDef, dimKey: string, topN: number =
       lanes.push({
         value,
         users: ok ? seg.users : 0,
-        steps: new Map(ok ? seg.steps.map((s) => [s.key, s.users] as const) : []),
+        steps: new Map(ok ? splitSteps(seg.steps).map((s) => [s.key, s.users] as const) : []),
         measured: ok,
         reason: ok ? null : seg.reason ?? null,
       });
@@ -439,7 +486,7 @@ export function breakdownLanes(funnel: FunnelDef, dimKey: string, topN: number =
       byValue.set(value, lane);
     }
     lane.users += seg.users;
-    for (const s of seg.steps) lane.steps.set(s.key, (lane.steps.get(s.key) ?? 0) + s.users);
+    for (const s of splitSteps(seg.steps)) lane.steps.set(s.key, (lane.steps.get(s.key) ?? 0) + s.users);
   }
   if (byValue.size === 0) return [];
 
@@ -458,6 +505,7 @@ export function breakdownLanes(funnel: FunnelDef, dimKey: string, topN: number =
   const remainder: BreakdownLane = { value: REMAINDER_VALUE, users: 0, steps: new Map() };
   let hasRemainder = false;
   for (const step of funnel.steps) {
+    if (unsplit.has(step.key)) continue;
     const segmented = lanes.reduce((sum, lane) => sum + (lane.steps.get(step.key) ?? 0), 0);
     const rest = step.users - segmented;
     if (rest > 0) {
@@ -466,13 +514,26 @@ export function breakdownLanes(funnel: FunnelDef, dimKey: string, topN: number =
     }
   }
   if (hasRemainder) {
-    remainder.users = remainder.steps.get(funnel.steps[0]?.key ?? '') ?? 0;
+    remainder.users = remainder.steps.get(funnel.steps.find((st) => !unsplit.has(st.key))?.key ?? '') ?? 0;
     lanes = [...lanes, remainder];
   }
   return lanes;
 }
 
+/** Keys of the steps a breakdown by `dimKey` cannot split (their `dims` leaves it out). */
+export function notSplitSteps(funnel: Pick<FunnelDef, 'steps'>, dimKey: string): Set<string> {
+  return new Set(funnel.steps.filter((s) => unsplitDims(s.dims, [dimKey]).length > 0).map((s) => s.key));
+}
+
 // ─── Significant-change collapse (user-set threshold) ───────────────────────
+
+export interface CollapsibleStep {
+  key: string;
+  label: string;
+  users: number;
+  measured?: false;
+  reason?: string;
+}
 
 export interface CollapsedStep {
   /** The LAST member's key — the group's boundary state; arcs anchor here. */
@@ -480,6 +541,9 @@ export interface CollapsedStep {
   label: string;
   /** Users LEAVING the group (last member's users). */
   users: number;
+  /** A not-measured step: always its own node, never folded into a group. */
+  measured?: false;
+  reason?: string;
   /** Present only for a real group (2+ members). */
   collapsed: {
     count: number;
@@ -497,19 +561,26 @@ export interface CollapsedStep {
  * (absolute — an insignificant increase collapses too). A significant change
  * starts a new node. Group nodes carry start → end users so a long run of
  * small drops that ADD UP to a big one stays visible, never hidden.
+ * A not-measured step has no change to compare: it stands alone, and the
+ * step after it starts a new node.
  */
 export function collapseSteps(
-  steps: { key: string; label: string; users: number }[],
+  steps: CollapsibleStep[],
   thresholdPct: number,
 ): CollapsedStep[] {
-  const plain = (s: { key: string; label: string; users: number }): CollapsedStep =>
-    ({ key: s.key, label: s.label, users: s.users, collapsed: null });
+  const plain = (s: CollapsibleStep): CollapsedStep => ({
+    key: s.key,
+    label: s.label,
+    users: s.users,
+    ...(s.measured === false ? { measured: false as const, ...(s.reason ? { reason: s.reason } : {}) } : {}),
+    collapsed: null,
+  });
   if (!Number.isFinite(thresholdPct) || thresholdPct <= 0 || steps.length === 0) {
     return steps.map(plain);
   }
-  const groups: { key: string; label: string; users: number }[][] = [];
+  const groups: CollapsibleStep[][] = [];
   for (let i = 0; i < steps.length; i++) {
-    if (i === 0) { groups.push([steps[0]]); continue; }
+    if (i === 0 || steps[i].measured === false || steps[i - 1].measured === false) { groups.push([steps[i]]); continue; }
     const prev = steps[i - 1].users;
     const cur = steps[i].users;
     const change = prev > 0 ? Math.abs(1 - cur / prev) * 100 : cur === prev ? 0 : 100;
@@ -819,7 +890,8 @@ export function readColumnKeys(params: URLSearchParams): string[] | null {
 
 // ─── Copy-as-Markdown (A14) ─────────────────────────────────────────────────
 
-export function stepTableMarkdown(name: string, rows: StepRow[]): string {
+/** `reasonOf` names why a not-measured row is not measured (the step's reason). */
+export function stepTableMarkdown(name: string, rows: StepRow[], reasonOf: (key: string) => string | null | undefined = () => null): string {
   const lines = [
     `### ${name}`,
     '',
@@ -827,6 +899,11 @@ export function stepTableMarkdown(name: string, rows: StepRow[]): string {
     '| --- | ---: | ---: | ---: | ---: |',
   ];
   for (const row of rows) {
+    if (row.measured === false) {
+      const reason = reasonOf(row.key);
+      lines.push(`| ${row.label} | not measured${reason ? ` (${reason})` : ''} | — | — | — |`);
+      continue;
+    }
     const ofTop = row.ofTop === null ? '—' : `${row.ofTop.toFixed(1)}%`;
     const ofPrev = row.ofPrev === null ? '—' : `${row.ofPrev.toFixed(1)}%`;
     const drop = row.drop === null ? '—' : row.drop < 0 ? `↑${-row.drop}` : `−${row.drop}`;
