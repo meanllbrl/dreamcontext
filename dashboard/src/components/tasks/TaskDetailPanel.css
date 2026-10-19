@@ -1,0 +1,1112 @@
+/* ── Overlay + Panel Shell ── */
+
+.detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: hsl(0 0% 0% / 0.3);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 100;
+  animation: fade-in 120ms ease;
+  transition: background var(--transition-normal);
+}
+
+.detail-overlay--fullscreen {
+  background: var(--color-bg);
+  /* Full-page is a PAGE, not a modal: the app's real top bar (sticky, --header-height,
+     z-index 30) stays visible and interactive above it. Covering it made the task view
+     read as a different app that had swallowed the chrome. The drawer variant keeps
+     inset:0 — a modal drawer dimming everything is exactly what a drawer is. */
+  top: var(--header-height);
+}
+
+.detail-panel {
+  width: 100%;
+  max-width: 680px;
+  height: 100vh;
+  background: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xl);
+  display: flex;
+  flex-direction: column;
+  animation: slide-in 200ms ease;
+  transition: max-width var(--transition-normal);
+}
+
+.detail-panel--fullscreen {
+  max-width: 100vw;
+  border-left: none;
+  box-shadow: none;
+  /* The overlay starts below the app header now — 100vh would overflow by exactly
+     --header-height and push the bottom of the panel (composer, tray) off-screen. */
+  height: 100%;
+}
+
+/* ── Full-page document layout: parameters LEFT, document RIGHT ─────────────────
+ * The design's full-page shape (and the drawer's opposite): the property form is a
+ * narrow left rail beside the document, not a stack on top of it. Grid, not flex —
+ * auto-placement sends every body child to the document column and only the
+ * props-block is pulled into the rail, so the JSX (shared with the drawer, where
+ * everything stays stacked) doesn't fork.
+ */
+.detail-panel--fullscreen .detail-body {
+  display: grid;
+  grid-template-columns: clamp(300px, 26%, 360px) minmax(0, 1fr);
+  column-gap: var(--space-6);
+  align-content: start;
+  width: 100%;
+  max-width: 1520px;
+  margin: 0 auto;
+}
+
+.detail-panel--fullscreen .detail-body > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.detail-panel--fullscreen .detail-body > .props-block {
+  grid-column: 1;
+  /* Span "all the rows" (the count just needs to exceed the document column's child
+     count; surplus rows collapse to zero height) so the rail owns the whole first
+     column while the document flows freely beside it. */
+  grid-row: 1 / span 60;
+  align-self: start;
+  /* The rail stays put while the document scrolls; taller-than-viewport parameter
+     stacks scroll inside the rail instead of pinning uselessly. */
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - var(--header-height) - var(--space-10));
+  overflow-y: auto;
+}
+
+.detail-panel--fullscreen .detail-header {
+  max-width: 1520px;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+}
+
+/* ── Zones ────────────────────────────────────────────────────────────────────────
+ * `min-height: 0` is load-bearing: without it a flex child refuses to shrink below its
+ * content and the document's own scroll is replaced by the whole panel scrolling.
+ */
+.detail-zones {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detail-zones > .detail-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.detail-panel--fullscreen .detail-header {
+  padding-left: var(--space-6);
+  padding-right: var(--space-6);
+}
+
+@keyframes slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  gap: var(--space-3);
+}
+
+.detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.detail-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.detail-icon-btn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.detail-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.detail-empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.detail-divider {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: var(--space-1) 0;
+}
+
+/* ── Properties Block (Notion-style) ── */
+
+.props-block {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* ── Grouped properties ─────────────────────────────────────────────────────
+ * Replaces the flat 18-row stack. The section HEAD is the hierarchy: uppercase, tertiary,
+ * quiet — it labels the group without competing with the values inside it.
+ */
+
+.task-section { border-bottom: 1px solid var(--color-border); }
+.task-section:last-child { border-bottom: none; }
+
+.task-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+.task-section-head:hover { background: var(--color-bg-secondary); }
+.task-section-head:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.task-section-caret {
+  flex: 0 0 auto;
+  font-size: 9px;
+  color: var(--color-text-tertiary);
+  transition: transform var(--transition-fast);
+}
+.task-section-caret[data-open] { transform: rotate(90deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .task-section-caret { transition: none; }
+}
+
+.task-section-title {
+  flex: 1;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* A closed section still says how much it is holding, so collapsing never hides the fact that
+   there is something in there. */
+.task-section-count {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.task-section-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+/* Not a `140px 1fr` grid: the label sits on a flexible column so a narrow rail gives its width
+   to the VALUE, which is the part that has to stay usable. */
+.task-field {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-1) 0;
+}
+
+.task-field-label {
+  flex: 0 0 92px;
+  padding-top: 6px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+}
+
+.task-field-value {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ── The shared nullable-field states ───────────────────────────────────────
+ * One shape for "empty", one for "required and missing" — so a reader can tell them apart at a
+ * glance, and a writer doesn't relearn a gesture per field.
+ */
+
+.task-field-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.task-field-empty:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+  color: var(--color-text-secondary);
+}
+
+.task-field-empty:disabled { cursor: default; opacity: 0.7; }
+
+.task-field-empty:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.task-field-required {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+/* A date's clear is the same × the chips use — not this field's private gesture. */
+.prop-date-edit { display: inline-flex; align-items: center; gap: var(--space-1); }
+
+.prop-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.prop-clear:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.prop-clear:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+/* "Undated by rule" now names its cause and offers the way out, instead of being a sentence
+   sitting where an input used to be with the explanation buried in a title attribute. */
+.prop-backlog { display: inline-flex; flex-direction: column; gap: 2px; }
+
+.prop-backlog-text { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+
+.prop-backlog-text code {
+  font-family: var(--font-mono);
+  padding: 0 3px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+}
+
+.prop-backlog-clear {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  text-align: left;
+}
+
+.prop-backlog-clear:hover { text-decoration: underline; }
+
+.prop-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  min-height: 36px;
+  align-items: start;
+  border-bottom: 1px solid var(--color-border);
+  transition: background var(--transition-fast);
+}
+
+.prop-row:last-child {
+  border-bottom: none;
+}
+
+.prop-row:hover {
+  background: var(--color-bg-secondary);
+}
+
+.prop-label {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  user-select: none;
+  line-height: 20px;
+}
+
+.prop-value {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  min-width: 0;
+  overflow-wrap: break-word;
+  line-height: 20px;
+}
+
+.prop-select {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+}
+
+.prop-select:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.prop-select:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+.prop-tags {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.prop-feature {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+}
+
+.prop-text {
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+}
+
+.prop-text--clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.prop-expandable {
+  cursor: pointer;
+  display: block;
+}
+
+.prop-expand-hint {
+  display: inline;
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  margin-left: var(--space-1);
+}
+
+.prop-date {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.prop-id {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Markdown Body ── */
+
+.markdown-body {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  line-height: var(--line-height-relaxed);
+  word-break: break-word;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* Headings */
+.markdown-body h1 {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  margin-top: var(--space-6);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.markdown-body h2 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  margin-top: var(--space-5);
+  margin-bottom: var(--space-2);
+}
+
+.markdown-body h3 {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-1);
+}
+
+/* Paragraphs */
+.markdown-body p {
+  margin-bottom: var(--space-3);
+}
+
+/* Lists */
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: var(--space-5);
+  margin-bottom: var(--space-3);
+}
+
+.markdown-body ul {
+  list-style-type: disc;
+}
+
+.markdown-body ol {
+  list-style-type: decimal;
+}
+
+.markdown-body li {
+  margin-bottom: var(--space-1);
+  line-height: var(--line-height-relaxed);
+}
+
+.markdown-body li > ul,
+.markdown-body li > ol {
+  margin-top: var(--space-1);
+  margin-bottom: 0;
+}
+
+/* Task list checkboxes */
+.markdown-body li input[type="checkbox"] {
+  margin-right: var(--space-2);
+  accent-color: var(--color-accent);
+}
+
+/* Inline code */
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-bg-tertiary);
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+/* Code blocks */
+.markdown-body pre {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  overflow-x: auto;
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+}
+
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Tables */
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+.markdown-body th,
+.markdown-body td {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--color-bg-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.markdown-body tr:hover {
+  background: var(--color-bg-secondary);
+}
+
+/* Blockquotes */
+.markdown-body blockquote {
+  border-left: 3px solid var(--color-accent);
+  padding-left: var(--space-4);
+  margin: var(--space-3) 0;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* Horizontal rules */
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: var(--space-4) 0;
+}
+
+/* Links */
+.markdown-body a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-body a:hover {
+  color: var(--color-accent);
+}
+
+/* Strong */
+.markdown-body strong {
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Images */
+.markdown-body img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+
+/* ── Changelog Section ── */
+
+.changelog-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.changelog-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.changelog-add {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.changelog-add .field-input {
+  flex: 1;
+}
+
+/* ── Mermaid (Workflow flowchart) ── */
+
+.markdown-body .mermaid-rendered {
+  position: relative;
+  margin: var(--space-3) 0;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  overflow: hidden;
+  height: 70vh;
+  max-height: 720px;
+  min-height: 420px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.markdown-body .mermaid-rendered:hover {
+  border-color: var(--color-border-hover);
+  box-shadow: var(--shadow-md);
+}
+
+.markdown-body .mermaid-stage {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.markdown-body .mermaid-stage:active {
+  cursor: grabbing;
+}
+
+.markdown-body .mermaid-stage > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.markdown-body .mermaid-controls {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  gap: 4px;
+  /* An opaque elevated surface, not frosted glass: the controls sit on every diagram for as
+     long as it is open, and a backdrop blur there repaints under each pan and zoom. */
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  z-index: 2;
+}
+
+.markdown-body .mermaid-controls button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  font-size: 16px;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.markdown-body .mermaid-controls button:hover {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.markdown-body .mermaid-error {
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+  border: 1px solid var(--color-error);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.markdown-body .mermaid-rendered svg {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+}
+
+/* ── RICE block (collapsible) ── */
+
+.rice-block {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.rice-header {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.rice-header:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.rice-header-label {
+  font-weight: var(--font-weight-medium);
+}
+
+.rice-score-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.rice-score-badge.rice-score--low {
+  background: hsl(0 70% 50% / 0.15);
+  color: hsl(0 70% 45%);
+  border-color: hsl(0 70% 50% / 0.3);
+}
+
+.rice-score-badge.rice-score--mid {
+  background: hsl(40 90% 50% / 0.15);
+  color: hsl(35 80% 38%);
+  border-color: hsl(40 90% 50% / 0.3);
+}
+
+.rice-score-badge.rice-score--high {
+  background: hsl(140 60% 45% / 0.18);
+  color: hsl(140 65% 30%);
+  border-color: hsl(140 60% 45% / 0.35);
+}
+
+[data-theme='dark'] .rice-score-badge.rice-score--low {
+  color: hsl(0 75% 75%);
+}
+
+[data-theme='dark'] .rice-score-badge.rice-score--mid {
+  color: hsl(40 90% 70%);
+}
+
+[data-theme='dark'] .rice-score-badge.rice-score--high {
+  color: hsl(140 60% 70%);
+}
+
+.rice-chevron {
+  transition: transform var(--transition-fast);
+  color: var(--color-text-tertiary);
+}
+
+.rice-chevron--open {
+  transform: rotate(180deg);
+}
+
+.rice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.rice-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rice-field-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rice-input {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.rice-clear-btn {
+  grid-column: 1 / -1;
+  justify-self: end;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.rice-clear-btn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+/* Editable tags (detail panel) */
+.prop-tags--editable .task-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.task-tag-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+}
+
+.task-tag-remove:hover {
+  opacity: 1;
+}
+
+.task-tag-input {
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs, 11px);
+  padding: 1px var(--space-2);
+  width: 64px;
+}
+
+.task-tag-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  width: 110px;
+}
+
+/* The "+ tag" control sits inline among the tag chips, so it has to read as one
+   of them (dashed = "add") rather than as a full-width form field. */
+.task-tag-picker {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.task-tag-picker .ss-trigger {
+  height: auto;
+  min-height: 0;
+  padding: 1px var(--space-2);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs, 11px);
+}
+
+.task-tag-picker .ss-trigger:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+/* The popover is wider than its trigger — a tag list needs room to be read. */
+.task-tag-picker .ss-pop {
+  min-width: 240px;
+}
+
+.prop-backlog-send {
+  align-self: flex-start;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.prop-backlog-send:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+/* Multi-assignee picker (detail panel) */
+.assignee-multi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.assignee-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1, 4px);
+}
+
+.assignee-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px var(--space-2);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-size: var(--font-size-xs, 11px);
+  border-radius: var(--radius-sm, 4px);
+}
+
+/* Assigned to a slug that matches no real member on a remote backend — it will
+   not sync (ClickUp would default the assignee to the API-token owner). Visually
+   distinct from a real, syncing assignee so the two are never confused. */
+.assignee-chip--unmapped {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+  outline: 1px dashed var(--color-error);
+  outline-offset: -1px;
+}
+
+.assignee-chip__warn {
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1;
+}
+
+/* Screen-reader-only: conveys the "won't sync" warning to assistive tech, since
+   the ⚠ icon is aria-hidden and a title tooltip isn't reliably announced. */
+.assignee-chip__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.assignee-chip__remove {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+}
+
+.assignee-chip__remove:hover {
+  opacity: 1;
+}
+
+/* Editable property inputs + delete row */
+.prop-text-input {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-2);
+  width: 100%;
+  max-width: 260px;
+}
+
+.prop-text-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* Multi-line variant (Summary): reads as a paragraph, grows vertically only. */
+.prop-textarea {
+  max-width: none;
+  min-height: calc(var(--font-size-sm) * 1.5 * 3);
+  line-height: 1.5;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.prop-danger-row {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.btn--danger-ghost {
+  background: none;
+  border: 1px solid var(--color-danger, #ef4444);
+  color: var(--color-danger, #ef4444);
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.btn--danger-ghost:hover {
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
+}
+
+.detail-danger-zone {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-4);
+}
+
+.detail-danger-hint {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs, 11px);
+}

@@ -7,7 +7,6 @@ import type { FunnelBarStep } from './FunnelBars';
 import { dropSeverity } from './funnelModel';
 import './FunnelBars.css';
 import './FunnelFlow.css';
-import { fill } from '../../../lib/fill';
 
 /**
  * `46%` / `4.5%`: whole percents from 10 up, one decimal below, in the reader's number format
@@ -127,7 +126,7 @@ export function FunnelFlow({ steps, markWorst = false, dense = false, narrow = f
     >
       {items.map((it, n) => {
         if (it.kind === 'more') {
-          const text = fill(t('lab.explorer.flowMore'), { n: String(it.count) });
+          const text = t('lab.explorer.flowMore').replace('{n}', String(it.count));
           return (
             <button
               key={`more-${it.from}`}
@@ -146,7 +145,7 @@ export function FunnelFlow({ steps, markWorst = false, dense = false, narrow = f
         const worst = markWorst && d.worst;
         // Users lost into this step, from the last MEASURED step before it (an unmeasured one is skipped).
         const lost = d.measured && d.prevUsers !== null ? d.prevUsers - d.users : 0;
-        const unmeasuredText = d.measured ? null : fill(t('lab.explorer.notMeasuredWhy'), { reason: reasonOf(d.key) ?? t('lab.blocks.breakdown.noPath') });
+        const unmeasuredText = d.measured ? null : t('lab.explorer.notMeasuredWhy').replace('{reason}', reasonOf(d.key) ?? t('lab.blocks.breakdown.noPath'));
         const derived = d.basis === 'derived' ? (
           <span className="funnel-flow-derived" data-lab-derived="" title={t('lab.explorer.derivedTitle')}>{t('lab.explorer.derived')}</span>
         ) : null;

@@ -12,7 +12,6 @@ import {
   localOnlyFieldsFromSnapshot,
   isLocalOnlyTaskField,
   REMOTE_MAPPED_TASK_FIELDS,
-  KNOWN_LOCAL_ONLY_TASK_FIELDS,
 } from '../../src/lib/task-backend/local-only.js';
 import { SyncLedger } from '../../src/lib/task-backend/sync-state.js';
 import { makeFakeGitHub, type FakeGitHub } from './github-fake.js';
@@ -89,9 +88,6 @@ describe('local-only field registry', () => {
     for (const key of ['objectives', 'rice', 'parent_task', 'related_feature', 'description', 'id', 'created_at']) {
       expect(isLocalOnlyTaskField(key)).toBe(true);
     }
-    // The provenance marker a proposal accept writes (task-proposals.ts) is local-only, by name.
-    expect(KNOWN_LOCAL_ONLY_TASK_FIELDS).toContain('from_proposal');
-    expect(isLocalOnlyTaskField('from_proposal')).toBe(true);
     // …and a key nobody has invented yet fails SAFE (local-only, so preserved).
     expect(isLocalOnlyTaskField('some_future_field')).toBe(true);
     // The mapped set is the closed complement — these the remote owns.
@@ -150,20 +146,6 @@ describe('github pull preserves LOCAL-ONLY task fields', () => {
     await backend.sync('push');
     return [...fake.issues.values()][0].number;
   }
-
-  // Fourth pass, open question: a card created with the marker has no base snapshot until its
-  // first push. A pull never rebuilds a card that is on disk (the rebuild runs only for a
-  // missing mirror file); the merge keeps every unmapped key from the CURRENT card.
-  it('from_proposal, written at create before any snapshot, survives the push and a remote-edit pull', async () => {
-    await backend.create({ name: 'From A Proposal', from_proposal: 'tp_abcdef12', variant: 'dashboard' });
-    expect(fm('from-a-proposal').from_proposal).toBe('tp_abcdef12');
-    await backend.sync('push');
-    const number = [...fake.issues.values()].find((i) => i.title === 'From A Proposal')!.number;
-    fake.editIssue(number, { title: 'From A Proposal', body: '## Why\n\nedited on GitHub\n' });
-    const report = await backend.sync('pull');
-    expect(report.errors).toEqual([]);
-    expect(fm('from-a-proposal').from_proposal).toBe('tp_abcdef12');
-  });
 
   it('AC2: `objectives:` survives a pull that updates the mirror — byte for byte', async () => {
     const number = await seedRichTask();

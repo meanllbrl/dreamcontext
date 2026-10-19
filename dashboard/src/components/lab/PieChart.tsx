@@ -11,7 +11,6 @@ import {
 } from './chart';
 import { entityDomain } from './LineChart';
 import './lab-bar-pie-heat.css';
-import { fill } from '../../lib/fill';
 
 /**
  * The pie (and donut) on the chart foundation: one slice per row, sized by its
@@ -399,7 +398,7 @@ function PiePlot({ rows, unit, hole, centerTotal, labels, colorIndex, format, co
     title: activeSlice.label,
     rows: [{
       id: activeSlice.id,
-      label: fill(t('lab.chart.share'), { pct: shareText(active.share, locale) }),
+      label: t('lab.chart.share').replace('{pct}', shareText(active.share, locale)),
       value: formatValue(active.value, fmt),
       color: colors.color(activeSlice.id),
       shape: 'rect',

@@ -122,12 +122,6 @@ export interface SyncResult {
    * self-healed. Never carries any token value.
    */
   healedStaleProjectToken?: boolean;
-  /**
-   * What the deterministic merge decided that a person should hear about (a
-   * second active cycle demoted, a task status this machine does not declare,
-   * a lab-board card kept). Rendered as warnings; absent when there is none.
-   */
-  mergeNotes?: string[];
 }
 
 const EMPTY_SCRUB = { blocks: [] as ScrubHit[], warns: [] as ScrubHit[] };
@@ -199,8 +193,6 @@ interface Ctx {
    * `runBrainSync` can stamp `healedStaleProjectToken` onto the final result.
    */
   session?: BrainSyncTokenSession;
-  /** Notes the deterministic merge produced this run (stamped onto the result). */
-  mergeNotes: string[];
 }
 
 /** Human-facing copy for a full-repo code conflict — names the file + how to finish. */
@@ -278,7 +270,6 @@ const HEALED_STALE_TOKEN_NOTE =
  * centrally, in `runBrainSync` — every successful entry-point result flows through it.
  */
 function applyHealInfo(ctx: Ctx, result: SyncResult): SyncResult {
-  if (ctx.mergeNotes.length > 0) result = { ...result, mergeNotes: [...(result.mergeNotes ?? []), ...ctx.mergeNotes] };
   if (!ctx.session?.healedStaleProjectToken) return result;
   return {
     ...result,
@@ -341,7 +332,6 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     strict: !!opts.strict,
     foreground: !!opts.foreground,
     noCheckpoint: !!opts.noCheckpoint,
-    mergeNotes: [],
   };
 
   // full-repo stages the WHOLE project (`git add -A` at the root), so the
@@ -546,7 +536,6 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
   }
 
   const resolution = d.resolveConflicts(gitCwd, mergeResult.conflicts, { fullRepo: ctx.mode === 'full-repo', contextRoot });
-  ctx.mergeNotes.push(...(resolution.notes ?? []));
   const needsTaskSync = computeNeedsTaskSync(config, resolution.resolved);
 
   // CODE conflict (full-repo, a file outside `_dream_context/`): git's semantic

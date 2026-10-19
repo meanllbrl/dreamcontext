@@ -95,15 +95,6 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
 
   // Tasks
   'GET /api/tasks': allow(READ),
-  'GET /api/task-proposals': allow(READ),
-  'GET /api/task-proposals/count': allow(READ),
-  'POST /api/task-proposals/filed/:slug/reject': allow('rejects a task sleep opened in this project, as the Tasks screen does'),
-  'POST /api/task-proposals/filed/:slug/keep': allow('keeps a task sleep opened in this project, as the Tasks screen does'),
-  'POST /api/task-proposals/changes/:slug/apply': allow('applies a reorganisation the task migration suggested in this project, as the Tasks screen does'),
-  'POST /api/task-proposals/changes/:slug/keep': allow('keeps a task as it is against the task migration\'s suggestion, as the Tasks screen does'),
-  'POST /api/task-proposals/:id/accept': allow('accepts one of sleep\'s task proposals in this project, as the Tasks screen does'),
-  'POST /api/task-proposals/:id/reject': allow('rejects one of sleep\'s task proposals in this project, as the Tasks screen does'),
-  'POST /api/task-filing-rules/:id/revert': allow('reverts one of this project\'s task-filing rules, as the Tasks screen does'),
   'POST /api/tasks': allow(PROJECT_WRITE),
   'GET /api/tasks/sync-status': allow(READ),
   'POST /api/tasks/sync': allow('syncs this project\'s tasks with its configured backend, as the dashboard does'),
@@ -124,26 +115,11 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'DELETE /api/task-overrides/statuses/:key': allow(PROJECT_WRITE),
   'GET /api/tasks/:slug': allow(READ),
   'GET /api/tasks/:slug/readiness': allow(READ),
-  'GET /api/tasks/:slug/journal': allow(READ),
   'DELETE /api/tasks/:slug': allow(PROJECT_WRITE),
   'PATCH /api/tasks/:slug': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/changelog': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/assign-agent': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/insert': allow(PROJECT_WRITE),
-  'POST /api/tasks/:slug/verdict': allow('the owner approves a task in review or sends it back, as the Inbox does (audited with its via)'),
-  'POST /api/tasks/:slug/plan': allow(PROJECT_WRITE),
-  'POST /api/tasks/:slug/rank': allow(PROJECT_WRITE),
-
-  // The Inbox, the Planning screen and the Close deck (C5)
-  'GET /api/inbox': allow(READ),
-  'GET /api/inbox/count': allow(READ),
-  'POST /api/inbox/seen': allow('marks an Inbox record seen, as the Inbox does (who and through what are kept on it)'),
-  'POST /api/learned/:id/revert': allow('the owner reverts a rule sleep learned in this project, as the Inbox does'),
-  'GET /api/cycles': allow(READ),
-  'GET /api/cycles/:id/close-plan': allow(READ),
-  'POST /api/cycles': allow(PROJECT_WRITE),
-  'POST /api/cycles/:id/start': allow(PROJECT_WRITE),
-  'POST /api/cycles/:id/close': allow(PROJECT_WRITE),
 
   // Sleep
   'GET /api/sleep': allow(READ),

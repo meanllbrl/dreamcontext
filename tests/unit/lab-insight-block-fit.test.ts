@@ -80,8 +80,7 @@ describe('InsightBlock: no scroll box around chart renders', () => {
   it('html/v1 and app/v1 bodies scroll whatever the render', () => {
     // Their bodies need a DOM (the sandboxed frame), so the rule is read from the source.
     const src = readFileSync(join(LAB, 'blocks/InsightBlock.tsx'), 'utf-8');
-    // `fillsCell` (r14 renamed the boolean so it cannot shadow the shared `fill` helper).
-    expect(src).toContain("const fillsCell = !!entry && !cache?.app && !cache?.html && entry.fit === 'fill';");
+    expect(src).toContain("const fill = !!entry && !cache?.app && !cache?.html && entry.fit === 'fill';");
   });
 
   it('the fill box is definite and clips; the body is placed absolutely inside it', () => {

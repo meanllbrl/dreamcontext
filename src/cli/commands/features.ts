@@ -9,7 +9,6 @@ import { insertToSection } from '../../lib/markdown.js';
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { generateId, slugify, today } from '../../lib/id.js';
-import { fillTemplate } from '../../lib/template-fill.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { analyzeFeatures, type FeatureRef, type TaskRef } from '../../lib/feature-freshness.js';
 import { featuresDir, featureSlug, featureProduct, FEATURES_SUBDIR, FEATURES_TYPE } from '../../lib/features-path.js';
@@ -205,16 +204,12 @@ export function registerFeaturesCommand(program: Command): void {
       const date = today();
 
       const template = getFeatureTemplate();
-      // One pass, every value literal (lib/template-fill.ts): name and description as valid
-      // YAML scalars (a `"` or `\` used to corrupt the file), and a `$&`, `$'`, `` $` `` or `$$`
-      // in any value reaches the file as typed.
-      const content = fillTemplate(template, {
-        ID: generateId('feat'),
-        DATE: date,
-        NAME: name,
-        DESCRIPTION: opts.description ?? '',
-        WHY: why || '(To be defined)',
-      }, ['NAME', 'DESCRIPTION']);
+      const content = template
+        .replaceAll('{{ID}}', generateId('feat'))
+        .replaceAll('{{DATE}}', date)
+        .replaceAll('{{NAME}}', name)
+        .replaceAll('{{DESCRIPTION}}', opts.description ?? '')
+        .replaceAll('{{WHY}}', why || '(To be defined)');
 
       if (folder) mkdirSync(targetDir, { recursive: true });
       writeFileSync(filePath, content, 'utf-8');

@@ -81,19 +81,6 @@ describe('release-discovery', () => {
       rmSync(join(root, 'state'), { recursive: true, force: true });
       expect(findUnreleasedTasks(root)).toEqual([]);
     });
-
-    it('GET /api/releases/unreleased lists only the tasks closed since the previous release', async () => {
-      writeFileSync(join(root, 'core', 'RELEASES.json'), JSON.stringify([
-        { id: 'rel_1', version: '1.0.0', date: '2026-02-20', status: 'released', summary: '', breaking: false, features: [], tasks: [], changelog: [] },
-      ]), 'utf-8');
-      writeFileSync(join(root, 'state', 'old-done.md'), '---\nid: "task_old"\nstatus: "completed"\nupdated_at: "2026-01-10"\n---\n', 'utf-8');
-      writeFileSync(join(root, 'state', 'new-done.md'), '---\nid: "task_new"\nstatus: "completed"\nupdated_at: "2026-03-01"\n---\n', 'utf-8');
-      const { call } = await import('../helpers/fake-http.js');
-      const { handleUnreleasedGet } = await import('../../src/server/routes/changelog.js');
-      const { code, body } = await call(handleUnreleasedGet, root, {}, { method: 'GET' });
-      expect(code).toBe(200);
-      expect((body.tasks as Array<{ id: string }>).map((t) => t.id)).toEqual(['task_new']);
-    });
   });
 
   describe('findUnreleasedFeatures', () => {

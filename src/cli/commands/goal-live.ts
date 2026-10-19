@@ -1,4 +1,3 @@
-import { bindSession } from '../../lib/session-task.js';
 import { Command } from 'commander';
 import { existsSync, unlinkSync } from 'node:fs';
 import { resolveContextRoot } from '../../lib/context-path.js';
@@ -159,10 +158,6 @@ export function goalLiveStart(deps: GoalLiveDeps, goal: string | undefined, mode
   const root = deps.resolveRoot();
   if (!root) throw new GoalLiveInputError('no _dream_context/ found from here');
   const now = deps.now();
-  // A Develop run IS this session working this task: bind it, so a compaction
-  // brings the task's context packet back (best-effort; never blocks the run).
-  const claudeSession = (deps.env.CLAUDE_CODE_SESSION_ID ?? '').trim();
-  if (claudeSession) bindSession(root, claudeSession, slug, 'develop');
   sweepAbandonedGoalLive(root, now.getTime());
   // A Develop run survives a handoff (new session id) and a reopen: take the run over instead
   // of wiping it, so the map, the reviewed count and the receipt stay intact.

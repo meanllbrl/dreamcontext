@@ -3,13 +3,11 @@ import type { Task } from '../../hooks/useTasks';
 import { useUpdateTask, useStatusModel } from '../../hooks/useTasks';
 import { TaskCard } from './TaskCard';
 import { taskAssignee } from './boardModel';
-import { useI18n } from '../../context/I18nContext';
 import {
   MONTH_SHORT,
   formatISO, todayISO, parseISO, addDays, diffDays, taskSpan,
 } from './calendar-utils';
 import './TimelineGantt.css';
-import { fill } from '../../lib/fill';
 
 interface TimelineGanttProps {
   tasks: Task[];
@@ -61,7 +59,6 @@ const rangeLabel = (start: string, end: string) =>
   start === end ? fmtShort(start) : `${fmtShort(start)} → ${fmtShort(end)}`;
 
 export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
-  const { t } = useI18n();
   const sm = useStatusModel();
   const [unscheduledOpen, setUnscheduledOpen] = useState(false);
   const [zoom, setZoom] = useState<number | null>(null);
@@ -262,10 +259,10 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
     return (
       <div className="gantt">
         <div className="gantt-empty">
-          <p className="gantt-empty-title">{t('board.timeline.emptyTitle')}</p>
+          <p className="gantt-empty-title">No scheduled tasks yet</p>
           <p className="gantt-empty-sub">
-            {t('board.timeline.emptyBody')}
-            {unscheduled.length > 0 && ` ${fill(t('board.timeline.waiting'), { n: String(unscheduled.length) })}`}
+            Set a due date on a task to place it on the timeline.
+            {unscheduled.length > 0 && ` ${unscheduled.length} task${unscheduled.length === 1 ? '' : 's'} waiting below.`}
           </p>
         </div>
         {unscheduled.length > 0 && (
@@ -297,14 +294,14 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
           </span>
         ))}
         <span className="gantt-legend-spacer" />
-        <div className="gantt-zoom" role="group" aria-label={t('board.timeline.zoom')}>
+        <div className="gantt-zoom" role="group" aria-label="Zoom timeline">
           <button
             type="button"
             className="gantt-zoom-btn"
             onClick={() => setZoom(clampIdx(zoomIdx - 1))}
             disabled={zoomIdx === 0}
-            aria-label={t('board.timeline.zoomOut')}
-            title={t('board.timeline.zoomOut')}
+            aria-label="Zoom out"
+            title="Zoom out"
           >
             −
           </button>
@@ -313,8 +310,8 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
             className="gantt-zoom-btn"
             onClick={() => setZoom(clampIdx(zoomIdx + 1))}
             disabled={zoomIdx === ZOOM_LADDER.length - 1}
-            aria-label={t('board.timeline.zoomIn')}
-            title={t('board.timeline.zoomIn')}
+            aria-label="Zoom in"
+            title="Zoom in"
           >
             +
           </button>
@@ -339,7 +336,7 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
               ))}
               {todayOffset !== null && (
                 <div className="gantt-today-line" style={{ left: todayOffset * dayW + dayW / 2 }}>
-                  <span className="gantt-today-flag">{t('board.timeline.today')}</span>
+                  <span className="gantt-today-flag">today</span>
                 </div>
               )}
             </div>
@@ -387,19 +384,19 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
                       onPointerDown={(e) => beginDrag(e, row, 'move')}
                       onClick={() => { if (!movedRef.current) onTaskClick(task); }}
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTaskClick(task); } }}
-                      title={`${task.name}\n${rangeLabel(start, end)}${overdue ? ` · ${t('board.timeline.overdue')}` : ''}\n${t('board.timeline.dragHint')}`}
+                      title={`${task.name}\n${rangeLabel(start, end)}${overdue ? ' · overdue' : ''}\nDrag to reschedule · drag an edge to resize`}
                       aria-label={`${task.name}, ${rangeLabel(start, end)}`}
                     >
                       <span
                         className="gantt-handle gantt-handle--start"
                         onPointerDown={(e) => beginDrag(e, row, 'start')}
-                        title={t('board.timeline.dragStart')}
+                        title="Drag to set start date"
                       />
                       {barW > 56 && <span className="gantt-bar-label">{task.name}</span>}
                       <span
                         className="gantt-handle gantt-handle--end"
                         onPointerDown={(e) => beginDrag(e, row, 'end')}
-                        title={t('board.timeline.dragDue')}
+                        title="Drag to set due date"
                       />
                     </div>
                     <span
@@ -431,11 +428,10 @@ function UnscheduledTray({
   onToggle: () => void;
   onTaskClick: (task: Task) => void;
 }) {
-  const { t } = useI18n();
   return (
     <div className={`gantt-unscheduled ${open ? 'gantt-unscheduled--open' : ''}`}>
       <button type="button" className="gantt-unscheduled-toggle" onClick={onToggle} aria-expanded={open}>
-        <span>{fill(t('board.timeline.unscheduled'), { n: String(tasks.length) })}</span>
+        <span>Unscheduled ({tasks.length})</span>
         <svg className={`gantt-chevron ${open ? 'gantt-chevron--open' : ''}`} width="12" height="12" viewBox="0 0 12 12" fill="none">
           <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

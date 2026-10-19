@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterEach, afterAll } from 'vitest';
 import { execSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isEmbedModelDownloaded } from '../../src/lib/embeddings/embedder.js';
@@ -45,27 +45,7 @@ interface CliOpts {
   lowPriority?: boolean;
 }
 
-/**
- * C4: sleep files a NEW top-level task only on a basis, and only after reading
- * the task-filing rules this cycle. These cases exercise the other gates, so a
- * sleep-side `tasks create` carries the owner's real ask (from the session
- * {@link startCycle} records) unless the case names its own basis or is a human.
- */
-const OWNER_ASK = 'please keep my draft when the tab reloads';
-/** The owner asks for THIS candidate by name, typed in the session {@link startCycle} records. */
-function withBasis(args: string, atRoot: string): string {
-  if (!args.startsWith('tasks create') || /--by human|--basis|--parent/.test(args)) return args;
-  const name = /^tasks create "([^"]*)"/.exec(args)?.[1] ?? '';
-  const quote = `please file ${name}: ${OWNER_ASK}`;
-  const transcript = join(atRoot, 'owner-session.jsonl');
-  if (existsSync(transcript)) {
-    appendFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: `Also, ${quote}.` } }) + '\n');
-  }
-  return `${args} --basis ask --quote "${quote}"`;
-}
-
 function cli(args: string, opts: CliOpts = {}): { out: string; code: number } {
-  args = withBasis(args, opts.cwd ?? root);
   try {
     // `nice` is POSIX-only, like the rest of this file's shell usage (`2>&1`).
     const out = execSync(`${opts.lowPriority ? 'nice -n 19 ' : ''}node ${CLI} ${args} 2>&1`, {
@@ -94,15 +74,7 @@ function startCycle(atRoot = root): void {
   };
   base.sleep_started_at = new Date().toISOString();
   base.cycle_tasks_filed = [];
-  const transcript = join(atRoot, 'owner-session.jsonl');
-  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: `Quick one: ${OWNER_ASK}.` } }) + '\n');
-  base.sessions = [{
-    session_id: 'owner-session', transcript_path: transcript, stopped_at: null, last_assistant_message: null,
-    change_count: 1, tool_count: 1, score: 3, task_slugs: [],
-  }];
   writeFileSync(sleepPath(atRoot), JSON.stringify(base, null, 2));
-  // The specialist reads the task-filing rules before filing anything (enforced).
-  cli('tasks rules', { cwd: atRoot });
 }
 
 const INIT = 'init --yes --name "T" --description "d" --stack "Node" --priority "p"';

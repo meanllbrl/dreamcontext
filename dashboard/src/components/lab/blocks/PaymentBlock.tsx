@@ -48,7 +48,7 @@ export function PaymentBlock({ frame, options, selection }: BlockViewProps) {
 
   const notes = unknownFunnel ? (
     <div className="lab-x-note" data-tone="caution" data-lab-unknown-funnel="">
-      {fill(t('lab.blocks.explorer.unknownFunnel'), { id: unknownFunnel, name: funnel.name })}
+      {t('lab.blocks.explorer.unknownFunnel').replace('{id}', unknownFunnel).replace('{name}', funnel.name)}
     </div>
   ) : null;
 

@@ -50,8 +50,7 @@ describe('two processes logging to the SAME task', () => {
     );
     for (const p of procs) expect(p.status).toBe(0);
 
-    // History lives in the task's journal, not its card.
-    const body = readFileSync(join(ctx(), 'state', 'journal', 'the-contended-task.md'), 'utf8');
+    const body = readFileSync(join(ctx(), 'state', 'the-contended-task.md'), 'utf8');
     for (const tag of ['A', 'B']) {
       for (let i = 0; i < 50; i++) {
         expect(body, `${tag}-${i} is missing — a write was lost`).toContain(`${tag}-${i}`);
@@ -202,20 +201,13 @@ describe('the hands-off set', () => {
 describe('lock and sidecar paths never sync', () => {
   const brain = buildBrainGitignore();
 
-  it.each([
-    'state/.locks/', 'state/.auto-sleep.lock', 'state/.auto-sleep.json',
-    // Machine-local task-system state, in the brain's own ignore too (second-pass review, Nit 12).
-    'state/.owner-corrections.json', 'state/.learned-patterns.json', 'state/.task-audit.json',
-  ])('the brain gitignore excludes %s', (entry) => expect(brain.split('\n')).toContain(entry));
+  it.each(['state/.locks/', 'state/.auto-sleep.lock', 'state/.auto-sleep.json'])(
+    'the brain gitignore excludes %s', (entry) => expect(brain).toContain(entry));
 
   it.each([
     '_dream_context/state/.locks/',
     '_dream_context/state/.auto-sleep.lock',
     '_dream_context/state/.auto-sleep.json',
-    // Machine-local task-system state: owner quotes, learned-pattern history, the task audit.
-    '_dream_context/state/.owner-corrections.json',
-    '_dream_context/state/.learned-patterns.json',
-    '_dream_context/state/.task-audit.json',
   ])('the full-repo gitignore excludes %s', (entry) => {
     expect(FULL_REPO_LOCAL_GITIGNORE_ENTRIES).toContain(entry);
   });

@@ -13,7 +13,6 @@ import {
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { useSystemInstall } from '../settings/SystemDependencies';
 import './OriginSetup.css';
-import { fill } from '../../lib/fill';
 
 /**
  * Collapse a git remote URL to a display slug + a GitHub web URL. Mirrors the
@@ -92,7 +91,7 @@ export function OriginSetup({ compact = false }: { compact?: boolean } = {}) {
         <div className="origin-setup origin-setup--done">
           <p className="origin-setup-title">
             <span className="origin-setup-mark" aria-hidden="true"><GitHubMark size={14} /></span>
-            {fill(t('brain.origin.connected'), { repo: result.fullName ?? result.remote })}
+            {t('brain.origin.connected').replace('{repo}', result.fullName ?? result.remote)}
           </p>
           <p className={`origin-setup-outcome${failed ? ' origin-setup-outcome--warn' : ''}`}>
             {failed

@@ -4,7 +4,6 @@ import { clipTodoItems, todoCapacity } from '../widgetSize';
 import { useWbText, useWhiteboardHost } from '../whiteboardHost';
 import { WidgetButton, WidgetFrame, WidgetNotice } from './WidgetFrame';
 import type { WidgetProps } from './types';
-import { fill } from '../../../lib/fill';
 
 /**
  * A checklist whose state lives in the board file, so an agent reading `whiteboard show --json`
@@ -69,7 +68,7 @@ export function TodoWidget({ elementId, payload, active, size, height }: WidgetP
           ))}
           {hidden > 0 && (
             <li className="wb-todo-more">
-              {fill(tx('whiteboard.todo.more', '+{n} more'), { n: String(hidden) })}
+              {tx('whiteboard.todo.more', '+{n} more').replace('{n}', String(hidden))}
             </li>
           )}
         </ul>

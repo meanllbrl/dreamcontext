@@ -136,15 +136,6 @@ function escapeRegex(str: string): string {
 /**
  * Print a success message.
  */
-/**
- * Text that came from data (a teammate's file, a remote) made safe to print:
- * C0/C1 control characters removed, so an escape sequence hidden in a YAML or
- * JSON string cannot drive the terminal (spoofed output, clipboard writes).
- */
-export function printable(text: string): string {
-  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
-}
-
 export function success(msg: string): void {
   console.log(chalk.green('✓') + ' ' + msg);
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { appendFileSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -10,7 +10,6 @@ import { appendTombstone } from '../../src/lib/task-tombstones.js';
 import { appendDeclined } from '../../src/lib/task-declined.js';
 import { updateSetupConfig } from '../../src/lib/setup-config.js';
 import { SLEEP_LOCK_STALE_MS } from '../../src/lib/sleep-consolidation.js';
-import { rulesHash } from '../../src/lib/task-filing-rules.js';
 
 // The embedder module is mocked so this file NEVER loads the real ONNX model and
 // never depends on whether THIS machine happens to have the 113 MB weights on
@@ -45,25 +44,10 @@ vi.mock('../../src/lib/embeddings/embedder.js', () => ({
 let project = '';
 let ctx = '';
 
-/**
- * C4: sleep files a NEW top-level task only on a basis. These tests exercise
- * the other gates, so every candidate carries a real owner ask from a session
- * transcript: the owner asking for THIS candidate in its own words (the basis
- * gate itself is covered in task-filing-basis.test.ts).
- */
-let askSession = { id: 'owner-session', path: '' };
-function withAsk(subject: string) {
-  const quote = `please file ${subject.split(/\s+/).filter(Boolean).slice(0, 6).join(' ')}`;
-  appendFileSync(askSession.path, JSON.stringify({ type: 'user', message: { role: 'user', content: `Hey, ${quote}.` } }) + '\n');
-  return { basis: 'ask' as const, quote, sessions: [askSession] };
-}
-
 beforeEach(() => {
   project = mkdtempSync(join(tmpdir(), 'dc-bar-'));
   ctx = join(project, '_dream_context');
   mkdirSync(join(ctx, 'state'), { recursive: true });
-  askSession = { id: 'owner-session', path: join(project, 'owner.jsonl') };
-  writeFileSync(askSession.path, '');
   delete process.env.DREAMCONTEXT_AUTO_SLEEP;
   delete process.env.DREAMCONTEXT_DECLINED_MATCH;
   delete process.env.DREAMCONTEXT_FILING_BAR_SEMANTIC;
@@ -76,14 +60,10 @@ afterEach(() => {
 });
 
 function writeSleep(extra: Record<string, unknown> = {}): void {
-  // A live cycle's specialist has read the task-filing rules (C4, enforced).
-  const read = typeof extra.sleep_started_at === 'string'
-    ? { filing_rules_read: { hash: rulesHash(ctx), epoch: extra.sleep_started_at } }
-    : {};
   writeFileSync(join(ctx, 'state', '.sleep.json'), JSON.stringify({
     debt: 0, last_sleep: null, last_sleep_summary: null, sleep_started_at: null,
     sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [],
-    compaction_log: [], pendingMigrationNotices: [], ...read, ...extra,
+    compaction_log: [], pendingMigrationNotices: [], ...extra,
   }, null, 2));
 }
 
@@ -92,7 +72,7 @@ const staleEpoch = () => new Date(Date.now() - SLEEP_LOCK_STALE_MS - 60_000).toI
 const GOOD_WHY = 'The dashboard shows a stale count because the cache is never invalidated on write.';
 
 const bar = (actor: FilingActor, why?: string, slug?: string) =>
-  assertTaskFilingBar({ contextRoot: ctx, actor, why, slug, ...withAsk(`${slug ?? ''} ${why ?? ''}`) });
+  assertTaskFilingBar({ contextRoot: ctx, actor, why, slug });
 
 describe('when the bar applies at all', () => {
   it('is OFF with no sleep state at all', async () => {
@@ -302,7 +282,6 @@ const file = (over: Partial<FilingBarInput> = {}) =>
     description: 'one line of scope',
     why: CANDIDATE_WHY,
     embed: fakeEmbed,
-    ...withAsk(over.name ?? 'A brand new concern'),
     ...over,
   });
 
@@ -402,7 +381,7 @@ describe('when the semantic gates cannot run, the bar passes AND SAYS SO', () =>
   it('an unindexed vault (the default here) skips with why:no-index — not a silent pass', async () => {
     writeTask('the-twin', 'The twin', atCosine(0.98));
     const v = await assertTaskFilingBar({
-      contextRoot: ctx, actor: 'sleep', name: 'A brand new concern', why: CANDIDATE_WHY, ...withAsk('A brand new concern'),
+      contextRoot: ctx, actor: 'sleep', name: 'A brand new concern', why: CANDIDATE_WHY,
     });
     expect(v.allowed).toBe(true);
     expect(v.neighbor).toEqual({ state: 'unavailable', why: 'no-index' });
@@ -413,7 +392,7 @@ describe('when the semantic gates cannot run, the bar passes AND SAYS SO', () =>
     process.env.DREAMCONTEXT_FILING_BAR_SEMANTIC = '0';
     writeTask('the-twin', 'The twin', atCosine(0.98));
     const v = await assertTaskFilingBar({
-      contextRoot: ctx, actor: 'sleep', name: 'A brand new concern', why: CANDIDATE_WHY, ...withAsk('A brand new concern'),
+      contextRoot: ctx, actor: 'sleep', name: 'A brand new concern', why: CANDIDATE_WHY,
     });
     expect(v.neighbor).toEqual({ state: 'unavailable', why: 'disabled' });
   });

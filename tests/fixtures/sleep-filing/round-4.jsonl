@@ -1,7 +1,0 @@
-{"type": "attachment", "attachment": {"type": "hook_additional_context", "content": ["Memory recall: update the readme for the new --quiet flag (from task docs)"]}}
-{"type": "user", "promptSource": "sdk", "message": {"role": "user", "content": "ship --quiet for sleep done"}}
-{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Shipped --quiet."}]}}
-{"type": "user", "promptSource": "sdk", "message": {"role": "user", "content": "please update the readme to document the new --quiet flag for sleep done"}}
-{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I'll note it."}]}}
-{"type": "user", "promptSource": "sdk", "message": {"role": "user", "content": "separately: please make the export retry when the network drops, it died twice on the train"}}
-{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_x", "content": "Error: socket hang up\n    at export (src/lib/export.ts:88)"}]}}

@@ -16,11 +16,7 @@ export interface RiceFields {
 
 export type RiceInput = Partial<Omit<RiceFields, 'score'>>;
 
-/**
- * The fields every view of a task carries, the list card and the task page alike.
- * Components that take either one (a field editor, the agent face) take this.
- */
-export interface TaskBase {
+export interface Task {
   slug: string;
   id: string;
   name: string;
@@ -45,40 +41,6 @@ export interface TaskBase {
   agent?: string | null;
   custom_fields?: Record<string, string | number | null>;
   rice: RiceFields | null;
-  /** The cycle the card is planned into (`cy_<id>`), or null (C3). */
-  cycle?: string | null;
-  /** `next` | `later` when the card waits outside a cycle. */
-  queue?: 'next' | 'later' | null;
-  /** Order inside its cycle or queue. */
-  rank?: number | null;
-}
-
-/**
- * One card of `GET /api/tasks` (plan r3 § W4): frontmatter and counts, never a body,
- * a section or the journal. The task page reads {@link TaskDetail} by slug.
- */
-export interface Task extends TaskBase {
-  created_by?: string | null;
-  /** Acceptance criteria on the card: how many, how many ticked. */
-  criteria: { total: number; done: number };
-  /** Roll-up of the non-cancelled sub-tasks; null for a task with none. */
-  children: { total: number; done: number } | null;
-  /** The card file's size in bytes. */
-  bytes: number;
-}
-
-/** One acceptance criterion as the task page shows it. */
-export interface CriterionView {
-  n: number;
-  text: string;
-  checked: boolean;
-  ref: string | null;
-  kind: 'cmd' | 'commit' | 'shot' | 'owner' | 'legacy' | null;
-  observed: boolean;
-}
-
-/** One task from `GET /api/tasks/:slug`: the whole card, parsed criteria, parent and children. */
-export interface TaskDetail extends TaskBase {
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -88,9 +50,6 @@ export interface TaskDetail extends TaskBase {
   changelog: string;
   sections: string[];
   body: string;
-  criteria: CriterionView[];
-  parent: { slug: string; name: string; status: string } | null;
-  children: Task[];
 }
 
 interface TasksResponse {
@@ -98,7 +57,7 @@ interface TasksResponse {
 }
 
 interface TaskResponse {
-  task: TaskDetail;
+  task: Task;
 }
 
 interface CreateTaskInput {
@@ -114,7 +73,7 @@ interface CreateTaskInput {
 
 interface UpdateTaskInput {
   slug: string;
-  updates: Partial<Pick<TaskDetail, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'start_date' | 'assignee' | 'agent' | 'objectives' | 'body'>> & {
+  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'start_date' | 'assignee' | 'agent' | 'objectives' | 'body'>> & {
     rice?: RiceInput | null;
     custom_fields?: Record<string, string | number | null>;
   };
@@ -161,19 +120,13 @@ export function useTasks() {
   });
 }
 
-/**
- * One task by slug: the body source of the task page and of every hand-off that needs
- * the card's text (the list carries none). Polls while visible, so criteria ticked by
- * an agent show up live.
- */
 export function useTask(slug: string) {
   const api = useApi();
   return useQuery({
     queryKey: ['tasks', slug],
-    queryFn: () => api.get<TaskResponse>(`/tasks/${encodeURIComponent(slug)}`),
+    queryFn: () => api.get<TaskResponse>(`/tasks/${slug}`),
     select: (data) => data.task,
     enabled: !!slug,
-    refetchInterval: () => pollMs(15_000),
   });
 }
 
@@ -193,15 +146,10 @@ export function useUpdateTask() {
   const api = useApi();
   return useMutation({
     mutationFn: ({ slug, updates }: UpdateTaskInput) =>
-      api.patch<TaskResponse>(`/tasks/${encodeURIComponent(slug)}`, updates),
+      api.patch<TaskResponse>(`/tasks/${slug}`, updates),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.slug] });
-      // A status or body change can move a task into or out of the Inbox's reviews (and its
-      // rail badge): an approval from the board, a criterion ticked on the page.
-      if (variables.updates.status !== undefined || variables.updates.body !== undefined) {
-        queryClient.invalidateQueries({ queryKey: ['inbox'] });
-      }
       // A task's `objectives` link feeds the roadmap rollup (progress, member tasks,
       // forecast) — refresh it so the roadmap reflects the change immediately.
       if (variables.updates.objectives !== undefined) {
@@ -302,7 +250,7 @@ export function useDeleteTask() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (slug: string) => api.del<{ success: boolean }>(`/tasks/${encodeURIComponent(slug)}`),
+    mutationFn: (slug: string) => api.del<{ success: boolean }>(`/tasks/${slug}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       // A deleted task drops out of any objective's rollup — refresh the roadmap.
@@ -553,53 +501,12 @@ export function useFeatureOptions() {
   });
 }
 
-/** Whether a task is ready to develop (`GET /api/tasks/:slug/readiness`), and what it lacks. */
-export interface TaskReadiness {
-  ready: boolean;
-  gaps: Array<{ field: string; problem: string }>;
-}
-
-/** The door's Develop choice reads this before it lets a session start. */
-export function useTaskReadiness(slug: string, enabled = true) {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['tasks', slug, 'readiness'],
-    queryFn: () => api.get<TaskReadiness>(`/tasks/${encodeURIComponent(slug)}/readiness`),
-    enabled: enabled && !!slug,
-  });
-}
-
-/** One journal entry as `GET /api/tasks/:slug/journal` serves it. */
-export interface TaskJournalEntry {
-  id: string;
-  date: string;
-  kind: 'created' | 'log' | 'evidence' | 'status' | 'approval' | 'sleep' | 'remote';
-  label: string;
-  actor: string | null;
-  body: string;
-}
-
-/**
- * One page of the task's journal, newest first (history lives beside the card, not in it).
- * `before` is the id of the last entry already shown: the page of entries older than it
- * ("Show older"). Under `['tasks', slug]`, so a task invalidation refreshes every page.
- */
-export function useTaskJournal(slug: string, before: string | null = null) {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['tasks', slug, 'journal', before],
-    queryFn: () => api.get<{ total: number; entries: TaskJournalEntry[] }>(
-      `/tasks/${encodeURIComponent(slug)}/journal${before ? `?before=${encodeURIComponent(before)}` : ''}`),
-    enabled: !!slug,
-  });
-}
-
 export function useAddTaskChangelog() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
     mutationFn: ({ slug, content }: { slug: string; content: string }) =>
-      api.post<{ success: boolean }>(`/tasks/${encodeURIComponent(slug)}/changelog`, { content }),
+      api.post<{ success: boolean }>(`/tasks/${slug}/changelog`, { content }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
@@ -611,59 +518,7 @@ export function useInsertTaskSection() {
   const api = useApi();
   return useMutation({
     mutationFn: ({ slug, section, content }: InsertTaskSectionInput) =>
-      api.post<{ success: boolean }>(`/tasks/${encodeURIComponent(slug)}/insert`, { section, content }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
-    },
-  });
-}
-
-// ─── The owner's verdict, planning and ranking (plan r3 § W4) ────────────────
-
-/** A refusal from the verdict, plan or rank routes: the server's code and message. */
-export interface TaskActionError {
-  error: string;
-  message: string;
-}
-
-/** Approve a task in review, or send it back with a note (owner-only; the browser sends Origin). */
-export function useTaskVerdict() {
-  const queryClient = useQueryClient();
-  const api = useApi();
-  return useMutation({
-    mutationFn: ({ slug, verdict, note }: { slug: string; verdict: 'approve' | 'send_back'; note?: string }) =>
-      api.post<TaskResponse>(`/tasks/${encodeURIComponent(slug)}/verdict`, { verdict, ...(note ? { note } : {}) }),
-    onSuccess: (_data, v) => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['tasks', v.slug] });
-      queryClient.invalidateQueries({ queryKey: ['inbox'] });
-    },
-  });
-}
-
-/** Plan a task into Now / Next / Later or a cycle (a parent brings its open sub-tasks). */
-export function usePlanTask() {
-  const queryClient = useQueryClient();
-  const api = useApi();
-  return useMutation({
-    mutationFn: ({ slug, target }: { slug: string; target: 'now' | 'next' | 'later' | string }) =>
-      api.post<{ placement: { cycle: string | null; queue: 'next' | 'later' | null }; moved: string[] }>(
-        `/tasks/${encodeURIComponent(slug)}/plan`, { target }),
-    onSuccess: (_data, v) => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['tasks', v.slug] });
-      queryClient.invalidateQueries({ queryKey: ['cycles'] });
-    },
-  });
-}
-
-/** Order a task just before or after another one of the same cycle or queue. */
-export function useRankTask() {
-  const queryClient = useQueryClient();
-  const api = useApi();
-  return useMutation({
-    mutationFn: ({ slug, before, after }: { slug: string; before?: string; after?: string }) =>
-      api.post<{ rank: number | null }>(`/tasks/${encodeURIComponent(slug)}/rank`, before ? { before } : { after }),
+      api.post<{ success: boolean }>(`/tasks/${slug}/insert`, { section, content }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },

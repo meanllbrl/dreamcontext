@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import chalk from 'chalk';
 import { checkbox, confirm } from '@inquirer/prompts';
@@ -65,15 +65,6 @@ const USER_PROMPT_SUBMIT_HOOK = hookCommand('user-prompt-submit');
 const POST_TOOL_USE_HOOK = hookCommand('post-tool-use');
 const PRE_COMPACT_HOOK = hookCommand('pre-compact');
 const ENSURE_DASHBOARD_HOOK = hookCommand('ensure-dashboard');
-const SESSION_END_HOOK = hookCommand('session-end');
-/**
- * The Read guard runs on EVERY Read, so it is a dependency-free script, never a
- * `dreamcontext` process (C2). It is not a `dreamcontext hook <name>` subcommand, so it is not
- * in {@link HOOK_SPECS} (whose every command is {@link hookCommand}): it is registered beside
- * them, as {@link READ_TASK_GUARD_SPEC}.
- */
-export const READ_TASK_GUARD_FILE = 'read-task-guard.cjs';
-export const READ_TASK_GUARD_HOOK = `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${READ_TASK_GUARD_FILE}"`;
 const OLD_HOOK = 'npx dreamcontext snapshot'; // migration target
 
 // ─── Hook Types ─────────────────────────────────────────────────────────────
@@ -122,50 +113,7 @@ export const HOOK_SPECS: readonly HookSpec[] = [
   // mid-session compaction should not relaunch the dashboard. Opt out with
   // DREAMCONTEXT_AUTO_DASHBOARD=0.
   { event: 'SessionStart', name: 'ensure-dashboard', command: ENSURE_DASHBOARD_HOOK, timeout: 10, matcher: 'startup|resume' },
-  // The session's task binding becomes a tombstone (a --resume re-binds from it).
-  { event: 'SessionEnd', name: 'session-end', command: SESSION_END_HOOK, timeout: 5 },
 ];
-
-/** A hook that runs a script, not `dreamcontext hook <name>`: no legacy command to rewrite. */
-type ScriptHookSpec = Omit<HookSpec, 'name'>;
-
-/** A sub-task card read brings its parent's card along (the guard exits at once on any other Read). */
-export const READ_TASK_GUARD_SPEC: ScriptHookSpec = { event: 'PostToolUse', command: READ_TASK_GUARD_HOOK, timeout: 10, matcher: 'Read' };
-
-/**
- * The shipped guard script: `dist/hooks/` in the package (tsup copies the top-level
- * `hooks/`), the repo's `hooks/` under tsx/tests.
- */
-function readTaskGuardSource(): string | null {
-  const here = fileURLToPath(new URL('.', import.meta.url));
-  for (const p of [join(here, 'hooks', READ_TASK_GUARD_FILE), join(here, '..', 'hooks', READ_TASK_GUARD_FILE), join(here, '..', '..', '..', 'hooks', READ_TASK_GUARD_FILE)]) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
-
-/** The guard script is a regular file in place (a symlink is never registered as a hook). */
-function readTaskGuardInstalled(projectRoot: string): boolean {
-  try {
-    return lstatSync(join(projectRoot, '.claude', 'hooks', READ_TASK_GUARD_FILE)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/** Write (refresh) `<project>/.claude/hooks/read-task-guard.cjs`. Returns true when it changed. */
-export function installReadTaskGuard(projectRoot: string): boolean {
-  const src = readTaskGuardSource();
-  if (!src) return false;
-  const dest = join(projectRoot, '.claude', 'hooks', READ_TASK_GUARD_FILE);
-  const body = readFileSync(src, 'utf-8');
-  try { if (lstatSync(dest).isSymbolicLink()) return false; } catch { /* absent */ } // never write through a link
-  if (existsSync(dest) && readFileSync(dest, 'utf-8') === body) return false;
-  mkdirSync(join(projectRoot, '.claude', 'hooks'), { recursive: true });
-  writeFileSync(dest, body, { encoding: 'utf-8', mode: 0o755 });
-  chmodSync(dest, 0o755);
-  return true;
-}
 
 // ─── Catalog Types ──────────────────────────────────────────────────────────
 
@@ -336,18 +284,7 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
   // Dedup key is (command, matcher) — two entries with the same command but
   // different matchers are intentionally distinct (e.g. the two PreToolUse
   // entries: one for 'Agent' gate and one for 'Edit|Write|MultiEdit' gate).
-  const specs: ReadonlyArray<HookSpec | ScriptHookSpec> = [...HOOK_SPECS, READ_TASK_GUARD_SPEC];
-  for (const spec of specs) {
-    // The Read hook runs a script in .claude/hooks; registering it without that
-    // script would make every Read in every session fail with a hook error.
-    if (spec.command === READ_TASK_GUARD_HOOK && !readTaskGuardInstalled(projectRoot)) {
-      // ...and an entry an earlier install left behind goes too.
-      const groups = settings.hooks[spec.event];
-      if (groups) {
-        settings.hooks[spec.event] = groups.filter((g) => !g.hooks?.some((h) => h.command === READ_TASK_GUARD_HOOK));
-      }
-      continue;
-    }
+  for (const spec of HOOK_SPECS) {
     if (!settings.hooks[spec.event]) {
       settings.hooks[spec.event] = [];
     }
@@ -357,8 +294,7 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
     // e.g. UserPromptSubmit installed at 5s before the Haiku recall path (which
     // can take ~15s) made the larger 120s timeout necessary, so the hook keeps
     // timing out after upgrade. Re-running install now heals the drift.
-    // A script hook (the Read guard) has no older `npx` form to rewrite.
-    const legacy = 'name' in spec ? legacyHookCommand(spec.name) : null;
+    const legacy = legacyHookCommand(spec.name);
     let existingHandler: HookHandler | undefined;
     for (const group of settings.hooks[spec.event]) {
       if ((group.matcher ?? '') !== (spec.matcher ?? '')) continue;
@@ -370,7 +306,7 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
     }
     // No current handler: an older installer's one becomes it, in place (matcher and position kept).
     let rewritten = false;
-    if (!existingHandler && legacy !== null) {
+    if (!existingHandler) {
       for (const group of settings.hooks[spec.event]) {
         if ((group.matcher ?? '') !== (spec.matcher ?? '')) continue;
         const handler = group.hooks?.find((h) => h.command === legacy);
@@ -1069,18 +1005,6 @@ export async function installCoreForPlatform(
   }
 
   {
-    try {
-      if (installReadTaskGuard(projectRoot)) {
-        installed.push(platformPrefixed(platform, `.claude/hooks/${READ_TASK_GUARD_FILE}`));
-      }
-    } catch (err) {
-      // The guard is a convenience; a read-only .claude never fails an install (its hook is
-      // then not registered either), but it is said out loud.
-      notes.push(platformPrefixed(platform, `${chalk.yellow('!')} ${chalk.dim(`.claude/hooks/${READ_TASK_GUARD_FILE} not written: ${(err as Error).message}`)}`));
-    }
-    if (!readTaskGuardInstalled(projectRoot)) {
-      notes.push(platformPrefixed(platform, `${chalk.yellow('!')} ${chalk.dim(`The parent-card Read hook is not registered: .claude/hooks/${READ_TASK_GUARD_FILE} is missing or not a regular file.`)}`));
-    }
     const hookResult = ensureClaudeHooks(projectRoot);
     recordIfManifest(manifest, '.claude/settings.json', 'hook');
     if (hookResult.added.length > 0) {

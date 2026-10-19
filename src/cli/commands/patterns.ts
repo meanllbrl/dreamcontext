@@ -4,10 +4,6 @@ import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { loadPatterns, loadPatternsReporting, matchPatterns, syncPatternShims } from '../../lib/patterns.js';
 import { success, error, info } from '../../lib/format.js';
-import { backfillSessions, ingestSessions, readCorrections } from '../../lib/owner-corrections.js';
-import { citedCorrectionIds, LearnError, learnRule, listLearnedItems, openGroups, revertItem } from '../../lib/learned-patterns.js';
-import { resolveActivePerson } from '../../lib/people-resolve.js';
-import { refuseSelfApproval } from './agents.js';
 
 /**
  * Register the `dreamcontext patterns` command.
@@ -135,117 +131,6 @@ export function registerPatternsCommand(program: Command): void {
         console.log(`    ${chalk.dim(h.pattern.relPath)}`);
         console.log(`    ${chalk.dim(`matched: ${h.matched.join(', ') || '—'}${h.corroborating.length ? `  ·  supporting: ${h.corroborating.join(', ')}` : ''}`)}`);
         console.log();
-      }
-    });
-
-  // --- corrections (C7: what the owner keeps correcting) ---
-  patterns
-    .command('corrections')
-    .description('The owner\'s corrections kept across sleeps; --recurring groups the ones said in 2+ sessions, --backfill <days> reads the last days once')
-    .option('--recurring', 'Only the groups said in two or more sessions that no learned rule cites yet')
-    .option('--backfill [days]', 'Read the owner\'s turns of the last N days (default 7) into the ledger first; skips sessions registered as spawned')
-    .option('--json', 'Machine-readable output')
-    .action((opts: { recurring?: boolean; backfill?: string | boolean; json?: boolean }) => {
-      const root = ensureContextRoot();
-      let backfill: { added: number; sessions: number; excluded: Record<string, number> } | null = null;
-      if (opts.backfill !== undefined) {
-        const days = opts.backfill === true ? 7 : Number(opts.backfill);
-        if (!Number.isInteger(days) || days < 1 || days > 90) {
-          error('--backfill takes a whole number of days, 1 to 90.');
-          process.exitCode = 1;
-          return;
-        }
-        let person: string | null = null;
-        try { person = resolveActivePerson(root).slug; } catch { /* unresolved: stored as null */ }
-        const found = backfillSessions(root, days);
-        try {
-          const r = ingestSessions(root, found.sessions, person, 'backfill', new Date(), citedCorrectionIds(root));
-          backfill = { added: r.added, sessions: found.sessions.length, excluded: { ...found.excluded } };
-        } catch (e) {
-          error(`Backfill refused: ${(e as Error).message}`);
-          process.exitCode = 1;
-          return;
-        }
-      }
-      const groups = opts.recurring ? openGroups(root) : null;
-      const items = opts.recurring ? null : readCorrections(root);
-      if (opts.json) {
-        console.log(JSON.stringify({ ...(backfill ? { backfill } : {}), ...(groups ? { groups } : { items }) }, null, 2));
-        return;
-      }
-      if (backfill) {
-        const ex = Object.entries(backfill.excluded).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(', ');
-        success(`Backfill: added ${backfill.added} from ${backfill.sessions} session(s)${ex ? ` (skipped as spawned: ${ex})` : ''}.`);
-      }
-      if (groups) {
-        if (groups.length === 0) { info('No correction said in two or more sessions waits to be learned.'); return; }
-        for (const g of groups) {
-          console.log(`  ${chalk.bold(g.groupId)}  ${chalk.dim(`${g.ids.length} correction(s), ${g.sessions} session(s)${g.originUnknown ? ', origin unknown' : ''}`)}`);
-          console.log(`    ${chalk.dim(`ids: ${g.ids.join(',')}`)}`);
-          for (const q of g.quotes) console.log(`    - (${q.date}) ${q.text}`);
-        }
-        return;
-      }
-      info(`${items!.length} correction(s) kept.`);
-    });
-
-  // --- learn (sleep-product writes a rule from one recurring group) ---
-  patterns
-    .command('learn <pattern>')
-    .description('Write a rule learned from ONE recurring group of the owner\'s corrections into a pattern (quotes and dates kept; the old file archived first)')
-    .requiredOption('--from <ids>', 'The correction ids of one group (comma list)')
-    .requiredOption('--title <text>', 'What the owner would say')
-    .requiredOption('--rule <text>', 'The rule, in the owner\'s terms')
-    .option('--replaces <lr_id>', 'Edit this learned block (a contradiction or a narrowing)')
-    .option('--edits <paragraph>', 'Replace this exact paragraph of the pattern (a contradiction of its existing text)')
-    .action((pattern: string, opts: { from: string; title: string; rule: string; replaces?: string; edits?: string }) => {
-      const root = ensureContextRoot();
-      try {
-        const c = learnRule(root, {
-          pattern,
-          title: opts.title,
-          rule: opts.rule,
-          cites: opts.from.split(','),
-          ...(opts.replaces ? { replaces: opts.replaces } : {}),
-          ...(opts.edits !== undefined ? { edits: opts.edits } : {}),
-        });
-        success(`Learned ${c.ruleId} in ${c.pattern} (${c.action}${c.archive ? `; the previous file is in ${c.archive}` : ''}).`);
-      } catch (e) {
-        if (e instanceof LearnError) { error(e.message); process.exitCode = 1; return; }
-        throw e;
-      }
-    });
-
-  // --- learned (what sleep learned; owner reverts from the Inbox) ---
-  patterns
-    .command('learned')
-    .description('Rules sleep learned from the owner\'s corrections, and the task-filing rule changes it made')
-    .option('--since <iso>', 'Only changes at or after this time')
-    .option('--json', 'Machine-readable output')
-    .action((opts: { since?: string; json?: boolean }) => {
-      const root = ensureContextRoot();
-      const items = listLearnedItems(root, opts.since ? { since: opts.since } : {});
-      if (opts.json) { console.log(JSON.stringify(items, null, 2)); return; }
-      if (items.length === 0) { info('Nothing learned yet.'); return; }
-      for (const i of items) {
-        console.log(`  ${chalk.bold(i.title)}  ${chalk.dim(`${i.pattern} · ${i.id} · ${i.at.slice(0, 10)}${i.reverted ? ` · reverted ${i.reverted.at.slice(0, 10)}` : ''}`)}`);
-        for (const q of i.quotes) console.log(`    - (${q.date}) ${q.text}`);
-      }
-    });
-
-  // --- revert (owner only) ---
-  patterns
-    .command('revert <id>')
-    .description('Undo a learned change (owner only; the Inbox does the same)')
-    .action((id: string) => {
-      if (refuseSelfApproval(process.env)) return;
-      const root = ensureContextRoot();
-      try {
-        const item = revertItem(root, id, 'owner');
-        success(`Reverted ${item.id} (${item.pattern}).`);
-      } catch (e) {
-        error((e as Error).message);
-        process.exitCode = 1;
       }
     });
 }

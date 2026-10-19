@@ -1,74 +1,58 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, usePlanTask, useRankTask } from '../../hooks/useTasks';
-import { useCycles } from '../../hooks/useCycles';
+import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel } from '../../hooks/useTasks';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
-import { useVersions } from '../../hooks/useVersions';
+import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
 import { confirmAction } from '../../lib/desktop';
 import {
-  type Dim, type OrderLane, type SaveScope,
-  dimGet, dimGroups, dueInfo, filterTasks, sortTasks, taskAssignees, VV_CURRENT,
+  type Dim, type SaveScope,
+  PRIO_ORDER,
+  dimGet, dimGroups, dueInfo, filterTasks, levelLabel, prioColor, sortTasks, taskAssignees,
 } from './boardModel';
-import { orderOf } from './taskOrder';
 import { BoardViewTabs } from './BoardViewTabs';
 import { BoardToolbar, type MenuKey } from './BoardToolbar';
 import { BoardColumn, type BoardColumnData, type BoardSubGroup } from './BoardColumn';
 import { BoardCard } from './BoardCard';
-import { CycleStrip } from './CycleStrip';
 import { AtRiskAlert } from './AtRiskAlert';
 import { SleepEvalBanner } from './SleepEvalDeck';
 import { SaveScopeDialog } from './SaveScopeDialog';
+import { TaskDetailPanel } from './TaskDetailPanel';
 import { TaskCreateModal } from './TaskCreateModal';
+import { DelegateComposer } from './DelegateComposer';
+import { AssignToAgentComposer } from './AssignToAgentComposer';
 import { useI18n } from '../../context/I18nContext';
-import { useGiveToAgent } from '../../lib/giveToAgent';
+import { AuthorTaskComposer } from './AuthorTaskComposer';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
+import { SparkIcon } from '../sleepy/TypeIcons';
+import { EisenhowerMatrix } from './EisenhowerMatrix';
+import { RiceScatter } from './RiceScatter';
 import { TimelineGantt } from './TimelineGantt';
+import { TaskCalendar } from './TaskCalendar';
+import { ActivityHeatmap } from './ActivityHeatmap';
 import './Board.css';
-import { fill } from '../../lib/fill';
 
 const AVATAR_PALETTE = ['#9d8cff', '#4aa8ff', '#4ade80', '#f0abfc', '#fbbf24', '#5eead4', '#f9a8d4'];
 const distinct = (xs: string[]): string[] => Array.from(new Set(xs));
 
 type PendingSave = { mode: 'save' | 'create'; name?: string } | null;
 
-/** Below this width the board shows one column at a time (plan r3 § 5b). */
-const ONE_COLUMN_QUERY = '(max-width: 640px)';
-
-function useOneColumn(): boolean {
-  const read = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(ONE_COLUMN_QUERY).matches;
-  const [one, setOne] = useState(read);
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const mq = window.matchMedia(ONE_COLUMN_QUERY);
-    const on = () => setOne(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, []);
-  return one;
-}
-
-export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
-  focus?: FocusTarget;
-  onOpenTask?: (slug: string) => void;
-  onOpenPlanning?: () => void;
-} = {}) {
-  const { t } = useI18n();
+export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const sm = useStatusModel();
   const s = useBoardState();
   const { data: tasks = [], isLoading } = useTasks();
   const { data: members = [] } = useTaskMembers();
   const { data: realVersions = [] } = useVersions();
-  // Not known yet (loading) is not "no cycle": the board waits for it, like the tasks.
-  const { data: cycles, isLoading: cyclesLoading } = useCycles();
-  const activeCycleId = cycles?.active ?? null;
+  const { data: activeVersion = null } = useActiveVersion();
   const updateTask = useUpdateTask();
-  const planTask = usePlanTask();
-  const rankTask = useRankTask();
   const deleteTask = useDeleteTask();
-  // Whether the in-app agent can start sessions (desktop, prerequisites, surface enabled):
-  // the toolbar's "Write it with an agent" path is offered only then (A6).
+  // Desktop-only gate for "Delegate to Claude": the in-app agent needs a real embedded
+  // terminal + the claude CLI (so it's hidden on the web build / when prereqs are missing,
+  // A6) AND the Agents surface must be enabled in Settings — otherwise the delegated agent
+  // has no dock to surface in and the menu item would dead-end. Same readiness check the
+  // header's Sleep tracker uses, plus the live `enabled` flag (kept in sync via the same
+  // event the Settings page broadcasts on save).
   const { data: agentCaps } = useAgentCapabilities();
   const [agentSettings, setAgentSettings] = useState(() => readAgentSettings());
   useEffect(() => {
@@ -82,42 +66,38 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
   const [viewMenuId, setViewMenuId] = useState<string | null>(null);
   const [colCollapsed, setColCollapsed] = useState<Record<string, boolean>>({});
   const [subCollapsed, setSubCollapsed] = useState<Record<string, boolean>>({});
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
+  const [delegateTask, setDelegateTask] = useState<Task | null>(null);
+  const [assignAgentTask, setAssignAgentTask] = useState<Task | null>(null);
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const giveToAgent = useGiveToAgent();
+  const [showAuthor, setShowAuthor] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave>(null);
   const [dismissedAlert, setDismissedAlert] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; tone: 'ok' | 'error' } | null>(null);
-  const oneColumn = useOneColumn();
-  const [mobileCol, setMobileCol] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
-  const flash = useCallback((msg: string, tone: 'ok' | 'error' = 'ok') => { setToast({ msg, tone }); }, []);
-  // A refusal (the evidence gate's 409 names every unproven criterion) stays long enough to read.
-  useEffect(() => { if (!toast) return; const tm = setTimeout(() => setToast(null), toast.tone === 'error' ? 8000 : 1900); return () => clearTimeout(tm); }, [toast]);
+  const flash = useCallback((msg: string) => { setToast(msg); }, []);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 1900); return () => clearTimeout(t); }, [toast]);
 
-  // A task opens as its own page (plan r3 § 5a): a card click, and the task the ⌘K palette or
-  // the Brain map navigated the board to.
-  const openTask = useCallback((slug: string) => onOpenTask?.(slug), [onOpenTask]);
-  useFocusTarget(focus, openTask);
+  // Open the task the ⌘K palette / Brain map navigated to in the TaskDetailPanel.
+  useFocusTarget(focus, (slug) => setSelectedSlug(slug));
 
   const closeAllMenus = useCallback(() => { setOpenMenu(null); setViewMenuId(null); }, []);
 
   // ── derived option data ──────────────────────────────────────────────────────
   const memberMap = useMemo(() => new Map(members.map((m) => [m.slug, m.name])), [members]);
-  const unassignedLabel = t('board.unassigned');
   const assignees = useMemo(() => {
     const present = distinct(tasks.flatMap(taskAssignees));
     const values = distinct([...members.map((m) => m.slug), ...present]);
     const list = values.map((v, i) => ({ value: v, label: memberMap.get(v) || v.replace(/[-_]/g, ' '), color: AVATAR_PALETTE[i % AVATAR_PALETTE.length] }));
-    return [...list, { value: 'none', label: unassignedLabel, color: 'var(--color-text-tertiary)' }];
-  }, [tasks, members, memberMap, unassignedLabel]);
-  const assigneeName = useCallback((slug: string) => (slug === 'none' ? unassignedLabel : memberMap.get(slug) || slug), [memberMap, unassignedLabel]);
-  const allTags = useMemo(() => distinct(tasks.flatMap((x) => x.tags)).sort(), [tasks]);
+    return [...list, { value: 'none', label: 'Unassigned', color: 'var(--color-text-tertiary)' }];
+  }, [tasks, members, memberMap]);
+  const assigneeName = useCallback((slug: string) => (slug === 'none' ? 'Unassigned' : memberMap.get(slug) || slug), [memberMap]);
+  const allTags = useMemo(() => distinct(tasks.flatMap((t) => t.tags)).sort(), [tasks]);
   const versionsForFilter = useMemo(
-    () => distinct([...realVersions.map((v) => v.version), ...tasks.map((x) => x.version).filter((v): v is string => !!v)]),
+    () => distinct([...realVersions.map((v) => v.version), ...tasks.map((t) => t.version).filter((v): v is string => !!v)]),
     [realVersions, tasks],
   );
   const releasedVersions = useMemo(
@@ -125,42 +105,30 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
     [realVersions],
   );
   // Resolves the version filter's virtual buckets (Current / Backlog / Completed).
-  // `@current` is the active cycle (boardModel.ts VV_CURRENT), by the Now column's own rule.
   const versionMeta = useMemo(
-    () => ({ activeCycle: activeCycleId, released: releasedVersions }),
-    [activeCycleId, releasedVersions],
+    () => ({ active: activeVersion, released: releasedVersions }),
+    [activeVersion, releasedVersions],
   );
 
   // ── filtering / grouping ──────────────────────────────────────────────────────
   const filtered = useMemo(() => filterTasks(tasks, s.filters, s.search, versionMeta, sm), [tasks, s.filters, s.search, versionMeta, sm]);
-  const orderLabels = useMemo<Record<OrderLane, string>>(
-    () => ({ now: t('board.order.now'), next: t('board.order.next'), later: t('board.order.later'), done: t('board.order.done') }),
-    [t],
-  );
-  const groupOpts = useMemo(
-    () => ({ versionOrder: versionsForFilter, assignees, statuses: sm, activeCycleId, orderLabels }),
-    [versionsForFilter, assignees, sm, activeCycleId, orderLabels],
-  );
+  const groupOpts = useMemo(() => ({ versionOrder: versionsForFilter, assignees, statuses: sm }), [versionsForFilter, assignees, sm]);
 
   const columns: { data: BoardColumnData; colKey: string }[] = useMemo(() => {
     return dimGroups(s.groupBy, filtered, groupOpts).map((col) => {
       const colKey = `${s.groupBy}:${col.key}`;
-      const cards = (xs: Task[]) => (s.groupBy === 'order' && s.sortBy === 'manual' ? xs : sortTasks(xs, s.sortBy, s.sortDir));
       let subs: BoardSubGroup[];
       if (s.subGroupBy === 'none') {
-        subs = [{ key: '_all', hasHeader: false, cards: cards(col.tasks) }];
+        subs = [{ key: '_all', hasHeader: false, cards: sortTasks(col.tasks, s.sortBy, s.sortDir) }];
       } else {
         const sg = dimGroups(s.subGroupBy as Dim, col.tasks, groupOpts).filter((x) => x.tasks.length);
         subs = sg.map((x) => {
           const subKey = `${colKey}|${x.key}`;
-          return { key: x.key, hasHeader: true, label: x.label, color: x.color, count: x.tasks.length, collapsed: !!subCollapsed[subKey], onToggleCollapse: () => setSubCollapsed((m) => ({ ...m, [subKey]: !m[subKey] })), cards: cards(x.tasks) };
+          return { key: x.key, hasHeader: true, label: x.label, color: x.color, count: x.tasks.length, collapsed: !!subCollapsed[subKey], onToggleCollapse: () => setSubCollapsed((m) => ({ ...m, [subKey]: !m[subKey] })), cards: sortTasks(x.tasks, s.sortBy, s.sortDir) };
         });
         if (!subs.length) subs = [{ key: '_e', hasHeader: false, cards: [], empty: true }];
       }
-      // The Done lane is closed until it is opened: finished work does not crowd the board.
-      const isDoneLane = s.groupBy === 'order' && col.key === 'done';
-      const collapsed = colCollapsed[colKey] ?? isDoneLane;
-      return { colKey, data: { key: col.key, label: col.label, count: col.tasks.length, color: col.color, collapsed, subs, noDrop: isDoneLane } };
+      return { colKey, data: { key: col.key, label: col.label, count: col.tasks.length, color: col.color, collapsed: !!colCollapsed[colKey], subs } };
     });
   }, [s.groupBy, s.subGroupBy, s.sortBy, s.sortDir, filtered, groupOpts, colCollapsed, subCollapsed]);
 
@@ -173,62 +141,36 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
   // ── at-risk alert ──────────────────────────────────────────────────────────────
   const atRisk = useMemo(() => {
     // Live = not terminal by KIND (a cancelled-kind task never enters the banner).
-    const open = tasks.filter((x) => !sm.isTerminal(x.status));
+    const open = tasks.filter((t) => !sm.isTerminal(t.status));
     let overdue = 0, today = 0, soon = 0;
-    open.forEach((x) => { const di = dueInfo(x, sm); if (!di) return; if (di.kind === 'overdue') overdue++; else if (di.kind === 'today') today++; else if (di.kind === 'soon' || di.kind === 'week') soon++; });
+    open.forEach((t) => { const di = dueInfo(t, sm); if (!di) return; if (di.kind === 'overdue') overdue++; else if (di.kind === 'today') today++; else if (di.kind === 'soon' || di.kind === 'week') soon++; });
     return { overdue, today, soon };
   }, [tasks, sm]);
   const showAlert = !dismissedAlert && (atRisk.overdue > 0 || atRisk.today > 0);
 
-  // ── drag + drop ─────────────────────────────────────────────────────────────────
-  // Order grouping: a drop on another column PLANS the card there (`POST /tasks/:slug/plan`),
-  // a drop on a card of the same column RANKS it before that card. Every other grouping
-  // patches the grouped field, as before.
+  // ── drag + drop (patch the grouped dimension) ───────────────────────────────────
   const draggable = s.layout === 'board';
   const onCardDragStart = useCallback((e: React.DragEvent, id: string) => { setDragId(id); try { e.dataTransfer.effectAllowed = 'move'; } catch { /* noop */ } }, []);
   const endDrag = useCallback(() => { setDragId(null); setDragOverKey(null); }, []);
-  const keyOf = useCallback((task: Task): string => {
-    if (s.groupBy === 'order') {
-      if (sm.isDone(task.status) && orderOf(task, activeCycleId) !== 'now') return 'done';
-      return orderOf(task, activeCycleId);
-    }
-    return dimGet(task, s.groupBy as Dim, activeCycleId);
-  }, [s.groupBy, sm, activeCycleId]);
   // The column key the dragged card currently lives in — used to suppress the
   // landing silhouette on its source column (a no-op drop).
   const dragSourceKey = useMemo(() => {
     if (!dragId) return null;
-    const task = tasks.find((x) => x.id === dragId);
-    return task ? keyOf(task) : null;
-  }, [dragId, tasks, keyOf]);
-  const onError = useCallback((err: Error) => flash(err.message, 'error'), [flash]);
+    const task = tasks.find((t) => t.id === dragId);
+    return task ? dimGet(task, s.groupBy as Dim) : null;
+  }, [dragId, tasks, s.groupBy]);
   const onColumnDrop = useCallback((colValue: string) => {
     const id = dragId;
     endDrag();
     if (!id) return;
-    const task = tasks.find((x) => x.id === id);
-    if (!task || keyOf(task) === colValue) return;
-    if (s.groupBy === 'order') {
-      if (colValue === 'done') return;
-      planTask.mutate({ slug: task.slug, target: colValue }, { onSuccess: () => flash(fill(t('board.toast.planned'), { lane: orderLabels[colValue as OrderLane] ?? colValue })), onError });
-      return;
-    }
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
     const field = s.groupBy as Dim;
     const value = colValue === 'none' && (field === 'version' || field === 'assignee') ? null : colValue;
-    updateTask.mutate(
-      { slug: task.slug, updates: { [field]: value } as Partial<Task> },
-      { onSuccess: () => flash(t('board.toast.updated')), onError },
-    );
-  }, [dragId, tasks, s.groupBy, keyOf, planTask, updateTask, flash, onError, endDrag, orderLabels, t]);
-  const onCardDrop = useCallback((target: Task) => {
-    const id = dragId;
-    endDrag();
-    if (!id) return;
-    const task = tasks.find((x) => x.id === id);
-    if (!task || task.slug === target.slug) return;
-    if (keyOf(task) !== keyOf(target)) { onColumnDrop(keyOf(target)); return; }
-    rankTask.mutate({ slug: task.slug, before: target.slug }, { onSuccess: () => flash(t('board.toast.ranked')), onError });
-  }, [dragId, tasks, keyOf, rankTask, flash, onError, endDrag, onColumnDrop, t]);
+    if ((task[field as keyof Task] ?? 'none') === (value ?? 'none')) return;
+    updateTask.mutate({ slug: task.slug, updates: { [field]: value } as Partial<Task> });
+    flash(`Updated ${field}`);
+  }, [dragId, tasks, s.groupBy, updateTask, flash, endDrag]);
 
   // ── right-click context menu ─────────────────────────────────────────────────────
   const openCtxMenu = useCallback((e: React.MouseEvent, task: Task) => {
@@ -237,62 +179,67 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
     setCtxMenu({ x: e.clientX, y: e.clientY, task });
   }, []);
   const ctxSetStatus = useCallback((task: Task, status: string) => {
-    if (task.status !== status) {
-      updateTask.mutate(
-        { slug: task.slug, updates: { status } as Partial<Task> },
-        { onSuccess: () => flash(fill(t('board.toast.moved'), { status: sm.labelOf(status) })), onError },
-      );
-    }
+    if (task.status !== status) { updateTask.mutate({ slug: task.slug, updates: { status } as Partial<Task> }); flash(`Moved to ${sm.labelOf(status)}`); }
     setCtxMenu(null);
-  }, [updateTask, flash, onError, sm, t]);
-  // Later is a place on the "when?" axis now, not a tag (plan r3 § 5b): one row plans it there.
-  const ctxMoveToLater = useCallback((task: Task) => {
+  }, [updateTask, flash, sm]);
+  const ctxSetPriority = useCallback((task: Task, priority: string) => {
+    if (task.priority !== priority) { updateTask.mutate({ slug: task.slug, updates: { priority } as Partial<Task> }); flash(`Priority → ${levelLabel(priority)}`); }
     setCtxMenu(null);
-    planTask.mutate(
-      { slug: task.slug, target: 'later' },
-      { onSuccess: () => flash(fill(t('board.toast.planned'), { lane: orderLabels.later })), onError },
+  }, [updateTask, flash]);
+  // Writes ONLY the tag: the backend's "backlog ⇒ undated" rule clears the
+  // dates itself, so this button cannot drift into a second definition of what
+  // backlog means.
+  const ctxSendToBacklog = useCallback((task: Task) => {
+    setCtxMenu(null);
+    if (task.tags.some((t) => t.toLowerCase() === 'backlog')) return;
+    updateTask.mutate(
+      { slug: task.slug, updates: { tags: [...task.tags, 'backlog'] } as Partial<Task> },
+      { onSuccess: () => flash('Sent to backlog'), onError: () => flash('Could not send to backlog') },
     );
-  }, [planTask, flash, onError, orderLabels, t]);
+  }, [updateTask, flash]);
   const ctxDelete = useCallback(async (task: Task) => {
     setCtxMenu(null);
     const ok = await confirmAction({
-      title: fill(t('board.delete.title'), { name: task.name || task.slug }),
-      body: t('board.delete.body'),
-      confirmLabel: t('taskPage.delete.confirm'),
+      title: `Delete “${task.name || task.slug}”?`,
+      body: 'This cannot be undone.',
+      confirmLabel: 'Delete',
       destructive: true,
     });
     if (!ok) return;
-    deleteTask.mutate(task.slug, { onSuccess: () => flash(t('board.toast.deleted')), onError: () => flash(t('board.toast.deleteFailed'), 'error') });
-  }, [deleteTask, flash, t]);
-  // The one door to an agent (plan r3 § 5e): Develop, a named agent or a custom prompt, all
-  // from the dialog `ProjectInstance` mounts, which reads the task by slug.
-  const ctxGiveToAgent = useCallback((task: Task) => { setCtxMenu(null); giveToAgent({ slug: task.slug }); }, [giveToAgent]);
+    deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed') });
+    if (selectedSlug === task.slug) setSelectedSlug(null);
+  }, [deleteTask, flash, selectedSlug]);
+  // Open the Delegate composer for a task (from the context menu). The composer dispatches
+  // the delegate event the always-mounted AgentSurface listens for; we just host the modal.
+  const ctxDelegate = useCallback((task: Task) => { setDelegateTask(task); setCtxMenu(null); }, []);
+  // "Assign to agent" runs one of the project's own agents on the task (server-side, so it is
+  // offered on every build, unlike Delegate). The composer answers every refusal in place.
+  const ctxAssignAgent = useCallback((task: Task) => { setAssignAgentTask(task); setCtxMenu(null); }, []);
 
   // ── view actions ────────────────────────────────────────────────────────────────
   const handleRequestSave = useCallback(() => { setPendingSave({ mode: 'save' }); closeAllMenus(); }, [closeAllMenus]);
-  // "+ New view" creates a blank view (Board, no filters) immediately and returns
+  // "+ New view" creates a blank view (Kanban, no filters) immediately and returns
   // its id so the tab bar can enter rename mode. No name prompt, no scope dialog.
-  const handleCreateBlank = useCallback((): string => { closeAllMenus(); const id = s.createBlankView(); flash(t('board.toast.viewCreated')); return id; }, [s, flash, closeAllMenus, t]);
+  const handleCreateBlank = useCallback((): string => { closeAllMenus(); const id = s.createBlankView(); flash('New view created'); return id; }, [s, flash, closeAllMenus]);
   const handlePickScope = useCallback((scope: SaveScope) => {
     if (!pendingSave) return;
     s.saveView(scope);
-    flash(scope === 'shared' ? t('board.toast.savedShared') : t('board.toast.savedLocal'));
+    flash(scope === 'shared' ? 'Saved for everyone' : 'Saved for yourself');
     setPendingSave(null);
-  }, [pendingSave, s, flash, t]);
+  }, [pendingSave, s, flash]);
 
-  if (!s.ready || isLoading || cyclesLoading) {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>{t('board.loading')}</div>;
+  const selectedTask = selectedSlug ? tasks.find((t) => t.slug === selectedSlug) || null : null;
+  const onTaskMove = useCallback((slug: string, updates: Partial<Pick<Task, 'priority' | 'urgency'>>) => updateTask.mutate({ slug, updates }), [updateTask]);
+
+  if (!s.ready || isLoading) {
+    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading board…</div>;
   }
 
-  const activeName = s.activeView?.name ?? t('board.view');
-  const pendingTitle = pendingSave?.mode === 'create'
-    ? fill(t('board.save.create'), { name: pendingSave.name || t('board.view.new') })
-    : fill(t('board.save.title'), { name: activeName });
+  const activeName = s.activeView?.name ?? 'view';
+  const pendingTitle = pendingSave?.mode === 'create' ? `Create “${pendingSave.name || 'New view'}”` : `Save “${activeName}”`;
   const pendingDefaultScope: SaveScope = s.activeView?.origin === 'local' || s.activeView?.hasLocalOverride ? 'local' : 'shared';
   const isEmpty = filtered.length === 0;
-  const isTimeline = s.layout === 'timeline';
-  // On a phone the board is one column at a time; the segmented control picks which.
-  const shownCol = oneColumn ? (columns.find((c) => c.data.key === mobileCol) ?? columns[0])?.data.key ?? null : null;
+  const isAdvanced = ['eisenhower', 'scatter', 'timeline', 'calendar', 'heatmap'].includes(s.layout);
 
   return (
     <div style={{ height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)' }}>
@@ -318,17 +265,16 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
         allTags={allTags}
         assignees={assignees}
         versionsForFilter={versionsForFilter}
-        activeCycleId={activeCycleId}
+        activeVersion={activeVersion}
         releasedVersions={releasedVersions}
         openMenu={openMenu}
         setOpenMenu={setOpenMenu}
         onNewTask={() => setShowCreate(true)}
-        onAuthorWithAgent={() => giveToAgent({ preset: 'author' })}
+        onAuthorWithAgent={() => setShowAuthor(true)}
         agentReady={agentReady}
         flash={flash}
       />
 
-      <CycleStrip onOpenPlanning={onOpenPlanning} />
       <SleepEvalBanner />
 
       {showAlert && (
@@ -341,87 +287,68 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
         />
       )}
 
-      <div className="bd-scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-bg)', overflow: isTimeline ? 'auto' : 'hidden' }}>
-        {isEmpty && !isTimeline ? (
-          <EmptyState
-            onClear={s.clearAllFilters}
-            // A "Current" view with no cycle running is empty because of the cycle, not the filters.
-            // Only a KNOWN "no cycle": a failed /cycles request gets the generic empty state.
-            noCycle={cycles !== undefined && !activeCycleId && s.filters.version.inc.includes(VV_CURRENT)}
-            onOpenPlanning={onOpenPlanning}
-          />
+      <div className="bd-scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-bg)', overflow: isAdvanced ? 'auto' : 'hidden' }}>
+        {isEmpty && !isAdvanced ? (
+          <EmptyState onClear={s.clearAllFilters} />
         ) : s.layout === 'board' ? (
-          <>
-            {oneColumn && (
-              <div className="bd-seg" role="group" aria-label={t('board.columns')}>
-                {columns.map(({ data }) => (
-                  <button key={data.key} type="button" className="bd-seg-btn" aria-pressed={shownCol === data.key} onClick={() => setMobileCol(data.key)}>
-                    {`${data.label} · ${data.count}`}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div
-              className="bd-scroll"
-              // Clear the active column only when the pointer leaves the whole board
-              // row. Per-column dragleave is intentionally NOT used: that boundary
-              // fires on every child-card crossing and on the silhouette reflow, and
-              // WKWebView (Tauri) frequently reports a null relatedTarget mid-drag.
-              onDragLeave={(e) => {
-                if (!draggable) return;
-                const rt = e.relatedTarget as Node | null;
-                if (rt && !e.currentTarget.contains(rt)) setDragOverKey(null);
-              }}
-              style={{ flex: 1, minHeight: 0, display: 'flex', gap: 14, padding: oneColumn ? '12px' : '16px 16px 18px', overflowX: 'auto', overflowY: 'hidden' }}
-            >
-              {columns.map(({ data, colKey }) => (
-                <BoardColumn
-                  key={colKey}
-                  col={data}
-                  allTasks={tasks}
-                  cardProps={s.cardProps}
-                  dragId={dragId}
-                  draggable={draggable && !oneColumn}
-                  hidden={oneColumn && shownCol !== data.key}
-                  isDropTarget={!!dragId && dragOverKey === data.key && !data.noDrop}
-                  showDropSilhouette={!!dragId && dragOverKey === data.key && dragSourceKey !== data.key && !data.noDrop}
-                  assigneeName={assigneeName}
-                  onToggleCollapse={() => setColCollapsed((m) => ({ ...m, [colKey]: !data.collapsed }))}
-                  onAddTask={() => setShowCreate(true)}
-                  onCardClick={(x) => openTask(x.slug)}
-                  onCardContextMenu={openCtxMenu}
-                  onCardDragStart={onCardDragStart}
-                  onCardDragEnd={endDrag}
-                  onCardDrop={s.groupBy === 'order' && !data.noDrop ? onCardDrop : undefined}
-                  isExpanded={(slug) => !!expanded[slug]}
-                  onToggleExpand={(slug) => setExpanded((m) => ({ ...m, [slug]: !m[slug] }))}
-                  onColumnDragOver={(e) => { if (draggable && !data.noDrop) { e.preventDefault(); if (dragOverKey !== data.key) setDragOverKey(data.key); } }}
-                  onColumnDrop={(e) => { if (draggable && !data.noDrop) { e.preventDefault(); onColumnDrop(data.key); } }}
-                />
-              ))}
-            </div>
-          </>
+          <div
+            className="bd-scroll"
+            // Clear the active column only when the pointer leaves the whole board
+            // row. Per-column dragleave is intentionally NOT used: that boundary
+            // fires on every child-card crossing and on the silhouette reflow, and
+            // WKWebView (Tauri) frequently reports a null relatedTarget mid-drag —
+            // both would clear dragOverKey for a frame and flicker the silhouette.
+            // dragOverKey is re-set by the next column's dragover and is always
+            // cleared on drop/dragend via endDrag().
+            onDragLeave={(e) => {
+              if (!draggable) return;
+              const rt = e.relatedTarget as Node | null;
+              if (rt && !e.currentTarget.contains(rt)) setDragOverKey(null);
+            }}
+            style={{ flex: 1, minHeight: 0, display: 'flex', gap: 14, padding: '16px 16px 18px', overflowX: 'auto', overflowY: 'hidden' }}
+          >
+            {columns.map(({ data, colKey }) => (
+              <BoardColumn
+                key={colKey}
+                col={data}
+                cardProps={s.cardProps}
+                dragId={dragId}
+                draggable={draggable}
+                isDropTarget={!!dragId && dragOverKey === data.key}
+                showDropSilhouette={!!dragId && dragOverKey === data.key && dragSourceKey !== data.key}
+                assigneeName={assigneeName}
+                onToggleCollapse={() => setColCollapsed((m) => ({ ...m, [colKey]: !m[colKey] }))}
+                onAddTask={() => setShowCreate(true)}
+                onCardClick={(t) => setSelectedSlug(t.slug)}
+                onCardContextMenu={openCtxMenu}
+                onCardDragStart={onCardDragStart}
+                onCardDragEnd={endDrag}
+                onColumnDragOver={(e) => { if (draggable) { e.preventDefault(); if (dragOverKey !== data.key) setDragOverKey(data.key); } }}
+                onColumnDrop={(e) => { if (draggable) { e.preventDefault(); onColumnDrop(data.key); } }}
+              />
+            ))}
+          </div>
         ) : s.layout === 'list' ? (
           <div className="bd-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 18px 20px' }}>
             {columns.map(({ data, colKey }) => (
-              <div key={colKey} style={{ marginBottom: 22 }} data-board-column={data.key}>
-                <button type="button" className="bd-col-head" aria-expanded={!data.collapsed} onClick={() => setColCollapsed((m) => ({ ...m, [colKey]: !data.collapsed }))} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '6px 4px 10px', cursor: 'pointer', position: 'sticky', top: 0, background: 'var(--color-bg)', zIndex: 2, width: '100%', border: 'none', color: 'inherit', font: 'inherit', textAlign: 'left' }}>
+              <div key={colKey} style={{ marginBottom: 22 }}>
+                <div onClick={() => setColCollapsed((m) => ({ ...m, [colKey]: !m[colKey] }))} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '6px 4px 10px', cursor: 'pointer', position: 'sticky', top: 0, background: 'var(--color-bg)', zIndex: 2 }}>
                   <span style={{ width: 9, height: 9, borderRadius: 3, background: data.color, flex: '0 0 auto' }} />
                   <span style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 14, color: 'var(--color-text)' }}>{data.label}</span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--color-text-tertiary)', background: 'var(--color-bg-tertiary)', padding: '1px 8px', borderRadius: 20 }}>{data.count}</span>
-                  <span style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
-                </button>
+                  <div style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
+                </div>
                 {!data.collapsed && data.subs.map((sub) => (
                   <div key={sub.key}>
                     {sub.hasHeader && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 6px 5px' }}>
                         <span style={{ width: 7, height: 7, borderRadius: '50%', background: sub.color, flex: '0 0 auto' }} />
-                        <span style={{ fontFamily: 'var(--font-family-text)', fontWeight: 600, fontSize: 11, letterSpacing: '0.04em', color: 'var(--color-text-secondary)' }}>{sub.label}</span>
+                        <span style={{ fontFamily: 'var(--font-family-text)', fontWeight: 600, fontSize: 11, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-secondary)' }}>{sub.label}</span>
                         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{sub.count}</span>
                       </div>
                     )}
-                    {sub.cards.map((x) => (
-                      <BoardCard key={x.id} task={x} cardProps={s.cardProps} variant="list" assigneeName={assigneeName} onClick={() => openTask(x.slug)} onContextMenu={(e) => openCtxMenu(e, x)} />
+                    {sub.cards.map((t) => (
+                      <BoardCard key={t.id} task={t} cardProps={s.cardProps} variant="list" assigneeName={assigneeName} onClick={() => setSelectedSlug(t.slug)} onContextMenu={(e) => openCtxMenu(e, t)} />
                     ))}
                   </div>
                 ))}
@@ -430,7 +357,11 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
           </div>
         ) : (
           <div style={{ flex: 1, minHeight: 0, padding: 16, display: 'flex', flexDirection: 'column' }}>
-            <TimelineGantt tasks={filtered} onTaskClick={(x) => openTask(x.slug)} />
+            {s.layout === 'eisenhower' && <EisenhowerMatrix tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} onTaskMove={onTaskMove} />}
+            {s.layout === 'scatter' && <RiceScatter tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} />}
+            {s.layout === 'timeline' && <TimelineGantt tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} />}
+            {s.layout === 'calendar' && <TaskCalendar tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} />}
+            {s.layout === 'heatmap' && <ActivityHeatmap tasks={filtered} />}
           </div>
         )}
       </div>
@@ -443,23 +374,46 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
       {ctxMenu && (
         <TaskContextMenu
           menu={ctxMenu}
-          inLater={orderOf(ctxMenu.task, activeCycleId) === 'later'}
+          agentReady={agentReady}
           onClose={() => setCtxMenu(null)}
-          onOpen={(x) => { openTask(x.slug); setCtxMenu(null); }}
-          onMoveToLater={ctxMoveToLater}
-          onGiveToAgent={ctxGiveToAgent}
+          onOpen={(t) => { setSelectedSlug(t.slug); setCtxMenu(null); }}
+          onSendToBacklog={ctxSendToBacklog}
+          onDelegate={ctxDelegate}
+          onAssignAgent={ctxAssignAgent}
           onSetStatus={ctxSetStatus}
+          onSetPriority={ctxSetPriority}
           onDelete={ctxDelete}
         />
       )}
 
+      {delegateTask && (
+        <DelegateComposer
+          task={delegateTask}
+          onClose={() => setDelegateTask(null)}
+          onDelegated={(title) => flash(`Delegated “${title}” to Claude`)}
+        />
+      )}
+
+      {assignAgentTask && (
+        <AssignToAgentComposer
+          task={assignAgentTask}
+          onClose={() => setAssignAgentTask(null)}
+        />
+      )}
+
+      {selectedTask && <TaskDetailPanel task={selectedTask} onClose={() => setSelectedSlug(null)} />}
       {showCreate && <TaskCreateModal onClose={() => setShowCreate(false)} />}
+      {showAuthor && (
+        <AuthorTaskComposer
+          onClose={() => setShowAuthor(false)}
+          onStarted={() => flash('Authoring agent started — it works in the corner')}
+        />
+      )}
       {pendingSave && <SaveScopeDialog title={pendingTitle} defaultScope={pendingDefaultScope} onPick={handlePickScope} onCancel={() => setPendingSave(null)} />}
 
       {toast && (
         <div className="bd-pop" style={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 60, display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 11, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-lg)', fontSize: 13, color: 'var(--color-text)' }}>
-          <span aria-hidden="true" style={{ color: toast.tone === 'error' ? 'var(--color-error)' : 'var(--color-accent)' }}>{toast.tone === 'error' ? '!' : '✓'}</span>
-          <span role={toast.tone === 'error' ? 'alert' : 'status'} style={{ whiteSpace: 'pre-line', maxWidth: 560 }}>{toast.msg}</span>
+          <span style={{ color: 'var(--color-accent)' }}>✓</span>{toast}
         </div>
       )}
     </div>
@@ -467,26 +421,30 @@ export function KanbanBoard({ focus, onOpenTask, onOpenPlanning }: {
 }
 
 interface CtxMenuState { x: number; y: number; task: Task }
-function TaskContextMenu({ menu, inLater, onClose, onOpen, onGiveToAgent, onSetStatus, onMoveToLater, onDelete }: {
+function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onAssignAgent, onSetStatus, onSetPriority, onSendToBacklog, onDelete }: {
   menu: CtxMenuState;
-  inLater: boolean;
+  agentReady?: boolean;
   onClose: () => void;
   onOpen: (t: Task) => void;
-  onGiveToAgent: (t: Task) => void;
+  onDelegate: (t: Task) => void;
+  onAssignAgent: (t: Task) => void;
   onSetStatus: (t: Task, status: string) => void;
-  onMoveToLater: (t: Task) => void;
+  onSetPriority: (t: Task, priority: string) => void;
+  onSendToBacklog: (t: Task) => void;
   onDelete: (t: Task) => void;
 }) {
   const sm = useStatusModel();
   const { t } = useI18n();
   const { task } = menu;
-  const W = 220, H = 190, SUB_W = 188;
+  // The collapsed menu is short now (≈ 220×224px with Assign to agent, +34 for the Delegate
+  // row); submenus fly out to the side.
+  const W = 220, H = agentReady ? 258 : 224, SUB_W = 188;
   const left = typeof window !== 'undefined' ? Math.min(menu.x, window.innerWidth - W - 8) : menu.x;
   const top = typeof window !== 'undefined' ? Math.min(menu.y, window.innerHeight - H - 8) : menu.y;
   // Flip the flyout to the left when the main menu sits too close to the right edge.
   const flipLeft = typeof window !== 'undefined' && left + W + SUB_W + 8 > window.innerWidth;
 
-  const [openSub, setOpenSub] = useState<'status' | null>(null);
+  const [openSub, setOpenSub] = useState<'status' | 'priority' | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -510,32 +468,41 @@ function TaskContextMenu({ menu, inLater, onClose, onOpen, onGiveToAgent, onSetS
   return (
     <>
       <div onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 70 }} />
-      <div className="bd-pop" role="menu" style={{ position: 'fixed', left, top, zIndex: 71, width: W, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, boxShadow: 'var(--shadow-lg)', padding: 6 }}>
-        <div className="bd-row" role="menuitem" onClick={() => onOpen(task)} style={row}>
+      <div className="bd-pop" style={{ position: 'fixed', left, top, zIndex: 71, width: W, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, boxShadow: 'var(--shadow-lg)', padding: 6 }}>
+        <div className="bd-row" onClick={() => onOpen(task)} style={row}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M15 3h6v6M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" /></svg>
-          <span style={{ flex: 1 }}>{t('board.menu.open')}</span>
+          <span style={{ flex: 1 }}>Open details</span>
         </div>
 
-        {/* The one door to an agent: Develop, a named agent or a custom prompt (plan r3 § 5e). */}
-        <div className="bd-row" role="menuitem" onClick={() => onGiveToAgent(task)} style={row}>
+        {/* Delegate to Claude — desktop-only (the in-app agent). Hands the task to a
+            background Claude Code agent via a prefilled composer. */}
+        {agentReady && (
+          <div className="bd-row" onClick={() => onDelegate(task)} style={{ ...row, color: 'var(--color-accent)' }}>
+            <span style={{ display: 'inline-flex', flex: '0 0 auto' }}><SparkIcon size={14} /></span>
+            <span style={{ flex: 1 }}>Delegate to Claude</span>
+          </div>
+        )}
+
+        {/* Assign to agent: one of this project's agents takes the task and runs on it. */}
+        <div className="bd-row" onClick={() => onAssignAgent(task)} style={row}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><rect x="4" y="8" width="16" height="12" rx="3" /><path d="M12 4v4M9 13h.01M15 13h.01M9 17h6" /></svg>
-          <span style={{ flex: 1 }}>{t('board.menu.giveToAgent')}</span>
+          <span style={{ flex: 1 }}>{t('tasks.assignToAgent')}</span>
         </div>
 
         <div style={{ height: 1, background: 'var(--color-border)', margin: '5px 4px' }} />
 
         {/* Move to status — collapsed, flyout submenu */}
         <div style={{ position: 'relative' }} onMouseEnter={() => setOpenSub('status')} onMouseLeave={() => setOpenSub(null)}>
-          <div className="bd-row" role="menuitem" aria-haspopup="menu" aria-expanded={openSub === 'status'} onClick={() => setOpenSub((x) => (x === 'status' ? null : 'status'))} style={{ ...row, ...(openSub === 'status' ? { background: 'var(--color-bg-secondary)' } : {}) }}>
+          <div className="bd-row" onClick={() => setOpenSub(s => (s === 'status' ? null : 'status'))} style={{ ...row, ...(openSub === 'status' ? { background: 'var(--color-bg-secondary)' } : {}) }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: sm.colorOf(task.status), flex: '0 0 auto' }} />
-            <span style={{ flex: 1 }}>{t('board.menu.status')}</span>
+            <span style={{ flex: 1 }}>Move to status</span>
             <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{sm.labelOf(task.status)}</span>
             {chevron}
           </div>
           {openSub === 'status' && (
-            <div className="bd-pop" role="menu" style={flyout}>
+            <div className="bd-pop" style={flyout}>
               {sm.order.map((st) => (
-                <div key={st} className="bd-row" role="menuitem" onClick={() => onSetStatus(task, st)} style={row}>
+                <div key={st} className="bd-row" onClick={() => onSetStatus(task, st)} style={row}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: sm.colorOf(st), flex: '0 0 auto' }} />
                   <span style={{ flex: 1 }}>{sm.labelOf(st)}</span>
                   {task.status === st && <span style={{ color: 'var(--color-accent)', fontSize: 12 }}>✓</span>}
@@ -545,44 +512,54 @@ function TaskContextMenu({ menu, inLater, onClose, onOpen, onGiveToAgent, onSetS
           )}
         </div>
 
-        {/* Later is a place on the "when?" axis: one row plans the card there. Hidden once
-            the card is already in Later rather than shown as a no-op. */}
-        {!inLater && (
-          <div className="bd-row" role="menuitem" onClick={() => onMoveToLater(task)} style={row}>
+        {/* Set priority — collapsed, flyout submenu */}
+        <div style={{ position: 'relative' }} onMouseEnter={() => setOpenSub('priority')} onMouseLeave={() => setOpenSub(null)}>
+          <div className="bd-row" onClick={() => setOpenSub(s => (s === 'priority' ? null : 'priority'))} style={{ ...row, ...(openSub === 'priority' ? { background: 'var(--color-bg-secondary)' } : {}) }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: prioColor(task.priority), flex: '0 0 auto' }} />
+            <span style={{ flex: 1 }}>Set priority</span>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{levelLabel(task.priority)}</span>
+            {chevron}
+          </div>
+          {openSub === 'priority' && (
+            <div className="bd-pop" style={flyout}>
+              {PRIO_ORDER.map((p) => (
+                <div key={p} className="bd-row" onClick={() => onSetPriority(task, p)} style={row}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: prioColor(p), flex: '0 0 auto' }} />
+                  <span style={{ flex: 1 }}>{levelLabel(p)}</span>
+                  {task.priority === p && <span style={{ color: 'var(--color-accent)', fontSize: 12 }}>✓</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Backlog is a TAG, not a status, so it never appeared in this menu and
+            had to be typed by hand. One row writes it. Hidden once the task is
+            already there rather than shown as a no-op. */}
+        {!task.tags.some((t) => t.toLowerCase() === 'backlog') && (
+          <div className="bd-row" onClick={() => onSendToBacklog(task)} style={row}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M3 7h18M3 12h18M3 17h18" /></svg>
-            <span style={{ flex: 1 }}>{t('board.menu.moveToLater')}</span>
+            <span style={{ flex: 1 }}>Send to backlog</span>
           </div>
         )}
 
         <div style={{ height: 1, background: 'var(--color-border)', margin: '5px 4px' }} />
-        <div className="bd-row bd-danger" role="menuitem" onClick={() => onDelete(task)} style={{ ...row, color: 'var(--color-text-secondary)' }}>
+        <div className="bd-row bd-danger" onClick={() => onDelete(task)} style={{ ...row, color: 'var(--color-text-secondary)' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
-          <span style={{ flex: 1 }}>{t('taskPage.delete.button')}</span>
+          <span style={{ flex: 1 }}>Delete task</span>
         </div>
       </div>
     </>
   );
 }
 
-/**
- * Nothing to draw. A view that filters by the current cycle while no cycle runs says THAT, and
- * offers the CycleStrip's "Plan a cycle" (the filters are not the reason, so clearing them is
- * the second choice there).
- */
-function EmptyState({ onClear, noCycle = false, onOpenPlanning }: { onClear: () => void; noCycle?: boolean; onOpenPlanning?: () => void }) {
-  const { t } = useI18n();
-  const chip: CSSProperties = { marginTop: 4, padding: '8px 16px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-soft)', color: 'var(--color-accent)', fontSize: 13, fontWeight: 600, border: '1px solid var(--color-accent)' };
+function EmptyState({ onClear }: { onClear: () => void }) {
   return (
-    <div data-board-empty={noCycle ? 'no-cycle' : 'filters'} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, textAlign: 'center', padding: 40 }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, textAlign: 'center', padding: 40 }}>
       <div style={{ width: 60, height: 60, borderRadius: 16, background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, color: 'var(--color-text-tertiary)' }}>⌕</div>
-      <div style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 19, color: 'var(--color-text)' }}>{t(noCycle ? 'board.cycle.none' : 'board.empty.title')}</div>
-      <div style={{ fontSize: 13.5, color: 'var(--color-text-tertiary)', maxWidth: 360, lineHeight: 1.5 }}>{t(noCycle ? 'board.empty.noCycleBody' : 'board.empty.body')}</div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-        {noCycle && onOpenPlanning && (
-          <button type="button" className="bd-chip" onClick={onOpenPlanning} style={chip}>{t('board.cycle.plan')}</button>
-        )}
-        <button type="button" className="bd-chip" onClick={onClear} style={noCycle && onOpenPlanning ? { ...chip, background: 'transparent', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' } : chip}>{t('board.empty.clear')}</button>
-      </div>
+      <div style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 19, color: 'var(--color-text)' }}>No tasks match these filters</div>
+      <div style={{ fontSize: 13.5, color: 'var(--color-text-tertiary)', maxWidth: 360, lineHeight: 1.5 }}>Try clearing a filter or widening your search. Your saved views stay put.</div>
+      <span className="bd-chip" onClick={onClear} style={{ marginTop: 4, padding: '8px 16px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-soft)', color: 'var(--color-accent)', fontSize: 13, fontWeight: 600, border: '1px solid var(--color-accent)' }}>Clear all filters</span>
     </div>
   );
 }

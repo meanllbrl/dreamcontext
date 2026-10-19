@@ -9,7 +9,6 @@ import { nextFireWords } from '../../lib/agentDraft';
 import { requestOpenAgents } from '../../lib/openAgents';
 import { useI18n } from '../../context/I18nContext';
 import './AgentProfilePopover.css';
-import { fill } from '../../lib/fill';
 
 /**
  * The description, as the DOCUMENT it actually is.
@@ -121,7 +120,7 @@ export function AgentProfilePopover({
         <div className="agent-pop-id">
           <b>{summary.title}</b>
           <small>{cadence} · {summary.model ?? 'default model'}, {summary.effort ?? 'default'} effort</small>
-          {runsAs && <small>{fill(t('automations.runsAs'), { name: runsAs })}</small>}
+          {runsAs && <small>{t('automations.runsAs').replace('{name}', runsAs)}</small>}
         </div>
       </div>
 
@@ -138,7 +137,7 @@ export function AgentProfilePopover({
         {/* Who it runs as is edited where that agent lives: its own profile on the Agents page. */}
         {face.of === 'agent' && (
           <button type="button" className="agent-btn" onClick={() => { requestOpenAgents({ slug: face.slug }); onClose(); }}>
-            {fill(t('automations.openAgent'), { name: face.title })}
+            {t('automations.openAgent').replace('{name}', face.title)}
           </button>
         )}
         {scheduled && (

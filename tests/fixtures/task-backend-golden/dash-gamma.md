@@ -24,3 +24,8 @@ start_date: '2026-06-11'
 ## Why
 
 Replaced body wholesale
+
+## Changelog
+
+### 2026-06-11 - Created
+- Task created.

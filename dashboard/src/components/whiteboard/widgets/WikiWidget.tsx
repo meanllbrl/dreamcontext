@@ -23,7 +23,6 @@ import { humanizeFileName, knowledgeTitle, pageCardTitle, pageTypeLabel, parseWi
 import { WidgetButton, WidgetFrame } from './WidgetFrame';
 import type { WidgetProps } from './types';
 import './wikiWidget.css';
-import { fill } from '../../../lib/fill';
 
 /**
  * THE WIKI CARD: a board's own reading list, kept in the card (`customData.dc`: a title and
@@ -413,7 +412,7 @@ export function WikiWidget({ elementId, payload, active, size, height }: WidgetP
       )}
       {hiddenRows > 0 && (
         <button ref={moreRef} type="button" className="wb-wiki-more" onClick={expand}>
-          {fill(tx('whiteboard.wiki.more', '+{n} more'), { n: String(hiddenRows) })}
+          {tx('whiteboard.wiki.more', '+{n} more').replace('{n}', String(hiddenRows))}
         </button>
       )}
       {showEditor && (
@@ -501,7 +500,7 @@ export function WikiWidget({ elementId, payload, active, size, height }: WidgetP
               <div className="wb-wiki-picker-head">
                 <span className="wb-wiki-picker-title">
                   {picker.section
-                    ? fill(tx('whiteboard.wiki.addTo', 'Add to {section}'), { section: list.sections.find((s) => s.id === picker.section)?.title ?? '' })
+                    ? tx('whiteboard.wiki.addTo', 'Add to {section}').replace('{section}', list.sections.find((s) => s.id === picker.section)?.title ?? '')
                     : tx('whiteboard.wiki.addPage', 'Add page')}
                 </span>
                 <IconButton label={tx('whiteboard.popup.close', 'Close')} onClick={() => setPicker(null)}><CloseIcon size={14} /></IconButton>
@@ -601,10 +600,10 @@ function SectionEditRow({
       ? tx('whiteboard.wiki.deleteEmpty', 'Delete “{title}”?')
       : n === 1
         ? tx('whiteboard.wiki.deleteOne', 'Delete “{title}” and its page?')
-        : fill(tx('whiteboard.wiki.deleteMany', 'Delete “{title}” and its {n} pages?'), { n: String(n) });
+        : tx('whiteboard.wiki.deleteMany', 'Delete “{title}” and its {n} pages?').replace('{n}', String(n));
     return (
-      <div className="wb-wiki-confirm" role="alertdialog" aria-label={fill(question, { title: section.title })}>
-        <span className="wb-wiki-confirm-text">{fill(question, { title: section.title })}</span>
+      <div className="wb-wiki-confirm" role="alertdialog" aria-label={question.replace('{title}', section.title)}>
+        <span className="wb-wiki-confirm-text">{question.replace('{title}', section.title)}</span>
         <span className="wb-wiki-confirm-actions">
           <button type="button" className="wb-widget-btn wb-wiki-danger" autoFocus onClick={onDelete}>{tx('whiteboard.wiki.delete', 'Delete')}</button>
           <WidgetButton onClick={onCancelDelete}>{tx('whiteboard.wiki.cancel', 'Cancel')}</WidgetButton>

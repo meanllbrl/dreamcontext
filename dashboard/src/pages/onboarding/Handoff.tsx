@@ -6,7 +6,6 @@ import type { ReadinessReport } from '../../lib/onboardingTypes';
 import { GemConverge } from './GemConverge';
 import { canStartClaude, handoffAction } from './handoffPlan';
 import type { CreatedProject } from './ProjectStep';
-import { fill } from '../../lib/fill';
 
 interface Props {
   project: CreatedProject;
@@ -55,7 +54,7 @@ export function Handoff({ project, report, onDone, onFinishSetup }: Props) {
   return (
     <div className="ob-panel-body ob-handoff">
       <GemConverge />
-      <h2 className="ob-title">{fill(t('onboarding.handoff.title'), { name: project.name })}</h2>
+      <h2 className="ob-title">{t('onboarding.handoff.title').replace('{name}', project.name)}</h2>
       <p className="ob-subtitle">{t('onboarding.handoff.subtitle')}</p>
       {project.cli?.status === 'failed' && <p className="ob-hint">{t('onboarding.project.cliFailed')}</p>}
       {!canStart && (

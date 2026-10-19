@@ -74,7 +74,6 @@ import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { clearSuperNote, peekSuperNote, superIndex, superRootOfChild } from '../../lib/super/store.js';
 import { SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
-import { LIMIT_CONTINUE_TEXT, handoffContinuePrompt } from '../../lib/app-prompts.js';
 import {
   attachSuperInbox, markSuperEventTurn, stashHeldOwnerTexts, superSocketAttached, superTurnEnded, takeHeldOwnerTexts,
 } from '../../lib/super/inbox.js';
@@ -1311,9 +1310,9 @@ const SWITCH_STALL_MS = Number(process.env.DREAMCONTEXT_SWITCH_STALL_MS) > 0
  * typed "devam et", one of them for 46 minutes. Replaying the owner's original text instead
  * would be worse: forty minutes into a run it restarts the whole request.
  */
-// The text lives in lib/app-prompts.ts, with every other prompt dreamcontext types as a user
-// turn, so a transcript reader can tell it from the owner's words.
-export { LIMIT_CONTINUE_TEXT };
+export const LIMIT_CONTINUE_TEXT =
+  'The previous turn was cut off by a Claude usage limit, and this chat has moved to another account. '
+  + 'Continue exactly where you stopped; do not redo finished work.';
 
 /** How long a chat's `claude` child may outlive its WebSocket to finish an in-flight turn.
  *
@@ -2561,7 +2560,8 @@ export function startChatSession(
             openTurn();
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/clear' }] } });
 
-            const continuePrompt = handoffContinuePrompt(pending.title, pending.task);
+            const continuePrompt = `Handoff: continue task ${pending.title} (${pending.task}). `
+              + `Read _dream_context/state/${pending.task}.md first, then carry on from its latest changelog entry.`;
             openTurn();
             writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: continuePrompt }] } });
 

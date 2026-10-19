@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { appendFileSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
+import { mkdirSync, rmSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -37,16 +37,6 @@ const TODAY = '2026-06-11';
 let projectRoot: string;
 let contextRoot: string;
 let prevCwd: string;
-
-/**
- * Give a task one proven criterion, so the evidence gate lets it close: these
- * tests are about the date window, not about evidence (task-evidence-gate.test.ts
- * owns that). The gate reads a ref's kind, never re-resolves it.
- */
-function prove(slug: string): void {
-  const file = join(contextRoot, 'state', `${slug}.md`);
-  appendFileSync(file, '\n## Acceptance Criteria\n\n- [x] It works (evidence: commit:abc1234)\n');
-}
 
 async function cli(...argv: string[]): Promise<void> {
   const program = new Command();
@@ -139,14 +129,12 @@ describe('CLI date window', () => {
 
   it('stamps the real end date on completion, over the planned one', async () => {
     await cli('tasks', 'create', 'Shipped', '-w', 'why', '--start', '2026-06-02', '--due', '2026-08-01');
-    prove('shipped');
     await cli('tasks', 'complete', 'shipped', 'Done early.');
     expect(await window('shipped')).toEqual({ start: '2026-06-02', due: TODAY, status: 'completed' });
   });
 
   it('stamps the real end date via `tasks status completed` too', async () => {
     await cli('tasks', 'create', 'Shipped Two', '-w', 'why', '--start', '2026-06-02', '--due', '2026-08-01');
-    prove('shipped-two');
     await cli('tasks', 'status', 'shipped-two', 'completed');
     expect(await window('shipped-two')).toEqual({ start: '2026-06-02', due: TODAY, status: 'completed' });
   });
@@ -155,7 +143,6 @@ describe('CLI date window', () => {
     // No start on a finished task means it went not-started → done in one move,
     // so it gets a real (same-day) window rather than half a range.
     await cli('tasks', 'create', 'Straight To Done', '-w', 'why');
-    prove('straight-to-done');
     await cli('tasks', 'complete', 'straight-to-done', 'Never picked up separately.');
     expect(await window('straight-to-done')).toEqual({ start: TODAY, due: TODAY, status: 'completed' });
   });
@@ -163,7 +150,6 @@ describe('CLI date window', () => {
   it('drops the backlog tag when completion dates a backlog task', async () => {
     // Dates and `backlog` are mutually exclusive; a done task is not backlog.
     await cli('tasks', 'create', 'Parked', '-w', 'why', '-t', 'backlog');
-    prove('parked');
     await cli('tasks', 'complete', 'parked', 'Closed straight out of the backlog.');
     const task = await new LocalTaskBackend(join(contextRoot, 'state')).get('parked');
     expect(task?.tags).toEqual([]);
@@ -175,7 +161,6 @@ describe('CLI date window', () => {
     (console.log as unknown as { mockImplementation: (f: (m?: unknown) => void) => void })
       .mockImplementation((m?: unknown) => { lines.push(String(m)); });
     await cli('tasks', 'create', 'Loud', '-w', 'why', '--start', '2026-06-02', '--due', '2026-08-01');
-    prove('loud');
     await cli('tasks', 'complete', 'loud', 'Done.');
     expect(lines.join('\n')).toContain(`due date set to ${TODAY} (work finished), replacing the planned 2026-08-01`);
   });
@@ -206,7 +191,6 @@ describe('dashboard PATCH date window', () => {
 
   it('stamps the real end when the board moves a card to completed', async () => {
     await cli('tasks', 'create', 'Board Done', '-w', 'why', '--due', '2026-08-01');
-    prove('board-done');
     const res = await patch('board-done', { status: 'completed' });
     expect(res.statusCode).toBe(200);
     // Never started, so the board close gives it a real same-day window.
@@ -215,7 +199,6 @@ describe('dashboard PATCH date window', () => {
 
   it('lets an explicit due date in the same patch win over the completion stamp', async () => {
     await cli('tasks', 'create', 'Explicit', '-w', 'why', '--start', '2026-06-02', '--due', '2026-08-01');
-    prove('explicit');
     const res = await patch('explicit', { status: 'completed', due_date: '2026-06-09' });
     expect(res.statusCode).toBe(200);
     expect(await window('explicit')).toMatchObject({ due: '2026-06-09', status: 'completed' });
@@ -233,7 +216,6 @@ describe('dashboard PATCH date window', () => {
 
   it('records one due_date change, not the intermediate value, when both rules fire', async () => {
     await cli('tasks', 'create', 'Tracked', '-w', 'why', '--start', '2026-06-01', '--due', '2026-06-03');
-    prove('tracked');
     const res = await patch('tracked', { start_date: '2026-06-10', status: 'completed' });
     expect(res.statusCode).toBe(200);
     // The reschedule (→ 2026-06-12) never hits disk; only the completion stamp does.

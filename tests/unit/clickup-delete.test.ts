@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, readFileSync, realpathSync, readdirSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -135,12 +135,8 @@ describe('clickup deletion propagation', () => {
     expect(report.conflicts).toHaveLength(1);
     expect(report.conflicts[0].reason).toBe('remote_deleted');
     const saved = readFileSync(report.conflicts[0].savedTo, 'utf-8');
+    expect(saved).toContain('push edilmemis not');
     expect(saved).toContain('kiymetli metin');
-    // The unpushed note is history: its journal is retired beside the tombstone, never lost.
-    const retiredDir = join(contextRoot, 'state', 'journal', '.deleted');
-    const retired = readdirSync(retiredDir).filter((f) => f.startsWith('edited-then-killed--'));
-    expect(retired).toHaveLength(1);
-    expect(readFileSync(join(retiredDir, retired[0]), 'utf-8')).toContain('push edilmemis not');
     expect(existsSync(join(contextRoot, 'state', 'edited-then-killed.md'))).toBe(false);
   });
 

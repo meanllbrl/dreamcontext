@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { dirname } from 'node:path';
-import { success, error, warn, info, header, printable } from '../../lib/format.js';
+import { success, error, warn, info, header } from '../../lib/format.js';
 import { readSetupConfig, updateSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
 import { runBrainSync, type SyncResult } from '../../lib/git-sync/sync-engine.js';
 import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
@@ -177,7 +177,6 @@ export function registerBrainCommand(program: Command): void {
 
 /** Shared renderer — also used by `sleep done`'s brain-sync integration. */
 export function renderBrainSyncResult(result: SyncResult): void {
-  for (const note of result.mergeNotes ?? []) warn(`Merge: ${printable(note)}`);
   switch (result.action) {
     case 'noop':
       info('Brain sync: nothing to do.');

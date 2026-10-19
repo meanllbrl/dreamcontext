@@ -6,7 +6,6 @@ import { isAgentHost } from '../desktop.js';
 import { projectRootOf, sanitizeUuid } from './agent-spawn-shared.js';
 import { countCheckboxes, firstUnticked, listCheckboxes, readSection } from '../../lib/markdown.js';
 import { isSafeTaskSlug } from '../../lib/task-backend/local.js';
-import { readJournal } from '../../lib/task-journal.js';
 import { readSessionFactsAsync, UNKNOWN_SESSION_FACTS } from '../../lib/session-facts.js';
 import { claimedCheckout, sessionCheckout } from '../../lib/session-cwd.js';
 import { editsElsewhere } from '../../lib/session-edits.js';
@@ -116,8 +115,7 @@ function degraded(slug: string, state: TaskProgressState, notice: string, update
 }
 
 /**
- * The newest entry in a task's history (its newest journal entry body, or a legacy
- * `## Changelog` section). Both are LIFO (newest at top, see the
+ * The newest entry in a task's `## Changelog`. The section is LIFO (newest at top, see the
  * task template), so the first bullet is the newest — but it is preceded by an HTML comment
  * and `### <date> - <kind>` headers, which are skipped.
  */
@@ -190,8 +188,7 @@ export function computeTaskProgress(contextRoot: string, slug: string): unknown 
   try {
     updatedAt = statSync(file).mtimeMs;
     criteria = readSection(file, 'Acceptance Criteria');
-    // History is the journal; a card not folded yet still carries its old section.
-    changelog = readSection(file, 'Changelog') ?? (readJournal(join(contextRoot, 'state'), slug)[0]?.body || null);
+    changelog = readSection(file, 'Changelog');
   } catch {
     return degraded(slug, 'unreadable', `"${slug}" could not be read from disk.`, updatedAt);
   }

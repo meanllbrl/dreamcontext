@@ -66,6 +66,7 @@ export interface BoardState {
   setSearch: (v: string) => void;
   cycleFilter: (key: keyof BoardFilters, val: string, mode: 'inc' | 'exc') => void;
   setDue: (v: DueFilter) => void;
+  setMinRice: (v: number) => void;
   clearField: (key: keyof BoardFilters) => void;
   clearAllFilters: () => void;
   setGroupBy: (d: Dim) => void;
@@ -83,7 +84,7 @@ export interface BoardState {
   resetView: () => void;
   saveView: (scope: SaveScope) => void;
   createView: (name: string, scope: SaveScope) => void;
-  /** Create a fresh blank view (Board, grouped by order, no filters) as a local view; returns its id. */
+  /** Create a fresh blank view (Kanban, no filters) as a local view; returns its id. */
   createBlankView: () => string;
   renameView: (id: string, name: string) => void;
   duplicateView: (id: string) => void;
@@ -169,8 +170,10 @@ export function useBoardState(): BoardState {
     });
   }, []);
   const setDue = useCallback((v: DueFilter) => patchFilters({ due: v }), [patchFilters]);
+  const setMinRice = useCallback((v: number) => patchFilters({ minRice: v }), [patchFilters]);
   const clearField = useCallback((key: keyof BoardFilters) => {
     if (key === 'due') patchFilters({ due: 'all' });
+    else if (key === 'minRice') patchFilters({ minRice: 0 });
     else patchFilters({ [key]: { inc: [], exc: [] } } as Partial<BoardFilters>);
   }, [patchFilters]);
   const clearAllFilters = useCallback(() => patchWorking({ filters: emptyFilters(), search: '' }), [patchWorking]);
@@ -307,7 +310,7 @@ export function useBoardState(): BoardState {
     views, activeViewId, activeView, versions: shared.versions, cardProps, isDirty,
     filters: working.filters, groupBy: working.groupBy, subGroupBy: working.subGroupBy,
     layout: working.layout, sortBy: working.sortBy, sortDir: working.sortDir, search: working.search,
-    setSearch, cycleFilter, setDue, clearField, clearAllFilters,
+    setSearch, cycleFilter, setDue, setMinRice, clearField, clearAllFilters,
     setGroupBy, setSubGroupBy, setLayout, setSort, toggleSortDir,
     toggleCardProp, addVersion, removeVersion,
     applyView, resetView, saveView, createView, createBlankView, renameView, duplicateView, deleteView,

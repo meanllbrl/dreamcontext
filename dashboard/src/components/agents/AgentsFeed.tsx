@@ -28,7 +28,6 @@ import {
 import '../sleepy/ChatPane.css';
 import '../sleepy/chat/composer.css';
 import './AgentsFeed.css';
-import { fill } from '../../lib/fill';
 
 /**
  * THE CHANNEL. One feed, every agent, newest at the bottom — the reading order
@@ -648,7 +647,7 @@ export function AgentsFeed({
               <button type="button" className="agents-feed-newpill" onClick={() => toBottom(true)}>
                 {unseen === 1
                   ? t('agents.feed.newMessages.one')
-                  : fill(t('agents.feed.newMessages.many'), { n: String(unseen) })}
+                  : t('agents.feed.newMessages.many').replace('{n}', String(unseen))}
                 <span aria-hidden="true"> ↓</span>
               </button>
             </div>

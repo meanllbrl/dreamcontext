@@ -115,14 +115,9 @@ describe('planDedup + applyDedup — family merge (D1, D2)', () => {
     expect(data.id).toBe('task_B'); // kept the newest body's own identity
     expect(content).toContain('NEWEST');
     expect(content).not.toContain('OLDEST');
-    // History is merged in the canonical JOURNAL; the card carries none of it.
-    expect(content).not.toContain('## Changelog');
-    const journal = readFileSync(join(stateDir, 'journal', 'foo.md'), 'utf-8');
-    expect(journal).toContain('first.');
-    expect(journal).toContain('second.');
-    expect(journal).toContain('third.');
-    expect(existsSync(join(stateDir, 'journal', 'foo-2.md'))).toBe(false);
-    expect(existsSync(join(stateDir, 'journal', 'foo-3.md'))).toBe(false);
+    expect(content).toContain('first.');
+    expect(content).toContain('second.');
+    expect(content).toContain('third.');
   });
 
   it('D2: map ends with one entry at canonical slug, newest remoteId, stale entries + sync state gone', () => {

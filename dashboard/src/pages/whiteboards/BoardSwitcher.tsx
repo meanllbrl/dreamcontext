@@ -13,7 +13,6 @@ import {
   DEFAULT_BOARD_SLUG, canDeleteBoard, filterBoards, isDefaultBoard, moveActive, newBoardName, pickActive,
 } from './boardSwitcherLogic';
 import './BoardSwitcher.css';
-import { fill } from '../../lib/fill';
 
 // ── All boards ───────────────────────────────────────────────────────────────────────────────
 
@@ -144,7 +143,7 @@ function BoardRow({
   if (confirming) {
     return (
       <li className="wbs-row wbs-row--confirm" id={id} role="option" aria-selected={active} data-active={active ? '' : undefined}>
-        <span className="wbs-confirm-text">{fill(t('whiteboard.switcher.deleteAsk'), { name: label })}</span>
+        <span className="wbs-confirm-text">{t('whiteboard.switcher.deleteAsk').replace('{name}', label)}</span>
         {del.isError && <span className="wbs-confirm-error">{del.error?.message}</span>}
         <span className="wbs-confirm-actions">
           <button type="button" className="wbs-btn" autoFocus onClick={onCancelDelete}>
@@ -185,7 +184,7 @@ function BoardRow({
               ? <span className="wbs-row-corrupt">{t('whiteboard.page.corruptBadge')}</span>
               : count === 1
                 ? t('whiteboard.switcher.elementsOne')
-                : fill(t('whiteboard.page.elements'), { n: String(count) })}
+                : t('whiteboard.page.elements').replace('{n}', String(count))}
             {updated && !Number.isNaN(updated.getTime()) && <> · {updated.toLocaleDateString()}</>}
           </span>
         </span>
@@ -252,7 +251,7 @@ function TrashRow({ item, onRestored }: { item: TrashedWhiteboard; onRestored: (
       <span className="wbs-row-text">
         <span className="wbs-row-name">{item.name}</span>
         <span className="wbs-row-meta" title={Number.isNaN(deleted.getTime()) ? undefined : deleted.toLocaleString(locale)}>
-          {item.elements === 1 ? t('whiteboard.switcher.elementsOne') : fill(t('whiteboard.page.elements'), { n: String(item.elements) })}
+          {item.elements === 1 ? t('whiteboard.switcher.elementsOne') : t('whiteboard.page.elements').replace('{n}', String(item.elements))}
           {!Number.isNaN(deleted.getTime()) && <> · {agoText(item.deletedAt, locale)}</>}
         </span>
         {restore.isError && <span className="wbs-confirm-error">{restore.error?.message}</span>}

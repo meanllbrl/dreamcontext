@@ -11,13 +11,11 @@
  *    `state` (open|closed) + `state_reason` + a `dc:<key>` sub-status label.
  *    `not_planned` is EXCLUSIVELY the soft-delete signal; a cancelled-kind
  *    status closes as `completed` + its `dc:<key>` label.
- *  - GitHub issues have no native priority/urgency: those (plus tags, version
- *    and the `cycle:cy_<id>` a task is planned into) ride as LABELS, with
- *    reserved prefixes carving the structured ones out.
+ *  - GitHub issues have no native priority/urgency: those (plus tags + version)
+ *    ride as LABELS, with reserved prefixes carving the structured ones out.
  */
 
 import { foldAscii } from '../fold-ascii.js';
-import { isCycleId } from '../cycles.js';
 import { splitChangelogEntries, normalizeEntry } from './clickup-map.js';
 import {
   DEFAULT_STATUSES,
@@ -41,10 +39,6 @@ export { splitChangelogEntries, normalizeEntry };
 /** GitHub Issue (REST v3) shape — the subset we read/write. */
 export interface GitHubIssue {
   number: number;
-  /** The issue's database id (sub-issue calls take this, never the number). */
-  id?: number;
-  /** Present when the issue has sub-issues (GitHub sub-issues API). */
-  sub_issues_summary?: { total?: number; completed?: number } | null;
   title: string;
   body?: string | null;
   state: 'open' | 'closed';
@@ -79,22 +73,10 @@ export interface GitHubComment {
 export const PRIORITY_PREFIX = 'priority:';
 export const URGENCY_PREFIX = 'urgency:';
 export const VERSION_PREFIX = 'version:';
-/**
- * The cycle a task is planned into rides as `cycle:cy_<id>` — the stable id,
- * never the display number (which is renumbered on merge). Only a value that is
- * a cycle id is reserved; any other `cycle:…` label stays a verbatim tag.
- */
-export const CYCLE_PREFIX = 'cycle:';
 /** dreamcontext-reserved namespace (sub-status labels live here). */
 export const DC_PREFIX = 'dc:';
 
 const RESERVED_PREFIXES = [PRIORITY_PREFIX, URGENCY_PREFIX, VERSION_PREFIX, DC_PREFIX];
-
-function cycleIdOfLabel(name: string): string | null {
-  if (!name.toLowerCase().startsWith(CYCLE_PREFIX)) return null;
-  const v = name.slice(CYCLE_PREFIX.length).trim();
-  return isCycleId(v) ? v : null;
-}
 
 // ─── Status ────────────────────────────────────────────────────────────────
 
@@ -253,8 +235,6 @@ export function labelsToGitHub(input: {
   priority?: string | null;
   urgency?: string | null;
   version?: string | null;
-  /** The card's own cycle id (resolved or not yet synced — carried either way). */
-  cycle?: string | null;
   status?: string | null;
   /** Override-declared `select` custom fields — ride as `<key>:<value>` labels. */
   selectFields?: Array<{ key: string; value: string | null }>;
@@ -266,7 +246,6 @@ export function labelsToGitHub(input: {
   if (input.priority && input.priority.trim()) out.push(`${PRIORITY_PREFIX}${input.priority.trim()}`);
   if (input.urgency && input.urgency.trim()) out.push(`${URGENCY_PREFIX}${input.urgency.trim()}`);
   if (input.version && input.version.trim()) out.push(`${VERSION_PREFIX}${input.version.trim()}`);
-  if (isCycleId(input.cycle?.trim())) out.push(`${CYCLE_PREFIX}${input.cycle!.trim()}`);
   for (const f of input.selectFields ?? []) {
     if (f.key && f.value !== null && String(f.value).trim()) {
       out.push(`${f.key}:${String(f.value).trim()}`);
@@ -295,20 +274,14 @@ export function labelsFromGitHub(
   priority: string;
   urgency: string | null;
   version: string | null;
-  /** The `cycle:cy_<id>` label's id, or null. Never resolved here: an unknown id is still a value. */
-  cycle: string | null;
-  /** The priority label actually present (null when none), unlike `priority`, which defaults. */
-  priorityLabel: string | null;
   /** Values of override-declared `select` custom fields carried as labels. */
   customFields: Record<string, string>;
 } {
   const names = labelNamesOf(labelNames);
   const tags: string[] = [];
   let priority = 'medium';
-  let priorityLabel: string | null = null;
   let urgency: string | null = null;
   let version: string | null = null;
-  let cycle: string | null = null;
   const customFields: Record<string, string> = {};
   // Match the LONGEST key first so a `team_lead:` field isn't shadowed by `team:`.
   const fieldKeys = [...selectFieldKeys].sort((a, b) => b.length - a.length);
@@ -317,12 +290,7 @@ export function labelsFromGitHub(
     const lower = name.toLowerCase();
     if (lower.startsWith(PRIORITY_PREFIX)) {
       const p = name.slice(PRIORITY_PREFIX.length).trim().toLowerCase();
-      if (PRIORITIES.has(p)) { priority = p; priorityLabel = p; }
-      continue;
-    }
-    const cycleId = cycleIdOfLabel(name);
-    if (cycleId) {
-      cycle = cycleId;
+      if (PRIORITIES.has(p)) priority = p;
       continue;
     }
     if (lower.startsWith(URGENCY_PREFIX)) {
@@ -346,7 +314,7 @@ export function labelsFromGitHub(
     tags.push(name);
   }
 
-  return { tags, priority, urgency, version, cycle, priorityLabel, customFields };
+  return { tags, priority, urgency, version, customFields };
 }
 
 /** Normalize a GitHub `labels` array (objects OR strings) to a string[]. */
@@ -365,7 +333,7 @@ export function labelNamesOf(
 /** Whether a label name is reserved (structured field, not a user tag). */
 export function isReservedLabel(name: string): boolean {
   const lower = name.toLowerCase();
-  return RESERVED_PREFIXES.some((p) => lower.startsWith(p)) || cycleIdOfLabel(name) !== null;
+  return RESERVED_PREFIXES.some((p) => lower.startsWith(p));
 }
 
 // ─── Body ↔ issue body ───────────────────────────────────────────────────────

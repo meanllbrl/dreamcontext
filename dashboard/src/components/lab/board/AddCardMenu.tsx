@@ -8,7 +8,6 @@ import {
   presetDims,
 } from './editorModel';
 import './editors.css';
-import { fill } from '../../../lib/fill';
 
 /**
  * ADD A CARD, three ways (plan D3):
@@ -45,7 +44,7 @@ export function AddCardMenu({ board, unplaced, insights, catalog, library, onAdd
   const summaryOf = (slug: string) => insights.find((i) => i.slug === slug);
   const ctx = {
     insight: bindTo || null,
-    tabLabel: fill(t('lab.editor.tabs.defaultLabel'), { n: '1' }),
+    tabLabel: t('lab.editor.tabs.defaultLabel').replace('{n}', '1'),
     htmlStarter: `<p>${escapeHtml(t('lab.editor.html.starter'))}</p>`,
   };
 

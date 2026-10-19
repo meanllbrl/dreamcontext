@@ -2,7 +2,6 @@ import { useI18n } from '../../../context/I18nContext';
 import { applyFrameOps, distinctValues } from '../../../generated/frameOps';
 import { BlockEmpty, drawableFrame, stringOption, type BlockViewProps } from './blockCommon';
 import { formatStat } from './format';
-import { fill } from '../../../lib/fill';
 
 /**
  * `filter`: a chip row over one dim of a dataset. Choosing a chip publishes
@@ -26,7 +25,9 @@ export function FilterBlock({ frame, options, filter, onFilter }: BlockViewProps
   const label = f.dims.find((d) => d.key === dim)?.label ?? dim;
   const narrowed = applyFrameOps(f, { filter: active === null ? null : { dim, value: active } });
   const total = narrowed.kind === 'table' ? narrowed.total : f.total;
-  const totalText = fill(t('lab.blocks.filter.total'), { n: total.count.toLocaleString(), v: total.v === null ? '' : `${formatStat(total.v, 'number', null)}${f.unit ? ` ${f.unit}` : ''}` });
+  const totalText = t('lab.blocks.filter.total')
+    .replace('{n}', total.count.toLocaleString())
+    .replace('{v}', total.v === null ? '' : `${formatStat(total.v, 'number', null)}${f.unit ? ` ${f.unit}` : ''}`);
 
   return (
     <div className="lab-block-filter" role="toolbar" aria-label={label} data-dim={dim} onClick={(e) => e.stopPropagation()}>

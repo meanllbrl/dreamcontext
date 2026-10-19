@@ -3,9 +3,9 @@ import { basename, join } from 'node:path';
 import fg from 'fast-glob';
 import matter from 'gray-matter';
 import { foldAscii } from '../fold-ascii.js';
+import { splitChangelogEntries } from './clickup-map.js';
 import { splitConflictMarkers } from './conflict-markers.js';
-import { foldCardChangelog } from '../task-card.js';
-import { foldEntryTexts, journalPath, readJournalRaw, splitEntryTexts } from '../task-journal.js';
+import { joinSections, splitSections, unionChangelog } from './merge.js';
 import { TASKS_MAP_REL } from './paths.js';
 import { SyncLedger, unionTaskMap, type TaskMapEntry } from './sync-state.js';
 import { TaskBackendError } from './types.js';
@@ -25,7 +25,7 @@ export interface DedupFamily {
   members: string[];
   /** The single remoteId shared by every mapped member; null when no member is mapped (never synced). */
   keepRemoteId: string | null;
-  /** Which member's frontmatter + body is kept verbatim (history is merged in the journal). */
+  /** Which member's frontmatter + body is kept verbatim (only its Changelog section is replaced by the union). */
   keptBodyFrom: string;
   /** Set instead of merging when members map to genuinely DIFFERENT real remote tasks — never merged, files untouched. */
   skippedReason?: 'distinct-remote-ids';
@@ -283,32 +283,50 @@ function computeRepairedMap(
   return { finalMap, repairs };
 }
 
+function renderChangelogSection(entries: string[]): string {
+  return entries.length > 0 ? `<!-- LIFO: newest at top -->\n\n${entries.join('\n\n')}\n` : '';
+}
+
+/** Union every family member's Changelog entries, folded in deterministic (slug-sorted) order. */
+function unionAllChangelogs(stateDir: string, sortedMemberSlugs: string[]): string[] {
+  let entries: string[] = [];
+  for (const slug of sortedMemberSlugs) {
+    const path = join(stateDir, `${slug}.md`);
+    if (!existsSync(path)) continue;
+    const { content } = matter(readFileSync(path, 'utf-8'));
+    const section = splitSections(content).find((s) => s.name.toLowerCase() === 'changelog');
+    const memberEntries = section ? splitChangelogEntries(section.content) : [];
+    entries = unionChangelog(entries, memberEntries);
+  }
+  return entries;
+}
+
 /**
  * Write the merged family to `canonicalSlug.md` (creating or overwriting it)
  * and delete every other member's file. The kept member's frontmatter and body
- * are preserved verbatim, so its `id:` (dcId) is exactly the value
- * `computeRepairedMap` already used. History is the journal: every member's
- * in-card Changelog is folded into its journal first, then every other
- * member's journal is folded into the canonical one (copy-counted, so the
- * entries two mirrors share land once) and retired.
+ * are preserved verbatim — only the Changelog section is replaced by the union
+ * — so its `id:` (dcId) is exactly the value `computeRepairedMap` already used.
  */
 function mergeFamilyFiles(stateDir: string, family: DedupFamily): void {
-  const members = [...family.members].sort();
-  for (const slug of members) {
-    const path = join(stateDir, `${slug}.md`);
-    if (existsSync(path)) foldCardChangelog(path);
+  const keptPath = join(stateDir, `${family.keptBodyFrom}.md`);
+  const parsed = matter(readFileSync(keptPath, 'utf-8'));
+  const sections = splitSections(parsed.content);
+
+  const entries = unionAllChangelogs(stateDir, [...family.members].sort());
+  const clIdx = sections.findIndex((s) => s.name.toLowerCase() === 'changelog');
+  if (entries.length > 0) {
+    const content = renderChangelogSection(entries);
+    if (clIdx >= 0) sections[clIdx] = { ...sections[clIdx], content };
+    else sections.push({ name: 'Changelog', content });
+  } else if (clIdx >= 0) {
+    sections.splice(clIdx, 1);
   }
 
-  const keptPath = join(stateDir, `${family.keptBodyFrom}.md`);
-  const kept = readFileSync(keptPath, 'utf-8');
-  writeFileSync(join(stateDir, `${family.canonicalSlug}.md`), kept, 'utf-8');
+  const mergedText = matter.stringify(joinSections(sections), parsed.data);
+  writeFileSync(join(stateDir, `${family.canonicalSlug}.md`), mergedText, 'utf-8');
 
-  for (const slug of members) {
+  for (const slug of family.members) {
     if (slug === family.canonicalSlug) continue;
-    const texts = splitEntryTexts(readJournalRaw(stateDir, slug));
-    foldEntryTexts(stateDir, family.canonicalSlug, texts);
-    const journal = journalPath(stateDir, slug);
-    if (existsSync(journal)) rmSync(journal);
     const path = join(stateDir, `${slug}.md`);
     if (existsSync(path)) rmSync(path);
   }

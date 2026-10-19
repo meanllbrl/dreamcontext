@@ -6,7 +6,6 @@ import { useConfig, useUpdateConfig } from '../../hooks/useConfig';
 import { SearchableSelect } from '../tasks/SearchableSelect';
 import { useInstantSave, SaveMark } from './useInstantSave';
 import { SettingRow, Toggle } from './SettingRow';
-import { fill } from '../../lib/fill';
 
 /**
  * Task mirroring for ONE provider — the ClickUp half lives under Integrations →
@@ -211,7 +210,7 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
     result.errors.length > 0
       ? `⚠ ${result.errors[0]}`
       : result.created.length > 0
-        ? `✓ ${t('settings.cloud_tasks.provision_created')}: ${result.created.join(', ')}${result.backfilled > 0 ? ` · ${fill(t('settings.cloud_tasks.provision_backfilled'), { n: String(result.backfilled) })}` : ''}`
+        ? `✓ ${t('settings.cloud_tasks.provision_created')}: ${result.created.join(', ')}${result.backfilled > 0 ? ` · ${t('settings.cloud_tasks.provision_backfilled').replace('{n}', String(result.backfilled))}` : ''}`
         : `✓ ${t('settings.cloud_tasks.provision_nothing')}`;
 
   const handleProvisionPreview = async () => {
@@ -420,7 +419,7 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
                 {provisionPreview.created.length > 0 && (
                   <p className="settings-provision-line">
                     <span className="settings-provision-badge settings-provision-badge--new">
-                      {fill(t('settings.cloud_tasks.preview_will_create'), { n: String(provisionPreview.created.length) })}
+                      {t('settings.cloud_tasks.preview_will_create').replace('{n}', String(provisionPreview.created.length))}
                     </span>{' '}
                     {provisionPreview.created.join(', ')}
                   </p>
@@ -428,7 +427,7 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
                 {provisionPreview.existing.length > 0 && (
                   <p className="settings-provision-line settings-provision-line--muted">
                     <span className="settings-provision-badge">
-                      {fill(t('settings.cloud_tasks.preview_existing'), { n: String(provisionPreview.existing.length) })}
+                      {t('settings.cloud_tasks.preview_existing').replace('{n}', String(provisionPreview.existing.length))}
                     </span>{' '}
                     {provisionPreview.existing.join(', ')}
                   </p>
@@ -437,7 +436,7 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
                   <button className="btn btn--primary" onClick={() => void handleProvisionConfirm()} disabled={provisioning}>
                     {provisioning
                       ? t('settings.cloud_tasks.provision_creating')
-                      : fill(t('settings.cloud_tasks.provision_confirm'), { n: String(provisionPreview.created.length) })}
+                      : t('settings.cloud_tasks.provision_confirm').replace('{n}', String(provisionPreview.created.length))}
                   </button>
                   <button className="btn btn--ghost" onClick={() => setProvisionPreview(null)} disabled={provisioning}>
                     {t('settings.cloud_tasks.provision_cancel')}

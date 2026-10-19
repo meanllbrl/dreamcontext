@@ -1,7 +1,6 @@
 import { useI18n } from '../../../context/I18nContext';
 import { usePhoneState, type PhoneState } from './phoneState';
 import './phone.css';
-import { fill } from '../../../lib/fill';
 
 /** What the chip says: a low battery first (the Mac may sleep), then cooling down, then the battery. */
 export function phoneChipView(s: PhoneState): { mac: 'low' | 'warm' | 'ok'; key: string; pct: number | null } {
@@ -21,7 +20,7 @@ export function PhoneChip() {
   const s = usePhoneState();
   if (!s) return null;
   const v = phoneChipView(s);
-  const label = v.pct !== null ? fill(t(v.key), { pct: String(v.pct) }) : t(v.key);
+  const label = v.pct !== null ? t(v.key).replace('{pct}', String(v.pct)) : t(v.key);
   return (
     <span className="dc-hf-chip" data-mac={v.mac} role="status">
       <span className="dc-hf-chip-dot" aria-hidden="true" />

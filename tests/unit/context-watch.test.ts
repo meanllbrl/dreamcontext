@@ -655,14 +655,14 @@ describe('selectHandoffForSessionStart', () => {
 });
 
 describe('renderHandoffBanner', () => {
-  it('names the task, its slug, the size and the packet to read first', () => {
+  it('names the task, its slug, the size and the file to read first', () => {
     const text = renderHandoffBanner(rec({ title: 'My task', task: 'my-task', contextTokens: 205_000 }));
     expect(text).toContain('HANDOFF');
     expect(text).toContain('My task');
     expect(text).toContain('(my-task)');
     expect(text).toContain('205k');
-    expect(text).toContain('dreamcontext tasks show my-task');
-    expect(text).toContain('the newest journal entry is the handoff');
+    expect(text).toContain('_dream_context/state/my-task.md');
+    expect(text).toContain('latest changelog entry');
   });
 
   it('omits the size when it was never measured', () => {

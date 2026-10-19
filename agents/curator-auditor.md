@@ -94,7 +94,7 @@ from the live `features` command, not assumed.
 
 **`tasks`** (backlog) — detect tasks that are **demonstrably finished** (cross-check the
 changelog / releases / code) → STATUS-BUMP; merge duplicate tasks; RETIRE stale ones; attach
-orphan tasks to the right cycle or queue (the current cycle is `dreamcontext cycle show`; planning is proposed to the owner, never applied).
+orphan tasks to the right planning version (the current sprint is `dreamcontext core releases active`).
 If `_dream_context/overrides/task.md` exists it declares the project's custom task shape — audit
 task files against it: flag tasks whose declared **`required`** custom fields are UNSET (a worker
 must set them via `tasks field`, and a status-bump to `completed`/`in_review` will hard-fail until

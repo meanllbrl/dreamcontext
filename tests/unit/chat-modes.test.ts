@@ -281,7 +281,7 @@ describe('modeBriefing', () => {
     expect(brief).toContain('# Mode: Develop');
     expect(brief).toMatch(/waves/i);
     expect(brief).toMatch(/evidence/i);
-    expect(brief).toContain('dreamcontext tasks check');
+    expect(brief).toContain('dreamcontext tasks log');
   });
 
   // ── The review + validate contract (2026-09-02; per-wave 2026-09-26; lead builds 2026-10-11) ──
@@ -394,7 +394,7 @@ describe('modeBriefing', () => {
 
   it('develop ticks nothing without evidence, and what the owner sees only from an observed check', () => {
     const brief = modeBriefing('develop', { worktreeAllowed: false });
-    expect(brief).toMatch(/\*\*No tick without evidence\*\*: `dreamcontext tasks check <slug> <n>`/);
+    expect(brief).toMatch(/\*\*No tick without evidence\*\* in its `dreamcontext tasks log/);
     expect(brief).toMatch(/screenshots you READ/);
     expect(brief).toMatch(/Green tests on an app that does not open are not evidence/);
     expect(brief).toMatch(/No\s+observed criterion on a task the owner opens: add one first/);

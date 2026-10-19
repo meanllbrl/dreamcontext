@@ -1,5 +1,3 @@
-import { bindSession, endBinding, readBinding, reapBindings, rebindFromTombstone, touchBinding, unbindSession } from '../../lib/session-task.js';
-import { buildContextPacket } from '../../lib/task-context-packet.js';
 import { Command } from 'commander';
 import {
   readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
@@ -2648,47 +2646,17 @@ export function registerHookCommand(program: Command): void {
       //
       // `consumedAt` is stamped ONLY here, and only after the banner has actually
       // been printed — that is what makes it print exactly once.
-      let handedOffTask: string | null = null;
       try {
         const handoffTab = process.env.DREAMCONTEXT_TAB_SESSION ?? null;
         const source = typeof input?.source === 'string' ? input.source : null;
         const picked = selectHandoffForSessionStart(root, source, handoffTab);
         if (picked) {
-          console.log(renderHandoffBanner(picked.record, buildContextPacket(root, picked.record.task)?.text ?? null));
+          console.log(renderHandoffBanner(picked.record));
           console.log('');
           stampHandoffRecord(root, picked.key, { consumedAt: new Date().toISOString() });
-          handedOffTask = picked.record.task;
         }
       } catch (handoffErr) {
         if (process.env.DREAMCONTEXT_DEBUG) console.error('[context-handoff] banner error:', (handoffErr as Error).message ?? handoffErr);
-      }
-
-      // ── Session → task binding (C2) ───────────────────────────────────────
-      // `/clear` starts over unbound; `--resume` brings an ended binding back; a
-      // handoff or a run spawned for a task (DREAMCONTEXT_TASK) binds; after a
-      // compaction the bound task's packet is delivered again, since the summary
-      // may have dropped the parent's decisions.
-      try {
-        const source = typeof input?.source === 'string' ? input.source : null;
-        if (sid) {
-          if (source === 'clear') unbindSession(root, sid);
-          if (source === 'resume') rebindFromTombstone(root, sid);
-          if (handedOffTask) bindSession(root, sid, handedOffTask, 'handoff');
-          const envTask = (process.env.DREAMCONTEXT_TASK ?? '').trim();
-          if (envTask && source !== 'compact' && !readBinding(root, sid)) bindSession(root, sid, envTask, 'env');
-          if (source === 'compact') {
-            const bound = readBinding(root, sid);
-            const packet = bound ? buildContextPacket(root, bound.task) : null;
-            if (bound && packet) {
-              touchBinding(root, sid);
-              console.log(`>> BOUND TASK: this session works ${bound.task}. Its context packet, delivered again after the compaction:`);
-              console.log(packet.text);
-            }
-          }
-        }
-        reapBindings(root);
-      } catch (bindErr) {
-        if (process.env.DREAMCONTEXT_DEBUG) console.error('[session-task] error:', (bindErr as Error).message ?? bindErr);
       }
 
       // Housekeeping for both context-handoff state dirs. SessionStart ONLY —
@@ -2699,45 +2667,6 @@ export function registerHookCommand(program: Command): void {
       } catch { /* housekeeping is never allowed to cost a session */ }
 
       console.log(snapshot);
-    });
-
-  // --- hook read-task --- (run by .claude/hooks/read-task-guard.cjs, only for a task card Read)
-  hook
-    .command('read-task')
-    .description('Add the parent task card when a sub-task card is read (called by the Read-hook guard script)')
-    .action(() => {
-      try {
-        const input = readStdin();
-        const toolInput = input && typeof input.tool_input === 'object' && input.tool_input !== null
-          ? input.tool_input as Record<string, unknown>
-          : {};
-        const file = typeof toolInput.file_path === 'string' ? toolInput.file_path : '';
-        const m = /^(.*\/_dream_context)\/state\/([^/]+)\.md$/.exec(resolve(file).replace(/\\/g, '/'));
-        if (!m || !existsSync(join(m[1], 'state'))) process.exit(0);
-        const [, root, slug] = m;
-        const sid = input && typeof input.session_id === 'string' ? input.session_id : null;
-        if (readBinding(root, sid)) touchBinding(root, sid);
-        const packet = buildContextPacket(root, slug, { only: 'parent' });
-        if (!packet) process.exit(0);
-        console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: packet.text } }));
-      } catch (err) {
-        if (process.env.DREAMCONTEXT_DEBUG) console.error('[read-task] error:', (err as Error).message ?? err);
-      }
-      process.exit(0);
-    });
-
-  // --- hook session-end ---
-  hook
-    .command('session-end')
-    .description('End this session\'s task binding (called by Claude Code SessionEnd hook)')
-    .action(() => {
-      try {
-        const input = readStdin();
-        const root = resolveContextRoot();
-        const sid = input && typeof input.session_id === 'string' ? input.session_id : null;
-        if (root && sid) endBinding(root, sid);
-      } catch { /* a session ending is never blocked */ }
-      process.exit(0);
     });
 
   // --- hook pre-tool-use ---
@@ -2874,8 +2803,6 @@ export function registerHookCommand(program: Command): void {
 
       const root = resolveContextRoot();
       if (!root) process.exit(0);
-      // A bound session's prompt keeps its task binding alive (idle reaping is 7 days).
-      if (typeof input.session_id === 'string') touchBinding(root, input.session_id);
 
       // ── A whiteboard agent card: the board, fresh, beside this message ────
       // Only a card session's child carries the two env vars (card-chat.ts), so
@@ -3166,11 +3093,9 @@ export function registerHookCommand(program: Command): void {
               // pattern that the user has just contradicted is worse than no
               // pattern: it will keep being injected, keep being obeyed, and the
               // same correction will keep being typed. Folding the correction
-              // back in is therefore part of THIS task: this is the fast path,
-              // while the reasoning that produced the correction is still here.
-              // Sleep catches only what the owner REPEATED (2+ sessions), through
-              // `patterns learn` (lib/learned-patterns.ts), and never over an
-              // awake edit; a single correction is this agent's to fold.
+              // back in is therefore part of THIS task, not a sleep chore — by
+              // the time sleep runs, the reasoning that produced the correction
+              // is gone and only its conclusion survives.
               lines.push(
                 '  ⛔ AND KEEP THEM TRUE: if the user contradicts, narrows, or extends one of these ' +
                   'patterns — or the two of you settle on something it does not say — you MUST update ' +

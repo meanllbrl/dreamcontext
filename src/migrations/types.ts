@@ -84,15 +84,6 @@ export interface MigrationAgentTask {
    * ledger-judged pending would nag about them forever on every old vault.
    */
   optIn?: boolean;
-  /**
-   * Does the agent still have work in THIS brain? Absent = yes until recorded.
-   * A task whose work depends on content (0.33.0: open tasks waiting for an
-   * outcome) answers from the filesystem, so a brain with nothing to judge
-   * never lists it, never dispatches sleep-migration for it, and `migrations
-   * record` refuses to mark it done while work remains. Must not throw; when
-   * it cannot tell, it answers true (the agent is the one who can report it).
-   */
-  needed?: (contextRoot: string) => boolean;
 }
 
 /**

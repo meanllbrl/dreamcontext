@@ -135,16 +135,7 @@ async function runOperationScript(): Promise<void> {
   await cli('tasks', 'status', 'golden-alpha', 'in_review', 'Ready for review');
   await cli('tasks', 'rice', 'golden-alpha', '--reach', '8', '--impact', '3', '--confidence', '100', '--effort', '1');
   await cli('tasks', 'rice', 'golden-beta', '--impact', '5');
-  // golden-beta has no criteria, so the evidence gate refuses a plain complete;
-  // --force --reason keeps the complete() byte path pinned (the force only
-  // writes a journal entry). It is refused from an agent env, so run it as a person.
-  const agentEnv = ['CLAUDECODE', 'DREAMCONTEXT_AGENT_SELF', 'DREAMCONTEXT_AUTOMATION_RUN'].map((k) => [k, process.env[k]] as const);
-  for (const [k] of agentEnv) delete process.env[k];
-  try {
-    await cli('tasks', 'complete', 'golden-beta', 'All done, verified.', '--force', '--reason', 'golden fixture: no criteria by design');
-  } finally {
-    for (const [k, v] of agentEnv) if (v !== undefined) process.env[k] = v;
-  }
+  await cli('tasks', 'complete', 'golden-beta', 'All done, verified.');
   await cli('tasks', 'status', 'golden-alpha', 'todo');
   await cli('tasks', 'rice', 'golden-beta', '--clear');
   // list/tags are read-only; exercised for crash-safety, not bytes

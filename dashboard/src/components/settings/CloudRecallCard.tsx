@@ -16,7 +16,6 @@ import {
   type CloudTier,
 } from '../../hooks/useCloudRecall';
 import './CloudRecallCard.css';
-import { fill } from '../../lib/fill';
 
 /**
  * Cloud recall, under the Hybrid recall choice. Opt-in and per vault: nothing leaves this computer
@@ -183,7 +182,10 @@ export function CloudRecallCard({ tier: onlyTier, onEnabled, onDisabled, onCance
           <>
             <dt>{t('settings.recall.cloud.spend')}</dt>
             <dd>
-              {fill(t('settings.recall.cloud.spend.summary'), { usd: usd(status.spend.vaultLifetimeUsd), queries: String(status.spend.todayQueries), max: String(status.spend.maxQueriesPerDay) })}
+              {t('settings.recall.cloud.spend.summary')
+                .replace('{usd}', usd(status.spend.vaultLifetimeUsd))
+                .replace('{queries}', String(status.spend.todayQueries))
+                .replace('{max}', String(status.spend.maxQueriesPerDay))}
             </dd>
           </>
         )}
@@ -295,7 +297,7 @@ function IndexBlock({ status, index, building, onBuild, describe }: {
           <span className="embed-model-status embed-model-status--ready">✓ {t('settings.recall.cloud.index.ready')}</span>
           {coverage && (
             <span className="embed-model-meta">
-              {fill(t('settings.recall.cloud.index.coverage'), { covered: String(coverage.coveredDocs), total: String(coverage.eligibleTotal) })}
+              {t('settings.recall.cloud.index.coverage').replace('{covered}', String(coverage.coveredDocs)).replace('{total}', String(coverage.eligibleTotal))}
             </span>
           )}
         </div>

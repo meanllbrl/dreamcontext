@@ -2,11 +2,12 @@ import { useMemo, useState } from 'react';
 import qrcode from 'qrcode-generator';
 import { useI18n } from '../../context/I18nContext';
 import { copyPreservingUnicode } from '../../lib/clipboard';
-import { fill } from '../../lib/fill';
 import './handsfree.css';
 
-/** `t()` is a plain lookup; placeholders are filled at the call site, by the shared helper. */
-export { fill };
+/** `t()` is a plain lookup; placeholders are filled here, at the call site. */
+export function fill(text: string, vars: Record<string, string | number>): string {
+  return text.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m));
+}
 
 /** A QR code of the URL, drawn as SVG cells from the module matrix (offline, no markup injected). */
 export function HandsfreeQr({ value, label }: { value: string; label: string }) {

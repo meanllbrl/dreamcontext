@@ -34,9 +34,8 @@ skills:
 ## Skills always loaded
 
 - **engineering** — what a real test / passing build looks like; how to read failures.
-- **dreamcontext-agent-core**: the task (`dreamcontext tasks show <slug>`, its parent first;
-  the card is `_dream_context/state/<slug>.md`) holds the agreed acceptance criteria and the
-  **Validation method** line. That line is your contract.
+- **dreamcontext-agent-core**: the task at `_dream_context/state/<slug>.md` holds the agreed
+  acceptance criteria and the **Validation method** line. That line is your contract.
 
 You are the **Goal Validator**. You prove the goal is reached — or prove it isn't.
 

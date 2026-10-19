@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useLabCredentials, useSetLabCredential } from '../../hooks/useLab';
 import { useI18n } from '../../context/I18nContext';
-import { fill } from '../../lib/fill';
 
 /**
  * Missing-credentials warning banner for the Lab board. Rendered above the
@@ -27,10 +26,10 @@ export function LabCredentialsBanner({ onToast }: { onToast: (msg: string) => vo
     setCredential.mutate({ key, value }, {
       onSuccess: () => {
         setValues((prev) => ({ ...prev, [key]: '' }));
-        onToast(fill(t('lab.credentials.saved'), { key }));
+        onToast(t('lab.credentials.saved').replace('{key}', key));
       },
       onError: (err) => {
-        onToast(fill(t('lab.credentials.saveFailed'), { key, message: (err as Error).message }));
+        onToast(t('lab.credentials.saveFailed').replace('{key}', key).replace('{message}', (err as Error).message));
       },
     });
   };
@@ -39,7 +38,7 @@ export function LabCredentialsBanner({ onToast }: { onToast: (msg: string) => vo
     <div className="lab-cred-banner" role="alert">
       <div className="lab-cred-banner-header">
         <span className="lab-cred-banner-title">
-          {fill(t('lab.credentials.title'), { n: String(missing.length) })}
+          {t('lab.credentials.title').replace('{n}', String(missing.length))}
         </span>
         <button
           className="lab-cred-banner-toggle"
@@ -58,7 +57,7 @@ export function LabCredentialsBanner({ onToast }: { onToast: (msg: string) => vo
                 <div className="lab-cred-banner-key">
                   <code>{key}</code>
                   <span className="lab-cred-banner-usedby">
-                    {fill(t('lab.credentials.usedBy'), { slugs: usedBy.join(', ') })}
+                    {t('lab.credentials.usedBy').replace('{slugs}', usedBy.join(', '))}
                   </span>
                 </div>
                 <div className="lab-cred-banner-form">

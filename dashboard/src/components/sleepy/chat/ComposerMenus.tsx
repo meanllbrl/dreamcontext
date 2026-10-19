@@ -12,7 +12,6 @@ import { AgentAvatar } from '../../agents/AgentAvatar';
 import { useAgents } from '../../../hooks/useAgents';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { useI18n } from '../../../context/I18nContext';
-import { fill } from '../../../lib/fill';
 
 /**
  * The three panels behind the redesigned composer toolbar: mode+permission (left trigger),
@@ -119,7 +118,7 @@ function AgentList({ agent, onPick, close }: {
         {agent && row(null, 'Claude', false, { tip: 'Back to Claude, in a new chat' })}
         {agents.map((a) => row(a.slug, a.title, a.hasPhoto, a.approvedForChat
           ? { tip: oneLineAbout(a.description) }
-          : { unapproved: true, tip: fill(openHint, { name: a.title }) }))}
+          : { unapproved: true, tip: openHint.replace('{name}', a.title) }))}
         <button
           type="button"
           role="menuitem"

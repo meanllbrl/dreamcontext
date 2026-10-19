@@ -387,21 +387,11 @@ describe('the keep-them-true rule ships in the hook, not only in prose', () => {
     expect(HOOK_SRC).toContain('do not silently skip it');
   });
 
-  // The old ban ("sleep never folds a correction into a pattern") was lifted (C7, 2026-10-15):
-  // sleep now writes pattern content from REPEATED corrections, through `patterns learn`, and a
-  // single correction stays the awake agent's. sleep-product-doctrine.test.ts checks every
-  // other wording of the ban is gone.
-  it('lets sleep learn pattern content from repeated corrections only, via patterns learn', () => {
+  it('keeps sleep out of pattern CONTENT', () => {
     const sleepRef = readFileSync(join(__dirname, '..', '..', 'skill', 'references', 'sleep.md'), 'utf-8');
     const sleepAgent = readFileSync(join(__dirname, '..', '..', 'agents', 'sleep-product.md'), 'utf-8');
-    expect(sleepRef).not.toContain('Sleep does NOT fold user corrections into patterns');
-    expect(sleepAgent).not.toContain('Never fold a user correction into a pattern');
-    expect(sleepRef).toContain('dreamcontext patterns learn');
-    expect(sleepRef).toContain('said in 2+ sessions');
-    expect(sleepRef).toContain('A single correction stays the awake agent');
-    expect(sleepAgent).toContain('Repeated owner corrections are yours.');
-    expect(sleepAgent).toContain('dreamcontext patterns learn <pattern>');
-    expect(sleepAgent).toContain('A single correction is never a rule');
+    expect(sleepRef).toContain('Sleep does NOT fold user corrections into patterns');
+    expect(sleepAgent).toContain('Never fold a user correction into a pattern');
   });
 });
 

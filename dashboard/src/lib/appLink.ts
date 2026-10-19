@@ -52,13 +52,10 @@ const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
 
 export const APP_LINK_PAGES = [
   'sleep', 'automations', 'tasks', 'knowledge', 'core', 'lab', 'roadmap', 'hypotheses', 'settings', 'agents',
-  // The task UI's pages (plan r3 § W5). Read here only: the Node writer still links a task as
-  // `page/tasks/<slug>`, which the board opens as the task page.
-  'task', 'inbox', 'planning', 'releases',
 ] as const;
 export type AppLinkPage = typeof APP_LINK_PAGES[number];
 /** The pages whose link may name one item. */
-const PAGES_WITH_ID: ReadonlySet<AppLinkPage> = new Set(['tasks', 'task', 'knowledge', 'core', 'agents']);
+const PAGES_WITH_ID: ReadonlySet<AppLinkPage> = new Set(['tasks', 'knowledge', 'core', 'agents']);
 
 /** The item id a page link may carry: an agent's slug on `agents`, the generic id elsewhere. */
 function isValidPageId(page: AppLinkPage, id: string): boolean {

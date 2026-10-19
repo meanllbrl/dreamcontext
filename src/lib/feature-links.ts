@@ -55,12 +55,6 @@ function featureFiles(contextRoot: string): string[] {
   return fg.sync('**/*.md', { cwd: dir, absolute: true });
 }
 
-/** Every feature's canonical slug, sorted (the areas a task can belong to). */
-export function listFeatureSlugs(contextRoot: string): string[] {
-  const dir = featuresDir(contextRoot);
-  return featureFiles(contextRoot).map((f) => featureSlug(dir, f)).sort((a, b) => a.localeCompare(b, 'en'));
-}
-
 /** Whether the project has any feature PRDs at all (drives create-time nudges). */
 export function anyFeaturesExist(contextRoot: string): boolean {
   return featureFiles(contextRoot).length > 0;

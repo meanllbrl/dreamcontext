@@ -12,8 +12,10 @@ import {
   startDateFromClickUp,
   startDateToClickUp,
   foldAscii,
+  normalizeEntry,
   priorityFromClickUp,
   priorityToClickUp,
+  splitChangelogEntries,
   resolveStatusFromClickUp,
   subStatusTag,
   statusToClickUp,
@@ -40,8 +42,6 @@ import {
 } from './clickup-fields.js';
 import { customFieldsFor, loadTaskOverride, type CustomFieldDef } from '../overrides.js';
 import { keyFromDcLabel, parentOf, SHIPPED_STATUS_KEYS } from '../task-status.js';
-import { activeCycle, readCycles } from '../cycles.js';
-import { cycleOfCard, mergeOrder, pushPriority, remotePlacement } from '../task-order.js';
 import { getActivePlanningVersion } from '../active-version.js';
 import { getExistingReleases } from '../release-discovery.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
@@ -49,27 +49,12 @@ import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js
 import { foreignProjectOf, projectScopeId, projectTag } from './provenance.js';
 import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
-import { readJournal, type JournalEntry, type NewJournalEntry } from '../task-journal.js';
-import { cardHasChangelog, foldCardChangelog } from '../task-card.js';
-import { withTaskFileLock } from '../task-file-lock.js';
-import { loadFamily } from '../task-parent.js';
-import { applyRemoteParentLink, holdOpenParent, noteParentLinkFailure, parentLinkSettled } from './parent-sync.js';
-import { recordHeldOpen } from '../task-audit.js';
-import {
-  applyRemoteComments,
-  commentBodyFor,
-  entriesToPost,
-  journalSyncPatch,
-  journalSyncState,
-  seedPostedFromBase,
-  type JournalSyncState,
-  type RemoteComment,
-} from './journal-sync.js';
-import { merge3Bodies, mergeScalar, planAssigneeHeal } from './merge.js';
+import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
+  type AddChangelogOptions,
   type AssigneeDrift,
   type CreateTaskInput,
   type InsertSectionOptions,
@@ -311,11 +296,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     this.recordLocalMutation(slug, 'push');
   }
 
-  /** Every history write (`addChangelog` included) lands here: queue a push for it. */
-  async addJournal(slug: string, entry: NewJournalEntry): Promise<JournalEntry> {
-    const written = await super.addJournal(slug, entry);
+  async addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void> {
+    await super.addChangelog(slug, entry, opts);
     this.recordLocalMutation(slug, 'push');
-    return written;
   }
 
   async delete(slug: string, opts: { absorbedBy?: string; reason?: string } = {}): Promise<void> {
@@ -765,19 +748,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       if (!entry?.localHash || entry.localHash !== hash) candidates.add(slug);
     }
 
-    // Parents first: a subtask is created under its parent's remote id.
-    const family = loadFamily(this.stateDir);
-    // A parent link the remote does not carry yet is a push, even when the card's
-    // bytes are already "synced" (a pull of the same task may have absorbed the edit).
-    for (const [child, parent] of family.parentOf) {
-      // A link-only push waits until the parent has a remote id (the sync after
-      // its own push lands): no child push is spent while the parent cannot land.
-      if (!parentLinkSettled(state.tasks[child], parent) && this.ledger.remoteIdFor(parent)) candidates.add(child);
-    }
-    for (const [slug, e] of Object.entries(state.tasks)) {
-      if (e.remote_parent && !family.parentOf.has(slug) && !parentLinkSettled(e, null) && existsSync(this.taskPath(slug))) candidates.add(slug);
-    }
-    const sorted = [...candidates].sort().sort((a, b) => Number(family.parentOf.has(a)) - Number(family.parentOf.has(b)));
+    const sorted = [...candidates].sort();
     // Bulk first sync (connecting a backend to a mature brain): with this many
     // never-synced tasks, pushTask switches to its low-request-count shape —
     // fields inline on the create, pre-existing changelog history kept local.
@@ -817,15 +788,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     }
   }
 
-  /** The active cycle's id (null when none, or when the store cannot be read). */
-  protected activeCycleId(): string | null {
-    try {
-      return activeCycle(readCycles(this.contextRoot).cycles)?.id ?? null;
-    } catch {
-      return null;
-    }
-  }
-
   protected async pushTask(
     slug: string,
     adapter: ApiAdapter,
@@ -835,17 +797,16 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
   ): Promise<void> {
     const path = this.taskPath(slug);
     if (!existsSync(path)) return;
-    // A card still carrying a Changelog (an old CLI wrote it) folds into the
-    // journal first, so the description and the comments both see the new shape.
-    if (cardHasChangelog(readFileSync(path, 'utf-8'))) {
-      withTaskFileLock(this.brainRoot(), slug, () => foldCardChangelog(path));
-    }
     const task = (await super.get(slug))!;
     const enqueueCutoff = this.nowMs();
 
     const entry = this.ledger.taskSync(slug);
-    const journal = this.journalState(slug);
-    const toPost = entriesToPost(readJournal(this.stateDir, slug), journal.posted);
+    const baseEntries = entry?.base_snapshot
+      ? changelogEntriesOfBody(entry.base_snapshot.body)
+      : [];
+    const currentEntries = splitChangelogEntries(task.changelog);
+    const baseNorm = new Set(baseEntries.map(normalizeEntry));
+    const newEntries = currentEntries.filter((e) => !baseNorm.has(normalizeEntry(e)));
 
     // assignees: every person:<slug> tag (plus the legacy assignee field),
     // mapped to ClickUp member ids. A slug that maps to NO member is NOT
@@ -904,14 +865,11 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       : null;
     const baseFmDue = (baseSnapshotFm?.due_date as string | null | undefined) ?? null;
     const baseFmStart = (baseSnapshotFm?.start_date as string | null | undefined) ?? null;
-    const sentPriority = pushPriority(task.raw, baseSnapshotFm, entry?.remote_priority, this.activeCycleId());
     const fields = {
       name: task.name,
       description: bodyToDescription(task.body),
       ...(mappedStatus !== null ? { status: mappedStatus } : {}),
-      // Order rides as the native priority (now → high, next → normal, later →
-      // low); a card only on legacy priority sends its own.
-      priority: priorityToClickUp(sentPriority),
+      priority: priorityToClickUp(task.priority),
       ...(startLocal !== null || baseFmStart !== null
         ? { start_date: startDateToClickUp(startLocal), start_date_time: false }
         : {}),
@@ -949,29 +907,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // fallback loop below must then skip them (they're already on the task).
     let fieldsInlined = false;
 
-    // The parent link rides the create/update itself (`parent: <remote id>`).
-    const recordedParent = entry?.remote_parent ?? null;
-    const desiredParent = loadFamily(this.stateDir).parentOf.get(slug) ?? null;
-    const parentRemoteId = desiredParent ? this.ledger.remoteIdFor(desiredParent) : null;
-    let remoteParent: string | null = recordedParent;
-    let linkStuck: { target: string | null; tries: number } | undefined;
-    if (desiredParent !== recordedParent) {
-      if (desiredParent && parentRemoteId) {
-        remoteParent = desiredParent;
-      } else if (desiredParent) {
-        // Not a failure (ClickUp was never asked): the candidate scan links it once
-        // the parent is pushed, without counting toward giving up.
-        report.warnings.push(`push ${slug}: its parent ${desiredParent} is not on ClickUp yet; the subtask link follows once it is.`);
-      } else {
-        // ClickUp cannot turn a subtask back into a task through the API: the
-        // remote keeps the old parent (remote_parent stays what ClickUp has), and
-        // the detach is marked stuck so neither the push retries it nor a pull
-        // of the unchanged remote parent undoes it.
-        linkStuck = noteParentLinkFailure(entry, null, true, report, slug, 'ClickUp');
-      }
-    }
-    const parentBody = remoteParent && remoteParent !== recordedParent && parentRemoteId ? { parent: parentRemoteId } : {};
-
     if (!remoteId) {
       // CREATE: one POST carries everything — fields + tags + assignees + the
       // bound custom-field values inline (`custom_fields: [{id, value}]`, which
@@ -983,7 +918,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         .filter((f) => f.value !== null && f.value !== undefined);
       const createBody = {
         ...fields,
-        ...parentBody,
         // person: tags stay local — the remote has real assignees.
         // dcproject: stamps the row so a shared-list pull can tell it apart (#177).
         tags: this.withProjectStamp(tagsToClickUp(stripPersonTags(task.tags), task.version, task.status, this.statusDefs())),
@@ -1032,7 +966,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
       // UPDATE: ONE field-level PUT per task (rate-limit friendly by design).
       const updated = await adapter.request<ClickUpTask>('PUT', `/task/${remoteId}`, {
-        body: { ...fields, ...assigneePatch, ...parentBody },
+        body: { ...fields, ...assigneePatch },
       });
       serverTime = serverTimeMs(updated.date_updated);
       report.pushed++;
@@ -1172,18 +1106,14 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // multiplies the request count. base_snapshot below absorbs them, so only
     // entries written after this sync become comments.
     const backfillChangelog = !(!entry?.base_snapshot && (bootstrap || wasMapped));
-    for (const je of toPost) {
-      if (backfillChangelog) {
-        const comment = await adapter.request<{ id: string; date?: string }>(
-          'POST',
-          `/task/${remoteId}/comment`,
-          { body: { comment_text: commentBodyFor(je) } },
-        );
-        serverTime = serverTimeMs(comment.date) ?? serverTime;
-        if (comment?.id !== undefined) journal.commentMap[String(comment.id)] = je.id;
-        report.commentsAdded++;
-      }
-      journal.posted.add(je.id);
+    for (const entryText of backfillChangelog ? newEntries : []) {
+      const comment = await adapter.request<{ id: string; date?: string }>(
+        'POST',
+        `/task/${remoteId}/comment`,
+        { body: { comment_text: entryText } },
+      );
+      serverTime = serverTimeMs(comment.date) ?? serverTime;
+      report.commentsAdded++;
     }
 
     // Success bookkeeping. last_synced_at is ClickUp SERVER time — never the
@@ -1204,10 +1134,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       base_snapshot: { hash: hashContent(newBase), body: newBase },
       localHash: hashContent(raw),
       pendingPush: tagOpsFailed,
-      remote_parent: remoteParent,
-      parent_link_stuck: linkStuck,
-      remote_priority: sentPriority,
-      ...journalSyncPatch(journal),
     });
     // NOTE: the push must NOT advance the global pull watermark (#185). The
     // watermark's contract is "I have PULLED everything up to T" — it gates
@@ -1255,7 +1181,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         {
           query: {
             page,
-            include_closed: true, subtasks: true,
+            include_closed: true,
             ...(watermark !== null ? { date_updated_gt: watermark } : {}),
           },
         },
@@ -1307,26 +1233,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // to pull it back down — do that once, at the end of the batch.
     this.ledger.enforceUnappliedFloor();
 
-    // Subtasks name their parent (`parent: <remote id>`); apply each link.
-    for (const remote of remoteTasks) {
-      if (!remote.parent) continue;
-      const childSlug = this.ledger.slugForRemoteId(remote.id);
-      const parentSlug = this.ledger.slugForRemoteId(String(remote.parent));
-      if (!childSlug || !parentSlug) continue;
-      await applyRemoteParentLink({
-        stateDir: this.stateDir,
-        ledger: this.ledger,
-        childSlug,
-        remoteParentSlug: parentSlug,
-        report,
-        write: async (fields) => {
-          this.applyingRemote = true;
-          try { await super.updateFields(childSlug, fields); } finally { this.applyingRemote = false; }
-        },
-      });
-    }
-    await this.syncAllParentStatuses(report);
-
     // ── Remote-deletion reconciliation ──────────────────────────────────────
     // A deleted remote task produces NO delta event — it just vanishes from
     // the list. Diff the id-map against the FULL remote id set; any mapped
@@ -1361,7 +1267,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
           const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
             'GET',
             `/list/${listId}/task`,
-            { query: { page, include_closed: true, subtasks: true } },
+            { query: { page, include_closed: true } },
           );
           const batch = res.tasks ?? [];
           for (const t of batch) remoteIds.add(t.id);
@@ -1412,9 +1318,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
           // last sync, preserve a copy before honoring the remote deletion.
           const raw = readFileSync(path, 'utf-8');
           const syncEntry = this.ledger.taskSync(entry.slug);
-          // Unposted journal entries are unsaved local work too.
-          const localChanged = !syncEntry?.localHash || hashContent(raw) !== syncEntry.localHash
-            || entriesToPost(readJournal(this.stateDir, entry.slug), this.journalState(entry.slug).posted).length > 0;
+          const localChanged = !syncEntry?.localHash || hashContent(raw) !== syncEntry.localHash;
           if (localChanged) {
             const savedTo = this.saveConflictCopy(entry.slug, raw, null);
             report.conflicts.push({ slug: entry.slug, savedTo, reason: 'remote_deleted' });
@@ -1501,19 +1405,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       'GET',
       `/task/${remote.id}/comment`,
     );
-    const remoteJournal: RemoteComment[] = (commentsRes.comments ?? [])
-      .filter((c) => (c.comment_text ?? '').trim())
-      .map((c) => {
-        const ms = Number(c.date);
-        return {
-          id: String(c.id),
-          body: c.comment_text ?? '',
-          author: c.user?.username ?? null,
-          createdAt: Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null,
-        };
-      })
-      // ClickUp lists newest first; the journal folds oldest first.
-      .reverse();
+    const remoteEntries = (commentsRes.comments ?? [])
+      .map((c) => (c.comment_text ?? '').trim())
+      .filter(Boolean);
 
     const { tags: remoteTags, version: remoteVersion } = tagsFromClickUp(remote.tags, this.knownVersions());
     // The `dc:<key>` tag carries a DECLARED sub-status the list status itself
@@ -1525,8 +1419,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       this.statusDefs(),
     );
     const remotePriority = priorityFromClickUp(remote.priority);
-    // The priority ClickUp actually holds (null when unset), for the order merge and the ledger.
-    const remotePriorityRaw = remote.priority ? remotePriority : null;
     const remoteDesc = (remote.description ?? '').replace(/\r\n/g, '\n').trim();
     const remoteDue = dueDateFromClickUp(remote.due_date);
     const remoteStart = startDateFromClickUp(remote.start_date);
@@ -1619,25 +1511,13 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
           `(the remote does not carry them; verify them before relying on the task).`,
         );
       }
-      const written = this.writeMirror(slug, fm, remoteDesc);
-      // Comments become journal entries; a journal that outlived its card (a
-      // rebuilt mirror) recognises its own comments instead of re-importing them.
-      // Whatever local history predates this link stays local (like a bootstrap).
-      const newSlug = slug;
-      const journal = this.journalState(newSlug);
-      if (remoteJournal.length > 0) {
-        withTaskFileLock(this.brainRoot(), newSlug, () =>
-          applyRemoteComments(this.stateDir, newSlug, remoteJournal, journal));
-      }
-      for (const je of readJournal(this.stateDir, newSlug)) journal.posted.add(je.id);
+      const written = this.writeMirror(slug, fm, remoteDesc, remoteEntries);
       this.ledger.recordMapping({ slug, dcId: fm.id as string, backend: this.name, remoteId: remote.id });
       this.ledger.updateTaskSync(slug, {
         last_synced_at: remoteTime ?? 0,
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
-        remote_priority: remotePriorityRaw,
-        ...journalSyncPatch(journal),
       });
       this.ledger.advanceWatermark(remoteTime);
       report.pulled++;
@@ -1656,10 +1536,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     // EXISTING mirror → merge.
     const path = this.taskPath(slug);
-    const mergeSlug = slug;
-    if (cardHasChangelog(readFileSync(path, 'utf-8'))) {
-      withTaskFileLock(this.brainRoot(), mergeSlug, () => foldCardChangelog(path));
-    }
     const entry = this.ledger.taskSync(slug);
     const localRaw = readFileSync(path, 'utf-8');
     const local = (await this.getLocal(slug))!;
@@ -1679,10 +1555,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       : null;
 
     // ── changelog: union (conflict-free by construction) ──
-    const journal = this.journalState(mergeSlug);
-    const remoteAddedCount = remoteJournal.length === 0 ? 0 : withTaskFileLock(this.brainRoot(), mergeSlug, () =>
-      applyRemoteComments(this.stateDir, mergeSlug, remoteJournal, journal));
-    const localUnposted = entriesToPost(readJournal(this.stateDir, mergeSlug), journal.posted).length > 0;
+    const localEntries = splitChangelogEntries(local.changelog);
+    const mergedEntries = unionChangelog(localEntries, remoteEntries);
+    const remoteNorm = new Set(remoteEntries.map(normalizeEntry));
+    const localOnlyEntries = localEntries.filter((e) => !remoteNorm.has(normalizeEntry(e)));
 
     // ── prose: 3-way with base; missing base → ClickUp wins + conflict copy ──
     const localDesc = bodyToDescription(local.body).trim();
@@ -1719,26 +1595,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       mergeScalar(baseV, localV, remoteV, localChanged ? localChangedAt : null, remoteTime);
 
     const statusM = scalar(baseFm?.status as string | undefined, local.status, remoteStatus);
-    // A remote close of a parent whose subtasks are open does not close it here.
-    const heldOpen = holdOpenParent(this.stateDir, this.statusDefs(), slug, local.status, statusM.value);
-    if (heldOpen) {
-      report.warnings.push(`pull ${slug}: closed on ClickUp while ${heldOpen.open} subtask(s) are open; kept ${heldOpen.keep} here.`);
-      statusM.value = heldOpen.keep;
-      statusM.winner = 'local';
-      recordHeldOpen(this.contextRoot, slug, heldOpen.open, (m) => report.warnings.push(`pull ${m}`));
-    }
-    // Order (C3): a card on the new model merges its order through the native
-    // priority and never takes a priority from ClickUp; a legacy card keeps the
-    // priority merge. ClickUp does not carry the cycle, so it stays local.
-    const activeCycleId = this.activeCycleId();
-    const orderM = mergeOrder({
-      base: baseFm, local: local.raw, remotePriority: remotePriorityRaw, activeCycleId,
-      lastRemotePriority: entry?.remote_priority, scalar,
-    });
-    const priorityM = orderM.newModel
-      ? { value: local.priority, winner: 'none' as const }
-      : scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
-    const orderWin = { value: orderM.queue, winner: orderM.orderWinner };
+    const priorityM = scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
     const nameM = scalar(baseFm?.name as string | undefined, local.name, remote.name);
     const tagsM = scalar(baseTagInfo?.tags, stripPersonTags(local.tags), remoteTags);
     const versionM = scalar(baseTagInfo?.version, local.version, remoteVersion);
@@ -1779,12 +1636,12 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       remoteStart,
     );
 
-    const scalarResults = [statusM, priorityM, nameM, tagsM, versionM, assigneeM, dueM, startM, orderWin];
+    const scalarResults = [statusM, priorityM, nameM, tagsM, versionM, assigneeM, dueM, startM];
     const anyLocalWin = scalarResults.some((r) => r.winner === 'local')
       || fieldWinners.some((r) => r.winner === 'local');
     const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote')
       || fieldWinners.some((r) => r.winner === 'remote');
-    const remoteAddedEntries = remoteAddedCount > 0;
+    const remoteAddedEntries = mergedEntries.length > localEntries.length;
     const remoteContributed = anyRemoteWin || remoteAddedEntries || mergedDesc !== localDesc;
 
     // ── conflicts: preserve the losing local copy, surface it ──
@@ -1813,11 +1670,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // Lean on person tags: a legacy single `assignee` field (spread from
     // local.raw) is folded into the tag set above, so drop it from the mirror.
     delete fm.assignee;
-    if (orderM.newModel) {
-      if (!('priority' in local.raw)) delete fm.priority;
-      if (orderM.cycle !== cycleOfCard(local.raw)) fm.cycle = orderM.cycle;
-      if (orderM.queue !== (local.raw.queue ?? null)) fm.queue = orderM.queue;
-    }
     // Apply custom-field winners (rice subfields rebuild the block — score
     // is always recomputed locally, never trusted from the remote).
     const ricePatch: RiceInput = {};
@@ -1860,7 +1712,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       (RICE_KEYS as string[]).includes(fw.key) ? 'rice'
         : BUILTIN_FIELD_KEYS.has(fw.key) ? fw.key
         : 'custom_fields');
-    const guarded = preserveLocalOnlyFields(local.raw, fm, [...boundKeys, ...(orderM.newModel ? ['cycle', 'queue'] : [])]);
+    const guarded = preserveLocalOnlyFields(local.raw, fm, boundKeys);
     for (const key of guarded.rescued) fm[key] = guarded.fm[key];
     if (guarded.rescued.length > 0) {
       report.warnings.push(
@@ -1873,13 +1725,13 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // git history to fall back on — keep the pre-pull bytes first. Only when the
     // bytes actually MOVE: a no-op merge writing a copy of itself would push a
     // real backup out of the keep window.
-    const rendered = this.renderMirror(fm, mergedDesc);
+    const rendered = this.renderMirror(fm, mergedDesc, mergedEntries);
     if (rendered !== localRaw) this.ledger.backupMirror(slug, localRaw);
     const written = this.writeMirrorContent(slug, rendered);
 
     // ── bookkeeping: base reflects the REMOTE state so surviving local
     //    changes still diff (and push) against it. ──
-    const keptLocal = anyLocalWin || proseLocalKept || localUnposted;
+    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
     if (keptLocal) {
       const remoteFmOverrides: Record<string, unknown> = {};
       const remoteCustom: Record<string, unknown> = {};
@@ -1899,16 +1751,15 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ? { custom_fields: { ...((fm.custom_fields as Record<string, unknown>) ?? {}), ...remoteCustom } }
         : {};
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, ...remoteCustomOverride, rice: remoteRice, ...(orderM.newModel ? remotePlacement(local.raw, undefined, remotePriorityRaw, activeCycleId) : {}) },
+        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, ...remoteCustomOverride, rice: remoteRice },
         remoteDesc,
+        remoteEntries,
       );
       this.ledger.updateTaskSync(slug, {
         last_synced_at: remoteTime ?? entry?.last_synced_at ?? 0,
         base_snapshot: { hash: hashContent(remoteRender), body: remoteRender },
         localHash: hashContent(remoteRender),
         pendingPush: true,
-        remote_priority: remotePriorityRaw,
-        ...journalSyncPatch(journal),
       });
     } else {
       this.ledger.updateTaskSync(slug, {
@@ -1916,21 +1767,12 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
-        remote_priority: remotePriorityRaw,
-        ...journalSyncPatch(journal),
       });
       this.ledger.dequeueFor(slug, this.nowMs());
     }
 
     this.ledger.advanceWatermark(remoteTime);
     report.pulled++;
-    if (heldOpen) {
-      await this.addJournal(slug, {
-        kind: 'status',
-        label: 'held open',
-        body: `- closed on ClickUp while ${heldOpen.open} subtask(s) are open: kept ${heldOpen.keep}; the next push reopens it`,
-      });
-    }
 
     // Journal what the REMOTE changed (winners only) into the sleep ledger —
     // consolidation has to see outside edits exactly like dashboard edits.
@@ -1942,7 +1784,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ['name', nameM, local.name],
         ['tags', tagsM, stripPersonTags(local.tags)],
         ['version', versionM, local.version],
-        ['queue', orderWin, local.raw.queue ?? null],
         ['assignees', assigneeM, assigneeSlugsOf(local.raw, local.tags)],
         ['due_date', dueM, (local.raw.due_date as string | null | undefined) ?? null],
         ['start_date', startM, (local.raw.start_date as string | null | undefined) ?? null],
@@ -2015,7 +1856,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
         'GET',
         `/list/${listId}/task`,
-        { query: { page, include_closed: true, subtasks: true } }, // closed tasks drift too
+        { query: { page, include_closed: true } }, // closed tasks drift too
       );
       const batch = res.tasks ?? [];
       all.push(...batch);
@@ -2215,23 +2056,26 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     return candidate;
   }
 
-  /** Compose a mirror CARD (frontmatter + prose body). History is the journal, never the card. */
-  protected renderMirror(fm: Record<string, unknown>, desc: string): string {
-    return matter.stringify(`${desc.trim()}\n`, fm);
+  /** Compose a mirror file (frontmatter + prose body + Changelog section). */
+  protected renderMirror(
+    fm: Record<string, unknown>,
+    desc: string,
+    changelogEntries: string[],
+  ): string {
+    const changelog = changelogEntries.length > 0
+      ? `## Changelog\n<!-- LIFO: newest at top -->\n\n${changelogEntries.join('\n\n')}\n`
+      : '';
+    const body = `${desc.trim()}\n${changelog ? `\n${changelog}` : ''}`;
+    return matter.stringify(body, fm);
   }
 
-  protected writeMirror(slug: string, fm: Record<string, unknown>, desc: string): string {
-    return this.writeMirrorContent(slug, this.renderMirror(fm, desc));
-  }
-
-  /** The task's journal sync state; a pre-journal ledger entry is seeded from its base snapshot. */
-  protected journalState(slug: string): JournalSyncState {
-    const entry = this.ledger.taskSync(slug);
-    const state = journalSyncState(entry);
-    if (entry && entry.posted_journal_ids === undefined && entry.base_snapshot) {
-      seedPostedFromBase(readJournal(this.stateDir, slug), entry.base_snapshot.body, state.posted);
-    }
-    return state;
+  protected writeMirror(
+    slug: string,
+    fm: Record<string, unknown>,
+    desc: string,
+    changelogEntries: string[],
+  ): string {
+    return this.writeMirrorContent(slug, this.renderMirror(fm, desc, changelogEntries));
   }
 
   /** Write already-composed mirror bytes (callers that render first to diff them). */
@@ -2289,6 +2133,21 @@ function renderWithBaseTags(raw: string, previousBase: string | null): string {
   }
 }
 
+/** Extract the changelog entries from a stored base-snapshot body. */
+function changelogEntriesOfBody(body: string): string[] {
+  const lines = body.split('\n');
+  const section: string[] = [];
+  let inChangelog = false;
+  for (const line of lines) {
+    const h = line.match(/^(#{2})\s+(.+)$/);
+    if (h) {
+      inChangelog = h[2].trim().toLowerCase() === 'changelog';
+      continue;
+    }
+    if (inChangelog) section.push(line);
+  }
+  return splitChangelogEntries(section.join('\n'));
+}
 
 /** One pickable list, with its full workspace path (onboarding picker). */
 export interface DiscoveredList {

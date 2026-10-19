@@ -6,27 +6,13 @@ import { DEFAULT_STATUSES, normalizeStatusKey, statusKeys, type StatusDef } from
 import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../frontmatter.js';
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
-import { fillTemplate } from '../template-fill.js';
 import { normalizeRice } from '../rice.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
 import { appendTombstone } from '../task-tombstones.js';
 import { withTaskFileLock } from '../task-file-lock.js';
-import {
-  JOURNAL_DIR,
-  appendJournalEntry,
-  moveJournal,
-  readJournal,
-  readJournalRaw,
-  retireJournal,
-  type JournalEntry,
-  type NewJournalEntry,
-  kindOfLabel,
-} from '../task-journal.js';
-import { CARD_CEILING, foldCardChangelog } from '../task-card.js';
 import { dateUpdatesForStatus } from '../task-dates.js';
 import { filterTasks, toTaskRecord, type TaskFilter } from '../task-query.js';
-import { liveChildren, loadFamily, loadTaskBriefs, normalizeParentRef, rolledUpStatus } from '../task-parent.js';
 import {
   TaskBackendError,
   type AddChangelogOptions,
@@ -37,11 +23,9 @@ import {
   type SyncReport,
   type TaskBackend,
   type TaskData,
-  type TaskListItem,
   type TaskSummary,
   type UpdateFieldsOptions,
 } from './types.js';
-import { parseCriteria } from '../task-evidence.js';
 import type { LocalTaskDescriptor } from './sync-state.js';
 
 /**
@@ -123,17 +107,29 @@ function getTaskTemplate(): string {
 id: "{{ID}}"
 name: "{{NAME}}"
 description: "{{DESCRIPTION}}"
+priority: "{{PRIORITY}}"
+urgency: "{{URGENCY}}"
 status: "{{STATUS}}"
 created_at: "{{DATE}}"
 updated_at: "{{DATE}}"
 tags: {{TAGS}}
 parent_task: null
 related_feature: null
+version: {{VERSION}}
 ---
 
 ## Why
+<!-- What problem does this solve? What breaks if we don't do it? Be concrete — name the user, the friction, the cost. -->
 
 {{WHY}}
+
+<!-- Other sections (User Stories, Acceptance Criteria, Workflow, Constraints & Decisions, Technical Details, Notes) are created on first insert — \`dreamcontext tasks insert <task> <section> "…"\`. A section that has nothing to say doesn't exist. -->
+
+## Changelog
+<!-- LIFO: newest at top. Auto-prepended by \`dreamcontext tasks log\`. -->
+
+### {{DATE}} - Created
+- Task created.
 `;
 }
 
@@ -169,17 +165,6 @@ function resolveScaffoldTemplate(overrideTemplate?: string | null): string {
 }
 
 /**
- * The card with its provenance line (`from_proposal: "<id>"`) inside the frontmatter, so the
- * marker lands in the card's FIRST write. No id: the content unchanged (golden-pinned bytes).
- */
-function withProvenance(content: string, fromProposal: string | undefined): string {
-  if (!fromProposal) return content;
-  const close = content.indexOf('\n---', 3);
-  if (!content.startsWith('---') || close < 0) return content;
-  return `${content.slice(0, close)}\nfrom_proposal: ${JSON.stringify(fromProposal)}${content.slice(close)}`;
-}
-
-/**
  * Substitute a task template's `{{TOKEN}}` placeholders. Shared by the CLI and
  * the dashboard create paths so a project override (`overrides/task.md`) renders
  * IDENTICALLY from both surfaces — only the no-override fallback differs per
@@ -195,40 +180,17 @@ function renderTaskTemplate(
   input: CreateTaskInput,
   opts: { name: string; status: string; description: string },
 ): string {
-  // One pass, every value literal (lib/template-fill.ts): a `$&`, `$'`, `` $` `` or `$$` in a
-  // name or a Why reaches the card as typed. The id is drawn once, as before (golden).
-  return fillTemplate(template, {
-    ID: generateId('task'),
-    NAME: opts.name,
-    DESCRIPTION: opts.description,
-    PRIORITY: input.priority ?? 'medium',
-    URGENCY: input.urgency ?? 'medium',
-    STATUS: opts.status,
-    TAGS: JSON.stringify(input.tags ?? []),
-    DATE: today(),
-    WHY: input.why || '(To be defined)',
-    VERSION: input.version ? JSON.stringify(input.version) : 'null',
-  }, ['NAME', 'DESCRIPTION', 'STATUS']);
-}
-
-/**
- * Priority, urgency and version are retired from the shipped card (the
- * "when?" axis is cycle / queue / rank). A caller that still passes them (the
- * legacy dashboard form, a deprecated `-v`) gets them layered on, additively;
- * `tasks create` passes none, so its card carries none.
- */
-function layerLegacyOrderFields(filePath: string, input: CreateTaskInput): void {
-  const fields: Record<string, unknown> = {};
-  if (input.priority) fields.priority = input.priority;
-  if (input.urgency) fields.urgency = input.urgency;
-  if (input.version) fields.version = input.version;
-  if (input.queue) fields.queue = input.queue;
-  if (Object.keys(fields).length > 0) updateFrontmatterFields(filePath, fields);
-}
-
-function safeParentRef(raw: unknown): string | null {
-  const ref = normalizeParentRef(raw);
-  return ref && isSafeTaskSlug(ref) ? ref : null;
+  return template
+    .replaceAll('{{ID}}', generateId('task'))
+    .replaceAll('{{NAME}}', opts.name)
+    .replaceAll('{{DESCRIPTION}}', opts.description)
+    .replaceAll('{{PRIORITY}}', input.priority ?? 'medium')
+    .replaceAll('{{URGENCY}}', input.urgency ?? 'medium')
+    .replaceAll('{{STATUS}}', opts.status)
+    .replaceAll('{{TAGS}}', JSON.stringify(input.tags ?? []))
+    .replaceAll('{{DATE}}', today())
+    .replaceAll('{{WHY}}', input.why || '(To be defined)')
+    .replaceAll('{{VERSION}}', input.version ? `"${input.version}"` : 'null');
 }
 
 function readSectionSafe(filePath: string, sectionName: string): string {
@@ -293,8 +255,7 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
     created_at: (data.created_at as string) ?? '',
     updated_at: (data.updated_at as string) ?? '',
     tags: Array.isArray(data.tags) ? data.tags as string[] : [],
-    // A slug (or a legacy id) that is safe to build a path from; anything else reads as none.
-    parent_task: safeParentRef(data.parent_task),
+    parent_task: (data.parent_task as string) ?? null,
     related_feature: (data.related_feature as string) ?? null,
     version: (data.version as string) ?? null,
     rice: normalizeRice(data.rice),
@@ -310,82 +271,18 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
       data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
         ? (data.custom_fields as Record<string, string | number | null>)
         : {},
-    // Absent unless set, so a task that came from no proposal is the exact object it always was.
-    ...(typeof data.from_proposal === 'string' && data.from_proposal.trim() ? { from_proposal: data.from_proposal.trim() } : {}),
     why: readSectionSafe(filePath, 'Why'),
     user_stories: readSectionSafe(filePath, 'User Stories'),
     acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
     constraints: readSectionSafe(filePath, 'Constraints & Decisions'),
     technical_details: readSectionSafe(filePath, 'Technical Details'),
     notes: readSectionSafe(filePath, 'Notes'),
-    // History is the journal; a card not folded yet still shows its old section.
-    changelog: readSectionSafe(filePath, 'Changelog') || readJournalRaw(dirname(filePath), slug).trim(),
+    changelog: readSectionSafe(filePath, 'Changelog'),
     sections,
     body: content.trim(),
     rawBody: content,
     raw: data,
-    ...placementOf(data),
   };
-}
-
-/** The card's place on the "when?" axis (C3), read as stored. */
-function placementOf(data: Record<string, unknown>): { cycle: string | null; queue: 'next' | 'later' | null; rank: number | null } {
-  return {
-    cycle: typeof data.cycle === 'string' && data.cycle.trim() ? data.cycle.trim() : null,
-    queue: data.queue === 'next' || data.queue === 'later' ? data.queue : null,
-    rank: typeof data.rank === 'number' && Number.isFinite(data.rank) ? data.rank : null,
-  };
-}
-
-/**
- * The list view of one card (`GET /api/tasks`, plan r3 § W4): frontmatter, criteria
- * counts and the file size. Never a body, a section or the journal: the list is
- * polled, the body is the task page's (`GET /api/tasks/:slug`). `children` is filled
- * by the caller, which sees the whole family.
- */
-export function readTaskCard(filePath: string): TaskListItem {
-  const slug = basename(filePath, '.md');
-  const { data } = readFrontmatter<Record<string, unknown>>(filePath);
-  const criteria = parseCriteria(readSectionSafe(filePath, 'Acceptance Criteria'));
-  let bytes = 0;
-  try { bytes = statSync(filePath).size; } catch { /* vanished */ }
-  return {
-    slug,
-    id: (data.id as string) ?? '',
-    name: (data.name as string) ?? slug,
-    description: (data.description as string) ?? '',
-    status: normalizeStatusKey(data.status) || 'todo',
-    created_at: (data.created_at as string) ?? '',
-    updated_at: (data.updated_at as string) ?? '',
-    tags: Array.isArray(data.tags) ? data.tags as string[] : [],
-    parent_task: safeParentRef(data.parent_task),
-    related_feature: (data.related_feature as string) ?? null,
-    version: (data.version as string) ?? null,
-    start_date: (data.start_date as string) ?? null,
-    due_date: (data.due_date as string) ?? null,
-    objectives: Array.isArray(data.objectives) ? (data.objectives as unknown[]).map(String) : [],
-    assignee: (data.assignee as string) ?? null,
-    ...(typeof data.agent === 'string' && isSafeAutomationSlug(data.agent.trim()) ? { agent: data.agent.trim() } : {}),
-    custom_fields:
-      data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
-        ? (data.custom_fields as Record<string, string | number | null>)
-        : {},
-    created_by: typeof data.created_by === 'string' ? data.created_by : null,
-    ...placementOf(data),
-    criteria: { total: criteria.length, done: criteria.filter((c) => c.checked).length },
-    children: null,
-    bytes,
-    // Legacy, read-only (decision 11): read as the full card reads them, so the board's
-    // legacy views and filters keep their values.
-    priority: (data.priority as string) ?? 'medium',
-    urgency: (data.urgency as string) ?? 'medium',
-    rice: normalizeRice(data.rice),
-  };
-}
-
-/** {@link readTaskCard} through the read memo (keyed on the card's stat only: no journal in it). */
-export function readTaskCardMemo(filePath: string): TaskListItem {
-  return memoRead('card', filePath, () => readTaskCard(filePath));
 }
 
 // ─── Read memo ───────────────────────────────────────────────────────────────
@@ -409,24 +306,10 @@ function fileSig(path: string): string {
   return `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
 }
 
-/**
- * A task read also carries its journal (`changelog` falls back to
- * `state/journal/<slug>.md`), and a journal append — `tasks log` from another
- * process, an assignment, a pull — never touches the card's stat. So the `task`
- * memo is keyed on the journal's stat too; a missing journal reads as `none`.
- */
-function journalSig(cardPath: string): string {
-  try {
-    return fileSig(join(dirname(cardPath), JOURNAL_DIR, basename(cardPath)));
-  } catch {
-    return 'none';
-  }
-}
-
-function memoRead<T>(kind: 'fm' | 'task' | 'card', path: string, read: () => T): T {
+function memoRead<T>(kind: 'fm' | 'task', path: string, read: () => T): T {
   const abs = resolve(path);
   const key = `${kind}\0${abs}`;
-  const sig = kind === 'task' ? `${fileSig(abs)}|${journalSig(abs)}` : fileSig(abs);
+  const sig = fileSig(abs);
   const hit = readMemo.get(key);
   readMemo.delete(key);
   if (hit && hit.sig === sig) {
@@ -448,7 +331,6 @@ export function forgetTaskRead(path: string): void {
   const abs = resolve(path);
   readMemo.delete(`fm\0${abs}`);
   readMemo.delete(`task\0${abs}`);
-  readMemo.delete(`card\0${abs}`);
 }
 
 /** Tests only: forget every memoized task read. */
@@ -561,9 +443,7 @@ export class LocalTaskBackend implements TaskBackend {
     if (existsSync(filePath)) {
       throw new TaskBackendError('already_exists', `Task already exists: ${slug}`);
     }
-    const created = withTaskFileLock(this.brainRoot(), slug, () => this.writeNewTaskSync(slug, filePath, input));
-    if (created.parent_task) await this.syncParentStatus(created.parent_task);
-    return created;
+    return withTaskFileLock(this.brainRoot(), slug, () => this.writeNewTaskSync(slug, filePath, input));
   }
 
   /** The scaffold write itself — always called under {@link withTaskFileLock}. */
@@ -593,8 +473,7 @@ export class LocalTaskBackend implements TaskBackend {
         description: input.description ?? input.name,
       });
 
-      writeFileSync(filePath, withProvenance(content, input.from_proposal), 'utf-8');
-      layerLegacyOrderFields(filePath, input);
+      writeFileSync(filePath, content, 'utf-8');
       if (input.rice) {
         updateFrontmatterFields(filePath, { rice: input.rice });
       }
@@ -620,8 +499,7 @@ export class LocalTaskBackend implements TaskBackend {
         status: 'todo',
         description: input.description ?? '',
       });
-      writeFileSync(filePath, withProvenance(content, input.from_proposal), 'utf-8');
-      layerLegacyOrderFields(filePath, input);
+      writeFileSync(filePath, content, 'utf-8');
       if (input.rice) {
         updateFrontmatterFields(filePath, { rice: input.rice });
       }
@@ -637,33 +515,35 @@ export class LocalTaskBackend implements TaskBackend {
       const name = input.name.trim();
       const dateStr = today();
       const tags = input.tags ?? [];
-      // Every string scalar through JSON.stringify: a valid YAML double-quoted scalar for any
-      // text (a `"` or `\` in a name used to end it early and corrupt the card), and the same
-      // bytes as before for a plain or Turkish value (golden-pinned).
-      const q = (v: string) => JSON.stringify(v);
-      const tagsYaml = tags.length > 0 ? `[${tags.map(t => q(t)).join(', ')}]` : '[]';
-      const versionYaml = input.version ? q(input.version) : 'null';
+      const tagsYaml = tags.length > 0 ? `[${tags.map(t => `"${t}"`).join(', ')}]` : '[]';
+      const versionYaml = input.version ? `"${input.version}"` : 'null';
       const riceYaml = input.rice
         ? `\nrice:\n  reach: ${input.rice.reach ?? 'null'}\n  impact: ${input.rice.impact ?? 'null'}\n  confidence: ${input.rice.confidence ?? 'null'}\n  effort: ${input.rice.effort ?? 'null'}\n  score: ${input.rice.score ?? 'null'}`
         : '';
       const content = `---
 id: "${generateId('task')}"
-name: ${q(name)}
-description: ${q(input.description ?? '')}
-priority: ${q(input.priority ?? 'medium')}
-urgency: ${q(input.urgency ?? 'medium')}
+name: "${name}"
+description: "${input.description ?? ''}"
+priority: "${input.priority ?? 'medium'}"
+urgency: "${input.urgency ?? 'medium'}"
 status: "todo"
 created_at: "${dateStr}"
 updated_at: "${dateStr}"
 tags: ${tagsYaml}
 parent_task: null
 related_feature: null
-version: ${versionYaml}${riceYaml}${input.from_proposal ? `\nfrom_proposal: ${q(input.from_proposal)}` : ''}
+version: ${versionYaml}${riceYaml}
 ---
 
 ## Why
 
 ${input.why || '(To be defined)'}
+
+## Changelog
+<!-- LIFO: newest entry at top -->
+
+### ${dateStr} - Created
+- Task created.
 `;
       writeFileSync(filePath, content, 'utf-8');
       if (input.start_date) {
@@ -679,13 +559,6 @@ ${input.why || '(To be defined)'}
     if (input.objectives && input.objectives.length > 0) {
       updateFrontmatterFields(filePath, { objectives: input.objectives });
     }
-    // Parent and cycle: additive the same way (absent → template bytes unchanged).
-    if (input.parent_task) {
-      updateFrontmatterFields(filePath, { parent_task: input.parent_task });
-    }
-    if (input.cycle) {
-      updateFrontmatterFields(filePath, { cycle: input.cycle });
-    }
 
     // Seed override-declared custom fields (additive — only when the project
     // ships an override, so no-override creation stays byte-identical). Declared
@@ -700,9 +573,6 @@ ${input.why || '(To be defined)'}
       }
     }
 
-    // History starts in the journal, never on the card.
-    appendJournalEntry(this.stateDir, slug, { kind: 'created', body: '- Task created.' });
-
     forgetTaskRead(filePath);
     return readTaskFile(filePath, this.statusDefs());
   }
@@ -713,14 +583,9 @@ ${input.why || '(To be defined)'}
     opts?: UpdateFieldsOptions,
   ): Promise<TaskData> {
     const path = this.requirePath(slug);
-    // A status or parent change moves the family's roll-up: remember the parent
-    // before the write so a child leaving one parent updates both.
-    const familyMove = fields.status !== undefined || fields.parent_task !== undefined;
-    let parentBefore: string | null = null;
     // The whole read-modify-write is inside the lock: two writers that both
     // READ before either WRITES silently lose one side's fields.
-    const task = withTaskFileLock(this.brainRoot(), slug, () => {
-      if (familyMove) parentBefore = safeParentRef(readFrontmatter<Record<string, unknown>>(path).data.parent_task);
+    return withTaskFileLock(this.brainRoot(), slug, () => {
       if (fields.tags !== undefined || fields.due_date !== undefined || fields.start_date !== undefined) {
         const { data: prev } = readFrontmatter<Record<string, unknown>>(path);
         fields = normalizeBacklogFields(prev, fields);
@@ -732,61 +597,9 @@ ${input.why || '(To be defined)'}
       } else {
         updateFrontmatterFields(path, fields);
       }
-      // A body that still carries a `## Changelog` (an old client, a pasted
-      // card) is folded into the journal on the way in — never kept, never lost.
-      foldCardChangelog(path);
       forgetTaskRead(path);
       return readTaskFile(path, this.statusDefs());
     });
-    if (familyMove) {
-      for (const parent of new Set([parentBefore, task.parent_task])) {
-        if (parent && parent !== slug) await this.syncParentStatus(parent);
-      }
-    }
-    return task;
-  }
-
-  /**
-   * Recompute a parent's status from its children and store it (journaled), so
-   * the board, the snapshot and the remote all read a real value. A no-op for
-   * a task without live children, a closed parent, or one already in step.
-   * Returns the new status when it moved.
-   */
-  /**
-   * Recompute every parent once. A pull writes children's statuses through the
-   * mirror, not through {@link updateFields}, so it calls this after its batch:
-   * otherwise a parent whose children all closed remotely never moves.
-   */
-  async syncAllParentStatuses(report?: { errors: string[] }): Promise<void> {
-    for (const parent of new Set(loadFamily(this.stateDir).parentOf.values())) {
-      try {
-        await this.syncParentStatus(parent);
-      } catch (err) {
-        report?.errors.push(`parent roll-up ${parent}: ${(err as Error).message ?? err}`);
-      }
-    }
-  }
-
-  async syncParentStatus(parentSlug: string): Promise<string | null> {
-    if (!isSafeTaskSlug(parentSlug)) return null;
-    const family = loadFamily(this.stateDir);
-    const resolved = family.bySlug.has(parentSlug)
-      ? parentSlug
-      : [...family.bySlug.values()].find((b) => b.id === parentSlug)?.slug;
-    if (!resolved) return null;
-    const parent = await this.get(resolved);
-    if (!parent) return null;
-    const next = rolledUpStatus(this.statusDefs(), parent.status, parent.rawBody, family.children.get(resolved) ?? []);
-    if (!next) return null;
-    const now = today();
-    await this.addJournal(resolved, {
-      kind: 'status',
-      label: `Status → ${next}`,
-      body: `- computed from its sub-tasks (was ${parent.status})`,
-    });
-    const dates = dateUpdatesForStatus(next, parent, now, this.statusDefs());
-    await this.updateFields(resolved, { status: next, updated_at: now, ...dates });
-    return next;
   }
 
   async insertSection(
@@ -796,74 +609,43 @@ ${input.why || '(To be defined)'}
     opts: InsertSectionOptions,
   ): Promise<void> {
     const path = this.requirePath(slug);
-    // History is the journal: a `Changelog` insert lands there, not on the card.
-    if (sectionName.trim().toLowerCase() === 'changelog') {
-      await this.addChangelog(slug, content);
-      return;
-    }
     try {
-      withTaskFileLock(this.brainRoot(), slug, () => {
-        foldCardChangelog(path);
-        // The card ceiling. Criteria stay insertable past it, so sleep's first
-        // choice (a criterion in an existing task) still works on a legacy card.
-        if (sectionName.trim().toLowerCase() !== 'acceptance criteria') {
-          const size = readFileSync(path, 'utf-8').length;
-          if (size + content.length > CARD_CEILING) {
-            throw new TaskBackendError(
-              'invalid_input',
-              `Card ceiling: ${slug} would be ${size + content.length} chars (limit ${CARD_CEILING}). ` +
-                'A card holds what the work is and how it is proven; put history in the journal ' +
-                '(`dreamcontext tasks log`) and long material in knowledge (`dreamcontext knowledge create`).',
-            );
-          }
-        }
-        insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false);
-      });
+      withTaskFileLock(this.brainRoot(), slug, () =>
+        insertToSection(path, sectionName, content, opts.position, true, opts.replacePlaceholders ?? false));
     } finally {
       forgetTaskRead(path);
     }
   }
 
-  /**
-   * Legacy entry point: a formatted `### <date> - <label>\n<body>` block. Its
-   * label picks the journal kind (`Completed` → status, `Created` → created,
-   * anything else → log) and is kept as the entry's label.
-   */
-  async addChangelog(slug: string, entry: string, _opts?: AddChangelogOptions): Promise<void> {
-    const m = /^###\s+\S+(?:\s+\d{2}:\d{2})?\s+-\s+(.*)\n?([\s\S]*)$/.exec(entry.trim());
-    if (!m) {
-      await this.addJournal(slug, { kind: 'log', body: entry.trim() });
-      return;
-    }
-    const { kind, rest } = kindOfLabel(m[1]);
-    const generic = /^(session update|update|dashboard update)$/i.test(rest) || rest === kind;
-    await this.addJournal(slug, { kind, ...(generic || !rest ? {} : { label: rest }), body: m[2].trim() });
-  }
-
-  async addJournal(slug: string, entry: NewJournalEntry): Promise<JournalEntry> {
+  async addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void> {
     const path = this.requirePath(slug);
     // `tasks log` is the single most concurrent task write there is — the
     // foreground logs progress while a background cycle reconciles the board —
-    // and the journal is a read-modify-write, so it shares the card's lock.
-    // The fold rewrites the card, so the read memo forgets it either way.
+    // and it is a read-modify-write of the same section, so it is exactly where
+    // an interleave drops an entry.
     try {
-      return withTaskFileLock(this.brainRoot(), slug, () => {
-        foldCardChangelog(path);
-        return appendJournalEntry(this.stateDir, slug, entry);
+      withTaskFileLock(this.brainRoot(), slug, () => {
+        try {
+          insertToSection(path, 'Changelog', entry, 'top');
+        } catch (err) {
+          if (!opts?.fallbackAppend) throw err;
+          // No Changelog section: append at EOF (pre-refactor CLI fallback).
+          const existing = readFileSync(path, 'utf-8');
+          writeFileSync(path, existing.trimEnd() + '\n\n' + entry + '\n', 'utf-8');
+        }
       });
     } finally {
       forgetTaskRead(path);
     }
-  }
-
-  async readJournal(slug: string): Promise<JournalEntry[]> {
-    if (!isSafeTaskSlug(slug)) return [];
-    return readJournal(this.stateDir, slug);
   }
 
   async complete(slug: string, summary?: string): Promise<TaskData> {
     const now = today();
-    await this.addJournal(slug, { kind: 'status', label: 'Completed', body: `- ${summary ?? 'Task completed.'}` });
+    await this.addChangelog(
+      slug,
+      `### ${now} - Completed\n- ${summary ?? 'Task completed.'}`,
+      { fallbackAppend: true },
+    );
     // Completing stamps the REAL end of the window, so the timeline shows what
     // happened rather than what was planned (see lib/task-dates.ts). Lives here
     // rather than in the CLI so every backend and every caller of `complete()`
@@ -874,31 +656,10 @@ ${input.why || '(To be defined)'}
 
   async delete(slug: string, opts: { absorbedBy?: string; reason?: string } = {}): Promise<void> {
     const path = this.requirePath(slug);
-    // A parent with live sub-tasks is never deleted: its children would lose
-    // the context they exist to carry. Closed children are detached first.
-    const family = loadFamily(this.stateDir);
-    const live = liveChildren(family, this.statusDefs(), slug);
-    if (live.length > 0) {
-      throw new TaskBackendError(
-        'invalid_input',
-        `${slug} has ${live.length} live sub-task(s): ${live.map((c) => c.slug).join(', ')}. ` +
-          'Close, move (`tasks parent <child> <other-parent>`) or detach (`tasks parent <child> clear`) them first.',
-      );
-    }
-    for (const child of family.children.get(slug) ?? []) {
-      await this.updateFields(child.slug, { parent_task: null });
-      await this.addJournal(child.slug, { kind: 'log', body: `- detached: its parent ${slug} was deleted` });
-    }
     // Read the id BEFORE unlinking — a tombstone that can name the task id stays
     // traceable through a remote backend's mapping.
     const doomed = await this.get(slug).catch(() => null);
-    withTaskFileLock(this.brainRoot(), slug, () => {
-      rmSync(path);
-      // The journal is history, not litter: it moves beside the tombstone.
-      try { retireJournal(this.stateDir, slug); } catch (err) {
-        console.error(`Warning: could not retire the journal of ${slug}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    });
+    withTaskFileLock(this.brainRoot(), slug, () => rmSync(path));
     forgetTaskRead(path);
     // A deleted FILE proves nothing later; this marker does. Without it a sleep
     // cycle re-files a chore somebody deliberately consolidated away.
@@ -911,8 +672,6 @@ ${input.why || '(To be defined)'}
     });
     // Referential integrity: no feature may keep listing a task that is gone.
     this.healFeatureLinks(() => healTaskRemoved(this.brainRoot(), slug));
-    // A deleted child moves its parent's roll-up.
-    if (doomed?.parent_task) await this.syncParentStatus(doomed.parent_task);
   }
 
   /** The brain root (`_dream_context/`) — stateDir is always `<root>/state`. */
@@ -955,10 +714,7 @@ ${input.why || '(To be defined)'}
     // for the rename), then move the file to the new slug. The id-map migration
     // is layered on by the remote backends' override.
     await this.updateFields(slug, { name: trimmed, updated_at: today() });
-    withTaskFileLock(this.brainRoot(), slug, () => {
-      renameSync(path, this.taskPath(newSlug));
-      moveJournal(this.stateDir, slug, newSlug);
-    });
+    withTaskFileLock(this.brainRoot(), slug, () => renameSync(path, this.taskPath(newSlug)));
     forgetTaskRead(path);
     forgetTaskRead(this.taskPath(newSlug));
     // A rename retires the OLD slug just as surely as a delete does: anything
@@ -972,13 +728,6 @@ ${input.why || '(To be defined)'}
     });
     // Referential integrity: features listing the old slug follow the rename.
     this.healFeatureLinks(() => healTaskRename(this.brainRoot(), slug, newSlug));
-    // ...and so do the sub-tasks pointing at it (the old slug, or a legacy id).
-    const renamedId = readFrontmatter<{ id?: string }>(this.taskPath(newSlug)).data.id ?? null;
-    for (const child of loadTaskBriefs(this.stateDir)) {
-      if (child.slug !== newSlug && (child.parent === slug || (renamedId && child.parent === renamedId))) {
-        await this.updateFields(child.slug, { parent_task: newSlug });
-      }
-    }
     return newSlug;
   }
 

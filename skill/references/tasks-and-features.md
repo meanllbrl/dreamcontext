@@ -1,14 +1,10 @@
 # Tasks & Features — full protocol
 
-## Tasks: a card and a journal
+## Tasks are your working documents
 
-A task is two files. The **card**, `state/<slug>.md`, holds what the work IS: Why, Acceptance Criteria, Constraints & Decisions, Technical Details, Notes (plus User Stories and Workflow when needed). It carries no history and no template comments, and stays under **12,000 chars** (`tasks insert` refuses past it, except into Acceptance Criteria; overflow goes to the journal via `tasks log`, or to knowledge). The **journal**, `state/journal/<slug>.md`, holds what HAPPENED: every `tasks log`, status change, evidence record and approval, newest first, each entry headed `### YYYY-MM-DD HH:MM - <kind> [je_<id>]` (kinds: `created`, `log`, `evidence`, `status`, `approval`, `sleep`, `remote`). The id is permanent: evidence refs, sync and merge use it. Features are retrospective product docs updated only during sleep — never put in-progress context in a feature.
+All context, decisions, user stories, acceptance criteria, constraints, technical details, notes, and progress live in the **task body**. Features are retrospective product docs updated only during sleep — never put in-progress context in a feature.
 
-The auto-loaded snapshot already lists every non-completed task with status, priority, and last-updated date. Answer "what am I working on?" / "which tasks are active?" directly from it — no tool calls. Read the card when you need the plan, and the newest journal entries when you need where the previous session left off.
-
-- **The journal is not a task.** Recall never returns it as one; with a remote task backend it travels through the backend (GitHub/ClickUp comments), never the brain repo; a git merge unions entries by id.
-- **A Changelog that comes back is folded.** A card that regains `## Changelog` (an older CLI, an old merge driver, a pull) is folded into its journal on the next write to that task or the next `tasks doctor`, deduplicated by normalised text with copy counting: nothing is dropped, nothing is doubled.
-- **Migration.** `dreamcontext update` to 0.33.0 moves every card's Changelog into its journal once (`dreamcontext tasks migrate-journal [--dry-run]` runs it by hand): backup under `_dream_context/tmp/pre-migration-<stamp>/`, template comments stripped, old ticked criteria marked `(evidence: legacy)`, a byte ledger proving card + journal + stripped = original. It is idempotent, leaves `state/archive/` alone, and retries on its next run when a task is locked or a sync is running.
+The auto-loaded snapshot already lists every non-completed task with status, priority, and last-updated date. Answer "what am I working on?" / "which tasks are active?" directly from it — no tool calls. Only read the full file when you need the body (the **Changelog** section is where the previous session left off).
 
 ### Lifecycle
 ```
@@ -21,79 +17,15 @@ The sleep agent picks the status that matches reality: `completed` for work that
 ### Create
 ```bash
 dreamcontext tasks create "Readable sentence name" \
-  --description "..." --why "What this accomplishes" \
-  [--person "Ada"] [--due 2026-07-01] [--tags backend,api]
-dreamcontext tasks plan <name> now|next|later   # where it sits (see Cycles, the queue, releases)
+  --description "..." --priority medium --why "What this accomplishes" \
+  [--version v0.9.0] [--person "Ada"] [--due 2026-07-01] [--tags backend,api]
 ```
-Defaults: `status=todo`, no cycle (reads as Next). Nothing lands in a cycle on its own: planning is a person's call. `-p/-u` are retired (accepted, ignored, warned); `-v` is deprecated (a cycle number/id plans it there, `BACKLOG` means Later, anything else is kept as a legacy label).
+Defaults: `priority=medium`, `status=todo`. A task created without `--version` auto-attaches to the **active planning version** (see Versioning).
 
 - **Name = a short plain sentence** describing what the task does ("Fix the login redirect loop"). Never a type-prefixed slug (`feat-x-y`) — the file slug is derived from the name automatically.
 - **`--why` is mandatory.** Creation fails without a non-empty reason; `created_at` covers the "when". A task must be readable months later on its Why alone.
-- **Lean card.** A new card contains only `## Why`; its journal starts with a `created` entry. Every other section (`user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`) is created on first `tasks insert`, in canonical position. Never insert placeholders to "complete" the shape; a section with nothing to say shouldn't exist.
-- **Sleep's own filing** needs a basis or goes to proposals: see [Sleep files only at high confidence](#sleep-files-only-at-high-confidence-proposals-and-the-filing-rules).
+- **Lean scaffold.** New tasks contain only `## Why` and `## Changelog`. Every other section (`user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`) is created on first `tasks insert` — in canonical position, before Changelog. Never insert placeholders to "complete" the shape; a section with nothing to say shouldn't exist.
 - **`--neighbor-checked <slug>` / `--declined-checked <key>` — proof of having looked (sleep only).** During a sleep cycle the filing bar refuses a task whose nearest existing task is semantically close, or that looks like an idea somebody declined. Both refusals name the exact flag that lifts them, and each takes the **slug/key it named** — passing a different one is refused again. They are not bypasses: they say "I read that neighbor / that declined reason, and this is genuinely separate". A near-verbatim duplicate (the merge band) has no flag at all; fold it in instead. A person filing their own task during a background cycle uses `--by human`, which is never checked. When the CLI prints `neighbor check skipped (…)` the semantic floor is OFF for that run — do the keyword dedup yourself (`memory recall "<topic>" --types task`) and check `tasks declined` by hand.
-
-### Sub-tasks: a parent and its steps (two levels)
-A **feature** is an area, a **parent task** is a deliverable with an end, a **sub-task** is one step of it. Two levels only.
-```bash
-dreamcontext tasks create "Step one" -w "…" --parent <parent>   # inherits objectives, feature, cycle (not cycle when sleep files it)
-dreamcontext tasks parent <task> <parent|clear>                  # place, move or detach
-dreamcontext tasks show <task>                                   # the context packet
-```
-- **Enforced:** the parent must exist, be top-level and open; a task with sub-tasks cannot become one. `parent_task` holds the parent's slug (a legacy id still resolves).
-- **The parent's status is computed** from its sub-tasks and stored (journaled): none started → `todo`, some → `in_progress`, all done → `in_review` when its own criteria pass the gate, else `in_progress`; never `completed` on its own. A parent cannot reach done while a sub-task is open, cannot be deleted with a live one (closed ones are detached), and cancelling it needs a decision per open sub-task: `tasks status <p> cancelled --child <t>=cancel|detach|move:<other> …` or `--children <decision>`. A rename repoints the sub-tasks. Roadmap progress counts leaves only; the snapshot folds sub-tasks under their parent with `n/m done`.
-- **The context packet** (`tasks show`, ≤ 12,000 chars): the parent's card (Why, Constraints & Decisions, every sibling with its status) first, then this card, then the newest 3 journal entries and the paths, fenced as task DATA under a fresh marker. Over the cap it drops journal entries, then Notes, then Technical Details; never the parent's Why or decisions, never the criteria. Develop, assign-to-agent, automations, the handoff banner, Delegate and goal-skill builders all receive this packet (or the command), never a bare path.
-- **The Read hook:** reading a sub-task's card in a session adds its parent's card next to it (`.claude/hooks/read-task-guard.cjs`, PostToolUse `Read`; any other Read costs one node start and adds nothing).
-- **Session binding:** a Develop run (`goal-live start`), a handoff, an agent run for a task, or `tasks bind <task>` binds the session (`state/.session-task/<id>.json`, machine-local); after a compaction the packet is delivered again. It survives Stop and compaction, ends with SessionEnd (a resume re-binds), `/clear` unbinds, 7 days idle reaps it. `tasks unbind` clears it.
-- **Sync:** GitHub sub-issues and ClickUp subtasks, both ways. A remote three levels deep is flattened onto the top parent (warned); a remote that drops a link never clears the local one; a remote close of a parent with open sub-tasks is held open here (journaled) and the next push reopens it. ClickUp cannot un-subtask through its API: a local detach warns.
-
-### Sleep files only at high confidence: proposals and the filing rules
-
-What sleep may put on the board itself, in order (the first fit wins): a **criterion** on an existing task, a **sub-task** under an existing parent, a **new top-level task** only with a basis, and otherwise a **proposal**. Only a new top-level task waits for the owner. Sleep never plans: what it files sits in no cycle (a sub-task does not inherit its parent's).
-
-```bash
-dreamcontext tasks create "<sentence>" --by sleep --basis ask --quote "<the owner's words>" -w "…"     # they asked for it
-dreamcontext tasks create "<sentence>" --by sleep --basis defect --evidence "<failing output>" -w "…"  # a proven defect
-dreamcontext tasks propose "<sentence>" -w "…" --quote "<session line>" [--parent <p>]  # everything else
-dreamcontext tasks proposals [--json]        # what waits: proposals + tasks sleep opened
-dreamcontext tasks accept <tp_id> [--name … -w … --parent <p>|--no-parent]   # owner only → Next queue
-dreamcontext tasks reject <tp_id|slug> --reason <reason> [--note "…"]        # every reject has a reason
-dreamcontext tasks keep <slug>               # owner only: a task sleep opened is fine
-dreamcontext tasks rules                     # read the task-filing rules (sleep must, each cycle)
-dreamcontext tasks rules pending|history     # rejects no rule cites yet / every change
-dreamcontext tasks rules set [R<n>] --title … --dont … --do … --rests-on <fb ids>
-dreamcontext tasks rules merge <keep> <drop>; dreamcontext tasks rules revert <R<n>>   # revert: owner only
-```
-
-- **The basis is checked, not trusted.** `--quote` must appear, as whole words, in a turn the owner TYPED in a session this sleep consolidates and share a word with the task's name or Why; tool results, hook context, sub-agent notifications, skill-loader text, compaction summaries and `tasks show` output do not count, and a refusal says where the words did appear. Quotes are stored and journaled scrubbed of secrets, on one line. `--evidence` must appear in a tool result (or an owner turn). A proposal's `--quote` must appear in the session (owner or assistant words). Sessions an orchestrator spawned are never searched.
-- **Proposals live on the Tasks screen** (the Proposals section and a count on Tasks in the sidebar), never in a chat or the snapshot: sleep often runs with nobody in a session. Each shows the name, the Why, the session quote and the suggested parent; accept and reject are one tap. Tasks sleep filed itself show in the same section as "opened by sleep" until kept or rejected.
-- **Accept** creates the task in the **Next** queue with `created_by: human` (the owner decides when it enters a cycle); a corrected name or Why is recorded as the diff. `accept`, `keep` and `rules revert` refuse an agent environment; the dashboard is the owner's path.
-- **Reject reasons:** `already-exists`, `abandoned`, `too-small`, `badly-written`, `wrong-project`, `not-work`. Every reject is written to `state/.task-feedback.json` (the proposal, its basis, the quote, the reason, the note) and to the declined store, so no later cycle re-files it. A rejected task sleep filed moves to the project's cancelled-kind status (refused when none is declared).
-- **What the reasons change, deterministically:** each `already-exists` lowers this project's neighbour review threshold by 0.01 (at most 0.05); three rejects of the same kind of candidate (similar name + Why) block that kind for both `create` and `propose`, and if they were `too-small` the refusal points at a criterion instead.
-- **The brake:** when more than 30% of sleep's last 20 judged items (filed tasks + decided proposals) were rejected, direct filing is off and only criteria, sub-tasks and proposals remain, until accepted proposals bring the rate down. `sleep done` prints what was filed, proposed and rejected, the brake when it is off, and a warning when the active cycle ends within 2 days with open work.
-- **The task-filing rules** (`knowledge/patterns/task-filing-rules.md`) are sleep's distillation of the rejects: every rule cites the reject ids it rests on and gives a don't/do pair; a near-duplicate rule is refused (merge), and the file is capped (8,000 chars, 15 rules). While a sleep runs, `tasks create --by sleep` and `tasks propose` refuse until `tasks rules` was read in that cycle (and again after a change). Every change is in `state/.task-filing-rules-history.json` (written before the file, under one lock); the owner reverts a rule from the Tasks screen in one tap, and a revert of a change that is no longer the latest is refused. A ledger, verdict or history file that cannot be read is never overwritten: writes refuse, and sleep files and proposes nothing until it is fixed.
-- **Storage:** `state/.task-proposals.json` (proposals + the ledger of tasks sleep filed) and `state/.task-feedback.json` are brain content the generated brain ignore does not exclude, so they sync like `.task-declined.json`; a brain that ignores all of `state/` keeps them on this machine. `created_by: sleep` on a card is informational only: a remote backend's pull may overwrite it.
-
-### Moving the open backlog onto the new model (migration 0.33.0)
-
-Nobody starts it: it is a registry migration (`src/migrations/0.33.0-backlog.ts`, after the journal split).
-
-- **Code step** (`update` / `sleep start`): every `planning` entry leaves `core/RELEASES.json` and `state/.active-version.json` is removed (both kept verbatim in the change list); every open task without a place gets one: legacy version `BACKLOG` → Later, everything else → Next, ranked so the old active version's work and work in flight lead; legacy `parent_task` ids become slugs; `<x>-step-<n>` goes under the one open `<x>-epic…`. Legacy `version`, `priority`, `urgency` stay on the card, unread. It takes stock: every task open at that moment gets a record waiting for an outcome.
-- **Agent task** `reorganize-open-tasks` (sleep-migration, in the next sleep, background included): each waiting task gets exactly one outcome, keep (optionally under a parent, or in Later), merge (cancelled + `absorbed_by: <slug>`, never deleted) or cancel, each with its own reason. A family is an AREA, so it becomes a feature link (`related_feature`, set on the parent and passed to its steps), never a parent; only a deliverable gets a parent, born clean (name ≤80, a criterion). The agent never moves a task off a feature it already has. What it is not sure about it does not apply: the task is kept and the change waits in the **Proposals** section of the Tasks screen as a change card (Apply / Keep as is; owner only). These never touch sleep's brake or feedback.
-- **Any brain:** the rules are generic; a brain with nothing open writes nothing and never lists the agent task, and a second run writes nothing. `migrations record` refuses while a task still waits.
-- **The change list** `state/.backlog-migration.json`: every value the migration replaced (`before`/`after`, who, when), the retired planning entries, the old active-version file, the parents it created, every outcome. It is the undo record; it syncs like `.task-declined.json` (machine-local where `state/` is ignored).
-
-```bash
-dreamcontext migrations backlog show [--pending] [--json]   # what waits, and every decision
-dreamcontext migrations backlog decide <slug> keep|merge|cancel [--parent <p>] [--feature <f>] [--queue next|later] [--into <slug>] --reason "…"
-dreamcontext migrations backlog parent "<deliverable>" --why "…" --criterion "…" --children a,b[,…] [--feature <f>]
-dreamcontext migrations backlog propose <slug> merge|cancel|parent|later|feature [--into|--parent <slug> | --feature <f>] --why "…"
-dreamcontext migrations backlog report [--json]             # open / top-level / parents / groups by feature before → now, outcomes, proposals
-dreamcontext tasks list -g feature                          # the board by area: where the families become few
-dreamcontext tasks list -g parent                           # families under their parent, standalone last, top-level count
-```
-
-A decision taken in an agent run is the agent's; one taken in a person's shell, or on the Tasks screen, is the owner's, and an agent never overrules it.
 
 ### Declining an idea (work that never became a task)
 
@@ -118,40 +50,19 @@ dreamcontext tasks insert <name> acceptance_criteria "API returns 200 with pagin
 dreamcontext tasks insert <name> constraints "Use native fetch, no axios"
 dreamcontext tasks insert <name> technical_details "Key file: src/api/tasks.ts (Express router)"
 dreamcontext tasks insert <name> notes "Edge case: empty results return [] not null"
-dreamcontext tasks insert <name> changelog "Implemented pagination for /api/tasks"   # goes to the journal
+dreamcontext tasks insert <name> changelog "Implemented pagination for /api/tasks"
 ```
-Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`, and `changelog` (kept as a name: it writes a journal entry, never a card section). A missing section is created on first insert; `workflow` holds the mermaid flowchart — add it only when the task is big enough to need one (`tasks doctor` validates it against the criteria once present).
+Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`, `changelog`. A missing section is created on first insert (before Changelog); `workflow` holds the mermaid flowchart — add it only when the task is big enough to need one (`tasks doctor` validates it against the criteria once present).
 
 ### Lifecycle commands
 ```bash
-dreamcontext tasks log <name> "what was done"        # journal entry — MANDATORY each session
+dreamcontext tasks log <name> "what was done"        # changelog entry — MANDATORY each session
 dreamcontext tasks status <name> in_progress "reason" # bump status; first in_progress auto-stamps start_date if unset, completed stamps due_date with the real end
 dreamcontext tasks status <name> in_review "reason"  # bump status (logs automatically; any declared status key works too)
 dreamcontext tasks statuses                        # the project's status set: key, kind, order, colour, GitHub/ClickUp mapping
-dreamcontext tasks complete <name> "summary"         # mark complete (same evidence gate as status completed)
-dreamcontext tasks check <name> <n|phrase> --run "npm test"   # tick a criterion WITH evidence (below)
-dreamcontext tasks approve <name> [--note "what I checked"]  # the owner's verdict: review → done (never from an agent)
-dreamcontext tasks doctor [name]                     # card-standard checks + Workflow drift
-dreamcontext tasks delete <name> --yes               # delete (propagates to remote on sync; the journal moves to state/journal/.deleted/)
+dreamcontext tasks complete <name> "summary"         # mark complete
+dreamcontext tasks delete <name> --yes               # delete (propagates to remote on sync)
 ```
-
-### Evidence changes status
-
-A criterion is ticked only with a reference to its proof: `- [x] <text> (evidence: <ref>)`.
-
-| ref | means | written by |
-|---|---|---|
-| `cmd:<je_id>` | an `evidence` journal entry: the command, its exit code and a scrubbed output tail (≤ 2,000 chars) | `tasks check --run "<cmd>"`, or `--output-file <path> --exit <code>` for a command already run |
-| `commit:<sha>` | a commit reachable from the current branch of the project or a linked repo | `tasks check --evidence commit:<sha>` |
-| `shot:<path>` | a project-relative screenshot that exists (no symlinks, nothing outside the project) | `tasks check --evidence shot:<path>` |
-| `owner:<je_id>` | an `approval` journal entry | a tick in the dashboard, `tasks approve` |
-| `legacy` | ticked before evidence existed (the migration) | the migration only |
-
-- **`tasks check` refuses** a non-zero exit (nothing is ticked), a `cmd:` that names no evidence entry, a `commit:` that is not reachable, a typed `owner:<date>`, and a phrase that matches zero or several criteria (it lists the candidates). Never flip a box with Edit: the gate counts an unreferenced tick as unproven.
-- **The gate.** A move to a review- or done-kind status (`tasks status`, `tasks complete`, a dashboard drag) is refused while any criterion is unticked or has no ref, and lists them. **Done directly** also needs every ref to be `cmd:` or `commit:` and no criterion marked `(observed)`; `shot:`, `owner:`, `legacy` and observed criteria reach review, and the owner closes them. A task with no criteria cannot close on its own word: done is refused (nothing proves it), review is open, and the owner closes it from there (or `--force --reason`). A body line starting `###` is demoted inside a journal entry, so a log can never forge an entry.
-- **The owner's paths.** `tasks approve` (review → done, writes an `approval` entry) and the dashboard (a ticked box writes an approval entry, then `owner:<its id>`; dragging a review card to done is an approval). `--force --reason "<why>"` passes the gate and is journaled. `approve` and `--force` are refused from a Claude session or agent run: an accident guard, not a security boundary; every approval and force is a journal entry with its actor.
-- **Evidence never leaves the machine.** `evidence` and `sleep` entries are not posted to GitHub/ClickUp; a card pulled from another machine keeps its refs and is not re-resolved.
-- **`tasks doctor`** reports: a template HTML comment, a name over 80 chars, a Why over 600 chars, a card over 12,000 chars, an open task with no criteria, a review task with unproven criteria, a review older than 7 days, and a typed owner date. It also folds a card's returned Changelog into its journal.
 
 ### Filtering & discovery
 ```bash
@@ -170,7 +81,7 @@ Filters compose (AND across flags), case-insensitive; version/priority/feature m
 
 ## RICE prioritization
 
-Optional, additive to priority/urgency; stored on the card and synced. The dashboard no longer shows it: the RICE scatter view and sort were retired in 0.33.0 (decision 10), and importance is now a card's rank inside its cycle or queue (see [Cycles, the queue, releases](#cycles-the-queue-releases)).
+Optional, additive to priority/urgency; powers the dashboard Scatter view and RICE sort.
 ```bash
 dreamcontext tasks create <name> --reach 5 --impact 3 --confidence 75 --effort 2
 dreamcontext tasks rice <name>                 # print current values
@@ -193,10 +104,10 @@ dreamcontext tasks create <name> --start 2026-06-25 --due 2026-07-01
 ```
 - `start` is always **on or before** `due`. Moving the **start** past the due date doesn't fail — the due date is pushed out by just enough to preserve the window's length (a 5-day job that starts late is still a 5-day job). Moving the **due** end before the start is still rejected, since that's a direct contradiction.
 - Status transitions record real-world timing: the first `in_progress` stamps `start_date` (and reschedules a due date it would have invalidated), `completed` stamps `due_date` with the actual end date. Completing a task that never had a start means it went not-started → done in one move, so it gets today at **both** ends (and loses its `backlog` tag, since it is now dated).
-- Setting either date on a `backlog`-tagged task **removes the `backlog` tag** (a dated task is planned, not backlog). The rule runs the other way too: adding the tag clears both dates. That direction is enforced in the BACKEND, so every surface inherits it. The board no longer writes the tag: its **Move to Later** plans the card into the Later queue (`queue: later`), which is a place on the "when?" axis, not a tag.
-- Both dates render in the dashboard's Timeline (Gantt) view.
+- Setting either date on a `backlog`-tagged task **removes the `backlog` tag** (a dated task is planned, not backlog). The rule runs the other way too: adding the tag clears both dates. That direction is enforced in the BACKEND, so every surface inherits it — the dashboard's "Send to backlog" writes only the tag and lets the backend undate the task, rather than keeping a second copy of the rule in the UI.
+- Both dates render in the dashboard timeline (Gantt) and calendar views.
 
-`urgency` (critical/high/medium/low) stays on the card, in the CLI and in sync. The dashboard no longer shows or edits priority or urgency (decision 3): the Eisenhower matrix was retired in 0.33.0, and a saved view grouped or sorted by either opens grouped by Now / Next / Later and sorted by rank.
+`urgency` (critical/high/medium/low) is the second Eisenhower axis (priority × urgency) for the dashboard matrix.
 
 ---
 
@@ -237,7 +148,7 @@ In the dashboard: **Assign to agent** on the task (pick an agent, optional note)
 - **Assign versus Delegate.** **Assign to agent** runs a named agent from the Agents page under its own approved prompt, unattended. **Delegate to Claude** opens a live Claude session on the task that you watch and steer.
 - **The status rule.** Assigning moves the task to `in_progress` only when it has no status or an open-kind one (`todo` and declared children). It never moves a task out of active, review, done, cancelled or an unknown status. Assigning itself is allowed at any status.
 - **What the agent gets.** The task name (capped at 200 characters) and a `--note` arrive fenced as data, never as instructions. A note typed in the dashboard is the owner speaking and goes in as the run's ask. The agent's own human gates stay on: a `## Flow` `hitl` node or `review` still stops it to ask.
-- **The result.** The agent logs its own entries with `tasks log`. On top of that the run writes exactly one sanitized entry: ``### <date> - Agent <title> (`slug`)`` and `- Run <runId>: <status>. Document: <path or none>.`, never the document body. The journal entry syncs to ClickUp/GitHub like any other log, so only the status and the document path leave the machine.
+- **The result.** The agent logs its own entries with `tasks log`. On top of that the run writes exactly one sanitized entry: ``### <date> - Agent <title> (`slug`)`` and `- Run <runId>: <status>. Document: <path or none>.`, never the document body. The changelog syncs to ClickUp/GitHub like any other entry, so only the status and the document path leave the machine.
 - **First use: approval.** The agent must be approved **to run** on this machine (a scheduled agent's automation approval does not count). Otherwise the CLI refuses with "Approve it on the Agents page", and the dashboard composer shows the review with **Approve and assign**. A disabled agent, an unknown agent or task, or an over-long note is refused too.
 - **Who may assign.** The owner, from the dashboard or their own terminal. An agent run cannot (`tasks assign-agent` refuses inside one).
 - **How long.** An assigned run uses the agent's call settings: a 15-minute timeout unless a former on-call agent carried its own.
@@ -812,7 +723,7 @@ Every task file has a `## Workflow` mermaid block near the top: one node per acc
 ```bash
 dreamcontext tasks doctor <name>     # checks flowchart ⇄ acceptance-criteria sync (all tasks if omitted)
 ```
-And tick the matching criterion immediately with its evidence (`dreamcontext tasks check <name> <n> --run "<cmd>"`) — don't wait for sleep.
+And flip the matching `- [ ]` → `- [x]` in the Acceptance Criteria list immediately — don't wait for sleep.
 
 ---
 
@@ -822,12 +733,13 @@ And tick the matching criterion immediately with its evidence (`dreamcontext tas
 id: "task_abc123"
 name: "Implement auth middleware"
 description: "Add JWT validation to protected routes"
+priority: "high"          # critical | high | medium | low
+urgency: "medium"         # critical | high | medium | low (Eisenhower axis)
 status: "todo"            # todo | in_progress | in_review | completed — or any key declared in overrides/task.md
 created_at: "2026-02-25"
 updated_at: "2026-02-25"
 tags: []                  # includes person:<slug> for assignees
-cycle: "cy_Ab3x9Qzk"       # the cycle it is planned into (or null); `queue: next|later` when in none
-rank: 20                  # order inside its cycle / queue (tasks rank)
+version: "v0.9.0"         # planning-version association (auto-set to active planning version)
 parent_task: null
 related_feature: null     # feature slug for cross-link
 product: null             # multi-product scoping (optional)
@@ -848,7 +760,7 @@ A project can override the default task shape, declare its own custom fields AND
 
 The file carries three things:
 
-- **Frontmatter `statuses:`** — extra task statuses, each living **under one of the shipped four**. Each entry: `name` (label), `key` (stable frontmatter value — ALWAYS write it explicitly; defaults to the snake_cased name), `kind` (`open | active | review | cancelled` — `done` is reserved for `completed`, exactly one done-kind status ever), `parent` (which of `todo`/`in_progress`/`in_review`/`completed` it rides under; defaults from the kind — `cancelled` → `completed`), `order` (pipeline position; the shipped four sit at 0 / 10 / 20 / 30, so `5` slots between `todo` and `in_progress`), optional `color` (6-hex — the GitHub label colour and the dashboard swatch) and optional `clickup` (list-status name aliases). The **kind drives everything**: `active` stamps the start date and counts as "being worked"; `review` triggers the required-field gate; `cancelled` is terminal — hidden by default, never overdue / at-risk / on the board, out of roadmap progress on both sides, and never the task a bookmark hint offers. The shipped four can be relabelled / reordered / recoloured but never removed or re-kinded. Every invalid entry (bad kind, non-hex colour, duplicate or reserved key, a collision with a custom-field key, a second done-kind) is dropped with a warning `doctor` shows — never fatal.
+- **Frontmatter `statuses:`** — extra task statuses, each living **under one of the shipped four**. Each entry: `name` (label), `key` (stable frontmatter value — ALWAYS write it explicitly; defaults to the snake_cased name), `kind` (`open | active | review | cancelled` — `done` is reserved for `completed`, exactly one done-kind status ever), `parent` (which of `todo`/`in_progress`/`in_review`/`completed` it rides under; defaults from the kind — `cancelled` → `completed`), `order` (pipeline position; the shipped four sit at 0 / 10 / 20 / 30, so `5` slots between `todo` and `in_progress`), optional `color` (6-hex — the GitHub label colour and the dashboard swatch) and optional `clickup` (list-status name aliases). The **kind drives everything**: `active` stamps the start date and counts as "being worked"; `review` triggers the required-field gate; `cancelled` is terminal — hidden by default, never overdue / at-risk / in the Eisenhower matrix, out of roadmap progress on both sides, and never the task a bookmark hint offers. The shipped four can be relabelled / reordered / recoloured but never removed or re-kinded. Every invalid entry (bad kind, non-hex colour, duplicate or reserved key, a collision with a custom-field key, a second done-kind) is dropped with a warning `doctor` shows — never fatal.
   - **THE PARENT IS THE WIRE.** A cloud backend only ever sees the parent — one of the four it already understands — so **a declared status needs nothing created on the provider**. The child's identity rides beside it as a `dc:<key>` marker and round-trips.
   - **GitHub**: the parent gives the open/closed state (parent `completed` → closed + `state_reason: completed`), and the `dc:<key>` label is auto-provisioned in the declared colour. `not_planned` stays EXCLUSIVELY the soft-delete signal (see integrations.md). A status key the local set does not know never reopens or closes an issue and never strips another machine's label.
   - **ClickUp**: the API cannot create list statuses, and it never has to. A declared status tries its own names first (so a list that really carries "Cancelled" gets the honest value — declare a `clickup:` alias when the list spells it differently), then falls back to the parent's status, with the `dc:<key>` **tag** carrying the child. On pull the tag wins only while it still agrees with the list status, so **a human moving the task in ClickUp always beats a stale tag**. `doctor` reports which declared statuses ride as a tag and flags any list status whose meaning your declaration changes.
@@ -916,62 +828,19 @@ Status values: `planning | in_progress | in_review | active | shipped | deprecat
 
 ---
 
-## Cycles, the queue, releases
+## Versioning & releases
 
-Three separate things (older cards may still hold `priority`, `urgency`, `version`: read, never written by these paths).
-
-- **Cycle** (`core/CYCLES.json`, git-tracked): a date range plus a one-sentence goal. Random stable id `cy_<nanoid8>`; the number you see is derived from start-date order and never stored or sent anywhere. One is active at a time. A team merge that leaves two active keeps the one that started first and says so (the CYCLES.json merge driver, and every read).
-- **Queue**: `Now` = the active cycle, `Next`, `Later`. Importance is the `rank` inside a cycle or queue, not a priority.
-- **Release** (`RELEASES.json`): an outcome, compiled from what closed since the previous release, with the cycles that work came from. Planning releases are no longer created.
+Versions and releases are unified in `RELEASES.json`. A "version" is a release entry with `status: planning`; releasing flips it to `released` with a date. Lifecycle: `planning → released`.
 
 ```bash
-dreamcontext cycle new --goal "Ship the card standard" [--weeks 2 | --end 2026-11-02]   # default: last cycle's length, else tasks.cycleDefaultWeeks (1)
-dreamcontext cycle start <n>                   # refused while another is active
-dreamcontext tasks plan <task> now|next|later|<n>   # a parent brings its open sub-tasks (journaled per child)
-dreamcontext tasks rank <task> --before|--after <task>
-dreamcontext cycle show [<n>]                  # goal, days left, done/total LEAVES, work grouped under parents
-dreamcontext cycle close [<n>] --carry a,b --back c --cancel d   # or --all carry|back|cancel; interactive on a TTY
-dreamcontext cycle list
-dreamcontext core releases add --ver 1.4.0 --summary "..." -y
+dreamcontext core releases add --ver v0.9.0 --summary "Dashboard improvements" --status planning
+dreamcontext core releases active                # print the active planning version
+dreamcontext core releases active v0.10.0        # switch active planning version
+dreamcontext core releases active --clear        # unset
+dreamcontext core releases list -n 10
+dreamcontext core releases show v0.9.0
 ```
-
-- **Leaves only.** Capacity and progress count tasks without children; a parent is counted through its children, and its own place is derived from them (a lone child in a cycle shows its parent as the header).
-- **The close is a ritual.** Every unfinished leaf is carried into the next planned cycle, sent back to Next, or cancelled; nothing closes undecided. Each carry is recorded on the closed cycle, so a task's carry count is visible (`cycle show`: `carried 2×`). An empty cycle closes as 0/0.
-- **On a remote.** GitHub carries the cycle as the label `cycle:cy_<id>`; GitHub labels and ClickUp's native priority carry the order: a task in any cycle (active or planned) → high, Next → normal, Later → low. Any cycle, not only the active one, on purpose: which cycle is active is read from each machine's own `core/CYCLES.json`, so a machine whose copy is behind must never send normal for a task that is in a cycle. Coming back it is lossy on purpose: urgent / critical / high → Now only if the task is already in the active cycle (else Next), normal → Next, low → Later. A remote cannot put a task into a cycle. A cycle id this machine does not have yet is kept on the card and shown as "cycle not yet synced" until `core/CYCLES.json` arrives; a push never drops it; `version:` labels are never removed. A card that only holds a legacy priority syncs as before.
-- **Sleep never plans.** It files and reconciles tasks; putting work into a cycle is the owner's call.
-
----
-
-## The dashboard's task screens
-
-The same model, seen by the owner. Every task-authored string (a section, a criterion, a journal body, a proposal, a learned quote, an audit note) renders as plain text or through one sanitizing markdown renderer (`marked` + DOMPurify), so a payload pulled from a remote or written by an agent never runs. Every screen speaks English and Turkish.
-
-- **The board** (Tasks) groups cards by **Now / Next / Later** by default, ordered by rank, with the active cycle in a strip above it (number, dates, goal, done/total leaves, days left, a link to Planning). One click regroups by status; version and assignee are in the Group menu. A finished card shows in Now only while it is in the active cycle; every other finished card waits in a **Done** lane that stays closed until opened, and a cancelled card is not on the board. A parent card shows `n/m` of its sub-tasks and opens them in place. A sub-task whose parent sits in another column shows under its parent's name. Dragging a card to another column plans it (`tasks plan`), and dropping it on a card of the same column ranks it (`tasks rank`). Right-click → **Move to Later** plans it into Later. **List** and **Timeline** show the same cards. On a phone it shows one column at a time. Saved views keep their own filter, sort and grouping. A view saved before 0.33.0 that named a retired layout opens on the Board. One grouped or sorted by priority or urgency opens on Now / Next / Later and rank. Its priority, urgency and RICE filters are dropped.
-- **The task page** (a card click, ⌘K, the Brain map) shows:
-  - the name as written, back to the board, status, and the place on the axis (Now / Next / Later or a cycle);
-  - the parent path, and the door to an agent;
-  - the criteria, each with what proves it (`cmd`, `commit`, `shot`, `owner`, `legacy`) and the observed tag (a tick there is the owner's `owner:` approval);
-  - Why, Constraints & Decisions and the other sections, each collapsible;
-  - the sub-tasks with `n/m`;
-  - the journal, five entries at a time with "Show older";
-  - the properties (dates, people, the agent, feature, roadmap, tags, custom fields).
-  A card's old in-card `## Changelog` renders only when opened, and a diagram loads only when the card has one. While the task is in review, the header carries the verdict: **Approve**, or **Send back** with a required note (the same call as `tasks approve` / `tasks send-back <name> --note "…"`).
-- **The Inbox** is what waits for the owner, and it carries the sidebar badge:
-  - **Reviews**: approve or send back in place. A review with an unticked criterion says "evidence incomplete": it is listed, but not counted in the badge.
-  - **Proposals and change cards**: sleep's proposals and the migration's uncertain changes, accept or reject as before.
-  - **Held open**: parents a sync kept open, each with Seen.
-  - **What sleep learned**: a rule from the owner's repeated corrections or a filing-rule change, with the quotes and their dates, and **Revert**.
-  - **Records**: every owner override (approval, send-back, accept, apply, force, exemption) with who, through what (`cli`, `dashboard`, `phone`, `no-origin`) and when. A `no-origin` record sits on a warning tint: a write with no browser Origin is the shape a scripted call has.
-- **Planning** lists the cycles (start a planned one; close the active one) and creates one (goal, start, weeks; the default is the project's). Its board puts the Next queue beside a cycle: drag or "Move to" plans, ↑ / ↓ ranks, and the capacity line compares the leaves planned with what the last three closed cycles finished.
-- **The Close deck** (Close on the active cycle) is `cycle close` with buttons. Each unfinished leaf, grouped under its parent with its carry count, gets **Carry**, **Back to Next** or **Cancel**, and **Apply to the rest** fills the undecided ones. Close stays disabled until every leaf is decided, and a close that cancels anything asks once. An interrupted close resumes with what it recorded.
-- **Releases** shows what closed since the previous release and is in no release yet (the set the next `release` compiles), and the releases themselves. It is read-only; releases change through `dreamcontext core releases`.
-- **"Give to an agent"** is the one door on the task surfaces: the task page's button, a card's context menu and the toolbar's "Write it with an agent". It reads the task by slug and offers four choices:
-  - **Develop**: readiness first (`tasks ready`: gaps shown, Start disabled until ready), then the same Develop session the Plan chat hands over to;
-  - **A named agent**: the Assign-to-agent composer;
-  - **Custom prompt**: the Delegate composer with its four modes, carrying the task's Why and criteria;
-  - **Write a new task**: the authoring composer.
-  Develop, the custom prompt and authoring need the in-app agent (the desktop app, Agents on). The Plan chat's own Develop button is unchanged.
-- **Retired in 0.33.0**: the Eisenhower matrix, the RICE scatter, Calendar and Activity heatmap views, the Versions popover, the task detail drawer, and the board's "Send to backlog". Priority, urgency, version and RICE stay readable on the card and in the CLI; the dashboard no longer edits them (decisions 3 and 10).
+New tasks without `--version` auto-attach to the active planning version, so work is always linked to a milestone. If none exists, the sleep agent creates one. The dashboard Version Manager plans and releases versions; the sleep agent reports release readiness when all of a planning version's tasks are done.
 
 ---
 
@@ -993,7 +862,7 @@ SKILL.md keeps one line per capability and one home per rule. This is the fuller
 
 ### Capability summaries: tasks, roadmap, Lab, people
 
-- **Tasks**: a card plus its journal, evidence-gated status, RICE, status lifecycle, start/due date ranges, resolved assignees, and project-declared custom fields (`overrides/task.md`)
+- **Tasks**: Working documents with changelog, RICE, status lifecycle, start/due date ranges, resolved assignees, and project-declared custom fields (`overrides/task.md`)
 - **Roadmap / Objectives**: PO-authored OKR board: objectives in `core/objectives/`, many-to-many task links (`objectives:` frontmatter), dependency DAG with full forecast cascade, target vs forecast slip detection, `dreamcontext roadmap` (+ `--json`)
 - **Lab / Insights**: Curated analytics **metrics** ("insights") synced from HTTP APIs or local scripts into the brain: manifests in `lab/insights/`, cached series every session, roadmap Key-Result binding (`lab bind` / the dashboard's objective dialogs — one feeder per objective, seeds `metric.current` on connect), dashboard Lab page. **Funnel analytics**: `--render funnel` + a `funnel-set/v1` payload gives a routed multi-page view — all-funnels comparison table + per-funnel step lane with drop badges, arc gesture, filters, breakdowns, compare (`/lab/<slug>`). **App insights (`--render app`)**: a script builds a multi-page, interactive, full-screen-capable body itself — `{ data, app }`, where `data` is a `dataset/v1` bundle and `app` declares an ordered list of sandboxed html pages wired to the host over a postMessage bridge (`lab.navigate`/`lab.data`/`lab.onRoute`) — no React component required. Routes to `/lab/<slug>` and `/lab/<slug>/p/<pageId>`, full screen via `?fs=1`. An agent reads a body it did not author with `lab body <slug> [--page]` and slices its numbers with `lab query <slug> [--where]`. `matrix/v1` (`--render breakdown`) is DEPRECATED for new insights — existing ones keep rendering, no migration forced. **An insight is NOT a knowledge file** — create with `dreamcontext lab create`, never `knowledge create`
 - **People (constitutions + roster)**: One constitution file per person (`people/<slug>.md`), a structural roster (`people/people.json`), machine-local active-person resolution, `person:<slug>` tags → ClickUp/GitHub assignees
@@ -1022,9 +891,9 @@ SKILL.md keeps one line per capability and one home per rule. This is the fuller
 
 **Naming: a task name is a short plain sentence saying what the task does** — "Fix the login redirect loop", "Dashboard renders the summary as a paragraph". Never a type-prefixed slug (`feat-x-y`, `fix-login-redirect`) — the slug is derived automatically from the name; you never write slug-style names yourself.
 
-**`-w/--why` is mandatory** — creation fails without it. A new card has only `## Why` (history goes to its journal); every other section appears when you first `tasks insert` into it. Never insert placeholder content to "fill out" a task — a section with nothing to say shouldn't exist.
+**`-w/--why` is mandatory** — creation fails without it. New tasks scaffold lean: only `## Why` and `## Changelog` exist at birth; every other section appears when you first `tasks insert` into it. Never insert placeholder content to "fill out" a task — a section with nothing to say shouldn't exist.
 
-Status: `todo → in_progress → in_review → completed` by default. A project may **declare more** in `_dream_context/overrides/task.md` (`statuses:` frontmatter — e.g. `planned`, `cancelled`), each living **under one of the four** and carrying a semantic `kind` (`open | active | review | done | cancelled`) that drives every derived behaviour. A cloud backend only ever sees the PARENT (so nothing has to be created on GitHub/ClickUp); the child rides beside it as a `dc:<key>` marker. `dreamcontext tasks statuses` lists the set with its parent and remote mapping. When a **cancelled-kind** status exists, abandoned / superseded / obsoleted work goes THERE (it leaves progress counts, is never overdue, closes the GitHub issue) — not to `in_review "confirm close"`. Your SessionStart briefing names the declared keys. Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes` — created on first insert; `changelog` writes a journal entry.
+Status: `todo → in_progress → in_review → completed` by default. A project may **declare more** in `_dream_context/overrides/task.md` (`statuses:` frontmatter — e.g. `planned`, `cancelled`), each living **under one of the four** and carrying a semantic `kind` (`open | active | review | done | cancelled`) that drives every derived behaviour. A cloud backend only ever sees the PARENT (so nothing has to be created on GitHub/ClickUp); the child rides beside it as a `dc:<key>` marker. `dreamcontext tasks statuses` lists the set with its parent and remote mapping. When a **cancelled-kind** status exists, abandoned / superseded / obsoleted work goes THERE (it leaves progress counts, is never overdue, closes the GitHub issue) — not to `in_review "confirm close"`. Your SessionStart briefing names the declared keys. Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`, `changelog` — created on first insert, slotted before Changelog.
 **Custom fields (if this project declares them).** When `_dream_context/overrides/task.md` exists, every task carries project-defined custom fields. Their **values are surfaced to you inline** — in the snapshot's Active Tasks block and in `dreamcontext tasks list --long` — so you can see them without opening the file; unset **required** fields show as `⚠ UNSET (required)`. When you create or reconcile a task, **set every declared field** (`dreamcontext tasks field <slug> <key> <value>` or `tasks create --field key=value`). **REQUIRED fields are mandatory — never create or complete a task with a required field left empty.** Fields marked **[ASK THE USER]** (`ask: true`) capture a human judgment (e.g. a time estimate) — **ask the user for the value when creating the task instead of guessing it.** The full schema + sync behavior → [tasks-and-features.md](references/tasks-and-features.md).
 **Objectives (roadmap links).** When the project has objectives (`core/objectives/` non-empty — they're in your snapshot), every task should declare which it serves: `objectives: [slug-a, slug-b]` in frontmatter (many-to-many — one task often lifts several outcomes). Set at creation (`tasks create --objectives a,b`) or later (`dreamcontext tasks objectives <task> a,b`). **Propose objective links for tasks you create; never overwrite a non-empty `objectives:` list — an existing value is a PO decision that sticks.** The field is local-only (never synced to a cloud backend). Rollups, forecasts, and slip detection are computed — `dreamcontext roadmap` / `--json`. Full model → [tasks-and-features.md](references/tasks-and-features.md).
 
@@ -1053,8 +922,8 @@ dreamcontext tasks handoff <slug> \
   --style "<how you are working, or none>" --files "<files in flight + line anchors, or none>"
 ```
 
-That entry is the whole handoff: a fresh session is told to read the task's **newest
-journal entry** before anything else, so write it for someone who was not here. The
+That entry is the whole handoff: a fresh session is told to read the task's **latest
+changelog entry** before anything else, so write it for someone who was not here. The
 command **refuses** — and writes nothing — while any part is missing or `--done`/`--next`
 is under a sentence; fix what it names and re-run. On success it writes the entry, sets the
 task `in_progress`, records the request, and writes a partial session digest.

@@ -125,13 +125,13 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
   const slice = funnelSlice(f, pick, sel);
   const notes: { key: string; text: string; attr: string }[] = [];
   if (pick && slice.funnelId !== pick) {
-    notes.push({ key: 'funnel', attr: 'data-lab-unknown-funnel', text: fill(t('lab.blocks.explorer.unknownFunnel'), { id: pick, name: slice.funnelName }) });
+    notes.push({ key: 'funnel', attr: 'data-lab-unknown-funnel', text: t('lab.blocks.explorer.unknownFunnel').replace('{id}', pick).replace('{name}', slice.funnelName) });
   }
   if ('missing' in dim) {
     return (
       <div className="lab-block-table lab-seg" data-lab-segments="">
         {notes.map((n) => <div key={n.key} className="lab-seg-note" {...{ [n.attr]: '' }}>{n.text}</div>)}
-        <div className="lab-seg-note" data-lab-segments-nodim="">{fill(t('lab.blocks.segments.noDim'), { by: dim.missing })}</div>
+        <div className="lab-seg-note" data-lab-segments-nodim="">{t('lab.blocks.segments.noDim').replace('{by}', dim.missing)}</div>
       </div>
     );
   }
@@ -140,9 +140,9 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
   const picked = stringListOption(options, 'metrics');
   const askedKeys = picked ? picked.filter((k) => k in levels) : Object.keys(levels);
   const unknown = picked ? picked.filter((k) => !(k in levels)) : [];
-  if (unknown.length > 0) notes.push({ key: 'metrics', attr: 'data-lab-unknown-metrics', text: fill(t('lab.blocks.explorer.unknownMetrics'), { keys: unknown.join(', ') }) });
+  if (unknown.length > 0) notes.push({ key: 'metrics', attr: 'data-lab-unknown-metrics', text: t('lab.blocks.explorer.unknownMetrics').replace('{keys}', unknown.join(', ')) });
   const ignored = slice.ignored.filter((k) => k !== dim.key);
-  if (ignored.length > 0) notes.push({ key: 'split', attr: 'data-lab-not-split', text: fill(t('lab.blocks.explorer.notSplit'), { dims: ignored.join(', ') }) });
+  if (ignored.length > 0) notes.push({ key: 'split', attr: 'data-lab-not-split', text: t('lab.blocks.explorer.notSplit').replace('{dims}', ignored.join(', ')) });
 
   const bands = boolOption(options, 'bands', true);
   const density = toDensity(options.density);
@@ -219,7 +219,7 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
                 const unmeasured = notMeasuredText(t, why);
                 // A measured row's null cell is the SEGMENT's own metric (its reason), never the funnel level's.
                 const own = ownOf.get(row.value) ?? {};
-                const low = row.measured && row.lowSample ? fill(t('lab.blocks.explorer.lowSample'), { n: fmtCount(row.users, locale) }) : null;
+                const low = row.measured && row.lowSample ? t('lab.blocks.explorer.lowSample').replace('{n}', fmtCount(row.users, locale)) : null;
                 return (
                   <tr
                     key={row.value}
@@ -264,7 +264,7 @@ export function SegmentsBlock({ frame, options, selection }: BlockViewProps) {
                       const deltaText = delta === null ? null : fmtMetricDelta(delta, fmtKey, locale, tight);
                       const titleParts = [
                         tone ? `${value} · ${statusWord(tone)}` : null,
-                        tight && deltaText ? fill(t('lab.blocks.benchmark.delta'), { delta: deltaText }) : null,
+                        tight && deltaText ? t('lab.blocks.benchmark.delta').replace('{delta}', deltaText) : null,
                       ].filter((x): x is string => x !== null);
                       return (
                         <td

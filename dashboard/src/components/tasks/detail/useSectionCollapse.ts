@@ -45,9 +45,9 @@ function read(vault: string | null): CollapseMap {
 /**
  * Default-open set — and the single registry of section ids.
  *
- * Earned by what a task view is FOR, not by taste: you open a task to see when it is due
- * (Timeline) and whose it is (Ownership). Labels and System are reference — real, but consulted
- * rather than read. (Status and placement sit in the task page's header, not in a section.) Custom fields default open only because
+ * Earned by what a task view is FOR, not by taste: you open a task to see where it stands
+ * (Workflow), when it is due (Timeline), and whose it is (Ownership). Scoring, Labels and System
+ * are reference — real, but consulted rather than read. Custom fields default open only because
  * a project that defined them did so deliberately.
  *
  * `satisfies` (not `:`) is what keeps the keys literal, so {@link SectionId} is the exact set of
@@ -58,22 +58,13 @@ function read(vault: string | null): CollapseMap {
  */
 export const DEFAULTS = {
   identity: true,
+  workflow: true,
   timeline: true,
   ownership: true,
   custom: true,
+  scoring: false,
   labels: false,
   system: false,
-  // The task page's document sections (plan r3 § 5a). Why and the decisions are what a task
-  // is read for; the rest is reference. A legacy in-card Changelog stays closed: it can weigh
-  // hundreds of kilobytes, and a closed section renders nothing.
-  why: true,
-  decisions: true,
-  stories: false,
-  details: false,
-  notes: false,
-  more: false,
-  legacy: false,
-  journal: true,
 } satisfies Record<string, boolean>;
 
 export type SectionId = keyof typeof DEFAULTS;
