@@ -9,7 +9,7 @@ import { promptInput } from '../../lib/prompt.js';
 import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
-import { ensureLocalStateIgnored, hasAcceptAudit, recordAudit } from '../../lib/task-audit.js';
+import { ensureLocalStateIgnored, recordAudit, shouldRecordAccept } from '../../lib/task-audit.js';
 import { applyVerdict, VerdictPreflightError } from '../../lib/task-verdict.js';
 import { newJournalEntryId } from '../../lib/task-journal.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
@@ -1709,9 +1709,14 @@ export function registerTasksCommand(program: Command): void {
       try {
         const r = await acceptProposal(root, backend, statusSet(), id, { name: opts.name, why: opts.why, parent }, 'cli');
         // Once per proposal, as the dashboard does: a re-accept that finished an interrupted one
-        // is the same decision, already audited.
-        if (!hasAcceptAudit(root, id)) {
-          recordAudit(root, { kind: 'accept', slug: r.slug, actor: actorOf() ?? 'owner', via: 'cli', note: `proposal ${id}`, journalId: null });
+        // is the same decision, already audited. The accept happened: an audit that cannot be
+        // written is a warning (exit 0), as on the dashboard (auditAfterCommit), never a crash.
+        if (shouldRecordAccept(root, id, r.finished === true)) {
+          try {
+            recordAudit(root, { kind: 'accept', slug: r.slug, actor: actorOf() ?? 'owner', via: 'cli', note: `proposal ${id}`, journalId: null });
+          } catch (auditErr) {
+            warn(`Accepted, but not recorded in the task audit (${auditErr instanceof Error ? auditErr.message : String(auditErr)}).`);
+          }
         }
         success(`Accepted: ${r.slug} (in the Next queue${r.parent ? `, under ${r.parent}` : ''}).`);
         if (r.parentDropped) warn(`Filed top-level: ${r.parentDropped}`);

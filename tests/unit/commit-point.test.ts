@@ -442,6 +442,110 @@ describe('the provenance marker', () => {
     expectNormalEnd(p.id);
   }, 20_000);
 
+  // Sixth pass, Major 2: the leftover finish holds the claim, so two overlapping finishes write
+  // one approval entry; the other caller is refused as an accept in flight.
+  it('(r19 a) two overlapping leftover finishes: one approval entry, one accepted proposal, the other refused', async () => {
+    const p = propose();
+    claim(p.id, staleAt());
+    cardOnSlug(p.id);
+    let open = () => {};
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    const readJournalOrig = LocalTaskBackend.prototype.readJournal;
+    let first = true;
+    vi.spyOn(LocalTaskBackend.prototype, 'readJournal').mockImplementation(async function (this: LocalTaskBackend, slug: string) {
+      if (first) { first = false; await gate; }
+      return readJournalOrig.call(this, slug);
+    });
+    const backend = new LocalTaskBackend(stateDir);
+    const a = acceptProposal(ctx, backend, DEFAULT_STATUSES, p.id, {}, 'dashboard');
+    const b = acceptProposal(ctx, backend, DEFAULT_STATUSES, p.id, {}, 'dashboard');
+    await expect(b).rejects.toMatchObject({ code: 'resolved', message: expect.stringMatching(/being accepted right now/) });
+    open();
+    expect((await a).finished).toBe(true);
+    vi.restoreAllMocks();
+    expect(approvals()).toHaveLength(1);
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)).toMatchObject({ status: 'accepted', slug: SLUG });
+    expect(keeps(p.id)).toHaveLength(1);
+  });
+
+  // Sixth pass, Major 1: the approval entry is the "step ran" marker. A late re-accept after the
+  // owner moved the card writes nothing to it: Later stays Later, a cycle stays a cycle.
+  for (const [label, moved, expected] of [
+    ['to Later', { queue: 'later' as const }, { queue: 'later', cycle: undefined }],
+    ['into a cycle', { queue: null, cycle: 'cy_owner001' }, { queue: undefined, cycle: 'cy_owner001' }],
+  ] as const) {
+    it(`(r19 b) the step ran, the mark hit a busy store, the owner moved the card ${label}: a re-accept leaves it there`, async () => {
+      const p = propose();
+      let release = () => {};
+      const create = LocalTaskBackend.prototype.create;
+      vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
+        const task = await create.call(this, input);
+        release = hold('.task-proposals');
+        return task;
+      });
+      expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+      release();
+      vi.restoreAllMocks();
+      expect(approvals()).toHaveLength(1);
+      await new LocalTaskBackend(stateDir).updateFields(SLUG, moved);
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + TTL + 60_000);
+      expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+      expect(readProposals(ctx).proposals.find((x) => x.id === p.id)).toMatchObject({ status: 'accepted', slug: SLUG });
+      const raw = readTaskFile(join(stateDir, `${SLUG}.md`)).raw;
+      expect(raw.queue ?? undefined).toBe(expected.queue);
+      expect(raw.cycle ?? undefined).toBe(expected.cycle);
+      expect(approvals()).toHaveLength(1);
+    }, 20_000);
+  }
+
+  // Sixth pass, Major 1: a create slower than the claim's TTL, finished meanwhile by another
+  // caller through the leftover path: the slow one's step finds the entry and writes nothing.
+  it('(r19 c) the slow-create race: one approval entry, one accepted proposal', async () => {
+    const p = propose();
+    let open = () => {};
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    const create = LocalTaskBackend.prototype.create;
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
+      const task = await create.call(this, input);
+      await gate;
+      return task;
+    });
+    const slow = acceptProposal(ctx, new LocalTaskBackend(stateDir), DEFAULT_STATUSES, p.id, {}, 'dashboard');
+    await vi.waitFor(() => expect(existsSync(join(stateDir, `${SLUG}.md`))).toBe(true));
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + TTL + 60_000);
+    const other = await acceptProposal(ctx, new LocalTaskBackend(stateDir), DEFAULT_STATUSES, p.id, {}, 'dashboard');
+    expect(other.finished).toBe(true);
+    open();
+    await slow;
+    expect(approvals()).toHaveLength(1);
+    expect(readProposals(ctx).proposals.find((x) => x.id === p.id)).toMatchObject({ status: 'accepted', slug: SLUG });
+    expect(keeps(p.id)).toHaveLength(1);
+  });
+
+  // Sixth pass, Minor: a stale claim whose marked card was deleted makes a NEW card: a real
+  // creation, so it gets its own audit and dashboard change.
+  it('a stale claim whose marked card was deleted: the new card is audited and is a dashboard change', async () => {
+    const p = propose();
+    let release = () => {};
+    const create = LocalTaskBackend.prototype.create;
+    vi.spyOn(LocalTaskBackend.prototype, 'create').mockImplementation(async function (this: LocalTaskBackend, input: Parameters<LocalTaskBackend['create']>[0]) {
+      const task = await create.call(this, input);
+      release = hold('.task-proposals');
+      return task;
+    });
+    expect((await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} })).code).toBe(200);
+    release();
+    vi.restoreAllMocks();
+    rmSync(join(stateDir, `${SLUG}.md`));
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + TTL + 60_000);
+    const r = await call(handleTaskProposalAccept, ctx, { id: p.id }, { body: {} });
+    expect(r.code).toBe(200);
+    expect(r.body.finished).toBeUndefined();
+    expect(existsSync(join(stateDir, `${SLUG}.md`))).toBe(true);
+    expect(listAudit(ctx).filter((e) => e.kind === 'accept' && e.note === `proposal ${p.id}`)).toHaveLength(2);
+    expect((readSleepState(ctx).dashboard_changes ?? []).filter((c) => c.target === SLUG && c.action === 'create')).toHaveLength(2);
+  }, 20_000);
+
   // Fifth pass, Minor: the re-accept that finished an interrupted one is the same decision.
   it('an interrupted accept accepted again: one accept audit and one dashboard change', async () => {
     const p = propose();
@@ -628,7 +732,7 @@ describe('tasks complete --force', () => {
   }, 20_000);
 });
 
-/** r18: `tasks accept` audits an accept once per proposal, like the dashboard (task-audit.ts hasAcceptAudit). */
+/** r18: `tasks accept` audits an accept once per proposal, like the dashboard (task-audit.ts shouldRecordAccept). */
 describe('tasks accept audits a re-accept once', () => {
   const AGENT_ENVS = ['CLAUDECODE', 'DREAMCONTEXT_AGENT_SELF', 'DREAMCONTEXT_AUTOMATION_RUN'];
   const saved: Record<string, string | undefined> = {};

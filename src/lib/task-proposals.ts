@@ -409,6 +409,11 @@ export interface AcceptResult {
   parentDropped?: string;
   /** The task was created but a later write failed (the proposal is accepted all the same). */
   warning?: string;
+  /**
+   * This call finished an EARLIER accept (the leftover path): no new card, the same decision.
+   * Callers record its audit and dashboard change only when the earlier one did not.
+   */
+  finished?: true;
 }
 
 /**
@@ -499,13 +504,7 @@ export async function acceptProposal(
   // failed field or journal write is reported, never left as a pending proposal
   // whose task is already on the board.
   try {
-    // `queue` again here: the dashboard create skeleton does not layer it.
-    await backend.updateFields(slug, { created_by: 'human', filing_basis: null, queue: 'next' });
-    await backend.addJournal(slug, {
-      kind: 'approval',
-      label: 'accepted from a sleep proposal',
-      body: approvalBody(p, contextRoot),
-    });
+    await ensureAcceptStep(backend, contextRoot, slug, p);
   } catch (err) {
     add(`The task was created, but its fields or journal note were not written: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -541,6 +540,21 @@ export async function acceptProposal(
 /** The approval journal entry an accept writes; the leftover path looks for `proposal <id>` in it. */
 function approvalBody(p: TaskProposal, contextRoot: string): string {
   return `- proposal ${p.id} (${p.basis}): "${storableQuote(p.quote, contextRoot)}"`;
+}
+
+/**
+ * The accept's post-create step, ONCE per proposal, for the normal path and the leftover finish
+ * alike. The approval journal entry naming `proposal <id>` is the "this step ran" marker (the
+ * fields are written before it): with no such entry, the three fields and then the entry; with
+ * one, nothing at all, so a card the owner has since moved to Later or into a cycle stays there.
+ * Throws on a failed write; the callers turn that into a warning.
+ */
+async function ensureAcceptStep(backend: TaskBackend, contextRoot: string, slug: string, p: TaskProposal): Promise<void> {
+  const ran = (await backend.readJournal(slug)).some((e) => e.body.includes(`proposal ${p.id} `) || e.body.includes(`proposal ${p.id}:`));
+  if (ran) return;
+  // `queue` here as well: the dashboard create skeleton does not layer it.
+  await backend.updateFields(slug, { created_by: 'human', filing_basis: null, queue: 'next' });
+  await backend.addJournal(slug, { kind: 'approval', label: 'accepted from a sleep proposal', body: approvalBody(p, contextRoot) });
 }
 
 /**
@@ -584,30 +598,42 @@ function markAccepted(
 }
 
 /**
- * Finish an accept that created its task but never marked the proposal: the normal post-create
- * step first (idempotent: fields only when one differs, the approval journal only when none
- * names this proposal; its failures are warnings), then accepted with the keep feedback, and a
- * warning that says so. A busy store refuses the mark; a retry repeats none of the step.
+ * Finish an accept that created its task but never marked the proposal. It re-takes the stale
+ * claim first (a second overlapping caller is then refused as an accept in flight), runs the
+ * post-create step once ({@link ensureAcceptStep}: nothing when it ran before; its failures are
+ * warnings), then marks the proposal accepted with the keep feedback and says so. A busy store
+ * refuses the claim or the mark; a retry repeats none of the step.
  */
 async function finishLeftoverAccept(contextRoot: string, backend: TaskBackend, proposal: TaskProposal, slug: string): Promise<AcceptResult> {
   const id = proposal.id;
+  const staleAt = proposal.claim?.at;
+  // Hold the claim while finishing: re-take the SAME stale claim under the store lock (a fresh
+  // one now), so a second overlapping caller sees an accept in flight and is refused like any.
+  mutateProposals(contextRoot, (store) => {
+    const live = store.proposals.find((x) => x.id === id);
+    if (!live || live.status !== 'pending') {
+      throw new ProposalError('resolved', `Proposal ${id} was already ${live ? live.status : 'removed'}.`);
+    }
+    if (!live.claim || live.claim.slug !== slug || live.claim.at !== staleAt) {
+      throw new ProposalError('resolved', `Proposal ${id} is being accepted right now; try again shortly.`);
+    }
+    // Date.now(): the clock claimFresh reads.
+    live.claim.at = new Date(Date.now()).toISOString();
+  });
   const warnings: string[] = [];
-  // The normal post-create step the interrupted accept may not have reached, done idempotently:
-  // the three fields only when one differs, the approval journal only when there is none yet.
+  let task: Awaited<ReturnType<TaskBackend['get']>> = null;
   try {
-    const before = await backend.get(slug);
-    const raw = before?.raw ?? {};
-    if (raw.created_by !== 'human' || (raw.filing_basis !== undefined && raw.filing_basis !== null) || before?.queue !== 'next') {
-      await backend.updateFields(slug, { created_by: 'human', filing_basis: null, queue: 'next' });
-    }
-    const journaled = (await backend.readJournal(slug)).some((e) => e.body.includes(`proposal ${id} `) || e.body.includes(`proposal ${id}:`));
-    if (!journaled) {
-      await backend.addJournal(slug, { kind: 'approval', label: 'accepted from a sleep proposal', body: approvalBody(proposal, contextRoot) });
-    }
+    await ensureAcceptStep(backend, contextRoot, slug, proposal);
   } catch (err) {
     warnings.push(`Its fields or journal note were not written: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const task = await backend.get(slug);
+  // The card's name, Why and parent, for the keep's diff and the result. A read that fails is a
+  // warning too: the decision stands (parent null, no diff), never a 500 after the writes landed.
+  try {
+    task = await backend.get(slug);
+  } catch (err) {
+    warnings.push(`The card could not be read back: ${err instanceof Error ? err.message : String(err)}`);
+  }
   mutateProposals(contextRoot, (store) => {
     const live = store.proposals.find((x) => x.id === id);
     if (live?.status === 'accepted' && live.slug === slug) return;
@@ -626,6 +652,7 @@ async function finishLeftoverAccept(contextRoot: string, backend: TaskBackend, p
     slug,
     parent: task?.parent_task ?? null,
     warning: [`The task "${slug}" was already created by an earlier accept that did not finish; the proposal is now marked accepted.`, ...warnings].join(' '),
+    finished: true,
   };
 }
 

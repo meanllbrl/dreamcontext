@@ -204,6 +204,16 @@ export function hasAcceptAudit(contextRoot: string, proposalId: string): boolean
   }
 }
 
+/**
+ * Whether an accept that just happened is recorded (audit + dashboard change). The one rule for
+ * the CLI and the dashboard: a leftover finish (`finished`, no new card) whose earlier accept is
+ * already audited is the same decision and is skipped; anything else, including a NEW card made
+ * on the slug of a deleted one, is a real creation and is recorded.
+ */
+export function shouldRecordAccept(contextRoot: string, proposalId: string, finished: boolean): boolean {
+  return !(finished && hasAcceptAudit(contextRoot, proposalId));
+}
+
 /** Mark one entry seen, recording who cleared it and through what. */
 export function markAuditSeen(contextRoot: string, id: string, actor: string, via: AuditVia, now: Date = new Date()): AuditEntry {
   ensureLocalStateIgnored(contextRoot);
