@@ -91,6 +91,8 @@ pub fn run() {
             app_link::take_app_link,
             splash::splash_done,
             splash::splash_play,
+            splash::intro_hold,
+            splash::intro_seen,
             node_setup::node_setup_start,
             node_setup::node_setup_status,
             node_setup::node_setup_cancel,

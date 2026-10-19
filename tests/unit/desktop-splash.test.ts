@@ -67,10 +67,11 @@ describe('desktop splash: the shell starts the clip', () => {
     for (const p of perms) expect(p.description, `${p.id} has no description`).toBeTruthy();
   });
 
-  it('the splash capability grants exactly the two permissions, to window `splash` only', () => {
+  it('the splash capability grants exactly its four permissions, to window `splash` only', () => {
     const cap = JSON.parse(read('capabilities/splash.json'));
     expect(cap.windows).toEqual(['splash']);
-    expect([...cap.permissions].sort()).toEqual(['allow-splash-done', 'allow-splash-play']);
+    // The clip's two, and the one-time intro's two (tests/unit/desktop-intro.test.ts).
+    expect([...cap.permissions].sort()).toEqual(['allow-intro-hold', 'allow-intro-seen', 'allow-splash-done', 'allow-splash-play']);
     expect(cap.remote).toBeUndefined();
   });
 
@@ -108,7 +109,9 @@ describe('desktop splash: the shell starts the clip', () => {
 
     it('asks the shell with splash_play once the clip can play, and plays directly if it cannot ask', () => {
       expect(html).toContain("invoke('splash_play')");
-      expect(html).toMatch(/addEventListener\('canplay', askShell/);
+      expect(html).toMatch(/addEventListener\('canplay', ready/);
+      // ready() asks at once, or after the seek to the intro's frame (desktop-intro.test.ts).
+      expect(html.slice(...Object.values(blockAt(html, html.indexOf('function ready'))))).toMatch(/if \(!startAt\) return askShell\(\);/);
       const ask = html.slice(...Object.values(blockAt(html, html.indexOf('function askShell'))));
       // No shell -> play here; a rejected or throwing invoke -> play here.
       expect(ask).toMatch(/if \(!tauri[^)]*\) return window\.__dcSplashPlay\(\);/);
