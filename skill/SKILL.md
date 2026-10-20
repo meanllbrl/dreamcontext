@@ -99,7 +99,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Duplicate task family repair** | `dreamcontext tasks dedup [--dry-run] [--yes]` merges `state/<slug>-2/-3/-4.md` duplicates. Local-only; `--dry-run` first. | [troubleshooting.md](references/troubleshooting.md#duplicate-tasks--the-same-task-appears-24-in-tasks-list) |
 | **Troubleshooting** | Symptom, cause and fix for broken-brain states | [troubleshooting.md](references/troubleshooting.md) |
 | **Web dashboard** | Local React UI: Kanban, brain graph, sleep tracker, council hall, an in-app Claude Code agent and the **Chat view BETA**. **Chat view only**: `dream-view`/`dream-actions` reach the agent through a surface briefing appended to a Chat spawn alone; anywhere else the fence renders as raw JSON | [integrations.md](references/integrations.md) |
-| **Chat modes (Basic / Planner / Developer / Train Me)** | **Chat view only.** A per-session system-prompt append, versioned in the picker: **Basic** (plain Claude Code), **Planner** (`plan`: goal-skill's planning half → a task), **Developer** (`develop`: its implementing half), **Train Me** (ALPHA: learns your taste, writes a pattern). The **Assistant** has its own mode in the notch, never in the picker; nor **Super Agent** (`super`, opt-in in Settings) | [integrations.md](references/integrations.md) |
+| **Chat modes (Basic / Planner / Developer / Train Me)** | A prompt append: **Basic** (plain Claude Code), **Planner** (`plan`: plans into a task), **Developer** (`develop`: builds it), **Train Me** (ALPHA: learns your taste). The **Assistant** has its own mode in the notch, never in the picker; nor **Super Agent** (`super`, opt-in in Settings) | [integrations.md](references/integrations.md) |
 | **Desktop app** | macOS app: multi-vault launcher, federation board, the dreamcontext Assistant (notch, hotkey, voice) | [integrations.md](references/integrations.md) |
 | **Notifications (`dreamcontext://`)** | A clicked banner opens its place; `dreamcontext notify` posts one | [cli-reference.md](references/cli-reference.md#notifications) |
 | **Federation** | Recall across multiple projects (vaults) live, read-only | [integrations.md](references/integrations.md) |
@@ -451,5 +451,6 @@ Open these with `Read` when the task needs depth:
 - **[brain-sync.md](references/brain-sync.md)**: whole-project GitHub cloud sync, setup, per-machine auth, cross-OS setup, troubleshooting.
 - **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync (one cloud backend at a time), dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.
 - **[hands-free.md](references/hands-free.md)**: Mac mode.
+- **[super-orchestration.md](references/super-orchestration.md)**: how the Super Agent splits a job list.
 - **[troubleshooting.md](references/troubleshooting.md)**: symptom, cause and careful fix for broken-brain states: duplicate tasks, sync ledger refusals, a stuck brain sync, structure and version drift.
 - **[improving-dreamcontext.md](references/improving-dreamcontext.md)**: the feedback loop, when and how to file.

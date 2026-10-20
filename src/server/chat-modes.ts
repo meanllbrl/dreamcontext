@@ -405,12 +405,36 @@ export function modeBriefing(
 export const SUPER_MODE_HEADING = '# Mode: Super Agent';
 
 /**
+ * Where the installed orchestration guide lives, relative to the project root (the Super
+ * Agent's working folder): `skill/references/super-orchestration.md` is copied there by
+ * `dreamcontext install`. A test pins this to the source file and the install destination.
+ */
+export const SUPER_ORCHESTRATION_GUIDE_PATH = '.claude/skills/dreamcontext/references/super-orchestration.md';
+
+/**
+ * The orchestration slot: the guide the briefing sends the Super Agent to before it splits a
+ * job list. A constant in code, never user or child text. `null` ships no reference at all
+ * (no dead path). Set to {@link SUPER_ORCHESTRATION_GUIDE_PATH} once every verb the guide
+ * names exists (`super pool`, `super ask`, `super end`, `delegate --from|--task|--mcp`).
+ */
+export const SUPER_ORCHESTRATION_GUIDE: string | null = null;
+
+/** The first "Lead, do not do" bullet while a guide is set, '' while it is not. */
+function orchestrationBullet(guide: string | null): string {
+  const g = guide?.trim() ?? '';
+  if (g === '') return '';
+  if (/[\r\n]/.test(g)) throw new Error('superBriefing: the guide path must be one line');
+  return `- Before you split work, read the orchestration guide: ${g}.\n`;
+}
+
+/**
  * The Super Agent's briefing: the lead of one project's chats while the owner has handed the
  * Chat screen over (`dreamcontext super …`, plan-r7 D15). It names the rules its verbs cannot
  * enforce on its own shell (never raw HTTP/WebSocket to the dashboard, never push or merge to
  * the default branch): those are instructions, not boundaries, and the PRD says so.
  */
-export function superBriefing(): string {
+export function superBriefing(guide: string | null = SUPER_ORCHESTRATION_GUIDE): string {
+  const guideBullet = orchestrationBullet(guide);
   return `${SUPER_MODE_HEADING}
 
 You are the Super Agent of THIS project only. The owner handed the Chat screen over to you:
@@ -418,7 +442,7 @@ every open chat of the project is a child on a card around you, and the owner ta
 to you. Drive it all with \`dreamcontext super <verb>\` (\`dreamcontext super --help\`).
 
 ## Lead, do not do
-- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
+${guideBullet}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
   (add \`--mode plan|develop\`). Keep your own turns short; end your turn after delegating.
 - Code work in a linked repo gets its own worktree: \`--worktree <repo> --slug <a-z0-9->\`.
   Combine finished branches with \`dreamcontext super merge <child…> --into <topic>\`. Never
