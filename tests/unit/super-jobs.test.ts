@@ -172,7 +172,6 @@ describe('the ONE status tone (owner 2026-10-21)', () => {
     expect(tone).not.toMatch(/:has\(/);
     expect(read(`${SUPER}/SuperSurface.css`).replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/data-super-tone[^{]*:has\(|:has\([^)]*data-super-tone/);
     expect(read(`${SUPER}/AgentCard.tsx`)).toMatch(/<div className="super-card" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}>/);
-    expect(read(`${SUPER}/AgentCard.tsx`)).toMatch(/<div className="super-card" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}>/);
   });
 
   it('every consumer reads --tone, and keeps its state word', () => {

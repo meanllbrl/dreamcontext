@@ -41,7 +41,7 @@ const sideOf = (p: StagePlan, r: Rect) => (r.x + r.width / 2 < p.width / 2 ? 'L'
 
 /** Centred across; down the stage it starts under the job bar's band and runs to the bottom
  *  margin, or stops above the bottom band when that band holds something (owner 2026-10-21). */
-function expectCentred(p: StagePlan, banded = p.narrow || p.others.length > 0) {
+function expectCentred(p: StagePlan, banded = p.narrow || p.others.length > 0 || p.order.length === 0) {
   const left = p.centre.x;
   const right = p.width - (p.centre.x + p.centre.width);
   const top = p.centre.y;
@@ -508,6 +508,12 @@ describe('bands and hit tests (F7, F12, FE1)', () => {
       expect(tall.queue.y + tall.queue.height).toBeLessThanOrEqual(tall.centre.y);
       for (const c of floats(tall)) expect(c.rect.y + c.rect.height).toBeLessThanOrEqual(tall.centre.y + tall.centre.height + EPS);
     }
+  });
+
+  it('an empty stage keeps the band: its first-run hint is drawn there, clear of the centre (review Major)', () => {
+    const p = planStage([], FLOAT, STAGES[1]);
+    expectCentred(p, true);
+    expect(p.dock.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
   });
 
   it('a card drawn in Others reserves the band again (the stack never sits under a tile or the centre)', () => {

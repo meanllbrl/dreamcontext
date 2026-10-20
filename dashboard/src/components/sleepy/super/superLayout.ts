@@ -363,8 +363,9 @@ export function planStage(
   // The bottom band only while it holds something (owner 2026-10-21): plan with the content down
   // to the margin first; a dock with terminals, a narrow stage, or a plan that draws a card in
   // Others reserves the band and plans again (the same inputs always give the same screen).
+  // An empty stage keeps the band: its first-run hint is drawn there (review Major).
   const narrow = Math.max(0, stage.width) < NARROW_STAGE_PX;
-  if (!narrow && !(opts.terminals ?? 0)) {
+  if (!narrow && !(opts.terminals ?? 0) && containers.length > 0) {
     const tall = planWith(containers, view, stage, opts, false);
     if (tall.others.length === 0) return tall;
   }
