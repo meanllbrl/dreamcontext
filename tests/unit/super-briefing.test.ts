@@ -66,10 +66,13 @@ describe('superBriefing', () => {
     expect(modeFromSystemPrompt(`# Surface: dreamcontext Chat\n\n${brief}`)).toBe('super');
   });
 
-  it('stays short: within 15 % of the plan-r7 briefing (2529 characters), with or without a guide', () => {
+  // The owner's field rules of 2026-10-21 (his language, no jargon, an estimate, rows kept from
+  // the first turn, no reply to a repeat) are an explicit allowance on top of the 15 %.
+  const OWNER_RULES_2026_10_21 = 400;
+  it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the owner\'s 2026-10-21 rules, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15));
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21);
     }
   });
 });
@@ -81,16 +84,26 @@ describe('how the super agent talks to the owner', () => {
 
   it('the briefing has the voice section, worded for every user', () => {
     expect(brief).toContain('## How you talk to the owner');
-    expect(brief).toContain('Write for someone juggling many things who must not lose the thread');
+    expect(brief).toContain('Write in his language, for someone juggling many things who must not lose the thread');
     for (const rule of [
-      'one subject per message', 'the result or what you need from him first', '2-4 short sentences',
-      'ids, hashes, paths and\ncommands only when he asks', 'never switch subject mid-message', 'at most one question, at the end',
+      'one\nsubject per message', 'the result or what you need from him first', '2-4 short sentences',
+      'ids,\nhashes, paths and commands only when he asks', 'never switch subject mid-message', 'at most one\nquestion, at the end',
       'Name any irreversible or outward action (push, merge, delete, a message sent) in plain words',
     ]) expect(brief).toContain(rule);
   });
 
+  it('the owner\'s field rules of 2026-10-21: his language, no jargon, an estimate, rows from the first turn, no reply to a repeat', () => {
+    for (const rule of [
+      'Write in his language', 'no inside jargon ("its own copy", not worktree)',
+      'Anything\nstill running gets an estimate of when it is ready', 'Write nothing between tool calls',
+      'nothing\nfor an event that only renamed a job or repeats a result he already has',
+      'with 3\n  or more jobs, set every row in your first turn and update each row an event touches',
+    ]) expect(brief).toContain(rule);
+    for (const rule of ['in his language and plain words', 'inside jargon', 'an estimate of when anything still running is ready']) expect(OWNER_VOICE).toContain(rule);
+  });
+
   it('every event last line, the handover and the recap carry the same rules', () => {
-    for (const rule of ['one subject', 'the result or what you need from him first', '2-4 short sentences', 'no ids, hashes, paths or commands unless he asks', 'at most one question and only at the end', 'in plain words']) {
+    for (const rule of ['one subject', 'the result or what you need from him first', '2-4 short sentences', 'no ids, hashes, paths, commands or inside jargon unless he asks', 'at most one question and only at the end', 'in plain words']) {
       expect(OWNER_VOICE).toContain(rule);
     }
     const s = { ...emptySuperState(), session: 'sup', enabled: true };

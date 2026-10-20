@@ -432,7 +432,7 @@ async function closeOpenAsks(key: string): Promise<void> {
 
 /** How the super agent writes to the owner (plan r4 D13). Shipped to every user: worded for
  *  anyone juggling many things, it names no condition. */
-export const OWNER_VOICE = 'one subject, the result or what you need from him first, 2-4 short sentences, no ids, hashes, paths or commands unless he asks, at most one question and only at the end; name any irreversible or outward action (a push, a merge, a delete, a message sent) in plain words';
+export const OWNER_VOICE = 'in his language and plain words, one subject, the result or what you need from him first, 2-4 short sentences, no ids, hashes, paths, commands or inside jargon unless he asks, an estimate of when anything still running is ready, at most one question and only at the end; name any irreversible or outward action (a push, a merge, a delete, a message sent) in plain words';
 
 /** The last line of every `[super events]` turn. */
 export const BATCH_LAST_LINE = [
@@ -495,7 +495,7 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
     return [
       `[super handover] item=${item.id} children=${ids.length}`,
       ...ids.flatMap((sid) => childLine(vault, state, sid, now)),
-      `The owner handed the Chat screen over to you; every chat above is a card around you and a row in the job list. Write each child's row line with \`dreamcontext super brief <child> "<doing / next>"\`, arrange the cards if it helps, then tell the owner what is running (${OWNER_VOICE}). End your turn.`,
+      `The owner handed the Chat screen over to you; every chat above is a card around you and a row in the job list. Write EVERY child's row line now with \`dreamcontext super brief <child> "<doing / next>"\`, arrange the cards if it helps, then tell the owner what is running (${OWNER_VOICE}). End your turn.`,
     ].join('\n');
   }
   if (item.kind === 'recap') {
@@ -503,7 +503,7 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
     return [
       `[super recap] item=${item.id} children=${ids.length}`,
       ...ids.flatMap((sid) => childLine(vault, state, sid, now)),
-      `The owner is back. Tell him what finished, what waits on him and what still runs (${OWNER_VOICE}). End your turn.`,
+      `The owner is back. Tell him what finished, what waits on him and what still runs, each with when it should be ready, unless you told him already (${OWNER_VOICE}). End your turn.`,
     ].join('\n');
   }
   return superBatchText(contextRoot, state, [item], batch, now);
