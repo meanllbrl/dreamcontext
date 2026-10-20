@@ -56,7 +56,12 @@ const END_REVIEW_TEAM = `- For \`multi-review\`, instead of that one reviewer: e
 
 const END_REVIEW_REROUND = `After a team FAIL, the fresh re-check is one specialist for each that raised a blocking
 finding, fed only its previous findings word for word and the files the fix changed; the
-router does not run again.`;
+router does not run again.
+
+A PARTIAL verdict (reviewer or specialist) means it ran out of turns, not that the change
+failed: keep its findings at their severity, then dispatch a fresh copy of that agent on its
+\`Not reviewed:\` paths only, with START and NOW. The review is done when nothing is left
+unread; a PARTIAL is never a PASS.`;
 
 const REVIEWER_EVIDENCE = `For each ticked criterion say whether its evidence OBSERVED it or inferred it; a criterion about
 what the owner sees, ticked with no screenshot, is FAIL.`;

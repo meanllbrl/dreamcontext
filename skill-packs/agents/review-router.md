@@ -24,7 +24,7 @@ tools:
   - Read
   - Glob
   - Grep
-maxTurns: 8
+maxTurns: 12
 skills:
   - multi-review
   - dreamcontext-agent-core
@@ -161,6 +161,10 @@ If `tier == "trivial"` and you judge the diff doesn't need any specialist
 (pure formatting, dependency bump, comment fix), set `specialists: []` and
 add `"recommend_fallback": "use built-in reviewer agent"` to the JSON. The main
 agent will follow that.
+
+**Turn budget (12).** With 2 turns left, emit the plan now from what you have read:
+add `"partial": true`, put every file you did not classify into `edge-cases` scope, and
+set `tier` to `"full"`. A plan the caller can act on beats a run that ends with no JSON.
 
 ## Hard rules
 

@@ -31,7 +31,7 @@ tools:
   - Glob
   - Grep
   - Bash
-maxTurns: 20
+maxTurns: 30
 color: red
 skills:
   - engineering
@@ -133,6 +133,18 @@ These will cause significant problems but may not crash immediately:
 ### Summary
 One sentence: what's the overall health of this change.
 ```
+
+**If the turn budget runs out (PARTIAL):** you have 30 turns. With 2 left, stop
+reading and return what you have instead of nothing:
+```markdown
+## Review: PARTIAL
+
+### Critical Issues / ### Major Issues
+<findings so far, same format; a Critical here still means the change fails>
+
+Not reviewed: path/a.ts, path/b.ts
+```
+The caller re-runs a fresh reviewer on the `Not reviewed:` paths only.
 
 **If PASS:**
 ```markdown

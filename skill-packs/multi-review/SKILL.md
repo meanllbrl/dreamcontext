@@ -120,6 +120,9 @@ skills, drop it. Note all drops in **Coordinator notes** so the user can verify.
 - **`READY_TO_MERGE`** — every specialist returned PASS, no Critical, no Major.
 - **`NEEDS_ATTENTION`** — any specialist returned CONCERNS, no Critical.
 - **`NEEDS_WORK`** — any specialist returned FAIL (at least one Critical).
+- A specialist that returned **PARTIAL** ran out of turns: keep its findings at their
+  severity and dispatch a fresh copy of it on its `Not reviewed:` files only, then compute
+  the verdict. PARTIAL is a re-run, never a PASS and never a FAIL by itself.
 
 **Emit the report** inline using this structure:
 
