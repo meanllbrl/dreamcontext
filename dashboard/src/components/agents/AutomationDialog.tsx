@@ -28,7 +28,6 @@ import {
 import { formatSchedule } from '../../../../src/lib/automations/schedule.js';
 import { AgentAvatar, initialsFor } from './AgentAvatar';
 import './AutomationDialog.css';
-import { fill } from '../../lib/fill';
 
 /** The model list the composer offers, mirrored (the dashboard has no import
  *  path into the CLI's model registry). A closed dropdown, not a chip rail —
@@ -619,13 +618,13 @@ export function AutomationDialog({
             {unapprovedAgent && (
               /* The 409 `agent_unapproved`, in place: what is wrong and the one way to fix it. */
               <p className="automation-agent-refused" role="alert">
-                <span>{fill(t('automations.agentUnapproved'), { name: unapprovedAgent.title })}</span>
+                <span>{t('automations.agentUnapproved').replace('{name}', unapprovedAgent.title)}</span>
                 <button
                   type="button"
                   className="automation-agent-link"
                   onClick={() => openAgents({ slug: unapprovedAgent.slug })}
                 >
-                  {fill(t('automations.openAgent'), { name: unapprovedAgent.title })}
+                  {t('automations.openAgent').replace('{name}', unapprovedAgent.title)}
                 </button>
               </p>
             )}
@@ -636,9 +635,9 @@ export function AutomationDialog({
           /* A bound automation's identity is its agent's: say whose, and how to get there. */
           <p className="agent-note automation-runs-as">
             <AgentAvatar slug={runsAs.slug} title={runsAs.title} hasPhoto={!!agent?.hasPhoto} size={20} of="agent" />
-            <span>{fill(t('automations.runsAs'), { name: runsAs.title })}</span>
+            <span>{t('automations.runsAs').replace('{name}', runsAs.title)}</span>
             <button type="button" className="automation-agent-link" onClick={() => openAgents({ slug: runsAs.slug })}>
-              {fill(t('automations.openAgent'), { name: runsAs.title })}
+              {t('automations.openAgent').replace('{name}', runsAs.title)}
             </button>
           </p>
         )}

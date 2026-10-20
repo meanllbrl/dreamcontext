@@ -32,21 +32,6 @@ export function useVersions() {
   });
 }
 
-/** What is done but not in a release yet (`GET /api/releases/unreleased`), for the Releases page. */
-export interface UnreleasedPayload {
-  tasks: Array<{ id: string; slug: string; name: string; description: string; cycle?: string | null }>;
-  features: Array<{ id: string; slug: string; status: string }>;
-  changelog: Array<{ index: number; entry: { date: string; type: string; scope: string; description: string; breaking: boolean } }>;
-}
-
-export function useUnreleased() {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['releases', 'unreleased'],
-    queryFn: () => api.get<UnreleasedPayload>('/releases/unreleased'),
-  });
-}
-
 export function usePlanningVersions() {
   const api = useApi();
   return useQuery({

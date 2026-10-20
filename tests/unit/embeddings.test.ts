@@ -452,16 +452,6 @@ describe('embeddingCacheCoversType (task-corpus warmth gate)', () => {
     expect(embeddingCacheCoversType(root, 'task')).toBe(true);
   });
 
-  it('task journals do not count: they are history, never in the task corpus', async () => {
-    const tasks = Array.from({ length: 5 }, (_, i) => taskDoc(`t${i}`));
-    for (let i = 0; i < 5; i++) {
-      mkdirSync(join(root, 'state', 'journal'), { recursive: true });
-      writeFileSync(join(root, 'state', 'journal', `t${i}.md`), '### 2026-10-16 10:00 - log [je_aaaaaaaaaa]\n- x\n');
-    }
-    await refreshEmbeddings(root, tasks, fakeEmbed);
-    expect(embeddingCacheCoversType(root, 'task')).toBe(true);
-  });
-
   it('8 of 10 cached clears the 0.8 bar', async () => {
     const tasks = Array.from({ length: 10 }, (_, i) => taskDoc(`t${i}`));
     await refreshEmbeddings(root, tasks.slice(0, 8), fakeEmbed);

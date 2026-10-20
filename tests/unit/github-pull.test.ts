@@ -50,11 +50,6 @@ function mirror(slug: string): string {
   return readFileSync(join(contextRoot, 'state', `${slug}.md`), 'utf-8');
 }
 
-function journal(slug: string): string {
-  const p = join(contextRoot, 'state', 'journal', `${slug}.md`);
-  return existsSync(p) ? readFileSync(p, 'utf-8') : '';
-}
-
 function occurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
@@ -143,23 +138,17 @@ describe('github PULL + merge (A4/A5/A7, mocked transport)', () => {
     fake.addRemoteComment(issue.number, '### 2026-06-21 - Note\n- beta');
 
     await backend.sync('pull');
-    // Comments land in the JOURNAL as remote entries; the card holds no history.
-    expect(mirror('talky')).not.toContain('## Changelog');
-    let m = journal('talky');
+    let m = mirror('talky');
     expect(m).toContain('alpha');
     expect(m).toContain('beta');
     expect(occurrences(m, '- alpha')).toBe(1);
-    expect(m).toMatch(/- remote \[je_[A-Za-z0-9]+\] \(by remote:/);
 
     // Re-pull after a remote touch: the same comments must not duplicate.
     fake.editIssue(issue.number, { body: '## Why\n\nx edited\n' });
     await backend.sync('pull');
-    m = journal('talky');
+    m = mirror('talky');
     expect(occurrences(m, '- alpha')).toBe(1);
     expect(occurrences(m, '- beta')).toBe(1);
-    // …and a push never sends a teammate's comment back.
-    const posted = await backend.sync('push');
-    expect(posted.commentsAdded).toBe(0);
   });
 
   it('A7: issue assignees map back to person:<slug> tags', async () => {

@@ -1,8 +1,7 @@
-import { join } from 'node:path';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { today, slugify } from '../../lib/id.js';
 import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
-import { parseJsonBody, requireBrowserOrigin, sendJson, sendError, writeVia } from '../middleware.js';
+import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { currentSyncJob, startSyncJob } from '../sync-job.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
@@ -36,23 +35,12 @@ import {
   DEFAULT_STATUSES,
   SHIPPED_STATUS_KEYS,
   STATUS_KINDS,
-  isDone,
-  isReview,
-  isCancelled,
   normalizeStatusKey,
   statusKeys,
+  isDone,
   type StatusKind,
 } from '../../lib/task-status.js';
-import { criteriaOfBody, describeGate, evidenceKind, gateStatus, parseCriteria, setCriterion } from '../../lib/task-evidence.js';
-import { checkParentLink, loadFamily, parentCloseBlock, rollupOf } from '../../lib/task-parent.js';
-import { newJournalEntryId, type NewJournalEntry } from '../../lib/task-journal.js';
-import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
-import { ensureLocalStateIgnored, recordAudit } from '../../lib/task-audit.js';
-import { listTaskCards } from '../../lib/task-list.js';
-import { applyVerdict, VerdictPreflightError } from '../../lib/task-verdict.js';
-import { TaskFileBusyError } from '../../lib/task-file-lock.js';
-import { planTask, rankTask } from '../../lib/task-plan.js';
 import {
   getTaskBackend,
   getTaskSyncStatus,
@@ -60,8 +48,6 @@ import {
   TaskBackendError,
   type TaskBackend,
   type TaskData,
-  type TaskDetailResponse,
-  type TaskListItem,
   type RemoteMember,
 } from '../../lib/task-backend/index.js';
 
@@ -347,9 +333,13 @@ export async function handleTasksList(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
-  // Cards only (plan r3 § W4): no body, section or journal. The task page reads
-  // GET /api/tasks/:slug; this list is polled by every open window.
-  const tasks: TaskListItem[] = listTaskCards(join(contextRoot, 'state'), loadStatuses(contextRoot));
+  const backend = backendFor(contextRoot);
+  const summaries = await backend.list();
+  const tasks: ReturnType<typeof toApiTask>[] = [];
+  for (const s of summaries) {
+    const task = await backend.get(s.name);
+    if (task) tasks.push(toApiTask(task));
+  }
   sendJson(res, 200, { tasks });
 }
 
@@ -817,16 +807,7 @@ export async function handleTasksDelete(
     return;
   }
 
-  try {
-    await backend.delete(slug);
-  } catch (err) {
-    // A parent with live sub-tasks is refused by the backend.
-    if (err instanceof TaskBackendError && err.code === 'invalid_input') {
-      sendError(res, 409, 'subtasks_open', err.message);
-      return;
-    }
-    throw err;
-  }
+  await backend.delete(slug);
 
   // Consolidation must see deletions too — recorded into the sleep state's
   // dashboard-changes ledger like every other dashboard mutation.
@@ -858,36 +839,7 @@ export async function handleTasksGet(
     return;
   }
 
-  sendJson(res, 200, taskDetail(contextRoot, task));
-}
-
-/** The task page's view of one task: the card, its parsed criteria, its parent and children. */
-function taskDetail(contextRoot: string, task: TaskData): TaskDetailResponse {
-  const stateDir = join(contextRoot, 'state');
-  const defs = loadStatuses(contextRoot);
-  const family = loadFamily(stateDir);
-  const parentSlug = family.parentOf.get(task.slug) ?? null;
-  const parent = parentSlug ? family.bySlug.get(parentSlug) ?? null : null;
-  const kidSlugs = new Set((family.children.get(task.slug) ?? []).map((c) => c.slug));
-  const children = kidSlugs.size > 0 ? listTaskCards(stateDir, defs).filter((c) => kidSlugs.has(c.slug)) : [];
-  return {
-    task: {
-      ...toApiTask(task),
-      cycle: task.cycle ?? null,
-      queue: task.queue ?? null,
-      rank: task.rank ?? null,
-      criteria: parseCriteria(task.acceptance_criteria).map((c) => ({
-        n: c.n,
-        text: c.text,
-        checked: c.checked,
-        ref: c.evidence,
-        kind: evidenceKind(c.evidence),
-        observed: c.observed,
-      })),
-      parent: parent ? { slug: parent.slug, name: parent.name, status: parent.status } : null,
-      children,
-    },
-  };
+  sendJson(res, 200, { task: toApiTask(task) });
 }
 
 /**
@@ -998,7 +950,7 @@ export async function handleTasksUpdate(
       return;
     }
   }
-  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'objectives', 'assignee', 'agent', 'parent_task'];
+  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'objectives', 'assignee', 'agent'];
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       const oldVal = (oldData[field] ?? null) as FieldChange['from'];
@@ -1216,128 +1168,12 @@ export async function handleTasksUpdate(
     }
   }
 
-  // ── Evidence (the dashboard is the owner's surface) ──
-  // A box the owner ticks here is proven by the owner: the tick names an
-  // approval entry (`owner:<je_id>`). An unticked box drops its ref. A move to
-  // review/done passes the same evidence gate as the CLI, except that moving a
-  // REVIEW task to done is the owner's approval. Order matters: the gate runs
-  // on the final body first, the card is written next, and only then do the
-  // journal entries land — a refused or failed save leaves no approval behind
-  // (approvals are shared to the remote) and no status move that never happened.
-  let actor: string | null = null;
-  try { actor = resolveActivePerson(contextRoot).slug; } catch { /* nobody resolved */ }
-  const pendingJournal: NewJournalEntry[] = [];
-  // Every approval this save makes is also a task-audit record (plan r3 E9): an owner
-  // tick and a review → done drag. This route does not refuse an Origin-less write
-  // (R4-2 item 1); it records it as `via: 'no-origin'`.
-  const pendingAudit: Array<{ journalId: string; note: string }> = [];
-  if (bodyChanged && newBody !== null) {
-    const before = criteriaOfBody(oldContent);
-    let nextBody: string = newBody;
-    for (const c of criteriaOfBody(newBody)) {
-      const prev = before.find((b) => b.n === c.n && b.text === c.text) ?? before.find((b) => b.text === c.text);
-      if (c.checked && !c.evidence && !(prev?.checked && prev.evidence)) {
-        const id = newJournalEntryId();
-        pendingJournal.push({ id, kind: 'approval', actor: actor ?? 'owner', body: `- ticked in the dashboard: ${c.text}` });
-        pendingAudit.push({ journalId: id, note: `ticked: ${c.text}` });
-        nextBody = setCriterion(nextBody, c.n, true, `owner:${id}`);
-      } else if (c.checked && !c.evidence && prev?.checked && prev.evidence) {
-        nextBody = setCriterion(nextBody, c.n, true, prev.evidence);
-      } else if (!c.checked && c.evidence) {
-        nextBody = setCriterion(nextBody, c.n, false, null);
-      }
-    }
-    newBody = nextBody;
-  }
-  if (updates.parent_task !== undefined && updates.parent_task !== existing.parent_task) {
-    if (updates.parent_task !== null) {
-      const check = checkParentLink(loadFamily(join(contextRoot, 'state')), loadStatuses(contextRoot), slug, String(updates.parent_task));
-      if (!check.ok) { sendError(res, 400, 'invalid_parent', check.reason); return; }
-      updates.parent_task = check.parent;
-    }
-    pendingJournal.push({
-      kind: 'log', actor: actor ?? 'owner',
-      body: updates.parent_task ? `- placed under ${updates.parent_task} in the dashboard` : '- detached from its parent in the dashboard',
-    });
-  }
-  if (updates.status && updates.status !== existing.status) {
-    const statuses = loadStatuses(contextRoot);
-    const target = updates.status as string;
-    // A parent closes after its sub-tasks, and is cancelled only with a decision
-    // per open sub-task (the CLI's --child/--children; the board has no form for it yet).
-    const family = loadFamily(join(contextRoot, 'state'));
-    const closeBlock = parentCloseBlock(family, statuses, slug, target);
-    if (closeBlock) { sendError(res, 409, 'subtasks_open', closeBlock); return; }
-    if (isCancelled(statuses, target)) {
-      const open = rollupOf(family.children.get(slug) ?? [], statuses).open;
-      if (open.length > 0) {
-        sendError(res, 409, 'subtasks_decision_required',
-          `${slug} has ${open.length} open sub-task(s); decide each before cancelling the parent: `
-          + `dreamcontext tasks status ${slug} ${target} --child <sub-task>=cancel|detach|move:<parent> (or --children <decision>).`);
-        return;
-      }
-    }
-    if (isDone(statuses, target) && isReview(statuses, existing.status)) {
-      const id = newJournalEntryId();
-      pendingJournal.push({ id, kind: 'approval', actor: actor ?? 'owner', body: `- approved in the dashboard (${existing.status} → ${target})` });
-      pendingAudit.push({ journalId: id, note: `approved (${existing.status} → ${target})` });
-    } else if (isDone(statuses, target) || isReview(statuses, target)) {
-      const gate = gateStatus(newBody ?? oldContent, isDone(statuses, target) ? 'done' : 'review');
-      if (!gate.ok) {
-        sendError(res, 409, 'evidence_required', describeGate(slug, target, gate));
-        return;
-      }
-    }
-    pendingJournal.push({ kind: 'status', label: target, actor: actor ?? 'owner', body: '- moved in the dashboard' });
-  }
-
-  // Preflight: an approval is audited, so the audit's ignore entries must be writable
-  // BEFORE anything moves; when they are not, the save is refused and nothing is done.
-  if (pendingAudit.length > 0) {
-    try {
-      ensureLocalStateIgnored(contextRoot);
-    } catch (err) {
-      sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this approval is refused: ${err instanceof Error ? err.message : String(err)}`);
-      return;
-    }
-  }
-
   updates.updated_at = today();
-  // The commit point. A busy card refuses here with nothing written; after it, a journal or
-  // audit record that cannot follow is a warning on a 200, never a refusal of a save that
-  // happened (the feature link and the dashboard change record still run).
-  let task: TaskData;
-  try {
-    task = await backend.updateFields(
-      slug,
-      updates,
-      bodyChanged && newBody !== null ? { body: newBody } : undefined,
-    );
-  } catch (err) {
-    if (err instanceof TaskFileBusyError) {
-      sendError(res, 409, 'busy', `${slug} is being written by another process (a sleep cycle may be running). Nothing was changed; try again in a moment.`);
-      return;
-    }
-    throw err;
-  }
-  const warnings: Array<'journal_not_recorded' | 'audit_not_recorded'> = [];
-  for (const entry of pendingJournal) {
-    try {
-      await backend.addJournal(slug, entry);
-    } catch (err) {
-      if (!warnings.includes('journal_not_recorded')) warnings.push('journal_not_recorded');
-      console.error(`[tasks] ${slug}: saved, but a journal entry could not be written (${err instanceof Error ? err.message : String(err)}).`);
-    }
-  }
-  const via = writeVia(req);
-  for (const a of pendingAudit) {
-    try {
-      recordAudit(contextRoot, { kind: 'approval', slug, actor: actor ?? 'owner', via, note: a.note, journalId: a.journalId });
-    } catch (err) {
-      if (!warnings.includes('audit_not_recorded')) warnings.push('audit_not_recorded');
-      console.error(`[tasks] ${slug}: saved, but an approval could not be recorded in the task audit (${err instanceof Error ? err.message : String(err)}).`);
-    }
-  }
+  const task = await backend.updateFields(
+    slug,
+    updates,
+    bodyChanged && newBody !== null ? { body: newBody } : undefined,
+  );
 
   // Bidirectional invariant: the feature side (related_tasks membership)
   // follows every task-side related_feature change.
@@ -1355,7 +1191,7 @@ export async function handleTasksUpdate(
     summary: buildFieldSummary('task', `state/${slug}.md`, fieldChanges),
   });
 
-  sendJson(res, 200, { task: toApiTask(task), ...(warnings.length > 0 ? { auditWarning: warnings[0], warnings } : {}) });
+  sendJson(res, 200, { task: toApiTask(task) });
 }
 
 /**
@@ -1402,40 +1238,6 @@ export async function handleTasksChangelog(
   });
 
   sendJson(res, 200, { success: true });
-}
-
-/** Journal entries the task panel shows under the card (A9). */
-export const PANEL_JOURNAL_LIMIT = 5;
-
-/**
- * GET /api/tasks/:slug/journal — the task's newest journal entries (default 5, max 50).
- * History left the card for `state/journal/<slug>.md`; the panel reads it here.
- */
-export async function handleTasksJournal(
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  const { slug } = params;
-  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
-  const backend = backendFor(contextRoot);
-  if ((await backend.get(slug)) === null) {
-    sendError(res, 404, 'not_found', `Task not found: ${slug}`);
-    return;
-  }
-  const query = new URL(req.url ?? '', 'http://x').searchParams;
-  const asked = Number(query.get('limit'));
-  const limit = Number.isInteger(asked) && asked > 0 ? Math.min(asked, 50) : PANEL_JOURNAL_LIMIT;
-  const all = await backend.readJournal(slug);
-  // `before=<je_id>`: the page of entries older than that one ("Show older").
-  const before = query.get('before');
-  const from = before ? all.findIndex((e) => e.id === before) + 1 : 0;
-  const page = before && from === 0 ? [] : all.slice(from, from + limit);
-  sendJson(res, 200, {
-    total: all.length,
-    entries: page.map(({ id, date, kind, label, actor, body }) => ({ id, date, kind, label, actor, body })),
-  });
 }
 
 /**
@@ -1593,126 +1395,4 @@ export async function handleTasksAssignAgent(
     console.error('[tasks] assign-agent failed', err);
     sendError(res, 500, 'assign_failed', 'Failed to assign the task.');
   }
-}
-
-// ─── The owner's verdict, planning and ranking (plan r3 § W4) ────────────────
-
-const VERDICT_STATUS: Record<string, number> = { not_found: 404, note_required: 400, not_in_review: 409, subtasks_open: 409, sleep_eval_gate: 409, busy: 409 };
-
-/**
- * POST /api/tasks/:slug/verdict — `{ verdict: 'approve' | 'send_back', note? }`.
- * The owner's verdict on a task in review, through the same lib/task-verdict.ts as
- * `tasks approve` / `tasks send-back`. Owner-only: refused (403) without a browser
- * Origin; the audit records `via`. Not `refuseSelfApproval` (E9: the server may itself
- * run inside a Claude session).
- */
-export async function handleTaskVerdict(
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  if (!requireBrowserOrigin(req, res)) return;
-  const { slug } = params;
-  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
-  const body = await parseJsonBody(req);
-  const verdict = body?.verdict;
-  if (verdict !== 'approve' && verdict !== 'send_back') {
-    sendError(res, 400, 'invalid_verdict', 'verdict must be "approve" or "send_back".');
-    return;
-  }
-  const note = body?.note;
-  if (note !== undefined && typeof note !== 'string') {
-    sendError(res, 400, 'invalid_note', 'note must be a string.');
-    return;
-  }
-  const backend = backendFor(contextRoot);
-  let actor: string | null = null;
-  try { actor = resolveActivePerson(contextRoot).slug; } catch { /* nobody resolved */ }
-  let r;
-  try {
-    r = await applyVerdict(backend, contextRoot, loadStatuses(contextRoot), slug, {
-      verdict, note: note as string | undefined, actor, via: writeVia(req),
-    });
-  } catch (err) {
-    // Only a preflight failure is "audit unavailable": nothing was written. Anything else that
-    // throws comes before the status write too (the records after it never throw), so it is
-    // reported as a failed write, never as a refusal of something that happened.
-    if (err instanceof VerdictPreflightError) {
-      sendError(res, 500, 'audit_unavailable', `The task audit cannot be written, so this verdict is refused and nothing changed: ${err.message}`);
-    } else {
-      sendError(res, 500, 'write_failed', `The verdict could not be written; nothing changed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    return;
-  }
-  if (!r.ok) { sendError(res, VERDICT_STATUS[r.code] ?? 409, r.code, r.message); return; }
-  const task = await backend.get(slug);
-  if (!task) { sendError(res, 404, 'not_found', `Task not found: ${slug}`); return; }
-  recordDashboardChange(contextRoot, {
-    entity: 'task',
-    action: 'update',
-    target: `state/${slug}.md`,
-    field: 'status',
-    summary: verdict === 'approve' ? `Approved task '${slug}'` : `Sent task '${slug}' back`,
-  });
-  // The verdict happened. A record that could not follow it is a warning, never a refusal.
-  sendJson(res, 200, {
-    ...taskDetail(contextRoot, task),
-    ...(r.warnings.length > 0 ? { auditWarning: r.warnings[0], warnings: r.warnings } : {}),
-  });
-}
-
-/** POST /api/tasks/:slug/plan — `{ target: 'now' | 'next' | 'later' | <cycle id or number> }`. */
-export async function handleTaskPlan(
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  const { slug } = params;
-  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
-  const body = await parseJsonBody(req);
-  const target = body?.target;
-  if (typeof target !== 'string' || !target.trim()) {
-    sendError(res, 400, 'unknown_target', 'target must be now, next, later or a cycle id or number.');
-    return;
-  }
-  const r = await planTask(contextRoot, backendFor(contextRoot), slug, target);
-  if (!r.ok) {
-    const code = r.code === 'not_found' ? 404 : r.code === 'not_open' ? 409 : 400;
-    sendError(res, code, r.code === 'closed_cycle' ? 'unknown_target' : r.code, r.message);
-    return;
-  }
-  if (r.moved.length > 0) {
-    recordDashboardChange(contextRoot, {
-      entity: 'task', action: 'update', target: `state/${slug}.md`, field: 'cycle, queue',
-      summary: `Planned task '${slug}' into ${r.where}`,
-    });
-  }
-  sendJson(res, 200, { placement: r.placement, moved: r.moved });
-}
-
-/** POST /api/tasks/:slug/rank — `{ before: <slug> }` or `{ after: <slug> }`, exactly one. */
-export async function handleTaskRank(
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  const { slug } = params;
-  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
-  const body = await parseJsonBody(req);
-  const before = body?.before;
-  const after = body?.after;
-  const anchor = typeof before === 'string' && after === undefined ? { before }
-    : typeof after === 'string' && before === undefined ? { after }
-      : null;
-  const other = anchor ? ('before' in anchor ? anchor.before : anchor.after) : null;
-  if (!anchor || !other || !isSafeTaskSlug(other)) {
-    sendError(res, 400, 'bad_anchor', 'Give exactly one of before or after: the slug of a task in the same cycle or queue.');
-    return;
-  }
-  const r = await rankTask(contextRoot, backendFor(contextRoot), slug, anchor);
-  if (!r.ok) { sendError(res, r.code === 'not_found' ? 404 : 400, r.code, r.message); return; }
-  sendJson(res, 200, { rank: r.rank });
 }

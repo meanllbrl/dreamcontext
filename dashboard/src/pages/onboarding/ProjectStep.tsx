@@ -15,7 +15,6 @@ import type { ReadinessReport } from '../../lib/onboardingTypes';
 import { GitHubMark } from '../../components/brain/GitHubLogin';
 import { CloneFlow, type BareFolder } from './CloneFlow';
 import { gitTrackState, type GitTrackState } from './handoffPlan';
-import { fill } from '../../lib/fill';
 
 type Mode = 'new' | 'existing' | 'github';
 
@@ -225,7 +224,7 @@ export function ProjectStep({ report, onCreated, onOpenExisting }: Props) {
               {t('onboarding.project.browse')}
             </button>
           </div>
-          {target && <span className="ob-hint ob-path">{fill(t('onboarding.project.preview'), { path: target })}</span>}
+          {target && <span className="ob-hint ob-path">{t('onboarding.project.preview').replace('{path}', target)}</span>}
           {parentMissing && <span className="ob-hint">{t('onboarding.project.parentWillBeCreated')}</span>}
         </div>
         {gitRow()}
@@ -257,7 +256,7 @@ export function ProjectStep({ report, onCreated, onOpenExisting }: Props) {
           <p className="ob-found">
             {docs === 1
               ? t('onboarding.project.docsFoundOne')
-              : fill(t('onboarding.project.docsFound'), { n: String(docs) })}
+              : t('onboarding.project.docsFound').replace('{n}', String(docs))}
           </p>
         )}
         <label className="ob-field">

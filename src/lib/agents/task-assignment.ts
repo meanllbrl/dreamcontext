@@ -1,8 +1,7 @@
 import { lstatSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { updateFrontmatterFields } from '../frontmatter.js';
-import { appendJournalEntry } from '../task-journal.js';
-import { foldCardChangelog } from '../task-card.js';
+import { insertToSection } from '../markdown.js';
 import { today } from '../id.js';
 import { loadStatuses } from '../overrides.js';
 import { PARENT_BY_KIND, statusKind } from '../task-status.js';
@@ -169,12 +168,13 @@ export function applyAssignmentStatus(
   const path = taskPath(contextRoot, taskSlug);
   withTaskFileLock(contextRoot, taskSlug, () => {
     updateFrontmatterFields(path, { status: next, updated_at: now, ...dateUpdatesForStatus(next, task, now, defs) });
-    foldCardChangelog(path);
-    appendJournalEntry(join(contextRoot, 'state'), taskSlug, {
-      kind: 'status',
-      label: next,
-      body: `- Assigned to the agent ${oneDataLine(agent.title, 120)} (\`${agent.slug}\`).`,
-    });
+    insertToSection(
+      path,
+      'Changelog',
+      `### ${now} - Status: ${next}\n- Assigned to the agent ${oneDataLine(agent.title, 120)} (\`${agent.slug}\`).`,
+      'top',
+      true,
+    );
   });
   return { moved: true, from: current };
 }
@@ -204,15 +204,13 @@ export function logAssignmentResult(
   if (!readTask(contextRoot, taskSlug)) return;
   const slug = isSafeAutomationSlug(agent.slug) ? agent.slug : 'unknown-agent';
   const now = today();
+  const entry = [
+    `### ${now} - Agent ${oneDataLine(agent.title, 120)} (\`${slug}\`)`,
+    `- Run ${oneDataLine(outcome.runId, 64)}: ${oneDataLine(String(outcome.status), 32)}. Document: ${documentLabel(contextRoot, outcome.outputPath)}.`,
+  ].join('\n');
   const path = taskPath(contextRoot, taskSlug);
   withTaskFileLock(contextRoot, taskSlug, () => {
-    foldCardChangelog(path);
-    appendJournalEntry(join(contextRoot, 'state'), taskSlug, {
-      kind: 'log',
-      label: `Agent ${oneDataLine(agent.title, 120)} (\`${slug}\`)`,
-      actor: `agent:${slug}`,
-      body: `- Run ${oneDataLine(outcome.runId, 64)}: ${oneDataLine(String(outcome.status), 32)}. Document: ${documentLabel(contextRoot, outcome.outputPath)}.`,
-    });
+    insertToSection(path, 'Changelog', entry, 'top', true);
     updateFrontmatterFields(path, { updated_at: now });
   });
 }

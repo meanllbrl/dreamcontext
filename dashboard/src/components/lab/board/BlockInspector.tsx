@@ -15,7 +15,6 @@ import {
 } from './editorModel';
 import { SaveToLibraryDialog } from './SaveToLibraryDialog';
 import './editors.css';
-import { fill } from '../../../lib/fill';
 
 /**
  * THE BLOCK INSPECTOR: a card's blocks and every setting they have, without code.
@@ -86,7 +85,7 @@ export function BlockInspector({
 
   const ctx = {
     insight: view.insight ?? insights[0]?.slug ?? null,
-    tabLabel: fill(t('lab.editor.tabs.defaultLabel'), { n: '1' }),
+    tabLabel: t('lab.editor.tabs.defaultLabel').replace('{n}', '1'),
     htmlStarter: `<p>${escapeHtml(t('lab.editor.html.starter'))}</p>`,
   };
 
@@ -477,7 +476,7 @@ function OptionField({
     case 'number':
       return (
         <Field label={label} hint={schema.min !== undefined && schema.max !== undefined
-          ? fill(t('lab.editor.range'), { min: String(schema.min), max: String(schema.max) })
+          ? t('lab.editor.range').replace('{min}', String(schema.min)).replace('{max}', String(schema.max))
           : undefined}>
           <CommitText
             field={key}
@@ -619,7 +618,7 @@ function PickField({
   const cache = insight === null ? null : known ? caches[insight] : fetched.data?.cache ?? null;
   const choices = schema.from ? pickChoices(schema.from, frame, cache, funnelId) : [];
   const rows = pickRows(choices, value);
-  const labelOf = (r: { label: string; stale: boolean }) => (r.stale ? fill(t('lab.editor.pick.stale'), { value: r.label }) : r.label);
+  const labelOf = (r: { label: string; stale: boolean }) => (r.stale ? t('lab.editor.pick.stale').replace('{value}', r.label) : r.label);
   const empty = choices.length === 0;
 
   if (spec.control === 'pick-list') {
@@ -682,7 +681,7 @@ function TabsField({ block, path, card, onEditCard }: { block: Block; path: numb
       <button
         type="button"
         className="lab-editor-link"
-        onClick={() => onEditCard(addTab(card, at, fill(t('lab.editor.tabs.defaultLabel'), { n: String(tabs.length + 1) })))}
+        onClick={() => onEditCard(addTab(card, at, t('lab.editor.tabs.defaultLabel').replace('{n}', String(tabs.length + 1))))}
       >{t('lab.editor.tabs.add')}</button>
     </div>
   );

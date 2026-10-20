@@ -27,33 +27,6 @@ function run(cmd: string, cwd: string, env?: NodeJS.ProcessEnv): string {
 }
 
 /**
- * One proven criterion, so the evidence gate lets the task close (these tests are
- * about the CLI verbs, not evidence; the gate reads a ref's kind, never re-resolves it).
- */
-function prove(dir: string, slug: string): void {
-  const file = join(dir, '_dream_context', 'state', `${slug}.md`);
-  writeFileSync(file, `${readFileSync(file, 'utf-8')}\n## Acceptance Criteria\n\n- [x] It works (evidence: commit:abc1234)\n`);
-}
-
-/** A task's journal: its history lives off the card (state/journal/<slug>.md). */
-/**
- * Give a task the legacy keys an old card holds (`tasks create` writes no
- * priority, urgency or version since C3), so the legacy setters and filters
- * stay covered on purpose.
- */
-function seedLegacy(dir: string, slug: string, fields: Record<string, string>): void {
-  const file = join(dir, '_dream_context', 'state', `${slug}.md`);
-  const text = readFileSync(file, 'utf-8');
-  const lines = Object.entries(fields).map(([k, v]) => `${k}: "${v}"`).join('\n');
-  writeFileSync(file, text.replace(/^status: /m, `${lines}\nstatus: `));
-}
-
-function journalOf(dir: string, slug: string): string {
-  const p = join(dir, '_dream_context', 'state', 'journal', `${slug}.md`);
-  return existsSync(p) ? readFileSync(p, 'utf-8') : '';
-}
-
-/**
  * Pin the git identity the CLI (and therefore `init`'s person creation) sees:
  * global + system config are redirected, so the person a fresh vault gets is the
  * same on a developer laptop and in CI. `identity: null` = a machine that never
@@ -227,8 +200,8 @@ describe('CLI commands (integration)', () => {
       expect(out).toContain('drop-me → cancelled');
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'drop-me.md'), 'utf-8');
       expect(content).toMatch(/status:\s*"?cancelled"?/);
-      expect(journalOf(tmpDir, 'drop-me')).toContain('Cancelled');
-      expect(journalOf(tmpDir, 'drop-me')).toContain('superseded by keep-me');
+      expect(content).toContain('Cancelled');
+      expect(content).toContain('superseded by keep-me');
       // A cancelled task stamps no dates.
       expect(content).not.toMatch(/due_date:\s*"?\d{4}/);
 
@@ -311,14 +284,12 @@ describe('CLI commands (integration)', () => {
       expect(existsSync(join(tmpDir, '_dream_context', 'state', 'my-task.md'))).toBe(true);
     });
 
-    it('creates a task with the lean card (Why only; history in the journal)', () => {
+    it('creates a task with the lean scaffold (Why + Changelog only)', () => {
       run('tasks create lean-task --description "Test lean" --priority medium --why "Testing the lean scaffold"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'lean-task.md'), 'utf-8');
       expect(content).toContain('## Why');
       expect(content).toContain('Testing the lean scaffold');
-      expect(content).not.toContain('## Changelog');
-      expect(content).not.toContain('<!--');
-      expect(journalOf(tmpDir, 'lean-task')).toContain('- Task created.');
+      expect(content).toContain('## Changelog');
       expect(content).toContain('related_feature: null');
       // Empty sections are not scaffolded — they appear on first insert.
       expect(content).not.toContain('## User Stories');
@@ -336,8 +307,7 @@ describe('CLI commands (integration)', () => {
     });
 
     it('prints, sets and no-ops priority and urgency on an existing task', () => {
-      run('tasks create level-task --description "Levels" -w "test why"', tmpDir);
-      seedLegacy(tmpDir, 'level-task', { priority: 'medium', urgency: 'low' });
+      run('tasks create level-task --description "Levels" --priority medium --urgency low -w "test why"', tmpDir);
       const file = join(tmpDir, '_dream_context', 'state', 'level-task.md');
 
       expect(run('tasks priority level-task', tmpDir)).toContain('priority: medium');
@@ -348,17 +318,17 @@ describe('CLI commands (integration)', () => {
       let content = readFileSync(file, 'utf-8');
       expect(content).toMatch(/^priority: "?high"?$/m);
       expect(content).toMatch(/^urgency: "?critical"?$/m);
-      expect(journalOf(tmpDir, 'level-task')).toContain('- priority: medium -> high');
-      expect(journalOf(tmpDir, 'level-task')).toContain('- urgency: low -> critical');
+      expect(content).toContain('- priority: medium -> high');
+      expect(content).toContain('- urgency: low -> critical');
 
-      // Same value: nothing written — no second journal line.
+      // Same value: nothing written — no second changelog line.
       expect(run('tasks priority level-task high', tmpDir)).toContain('no change');
-      expect(journalOf(tmpDir, 'level-task').match(/- priority: /g)).toHaveLength(1);
+      content = readFileSync(file, 'utf-8');
+      expect(content.match(/- priority: /g)).toHaveLength(1);
     });
 
     it('rejects an invalid priority or urgency with a non-zero exit', () => {
-      run('tasks create bad-level --description "Levels" -w "test why"', tmpDir);
-      seedLegacy(tmpDir, 'bad-level', { priority: 'medium' });
+      run('tasks create bad-level --description "Levels" --priority medium -w "test why"', tmpDir);
       let code = 0;
       try {
         execSync(`node ${CLI} tasks priority bad-level urgent 2>&1`, { cwd: tmpDir, encoding: 'utf-8' });
@@ -396,11 +366,9 @@ describe('CLI commands (integration)', () => {
     it('inserts into task changelog with auto-date header', () => {
       run('tasks create cl-test --description "Test" --priority low -w "test why"', tmpDir);
       run('tasks insert cl-test changelog "Added pagination support"', tmpDir);
-      const card = readFileSync(join(tmpDir, '_dream_context', 'state', 'cl-test.md'), 'utf-8');
-      expect(card).not.toContain('Added pagination support');
-      const journal = journalOf(tmpDir, 'cl-test');
-      expect(journal).toContain('Added pagination support');
-      expect(journal).toMatch(/### \d{4}-\d{2}-\d{2} \d{2}:\d{2} - log \[je_[A-Za-z0-9]+\]/);
+      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'cl-test.md'), 'utf-8');
+      expect(content).toContain('Added pagination support');
+      expect(content).toMatch(/### \d{4}-\d{2}-\d{2} - Update/);
     });
 
     it('rejects unknown task section', () => {
@@ -441,54 +409,43 @@ parent_task: null
     it('logs progress to a task', () => {
       run('tasks create log-test --description "Test" --priority low -w "test why"', tmpDir);
       run('tasks log log-test "Implemented feature X"', tmpDir);
-      expect(journalOf(tmpDir, 'log-test')).toContain('Implemented feature X');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'log-test.md'), 'utf-8');
+      expect(content).toContain('Implemented feature X');
     });
 
     it('completes a task without a summary in non-interactive mode (no hang)', () => {
       run('tasks create no-summary --description "Test" --priority low -w "test why"', tmpDir);
-      prove(tmpDir, 'no-summary');
       // `run` invokes via execSync with no TTY; the bare form must not block on a prompt.
       const output = run('tasks complete no-summary', tmpDir);
       expect(output).toContain('completed');
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'no-summary.md'), 'utf-8');
       expect(content).toMatch(/status:\s*"?completed"?/);
-      expect(journalOf(tmpDir, 'no-summary')).toContain('Task completed.');
-    });
-
-    it('refuses to complete a task with no criteria (nothing proves it is done)', () => {
-      run('tasks create unproven --description "Test" --priority low -w "test why"', tmpDir);
-      const out = run('tasks complete unproven "All done"', tmpDir);
-      expect(out).toContain('no acceptance criteria');
-      expect(readFileSync(join(tmpDir, '_dream_context', 'state', 'unproven.md'), 'utf-8')).not.toContain('status: completed');
+      expect(content).toContain('Task completed.');
     });
 
     it('completes a task', () => {
       run('tasks create done-task --description "Test" --priority low -w "test why"', tmpDir);
-      prove(tmpDir, 'done-task');
       run('tasks complete done-task "All done"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'done-task.md'), 'utf-8');
       expect(content).toContain('status: completed');
-      expect(journalOf(tmpDir, 'done-task')).toContain('All done');
+      expect(content).toContain('All done');
     });
 
     it('creates a task with only --why (uses defaults, no prompts)', () => {
       const output = run('tasks create defaults-test -w "test why"', tmpDir);
       expect(output).toContain('created');
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'defaults-test.md'), 'utf-8');
-      // C3: no priority, urgency or version on a new card; the order is cycle / queue / rank.
-      expect(content).not.toMatch(/^(priority|urgency|version):/m);
+      expect(content).toContain('priority: "medium"');
       expect(content).toContain('status: "todo"');
       expect(content).toContain('description: "defaults-test"');
       expect(content).toContain('tags: []');
     });
 
     it('creates a task with --status and --tags flags', () => {
-      const out = run('tasks create flagged-task -d "Flagged" -p high -s in_progress -t "backend,api" -w "test why"', tmpDir);
+      run('tasks create flagged-task -d "Flagged" -p high -s in_progress -t "backend,api" -w "test why"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'flagged-task.md'), 'utf-8');
       expect(content).toContain('status: "in_progress"');
-      // -p is retired: accepted, warned about, not written.
-      expect(out).toContain('-p/--priority is retired');
-      expect(content).not.toMatch(/^priority:/m);
+      expect(content).toContain('priority: "high"');
       expect(content).toContain('"backend"');
       expect(content).toContain('"api"');
     });
@@ -510,11 +467,9 @@ parent_task: null
       expect(output).toContain('Status must be one of');
     });
 
-    it('accepts a retired -p value with a warning and writes no priority', () => {
+    it('rejects invalid priority', () => {
       const output = run('tasks create bad-prio -p urgent -w "test why"', tmpDir);
-      expect(output).toContain('-p/--priority is retired');
-      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'bad-prio.md'), 'utf-8');
-      expect(content).not.toMatch(/^priority:/m);
+      expect(output).toContain('Priority must be one of');
     });
 
     it('lists non-completed tasks by default', () => {
@@ -568,11 +523,8 @@ parent_task: null
     });
 
     it('filters by --version and --priority', () => {
-      run('tasks create v-s5 -d "x" -v S5 -w "test why"', tmpDir);
-      seedLegacy(tmpDir, 'v-s5', { priority: 'critical' });
-      // -v BACKLOG is the Later queue now (no version written).
-      run('tasks create v-backlog -d "x" -v BACKLOG -w "test why"', tmpDir);
-      expect(readFileSync(join(tmpDir, '_dream_context', 'state', 'v-backlog.md'), 'utf-8')).toMatch(/^queue: "?later"?$/m);
+      run('tasks create v-s5 -d "x" -v S5 -p critical -w "test why"', tmpDir);
+      run('tasks create v-backlog -d "x" -v BACKLOG -p low -w "test why"', tmpDir);
       expect(run('tasks list --version S5', tmpDir)).toContain('v-s5');
       expect(run('tasks list --version S5', tmpDir)).not.toContain('v-backlog');
       expect(run('tasks list --priority critical', tmpDir)).toContain('v-s5');
@@ -588,8 +540,7 @@ parent_task: null
     });
 
     it('emits JSON with --json', () => {
-      run('tasks create json-task -d "A JSON task" -t memoryos -v S5 -w "test why"', tmpDir);
-      seedLegacy(tmpDir, 'json-task', { priority: 'high' });
+      run('tasks create json-task -d "A JSON task" -t memoryos -v S5 -p high -w "test why"', tmpDir);
       const output = run('tasks list --tag memoryos --json', tmpDir);
       const parsed = JSON.parse(output);
       expect(Array.isArray(parsed)).toBe(true);
@@ -913,11 +864,10 @@ parent_task: null
 
       // Existing settings preserved
       expect(settings.permissions.allow).toContain('Bash(npm test:*)');
-      // Existing PostToolUse hook preserved + ours added (Edit|Write, then the Read guard)
-      expect(settings.hooks.PostToolUse).toHaveLength(3);
+      // Existing PostToolUse hook preserved + our new one added
+      expect(settings.hooks.PostToolUse).toHaveLength(2);
       expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe('echo done');
       expect(settings.hooks.PostToolUse[1].hooks[0].command).toBe(hookCommand('post-tool-use'));
-      expect(settings.hooks.PostToolUse[2].matcher).toBe('Read');
       // Hooks added (session-start snapshot + ensure-dashboard auto-open)
       expect(settings.hooks.SessionStart).toHaveLength(2);
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe(hookCommand('session-start'));
@@ -977,21 +927,18 @@ parent_task: null
       // Two SessionStart groups (snapshot + ensure-dashboard), each deduped to one.
       expect(settings.hooks.SessionStart).toHaveLength(2);
       expect(settings.hooks.Stop).toHaveLength(1);
-      expect(settings.hooks.PostToolUse).toHaveLength(2); // Edit|Write + the Read guard
+      expect(settings.hooks.PostToolUse).toHaveLength(1);
       expect(settings.hooks.PreCompact).toHaveLength(1);
-      expect(settings.hooks.SessionEnd).toHaveLength(1);
     });
 
     it('installs PostToolUse and PreCompact hooks', () => {
       run('install-skill', tmpDir);
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
       expect(settings.hooks.PostToolUse).toBeDefined();
-      expect(settings.hooks.PostToolUse).toHaveLength(2);
+      expect(settings.hooks.PostToolUse).toHaveLength(1);
       expect(settings.hooks.PostToolUse[0].matcher).toBe('Edit|Write');
       expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe(hookCommand('post-tool-use'));
       expect(settings.hooks.PostToolUse[0].hooks[0].timeout).toBe(30);
-      expect(settings.hooks.PostToolUse[1].matcher).toBe('Read');
-      expect(settings.hooks.PostToolUse[1].hooks[0].command).toBe('node "$CLAUDE_PROJECT_DIR/.claude/hooks/read-task-guard.cjs"');
 
       expect(settings.hooks.PreCompact).toBeDefined();
       expect(settings.hooks.PreCompact).toHaveLength(1);
@@ -1437,7 +1384,6 @@ parent_task: null
 
     it('auto-discovers completed tasks', () => {
       run('tasks create auth -d "Build auth" -p high -w "test why"', tmpDir);
-      prove(tmpDir, 'auth');
       run('tasks complete auth "Done"', tmpDir);
       const output = run('core releases add --ver 1.0.0 --summary "Auth release" --yes', tmpDir);
       expect(output).toContain('1 tasks');
@@ -1515,17 +1461,8 @@ parent_task: null
     });
 
     describe('set-status', () => {
-      // Planning entries are no longer created (C3: plan with a cycle), but legacy
-      // ones still exist until they are retired, and must still flip to released.
-      const seedPlanning = (ver: string, summary: string): void => {
-        const file = join(tmpDir, '_dream_context', 'core', 'RELEASES.json');
-        const list = existsSync(file) ? JSON.parse(readFileSync(file, 'utf-8')) : [];
-        list.unshift({ id: `rel_${ver.replace(/\W/g, '')}`, version: ver, date: '', summary, breaking: false, status: 'planning', features: [], tasks: [], changelog: [] });
-        writeFileSync(file, JSON.stringify(list, null, 2));
-      };
-
       it('flips a planning release to released with a date', () => {
-        seedPlanning('0.6.0', 'Beta');
+        run('core releases add --ver 0.6.0 --summary "Beta" --status planning', tmpDir);
         const out = run('core releases set-status 0.6.0 released --date 2026-06-05', tmpDir);
         expect(out).toContain('0.6.0');
         expect(out).toContain('released');
@@ -1545,14 +1482,13 @@ parent_task: null
       });
 
       it('errors on an invalid status value', () => {
-        seedPlanning('0.7.0', 'RC');
+        run('core releases add --ver 0.7.0 --summary "RC" --status planning', tmpDir);
         const out = run('core releases set-status 0.7.0 shipped', tmpDir);
-        expect(out).toContain("must be 'released'");
-        expect(run('core releases set-status 0.7.0 planning', tmpDir)).toContain('Planning releases are retired');
+        expect(out).toContain("must be 'planning' or 'released'");
       });
 
       it('preserves all other fields after update', () => {
-        seedPlanning('0.8.0', 'RC2');
+        run('core releases add --ver 0.8.0 --summary "RC2" --status planning', tmpDir);
         run('core releases set-status 0.8.0 released --date 2026-06-10', tmpDir);
         const releases = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'core', 'RELEASES.json'), 'utf-8'));
         const entry = releases.find((r: any) => r.version === '0.8.0');

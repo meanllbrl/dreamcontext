@@ -1,7 +1,6 @@
 import { Command } from 'commander';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { REGISTRY, agentTaskNeeded, unfinishedAgentTasks } from '../../migrations/index.js';
-import { registerBacklogMigrationCommands } from './migrations-backlog.js';
+import { unfinishedAgentTasks } from '../../migrations/index.js';
 import { appendLedger } from '../../lib/migration-ledger.js';
 import { migrateDiagramsToFolders } from '../../lib/diagrams-migration.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -46,8 +45,6 @@ export function registerMigrationsCommand(program: Command): void {
         );
       }
     });
-
-  registerBacklogMigrationCommands(migrations);
 
   // --- apply-diagrams ---
   migrations
@@ -131,7 +128,6 @@ export function registerMigrationsCommand(program: Command): void {
     )
     .option('--files <paths...>', 'Files touched (space-separated)', [])
     .option('--summary <text>', 'Human-readable summary', '')
-    .option('--force', 'Record an agent task even though it still reports work in this brain')
     .action(
       (opts: {
         version: string;
@@ -139,7 +135,6 @@ export function registerMigrationsCommand(program: Command): void {
         executor: string;
         files: string[];
         summary: string;
-        force?: boolean;
       }) => {
         const validExecutors = ['code', 'agent', 'detected'];
         if (!validExecutors.includes(opts.executor)) {
@@ -150,17 +145,6 @@ export function registerMigrationsCommand(program: Command): void {
         }
 
         const root = ensureContextRoot();
-        // An agent task that can tell whether its work is done (0.33.0's backlog)
-        // is not recorded while it still has some: the ledger would call it
-        // finished and nothing would ever list the rest.
-        if (opts.executor === 'agent' && !opts.force) {
-          const m = REGISTRY.find((x) => x.version === opts.version && x.agentTask?.id === opts.step);
-          if (m?.agentTask?.needed && agentTaskNeeded(m, root)) {
-            error(`${opts.version}/${opts.step} still has work in this brain (dreamcontext migrations pending). Finish it first, or pass --force.`);
-            process.exitCode = 1;
-            return;
-          }
-        }
         const entry: LedgerEntry = {
           version: opts.version,
           step: opts.step,

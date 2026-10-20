@@ -14,7 +14,6 @@ import {
 import { useAuthStatus } from '../../hooks/useBrainStatus';
 import { GitHubLogin } from '../../components/brain/GitHubLogin';
 import { openFolderPicker, pickerError } from '../../lib/desktop';
-import { fill } from '../../lib/fill';
 
 /** A bare folder the clone produced (or an existing one the person chose): set it up next. */
 export interface BareFolder {
@@ -271,10 +270,10 @@ export function CloneFlow({ defaultParent, onBack, onExistingProject, onBareFold
       const tail = cloneRun.progress.split('\n').filter((l) => l.trim()).slice(-6).join('\n');
       return (
         <>
-          <h2 className="ob-title ob-title--sm">{fill(t('onboarding.clone.cloningTitle'), { repo: selectedRepo })}</h2>
+          <h2 className="ob-title ob-title--sm">{t('onboarding.clone.cloningTitle').replace('{repo}', selectedRepo)}</h2>
           <p className="ob-hint">
             <span className="ob-live-dot" aria-hidden="true" />
-            {fill(t('onboarding.clone.cloningHint'), { path: `${parent}/${repoFolder}` })}
+            {t('onboarding.clone.cloningHint').replace('{path}', `${parent}/${repoFolder}`)}
           </p>
           <pre className="ob-progress-log" aria-live="polite">{tail || t('onboarding.clone.contacting')}</pre>
         </>
@@ -321,7 +320,7 @@ export function CloneFlow({ defaultParent, onBack, onExistingProject, onBareFold
           </button>
         </div>
         {parent && repoFolder && (
-          <p className="ob-hint ob-path">{fill(t('onboarding.clone.destPreview'), { path: `${parent}/${repoFolder}` })}</p>
+          <p className="ob-hint ob-path">{t('onboarding.clone.destPreview').replace('{path}', `${parent}/${repoFolder}`)}</p>
         )}
       </>
     );

@@ -118,21 +118,20 @@ describe('create from override — custom body shape', () => {
     const backend = new LocalTaskBackend(stateDir);
     const task = await backend.create({ name: 'No Body', variant: 'cli' });
     // Shipped shape (override declared fields only, no custom body): the lean
-    // card — Why only, other sections appear on first insert, history is the journal.
-    expect(task.sections).toEqual(['Why']);
+    // scaffold — Why + Changelog only, other sections appear on first insert.
+    expect(task.sections).toContain('Why');
+    expect(task.sections).toContain('Changelog');
     expect(task.sections).not.toContain('User Stories');
     expect(task.custom_fields).toEqual({ sprint: null });
   });
 });
 
 describe('no override — surfaces stay on the shipped shape', () => {
-  it('cli create uses the shipped lean card (Why only; history goes to the journal)', async () => {
+  it('cli create uses the shipped lean template (Why + Changelog only)', async () => {
     const backend = new LocalTaskBackend(stateDir);
     const task = await backend.create({ name: 'Plain CLI', variant: 'cli' });
-    expect(task.sections).toEqual(['Why']);
-    expect(rawTask(task.slug)).not.toContain('<!--');
-    expect(rawTask(task.slug)).not.toContain('## Changelog');
-    expect(readFileSync(join(stateDir, 'journal', `${task.slug}.md`), 'utf-8')).toMatch(/- created \[je_[A-Za-z0-9]+\]\n- Task created\./);
+    expect(task.sections).toContain('Why');
+    expect(task.sections).toContain('Changelog');
     expect(task.sections).not.toContain('User Stories');
     expect(rawTask(task.slug)).not.toContain('## Workflow');
     expect(task.custom_fields).toEqual({});

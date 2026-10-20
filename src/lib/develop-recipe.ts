@@ -10,14 +10,10 @@ import { PLANNER_BRIEF } from './planner-brief.js';
  * inferred" into the reviewer's brief when the validator went; it was cancelled before it did.
  * These three lines are that promise, shared by both recipes.
  */
-const EVIDENCE_TICK_RULE = `A tick goes through \`tasks check\`, never an edit of the card: it records the green check's
-   output in the task's journal and refuses a failing one. Per criterion that check proves:
-
-  dreamcontext tasks check "$S" <n> --output-file "$ROOT/tmp/develop/$S/check-wN.out" --exit 0
-
-   A criterion about what the owner sees takes \`--evidence shot:<path>\` from the observed
-   check (section 3), its console output in the log line, and can only reach review.
-   No evidence = no tick, and a run with an unticked criterion does not close.`;
+const EVIDENCE_TICK_RULE = `A tick needs its evidence in the same log line: the check's summary line, or, for a
+   criterion about what the owner sees, the screenshot paths and the console output from the
+   observed check (section 3). No evidence = no tick, and a run with an unticked criterion
+   does not close.`;
 
 const OBSERVED_CHECK = `- The observed check, when a criterion is about what the owner sees: open the result in the
   real app or a headless browser at a phone (390 px) and a desktop (1440 px) width, record the
@@ -135,9 +131,6 @@ repo: tell the owner once that there is no net, and keep your own list of change
 
 ## 1. The wave map is your order of work
 
-Read the task as one packet: \`dreamcontext tasks show "$S"\` prints its parent task first (Why,
-decisions, siblings), then its card and newest journal entries. The parent's decisions bind it.
-
 The plan decides how the run goes, and a map from Plan mode is used unchanged. Its first line
 is \`EXECUTION: lead\` (or there is none): this recipe, its lanes built one after another.
 \`EXECUTION: fan-out\`: section 5. No map in the task: write one before any code, lead unless
@@ -158,14 +151,14 @@ docs checks), which a related-tests run cannot find.
    turns out to be wrong = STOP and say so.
 2. Check it ONCE, through the heavy lock (it never fights another session's tests):
 
-  dreamcontext builder test "$S" --wave N --related <every path you changed> --also <also-run tests> > "$ROOT/tmp/develop/$S/check-wN.out" 2>&1; echo "exit $?"; cat "$ROOT/tmp/develop/$S/check-wN.out"
+  dreamcontext builder test "$S" --wave N --related <every path you changed> --also <also-run tests>
 
    It type-checks each touched package and runs the tests that import your changes; SHOW its
    output. Exit 0 = GREEN, except a "NOT GREEN: no test covers" line: add that test with
    --also, or record that it is untested. 1 = failures (\`FAIL: <key>\`): fix them, then re-run
    only what failed plus what the fix changed:
 
-  dreamcontext builder test "$S" --wave N --failed --related <files the fix changed> > "$ROOT/tmp/develop/$S/check-wN.out" 2>&1; echo "exit $?"; cat "$ROOT/tmp/develop/$S/check-wN.out"
+  dreamcontext builder test "$S" --wave N --failed --related <files the fix changed>
 
    75 = a check did not run: run it again. A red that is a timeout under load is the machine:
    record the load line and re-run it before you change code. A key marked \`FAILED 2x\` after
@@ -323,8 +316,7 @@ Never start anything with the Bash tool's run_in_background.
 
 ## 1. The wave map (before any code changes)
 
-Read the task: \`dreamcontext tasks show "$S"\` (its parent task first, then its card and newest
-journal entries). If it has no wave map, write one into it:
+Read the task. If it has no wave map, write one into it:
 
   dreamcontext tasks insert "$S" technical_details -- "WAVE MAP: W1 lanes A (owns a.ts, b.ts: AC1, AC2), B (owns c.ts: AC3) | W2 ... | also run: <tests>"
 
@@ -443,7 +435,7 @@ owner. Each result is printed once.
    An "outside my files" item in a report goes to the lane that owns that file, by resume.
 3. The check, once, for the whole wave: every path the wave changed plus the map's also-run list:
 
-  dreamcontext builder test "$S" --wave N --related <every changed path> --also <also-run tests> > "$ROOT/tmp/develop/$S/check-wN.out" 2>&1; echo "exit $?"; cat "$ROOT/tmp/develop/$S/check-wN.out"
+  dreamcontext builder test "$S" --wave N --related <every changed path> --also <also-run tests>
 
    It type-checks each touched package and runs the tests that import the changes, through
    the heavy lock; SHOW its output. Exit 0 = GREEN, except a "NOT GREEN: no test covers"
@@ -458,7 +450,7 @@ owner. Each result is printed once.
 
    then \`dreamcontext builder wait "$S"\`, then re-run only what failed plus what the fix changed:
 
-  dreamcontext builder test "$S" --wave N --failed --related <files the fix changed> > "$ROOT/tmp/develop/$S/check-wN.out" 2>&1; echo "exit $?"; cat "$ROOT/tmp/develop/$S/check-wN.out"
+  dreamcontext builder test "$S" --wave N --failed --related <files the fix changed>
 
    A key marked \`FAILED 2x\`, or the CLI refusing a 4th resume = STOP and put it to the owner.
    A red that is a timeout under load is the machine: record the load line and re-run it
@@ -572,13 +564,13 @@ Every account capped: stop and tell the owner.
 
 ## 5. Briefs
 
-BASE: "Run \`dreamcontext tasks show <slug>\` (its parent task first), then read in full the files the lanes will change
+BASE: "Read _dream_context/state/<slug>.md, then read in full the files the lanes will change
 or call: <files by name, never whole directories>. Do not edit, run or test anything. Reply
 'BASE READY' and, in at most ten lines, the contracts the lanes share."
 
 BUILDER: "Your lane: <criteria>. You own ONLY: <files>. <What you consume from an earlier
 wave or produce for a later one: exact names and shapes>. Build exactly that.
-<A spawned builder, not a fork, also gets: run \`dreamcontext tasks show <slug>\` first.>
+<A spawned builder, not a fork, also gets: Read _dream_context/state/<slug>.md first.>
 Never call dreamcontext goal-live.
 ${NO_CHECK_BUILDER_RULES}
 Your final message starts with the exact heading '## wN-L report', then a line 'files changed:'

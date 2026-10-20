@@ -27,21 +27,8 @@ import { handleWindowCommand } from './routes/window-control.js';
 import { handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperLayout, handleSuperRecap, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
-import {
-  handleTaskProposalsList,
-  handleTaskProposalsCount,
-  handleTaskProposalAccept,
-  handleTaskChangeApply,
-  handleTaskChangeKeep,
-  handleTaskProposalReject,
-  handleFiledTaskReject,
-  handleFiledTaskKeep,
-  handleTaskFilingRuleRevert,
-} from './routes/task-proposals.js';
-import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksJournal, handleTaskVerdict, handleTaskPlan, handleTaskRank, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
 import { handleSleepEvalLabelsGet, handleSleepEvalLabelsPost } from './routes/sleep-eval.js';
-import { handleCyclesList, handleCyclesCreate, handleCycleStart, handleCycleClosePlan, handleCycleClose } from './routes/cycles.js';
-import { handleInbox, handleInboxCount, handleInboxSeen, handleLearnedRevert } from './routes/inbox.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
 import {
@@ -317,26 +304,6 @@ export function buildRouter(): Router {
 
   // Tasks
   router.get('/api/tasks', handleTasksList);
-  // Sleep's proposals + the tasks it opened itself (the Tasks screen's Proposals section).
-  router.get('/api/task-proposals', handleTaskProposalsList);
-  router.get('/api/task-proposals/count', handleTaskProposalsCount);
-  router.post('/api/task-proposals/filed/:slug/reject', handleFiledTaskReject);
-  router.post('/api/task-proposals/filed/:slug/keep', handleFiledTaskKeep);
-  router.post('/api/task-proposals/changes/:slug/apply', handleTaskChangeApply);
-  router.post('/api/task-proposals/changes/:slug/keep', handleTaskChangeKeep);
-  router.post('/api/task-proposals/:id/accept', handleTaskProposalAccept);
-  router.post('/api/task-proposals/:id/reject', handleTaskProposalReject);
-  router.post('/api/task-filing-rules/:id/revert', handleTaskFilingRuleRevert);
-  // The Inbox, the Planning screen and the Close deck (C5, plan r3 § W4).
-  router.get('/api/inbox', handleInbox);
-  router.get('/api/inbox/count', handleInboxCount);
-  router.post('/api/inbox/seen', handleInboxSeen);
-  router.post('/api/learned/:id/revert', handleLearnedRevert);
-  router.get('/api/cycles', handleCyclesList);
-  router.post('/api/cycles', handleCyclesCreate);
-  router.post('/api/cycles/:id/start', handleCycleStart);
-  router.get('/api/cycles/:id/close-plan', handleCycleClosePlan);
-  router.post('/api/cycles/:id/close', handleCycleClose);
   router.post('/api/tasks', handleTasksCreate);
   // Sync routes are registered BEFORE :slug — first match wins.
   router.get('/api/tasks/sync-status', handleTasksSyncStatus);
@@ -361,10 +328,6 @@ export function buildRouter(): Router {
   router.delete('/api/tasks/:slug', handleTasksDelete);
   router.patch('/api/tasks/:slug', handleTasksUpdate);
   router.post('/api/tasks/:slug/changelog', handleTasksChangelog);
-  router.get('/api/tasks/:slug/journal', handleTasksJournal);
-  router.post('/api/tasks/:slug/verdict', handleTaskVerdict);
-  router.post('/api/tasks/:slug/plan', handleTaskPlan);
-  router.post('/api/tasks/:slug/rank', handleTaskRank);
   // Assign to agent: sets `agent:`, applies the status rule, starts the agent's
   // call-target run with the task as data (409 when it is not approved to run).
   router.post('/api/tasks/:slug/assign-agent', handleTasksAssignAgent);

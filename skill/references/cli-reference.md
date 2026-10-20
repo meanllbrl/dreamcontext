@@ -138,20 +138,11 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 
 | Command | Description |
 |---|---|
-| `tasks list` | List/filter/group tasks (excludes terminal — done- and cancelled-kind — tasks by default). Flags: `-s/--status`, `-a/--all`, `--tag <t>` (repeatable, AND), `--any-tag <t>` (repeatable, OR), `--version <id>` (sprint/milestone), `--priority <level>`, `--feature <slug>`, `--objective <slug>`, `--since YYYY-MM-DD` / `--until YYYY-MM-DD` (inclusive, on `updated_at`), `-g/--group-by tag\|version\|priority\|status\|parent\|feature` (`parent`: each family under its parent's own row, standalone tasks last, with the top-level count; `feature`: the board by area), `--long`, `--tags`, `--json`. Filters compose (AND), case-insensitive. The snapshot's Active Tasks footer teaches this surface. |
+| `tasks list` | List/filter/group tasks (excludes terminal — done- and cancelled-kind — tasks by default). Flags: `-s/--status`, `-a/--all`, `--tag <t>` (repeatable, AND), `--any-tag <t>` (repeatable, OR), `--version <id>` (sprint/milestone), `--priority <level>`, `--feature <slug>`, `--objective <slug>`, `--since YYYY-MM-DD` / `--until YYYY-MM-DD` (inclusive, on `updated_at`), `-g/--group-by tag\|version\|priority\|status`, `--long`, `--tags`, `--json`. Filters compose (AND), case-insensitive. The snapshot's Active Tasks footer teaches this surface. |
 | `tasks tags` | Distinct task tags with counts. `-a/--all`, `--json`. |
-| `tasks create <name>` | Create a task (writes no priority, urgency or version). Flags: `-d/--description`, `-p/--priority` and `-u/--urgency` (retired: accepted, warned, ignored), `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version` (deprecated: a cycle number/id plans it there, `BACKLOG` = Later, else a legacy label), `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--start YYYY-MM-DD`, `--due YYYY-MM-DD`, `--objectives <csv>` (roadmap objective slugs this task serves; slugs must exist), `--field <key=value>` (repeatable; sets declared custom fields), `--allow-missing-required` (create a draft even when a required custom field is unset), `--by human\|sleep` (who is filing; during a live sleep cycle anything but `human` must clear the filing bar), `--neighbor-checked <slug>` (lifts a review-band filing-bar refusal by naming the nearest task you looked at), `--declined-checked <key>` (lifts a semantic declined-match refusal by naming the declined idea you read; the exact-slug match is never lifted). **Fails** if a required custom field is unset and `--allow-missing-required` is not given. |
+| `tasks create <name>` | Create a task. Flags: `-d/--description`, `-p/--priority critical\|high\|medium\|low`, `-u/--urgency …`, `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version`, `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--start YYYY-MM-DD`, `--due YYYY-MM-DD`, `--objectives <csv>` (roadmap objective slugs this task serves; slugs must exist), `--field <key=value>` (repeatable; sets declared custom fields), `--allow-missing-required` (create a draft even when a required custom field is unset), `--by human\|sleep` (who is filing; during a live sleep cycle anything but `human` must clear the filing bar), `--neighbor-checked <slug>` (lifts a review-band filing-bar refusal by naming the nearest task you looked at), `--declined-checked <key>` (lifts a semantic declined-match refusal by naming the declined idea you read; the exact-slug match is never lifted). **Fails** if a required custom field is unset and `--allow-missing-required` is not given. |
 | `tasks decline "<topic>" --reason <text>` | Record an idea the user dropped that never became a task, so no sleep cycle re-files it. Reason mandatory (≥20 chars); key = slugified topic; refuses when a LIVE task with that slug exists (cancel that instead); a tombstoned slug may be declined. Writes `state/.task-declined.json` (synced brain content). |
 | `tasks declined [--json]` | List declined ideas (newest first). |
-| `tasks propose "<name>" -w <why> --quote <line> [--parent <p>] [--basis ask\|defect\|discussion] [--by sleep\|agent]` | Sleep's path for a new top-level task it may not file itself: stored in `state/.task-proposals.json`, shown on the Tasks screen. The quote must appear in a session this sleep consolidates; passes the same content gates as a filed task (Why floor, tombstones, declined, same-kind block, neighbour). |
-| `tasks proposals [--json]` | What waits for the owner: pending proposals, tasks sleep opened itself, and the brake. |
-| `tasks accept <tp_id> [--name] [-w] [--parent <p>\|--no-parent]` | Owner only (refused from an agent environment): the proposal becomes a task in the Next queue, `created_by: human`; an edited name/Why is recorded as feedback. |
-| `tasks reject <tp_id\|slug> --reason <r> [--note]` | Reject a proposal or a task sleep opened. Reasons: already-exists, abandoned, too-small, badly-written, wrong-project, not-work. Writes `state/.task-feedback.json` and the declined store; a filed task moves to the cancelled-kind status. |
-| `tasks keep <slug>` | Owner only: a task sleep opened stays, and counts as a good filing. |
-| `tasks rules [--json]` | Print the task-filing rules and record that they were read in this sleep (required before `create --by sleep` / `propose` while a sleep runs). |
-| `tasks rules pending\|history [--json]` | Rejects no rule cites yet / every rule change. |
-| `tasks rules set [R<n>] --title --dont --do --rests-on <fb ids>` | Add or rewrite a rule in `knowledge/patterns/task-filing-rules.md`; it must cite real rejects; a near-duplicate is refused (merge); capped at 8,000 chars / 15 rules. |
-| `tasks rules merge <keep> <drop>` / `tasks rules revert <R<n>>` | Fold one rule into another / undo the latest change to a rule (revert: owner only). |
 | `tasks undecline <key>` | Lift a declined idea (awake decision), so it can be filed again. |
 | `tasks tombstones` | List slugs deliberately retired by `tasks delete`/`rename` (with the task that absorbed each); a sleep cycle never re-files a tombstoned slug. |
 | `tasks rice <name>` | Print or update RICE values. `--reach`/`--impact`/`--confidence`/`--effort`, `--clear`. |
@@ -163,44 +154,25 @@ A slug is a filesystem path segment and a dashboard route segment, so the charse
 | `tasks tag <name> <tags...>` | Add (or `--remove`) tags. `person:<slug>` assigns a person. |
 | `tasks assign-agent <name> [agent]` | Assign to agent: sets the local-only `agent:` field, moves an open-kind (or status-less) task to `in_progress`, and runs the agent on it now in the foreground; the agent must be approved to run here. `--note <text>` (fenced as data with the task), `--clear` (remove the agent; runs nothing). Refused inside an agent run. Detail: [tasks-and-features.md](tasks-and-features.md#assign-to-agent). |
 | `tasks field <name> <key> [value\|clear]` | Set or clear a user-defined custom field declared in `overrides/task.md` (synced to ClickUp/GitHub). Validates select options + number types. |
-| `tasks insert <name> <section> <content...>` | Insert into a section: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`; `changelog` writes a journal entry. Refuses a card past 12,000 chars (except into `acceptance_criteria`). |
-| `tasks log <name> [content...]` | Add an entry to the task's journal (`state/journal/<slug>.md`; cross-session continuity). **Use every session.** |
-| `tasks check <name> <n\|phrase>` | Tick a criterion with evidence. `--run "<cmd>"` runs it and records exit code + scrubbed tail (≤ 2,000 chars) as an `evidence` journal entry, ticking with `cmd:<je_id>`; `--output-file <path> --exit <code>` ingests a command already run; `--evidence commit:<sha>\|shot:<path>`. Refuses a non-zero exit, an unresolved `cmd:`, an unreachable `commit:`, a typed `owner:<date>`, and a phrase matching 0 or >1 criteria. |
-| `tasks show <name>` | The context packet: the parent's card + siblings first, then the card, the newest 3 journal entries and paths, fenced as data (≤ 12,000 chars). `--json`, `--cap <n>`, `--entries <n>`. |
-| `tasks plan <name> <now\|next\|later\|cycle>` | Put a task in the active cycle (`now`), a cycle by number or id, or the Next / Later queue. A parent brings its open sub-tasks (one journal entry each); a parent's own place is derived from its children. Closed tasks and closed cycles are refused. |
-| `tasks rank <name> --before\|--after <task>` | Order a task inside its cycle or queue (importance = rank). Refused across buckets. |
-| `tasks parent <name> <parent\|clear>` | Make a task a sub-task (two levels; parent open and top-level; inherits objectives, feature, cycle when unset) or detach it. `tasks create --parent <p>` does the same at birth. |
-| `tasks bind <name>` / `tasks unbind` | Bind this Claude session (CLAUDE_CODE_SESSION_ID) to a task so its packet returns after a compaction; or clear it. |
-| `tasks approve <name>` | The owner's verdict on a task in review: writes an `approval` journal entry and moves it to done. `--note "<what was checked>"`. Refused from a Claude session or agent run. |
-| `tasks send-back <name> --note "<what is missing>"` | The owner's other verdict on a task in review: writes an `approval` journal entry labelled `sent back` with the note and returns the task to the first active status. The note is required. Refused from a Claude session or agent run. Both verdicts are recorded in the task audit (shown on the Inbox); the dashboard's verdict does the same. |
+| `tasks insert <name> <section> <content...>` | Insert into a section: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`. |
+| `tasks log <name> [content...]` | Add a changelog entry (cross-session continuity). **Use every session.** |
 | `tasks handoff <name> --done --next --decisions --learned --style --files [note...]` | Context handoff: writes all six parts as ONE changelog entry, sets `in_progress`, pins the task for a fresh session. **Refuses and writes nothing** while a part is missing (`none` is valid except for `--done`/`--next`, which need a real sentence). |
 | `tasks ready <name>` | Plan → Develop gate: exits 1 naming each gap (no `- [ ]` criterion, no `Validation method:` criterion, `technical_details` empty or naming no file). The Develop button runs the same check on click. |
-| `tasks status <name> <status> [reason...]` | Change status (logs to the journal). **Evidence-gated:** a review- or done-kind status is refused while a criterion is unticked or has no evidence ref; done directly needs only `cmd:`/`commit:` refs and nothing `(observed)`, and at least one criterion (a task with none reaches done only through review or `--force`). `--force --reason "<why>"` passes the gate (journaled; refused from an agent environment). `<status>` is `todo\|in_progress\|in_review\|completed` or any key declared under `statuses:` in `overrides/task.md`. On the first move to an `active`-kind status (`in_progress`), stamps `start_date` with today if it is unset (a planned start is never overwritten) and pushes an already-passed `due_date` out to stay valid. On `completed`, stamps `due_date` with the real completion date (and `start_date` too when the task was never started — a same-day window). A `cancelled`-kind status stamps nothing. Moving to a `done`- or `review`-kind status hard-fails while a required custom field is unset. A parent never reaches done while a sub-task is open; cancelling one needs `--child <t>=cancel\|detach\|move:<p>` per open sub-task or `--children <decision>`. |
+| `tasks status <name> <status> [reason...]` | Change status (logs to changelog). `<status>` is `todo\|in_progress\|in_review\|completed` or any key declared under `statuses:` in `overrides/task.md`. On the first move to an `active`-kind status (`in_progress`), stamps `start_date` with today if it is unset (a planned start is never overwritten) and pushes an already-passed `due_date` out to stay valid. On `completed`, stamps `due_date` with the real completion date (and `start_date` too when the task was never started — a same-day window). A `cancelled`-kind status stamps nothing. Moving to a `done`- or `review`-kind status hard-fails while a required custom field is unset. |
 | `tasks statuses` | Read-only: the project's status set — key, label, kind, **parent** (which shipped status it rides under), order, colour, shipped/declared, and how each maps to GitHub (`state+state_reason dc:<key>`) and to the cached remote list statuses (`<parent status> + dc:<key> tag`). `--json`. Declare statuses in `overrides/task.md` or the dashboard Settings. |
-| `tasks complete <name> [summary...]` | Mark completed (convenience; same evidence gate, same `--force --reason`). |
-| `tasks migrate-journal` | Move every card's `## Changelog` into its journal now (the 0.33.0 migration): backup under `_dream_context/tmp/`, byte ledger, idempotent. `--dry-run` reports only. |
-| `tasks delete <name>` | Delete a task (propagates to remote backend on sync). `--yes`. Refused for a parent with a live sub-task (closed ones are detached). |
+| `tasks complete <name> [summary...]` | Mark completed (convenience). |
+| `tasks delete <name>` | Delete a task (propagates to remote backend on sync). `--yes`. |
 | `tasks rename <name> <new-name>` | Rename a task: rewrites the name, moves the file to the new slug, and re-keys the sync mapping by the stable dcId so the **same** remote task/issue is updated on next sync — never duplicated. Use this instead of hand-editing `name:` + renaming the file. |
-| `tasks doctor [name]` | Card-standard checks (template comment, name > 80 chars, Why > 600 chars, card > 12,000 chars, open task without criteria, unproven review, review older than 7 days, typed owner date) plus Workflow ⇄ Acceptance Criteria drift (all tasks if name omitted); folds a returned Changelog into the journal. `--remote` also checks the remote backend for assignee drift (needs a token). |
+| `tasks doctor [name]` | Validate the Workflow flowchart is in sync with Acceptance Criteria (all tasks if name omitted). `--remote` also checks the remote backend for assignee drift (needs a token). |
 | `tasks sync [push\|pull\|both]` | Sync with the remote backend (no-op on local). `--hook`, `--reconcile` (heal pre-existing assignee drift below the watermark — #78), `--json`. |
 | `tasks members` | People with access to the remote list (assignee candidates). `--json`. |
 | `tasks provision` | Create recommended + override-declared custom fields on the remote backend (ClickUp list fields / GitHub labels). Reuses any that already exist by name. |
 | `tasks sync-hooks install\|uninstall` | Manage best-effort git sync triggers (post-commit, pre-push). |
 | `tasks dedup` | Heal duplicate `-N` task-file families (e.g. `state/<slug>-2.md`) left behind by a corrupted/conflicted sync ledger — merges each family into its canonical slug, repoints `.tasks-map.json`, removes the redundant files. **LOCAL-ONLY**: never calls the remote backend. `--dry-run` prints the plan without mutating; the mutating run **requires `--yes`** (refuses non-interactively without it, like `tasks delete`). See [integrations.md](integrations.md#healing-duplicate-task-families-tasks-dedup--backend-generic). |
 
-Sections for `tasks insert`: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, and `changelog` (a journal entry). See [tasks-and-features.md](tasks-and-features.md) for the full protocol.
+Sections for `tasks insert`: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`. See [tasks-and-features.md](tasks-and-features.md) for the full protocol.
 
 ---
-
-## Cycles (the planning time box — see [tasks-and-features.md](tasks-and-features.md))
-
-| Command | Purpose |
-|---|---|
-| `cycle new --goal "<sentence>"` | Open a planned cycle. `-w/--weeks <n>` or `--end YYYY-MM-DD`, `--start YYYY-MM-DD` (default: today, or the day after the last open cycle ends). Default length: the last cycle's, else `tasks.cycleDefaultWeeks` in `state/.config.json`, else 1 week. `--json`. |
-| `cycle start <n\|id>` | Make a planned cycle active. Refused while another is active. |
-| `cycle show [n\|id]` | Goal, dates, days left, done/total leaves, the work grouped under parents, carry counts. Default: the active cycle. `--json`. |
-| `cycle close [n\|id]` | Decide every unfinished leaf: `--carry <csv>` (into the next planned cycle, or `--into <n>`), `--back <csv>` (Next queue), `--cancel <csv>`, or `--all carry\|back\|cancel`. Interactive on a TTY; refuses undecided leaves otherwise. Records carried/backed/cancelled and done/total on the cycle. An empty cycle closes as 0/0. |
-| `cycle list` | Every cycle (number, status, dates, done/total, goal) plus cycle ids cards point at that are not synced yet. `--json`. |
 
 ## Roadmap (objectives — the OKR board)
 
@@ -403,9 +375,9 @@ Sections for `features insert`: `changelog`, `notes`, `technical_details`, `cons
 | Command | Description |
 |---|---|
 | `core changelog add` | Add a changelog entry. `--type feat\|fix\|refactor\|chore\|docs\|perf\|test\|change`, `--scope`, `--description`, `--summary` (≤200 char), `--references <csv>` (`commit:`/`file:`/`knowledge:`/`feature:`/`task:`/`url:`), `--authors <csv>`, `--supersedes <key>`, `--breaking`. |
-| `core releases add` | Record a release: completed tasks closed since the previous release, features, changelog, and the cycles the tasks came from. `-V/--ver`, `-s/--summary`, `-y/--yes`. `--status planning` is refused (plan with a cycle). |
+| `core releases add` | Create a release (auto-discovers tasks/features/changelog). `-V/--ver`, `-s/--summary`, `--status planning\|released` (default released), `-y/--yes`. |
 | `core releases list` | List recent releases. `-n/--count`. |
-| `core releases active [version]` | Deprecated (planning is a cycle; new tasks no longer default into a version). Reads/sets the legacy pointer. `--clear` to unset. |
+| `core releases active [version]` | Get/set the active planning version (default for new tasks' version). `--clear` to unset. |
 | `core releases show <version>` | Show a release's details. |
 
 ---
@@ -419,10 +391,6 @@ Sections for `features insert`: `changelog`, `notes`, `technical_details`, `cons
 | `knowledge tags` | List standard tags. `--plain`. |
 | `knowledge move <slug> <folder>` | Move `knowledge/<slug>.md` → `knowledge/<folder>/<basename>.md` and rewrite inbound `[[wikilinks]]` atomically (target token only; `\|alias`/`#anchor` preserved). Free-form folders — nothing reserved; nested allowed; path traversal + clobber rejected. Use this instead of `mv` + hand-editing links. |
 | `knowledge touch <slug>` | Record access (decay/staleness tracking + warm loading). |
-| `patterns corrections [--recurring] [--backfill [days]] [--json]` | The owner's corrections kept across sleeps (read at `sleep start` from the owner's own turns, redacted, machine-local). `--recurring`: the groups said in 2+ sessions by one person that no learned rule cites yet. `--backfill` (default 7 days, max 90) reads the last days once, skipping sessions registered as spawned (`--json` gives the skip counts); a second run adds nothing. |
-| `patterns learn <pattern> --from <ids> --title <t> --rule <t> [--replaces <lr_id> \| --edits "<paragraph>"]` | Sleep-product's writer: a rule from ONE recurring group, with its quotes and dates, as a `[lr_<id>]` block under `## Learned from the owner's corrections`. `--edits` replaces that exact paragraph (a contradiction of existing text), `--replaces` a learned block; the old file is archived to `knowledge/.archive/` first. Refused: fewer than 2 cites or 1 session, cites outside one group, reused or reverted cites, a rule the file already states, `task-filing-rules`, a symlink, a file past 150 lines, text edited awake. Runs `patterns sync`. |
-| `patterns learned [--since <iso>] [--json]` | What sleep learned: the learned rules and the task-filing rule changes sleep made, newest first. |
-| `patterns revert <id>` | **Owner only** (refused from a Claude session or an agent run). Undo a learned change (`lp_…`, restoring the archived file) or a filing-rule change (`R<n>@<at>`); refused if the file changed since. The Inbox does the same. |
 
 > `knowledge/**/*.md` is indexed **recursively**, so knowledge organized into context folders (`knowledge/<context>/…`) stays first-class. Group a flat file into a context folder with `knowledge move <slug> <folder>` (atomic move + wikilink rewrite); `sleep-product` calls this same command during consolidation; legacy flat `knowledge/diagrams/` boards are folded by `migrations apply-diagrams`. Never hand-move + hand-edit links. See [knowledge-and-recall.md](knowledge-and-recall.md).
 
@@ -471,7 +439,6 @@ The key lives in `~/.dreamcontext/recall-cloud.json` (0600); `DREAMCONTEXT_RECAL
 | `sleep done <summary...>` | Mark consolidation complete, write history, reset debt. |
 | `sleep debt` | Output the debt number (programmatic). |
 | `sleep history` | Consolidation history log. `-n/--limit`. |
-| `sleep eval exempt <child> --reason <text>` | **Owner only** (refused from a Claude session or an agent run). Lets a sub-task of a gated parent close without an eval run, for the stated reason: journaled on the sub-task, recorded in the task audit, listed by `sleep eval status` (`--json`: `exemptions`). The gate honours it only while the journal entry and the audit record both match. |
 
 See [sleep.md](sleep.md) for the full flow.
 
@@ -694,8 +661,7 @@ Every posted banner is appended to `~/.dreamcontext/notifications.jsonl` (`{id, 
 | `builder load [--reap]\|heavy [--max-wait <s>] -- <cmd>\|report <file> <TaskId>\|review-pick <file>` | Helpers for headless `claude -p` builders and their orchestrator (goal-skill, Develop). `load` prints `cores N load1 X busy\|quiet` (Node's loadavg, locale-proof) and lists the type-checkers/test runners of this repo whose parent is gone; `--reap` SIGTERMs them; always exits 0. `heavy -- <cmd>` runs a type-check or test run holding the repo's heavy lock (`<git common dir>/dc-heavy.lock`, a dead holder is reclaimed, a live one never), so builders take turns; exits with the command's code, or 75 when the lock stayed busy past `--max-wait` (default 300 s) and nothing ran. `report <file> <TaskId>` reads a `--output-format json` output (or a log appended across resumes) and prints `reported` (exit 0; the final message opens with `## <TaskId> report` and does not end on a promise), `unfinished`, `stopped` (the run errored: usage limit, max turns) or `missing` (exit 3). Builders are spawned with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` so a timed-out check is killed, not moved out of a session about to exit. `review-pick <file>` reads the `review-router`'s reply (its last ```` ```json ```` plan) and prints which end review a Develop run or goal-skill's Phase 5 gets: `reviewer: <why>` for a small or one-area diff, `multi-review: <why>; team: <agents>` for a Full tier, a hot path, UI plus another area, or an area outside the router's vocabulary (`frontend`, `backend`, `cloud-functions`, `data`, `infra`; a plan with no tier reads as Full). The team is `review-edge-cases` plus each named specialist, and the `reviewer` when none is named. Exit 2 = no plan in the file: run the router once more, then the team without a plan. |
 | `reflect` | Surface recurring cross-session terms as candidates. `--min-sessions`, `--max`, `--write`. |
 | `snapshot` | Output the context snapshot (used by SessionStart). `--tokens`, `--vault <name>`. Budget-bounded — see [Snapshot budget](#snapshot-budget--the-harness-limit). |
-| `migrations pending\|apply-diagrams\|record` | Inspect/apply brain-structure migrations. `record --files --summary`; an agent task that can tell its work is unfinished (0.33.0's) is refused until done (`--force` overrides). |
-| `migrations backlog show\|decide\|parent\|propose\|report` | The 0.33.0 task migration's agent half: what waits (`show --pending`), one outcome per task (`decide <slug> keep\|merge\|cancel [--parent] [--feature] [--queue] [--into] --reason`), a parent for a deliverable (`parent "<name>" --why --criterion --children a,b [--feature]`), an uncertain change to the Tasks screen's Proposals (`propose <slug> merge\|cancel\|parent\|later\|feature`), before → after counts incl. groups by feature (`report`). See tasks-and-features.md. |
+| `migrations pending\|apply-diagrams\|record` | Inspect/apply brain-structure migrations. `record --files --summary`. |
 | `feedback` | File a gap/bug upstream as a GitHub issue. See [improving-dreamcontext.md](improving-dreamcontext.md). |
 | `hook <name>` | Hook handlers (called by the platform, not you): `session-start`, `stop`, `subagent-start`, `pre-tool-use`, `user-prompt-submit`, `post-tool-use`, `pre-compact`, `ensure-dashboard`, `refresh-asset-drift`. |
 
@@ -839,7 +805,7 @@ _dream_context/
 ├── core/
 │   ├── 0.soul.md  2.memory.md            ← slot 1 is RETIRED (the user file became people/)
 │   ├── 3.style_guide_and_branding.md  4.tech_stack.md  6.system_flow.md
-│   ├── CHANGELOG.json  RELEASES.json  CYCLES.json  taxonomy.json
+│   ├── CHANGELOG.json  RELEASES.json  taxonomy.json
 ├── people/                           ← WHO works in this vault (`dreamcontext people`)
 │   ├── people.json                   ←   the structural roster: {version, people:{<slug>:{name,emails[],role?}}}
 │   └── <slug>.md                     ←   one constitution per person — verbatim in the snapshot when active,
@@ -866,6 +832,6 @@ _dream_context/
 │   │                                    (the `people` roster key was RETIRED in 0.23.0 → people/people.json)
 │   ├── .brain-local.json             ← gitignored: machine-local state incl. the active-person pin
 │   │                                    (linked-repo LOCAL paths live in ~/.dreamcontext/linked-repos.json, never synced)
-│   ├── .active-version.json          ← legacy sprint pointer (deprecated; cycles live in core/CYCLES.json)
+│   ├── .active-version.json          ← current sprint (active planning version)
 │   ├── .sleep.json  .secrets.json (gitignored)  .active-task
 ```

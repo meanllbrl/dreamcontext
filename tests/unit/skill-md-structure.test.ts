@@ -47,7 +47,7 @@ const RULE_TITLES = [
   'Recall before grep.',
   'Single source of truth — check before creating, update over duplicate.',
   "Work over ~5 minutes needs a task — but don't fork tasks.",
-  'Tick criteria with evidence as you go.',
+  'Mark checkboxes as you go.',
   'Log every session',
   'Reuse before create.',
   'Features are sleep-only.',

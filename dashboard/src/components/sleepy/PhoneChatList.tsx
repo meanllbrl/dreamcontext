@@ -17,7 +17,6 @@ import {
   ageLabel, chatLastTs, chatSearchText, closedRows, highlight, listTap, listView, openMatches, openRows, queryTokens,
   type ClosedRow, type ListFilter, type OpenRow,
 } from './phoneList';
-import { fill } from '../../lib/fill';
 
 /**
  * The phone's home on Mac mode: the Sohbetler list (AC21-AC22). Every chat of the project, open
@@ -297,7 +296,7 @@ export function PhoneChatList({
                           const held = tabs.find((x) => x.id === row.id);
                           markClosed([held?.claudeId, held?.altClaudeId]);
                           onCloseSession(row.id);
-                        }} aria-label={fill(t('handsfree.list.closeChat'), { title: row.title || t('handsfree.mac.untitled') })} data-testid="list-close">
+                        }} aria-label={t('handsfree.list.closeChat').replace('{title}', () => row.title || t('handsfree.mac.untitled'))} data-testid="list-close">
                         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden><path d="M4 4 12 12M12 4 4 12" /></svg>
                       </button>
                     )}
@@ -339,7 +338,7 @@ export function PhoneChatList({
           <p className="mchat-empty" data-testid="list-empty">
             {hiddenByChip
               ? t(filter === 'open' ? 'handsfree.list.noneOpen' : 'handsfree.list.noneClosed')
-              : dq ? fill(t('handsfree.list.noMatch'), { q: dq }) : t('handsfree.list.empty')}
+              : dq ? t('handsfree.list.noMatch').replace('{q}', () => dq) : t('handsfree.list.empty')}
           </p>
         )}
       </div>

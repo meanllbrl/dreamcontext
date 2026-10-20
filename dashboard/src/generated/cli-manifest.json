@@ -939,7 +939,7 @@
     },
     {
       "path": "core releases active",
-      "desc": "Deprecated: planning is a cycle now (dreamcontext cycle show). Gets or sets the legacy active planning version",
+      "desc": "Get or set the active planning version (used as default for new tasks)",
       "args": [
         "[version]"
       ]
@@ -1206,58 +1206,6 @@
         "--conviction",
         "--headline",
         "--concession"
-      ]
-    },
-    {
-      "path": "cycle",
-      "desc": "Cycles: a dated time box with one goal, one active at a time (apart from the queue and from releases)",
-      "args": [],
-      "group": true
-    },
-    {
-      "path": "cycle close",
-      "desc": "Close a cycle: every unfinished leaf is carried into the next cycle, sent back to Next, or cancelled",
-      "args": [
-        "[cycle]"
-      ],
-      "valueFlags": [
-        "--carry",
-        "--back",
-        "--cancel",
-        "--all",
-        "--into"
-      ]
-    },
-    {
-      "path": "cycle list",
-      "desc": "List cycles (number, status, dates, done/total leaves, goal)",
-      "args": []
-    },
-    {
-      "path": "cycle new",
-      "desc": "Open a planned cycle (default length: the last cycle's, else tasks.cycleDefaultWeeks, else 1 week)",
-      "args": [],
-      "valueFlags": [
-        "-g",
-        "--goal",
-        "-w",
-        "--weeks",
-        "--end",
-        "--start"
-      ]
-    },
-    {
-      "path": "cycle show",
-      "desc": "Show a cycle: goal, days left, progress over leaves, its work grouped under parents",
-      "args": [
-        "[cycle]"
-      ]
-    },
-    {
-      "path": "cycle start",
-      "desc": "Make a planned cycle the active one (refused while another is active)",
-      "args": [
-        "<cycle>"
       ]
     },
     {
@@ -1594,18 +1542,8 @@
       "args": []
     },
     {
-      "path": "hook read-task",
-      "desc": "Add the parent task card when a sub-task card is read (called by the Read-hook guard script)",
-      "args": []
-    },
-    {
       "path": "hook refresh-asset-drift",
       "desc": "Recompute whether `dreamcontext update` would change any asset this project uses (detached cache refresh)",
-      "args": []
-    },
-    {
-      "path": "hook session-end",
-      "desc": "End this session's task binding (called by Claude Code SessionEnd hook)",
       "args": []
     },
     {
@@ -2538,65 +2476,6 @@
       "args": []
     },
     {
-      "path": "migrations backlog",
-      "desc": "The 0.33.0 task migration: what waits, decide each open task, group families, before/after",
-      "args": [],
-      "group": true
-    },
-    {
-      "path": "migrations backlog decide",
-      "desc": "Give one open task its outcome: keep (optionally under a parent, linked to a feature, or in Later), merge (cancelled + absorbed_by, never deleted) or cancel",
-      "args": [
-        "<task>",
-        "<outcome>"
-      ],
-      "valueFlags": [
-        "--parent",
-        "--queue",
-        "--into",
-        "--feature",
-        "--reason"
-      ]
-    },
-    {
-      "path": "migrations backlog parent",
-      "desc": "Create a parent for a family of open tasks (a deliverable, never an area) and keep each of them under it",
-      "args": [
-        "<name>"
-      ],
-      "valueFlags": [
-        "--why",
-        "--children",
-        "--criterion",
-        "--description",
-        "--feature"
-      ]
-    },
-    {
-      "path": "migrations backlog propose",
-      "desc": "Not sure? Keep the task as it is and put the change in front of the owner on the Tasks screen (Proposals)",
-      "args": [
-        "<task>",
-        "<change>"
-      ],
-      "valueFlags": [
-        "--into",
-        "--parent",
-        "--feature",
-        "--why"
-      ]
-    },
-    {
-      "path": "migrations backlog report",
-      "desc": "Before/after counts: open, top-level, parents, groups by feature, outcomes, proposals waiting, placement",
-      "args": []
-    },
-    {
-      "path": "migrations backlog show",
-      "desc": "What the migration took stock of: tasks still waiting for an outcome, and every decision so far",
-      "args": []
-    },
-    {
       "path": "migrations pending",
       "desc": "Print pending agent task instructions for any unfinished migrations",
       "args": []
@@ -2636,36 +2515,6 @@
       "group": true
     },
     {
-      "path": "patterns corrections",
-      "desc": "The owner's corrections kept across sleeps; --recurring groups the ones said in 2+ sessions, --backfill <days> reads the last days once",
-      "args": [],
-      "valueFlags": [
-        "--backfill"
-      ]
-    },
-    {
-      "path": "patterns learn",
-      "desc": "Write a rule learned from ONE recurring group of the owner's corrections into a pattern (quotes and dates kept; the old file archived first)",
-      "args": [
-        "<pattern>"
-      ],
-      "valueFlags": [
-        "--from",
-        "--title",
-        "--rule",
-        "--replaces",
-        "--edits"
-      ]
-    },
-    {
-      "path": "patterns learned",
-      "desc": "Rules sleep learned from the owner's corrections, and the task-filing rule changes it made",
-      "args": [],
-      "valueFlags": [
-        "--since"
-      ]
-    },
-    {
       "path": "patterns list",
       "desc": "List every pattern with its \"/\" name and derived triggers",
       "args": []
@@ -2675,13 +2524,6 @@
       "desc": "Show which patterns a prompt would trigger, and why",
       "args": [
         "<prompt...>"
-      ]
-    },
-    {
-      "path": "patterns revert",
-      "desc": "Undo a learned change (owner only; the Inbox does the same)",
-      "args": [
-        "<id>"
       ]
     },
     {
@@ -3126,16 +2968,6 @@
       ]
     },
     {
-      "path": "sleep eval exempt",
-      "desc": "Owner only: let a sub-task close without an eval run, for a stated reason (journaled on the task, listed here and on the Inbox)",
-      "args": [
-        "<child>"
-      ],
-      "valueFlags": [
-        "--reason"
-      ]
-    },
-    {
       "path": "sleep eval label",
       "desc": "Answer a card: what sleep should have done (new-task | add-to-task | nothing), or keep | reject for a repeated correction; \"nothing\" needs --reason (already-exists, abandoned, too-small, badly-written, wrong-project, not-work)",
       "args": [
@@ -3379,29 +3211,6 @@
       "group": true
     },
     {
-      "path": "tasks accept",
-      "desc": "Accept a proposal: it becomes a task in the Next queue (owner only)",
-      "args": [
-        "<id>"
-      ],
-      "valueFlags": [
-        "--name",
-        "-w",
-        "--why",
-        "--parent"
-      ]
-    },
-    {
-      "path": "tasks approve",
-      "desc": "Approve a task in review: the owner's verdict, recorded in the journal, closes it (never from an agent)",
-      "args": [
-        "<name>"
-      ],
-      "valueFlags": [
-        "--note"
-      ]
-    },
-    {
       "path": "tasks assign-agent",
       "desc": "Assign a task to an agent: sets agent:, moves an open task to in_progress, and runs the agent on it now",
       "args": [
@@ -3413,35 +3222,11 @@
       ]
     },
     {
-      "path": "tasks bind",
-      "desc": "Bind this Claude session to a task: after a compaction its context packet is delivered again (needs CLAUDE_CODE_SESSION_ID)",
-      "args": [
-        "<task>"
-      ]
-    },
-    {
-      "path": "tasks check",
-      "desc": "Tick a criterion with evidence: --run a command (recorded in the journal, ticked as cmd:<id>), or --evidence commit:<sha> | shot:<path>",
-      "args": [
-        "<name>",
-        "<criterion>"
-      ],
-      "valueFlags": [
-        "--run",
-        "--output-file",
-        "--exit",
-        "--evidence"
-      ]
-    },
-    {
       "path": "tasks complete",
-      "desc": "Mark a task as completed (evidence-gated: every criterion proven by cmd:/commit:, nothing observed)",
+      "desc": "Mark a task as completed",
       "args": [
         "<name>",
         "[summary...]"
-      ],
-      "valueFlags": [
-        "--reason"
       ]
     },
     {
@@ -3474,14 +3259,10 @@
         "--due",
         "--objectives",
         "--feature",
-        "--parent",
         "--field",
         "--by",
         "--neighbor-checked",
-        "--declined-checked",
-        "--basis",
-        "--quote",
-        "--evidence"
+        "--declined-checked"
       ]
     },
     {
@@ -3517,7 +3298,7 @@
     },
     {
       "path": "tasks doctor",
-      "desc": "Check task cards: the card standard (template comments, long names/Why, card size, open tasks without criteria, unproven or stale reviews) and Workflow drift; folds a Changelog back into the journal",
+      "desc": "Validate Workflow flowchart is in sync with Acceptance Criteria",
       "args": [
         "[name]"
       ]
@@ -3578,13 +3359,6 @@
       ]
     },
     {
-      "path": "tasks keep",
-      "desc": "Keep a task sleep opened: it leaves the Proposals section and counts as a good filing (owner only)",
-      "args": [
-        "<slug>"
-      ]
-    },
-    {
       "path": "tasks list",
       "desc": "List tasks, with filters, grouping, tag discovery, and JSON output",
       "args": [],
@@ -3605,7 +3379,7 @@
     },
     {
       "path": "tasks log",
-      "desc": "Add an entry to a task's journal (cross-session continuity)",
+      "desc": "Add a changelog entry to a task (cross-session continuity)",
       "args": [
         "<name>",
         "[content...]"
@@ -3617,32 +3391,11 @@
       "args": []
     },
     {
-      "path": "tasks migrate-journal",
-      "desc": "Move every task card's Changelog into its journal now (the 0.33.0 migration; idempotent, backs up to tmp/)",
-      "args": []
-    },
-    {
       "path": "tasks objectives",
       "desc": "Print, set, or clear the roadmap objectives a task serves (local-only field)",
       "args": [
         "<name>",
         "[slugs]"
-      ]
-    },
-    {
-      "path": "tasks parent",
-      "desc": "Make a task a sub-task of a parent (two levels only; inherits objectives and feature when it has none), or clear it",
-      "args": [
-        "<task>",
-        "<parent>"
-      ]
-    },
-    {
-      "path": "tasks plan",
-      "desc": "Plan a task into a cycle or a queue (Now / Next / Later). A parent brings its open sub-tasks with it",
-      "args": [
-        "<task>",
-        "<target>"
       ]
     },
     {
@@ -3654,59 +3407,15 @@
       ]
     },
     {
-      "path": "tasks proposals",
-      "desc": "List what waits for the owner: sleep's proposals and the tasks sleep opened itself",
-      "args": []
-    },
-    {
-      "path": "tasks propose",
-      "desc": "Propose a task to the owner (sleep's path for a new top-level task without an ask/defect basis)",
-      "args": [
-        "<name>"
-      ],
-      "valueFlags": [
-        "-w",
-        "--why",
-        "--quote",
-        "--parent",
-        "--basis",
-        "--by",
-        "--neighbor-checked",
-        "--declined-checked"
-      ]
-    },
-    {
       "path": "tasks provision",
       "desc": "Create the recommended fields on the remote task container (urgency, summary, RICE, …)",
       "args": []
-    },
-    {
-      "path": "tasks rank",
-      "desc": "Order a task inside its cycle or queue (importance is rank, not priority)",
-      "args": [
-        "<task>"
-      ],
-      "valueFlags": [
-        "--before",
-        "--after"
-      ]
     },
     {
       "path": "tasks ready",
       "desc": "Check a task carries everything a fresh Develop session needs: criteria, validation method, file-by-file plan",
       "args": [
         "<name>"
-      ]
-    },
-    {
-      "path": "tasks reject",
-      "desc": "Reject a proposal or a task sleep opened, with a reason (feeds the task-filing rules)",
-      "args": [
-        "<item>"
-      ],
-      "valueFlags": [
-        "--reason",
-        "--note"
       ]
     },
     {
@@ -3731,78 +3440,6 @@
       ]
     },
     {
-      "path": "tasks rules",
-      "desc": "Read the task-filing rules sleep learned from the owner's rejects (required before sleep files or proposes)",
-      "args": [],
-      "group": true
-    },
-    {
-      "path": "tasks rules history",
-      "desc": "Every change to the rules, newest first",
-      "args": []
-    },
-    {
-      "path": "tasks rules merge",
-      "desc": "Fold one rule into another: their rejects are unioned and the second disappears",
-      "args": [
-        "<keep>",
-        "<drop>"
-      ],
-      "valueFlags": [
-        "--title",
-        "--dont",
-        "--do",
-        "--by"
-      ]
-    },
-    {
-      "path": "tasks rules pending",
-      "desc": "The owner's rejects no rule cites yet (what the next distillation reads)",
-      "args": []
-    },
-    {
-      "path": "tasks rules revert",
-      "desc": "Undo the latest change to a rule (owner only; the Tasks screen does the same)",
-      "args": [
-        "<id>"
-      ]
-    },
-    {
-      "path": "tasks rules set",
-      "desc": "Add or rewrite a rule: it must cite the rejects it rests on and give a don't and a do example",
-      "args": [
-        "[id]"
-      ],
-      "valueFlags": [
-        "--title",
-        "--dont",
-        "--do",
-        "--rests-on",
-        "--by"
-      ]
-    },
-    {
-      "path": "tasks send-back",
-      "desc": "Send a task in review back to work with a note: the owner's verdict, recorded in the journal (never from an agent)",
-      "args": [
-        "<name>"
-      ],
-      "valueFlags": [
-        "--note"
-      ]
-    },
-    {
-      "path": "tasks show",
-      "desc": "Print the task's context packet: its parent's card and siblings first, then its card, then its latest journal entries (what an agent reads before working it)",
-      "args": [
-        "<task>"
-      ],
-      "valueFlags": [
-        "--cap",
-        "--entries"
-      ]
-    },
-    {
       "path": "tasks start",
       "desc": "Set or clear a task planned start date (the range start)",
       "args": [
@@ -3812,16 +3449,11 @@
     },
     {
       "path": "tasks status",
-      "desc": "Change a task's status (logs the change; review/done are evidence-gated; stamps start_date on the first active-kind status if unset, due_date on completed)",
+      "desc": "Change a task's status (logs the change; stamps start_date on the first active-kind status if unset, due_date on completed)",
       "args": [
         "<name>",
         "<new-status>",
         "[reason...]"
-      ],
-      "valueFlags": [
-        "--reason",
-        "--child",
-        "--children"
       ]
     },
     {
@@ -3859,11 +3491,6 @@
     {
       "path": "tasks tombstones",
       "desc": "List retired task slugs and what absorbed them (why sleep will not re-file them)",
-      "args": []
-    },
-    {
-      "path": "tasks unbind",
-      "desc": "Clear this Claude session's task binding",
       "args": []
     },
     {

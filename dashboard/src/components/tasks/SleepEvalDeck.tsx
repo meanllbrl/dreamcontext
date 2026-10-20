@@ -4,7 +4,6 @@ import { phoneAllows } from '../../lib/phoneSurface';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import './SleepEvalDeck.css';
-import { fill } from '../../lib/fill';
 
 /**
  * The sleep-eval labelling deck. A banner on the Tasks board says how many cards wait; the
@@ -100,8 +99,8 @@ export function SleepEvalBanner() {
         <span className="se-banner-title">{t('sleepEval.banner.title')}</span>
         <span className="se-banner-sub">
           {requiredLeft > 0
-            ? fill(t('sleepEval.banner.required'), { n: String(requiredLeft) })
-            : fill(t('sleepEval.banner.optional'), { n: String(data.labelled - data.required.labelled) })}
+            ? t('sleepEval.banner.required').replace('{n}', String(requiredLeft))
+            : t('sleepEval.banner.optional').replace('{n}', String(data.labelled - data.required.labelled))}
         </span>
         <div className="se-flex" />
         <button type="button" className="se-btn se-btn-primary" onClick={() => setOpen(true)}>{t('sleepEval.banner.open')}</button>
@@ -121,7 +120,7 @@ function answersFor(card: LabelCard, t: (k: string) => string): Answer[] {
     ];
   }
   const into = card.parentName
-    ? fill(t('sleepEval.a.addTo'), { task: card.parentName })
+    ? t('sleepEval.a.addTo').replace('{task}', card.parentName)
     : t('sleepEval.a.addToExisting');
   if (card.category === 'opened') {
     return [
@@ -248,7 +247,7 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
         {requiredDone ? (
           <div className="se-optional">
             <div className="se-optional-title">{t('sleepEval.deck.requiredDone')}</div>
-            <div className="se-optional-sub">{fill(t('sleepEval.deck.optionalCount'), { n: String(extra) })}</div>
+            <div className="se-optional-sub">{t('sleepEval.deck.optionalCount').replace('{n}', String(extra))}</div>
             <button type="button" className="se-btn" onClick={onClose}>{t('sleepEval.deck.stopHere')}</button>
           </div>
         ) : (
@@ -257,7 +256,7 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
               <div className="se-progress-fill" style={{ width: `${progress.required.total > 0 ? Math.round((progress.required.labelled / progress.required.total) * 100) : 0}%` }} />
             </div>
             <div className="se-progress-text">
-              {fill(t('sleepEval.deck.requiredCount'), { n: String(progress.required.labelled), total: String(progress.required.total) })}
+              {t('sleepEval.deck.requiredCount').replace('{n}', String(progress.required.labelled)).replace('{total}', String(progress.required.total))}
             </div>
           </>
         )}

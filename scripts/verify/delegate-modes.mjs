@@ -5,10 +5,8 @@
  *   npm run build && npm run verify:delegate-modes
  *
  * The unit suite pins the prompts and the per-mode settings (tests/unit/delegate-modes.test.ts).
- * This proves the part a person actually touches: right-click a real task card, take "Give to an
- * agent…", pick "Custom prompt" in the door (plan r3 § 5e), and the composer — fed the task as
- * `GET /api/tasks/:slug` serves it, so the harness WAITS for that detail-backed prompt by selector,
- * never by a fixed sleep — offers four jobs — Autonomous / Discuss / Is it done? / Summarize — where picking one
+ * This proves the part a person actually touches: right-click a real task card, and the modal
+ * offers four jobs — Autonomous / Discuss / Is it done? / Summarize — where picking one
  * REDRAFTS the prompt, re-arms the permission toggle to what that job needs, and (for Discuss)
  * promises to open on screen (in Chat) rather than in the corner. Plus the model picker, and the promise
  * that a mode switch never silently eats a prompt you had already edited.
@@ -131,27 +129,17 @@ async function runTheme(base, theme) {
   const bypassBox = modal.locator('input[type=checkbox]');
 
   await page.goto(`${base}/?vault=proj&page=tasks`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(3000);
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(200); }
+
+  // ENTRY — right-click the real card, take the menu item.
   const card = page.locator('.bd-card:visible').first();
   check('the task board renders the seeded task', await until(async () => (await card.count()) > 0, 20000));
-  for (let i = 0; i < 3 && (await page.locator('.announcements-modal-scrim').count()); i++) {
-    await page.keyboard.press('Escape');
-    await page.locator('.announcements-modal-scrim').first().waitFor({ state: 'detached', timeout: 2000 }).catch(() => {});
-  }
-
-  // ENTRY — right-click the real card, take the one door, pick "Custom prompt".
   await card.click({ button: 'right' });
-  const item = page.getByText('Give to an agent…', { exact: true }).first();
-  check('the context menu offers "Give to an agent…"', await until(async () => (await item.count()) > 0, 8000));
+  const item = page.getByText('Delegate to Claude', { exact: true }).first();
+  check('the context menu offers "Delegate to Claude"', await until(async () => (await item.count()) > 0, 8000));
   await item.click();
-  // The door reads the task by slug: its choices are live once the detail has arrived.
-  await page.locator('[data-give-ready="true"]').waitFor({ timeout: 15000 }).catch(() => {});
-  const custom = page.locator('[data-give-choice="custom"]:not([disabled])');
-  check('the door offers "Custom prompt"', await until(async () => (await custom.count()) > 0, 8000));
-  await custom.click();
-  // The composer opens on the task detail: wait for the prompt that carries its criteria.
-  await page.locator('.modal:visible textarea').first().waitFor({ timeout: 15000 }).catch(() => {});
   check('the composer opens', await until(async () => (await modal.count()) > 0, 8000));
-  check('the composer is fed the task detail (Why and criteria)', await until(async () => /\*\*\(A1\)\*\*/.test(await promptText().catch(() => '')), 15000));
 
   // MODES — four jobs, autonomous first and selected.
   const chips = modal.getByRole('radio');
@@ -175,7 +163,7 @@ async function runTheme(base, theme) {
 
   // DISCUSS — redrafts, disarms bypass, promises to open on screen.
   await chip('Discuss').click();
-  await until(async () => (await promptText()) !== autonomous, 5000);
+  await page.waitForTimeout(300);
   const discuss = await promptText();
   check('picking Discuss redrafts the prompt', discuss !== autonomous);
   check('the discuss draft forbids editing and invites questions',
@@ -191,7 +179,7 @@ async function runTheme(base, theme) {
 
   // IS IT DONE? — verifies without building, and can run commands unattended.
   await chip('Is it done?').click();
-  await until(async () => (await promptText()) !== discuss, 5000);
+  await page.waitForTimeout(300);
   const verify = await promptText();
   check('the verify draft checks criteria without implementing them',
     /do NOT build/i.test(verify) && /acceptance criteria/i.test(verify), verify.slice(0, 120));
@@ -200,7 +188,7 @@ async function runTheme(base, theme) {
 
   // SUMMARIZE — read-only.
   await chip('Summarize').click();
-  await until(async () => (await promptText()) !== verify, 5000);
+  await page.waitForTimeout(300);
   const summary = await promptText();
   check('the summarize draft is read-only and short by instruction',
     /Read-only/i.test(summary) && /under a minute/i.test(summary), summary.slice(0, 120));
@@ -210,27 +198,27 @@ async function runTheme(base, theme) {
   // EDITED PROMPT — a mode switch offers it back instead of eating it.
   await promptBox.fill('MY OWN BRIEF — do exactly this.');
   await chip('Autonomous').click();
-  await modal.getByRole('button', { name: /Restore it/i }).first().waitFor({ timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(300);
   check('switching away from an edited prompt says so and offers a restore',
     (await modal.getByRole('button', { name: /Restore it/i }).count()) > 0);
   await page.screenshot({ path: join(SHOTS, `replaced-${theme}.png`) });
   await modal.getByRole('button', { name: /Restore it/i }).click();
-  await until(async () => (await promptText()) === 'MY OWN BRIEF — do exactly this.', 5000);
+  await page.waitForTimeout(300);
   check('restoring brings the edited text back', (await promptText()) === 'MY OWN BRIEF — do exactly this.');
   check('restoring brings its mode back too', (await chip('Summarize').getAttribute('aria-checked')) === 'true');
   await page.screenshot({ path: join(SHOTS, `restore-${theme}.png`) });
 
   // Switching with an UNTOUCHED draft is silent — no restore noise.
   await chip('Discuss').click();
-  await until(async () => (await chip('Discuss').getAttribute('aria-checked')) === 'true', 5000);
+  await page.waitForTimeout(200);
   await chip('Is it done?').click();
-  await until(async () => (await chip('Is it done?').getAttribute('aria-checked')) === 'true', 5000);
+  await page.waitForTimeout(200);
   check('switching a pristine draft shows no restore notice',
     (await modal.getByRole('button', { name: /Restore it/i }).count()) === 0);
 
   // Nothing was ever delegated — the surface must hold no session.
   await page.keyboard.press('Escape');
-  await modal.first().waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(400);
   check('no agent was spawned by this run', (await page.locator('.agent-tab').count()) === 0);
 
   await browser.close();

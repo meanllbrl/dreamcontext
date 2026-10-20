@@ -1,7 +1,6 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { BoardPopover, MenuItem } from './BoardPopover';
-import { fill } from '../../../lib/fill';
 
 /**
  * The board's ⋯ menu: New board, Rename, Delete, Sync board.
@@ -99,7 +98,7 @@ export function BoardMenu({ title, canRename, canDelete, canSync, onNew, onRenam
       {mode === 'delete' && (
         <BoardPopover key="delete" anchor={triggerRef} onClose={close} role="dialog" label={t('lab.board.menu.delete')}>
           <div className="board-form" data-lab-board-form="delete">
-            <p className="board-form-note">{fill(t('lab.board.menu.deleteConfirm'), { title: title ?? '' })}</p>
+            <p className="board-form-note">{t('lab.board.menu.deleteConfirm').replace('{title}', title ?? '')}</p>
             <div className="board-form-actions">
               <button type="button" className="board-btn" onClick={close}>{t('lab.board.cancel')}</button>
               <button type="button" className="board-btn board-btn--danger" onClick={() => { setMode(null); onDelete(); }}>

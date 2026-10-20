@@ -76,7 +76,7 @@ function readHint(view: ElementView): string | null {
     case 'insight':
       return ref ? `dreamcontext lab show ${ref}` : null;
     case 'task':
-      return ref ? `dreamcontext tasks show ${ref}` : null;
+      return ref ? `Read _dream_context/state/${ref}.md` : null;
     case 'knowledge':
       if (!ref) return null;
       return /\.(md|pdf|html?)$/i.test(ref) ? `Read ${ref}` : `Read _dream_context/knowledge/${ref}.md`;

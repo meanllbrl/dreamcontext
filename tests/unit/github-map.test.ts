@@ -130,12 +130,12 @@ describe('label compose / decompose (priority + urgency + tags + version + dc:*)
   it('labelsFromGitHub splits reserved prefixes out and keeps the rest as user tags', () => {
     expect(
       labelsFromGitHub(['backend', 'cli', 'priority:high', 'urgency:low', 'version:v0.9.0', 'dc:in-progress']),
-    ).toEqual({ tags: ['backend', 'cli'], priority: 'high', urgency: 'low', version: 'v0.9.0', cycle: null, priorityLabel: 'high', customFields: {} });
+    ).toEqual({ tags: ['backend', 'cli'], priority: 'high', urgency: 'low', version: 'v0.9.0', customFields: {} });
   });
 
   it('defaults priority to medium and urgency/version to null when absent (ClickUp parity)', () => {
-    expect(labelsFromGitHub(['bug'])).toEqual({ tags: ['bug'], priority: 'medium', urgency: null, version: null, cycle: null, priorityLabel: null, customFields: {} });
-    expect(labelsFromGitHub([])).toEqual({ tags: [], priority: 'medium', urgency: null, version: null, cycle: null, priorityLabel: null, customFields: {} });
+    expect(labelsFromGitHub(['bug'])).toEqual({ tags: ['bug'], priority: 'medium', urgency: null, version: null, customFields: {} });
+    expect(labelsFromGitHub([])).toEqual({ tags: [], priority: 'medium', urgency: null, version: null, customFields: {} });
   });
 
   it('ignores an unknown priority value, keeping the medium default', () => {
@@ -146,17 +146,9 @@ describe('label compose / decompose (priority + urgency + tags + version + dc:*)
     const original = { tags: ['backend', 'cli'], priority: 'critical', urgency: 'high', version: 'v1.2.3' };
     const composed = labelsToGitHub({ ...original, status: 'in_review' });
     const back = labelsFromGitHub(composed);
-    expect(back).toEqual({ ...original, cycle: null, priorityLabel: 'critical', customFields: {} });
+    expect(back).toEqual({ ...original, customFields: {} });
     // and the sub-status survives separately
     expect(statusFromLabels(composed)).toBe('in_review');
-  });
-
-  it('carries the cycle as cycle:cy_<id> (the id only); any other cycle: label is a plain tag', () => {
-    const composed = labelsToGitHub({ tags: ['x'], cycle: 'cy_Ab3-_x9Q', version: 'v1' });
-    expect(composed).toEqual(['x', 'version:v1', 'cycle:cy_Ab3-_x9Q']);
-    expect(labelsFromGitHub(composed).cycle).toBe('cy_Ab3-_x9Q');
-    expect(labelsFromGitHub(['cycle:3'])).toMatchObject({ cycle: null, tags: ['cycle:3'] });
-    expect(labelsToGitHub({ cycle: '3' })).toEqual([]);
   });
 
   it('carves out override-declared select custom fields as `<key>:<value>` (not tags)', () => {

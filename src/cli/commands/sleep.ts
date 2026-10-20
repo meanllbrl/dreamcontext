@@ -55,14 +55,6 @@ import {
   CURATOR_TASK_SLUG,
 } from '../../lib/sleep-flags.js';
 import { loadStatuses } from '../../lib/overrides.js';
-import { activeCycle, cycleProgress, daysLeft, readCycles } from '../../lib/cycles.js';
-import { loadFamily } from '../../lib/task-parent.js';
-import { cycleCounts, filingBrake, readProposals } from '../../lib/task-proposals.js';
-import { rulesForBrief } from '../../lib/task-filing-rules.js';
-import { ingestSessions } from '../../lib/owner-corrections.js';
-import { citedCorrectionIds, listLearnedItems, recurringCorrectionsBrief } from '../../lib/learned-patterns.js';
-import { basisSessions, sessionsFromSleepState } from '../../lib/ask-basis.js';
-import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-log.js';
 import { scanDigests, planDigestGc, runDigestGc } from '../../lib/session-digest.js';
 import { collectBrainDirty, renderBrainDirtyWarning } from '../../lib/brain-dirty.js';
@@ -543,25 +535,6 @@ export function registerSleepCommand(program: Command): void {
         if (decision.depth !== 'deep') {
           say.info('Light/standard consolidation: do NOT merge/summarize-replace/delete knowledge — flag candidates in the report instead.');
         }
-        // The task-filing rules go into the brief: sleep-tasks gets them verbatim,
-        // and the CLI refuses its first file/propose until it has run `tasks rules`.
-        const filingRules = rulesForBrief(root);
-        say.info(`${filingRules}\nPass these to sleep-tasks verbatim; it must run \`dreamcontext tasks rules\` before filing or proposing (the CLI refuses until it has).`);
-
-        // C7 — the owner's corrections of this sleep's sessions go into the ledger,
-        // read through the owner-turn classifier. A failure here (an ignore entry
-        // that cannot be written) skips the write with a warning: nothing is written
-        // without its ignore, and the sleep is not aborted.
-        try {
-          let person: string | null = null;
-          try { person = resolveActivePerson(root).slug; } catch { /* unresolved: stored as null */ }
-          ingestSessions(root, basisSessions(sessionsFromSleepState(root)), person, 'epoch', new Date(), citedCorrectionIds(root));
-        } catch (err) {
-          say.warn(`Owner corrections: not recorded this sleep — ${(err as Error).message ?? err}`);
-        }
-        const corrections = recurringCorrectionsBrief(root);
-        say.info(`Recurring owner corrections: ${corrections.count} group(s)${corrections.count > 0 ? ' → sleep-product (`dreamcontext patterns corrections --recurring`)' : ''}`);
-        if (corrections.text) say.info(`${corrections.text}\nPass this block to sleep-product verbatim.`);
 
         // Change C — a NEW cycle supersedes any previous cycle's pending
         // private-derivation disclosure. This is the one genuine wedge (a
@@ -608,9 +581,6 @@ export function registerSleepCommand(program: Command): void {
             cappedByCatchup: decision.cappedByCatchup,
             migrations: codeNotices,
             automationOutputs,
-            filingRules,
-            recurringCorrections: corrections.count,
-            recurringCorrectionsBrief: corrections.text,
           }, null, 2));
         }
       } finally {
@@ -700,7 +670,6 @@ export function registerSleepCommand(program: Command): void {
         const fresh = readSleepState(root);
         const previousDebt = fresh.debt;
         const epoch = fresh.sleep_started_at;
-        const previousConsolidatedAt = fresh.last_consolidated_at;
 
         const result = applyConsolidation(fresh, epoch);
         const today_ = today();
@@ -713,42 +682,19 @@ export function registerSleepCommand(program: Command): void {
         // Finalize and persist the new state exactly once.
         const finalState = finalizeSleepState(result.state, summary, today_, new Date().toISOString());
         writeSleepState(root, finalState);
-        return { previousDebt, epoch, today_, finalState, previousConsolidatedAt };
+        return { previousDebt, epoch, today_, finalState };
       });
       if (!doneLock.locked) {
         error('Sleep state is busy — refusing to consolidate from a stale read. Retry in a moment.');
         process.exitCode = 1;
         return;
       }
-      const { previousDebt, epoch, today_, finalState, previousConsolidatedAt } = doneLock.value;
+      const { previousDebt, epoch, today_, finalState } = doneLock.value;
 
       if (epoch && finalState.sessions.length > 0) {
         success(`Consolidation complete. Debt reduced from ${previousDebt} to ${finalState.debt}. ${finalState.sessions.length} post-epoch session(s) preserved.`);
       } else {
         success(`Consolidation complete. Debt reset from ${previousDebt} to ${finalState.debt}.`);
-      }
-
-      // Task filing (owner decision 8): what this cycle filed and proposed, what
-      // the owner rejected since the last sleep, and the brake. Then the one
-      // cycle signal sleep gives — it never plans anything itself.
-      try {
-        for (const line of taskFilingLines(root, epoch, previousConsolidatedAt)) info(line);
-        const ending = cycleEndingWarning(root);
-        if (ending) warn(ending);
-      } catch (err) {
-        warn(`Task filing counts: skipped — ${(err as Error).message ?? err}`);
-      }
-
-      // C7 — what sleep learned this cycle (rules from repeated owner corrections
-      // and task-filing rule changes). Reverting is the owner's, from the Inbox.
-      try {
-        const learned = epoch ? listLearnedItems(root, { since: epoch }) : [];
-        if (learned.length > 0) {
-          info(`Learned this sleep (${learned.length}) — the owner can revert any of them from the Inbox:`);
-          for (const l of learned) info(`  ${l.title} (${l.pattern}, ${l.id})${l.reverted ? ' — reverted' : ''}`);
-        }
-      } catch (err) {
-        warn(`Learned this sleep: skipped — ${(err as Error).message ?? err}`);
       }
 
       // AC6 (1/2) — recidivism escalation: reconcile this cycle's --flag
@@ -838,10 +784,11 @@ export function registerSleepCommand(program: Command): void {
           });
           info(`Curator task created: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
         } else if (plan.action === 'refresh' || plan.action === 'refresh-absorbing') {
-          await backend.addJournal(plan.slug, {
-            kind: 'sleep',
-            body: `- ${today_}: ${buckets.orphan.length} orphan tag(s) still present — curator pass still needed.`,
-          });
+          await backend.addChangelog(
+            plan.slug,
+            `- ${today_}: ${buckets.orphan.length} orphan tag(s) still present — curator pass still needed.`,
+            { fallbackAppend: true },
+          );
           info(plan.action === 'refresh'
             ? `Curator task refreshed: ${plan.slug} (${buckets.orphan.length} orphan tags).`
             : `Curator chore was merged into ${plan.slug}; logged ${buckets.orphan.length} orphan tags there instead of re-filing it.`);
@@ -1401,31 +1348,4 @@ export function registerRecallCommand(program: Command): void {
       writeSleepState(root, state);
     },
   });
-}
-
-/** `sleep done`'s task-filing report: filed / proposed / rejected, and the brake when it is off. */
-export function taskFilingLines(root: string, epoch: string | null, lastConsolidatedAt: string | null): string[] {
-  const c = cycleCounts(root, epoch, lastConsolidatedAt);
-  const brake = filingBrake(readProposals(root));
-  const lines = [
-    `Tasks this cycle: filed ${c.filed} new + ${c.children} sub-task(s), proposed ${c.proposed}; `
-      + `the owner rejected ${c.rejected} since the last sleep.`,
-  ];
-  if (!brake.open) {
-    lines.push(`Direct filing is OFF: ${brake.rejected} of sleep's last ${brake.window} items were rejected `
-      + `(${Math.round((brake.rate ?? 0) * 100)}%). New top-level tasks go to proposals until the rate recovers.`);
-  }
-  return lines;
-}
-
-/** The active cycle ends within two days with open leaves: say so (sleep never plans). */
-export function cycleEndingWarning(root: string, now: string = today()): string | null {
-  const c = activeCycle(readCycles(root).cycles);
-  if (!c) return null;
-  const left = daysLeft(c, now);
-  if (left > 2) return null;
-  const progress = cycleProgress(loadFamily(join(root, 'state')), loadStatuses(root), c.id);
-  if (progress.open.length === 0) return null;
-  return `Cycle #${c.number} ends ${left === 0 ? 'today' : `in ${left} day(s)`} with ${progress.open.length} open item(s). `
-    + 'Closing it is the owner\'s call (carry, back to Next, or cancel); sleep planned nothing.';
 }

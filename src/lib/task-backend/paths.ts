@@ -23,7 +23,6 @@ export const PRE_PULL_DIR_PREFIX = '.pre-pull-';
 /** .gitignore entries required when a remote backend owns the tasks. */
 export const REMOTE_BACKEND_GITIGNORE_ENTRIES = [
   '_dream_context/state/*.md',
-  '_dream_context/state/journal/',
   '_dream_context/state/.tasks-sync.lock',
   '_dream_context/state/.tasks-sync.json',
   '_dream_context/state/.tasks-queue.json',

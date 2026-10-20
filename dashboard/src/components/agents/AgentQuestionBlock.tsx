@@ -7,7 +7,6 @@ import type { PendingQuestion } from '../sleepy/chatSession';
 import { SurveyCard, type SurveyHost } from '../sleepy/chat/SurveyCard';
 import { FoldedReport } from './FoldedReport';
 import '../sleepy/chat/cards.css';
-import { fill } from '../../lib/fill';
 
 /**
  * THE QUESTION A RUN STOPPED TO ASK, asked the way Chat asks.
@@ -113,7 +112,7 @@ export function AgentQuestionBlock({
     answerQuestion.mutate({ id: question.id, kind: 'flow-hitl', answer: body }, {
       onError: (err) => {
         setAttempt((a) => a + 1);
-        onToast(fill(t('agents.question.failed'), { name: title, reason: (err as Error).message }));
+        onToast(t('agents.question.failed').replace('{name}', title).replace('{reason}', (err as Error).message));
       },
     });
   };

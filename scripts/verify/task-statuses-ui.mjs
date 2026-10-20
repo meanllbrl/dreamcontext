@@ -7,12 +7,10 @@
  * Scratch vault (fake HOME) declares `planned` + `cancelled` in overrides/task.md, seeds
  * tasks including a CANCELLED one with a long-past due date, then drives the built
  * dashboard with Playwright and screenshots:
- *   01 Board grouped by status — Planned + Cancelled columns; the cancelled task shows NO
- *      overdue badge and the at-risk banner counts only the live overdue task
- *   02 Board grouped by Now / Next / Later — the cancelled task is absent and the completed,
- *      never-planned one is in the Done lane, never in Next or Later (plan r3 § 5b; the
- *      Eisenhower matrix this step used to check was retired in § 5c)
- *   03 Task page — the status select lists all six keys
+ *   01 Kanban — Planned + Cancelled columns; the cancelled task shows NO overdue badge and the
+ *      at-risk banner counts only the live overdue task
+ *   02 Eisenhower — the cancelled task is absent
+ *   03 Task detail — the status dropdown lists all six keys
  *   04 Settings › Task Format — the Statuses editor with the live column preview
  *   05 CLI — `tasks statuses`, `tasks list`, `doctor` (terminal render)
  *   06 GitHub wire — round trip + delete proof + schema drift against the fake (terminal render)
@@ -97,16 +95,9 @@ try {
     await page.waitForTimeout(1500);
   };
 
-  // The board opens grouped by Now / Next / Later; the status pipeline is one click away.
-  const groupBy = async (label) => {
-    await page.locator('.bd-seg-btn', { hasText: label }).first().click();
-    await page.locator(`.bd-seg-btn[aria-pressed="true"]`, { hasText: label }).first().waitFor({ timeout: 5000 });
-  };
-
-  // 01 — the board grouped by status (wide viewport so all six columns are on screen)
+  // 01 — Kanban (wide viewport so all six columns are on screen)
   await page.setViewportSize({ width: 1900, height: 940 });
   await openBoard();
-  await groupBy('Status');
   const colLabels = await page.locator('.bd-scroll [class*="col"] , .bd-scroll').allInnerTexts();
   const boardText = colLabels.join(' ').replace(/\s+/g, ' ');
   check('01 Kanban shows a Planned column and a Cancelled column', /Planned/.test(boardText) && /Cancelled/.test(boardText), boardText.slice(0, 120));
@@ -120,33 +111,33 @@ try {
   await shot('01-kanban-declared-columns');
   await page.setViewportSize({ width: 1440, height: 940 });
 
-  // 02 — the board grouped by Now / Next / Later (the default)
-  await groupBy('Now / Next / Later');
-  const column = (key) => page.locator(`[data-board-column="${key}"]`).first();
-  const cardsIn = async (key) => ((await column(key).innerText().catch(() => '')) || '').replace(/\s+/g, ' ');
-  const nextText = await cardsIn('next');
-  const laterText = await cardsIn('later');
-  const boardNow = (await page.locator('[data-board-column]').allInnerTexts()).join(' ').replace(/\s+/g, ' ');
-  check('02 the order board omits the cancelled task', !/Old idea/.test(boardNow), boardNow.slice(0, 120));
-  check('02 the completed, never-planned task is not in Next or Later', !/Landing page copy/.test(nextText) && !/Landing page copy/.test(laterText));
-  check('02 the live tasks are in Next', /Fix login bug/.test(nextText) && /Ship onboarding/.test(nextText), nextText.slice(0, 120));
-  const doneHead = column('done').locator('.bd-col-head').first();
-  check('02 the Done lane is closed by default', (await doneHead.getAttribute('aria-expanded').catch(() => null)) === 'false');
-  await doneHead.click();
-  await column('done').locator('.bd-card', { hasText: 'Landing page copy' }).first().waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-  check('02 opening the Done lane shows the completed task', (await column('done').locator('.bd-card', { hasText: 'Landing page copy' }).count()) > 0);
-  await shot('02-order-board-no-cancelled');
+  // 02 — Eisenhower
+  const viewChip = page.locator('.bd-chip, .bd-hover', { hasText: /^Board$|Kanban/ }).first();
+  if (await viewChip.count()) {
+    await viewChip.click(); await page.waitForTimeout(500);
+    const row = page.locator('.bd-row', { hasText: 'Eisenhower' }).first();
+    if (await row.count()) { await row.click(); await page.waitForTimeout(1200); }
+  }
+  const eis = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+  const inMatrix = /Do first|Urgent|Eliminate/i.test(eis);
+  check('02 Eisenhower matrix omits the cancelled task but keeps the live ones', inMatrix && !/Old idea/.test(eis) && /Fix login bug/.test(eis), inMatrix ? 'matrix rendered' : 'could not switch layout');
+  await shot('02-eisenhower-no-cancelled');
 
-  // 03 — the task page's status select
+  // 03 — task detail status dropdown
   await openBoard();
   await page.locator('.bd-card', { hasText: 'Q4 roadmap' }).first().click();
-  await page.locator('[data-task-ready="q4-roadmap"]').waitFor({ timeout: 10000 });
-  const opts = await page.locator('#tkp-status option').allTextContents().catch(() => []);
-  check('03 the task page status select lists all six statuses in order', opts.join('|') === 'To Do|Planned|In Progress|In Review|Completed|Cancelled', opts.join('|'));
-  await page.locator('#tkp-status').scrollIntoViewIfNeeded().catch(() => {});
-  await shot('03-task-page-status-select');
+  await page.waitForTimeout(1200);
+  const wf = page.locator('.task-section-head', { hasText: 'Workflow' }).first();
+  if (await wf.count()) { const open = await page.locator('#tf-status').count(); if (!open) { await wf.click(); await page.waitForTimeout(500); } }
+  const opts = await page.locator('#tf-status option').allTextContents().catch(() => []);
+  check('03 the detail status dropdown lists all six statuses in order', opts.join('|') === 'To Do|Planned|In Progress|In Review|Completed|Cancelled', opts.join('|'));
+  await page.locator('#tf-status').scrollIntoViewIfNeeded().catch(() => {});
+  await shot('03-task-detail-status-select');
 
-  // 04 — Settings › Task Format
+  // 04 — Settings › Task Format (close the detail overlay first — it intercepts clicks)
+  await dismiss();
+  if (await page.locator('.detail-overlay').count()) await page.locator('.detail-overlay').first().click({ position: { x: 5, y: 5 } }).catch(() => {});
+  await page.waitForTimeout(500);
   await page.goto(`${URL}/?vault=scratch`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1000);
   await dismiss();

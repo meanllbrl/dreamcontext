@@ -195,18 +195,10 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     '# everything else here is local machine/session state and must never sync.',
     '',
     'state/.secrets.json',
-    // Machine-local task-system state (owner chat quotes, learned-pattern history, the
-    // task audit). Above every negation; `ensureLocalStateIgnored` (task-audit.ts) adds
-    // the same lines to an existing ignore before the first write.
-    'state/.owner-corrections.json',
-    'state/.learned-patterns.json',
-    'state/.task-audit.json',
     // Which task THIS session is on. Machine-local by nature, and load-bearing
     // since `bookmark add` reads it as an implicit `--task`: a synced one would
     // file a teammate's bookmarks against whatever task someone else had open.
     'state/.active-task',
-    // Which task each live session is bound to (one file per session id, C2).
-    'state/.session-task/',
     'state/.sleep.json',
     'state/.sleep-history.json',
     'state/.agent-sessions.json',
@@ -262,8 +254,6 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
       '',
       '# Tasks are a local mirror under a remote task backend — issues/ClickUp are source of truth.',
       'state/*.md',
-      '# Task journals travel with their cards: through the backend, never the brain repo.',
-      'state/journal/',
     );
   }
   return `${lines.join('\n')}\n`;
@@ -293,10 +283,6 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   '_dream_context/state/.active-task',
   '_dream_context/state/.sleep.json',
   '_dream_context/state/.sleep-history.json',
-  // Owner chat quotes, learned-pattern history and the task audit: machine-local.
-  '_dream_context/state/.owner-corrections.json',
-  '_dream_context/state/.learned-patterns.json',
-  '_dream_context/state/.task-audit.json',
   '_dream_context/state/.agent-sessions.json',
   '_dream_context/state/.agent-session-map/',
   '_dream_context/state/.session-titles.json',

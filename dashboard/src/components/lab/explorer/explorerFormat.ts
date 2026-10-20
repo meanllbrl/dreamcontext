@@ -9,7 +9,6 @@ import {
   type Selection,
   type SliceReasonCode,
 } from '../../../generated/frameOps';
-import { fill } from '../../../lib/fill';
 
 /**
  * The funnel explorer's shared wording and figures, used by the header, the
@@ -30,8 +29,10 @@ import { fill } from '../../../lib/fill';
 
 export type Translate = (key: string) => string;
 
-/** `{name}` placeholders filled from `vars`: the dashboard's one helper (lib/fill.ts), used here too. */
-export { fill };
+/** `{name}` placeholders filled from `vars` (a placeholder with no value stays as written). */
+export function fill(text: string, vars: Record<string, string | number>): string {
+  return text.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m));
+}
 
 // ─── One number formatter for the explorer (tr-TR / en-US) ────────────────
 //

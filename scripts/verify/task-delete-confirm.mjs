@@ -3,11 +3,7 @@
  * Task delete, end to end — does the button actually delete, and does saying no
  * actually stop it?
  *
- *   node scripts/verify/task-delete-confirm.mjs   (npm run verify:task-delete)
- *
- * Since the task rebuild (plan r3 § 5a/5c) the delete lives on the TASK PAGE: a
- * card click opens the page, and its "Delete task" button asks through
- * `confirmAction`. Each scenario waits for `[data-task-ready]` before pressing it.
+ *   node scripts/verify/task-delete-confirm.mjs
  *
  * WHY THIS EXISTS: the delete buttons were dead in the desktop app and NOTHING
  * caught it. `window.confirm` returns `false` in that webview (wry's
@@ -150,16 +146,18 @@ try {
     // Board cards are `.bd-card` — read off the real DOM rather than guessed,
     // because a wrong selector here fails as a 30s timeout that looks like a
     // product bug.
-    // Each scenario starts from a FRESH load: a cancelled delete leaves the task
-    // page open, so the next scenario goes back through the board, as a person would.
+    // Each scenario starts from a FRESH load. A cancelled delete leaves the
+    // detail panel open over the board and Escape does not close it, so
+    // reusing the page makes the second scenario fail on a covered card — a
+    // harness artifact that reads exactly like the product bug under test.
     const openTask = async (label) => {
       await page.goto(`${URL}/?vault=scratch`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(1200);
       await dismissAnnouncements();
       await page.locator('.sidebar-item', { hasText: 'Tasks' }).first().click();
-      const card = page.locator('.bd-card', { hasText: label }).first();
-      await card.waitFor({ state: 'visible', timeout: 15000 });
-      await card.click();
-      await page.locator('[data-task-ready]').first().waitFor({ timeout: 10000 });
+      await page.waitForTimeout(1200);
+      await page.locator('.bd-card', { hasText: label }).first().click();
+      await page.waitForTimeout(1200);
     };
 
     const dialog = page.locator('[data-confirm-dialog]');
@@ -249,10 +247,9 @@ try {
       await stale.waitForTimeout(600);
     }
     await stale.locator('.sidebar-item', { hasText: 'Tasks' }).first().click();
-    const staleCard = stale.locator('.bd-card', { hasText: 'Stale shell task' }).first();
-    await staleCard.waitFor({ state: 'visible', timeout: 15000 });
-    await staleCard.click();
-    await stale.locator('[data-task-ready]').first().waitFor({ timeout: 10000 });
+    await stale.waitForTimeout(1200);
+    await stale.locator('.bd-card', { hasText: 'Stale shell task' }).first().click();
+    await stale.waitForTimeout(1200);
     const staleBtn = stale.locator('button', { hasText: /^Delete task$/ }).first();
     await staleBtn.waitFor({ state: 'visible', timeout: 8000 });
     await staleBtn.click();

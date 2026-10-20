@@ -18,11 +18,9 @@ import {
 import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
 import type { ProjectRollup } from '../sleepy/agentStatus';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
-import { useInboxCount } from '../../hooks/useInbox';
 import './Sidebar.css';
-import { fill } from '../../lib/fill';
 
-export type Page = 'tasks' | 'task' | 'inbox' | 'planning' | 'releases' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
+export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
 
 interface SidebarProps {
   activePage: Page;
@@ -36,7 +34,7 @@ interface SidebarProps {
 
 /** The i18n key of each page's name (the phone's top bar shows it). */
 export const PAGE_LABEL_KEY: Record<Page, string> = {
-  tasks: 'nav.tasks', task: 'nav.task', inbox: 'nav.inbox', planning: 'nav.planning', releases: 'nav.releases', roadmap: 'nav.roadmap', hypotheses: 'nav.hypotheses', lab: 'nav.labpage', automations: 'nav.automations',
+  tasks: 'nav.tasks', roadmap: 'nav.roadmap', hypotheses: 'nav.hypotheses', lab: 'nav.labpage', automations: 'nav.automations',
   agents: 'nav.agents', core: 'nav.core', knowledge: 'nav.knowledge', sleep: 'nav.sleep', brain: 'nav.brain', council: 'nav.council',
   settings: 'nav.settings', packs: 'nav.packs', about: 'nav.about', taxonomy: 'nav.taxonomy', announcements: 'nav.announcements',
   whiteboards: 'nav.whiteboard',
@@ -104,11 +102,6 @@ const NAV_GROUPS: NavGroup[] = [
       { page: 'tasks', labelKey: 'nav.tasks' },
       { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
       { page: 'agents', labelKey: 'nav.agents', maturity: 'beta' },
-      // The task screens (plan r3 § 5d). After Agents, so Automations stays right after Tasks and
-      // Agents right after Automations (the owner's order); before the beta and alpha pages.
-      { page: 'inbox', labelKey: 'nav.inbox' },
-      { page: 'planning', labelKey: 'nav.planning' },
-      { page: 'releases', labelKey: 'nav.releases' },
       { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
       { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
       { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
@@ -200,12 +193,6 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   // their laptop must not clear this badge here.
   const { data: agentFeed } = useAgentFeed();
   const agentUnread = agentFeed?.unreadTotal ?? 0;
-  // What waits for the owner — sleep's proposals and change cards, fully evidenced reviews,
-  // parents a sync held open — lives on the Inbox; the rail is how the owner learns it exists
-  // (sleep often runs with nobody in a session). A review with an unticked criterion is
-  // listed there but not counted here (`GET /api/inbox/count`).
-  const { data: inboxCount } = useInboxCount();
-  const inboxWaiting = inboxCount?.waiting ?? 0;
   // Hypotheses is in the rail for everyone, on or off. It used to be hidden
   // while the learning layer was disabled, which made the layer undiscoverable
   // by exactly the people who had never turned it on: the page that explains it
@@ -231,8 +218,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   // While the overlay covers the page, Chat is where the user IS — one active row, not two.
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
-  // One task's page is part of Tasks: the rail keeps the Tasks row lit while it is open.
-  const current: Page | null = chatOpen && showChat ? null : activePage === 'task' ? 'tasks' : activePage;
+  const current: Page | null = chatOpen && showChat ? null : activePage;
   const vaultLabel = vault ?? '';
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
@@ -352,8 +338,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
               const isAbout = page === 'about';
               const badgeCount = page === 'announcements' ? unread.length
                 : page === 'automations' ? agentUnread
-                  : page === 'inbox' ? inboxWaiting
-                    : 0;
+                  : 0;
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
@@ -371,9 +356,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                         plain row pays no extra gap. */}
                     {(badgeCount > 0 || level) && (
                       <span className="sidebar-item-end">
-                        {badgeCount > 0 && (
-                          <span className="sidebar-badge" {...(page === 'inbox' ? { title: fill(t('nav.inbox.waitingBadge'), { n: String(badgeCount) }) } : {})}>{badgeCount}</span>
-                        )}
+                        {badgeCount > 0 && <span className="sidebar-badge">{badgeCount}</span>}
                         <MaturityTag level={level} className="sidebar-maturity" />
                       </span>
                     )}

@@ -95,7 +95,6 @@
     "verify:sidebar-rail": "node scripts/verify/sidebar-rail.mjs",
     "verify:task-delete": "node scripts/verify/task-delete-confirm.mjs",
     "verify:task-backlog": "node scripts/verify/task-backlog-and-tags.mjs",
-    "verify:task-ui": "node scripts/verify/task-ui.mjs",
     "verify:lab-app": "node scripts/verify/lab-app-insight.mjs",
     "verify:chat-segments": "node scripts/verify/chat-segments.mjs",
     "verify:node-setup-page": "node scripts/verify/node-setup-page.mjs",

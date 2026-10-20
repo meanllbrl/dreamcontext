@@ -1,7 +1,5 @@
 import type { RiceFields } from '../rice.js';
 import type { TaskFilter, TaskRecord } from '../task-query.js';
-import type { JournalEntry, NewJournalEntry } from '../task-journal.js';
-import type { EvidenceKind } from '../task-evidence.js';
 
 /**
  * Pluggable task backend — issue #11.
@@ -50,12 +48,6 @@ export interface TaskFrontmatter {
    * preserves it.
    */
   agent?: string | null;
-  /**
-   * The sleep proposal (`tp_…`) this card was accepted from, written in the SAME write as the
-   * card so a crash after the create still leaves it (task-proposals.ts finishes that accept
-   * only when this matches). LOCAL-ONLY, like `agent`: no backend maps it, every pull keeps it.
-   */
-  from_proposal?: string | null;
   created_by?: string | null;
   updated_by?: string | null;
   /**
@@ -102,18 +94,12 @@ export interface TaskData {
   agent?: string;
   /** User-defined custom-field values (override-declared). Empty when none. */
   custom_fields: Record<string, string | number | null>;
-  /** The proposal this card was accepted from (see TaskFrontmatter.from_proposal). Absent otherwise. */
-  from_proposal?: string;
   why: string;
   user_stories: string;
   acceptance_criteria: string;
   constraints: string;
   technical_details: string;
   notes: string;
-  /**
-   * The task's history as raw text: its journal (`state/journal/<slug>.md`), or
-   * — on a card not yet folded — the legacy in-card `## Changelog` section.
-   */
   changelog: string;
   sections: string[];
   /** Body with surrounding whitespace trimmed (dashboard display form). */
@@ -126,53 +112,6 @@ export interface TaskData {
   rawBody: string;
   /** Raw frontmatter as parsed — change-tracking diffs raw values, not normalized ones. */
   raw: Record<string, unknown>;
-  /** The cycle the card is planned into (`cy_<id>`, possibly not yet synced), or null (C3). */
-  cycle?: string | null;
-  /** `next` | `later` when the card waits outside a cycle; null when unset. */
-  queue?: 'next' | 'later' | null;
-  /** Order inside its cycle or queue; null when unranked. */
-  rank?: number | null;
-}
-
-/**
- * One card in `GET /api/tasks` (plan r3 § W4): the frontmatter and a few derived counts,
- * never a body, a section or the journal. The task page reads `GET /api/tasks/:slug`.
- */
-export interface TaskListItem {
-  slug: string; id: string; name: string; description: string; status: string;
-  created_at: string; updated_at: string; tags: string[];
-  parent_task: string | null; related_feature: string | null; version: string | null;
-  start_date: string | null; due_date: string | null; objectives: string[];
-  assignee: string | null; agent?: string; custom_fields: Record<string, string | number | null>;
-  created_by: string | null;
-  cycle: string | null; queue: 'next' | 'later' | null; rank: number | null;
-  criteria: { total: number; done: number };
-  /** Non-cancelled children (rollupOf); null for a task with none. */
-  children: { total: number; done: number } | null;
-  /** The card file's size in bytes. */
-  bytes: number;
-  /** Legacy, read-only (decision 11). */
-  priority?: string; urgency?: string; rice?: RiceFields | null;
-}
-
-/** One acceptance criterion as the task page shows it. */
-export interface CriterionView {
-  n: number;
-  text: string;
-  checked: boolean;
-  ref: string | null;
-  kind: EvidenceKind | null;
-  observed: boolean;
-}
-
-/** `GET /api/tasks/:slug`: the whole card, its parsed criteria, its parent and its children. */
-export interface TaskDetailResponse {
-  task: Omit<TaskData, 'raw' | 'rawBody'> & {
-    cycle: string | null; queue: 'next' | 'later' | null; rank: number | null;
-    criteria: CriterionView[];
-    parent: { slug: string; name: string; status: string } | null;
-    children: TaskListItem[];
-  };
 }
 
 /** Section keys accepted by insertSection (matches SECTION_MAP in section-insert.ts). */
@@ -201,14 +140,6 @@ export interface CreateTaskInput {
   objectives?: string[];
   /** Seed user-defined custom-field values at creation (override-declared). */
   custom_fields?: Record<string, string | number | null>;
-  /** The parent task's slug (two levels only; validated by the caller via task-parent.ts). */
-  parent_task?: string | null;
-  /** The cycle this task is planned into (inherited from its parent). */
-  cycle?: string | null;
-  /** The queue it waits in when it is in no cycle (`next` | `later`). */
-  queue?: 'next' | 'later' | null;
-  /** Written into the card's first write (provenance of a proposal accept); absent: no line. */
-  from_proposal?: string;
   /**
    * Which historical template produced the file. The CLI and the dashboard
    * have always written different task skeletons (full template with Workflow
@@ -227,9 +158,8 @@ export interface InsertSectionOptions {
 
 export interface AddChangelogOptions {
   /**
-   * Legacy flag from when history lived in the card (append at EOF when the
-   * card had no `## Changelog`). History is the journal now, which always
-   * exists to be written, so it is accepted and ignored.
+   * When the task has no `## Changelog` section: append the raw entry at EOF
+   * (CLI behavior) instead of throwing (server-route behavior).
    */
   fallbackAppend?: boolean;
 }
@@ -399,16 +329,8 @@ export interface TaskBackend {
     content: string,
     opts: InsertSectionOptions,
   ): Promise<void>;
-  /**
-   * `entry` is a formatted `### <date> - <label>` block; it is written to the
-   * task's JOURNAL (never the card) with its kind read from the label. Prefer
-   * {@link addJournal} in new code.
-   */
+  /** `entry` is the fully formatted changelog block (callers own the label format). */
   addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void>;
-  /** Prepend one entry to the task's journal; returns it with its stable id. */
-  addJournal(slug: string, entry: NewJournalEntry): Promise<JournalEntry>;
-  /** The task's journal, newest entry first (empty when none). */
-  readJournal(slug: string): Promise<JournalEntry[]>;
   complete(slug: string, summary?: string): Promise<TaskData>;
   /**
    * Delete a task (remote backends propagate the deletion on sync).

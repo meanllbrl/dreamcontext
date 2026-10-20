@@ -62,9 +62,6 @@ export const REMOTE_MAPPED_TASK_FIELDS: ReadonlySet<string> = new Set([
 export const KNOWN_LOCAL_ONLY_TASK_FIELDS: readonly string[] = [
   'objectives',
   'rice',
-  // Synced since C2, but through its own channel (GitHub sub-issues, ClickUp
-  // subtasks; see parent-sync.ts), never by the merged frontmatter: the merge
-  // must still carry it through untouched.
   'parent_task',
   'related_feature',
   'description',
@@ -73,9 +70,6 @@ export const KNOWN_LOCAL_ONLY_TASK_FIELDS: readonly string[] = [
   // The agent a task is assigned to: an agent is a vault entity with no remote
   // counterpart, and agents are never people, so it never becomes an assignee.
   'agent',
-  // The sleep proposal a card was accepted from (task-proposals.ts): written with the card,
-  // read by the accept-recovery path; no remote has a field for it.
-  'from_proposal',
 ];
 
 /** Identity fields the mirror-rebuild path mints fresh rather than restoring. */

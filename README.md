@@ -322,16 +322,7 @@ A local web UI over the same files the CLI writes — React 19 on a zero-depende
 
 **Search & ask.** The front door is a search bar over your whole picture: instantly-ranked hits across knowledge, features, tasks, core, memory, objectives, insights, hypotheses, and automations — each jumping straight to the surface that renders it — plus a plain-language **Ask** that answers from your own files with sources cited inline. A `★` dial next to the input narrows to what the brain marks as important. Both run on the same local BM25 engine as `memory recall`: instant, zero tokens, nothing leaves your machine. A **Chat** mode goes deeper by running a read-only Claude Code session inside your vault (planning permission mode, action tools disallowed — it can never write or run commands), streamed live, with a normal/intelligent depth toggle.
 
-**Tasks.** The board asks *when* before *how important*: cards sit in **Now** (the active cycle), **Next** (the queue the next cycle is planned from) and **Later**, ordered by rank, with a cycle strip above them; one click regroups them by status. Finished work waits in a closed **Done** lane, and a cancelled card leaves the board. A parent card shows how many of its sub-tasks are done and opens them in place. Drag a card to another column to plan it, or onto another card to rank it; right-click it to **Move to Later**. Saved views keep their own filter, sort and grouping, and the same cards render as a **List** and a **Timeline (Gantt)**. A click opens the **task page**: the name as written, its place on the axis, the parent path, the criteria with what proves each one, the decisions and the other sections, the sub-tasks, and the journal a page at a time; a box you tick there is recorded as your approval. Tags are **picked from what the vault already uses**, most-used first with their counts, and typing an unknown one still creates it — hand-typing is how a vocabulary ends up carrying both `decisions` and `decision`. (The Eisenhower, RICE, Calendar and Heatmap views and the Versions popover were retired in 0.33.0.)
-
-**Inbox, Planning, Releases.** What waits for you has one place, the **Inbox**, and it carries the sidebar badge:
-- reviews to approve or send back with a note;
-- sleep's proposals and change cards;
-- parents a sync held open;
-- what sleep learned from your repeated corrections, with your own quotes and a one-click **Revert**;
-- the records of every override, with who did it and through what. One with no browser origin is flagged as possibly an agent.
-
-**Planning** creates and starts cycles. You drag work from Next into one against a capacity hint drawn from the cycles you finished. The **Close deck** ends a cycle: every unfinished leaf is carried, sent back or cancelled, and nothing closes undecided. **Releases** lists what shipped and what closed since the last release. **Give to an agent** is one door from any task: Develop it (after a readiness check), hand it to one of your agents, delegate it with your own prompt, or have an agent write a new task.
+**Tasks.** A drag-and-drop Kanban with saved views (each with its own persisted filter, sort, and grouping), two-pane include/exclude filters, a sprint-aware Versions popover with Current / Backlog / Completed buckets and inline set-current / mark-complete actions, per-card property badges (due date, RICE score, multi-assignee avatars), and an At-Risk alert for past-due or blocked work. The same tasks render along the time axis as a **Timeline (Gantt)**, a **Calendar**, an **Activity heatmap**, an **Eisenhower matrix**, and a **RICE** prioritization view. A Notion-style detail panel edits everything inline — status, dates, custom fields, changelog entries. Backlog is a tag rather than a status, so it gets its own one-click **Send to backlog** on the card's context menu and in the detail panel; it writes only the tag and lets the backend's "backlog ⇒ undated" rule clear the dates, so there is one definition of backlog rather than two. Tags are **picked from what the vault already uses**, most-used first with their counts, and typing an unknown one still creates it — hand-typing is how a vocabulary ends up carrying both `decisions` and `decision`.
 
 **Memory surfaces.** A split-pane **Core editor** with live preview; a **Knowledge manager** with search and pin/unpin; a **Feature PRD viewer**; SQL ER-diagram previews for data structures; a **Brain graph** that renders the whole corpus as an interactive network (explicit and inferred links, node drawer, layout filters); **Council Hall** for browsing debates (overview, per-persona transcripts, persona × round matrix); a **Roadmap page** with a draggable forecast timeline where dependents slide and redden live when an objective slips; and a **Version manager** for planning, releasing, renaming, and deleting versions safely.
 
@@ -353,7 +344,7 @@ dreamcontext app status       # Show installed app version and state
 
 **One window over all your projects.** The launcher lists every registered [vault](#federation), and opening one adds it to a centered **chip strip** at the top of a single window rather than spawning another window to hunt for. Every open project stays **live**: a background project's chat keeps streaming and its PTY never remounts, because visibility is not allowed to touch a WebSocket. Each chip reports what its project is doing at a glance, rolled up from that project's live sessions into asking / working / idle, and a project whose agent is waiting on you bounces the way an app bounces in the Dock, firing a native banner even when the window is already focused. Hold ⌥ and press Tab to walk the strip and release to switch (Control chords stay with the terminal, where ⌃C and ⌃D belong); ⇧-click a project to spread it into its own window anyway. Six projects stay hot at once and idle ones evict to cold chips, so the window does not degrade as you open more. Per-project status dots (green up-to-date / yellow needs-update / red folder-gone) let you update from the UI.
 
-**Onboarding without a terminal.** The first launch sets your Mac up for you. It opens with a one-time intro: the logo sits upside down until you click to set it right, and it rides a ramp back into place before the usual opening animation. No Node.js? The opening screen hands over to a short setup that downloads a private, checksum-verified copy just for dreamcontext, then the app starts. The Launcher greets you with a short welcome that says what dreamcontext is, then walks three steps. **This Mac** checks everything Claude needs (dreamcontext in Terminal, Claude and its sign-in, Git, GitHub) and fixes it with one **Set everything up** button: Git's install starts first and keeps going in the background, Claude signs in through your browser, GitHub through a short code (or reuses the GitHub command line tool's sign-in when it already has one). **Project** creates a new folder (making `~/projects` if it is missing), sets up a folder you already have (counting its documents for Claude to read in, and offering Git), or clones one of your GitHub repositories. **Start with Claude** opens the project and starts the conversation that builds its brain with you, so there is no prompt to copy and paste. Calm motion in the splash's style, and none at all with Reduce Motion on.
+**Onboarding without a terminal.** The first launch sets your Mac up for you. No Node.js? The opening screen hands over to a short setup that downloads a private, checksum-verified copy just for dreamcontext, then the app starts. The Launcher greets you with a short welcome that says what dreamcontext is, then walks three steps. **This Mac** checks everything Claude needs (dreamcontext in Terminal, Claude and its sign-in, Git, GitHub) and fixes it with one **Set everything up** button: Git's install starts first and keeps going in the background, Claude signs in through your browser, GitHub through a short code (or reuses the GitHub command line tool's sign-in when it already has one). **Project** creates a new folder (making `~/projects` if it is missing), sets up a folder you already have (counting its documents for Claude to read in, and offering Git), or clones one of your GitHub repositories. **Start with Claude** opens the project and starts the conversation that builds its brain with you, so there is no prompt to copy and paste. Calm motion in the splash's style, and none at all with Reduce Motion on.
 
 **A real agent terminal, in-app** _(beta)_. Drive Claude Code sessions inside any vault from a split-pane, multi-session terminal — per-pane tabs, ⌘D drag-to-split, ⌘T/⌘W, minimize-to-corner dock; sessions live in a detached DOM so the PTY never remounts. Drop an image to inject it into the vault; jump anywhere with the **⌘K command palette** (live BM25 recall + intelligent toggle). The dock is **screen-true** — status is read from the visible terminal buffer, not byte-flow, so a session waiting on you surfaces as "Needs you" (shake, chime, queue-jump) instead of flapping between ready and working.
 
@@ -448,7 +439,7 @@ dreamcontext tasks sync-hooks install               # best-effort post-commit/pr
 ```
 
 - Both backends talk to the provider's REST API directly (no MCP) — so sync works headless in git hooks, post-sleep consolidation, and cron.
-- **GitHub** maps each task to an issue: the issue body holds the task card, journal entries (logs, status changes, approvals; never evidence) become comments, `todo` / `in_progress` / `in_review` (and any status your project declares) ride `dc:*` labels, and priority / urgency / tags / version ride reserved-prefix labels. `completed` closes the issue; a declared `cancelled`-kind status closes it as completed with its `dc:cancelled` label; a delete soft-closes as `not_planned`.
+- **GitHub** maps each task to an issue: the issue body holds the task, changelog entries become comments, `todo` / `in_progress` / `in_review` (and any status your project declares) ride `dc:*` labels, and priority / urgency / tags / version ride reserved-prefix labels. `completed` closes the issue; a declared `cancelled`-kind status closes it as completed with its `dc:cancelled` label; a delete soft-closes as `not_planned`.
 - **Statuses are yours to declare.** Add `planned`, `cancelled` or anything else in `_dream_context/overrides/task.md` (or the dashboard Settings), each **under one of the four shipped statuses** and carrying a semantic kind — `open`, `active`, `review`, `cancelled`. The CLI, board, roadmap, snapshot and both cloud backends follow without a code change: a cancelled task leaves progress counts and is never overdue. **Cloud sync only ever sees the parent**, so nothing has to be created on GitHub or ClickUp — the child rides beside it as a `dc:<key>` label/tag and round-trips.
 - **Local task images render on GitHub**: a locally-embedded image is uploaded to a dedicated `dreamcontext-assets` branch — content-sniffed by magic bytes, size-gated, content-addressed for dedupe — and linked by its hosted URL on the wire, while the local task keeps its canonical path.
 - Sync is watermark-based on server time: one field-level `PUT` per task under the rate limit, changelog entries union-merge as comments, prose merges 3-way against the last synced base.
@@ -759,38 +750,30 @@ Who is at the keyboard is resolved per machine, never guessed: `DREAMCONTEXT_PER
 dreamcontext core changelog add           # Add changelog entry
 dreamcontext core releases add            # Create release with auto-discovery
 dreamcontext core releases add --yes      # Non-interactive, include all unreleased items
+dreamcontext core releases add --ver v0.2.0 --summary "..." --status planning  # Planning version
 dreamcontext core releases list / show <version>
-dreamcontext cycle new --goal "..." / start <n> / show / close / list   # the planning time box
 ```
 
-A release is an outcome: it is compiled from the tasks closed since the previous release (plus features and changelog entries), links the cycles that work came from, and back-populates `released_version` on included features. Planning is a cycle (a date range with one goal, one active at a time), not a release: `--status planning` is refused.
+Release creation auto-discovers unreleased tasks, features, and changelog entries and back-populates `released_version` on included features. Use `--status planning` for a version placeholder; the dashboard's version manager provides the planning → released transition.
 
 ### Tasks
 
 ```bash
 dreamcontext tasks list [--all] [--status in_progress] [--objective <slug>]
-dreamcontext tasks create <name> [--status in_progress] [--tags "api,auth"] \
-  [--start 2026-06-25] [--due 2026-07-01] [--objectives a,b] [--field key=value]
+dreamcontext tasks create <name> [--priority high] [--status in_progress] [--tags "api,auth"] \
+  [--urgency high] [--version v0.2.0] [--start 2026-06-25] [--due 2026-07-01] [--objectives a,b] [--field key=value]
 dreamcontext tasks start <name> <date|clear>     # set/clear the planned start
 dreamcontext tasks due <name> <date|clear>       # set/clear the due/end
-dreamcontext tasks plan <name> now|next|later|<n> # place it: active cycle, a cycle, or the queue
-dreamcontext tasks rank <name> --before <task>    # order inside its cycle or queue
+dreamcontext tasks version <name> [version|clear] # print / set / clear the sprint a task rides
 dreamcontext tasks field <name> <key> [value|clear] # user-declared custom fields
 dreamcontext tasks tag <name> <tags…> [--remove]
-dreamcontext tasks log <name> <content>          # Log progress to the task's journal (newest first)
+dreamcontext tasks log <name> <content>          # Log progress (newest first)
 dreamcontext tasks insert <name> <section> <content>
-dreamcontext tasks check <name> <n> --run "npm test"   # Tick a criterion WITH evidence (or --evidence commit:<sha>|shot:<path>)
-dreamcontext tasks status <name> in_review       # Evidence-gated: every criterion proven
-dreamcontext tasks approve <name>                # The owner's verdict: review → done
 dreamcontext tasks complete <name>
-dreamcontext tasks doctor [name]                 # Card-standard checks
 dreamcontext tasks dedup [--dry-run] [--yes]     # Heal duplicate -N task-mirror families (LOCAL-ONLY; dry-run first, always)
 ```
 
 All flags are optional (medium priority/urgency, todo status by default), so every command works non-interactively for agent use.
-
-- **Card and journal**: a task is a short card (`state/<slug>.md`: Why, criteria, decisions, details, notes; no history, at most 12,000 chars) plus a journal (`state/journal/<slug>.md`) where every log, status change, evidence record and approval lands, each with a permanent id. Upgrading to 0.33.0 moves every old Changelog into its journal once, with a backup in `_dream_context/tmp/` and a byte ledger proving nothing was lost.
-- **Evidence changes status**: a criterion is ticked as `- [x] … (evidence: cmd:<id> | commit:<sha> | shot:<path> | owner:<id>)`. `tasks check --run` records the command's exit code and a scrubbed output tail in the journal and refuses a failing one. Review and done are refused while a criterion is unproven; work proven only by commands and commits may close directly, anything observed or screenshotted goes to review and closes on the owner's approval (the dashboard, or `tasks approve`, never from an agent).
 
 - **Date ranges**: start must be on or before due; setting any date removes the `backlog` tag, and the first move to `in_progress` auto-stamps `start_date` if unset. Dates render in Timeline/Calendar and sync natively to both remote backends.
 - **Version folding**: `tasks version` folds against `RELEASES.json`, so a lowercased round-trip or a typed `s5` resolves to the canonical spelling instead of minting a near-duplicate version string.

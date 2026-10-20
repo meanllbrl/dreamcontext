@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { TaskBase } from '../../hooks/useTasks';
+import type { Task } from '../../hooks/useTasks';
 import { useAssignTaskToAgent } from '../../hooks/useTasks';
 import { findAgent, useAgent, useAgents, useApproveAgent } from '../../hooks/useAgents';
 import { useI18n } from '../../context/I18nContext';
@@ -39,7 +39,7 @@ export function TaskAgentFace({ slug, size = 20 }: { slug: string; size?: number
 }
 
 interface AssignToAgentComposerProps {
-  task: TaskBase;
+  task: Task;
   onClose: () => void;
   /** Called once the run has started, with the confirmation line (a board can flash it). */
   onAssigned?: (message: string) => void;

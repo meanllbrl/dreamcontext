@@ -19,8 +19,6 @@ import {
 /** ClickUp REST v2 task shape (the subset we read/write). */
 export interface ClickUpTask {
   id: string;
-  /** The parent task's id when this is a subtask (fetched with `subtasks=true`). */
-  parent?: string | null;
   name: string;
   description?: string | null;
   text_content?: string | null;

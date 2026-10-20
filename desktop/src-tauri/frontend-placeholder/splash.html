@@ -9,10 +9,6 @@
   The shell (src/splash.rs) shows the Launcher once this page is done AND the Launcher has
   loaded, then calls window.__dcSplashExit() to fade this card and closes the window.
 
-  Arriving from the one-time intro (intro.html, `?after=intro`) the card is already on screen
-  and the intro ends on the clip's own frame at INTRO_FRAME: the page shows that frame at once
-  (intro-handoff*.jpg) and plays the clip on from it, so the hand-over is one continuous shot.
-
   The page never starts the clip itself. In macOS Low Power Mode WebKit refuses any <video>
   play() that no user gesture started, muted or not, and wry's autoplay setting does not lift
   that. A script the shell runs through evaluateJavaScript counts as a gesture, so the page
@@ -30,11 +26,10 @@
   .light .card { background: radial-gradient(ellipse 75% 85% at 50% 50%, #ffffff 0%, #f6f4fd 50%, #e9e5f6 100%); }
   .light .hint { color: rgba(70, 76, 100, 0.62); }
   .card.in { opacity: 1; }
-  .from-intro .card:not(.out) { opacity: 1; transition: none; }
   .card.out { opacity: 0; transition: opacity 320ms ease-in; }
   video, img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
   img, .still video { display: none; }
-  .still img, .bridged #bridge { display: block; }
+  .still img { display: block; }
   /* Only for a slow boot: the clip has ended and the app is still on its way. */
   .hint {
     position: absolute; left: 0; right: 0; bottom: 26px; text-align: center;
@@ -49,7 +44,6 @@
 <body>
 <div class="card" id="card">
   <video id="clip" playsinline preload="auto"></video>
-  <img id="bridge" alt="" decoding="sync">
   <img id="still" src="splash-still.jpg" alt="dreamcontext">
   <div class="hint" id="hint">Starting…</div>
 </div>
@@ -68,17 +62,6 @@
   var suffix = light ? '-light' : '';
   if (light) document.documentElement.classList.add('light');
   document.getElementById('still').src = 'splash-still' + suffix + '.jpg';
-
-  // The intro hands over on this frame of the clip (seconds): the mark whole, centred.
-  var INTRO_FRAME = 1.35;
-  var fromIntro = /[?&]after=intro\b/.test(location.search);
-  var startAt = 0;
-  if (fromIntro) {
-    startAt = INTRO_FRAME;
-    document.documentElement.classList.add('from-intro');
-    document.getElementById('bridge').src = 'intro-handoff' + suffix + '.jpg';
-    card.classList.add('bridged');
-  }
 
   function done() {
     if (reported) return;
@@ -142,8 +125,6 @@
   clip.addEventListener('playing', function () {
     if (started || stilled) return;
     started = true;
-    // The intro's frame stays on top a moment, until the clip has surely painted under it.
-    if (fromIntro) setTimeout(function () { card.classList.remove('bridged'); }, 120);
     var length = isFinite(clip.duration) && clip.duration > 0 ? clip.duration : 2.6;
     setTimeout(finished, (length - clip.currentTime) * 1000 + 1000);
   });
@@ -165,15 +146,6 @@
     }
   }
 
-  // From the intro, the clip is moved to the hand-over frame BEFORE the shell is asked: played
-  // first and seeked after, WebKit shows the clip's opening (an almost black field) under the
-  // bridge for the length of the seek. A seek that never lands leaves the 3s still to cover it.
-  function ready() {
-    if (!startAt) return askShell();
-    clip.addEventListener('seeked', askShell, { once: true });
-    try { clip.currentTime = startAt; } catch (e) { askShell(); }
-  }
-
   // Played from a blob URL: WebKit's media loader wants byte-range responses, which the
   // app's custom-scheme asset handler does not give. A blob it can seek freely.
   fetch('splash' + suffix + '.mp4')
@@ -181,8 +153,8 @@
     .then(function (blob) {
       clip.src = URL.createObjectURL(blob);
       // Ask only once the clip can play: a gesture spent on a clip still loading is lost.
-      if (clip.readyState >= 3) ready();
-      else clip.addEventListener('canplay', ready, { once: true });
+      if (clip.readyState >= 3) askShell();
+      else clip.addEventListener('canplay', askShell, { once: true });
     })
     .catch(still);
 })();

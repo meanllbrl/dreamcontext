@@ -6,7 +6,7 @@
  *   npm run build && node scripts/verify/jev-spike-empty-field.mjs [--vault fitpulse_dreamcontext] [--ui 60] [--all]
  *
  * TWO TIERS, SAME QUESTION.
- *   UI tier   — Playwright opens each task's page in the real dashboard, hands the
+ *   UI tier   — Playwright opens each task's detail panel in the real dashboard, hands the
  *               panel's aria snapshot + text to Jev, asks "is the field empty?". This is the
  *               shape a validator would use: judge what the USER SEES. `--ui N` caps how many
  *               tasks go through the browser (default 60, balanced empty/filled); `--all` does
@@ -19,7 +19,7 @@
  * Every Jev verdict is scored against it; precision/recall are printed, not asserted away.
  *
  * KEY: `~/.dreamcontext/voice.json` → `openRouterKey`, read into memory, never printed.
- * MUTATION: none. Opening a task page does not PATCH; nothing is typed into a field.
+ * MUTATION: none. Opening a detail panel does not PATCH; nothing is typed into a field.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -118,11 +118,11 @@ async function uiTier(base, key, truth, slugs) {
   await page.waitForTimeout(400);
   console.log(`  view: ${(await page.locator('.bd-card').count())} cards visible after switching to All Tasks`);
 
-  // A task opens as its own page (plan r3 § 5a); "Back to board" returns to the cards.
+  // The detail panel is an overlay that swallows clicks; it closes from its own button, not Escape.
   const closePanel = async () => {
-    if (await page.locator('[data-task-page]').count()) {
-      await page.locator('.tkp-back').first().click({ timeout: 2000 }).catch(() => {});
-      await search.waitFor({ timeout: 10_000 }).catch(() => {});
+    for (let i = 0; i < 4 && (await page.locator('.detail-overlay').count()); i += 1) {
+      await page.locator('.detail-overlay button.modal-close').first().click({ timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(200);
     }
   };
   const rows = []; let unopened = 0, shot = 0;
@@ -133,15 +133,15 @@ async function uiTier(base, key, truth, slugs) {
     const card = page.locator('.bd-card').first();
     if (!(await card.count())) { unopened++; rows.push({ slug, truth: t.empty, got: 'unopened', p: NaN }); continue; }
     await card.click();
-    const panel = page.locator('[data-task-page]');
-    try { await page.locator('[data-task-ready]').waitFor({ timeout: 5000 }); } catch { unopened++; rows.push({ slug, truth: t.empty, got: 'unopened', p: NaN }); continue; }
+    const panel = page.locator('.detail-overlay');
+    try { await panel.waitFor({ timeout: 5000 }); } catch { unopened++; rows.push({ slug, truth: t.empty, got: 'unopened', p: NaN }); continue; }
     await page.waitForTimeout(250);
     const aria = await panel.ariaSnapshot();
     const text = await panel.innerText();
     if (shot < 2) { await page.screenshot({ path: join(SHOTS, `panel-${shot++}.png`) }); }
-    const { answers, ms } = await jev(key, { screen: 'Task page', task_name: t.name, accessibility_tree: aria.slice(0, 20_000), visible_text: text.slice(0, 8_000) }, {
+    const { answers, ms } = await jev(key, { screen: 'Task detail panel', task_name: t.name, accessibility_tree: aria.slice(0, 20_000), visible_text: text.slice(0, 8_000) }, {
       field_empty: noul(`In the Custom Fields section, is the "${FIELD_LABEL}" field EMPTY (no value entered)?`),
-      panel_is_task: noul(`Is this the page for the task named "${t.name}"?`),
+      panel_is_task: noul(`Is this the detail panel for the task named "${t.name}"?`),
     });
     const p = answers.field_empty.noul;
     rows.push({ slug, truth: t.empty, got: band(p), p, right: answers.panel_is_task.noul, ms });
@@ -224,7 +224,7 @@ async function apiTier(base, key, truth) {
     const half = Math.ceil(Math.min(UI_CAP, truth.size) / 2);
     const pick = (arr, n) => arr.slice(0, n).map(([slug]) => slug);
     const slugs = UI_CAP === Infinity ? [...truth.keys()] : [...pick(empties, half), ...pick(filled, half)];
-    console.log(`\n§B  UI TIER — ${slugs.length} task pages opened in the real dashboard, Jev reads each`);
+    console.log(`\n§B  UI TIER — ${slugs.length} detail panels opened in the real dashboard, Jev reads each`);
     const ui = await uiTier(base, key, truth, slugs);
     const sB = score(ui.rows.filter((r) => r.got !== 'unopened'));
     console.log(`  empty-detection: precision ${pct(sB.precision)} · recall ${pct(sB.recall)} · fp ${sB.fp} · fn ${sB.fn} · inconclusive ${sB.inc} · unopened ${ui.unopened}`);

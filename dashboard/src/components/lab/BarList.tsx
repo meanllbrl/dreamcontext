@@ -10,8 +10,6 @@ import {
 } from './chart';
 import { entityDomain } from './LineChart';
 import './lab-bar-pie-heat.css';
-// `fill` is also a prop of this component, so the placeholder helper is imported as fillText.
-import { fill as fillText } from '../../lib/fill';
 
 /**
  * The lab's ONE bar renderer, on the chart foundation: a value axis with nice
@@ -524,10 +522,10 @@ export function barTooltipContent(
     rows.push({ id: 'value', label: compare && num(p) ? copy.current : '', value: num(v) ? formatValue(v, fmt) : '-', color, shape: 'rect', dim: !num(v) });
     if (compare && num(p)) {
       rows.push({ id: 'prev', label: copy.previous, value: formatValue(p, fmt), color: ghostColor(color), shape: 'rect' });
-      if (num(v)) footer = fillText(copy.vsPrev, { delta: formatDelta(v, p, fmt) });
+      if (num(v)) footer = copy.vsPrev.replace('{delta}', formatDelta(v, p, fmt));
     } else if (opts.share && num(v)) {
       const total = s.values.reduce<number>((a, x) => a + (num(x) && x > 0 ? x : 0), 0);
-      if (total > 0 && v > 0) footer = fillText(copy.share, { pct: formatNumber(v / total, { format: 'percent', locale }) });
+      if (total > 0 && v > 0) footer = copy.share.replace('{pct}', formatNumber(v / total, { format: 'percent', locale }));
     }
     return { title: cat.label, rows, footer };
   }
@@ -540,7 +538,7 @@ export function barTooltipContent(
       total += v;
       any = true;
     }
-    const delta = compare && num(v) && num(p) ? `, ${fillText(copy.vsPrev, { delta: formatDelta(v, p, fmt) })}` : '';
+    const delta = compare && num(v) && num(p) ? `, ${copy.vsPrev.replace('{delta}', formatDelta(v, p, fmt))}` : '';
     rows.push({
       id: s.id,
       label: `${s.label}${delta}`,
@@ -716,7 +714,7 @@ export type ShareRow = BarRow & { other?: number | null; prev?: number | null };
 
 /** The Other label: "Other" or "Other (3)" in the reader's language. */
 export function otherLabel(t: (key: string) => string, count: number | null | undefined): string {
-  return typeof count === 'number' && count > 0 ? fillText(t('lab.blocks.otherCount'), { n: String(count) }) : t('lab.blocks.other');
+  return typeof count === 'number' && count > 0 ? t('lab.blocks.otherCount').replace('{n}', String(count)) : t('lab.blocks.other');
 }
 
 /**

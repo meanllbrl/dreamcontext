@@ -9,7 +9,6 @@ import {
   type AxisTick, type CartesianLayout, type ChartFormat, type EndLabelItem, type EndLabels, type LegendItem,
   type LegendPosition, type Measure, type Rect, type ResolvedAxis, type TooltipRow, type TooltipSpec,
 } from './chart';
-import { fill } from '../../lib/fill';
 
 /**
  * The lab line chart, on the shared chart foundation (chart/): it fills the
@@ -121,7 +120,7 @@ export function entityDomain(domain: readonly string[] | null | undefined, names
 /** The label a series shows: its name, or the localized "Other (n)" for a folded series. */
 export function seriesLabel(s: ChartSeries, t: (key: string) => string): string {
   if (typeof s.other !== 'number') return s.name;
-  return s.other > 0 ? fill(t('lab.blocks.otherCount'), { n: String(s.other) }) : t('lab.blocks.other');
+  return s.other > 0 ? t('lab.blocks.otherCount').replace('{n}', String(s.other)) : t('lab.blocks.other');
 }
 
 /** Y ticks for a linear value scale, formatted with one shared precision. */

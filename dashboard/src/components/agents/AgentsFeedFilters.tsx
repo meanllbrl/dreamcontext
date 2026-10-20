@@ -7,7 +7,6 @@ import { AgentAvatar } from './AgentAvatar';
 import { useI18n } from '../../context/I18nContext';
 import { useDismissOnOutside } from '../../lib/useDismissOnOutside';
 import './AgentsFeedFilters.css';
-import { fill } from '../../lib/fill';
 
 /**
  * THE CHANNEL'S FILTER ROW — and it never hides an agent.
@@ -142,7 +141,7 @@ export function AgentsFeedFilters({
   const fitted = pickVisible(agents, fit, activeId);
   const hidden = agents.filter((c) => !fitted.includes(c));
   const visible = measuring ? agents : fitted;
-  const moreLabel = (n: number) => (n === 1 ? t('agents.filter.more.one') : fill(t('agents.filter.more.many'), { n: String(n) }));
+  const moreLabel = (n: number) => (n === 1 ? t('agents.filter.more.one') : t('agents.filter.more.many').replace('{n}', String(n)));
 
   // ── The "+N agents" menu ─────────────────────────────────────────────────
   const [open, setOpen] = useState(false);

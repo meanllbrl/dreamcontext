@@ -16,7 +16,6 @@ import { useSleep, sleepThresholds, DEFAULT_SLEEP_THRESHOLDS } from '../../hooks
 import { useAutoSleep, useSetAutoSleep, useCancelAutoSleep, type AutoSleepTrigger } from '../../hooks/useAutoSleep';
 import { Toggle } from './SettingRow';
 import './SleepSettings.css';
-import { fill } from '../../lib/fill';
 
 /**
  * Settings › Sleep — the per-brain sleep tuning that used to be constants in
@@ -130,7 +129,7 @@ export function SleepSettings(): JSX.Element {
                 <span className="sleep-threshold-mark">
                   {overrides[level] !== undefined
                     ? t('settings.sleep.overridden')
-                    : fill(t('settings.sleep.is_default'), { n: String(DEFAULT_SLEEP_THRESHOLDS[level]) })}
+                    : t('settings.sleep.is_default').replace('{n}', String(DEFAULT_SLEEP_THRESHOLDS[level]))}
                 </span>
               </span>
               <input
@@ -159,7 +158,9 @@ export function SleepSettings(): JSX.Element {
         )}
 
         <p className="sleep-derived">
-          {fill(t('settings.sleep.derived'), { deep: String(Math.round(current.mustSleep * 1.5)), cooldown: String(current.mustSleep * 2) })}
+          {t('settings.sleep.derived')
+            .replace('{deep}', String(Math.round(current.mustSleep * 1.5)))
+            .replace('{cooldown}', String(current.mustSleep * 2))}
         </p>
 
         <div className="sleep-actions">
@@ -329,8 +330,8 @@ function AutoSleepBlock(): JSX.Element {
         <div className={`sleep-job${live ? ' sleep-job--live' : ''}`}>
           <span className="sleep-job-text">
             {live
-              ? fill(t('settings.sleep.job_running'), { time: new Date(job.startedAt).toLocaleTimeString() })
-              : fill(t('settings.sleep.job_last'), { status: job.status })}
+              ? t('settings.sleep.job_running').replace('{time}', new Date(job.startedAt).toLocaleTimeString())
+              : t('settings.sleep.job_last').replace('{status}', job.status)}
           </span>
           {live && (
             <button
@@ -345,7 +346,9 @@ function AutoSleepBlock(): JSX.Element {
                 void (async () => {
                   const ok = await confirmAction({
                     title: t('settings.sleep.job_cancel'),
-                    body: fill(t('settings.sleep.job_confirm'), { pid: String(job.pid), time: new Date(job.startedAt).toLocaleTimeString() }),
+                    body: t('settings.sleep.job_confirm')
+                      .replace('{pid}', String(job.pid))
+                      .replace('{time}', new Date(job.startedAt).toLocaleTimeString()),
                     confirmLabel: t('settings.sleep.job_cancel'),
                     destructive: true,
                   });

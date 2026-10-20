@@ -155,7 +155,7 @@
    *
    * Every surface that sits "below the title bar" measures that distance as
    * `--header-height` against the viewport: the expanded agent overlay
-   * (`AgentTerminal.css:30,43`), `FullscreenOverlay`, the task page, the sidebar's
+   * (`AgentTerminal.css:30,43`), `FullscreenOverlay`, `TaskDetailPanel`, the sidebar's
    * `calc(100vh - …)`, and the boards' inline `calc(100dvh - …)`. When the window briefly
    * had TWO bars (chrome + a per-project header) this block doubled the variable for the
    * subtree. The project header row is gone — its controls portal into the chrome bar — so

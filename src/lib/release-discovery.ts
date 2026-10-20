@@ -61,12 +61,6 @@ export interface ReleaseEntry {
    * has no contributors yet.
    */
   contributors?: string[];
-  /**
-   * The cycles the swept tasks were planned in (`cy_<id>`), linked at record
-   * time. A release is an outcome, not a plan: it is compiled from what closed,
-   * and this only says which time boxes the work came from. Omitted when empty.
-   */
-  cycles?: string[];
 }
 
 export interface UnreleasedTask {
@@ -74,8 +68,6 @@ export interface UnreleasedTask {
   slug: string;
   name: string;
   description: string;
-  /** The cycle the task was planned in, when it carries one. */
-  cycle?: string | null;
 }
 
 export interface UnreleasedFeature {
@@ -113,30 +105,9 @@ export function getLastRelease(root: string): ReleaseEntry | null {
   return releases.length > 0 ? releases[0] : null;
 }
 
-/**
- * The date of the most recent published release (status released, not
- * superseded, with a date), or null when nothing has been released yet.
- */
-export function previousReleaseDate(root: string): string | null {
-  let latest: string | null = null;
-  for (const r of getExistingReleases(root)) {
-    const status = String(r.status);
-    if (status === 'planning' || status === 'superseded') continue;
-    if (typeof r.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && (latest === null || r.date > latest)) latest = r.date;
-  }
-  return latest;
-}
-
-/**
- * Completed tasks no release has swept yet. With `since`, only those that
- * closed on or after that date (the previous release's): a release is compiled
- * from what closed since the one before it. The closing day is the card's
- * `updated_at` (completion stamps it), else its `due_date`.
- */
-export function findUnreleasedTasks(root: string, opts: { since?: string | null } = {}): UnreleasedTask[] {
+export function findUnreleasedTasks(root: string): UnreleasedTask[] {
   const releases = getExistingReleases(root);
   const releasedTaskIds = new Set(releases.flatMap(r => r.tasks ?? []));
-  const since = opts.since ?? null;
 
   const stateDir = join(root, 'state');
   if (!existsSync(stateDir)) return [];
@@ -150,17 +121,11 @@ export function findUnreleasedTasks(root: string, opts: { since?: string | null 
       if (data.status !== 'completed') continue;
       const id = String(data.id ?? '');
       if (releasedTaskIds.has(id)) continue;
-      if (since) {
-        const closed = String(data.updated_at ?? data.due_date ?? '');
-        if (closed && closed < since) continue;
-      }
-      const cycle = typeof data.cycle === 'string' && data.cycle.trim() ? data.cycle.trim() : null;
       result.push({
         id,
         slug: basename(file, '.md'),
         name: String(data.name ?? basename(file, '.md')),
         description: String(data.description ?? ''),
-        ...(cycle ? { cycle } : {}),
       });
     } catch { /* skip unreadable */ }
   }

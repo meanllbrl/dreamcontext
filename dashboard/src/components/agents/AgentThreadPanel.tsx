@@ -27,7 +27,6 @@ import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { readAgentSettings } from '../../lib/agentSettings';
 import { useI18n } from '../../context/I18nContext';
-import { fill } from '../../lib/fill';
 
 /**
  * ONE RUN'S THREAD, on the right — and where a reply is written.
@@ -159,7 +158,7 @@ function LiveRow({
     <div className="agent-thread-live" role="status" aria-live="polite">
       <span className="agent-msg-live-dot" aria-hidden="true" />
       <span className="agent-thread-live-text agent-msg-elapsed">
-        {fill(t(elsewhere ? 'agents.thread.liveElsewhere' : 'agents.thread.live'), { time })}
+        {t(elsewhere ? 'agents.thread.liveElsewhere' : 'agents.thread.live').replace('{time}', time)}
       </span>
       {elsewhere && onOpen && (
         <button type="button" className="agent-thread-live-open" onClick={onOpen}>
@@ -170,7 +169,7 @@ function LiveRow({
         <span className="agent-thread-live-queue">
           {waiting === 1
             ? t('agents.thread.liveQueued.one')
-            : fill(t('agents.thread.liveQueued.other'), { n: String(waiting) })}
+            : t('agents.thread.liveQueued.other').replace('{n}', String(waiting))}
         </span>
       )}
     </div>
@@ -373,14 +372,14 @@ export function AgentThreadPanel({
   const blocked: { text: string; action: string; run: () => void } | null = agent
     ? (!agent.enabled
       ? {
-        text: fill(t('agents.thread.off'), { name: message.title }),
+        text: t('agents.thread.off').replace('{name}', message.title),
         action: t('agents.thread.turnOn'),
         run: () => setEnabled.mutate({ slug: message.slug, enabled: true }),
       }
       : !agent.approved
         ? {
-          text: fill(t('agents.thread.unapproved'), { name: message.title }),
-          action: fill(t('agents.thread.review'), { name: message.title }),
+          text: t('agents.thread.unapproved').replace('{name}', message.title),
+          action: t('agents.thread.review').replace('{name}', message.title),
           run: () => onOpenAgent(message.slug),
         }
         : null)
@@ -538,7 +537,7 @@ export function AgentThreadPanel({
       style={{ position: 'relative', inset: 'auto', ...(overlay || width === null ? {} : { width }) }}
       // Inside the scrim, a click on the panel must not reach the scrim, which closes it.
       onClick={overlay ? (e) => e.stopPropagation() : undefined}
-      aria-label={fill(t('agents.thread.aria'), { name: message.title })}
+      aria-label={t('agents.thread.aria').replace('{name}', message.title)}
       onKeyDown={onKeyDown}
     >
       {!overlay && (
@@ -687,9 +686,9 @@ export function AgentThreadPanel({
                 // question IS the answer. The placeholder says which of the two this is.
                 idlePlaceholder={
                   message.question
-                    ? fill(t('agents.thread.answerPlaceholder'), { name: message.title })
+                    ? t('agents.thread.answerPlaceholder').replace('{name}', message.title)
                     : busyWith
-                      ? fill(t('agents.thread.queuePlaceholder'), { name: message.title })
+                      ? t('agents.thread.queuePlaceholder').replace('{name}', message.title)
                       : `Reply to ${message.title}…`
                 }
                 quote={null}

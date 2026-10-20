@@ -12,7 +12,6 @@ import { boardCardsAdopted, subscribeAdoption } from './boardAgentScratch';
 import { useAgentSession, useBoardAgents } from './useBoardAgents';
 import { AgentCardMenu, Blocked, CardChat, StateWord, stateText } from './widgets/AgentWidget';
 import './BoardAgentPanel.css';
-import { fill } from '../../lib/fill';
 
 type Tx = (key: string, fallback: string) => string;
 
@@ -92,7 +91,7 @@ export function BoardAgentPanel({ board }: { board: string }) {
       {dropping && agent && (
         <div className="wb-agent-drop-veil" aria-hidden="true">
           <span className="wb-agent-drop-label">
-            {fill(tx('whiteboard.agent.dropHere', 'Add to the chat with {name}'), { name: agent.title })}
+            {tx('whiteboard.agent.dropHere', 'Add to the chat with {name}').replace('{name}', agent.title)}
           </span>
           {target?.what && <span className="wb-agent-drop-what">{target.what}</span>}
         </div>
@@ -192,7 +191,7 @@ function PanelChat({ vault, board, agent, tx }: { vault: string; board: string; 
     <CardChat
       session={session}
       reopen={() => open('resume')}
-      placeholder={fill(tx('whiteboard.agent.placeholder', 'Message {name}…'), { name: agent.title })}
+      placeholder={tx('whiteboard.agent.placeholder', 'Message {name}…').replace('{name}', agent.title)}
     />
   );
 }

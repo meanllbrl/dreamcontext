@@ -15,7 +15,6 @@ import { readAgentSettings } from '../../lib/agentSettings';
 import { runBrainResolveAgent, DREAM_SYNC_COMMAND } from '../../lib/brainResolveAgent';
 import { readAutoCheckpointOnOpen } from '../../lib/brainSyncPrefs';
 import './BrainSyncControl.css';
-import { fill } from '../../lib/fill';
 
 /**
  * The connected brain cloud-sync control (github-cloud-collaboration-brain-repo-sync
@@ -138,7 +137,7 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
             showFeedback({ kind: 'warn', message: t('brain.sync.detachedShort') });
             break;
           case 'pulled':
-            showFeedback({ kind: 'ok', message: fill(t('brain.sidebar.refreshPulled'), { n: String(result.pulledUpdates ?? 0) }) });
+            showFeedback({ kind: 'ok', message: t('brain.sidebar.refreshPulled').replace('{n}', String(result.pulledUpdates ?? 0)) });
             break;
           case 'pushed':
             showFeedback({ kind: 'ok', message: t('brain.sidebar.refreshPushed') });
@@ -242,7 +241,7 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
           {codeConflicts.length > 0 && (
             <ul className="brain-sync-files">
               {codeConflicts.slice(0, 4).map((f) => <li key={f}><code>{f}</code></li>)}
-              {codeConflicts.length > 4 && <li>{fill(t('brain.code.more'), { n: String(codeConflicts.length - 4) })}</li>}
+              {codeConflicts.length > 4 && <li>{t('brain.code.more').replace('{n}', String(codeConflicts.length - 4))}</li>}
             </ul>
           )}
           <p className="brain-sync-panel-hint">{t('brain.code.hint')}</p>
@@ -297,7 +296,7 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
 
       {/* ── item 7: auto-checkpoint transparency (identifiable + undoable) ── */}
       {checkpointSha && (
-        <div className="brain-sync-note" title={fill(t('brain.checkpoint.undo'), { sha: checkpointSha.slice(0, 7) })}>
+        <div className="brain-sync-note" title={t('brain.checkpoint.undo').replace('{sha}', checkpointSha.slice(0, 7))}>
           <span aria-hidden="true">✓</span> {t('brain.checkpoint.note')}
         </div>
       )}

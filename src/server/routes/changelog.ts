@@ -10,7 +10,6 @@ import {
   findUnreleasedTasks,
   findUnreleasedFeatures,
   findUnreleasedChangelog,
-  previousReleaseDate,
 } from '../../lib/release-discovery.js';
 import type { ChangelogEntry, ReleaseEntry } from '../../lib/release-discovery.js';
 import { deriveContributors } from '../../lib/attribution.js';
@@ -69,8 +68,7 @@ export async function handleReleasesGet(
 }
 
 /**
- * GET /api/releases/unreleased - Get auto-discovered unreleased items. Tasks are the ones
- * closed since the previous release, the same set `release` compiles from.
+ * GET /api/releases/unreleased - Get auto-discovered unreleased items
  */
 export async function handleUnreleasedGet(
   _req: IncomingMessage,
@@ -78,7 +76,7 @@ export async function handleUnreleasedGet(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
-  const tasks = findUnreleasedTasks(contextRoot, { since: previousReleaseDate(contextRoot) });
+  const tasks = findUnreleasedTasks(contextRoot);
   const features = findUnreleasedFeatures(contextRoot);
   const changelog = findUnreleasedChangelog(contextRoot);
   sendJson(res, 200, { tasks, features, changelog });

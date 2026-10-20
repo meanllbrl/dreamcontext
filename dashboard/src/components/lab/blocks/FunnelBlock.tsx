@@ -113,7 +113,7 @@ export function FunnelBlock({ block, frame, options, selection, lanes, onFunnel 
   const fit = funnelFit(all.map((f) => f.steps.length), box.height, compact);
   const funnels = all.slice(0, Math.max(1, fit.count));
   const more = fit.note ? all.length - funnels.length : 0;
-  const stepLabel = (pct: string) => fill(t('lab.blocks.funnel.ofPrev'), { pct });
+  const stepLabel = (pct: string) => t('lab.blocks.funnel.ofPrev').replace('{pct}', pct);
   const widths = valueWidths(el, funnels, stepLabel);
   const mode = showConversion ? funnelStepMode(box.width, widths) : 'none';
   // Every row's value column as wide as the widest, so the tracks end together.
@@ -133,7 +133,7 @@ export function FunnelBlock({ block, frame, options, selection, lanes, onFunnel 
           <FunnelBars steps={f.steps} dense={fit.dense} fill stepLabel={mode === 'none' ? null : stepLabel} stepMode={mode === 'none' ? 'full' : mode} valueWidth={valueWidth} />
         </section>
       ))}
-      {more > 0 && <div className="lab-block-funnel-more">{fill(t('lab.blocks.funnel.more'), { n: String(more) })}</div>}
+      {more > 0 && <div className="lab-block-funnel-more">{t('lab.blocks.funnel.more').replace('{n}', String(more))}</div>}
     </div>
   );
 }
@@ -222,7 +222,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
   if (view.pick !== null && view.pick !== slice.funnelId) {
     notes.push({
       key: 'unknown',
-      text: fill(t('lab.blocks.explorer.unknownFunnel'), { id: view.pick, name: slice.funnelName }),
+      text: t('lab.blocks.explorer.unknownFunnel').replace('{id}', view.pick).replace('{name}', slice.funnelName),
       tone: 'caution',
       attr: { 'data-lab-unknown-funnel': view.pick },
     });
@@ -231,7 +231,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
   const copy: FunnelStepCopy = {
     derived: t('lab.explorer.derived'),
     derivedTitle: t('lab.explorer.derivedTitle'),
-    notMeasured: (reason) => fill(t('lab.explorer.notMeasuredWhy'), { reason: reason ?? t('lab.blocks.breakdown.noPath') }),
+    notMeasured: (reason) => t('lab.explorer.notMeasuredWhy').replace('{reason}', reason ?? t('lab.blocks.breakdown.noPath')),
     knTitle: (k, n) => fill(t('lab.explorer.knTitle'), { min: KN_THRESHOLD, k, n }),
     locale,
   };
@@ -239,7 +239,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
   if (view.compare === 'lanes' && view.lanes.length === 0) {
     // The Compare tab with nothing pinned: say how to pin, never an empty box.
     // Name the actual control, worded exactly as the breakdown bar renders it (its button / its title).
-    const pinText = fill(t('lab.blocks.breakdown.pin'), { sel: `'${nameOf(slice.selection)}'` });
+    const pinText = t('lab.blocks.breakdown.pin').replace('{sel}', `'${nameOf(slice.selection)}'`);
     body = (
       <div className="lab-x-empty" data-lab-empty="compare" role="note">
         <span>{t('lab.explorer.emptyCompare')}</span>
@@ -258,14 +258,14 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
   } else if (!slice.measured) {
     body = (
       <div className="funnel-explorer-unmeasured" data-lab-not-measured={nameOf(slice.selection)} role="note">
-        {fill(t('lab.blocks.explorer.notMeasured'), { sel: nameOf(slice.selection), reason: slice.reason ?? t('lab.blocks.breakdown.noPath') })}
+        {t('lab.blocks.explorer.notMeasured').replace('{sel}', nameOf(slice.selection)).replace('{reason}', slice.reason ?? t('lab.blocks.breakdown.noPath'))}
       </div>
     );
   } else {
     if (slice.lowSample && Object.keys(slice.selection).length > 0) {
       notes.push({
         key: 'low',
-        text: fill(t('lab.blocks.explorer.lowSample'), { n: fmtCount(slice.users, locale) }),
+        text: t('lab.blocks.explorer.lowSample').replace('{n}', fmtCount(slice.users, locale)),
         tone: 'caution',
         attr: { 'data-lab-low-sample': String(slice.users) },
       });
@@ -276,7 +276,7 @@ function FunnelExplorer({ frame, view, measureRef, box }: {
       body = <FunnelFlow steps={slice.steps} markWorst={view.markWorst} dense={flowDense} narrow={box.width > 0 && box.width < FLOW_NARROW_PX} />;
     } else {
       const fit = funnelFit([n], box.height, view.compact);
-      const stepLabel = (pct: string) => fill(t('lab.blocks.funnel.ofPrev'), { pct });
+      const stepLabel = (pct: string) => t('lab.blocks.funnel.ofPrev').replace('{pct}', pct);
       const mode = view.showConversion ? (box.width > 0 && box.width < FLOW_NARROW_PX ? 'short' : 'full') : null;
       const drops = stepDrops(slice.steps);
       const worst = view.markWorst ? drops.find((d) => d.worst) ?? null : null;

@@ -79,11 +79,6 @@ automatically when they run `dreamcontext update` or `dreamcontext sleep start`.
      broken links.
    - Agent writes the ledger via `dreamcontext migrations record` on
      completion (never at the start).
-   - When whether the agent has work depends on CONTENT, give the agentTask a
-     `needed(contextRoot)` predicate: a brain with nothing to judge then never
-     lists it (no sleep-migration dispatch), and `migrations record` refuses
-     while it still answers true. `src/migrations/0.33.0-backlog.ts` is the
-     worked example.
 
 6. **Never guess, and know what counts as guessing.** A step may only do what is
    DETERMINISTIC. Two questions look mechanical and are not:

@@ -2,7 +2,6 @@ import { useAutomationDispatcher, useInstallDispatcher, useUninstallDispatcher }
 import { confirmAction } from '../../lib/desktop';
 import { useI18n } from '../../context/I18nContext';
 import './AutomationsDispatcherBar.css';
-import { fill } from '../../lib/fill';
 
 /**
  * The scheduler switch — Automations' one machine-local gate, made visible and
@@ -87,7 +86,7 @@ export function AutomationsDispatcherBar({
             : `Scheduler on. Branded notifications unavailable (${result.notifier.reason}).`,
         );
       },
-      onError: (err) => onToast?.(fill(t('scheduler.toast.onFailed'), { reason: (err as Error).message })),
+      onError: (err) => onToast?.(t('scheduler.toast.onFailed').replace('{reason}', (err as Error).message)),
     });
   };
 
@@ -101,7 +100,7 @@ export function AutomationsDispatcherBar({
     if (!ok) return;
     uninstall.mutate(undefined, {
       onSuccess: () => onToast?.(t('scheduler.toast.off')),
-      onError: (err) => onToast?.(fill(t('scheduler.toast.offFailed'), { reason: (err as Error).message })),
+      onError: (err) => onToast?.(t('scheduler.toast.offFailed').replace('{reason}', (err as Error).message)),
     });
   };
 
@@ -190,7 +189,7 @@ export function AutomationsDispatcherBar({
   }
 
   if (dispatcher.installed) {
-    const [head, rest] = headAndRest(fill(t('scheduler.full.on'), { when: fmtWhen(dispatcher.lastTickCompletedAt) }));
+    const [head, rest] = headAndRest(t('scheduler.full.on').replace('{when}', fmtWhen(dispatcher.lastTickCompletedAt)));
     return (
       <div className="auto-dispatch auto-dispatch--on auto-dispatch--tight">
         <span className="auto-dispatch-dot" aria-hidden="true" />

@@ -374,7 +374,7 @@ export function renderNudge(
       '',
       'Finish the turn you are in, then hand off before starting anything new:',
       ...steps,
-      'It writes all of that into the task journal as one entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
+      'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
       '',
       'This is still your call, but it is no longer a quiet one: if you are continuing in this session anyway, TELL THE USER in your next message and say why. Do not continue silently.',
       `(Next reminder at ~${k(next)}.)`,
@@ -384,7 +384,7 @@ export function renderNudge(
       '',
       'Hand off unless you have a reason not to — write your whole state into the task in one command:',
       ...steps,
-      'It writes all of that into the task journal as one entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
+      'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
       '',
       `There are two good reasons to keep going: the task is nearly done, or the state genuinely cannot be written down. "I am in the middle of something" is not one of them — that is what --done and --next are for. Past ${k(cfg.hardAt)} this gets blunter.`,
       `(Next reminder at ~${k(next)}.)`,
@@ -760,14 +760,11 @@ export function selectHandoffForSessionStart(
 }
 
 /** The SessionStart banner. Printed BEFORE the snapshot so it is the first thing read. */
-export function renderHandoffBanner(record: HandoffRecord, packet?: string | null): string {
+export function renderHandoffBanner(record: HandoffRecord): string {
   const size = record.contextTokens ? ` that reached ${k(record.contextTokens)} tokens` : '';
   return [
     `>> HANDOFF: continuing task ${record.title} (${record.task}) from a session${size}.`,
-    packet
-      ? `The task's context packet follows (its parent task first). The newest journal entry in it is the handoff: read it before anything else. Re-read the packet any time with \`dreamcontext tasks show ${record.task}\`.`
-      : `Run \`dreamcontext tasks show ${record.task}\` (its parent task, its card, its newest journal entries) before anything else: the newest journal entry is the handoff.`,
-    ...(packet ? [packet.trimEnd()] : []),
+    `Read _dream_context/state/${record.task}.md — its latest changelog entry is the handoff — before anything else.`,
   ].join('\n');
 }
 

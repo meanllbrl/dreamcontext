@@ -104,18 +104,24 @@ dreamcontext core changelog add \
 #### A3. Releases — surface readiness, never auto-release
 
 ```bash
-dreamcontext cycle show                                 # the active cycle: goal, days left, done/total
-dreamcontext core releases list                         # what shipped, and when
+dreamcontext core releases active                       # current planning version
+dreamcontext core releases show <version>               # full detail
+dreamcontext tasks list --status in_review
 dreamcontext tasks list --status completed
 ```
 
-Completed work not in any release yet → surface release readiness in your report (a release is compiled from what closed since the previous one). A cancelled-kind task neither blocks readiness nor counts as shipped.
+All tasks on the active planning version `completed` (or only `in_review` left) → surface readiness in your report. A cancelled-kind task neither blocks readiness nor counts as shipped.
 
 **What's New feed** (here `dashboard/public/announcements.json`): a ready version with no announcement is reported, never authored by you (the `announcements` skill's awake work).
 
 **Never run `dreamcontext core releases add --status released`** unless the user's hint explicitly asks for it.
 
-Planning releases are retired: never create one (`--status planning` is refused) and never open or start a cycle. Planning is the owner's.
+If no active planning version exists, create one before adding entries, then **set it active** so `sleep-tasks`' auto-attach lands on it:
+
+```bash
+dreamcontext core releases add --ver vX.Y.Z --status planning --summary "<theme>" --yes
+dreamcontext core releases active <version>
+```
 
 ### Pass B — Core identity reconciliation
 
@@ -123,7 +129,7 @@ Two different gates, by whether the target file describes user intent or code re
 
 #### B0a. Two-observation gate (preferences & decisions)
 
-Applies to `people/<slug>.md` (a person's preferences) and `2.memory.md` (**Technical Decisions** and **Known Issues** only). Scan for **recurring** signals (a preference enforced 2+ times, a decision concluded, a new constraint, a footgun solved). **The default is no change.** One observation is data; two is a pattern. A recurring reusable SOLUTION SHAPE is not a core-file entry: report it as a pattern signal for `sleep-product`. A correction about HOW work must be done (a style or rule the owner repeats) is not a person preference: do not write it to `people/<slug>.md`; report it as a pattern signal for sleep-product (the CLI ledger already carries it).
+Applies to `people/<slug>.md` (a person's preferences) and `2.memory.md` (**Technical Decisions** and **Known Issues** only). Scan for **recurring** signals (a preference enforced 2+ times, a decision concluded, a new constraint, a footgun solved). **The default is no change.** One observation is data; two is a pattern. A recurring reusable SOLUTION SHAPE is not a core-file entry: report it as a pattern signal for `sleep-product`.
 
 `2.memory.md` has no LIFO ship-narrative section: ship events live in `CHANGELOG.json`. Do NOT re-create a LIFO/session-log section; write a changelog entry instead.
 

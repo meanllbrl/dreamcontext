@@ -15,10 +15,6 @@ export interface TaskRecord {
   urgency: string;
   tags: string[];
   version: string | null;
-  /** The cycle the task is planned into (`cy_<id>`, maybe not yet synced), or null. */
-  cycle: string | null;
-  /** `next` | `later` outside a cycle, or null (reads as next). */
-  queue: string | null;
   related_feature: string | null;
   parent_task: string | null;
   /** Objective slugs this task serves (many-to-many, local-only). */
@@ -37,8 +33,8 @@ export interface TaskRecord {
   file: string;
 }
 
-export type GroupBy = 'tag' | 'version' | 'priority' | 'status' | 'parent' | 'feature';
-export const GROUP_BY_FIELDS: readonly GroupBy[] = ['tag', 'version', 'priority', 'status', 'parent', 'feature'];
+export type GroupBy = 'tag' | 'version' | 'priority' | 'status';
+export const GROUP_BY_FIELDS: readonly GroupBy[] = ['tag', 'version', 'priority', 'status'];
 
 export interface TaskFilter {
   /** Exact status match. Takes precedence over `all`. */
@@ -90,8 +86,6 @@ export const NONE_KEY: Record<GroupBy, string> = {
   version: '(no version)',
   priority: '(no priority)',
   status: '(unknown)',
-  parent: '(standalone)',
-  feature: '(no feature)',
 };
 
 function str(v: unknown, fallback = ''): string {
@@ -137,8 +131,6 @@ export function toTaskRecord(
     urgency: str(data.urgency, '-'),
     tags: toTags(data.tags),
     version: strOrNull(data.version),
-    cycle: strOrNull(data.cycle),
-    queue: strOrNull(data.queue),
     related_feature: strOrNull(data.related_feature),
     parent_task: strOrNull(data.parent_task),
     objectives: Array.isArray(data.objectives)
@@ -212,7 +204,7 @@ function groupRank(groupBy: GroupBy, key: string, statuses: readonly StatusDef[]
     const i = sortByOrder(statuses).findIndex((s) => s.key === key.toLowerCase().replace(/-/g, '_'));
     return i === -1 ? 99 : i;
   }
-  // tag / version / parent / feature: push the "none" bucket last, alphabetical otherwise.
+  // tag / version: push the "none" bucket last, alphabetical otherwise.
   return key === NONE_KEY[groupBy] ? 99 : 0;
 }
 
@@ -234,29 +226,12 @@ export function groupTasks(
     else map.set(key, [t]);
   };
 
-  // -g parent: a family is one group named after its parent (the parent's own
-  // row first), whatever the parent ref says (slug, or a legacy id).
-  const slugOfRef = new Map<string, string>();
-  const isParent = new Set<string>();
-  if (groupBy === 'parent') {
-    for (const t of tasks) {
-      slugOfRef.set(t.name, t.name);
-      if (t.id) slugOfRef.set(t.id, t.name);
-    }
-    for (const t of tasks) if (t.parent_task) isParent.add(slugOfRef.get(t.parent_task) ?? t.parent_task);
-  }
-
   for (const t of tasks) {
-    if (groupBy === 'parent') {
-      const parent = t.parent_task ? slugOfRef.get(t.parent_task) ?? t.parent_task : null;
-      push(parent ?? (isParent.has(t.name) ? t.name : NONE_KEY.parent), t);
-    } else if (groupBy === 'tag') {
+    if (groupBy === 'tag') {
       if (t.tags.length === 0) push(NONE_KEY.tag, t);
       else for (const tag of t.tags) push(tag, t);
     } else if (groupBy === 'version') {
       push(t.version ?? NONE_KEY.version, t);
-    } else if (groupBy === 'feature') {
-      push(t.related_feature ?? NONE_KEY.feature, t);
     } else if (groupBy === 'priority') {
       push(t.priority && t.priority !== '-' ? t.priority : NONE_KEY.priority, t);
     } else {
@@ -264,12 +239,6 @@ export function groupTasks(
     }
   }
 
-  if (groupBy === 'parent') {
-    for (const [key, arr] of map) {
-      const own = arr.findIndex((t) => t.name === key);
-      if (own > 0) arr.unshift(...arr.splice(own, 1));
-    }
-  }
   return [...map.keys()]
     .sort((a, b) => groupRank(groupBy, a, statuses) - groupRank(groupBy, b, statuses) || a.localeCompare(b, 'en', { sensitivity: 'base' }))
     .map((key) => ({ key, tasks: map.get(key)! }));
