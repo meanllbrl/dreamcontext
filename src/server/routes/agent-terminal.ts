@@ -13,6 +13,7 @@ import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cutProcessGroups, pathUnderAny } from '../../lib/automations/runner.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { modelAlias, modelOptionsFrom } from '../../lib/model-list.js';
+import { priceForModelId, SMALL_WINDOW_MODEL, type TokenPrice } from '../../lib/model-facts.js';
 import { foldJsonl } from '../../lib/jsonl-fold.js';
 import { tabSessionEnv } from '../../lib/session-origin.js';
 import { phoneTranscriptRefused } from '../phone-origin.js';
@@ -779,7 +780,7 @@ function parseEffortsFromCli(): Promise<string[]> {
 interface ModelOpt { id: string; label: string; }
 /** A model option as the CLIENT receives it: the static option plus its public input rate,
  *  so the composer's model menu can print "$5/M in" without shipping a SECOND price table
- *  that would drift from the one the cost readout already uses (`MODEL_PRICING` below).
+ *  that would drift from the one the cost readout already uses (`priceForModel` below, which reads `model-facts.ts`).
  *  Widened here rather than on `ModelOpt` so `buildStaticModelConfig` — which knows nothing
  *  about pricing and is cached for the server's lifetime — stays untouched. */
 interface PricedModelOpt extends ModelOpt { priceIn: number }
@@ -898,33 +899,11 @@ export async function handleAgentSessionModel(
 //     turn actually ran on. This is an ESTIMATE "if you paid per token" — a Max/Pro
 //     subscription is flat-rate, so it's a what-if, not a bill.
 
-interface TokenPrice { in: number; out: number; cacheWrite: number; cacheRead: number }
-/** Public API list prices, USD per MILLION tokens (platform.claude.com/docs/en/pricing).
- *  Cache-write is the 5-minute rate (1.25× input); cache-read is 0.1× input. Current
- *  1M-context models carry no long-context premium, so one rate per tier suffices.
- *  `opusLegacy` covers Opus 4.1 / 4.0 / 3, which kept the old $15/$75 rate — Opus 4.5+
- *  lists at $5/$25. */
-const MODEL_PRICING: Record<string, TokenPrice> = {
-  fable:      { in: 10, out: 50, cacheWrite: 12.5,  cacheRead: 1 },
-  opus:       { in: 5,  out: 25, cacheWrite: 6.25,  cacheRead: 0.5 },
-  opusLegacy: { in: 15, out: 75, cacheWrite: 18.75, cacheRead: 1.5 },
-  sonnet:     { in: 3,  out: 15, cacheWrite: 3.75,  cacheRead: 0.3 },
-  haiku:      { in: 1,  out: 5,  cacheWrite: 1.25,  cacheRead: 0.1 },
-};
-
+/** Public API list prices (USD per MILLION tokens) live in ONE place, `src/lib/model-facts.ts`
+ *  (current generation + every legacy id at its own rate); this is just the resolver. */
 export function priceForModel(model: string): TokenPrice {
-  const s = model.toLowerCase();
-  if (s.includes('fable') || s.includes('mythos')) return MODEL_PRICING.fable;
-  if (s.includes('haiku')) return MODEL_PRICING.haiku;
-  if (s.includes('sonnet')) return MODEL_PRICING.sonnet;
-  // Legacy full ids: claude-opus-4-1-20250805, claude-opus-4-20250514, claude-3-opus-*.
-  if (/opus-4-[01]\b|opus-4-\d{8}|3-opus/.test(s)) return MODEL_PRICING.opusLegacy;
-  return MODEL_PRICING.opus; // current opus + unknown models default to the opus tier
+  return priceForModelId(model);
 }
-
-/** Model ids whose context window is 200K rather than 1M: the whole Haiku line, and the
- *  Opus/Sonnet generations before 4.6. */
-const SMALL_WINDOW_MODEL = /haiku|3-opus|3-[57]-sonnet|opus-4-[01]\b|opus-4-5\b|sonnet-4-[05]\b|-4-\d{8}/;
 
 /**
  * The running model's context window, in tokens. MIRRORED on the client

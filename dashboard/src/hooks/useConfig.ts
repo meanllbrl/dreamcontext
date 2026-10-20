@@ -24,10 +24,11 @@ export const SLEEP_SPECIALISTS = [
 ] as const;
 export type SleepSpecialist = (typeof SLEEP_SPECIALISTS)[number];
 
-/** Models the UI offers. The CLI additionally accepts an unknown id behind
+/** Models the UI offers: the current ids of src/lib/model-facts.ts (pinned by model-facts.test.ts).
+ *  The CLI additionally accepts an unknown id behind
  *  `--allow-unknown`; the UI deliberately does not — a picker is not the place
  *  to type a model this build has never heard of. */
-export const SLEEP_MODEL_OPTIONS = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] as const;
+export const SLEEP_MODEL_OPTIONS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const;
 export const SLEEP_EFFORT_OPTIONS = ['low', 'medium', 'high'] as const;
 
 export interface SleepSpecialistConfig {
