@@ -6,8 +6,9 @@ import { AgentSummaryBlock } from '../agents/AgentSummaryBlock';
 import { AgentQuestionBlock } from '../agents/AgentQuestionBlock';
 import { FoldedReport } from '../agents/FoldedReport';
 import { useAgentThreadHost } from '../agents/agentsChannelHost';
-import { runDuration, useNow } from '../agents/agentRunState';
+import { runDuration } from '../agents/agentRunState';
 import { Composer } from '../sleepy/chat/Composer';
+import { WorkingIndicator } from '../sleepy/chat/Banners';
 import { isAtBottom } from '../sleepy/chat/chatEntities';
 import { useApi, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
@@ -18,11 +19,12 @@ import {
   useSayInChannel, type AgentActivity, type FeedMessage, type RunAnswer, type ThreadEntry,
 } from '../../hooks/useAutomations';
 import {
-  buildConversation, dayRuleLabel, openQuestionOf, overrideFor, readTemporaryModels, routineCountLabel,
-  writeTemporaryModel, type ConversationItem, type ConversationThread, type TeamAgent, type TeamRow,
-  type TemporaryModel,
+  buildConversation, dayRuleLabel, focusTargetKey, openQuestionOf, overrideFor, pendingApprovals,
+  readTemporaryModels, routineCountLabel, talkBlocked, writeTemporaryModel, type ConversationItem,
+  type ConversationThread, type TeamAgent, type TeamRow, type TemporaryModel,
 } from './teamModel';
 import { TeamIcon } from './TeamIcons';
+import { TeamApproval } from './TeamApproval';
 import '../sleepy/ChatPane.css';
 import '../sleepy/chat/composer.css';
 import '../sleepy/chat/cards.css';
@@ -73,10 +75,11 @@ export function TeamConversation({
   panelOpen,
   onTogglePanel,
   onOpenRoutines,
-  onReview,
   onOpenFile,
   onToast,
   onBack,
+  focus = null,
+  onFocusDone,
 }: {
   row: TeamRow;
   agent: TeamAgent;
@@ -85,12 +88,14 @@ export function TeamConversation({
   panelOpen: boolean;
   onTogglePanel: () => void;
   onOpenRoutines: () => void;
-  /** Open its profile, where the review is. */
-  onReview: () => void;
   onOpenFile: (path: string) => void;
   onToast: (msg: string) => void;
   /** Phone width: back to the list. */
   onBack?: () => void;
+  /** A notification or link landed here for this routine's (or agent's) newest message. */
+  focus?: { slug: string; nonce: number } | null;
+  /** The landing happened: the page forgets it, so coming back here opens at the newest end. */
+  onFocusDone?: () => void;
 }) {
   const { t } = useI18n();
   const api = useApi();
@@ -142,22 +147,59 @@ export function TeamConversation({
   // ── Scroll: open at the newest end, follow it while the reader is there ──
   const scrollRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  /** The scroller's size when the reader last scrolled: a scroll event caused by the content or
+   *  the pane changing size (a panel opening, a card unfolding) is not the reader leaving the end. */
+  const lastBox = useRef({ height: 0, client: 0 });
+  const toEnd = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    lastBox.current = { height: el.scrollHeight, client: el.clientHeight };
+  }, []);
   useEffect(() => { stick.current = true; }, [slug]);
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [items, slug]);
+    if (stick.current) toEnd();
+  }, [items, slug, toEnd]);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => { if (stick.current) el.scrollTop = el.scrollHeight; });
+    // The pane itself too: opening the side panel narrows it, the text re-wraps and grows.
+    const ro = new ResizeObserver(() => { if (stick.current) toEnd(); });
+    ro.observe(el);
     for (const child of el.children) ro.observe(child);
     return () => ro.disconnect();
-  }, [items]);
+  }, [items, toEnd]);
   const onScroll = () => {
     const el = scrollRef.current;
-    if (el) stick.current = isAtBottom(el);
+    if (!el) return;
+    const resized = el.scrollHeight !== lastBox.current.height || el.clientHeight !== lastBox.current.client;
+    lastBox.current = { height: el.scrollHeight, client: el.clientHeight };
+    if (resized && stick.current) { toEnd(); return; }
+    stick.current = isAtBottom(el);
   };
+
+  // A notification or link for this teammate: bring that routine's newest message into view
+  // and mark it for a moment, instead of leaving the reader wherever the list was.
+  const [flash, setFlash] = useState<string | null>(null);
+  const focusKey = focus ? focusTargetKey(items, focus.slug) : null;
+  useEffect(() => {
+    if (!focus || !focusKey) return;
+    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-item-key="${CSS.escape(focusKey)}"]`);
+    if (!el || !scrollRef.current) return;
+    const box = scrollRef.current;
+    box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - 24;
+    stick.current = isAtBottom(box);
+    setFlash(focusKey);
+    onFocusDone?.();
+    // Once per landing: the nonce says a new one arrived.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.nonce, focusKey !== null]);
+  // The mark fades on its own clock, apart from the landing (which the page clears at once).
+  useEffect(() => {
+    if (!flash) return;
+    const timer = setTimeout(() => setFlash(null), 2400);
+    return () => clearTimeout(timer);
+  }, [flash]);
 
   // ── Read marks: a message is read once it has been on screen ──
   const markRead = useMarkThreadRead();
@@ -212,24 +254,32 @@ export function TeamConversation({
   questionRef.current = question;
   const overrideRef = useRef<{ model?: string; effort?: string }>({});
   overrideRef.current = temporary ? overrideFor(pick, defaults) : {};
+  /** The message just sent, drawn at once (Chat's own way): the owner's bubble and the agent
+   *  working under it, until the conversation itself has the turn. */
+  const [sending, setSending] = useState<{ text: string; since: number } | null>(null);
   const onSend = useCallback((text: string, opts: { restore?: boolean } = {}) => {
     const fail = (err: unknown) => {
+      setSending(null);
       noteRef.current({ kind: 'error', text: (err as Error).message });
       // A suggestion was never in the field, so there is nothing of the reader's to put back.
       if (opts.restore !== false) restoreRef.current();
     };
+    // The bubble leaves when the conversation has re-read the turn the server wrote.
+    const landed = () => queryClient.invalidateQueries({ queryKey: ['automations-feed'] }).finally(() => setSending(null));
     stick.current = true;
+    noteRef.current(null);
+    setSending({ text, since: Date.now() });
     const q = questionRef.current;
     if (q?.question) {
       const id = q.question.id;
       answer.mutate({ id, kind: 'flow-hitl', answer: text }, {
-        onSuccess: () => setAnswered((prev) => new Set(prev).add(id)),
+        onSuccess: () => { setAnswered((prev) => new Set(prev).add(id)); void landed(); },
         onError: fail,
       });
       return;
     }
-    say.mutate({ slug, text, ...overrideRef.current }, { onError: fail });
-  }, [answer, say, slug]);
+    say.mutate({ slug, text, ...overrideRef.current }, { onSuccess: () => { void landed(); }, onError: fail });
+  }, [answer, say, slug, queryClient]);
   const slashCommands = useProjectSlashCommands().data?.commands;
   const { host, note, setNote, restoreLastSent } = useAgentThreadHost(
     { slug, title: agent.title, runId: '' },
@@ -241,8 +291,10 @@ export function TeamConversation({
 
   const { data: dispatcher } = useAutomationDispatcher();
   const install = useInstallDispatcher();
-  const blocked = !agent.approvedForChat;
+  const pending = useMemo(() => pendingApprovals(agent, row.routines), [agent, row.routines]);
+  const blocked = talkBlocked(pending);
   const routineCount = row.routines.length;
+  const working = items.some((it) => it.kind === 'live');
 
   return (
     <section className="aiteam-convo chat-pane" aria-label={agent.title}>
@@ -283,14 +335,7 @@ export function TeamConversation({
         </button>
       </header>
 
-      {blocked && (
-        <div className="aiteam-banner">
-          <span className="aiteam-event-mark"><TeamIcon name="lock" size={10} /></span>
-          <span><b>{t('aiteam.review.lede').replace('{name}', agent.title)}</b> {t('aiteam.review.sub')}</span>
-          <span className="aiteam-spacer" />
-          <button type="button" className="agent-btn agent-btn--primary" onClick={onReview}>{t('aiteam.review.go')}</button>
-        </div>
-      )}
+      <TeamApproval agentTitle={agent.title} pending={pending} onToast={onToast} />
       {!blocked && messages.length === 0 && dispatcher && !dispatcher.installed && (
         <div className="aiteam-banner">
           <span className="auto-dispatch-pill"><span className="auto-dispatch-dot" aria-hidden="true" /><span className="auto-dispatch-pill-label">{t('aiteam.scheduler.off')}</span></span>
@@ -309,10 +354,20 @@ export function TeamConversation({
 
       <div className="aiteam-scroll" ref={scrollRef} onScroll={onScroll}>
         <div className="aiteam-col">
-          {messages.length === 0 ? (
+          {messages.length === 0 && !sending ? (
             <Hello agent={agent} role={row.role} onSuggest={blocked ? undefined : (text) => onSend(text, { restore: false })} />
           ) : (
-            items.map((it) => <Item key={it.key} item={it} agent={agent} onOpenFile={onOpenFile} onToast={onToast} />)
+            items.map((it) => (
+              <Item key={it.key} item={it} agent={agent} flash={flash === it.key} onOpenFile={onOpenFile} onToast={onToast} />
+            ))
+          )}
+          {sending && (
+            <>
+              <div className="chat-msg-user-row" data-team-sending>
+                <div className="chat-msg-user-bubble aiteam-you">{sending.text}</div>
+              </div>
+              {!working && <WorkingRow agent={agent} since={sending.since} label={t('aiteam.sending')} />}
+            </>
           )}
         </div>
       </div>
@@ -397,7 +452,9 @@ function Hello({ agent, role, onSuggest }: { agent: TeamAgent; role: string; onS
       <AgentAvatar of="agent" slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={72} />
       <h2 className="aiteam-hello-name">{agent.title}</h2>
       {role && <p className="aiteam-hello-role">{role}</p>}
-      <p className="aiteam-hello-note">{t('aiteam.hello.note')}</p>
+      {/* "Start with one of these" only when there are some: a teammate waiting for approval
+          offers none, and the strip above already says what to do. */}
+      {onSuggest && <p className="aiteam-hello-note">{t('aiteam.hello.note')}</p>}
       {onSuggest && (
         <div className="aiteam-suggest">
           {suggestions.map(([kind, text]) => (
@@ -413,21 +470,24 @@ function Hello({ agent, role, onSuggest }: { agent: TeamAgent; role: string; onS
 }
 
 function Item({
-  item, agent, onOpenFile, onToast,
+  item, agent, flash, onOpenFile, onToast,
 }: {
   item: ConversationItem;
   agent: TeamAgent;
+  /** A notification landed on this one: mark it for a moment. */
+  flash: boolean;
   onOpenFile: (path: string) => void;
   onToast: (msg: string) => void;
 }) {
   const { t } = useI18n();
+  const mark = { 'data-item-key': item.key, ...(flash ? { 'data-flash': '' } : {}) };
   switch (item.kind) {
     case 'day':
-      return <div className="agents-feed-day"><span>{dayRuleLabel(item.at, new Date(), t)}</span></div>;
+      return <div className="agents-feed-day" {...mark}><span>{dayRuleLabel(item.at, new Date(), t)}</span></div>;
     case 'ran': {
       const took = runDuration(item.durationMs);
       return (
-        <div className={`aiteam-event${item.failed ? ' aiteam-event--bad' : ''}`}>
+        <div className={`aiteam-event${item.failed ? ' aiteam-event--bad' : ''}`} {...mark}>
           <span className="aiteam-event-mark"><TeamIcon name="clock" size={10} /></span>
           <span>{t('aiteam.event.ran').replace('{title}', item.title)} · {hhmm(item.at)}{took ? ` · ${took}` : ''}</span>
         </div>
@@ -435,22 +495,22 @@ function Item({
     }
     case 'event':
       return (
-        <div className={`aiteam-event aiteam-event--${item.tone}`} data-team-event>
+        <div className={`aiteam-event aiteam-event--${item.tone}`} data-team-event {...mark}>
           <span className="aiteam-event-mark"><TeamIcon name="check" size={10} /></span>
           <span>{item.text}</span>
         </div>
       );
     case 'you':
       return (
-        <div className="chat-msg-user-row">
+        <div className="chat-msg-user-row" {...mark}>
           <div className="chat-msg-user-bubble aiteam-you">{item.text}</div>
         </div>
       );
     case 'live':
-      return <LiveRow message={item.message} />;
+      return <WorkingRow agent={agent} since={Date.parse(item.message.at) || undefined} label={t('aiteam.working.label')} mark={mark} />;
     case 'agent':
       return (
-        <article className="agent-msg" data-msg-key={item.message.key}>
+        <article className="agent-msg" data-msg-key={item.message.key} {...mark}>
           <div className="agent-msg-av">
             <AgentAvatar of="agent" slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={32} />
           </div>
@@ -476,15 +536,29 @@ function Item({
   }
 }
 
-function LiveRow({ message }: { message: FeedMessage }) {
-  const { t } = useI18n();
-  const now = useNow(true);
-  const since = Date.parse(message.at);
-  const time = Number.isNaN(since) ? '' : runDuration(now - since) ?? '';
+/**
+ * The agent at work, said the way Chat says it: its face and name where its answer will be,
+ * and Chat's own working indicator (dots, label, the elapsed clock) as the body.
+ */
+function WorkingRow({
+  agent, since, label, mark,
+}: {
+  agent: TeamAgent;
+  since?: number;
+  label: string;
+  mark?: Record<string, string>;
+}) {
   return (
-    <div className="aiteam-live" role="status" aria-live="polite">
-      <span className="agent-msg-live-dot" aria-hidden="true" />
-      <span className="agent-msg-elapsed">{t('aiteam.working').replace('{time}', time)}</span>
-    </div>
+    <article className="agent-msg aiteam-working" aria-live="polite" {...mark}>
+      <div className="agent-msg-av">
+        <AgentAvatar of="agent" slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={32} />
+      </div>
+      <div className="agent-msg-body">
+        <div className="agent-msg-head">
+          <span className="agent-msg-name">{agent.title}</span>
+        </div>
+        <WorkingIndicator label={label} startedAt={since} />
+      </div>
+    </article>
   );
 }

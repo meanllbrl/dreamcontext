@@ -95,7 +95,8 @@ export function runningAutomations(now = Date.now()): RunningAutomation[] {
       const m = manifests.find((x) => x.slug === slug);
       if (!m) continue;
       out.push({
-        vault: p.vault, slug, title: m.title, since: a.since, runId: a.runId,
+        // Who is working: the teammate's name, the one the AI Team page lists it under.
+        vault: p.vault, slug, title: m.agentTitle || m.title, since: a.since, runId: a.runId,
         hasPhoto: resolveAutomationPhoto(p.contextRoot, m.photo) !== null,
       });
     }
@@ -103,6 +104,14 @@ export function runningAutomations(now = Date.now()): RunningAutomation[] {
   out.sort((a, b) => b.since - a.since);
   runningCache = { at: now, value: out };
   return out;
+}
+
+/** Who said it, as the AI Team page names it: the teammate, then the routine when one spoke
+ *  for it ("Doctor · Daily check"); the agent's own turns are just the teammate. */
+export function speakerTitle(agentTitle: string | null | undefined, title: string): string {
+  const who = (agentTitle ?? '').trim();
+  if (!who || who === title) return title;
+  return `${who} · ${title}`;
 }
 
 export function unreadAutomationPosts(now = Date.now()): AutomationPost[] {
@@ -118,7 +127,7 @@ export function unreadAutomationPosts(now = Date.now()): AutomationPost[] {
       if (!(m.textFrom === 'post' || m.textFrom === 'error' || m.needsYou)) continue;
       out.push({
         key: `${p.vault}::${m.slug}::${m.runId}`,
-        vault: p.vault, slug: m.slug, title: m.title, hasPhoto: m.hasPhoto, runId: m.runId,
+        vault: p.vault, slug: m.slug, title: speakerTitle(m.agentTitle, m.title), hasPhoto: m.hasPhoto, runId: m.runId,
         at: m.at, status: m.status, textFrom: m.textFrom,
         text: clip(m.question?.text ? plainPostText(m.question.text) : plainPostText(m.text)),
         needsYou: m.needsYou, newestId: m.newestId,

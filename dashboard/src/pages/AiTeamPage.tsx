@@ -75,6 +75,8 @@ export function AiTeamPage({
   const [editing, setEditing] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [openFile, setOpenFile] = useState<string | null>(null);
+  /** A notification or link landed: which routine's newest message to bring into view. */
+  const [landing, setLanding] = useState<{ slug: string; nonce: number } | null>(null);
   /** Phone width: which of the two halves is on screen. */
   const [mobileShow, setMobileShow] = useState<'list' | 'convo'>('list');
 
@@ -116,6 +118,7 @@ export function AiTeamPage({
     if (!automationFocus || !automationsQ.data) return;
     const a = automations.find((x) => x.slug === automationFocus.slug);
     setSelected(a?.agent ?? automationFocus.slug);
+    setLanding({ slug: automationFocus.slug, nonce: automationFocus.nonce });
     setCreating(null);
     setMobileShow('convo');
     onAutomationFocusDone?.();
@@ -138,6 +141,7 @@ export function AiTeamPage({
 
   const select = useCallback((slug: string) => {
     setSelected(slug);
+    setLanding(null);
     setCreating(null);
     setMobileShow('convo');
   }, []);
@@ -254,7 +258,8 @@ export function AiTeamPage({
             panelOpen={panelShown}
             onTogglePanel={() => setPanel((p) => (p ? null : 'profile'))}
             onOpenRoutines={() => setPanel((p) => (p === 'routines' ? null : 'routines'))}
-            onReview={() => setPanel('profile')}
+            focus={landing}
+            onFocusDone={() => setLanding(null)}
             onOpenFile={setOpenFile}
             onToast={setToast}
             onBack={narrow ? () => setMobileShow('list') : undefined}
