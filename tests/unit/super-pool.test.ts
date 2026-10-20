@@ -279,6 +279,14 @@ describe('super ask', () => {
     expect(item.requestId).toBeUndefined();
   });
 
+  it('every Unicode format character and C1 control is stripped (security review Minor 2)', async () => {
+    write();
+    const r = await verb('ask', { text: 'Go\u061c on\u00ad\u2060?', options: ['A\u0085B', 'C\u2064D'] });
+    expect(r.status).toBe(200);
+    const item = (await readSuperState(root)).queue.find((q) => q.kind === 'ask')!;
+    expect(item).toMatchObject({ ownerText: 'Go on?', options: ['A B', 'CD'] });
+  });
+
   it('one open ask at a time', async () => {
     write();
     expect((await verb('ask', { text: 'First?' })).status).toBe(200);

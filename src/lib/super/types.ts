@@ -348,7 +348,9 @@ export const MAX_BATCH = 8;
  *  (zero-width, bidi overrides and isolates, BOM) removed, control characters made spaces. */
 export function askLine(raw: string): string {
   // eslint-disable-next-line no-control-regex
-  return raw.replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Every Unicode format character (Cf: zero-width, bidi marks and isolates, soft hyphen, BOM)
+  // goes; C0 and C1 controls become a space (security review Minor 2).
+  return raw.replace(/\p{Cf}/gu, '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /** One `ask` option as stored: format characters stripped, one line, trimmed. Empty or longer

@@ -299,7 +299,15 @@ export function superBatchOf(text: string): { kind: string; batch: string | null
   }
   const batch = /^batch=([A-Za-z0-9_-]+)/.exec(ev.rest)?.[1] ?? null;
   const items: Array<{ child: string; kind: string }> = [];
-  for (const m of text.matchAll(/^- item=\S+ child=(\S+) event=(\S+)/gm)) items.push({ child: m[1], kind: m[2] });
+  // Only the server's own lines: a fenced block (child text) is skipped whole, so a child that
+  // writes "- item=… event=done" never adds a name to the line (security review Minor 1).
+  let fenced = false;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('<untrusted-project-output')) { fenced = !line.includes('</untrusted-project-output>'); continue; }
+    if (fenced) { if (line.includes('</untrusted-project-output>')) fenced = false; continue; }
+    const m = /^- item=\S+ child=(\S+) event=(\S+)/.exec(line);
+    if (m) items.push({ child: m[1], kind: m[2] });
+  }
   return { kind: 'batch', batch, items };
 }
 
