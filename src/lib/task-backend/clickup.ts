@@ -48,7 +48,7 @@ import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js
 import { foreignProjectOf, projectScopeId, projectTag } from './provenance.js';
 import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
-import { changelogEntriesMissingFrom, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
+import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
@@ -1104,7 +1104,17 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // multiplies the request count. base_snapshot below absorbs them, so only
     // entries written after this sync become comments.
     const backfillChangelog = !(!entry?.base_snapshot && (bootstrap || wasMapped));
-    for (const entryText of backfillChangelog ? newEntries : []) {
+    let toPost = backfillChangelog ? newEntries : [];
+    // The base is what THIS machine posted. Another machine's history (a teammate's,
+    // or the 0.33.0 journals folded back onto the card) may already be comments the
+    // base never saw: ask the remote itself before posting, so nothing posts twice
+    // whatever this machine's ledger says. Only a task that existed before this push
+    // can hold comments; one created just now costs no request.
+    if (toPost.length > 0 && wasMapped) {
+      const remoteComments = await this.fetchTaskComments(adapter, remoteId);
+      toPost = changelogEntriesToPost(toPost, currentEntries, remoteComments);
+    }
+    for (const entryText of toPost) {
       const comment = await adapter.request<{ id: string; date?: string }>(
         'POST',
         `/task/${remoteId}/comment`,
@@ -1152,6 +1162,40 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     if (tagOpsFailed) {
       this.ledger.enqueue({ id: `tag-retry-${slug}-${enqueueCutoff}`, kind: 'push', slug, ts: enqueueCutoff + 1 });
     }
+  }
+
+  /** ClickUp returns a task's comments 25 at a time, newest first. */
+  private static readonly COMMENT_PAGE = 25;
+  /** A push's duplicate check reads at most this many pages (1,000 comments). */
+  private static readonly COMMENT_PAGES_MAX = 40;
+
+  /**
+   * Every comment on a task, as text: page by page with ClickUp's `start` /
+   * `start_id` (the oldest comment of the page before). Stops on a short page, a
+   * page with no comment not yet seen, or the page cap.
+   */
+  private async fetchTaskComments(adapter: ApiAdapter, remoteId: string): Promise<string[]> {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    let cursor: { start: string; start_id: string } | null = null;
+    for (let page = 0; page < ClickUpTaskBackend.COMMENT_PAGES_MAX; page++) {
+      const res: { comments?: ClickUpComment[] } = await adapter.request<{ comments?: ClickUpComment[] }>(
+        'GET',
+        `/task/${remoteId}/comment`,
+        cursor ? { query: cursor } : undefined,
+      );
+      const batch = res.comments ?? [];
+      const fresh = batch.filter((c) => !seen.has(c.id));
+      for (const c of fresh) {
+        seen.add(c.id);
+        const text = (c.comment_text ?? '').trim();
+        if (text) out.push(text);
+      }
+      const oldest = batch[batch.length - 1];
+      if (batch.length < ClickUpTaskBackend.COMMENT_PAGE || fresh.length === 0 || !oldest?.date) break;
+      cursor = { start: oldest.date, start_id: oldest.id };
+    }
+    return out;
   }
 
   // ── PULL (ClickUp → local) ────────────────────────────────────────────────

@@ -403,15 +403,25 @@ describe('the next GitHub sync after the fold', () => {
     expect(fake.comments.get(issue)).toHaveLength(3);
   });
 
-  it('control: the same fold WITHOUT the seeded ledger would post the whole history again', async () => {
-    await vaultAfter033();
+  it('machine B (its ledger never seeded, its base stale) posts none of the history the remote holds; a new entry still posts', async () => {
+    const { issue } = await vaultAfter033();
     const r = foldTaskJournals(ctx);
-    cpSync(join(r.backupDir!, '.tasks-sync.json'), syncFile()); // the ledger as 0.33.0 left it
+    // A teammate's machine: the same folded card, the ledger as 0.33.0 left it there.
+    cpSync(join(r.backupDir!, '.tasks-sync.json'), syncFile());
     fake.requests.length = 0;
 
     const report = await backend().sync('push');
-    expect(commentPosts().length).toBe(3);
-    expect(report.commentsAdded).toBe(3);
+    expect(report.errors).toEqual([]);
+    expect(commentPosts()).toEqual([]);
+    expect(report.commentsAdded).toBe(0);
+    expect(fake.comments.get(issue)).toHaveLength(3);
+
+    const fresh = '### 2026-10-21 - Session Update\n- tiles ship at 1440';
+    await backend().addChangelog('orbit-tiles', fresh);
+    fake.requests.length = 0;
+    expect((await backend().sync('push')).errors).toEqual([]);
+    expect(commentPosts().map((q) => (q.body as { body: string }).body)).toEqual([fresh]);
+    expect(fake.comments.get(issue)).toHaveLength(4);
   });
 
   it('a later pull does not merge the comments 0.33.0 posted in a second time', async () => {
@@ -515,7 +525,7 @@ describe('the next ClickUp sync after the fold', () => {
     return id;
   }
 
-  it('posts no comment for the folded history, and the control without the seeded ledger would', async () => {
+  it('posts no comment for the folded history', async () => {
     const id = await vaultAfter033();
     const r = foldTaskJournals(ctx);
     expect(r.ledgerSeeded).toBe(1);
@@ -523,12 +533,74 @@ describe('the next ClickUp sync after the fold', () => {
     const report = await backend().sync('push');
     expect(report.errors).toEqual([]);
     expect(commentPosts()).toEqual([]);
+    expect(report.pushed).toBe(0);
     expect(fake.comments.get(id)).toHaveLength(3);
+  });
 
+  it('machine B (its ledger never seeded, its base stale) posts none of the history the remote holds; a new entry still posts', async () => {
+    const id = await vaultAfter033();
+    const r = foldTaskJournals(ctx);
+    // A teammate's machine: the same folded card, the ledger as 0.33.0 left it there.
     cpSync(join(r.backupDir!, '.tasks-sync.json'), join(ctx, 'state', '.tasks-sync.json'));
     fake.requests.length = 0;
-    await backend().sync('push');
-    expect(commentPosts().length).toBe(3);
+    const report = await backend().sync('push');
+    expect(report.errors).toEqual([]);
+    expect(commentPosts()).toEqual([]);
+    expect(fake.comments.get(id)).toHaveLength(3);
+
+    const fresh = '### 2026-10-21 - Session Update\n- tiles ship at 1440';
+    await backend().addChangelog('orbit-tiles', fresh);
+    fake.requests.length = 0;
+    expect((await backend().sync('push')).errors).toEqual([]);
+    expect(commentPosts().map((q) => (q.body as { comment_text: string }).comment_text)).toEqual([fresh]);
+    expect(fake.comments.get(id)).toHaveLength(4);
+  });
+
+  it('reads every page of a long history (ClickUp sends 25 comments a page) before deciding what is new', async () => {
+    fake = makeFakeClickUp();
+    clock = 1000;
+    // Real ClickUp paging: newest first, 25 a page, `start`/`start_id` = the oldest comment of the page before.
+    let pagesRead = 0;
+    const paged = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const m = u.pathname.match(/\/task\/([^/]+)\/comment$/);
+      if (!m || (init?.method ?? 'GET').toUpperCase() !== 'GET') return fake.fetchImpl(url, init);
+      const all = [...(fake.comments.get(m[1]) ?? [])].reverse();
+      const startId = u.searchParams.get('start_id');
+      const from = startId ? all.findIndex((c) => c.id === startId) + 1 : 0;
+      const comments = all.slice(from, from + 25);
+      pagesRead++;
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ comments }) } as unknown as Response;
+    }) as typeof fetch;
+    const pagedBackend = () => {
+      const now = () => (clock += 7);
+      const sleep = async () => { clock += 1; };
+      const adapter = new ApiAdapter({ baseUrl: 'https://api.clickup.com/api/v2', authHeaders: () => ({ Authorization: 'pk_test' }), fetchImpl: paged, now, sleep });
+      return new ClickUpTaskBackend(ctx, CONFIG, { adapter, now, sleep });
+    };
+    const cu = pagedBackend();
+    await cu.create({ name: 'Orbit tiles', variant: 'cli' });
+    for (let d = 1; d <= 30; d++) await cu.addChangelog('orbit-tiles', `### 2026-09-${String(d).padStart(2, '0')} - Session Update\n- tile pass ${d}`);
+    await cu.sync('push');
+    const id = JSON.parse(readFileSync(join(ctx, 'state', '.tasks-map.json'), 'utf-8'))[0].remoteId as string;
+    expect(fake.comments.get(id)).toHaveLength(31);
+
+    // Machine B: the base lost its Changelog (as 0.33.0 left it), the card still holds all 31.
+    const syncPath = join(ctx, 'state', '.tasks-sync.json');
+    const state = JSON.parse(readFileSync(syncPath, 'utf-8'));
+    const e = state.tasks['orbit-tiles'];
+    const base = e.base_snapshot.body.slice(0, e.base_snapshot.body.indexOf('## Changelog')).replace(/\s+$/, '\n');
+    e.base_snapshot = { hash: hashContent(base), body: base };
+    e.localHash = 'stale';
+    writeFileSync(syncPath, JSON.stringify(state, null, 2));
+    fake.requests.length = 0;
+    pagesRead = 0;
+
+    const report = await pagedBackend().sync('push');
+    expect(report.errors).toEqual([]);
+    expect(commentPosts()).toEqual([]);
+    expect(fake.comments.get(id)).toHaveLength(31);
+    expect(pagesRead).toBe(2);
   });
 
   it('queue/rank frontmatter never reaches the wire on an update push', async () => {

@@ -220,6 +220,32 @@ export function changelogEntriesMissingFrom(entries: string[], against: string[]
 }
 
 /**
+ * Which of a push's new entries may become comments: only those the remote does
+ * not already hold. The ledger's base says what THIS machine posted; it says
+ * nothing about another machine. A teammate whose ledger predates the 0.33.0
+ * journal fold (the ledger is per machine) has a stale base, and diffed against
+ * it every folded entry reads as new — while the remote holds each one as a
+ * comment already. So the remote's own comments decide, as a multiset over the
+ * whole card: an entry is posted only while the card holds more copies of it
+ * than the remote does, so a genuinely new entry with the same words as an old
+ * one still goes.
+ */
+export function changelogEntriesToPost(newEntries: string[], cardEntries: string[], remoteComments: string[]): string[] {
+  const owed = new Map<string, number>();
+  for (const e of changelogEntriesMissingFrom(cardEntries, remoteComments)) {
+    const n = canonicalEntry(e);
+    owed.set(n, (owed.get(n) ?? 0) + 1);
+  }
+  return newEntries.filter((e) => {
+    const n = canonicalEntry(e);
+    const k = owed.get(n) ?? 0;
+    if (k === 0) return false;
+    owed.set(n, k - 1);
+    return true;
+  });
+}
+
+/**
  * Union-merge changelog entries (conflict-free by construction).
  * Remote-only entries stack on top (LIFO), local order preserved below. A
  * multiset union: an entry held N times on one side and M on the other is

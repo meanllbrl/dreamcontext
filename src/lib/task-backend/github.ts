@@ -45,7 +45,7 @@ import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { resolveActor } from './identity.js';
 import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
-import { changelogEntriesMissingFrom, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
+import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
@@ -889,7 +889,19 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // never-synced task's pre-existing history LOCAL (see pushLocal) —
     // base_snapshot below absorbs it, so only future entries become comments.
     const backfillChangelog = !(!entry?.base_snapshot && (bootstrap || wasMapped));
-    for (const entryText of backfillChangelog ? newEntries : []) {
+    let toPost = backfillChangelog ? newEntries : [];
+    // The base is what THIS machine posted. Another machine's history (a teammate's,
+    // or the 0.33.0 journals folded back onto the card) may already be comments the
+    // base never saw: ask the remote itself before posting, so nothing posts twice
+    // whatever this machine's ledger says. Only an issue that existed before this
+    // push can hold comments; one created just now costs no request.
+    if (toPost.length > 0 && wasMapped) {
+      const remoteComments = (await this.fetchIssueComments(adapter, owner, repo, remoteId))
+        .map((c) => (c.body ?? '').trim())
+        .filter(Boolean);
+      toPost = changelogEntriesToPost(toPost, currentEntries, remoteComments);
+    }
+    for (const entryText of toPost) {
       const comment = await adapter.request<GitHubComment>(
         'POST',
         `${this.issuesPath(owner, repo)}/${remoteId}/comments`,
