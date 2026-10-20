@@ -1714,11 +1714,19 @@ async function board(engineName, browserType, base, full) {
       ok('…turning costs <= 20 style recalcs a second over resting (15 fps clock)', withRing.recalcPerS - without.recalcPerS <= 20, JSON.stringify({ withRing, without }));
       await page.screenshot({ path: join(OUT, 'board-working-ring.png') });
       // The compact and the full event lines, the larger centre font, in light and dark.
-      for (const [w, h] of [[1280, 800], [1920, 1080]]) for (const scheme of ['light', 'dark']) {
+      for (const [w, h] of [[1280, 800], [1800, 1130], [1920, 1080]]) for (const scheme of ['light', 'dark']) {
         await page.setViewportSize({ width: w, height: h });
         await page.emulateMedia({ colorScheme: scheme });
         await page.waitForTimeout(600);
         await page.screenshot({ path: join(OUT, `board-closed-${w}-${scheme}.png`) });
+        if (scheme === 'dark') {
+          // The centre takes the height while the bottom band is empty (owner 2026-10-21).
+          const g = await geo(page);
+          const banded = (record().containers ?? []).some((c) => c.place === 'others') || g.others > 0 || (await page.locator('[data-testid="super-terminals-row"] button').count()) > 0;
+          const below = g.s.y + g.s.h - (g.c.y + g.c.h);
+          report.note(`${w}x${h}: centre ${Math.round(g.c.w)}x${Math.round(g.c.h)}, ${Math.round(below)} px below it (${banded ? 'band reserved: Others or terminals' : 'band empty'})`);
+          ok(`chromium ${w}x${h}: the centre runs to the bottom margin unless the band holds something`, banded ? below >= 24 + 40 - 1 : Math.abs(below - 24) <= 1, JSON.stringify({ below, banded }));
+        }
       }
       await page.setViewportSize({ width: 1600, height: 1000 });
       await page.emulateMedia({ colorScheme: 'dark' });

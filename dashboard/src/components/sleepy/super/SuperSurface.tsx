@@ -116,8 +116,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
 
   // ── The plan ──
   const plan = useMemo(
-    () => planStage(stageItems(state.containers, state.groups, state.view), state.view, size, { dragging: pinned }),
-    [state.containers, state.groups, state.view, size, pinned],
+    () => planStage(stageItems(state.containers, state.groups, state.view), state.view, size, { dragging: pinned, terminals: props.terminals.length }),
+    [state.containers, state.groups, state.view, size, pinned, props.terminals.length],
   );
   const planRef = useRef(plan);
   planRef.current = plan;
