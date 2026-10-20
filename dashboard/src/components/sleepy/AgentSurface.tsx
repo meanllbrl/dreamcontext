@@ -93,7 +93,7 @@ import type { TerminalRowItem } from './super/TerminalsRow';
 import {
   actionGeneration, adoptionBody, cardReference, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
   homedSessions, isSuperSession, markedChildren, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
-  windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
+  SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperLayout, postSuperRecap } from './super/superApi';
@@ -3103,10 +3103,10 @@ export function AgentSurface() {
   }
   superWindowGuardRef.current = (cs, verb, args) => {
     const caller = superCallerOf(cs);
-    // The Super Agent's one window verb, `send` (its `super send`): resolve the tab it names by
-    // sid OR pin id, and hand the re-check all three ids (sid, pin, live conversation).
+    // The Super Agent's window verbs into a child (`super send`, `super update`): resolve the
+    // tab it names by sid OR pin id, and hand the re-check all three ids (sid, pin, live conversation).
     let target: SuperSendTarget | null = null;
-    if (caller === 'super' && verb === 'send' && typeof args.tab === 'string' && args.tab) {
+    if (caller === 'super' && (SUPER_CHILD_VERBS as readonly string[]).includes(verb) && typeof args.tab === 'string' && args.tab) {
       const meta = sessionList.find((m) => m.id === args.tab || m.claudeId === args.tab);
       const live = meta && !meta.dormant ? sessions.current.get(meta.id) : undefined;
       if (meta) target = { sid: meta.id, pin: meta.claudeId, conversation: live && live.kind === 'chat' ? live.claudeId : null };
@@ -3307,8 +3307,11 @@ export function AgentSurface() {
       if (!canSpawn || !vault) return { ok: false, error: 'cannot_spawn' };
       setSuperDelegated((prev) => new Map(prev).set(child, Date.now() + DELEGATE_MARK_GRACE_MS));
       if (existing) {
+        // A parked tab comes back exactly as it was parked (`resumeSession`): say so, so the
+        // record holds what runs, not the request.
+        const p = existing.parked?.transport === 'chat' ? existing.parked : undefined;
         resumeSession(existing.id);
-        return { ok: true, result: { sessionId: child } };
+        return { ok: true, result: { sessionId: child, mode: (p && existing.mode) || DEFAULT_CHAT_MODE, model: p?.model ?? '', effort: p?.effort ?? '' } };
       }
       const r = delegateArgs({ prompt: '-', mode: args.mode, model: args.model, effort: args.effort, title: args.title });
       if (!r.ok) return r;
@@ -3319,7 +3322,7 @@ export function AgentSurface() {
         ...(r.mode !== DEFAULT_CHAT_MODE ? { mode: r.mode } : {}),
       }]);
       setPanes((prev) => placeDelegatedChild(prev, activePaneId, s.id, nextPaneId).panes);
-      return { ok: true, result: { sessionId: child } };
+      return { ok: true, result: { sessionId: child, mode: r.mode, model: r.model, effort: r.effort } };
     }
     return { ok: false, error: 'unknown_verb' };
   };
@@ -3353,17 +3356,47 @@ export function AgentSurface() {
   // his to end) and the server records it ended like `super end`: card gone, no relaunch brings
   // the tab back, the transcript stays. "End when done" waits for the turn to end first.
   const [endPending, setEndPending] = useState<ReadonlySet<string>>(new Set());
+  // Children whose end the server did not record: still running, and the card says so.
+  const [endFailed, setEndFailed] = useState<ReadonlySet<string>>(new Set());
+  const without = (set: ReadonlySet<string>, child: string): ReadonlySet<string> => {
+    if (!set.has(child)) return set;
+    const next = new Set(set);
+    next.delete(child);
+    return next;
+  };
+  // Recorded FIRST, closed after: the record takes the child out of the event index, so its
+  // exit raises no `gone` turn, and a record that fails leaves the chat running, never a dead
+  // process the record still calls a child.
+  const endingRef = useRef<Set<string>>(new Set());
   const endChildNow = useCallback((child: string) => {
-    setEndPending((prev) => { if (!prev.has(child)) return prev; const next = new Set(prev); next.delete(child); return next; });
-    const meta = sessionListRef.current.find((m) => m.claudeId === child);
-    if (meta) closeSessionById(meta.id);
-    void postSuperEnd(scopedApi, child).then((st) => { if (st) setSuperState(withPendingEdits(st)); }).catch(() => undefined);
+    setEndPending((prev) => without(prev, child));
+    setEndFailed((prev) => without(prev, child));
+    if (endingRef.current.has(child)) return;
+    endingRef.current.add(child);
+    void postSuperEnd(scopedApi, child).then((st) => {
+      if (!st) throw new Error('no state in the answer');
+      setSuperState(withPendingEdits(st));
+      const meta = sessionListRef.current.find((m) => m.claudeId === child);
+      if (meta) closeSessionById(meta.id);
+    }).catch((err: unknown) => {
+      console.warn('[super] the child was not ended:', err);
+      setEndFailed((prev) => new Set(prev).add(child));
+    }).finally(() => { endingRef.current.delete(child); });
   }, [closeSessionById, scopedApi]);
   const endChildFromCard = useCallback((child: string, whenDone: boolean) => {
     const s = chatByClaudeId(child);
-    if (whenDone && s?.hasLiveWork()) { setEndPending((prev) => new Set(prev).add(child)); return; }
+    if (whenDone && s?.hasLiveWork()) {
+      setEndFailed((prev) => without(prev, child));
+      setEndPending((prev) => new Set(prev).add(child));
+      return;
+    }
     endChildNow(child);
   }, [chatByClaudeId, endChildNow]);
+  // "Move to Others" after "End when done": the owner's latest word keeps it running.
+  const keepChildRunning = useCallback((child: string) => {
+    setEndPending((prev) => without(prev, child));
+    setEndFailed((prev) => without(prev, child));
+  }, []);
   useEffect(() => {
     if (!endPending.size) return undefined;
     const tick = setInterval(() => {
@@ -4675,7 +4708,9 @@ export function AgentSurface() {
             onStageReady={onStageReady}
             onAskAbout={askAboutCard}
             onEndChild={endChildFromCard}
+            onKeepChild={keepChildRunning}
             endPending={endPending}
+            endFailed={endFailed}
           />
         )}
         {/* Mac mode's phone has two screens, the Sohbetler list and one chat (owner, 2026-10-17):

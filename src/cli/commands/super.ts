@@ -4,7 +4,7 @@ import { windowEnv } from './window.js';
 
 /**
  * `dreamcontext super …` — the project's Super Agent drives the hand-over screen: its child
- * chats (delegate, brief, read, answer, send), the cards floating around it (open, half, present,
+ * chats (delegate, brief, read, answer, send, end, resume, update, adopt), the cards floating around it (open, half, present,
  * stack, float, close, group, ungroup), the one question queue, and its children's worktrees.
  *
  * A THIN HTTP CLIENT, the `window` command's shape: every verb is one call to
@@ -162,8 +162,27 @@ export function registerSuperCommand(program: Command): void {
     .option('--mode <mode>', 'basic | plan | develop')
     .option('--model <id>', 'Model id or alias')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
-    .action((child: string, o: { mode?: string; model?: string; effort?: string }) =>
-      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort }));
+    .option('--force', 'ONLY when the owner asked: reopen his own (adopted) chat')
+    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean }) =>
+      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true }));
+
+  s.command('update <child>')
+    .description('Change a RUNNING child\'s mode, model or effort (the window\'s own switches; a mode change restarts it on the same conversation once its turn ends); recorded for `super resume`')
+    .option('--mode <mode>', 'basic | plan | develop')
+    .option('--model <id>', 'Model id or alias (from its next turn)')
+    .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .option('--force', 'ONLY when the owner asked: change his own (adopted) chat')
+    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean }) => {
+      if (!o.mode && !o.model && !o.effort) return usage('name what changes: --mode, --model or --effort');
+      return run('update', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true });
+    });
+
+  s.command('adopt <chat>')
+    .description('Make an open chat of this project one of your children (its card comes, it hears of the hand-over). Every chat you did not start is the owner\'s: only on his word, with --force')
+    .option('--brief <line>', 'The one-line reminder its card shows (default: its title)')
+    .option('--force', 'ONLY when the owner asked: adopt his own chat')
+    .action((chat: string, o: { brief?: string; force?: boolean }) =>
+      run('adopt', { chat, brief: o.brief, force: o.force === true }));
 
   s.command('send <child> <text>')
     .description('Send a message into a child chat (steered into its running turn; queued only while it asks)')

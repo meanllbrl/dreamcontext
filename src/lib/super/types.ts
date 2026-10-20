@@ -90,15 +90,16 @@ export interface SuperChild {
   sessionId: string;
   /** The one-line reminder its container shows (`super brief`); the tab title until then. */
   brief: string;
-  /** Adopted at hand-over (true) or started by `super delegate` (false). */
+  /** The owner's own chat, adopted at hand-over or by `super adopt` on his word (true), or
+   *  started by `super delegate` (false). */
   adopted: boolean;
   /** Its own worktree, when `super delegate --worktree` made one: under `~/.claude-worktrees/`. */
   worktree?: string;
   /** `super/<slug>`, beside `worktree`. */
   branch?: string;
   startedAt: number;
-  /** What it was started with (`super delegate --mode/--model/--effort`), so `super resume`
-   *  reopens it the same way. Absent = basic, the default model and effort. */
+  /** What it runs with (`super delegate`, then `super update --mode/--model/--effort`), so
+   *  `super resume` reopens it the same way. Absent = basic, the default model and effort. */
   mode?: string;
   model?: string;
   effort?: string;
@@ -107,7 +108,8 @@ export interface SuperChild {
   endedAt?: number;
 }
 
-/** Ended children the record keeps (newest first); older ones drop out of it. */
+/** Ended children the record keeps (newest first); older ones drop out of it, except one that
+ *  still owns a worktree (it leaves when `super worktree remove` clears it). */
 export const MAX_ENDED_CHILDREN = 30;
 
 export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover', 'ended'] as const;
@@ -283,7 +285,7 @@ export const MAX_QUEUE = 200;
 export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
   'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
-  'end', 'resume',
+  'end', 'resume', 'update', 'adopt',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 

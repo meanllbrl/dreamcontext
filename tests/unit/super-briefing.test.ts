@@ -52,8 +52,17 @@ describe('superBriefing', () => {
     expect(modeFromSystemPrompt(`# Surface: dreamcontext Chat\n\n${brief}`)).toBe('super');
   });
 
+  it('names the child lifecycle: end, resume, update, adopt (the owner\'s chats only on his word)', () => {
+    expect(brief).toContain('dreamcontext super end <child>');
+    expect(brief).toContain('super resume <child>');
+    expect(brief).toContain('super update <child> --model|--effort|--mode');
+    expect(brief).toContain('super adopt <chat>');
+    expect(brief).toContain('The owner\'s own chats take `--force`, only when he asks.');
+  });
+
   it('stays short', () => {
-    expect(brief.length).toBeLessThan(2600);
+    // 2600 -> 2800 (2026-10-21): the child lifecycle line (`super update`, `super adopt`).
+    expect(brief.length).toBeLessThan(2800);
   });
 
   describe('the orchestration slot', () => {
@@ -83,8 +92,8 @@ describe('superBriefing', () => {
     });
 
     it('adds only the one pointer line when set (the job-list task\'s length rule replaces the cap)', () => {
-      expect(superBriefing(null).length).toBeLessThan(2600);
-      expect(superBriefing(PATH).length).toBeLessThan(2800);
+      expect(superBriefing(null).length).toBeLessThan(2800);
+      expect(superBriefing(PATH).length).toBeLessThan(3000);
       expect(superBriefing(PATH).length - superBriefing(null).length).toBe(bullet.length + 1);
     });
   });

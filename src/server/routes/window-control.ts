@@ -111,7 +111,7 @@ function tabIdsOf(sessionId: string): Set<string> {
  *  - no token but the super session's own may target the super tab;
  *  - the super session's token reaches only its recorded children and its own tab, and calls no
  *    `new`/`split` while handed over (`super delegate` is the one spawn path, so the cap sees
- *    every child);
+ *    every child) and no `mode`/`model`/`effort` into a child (`super update` is the one path);
  *  - a recorded child's token, while handed over, reaches no sibling and calls no `new`/`split`.
  * A channel minted with no identity (tests) is nobody and gets no super rule. The browser
  * executor re-checks what it can (its own tab ids).
@@ -137,6 +137,11 @@ export function superWindowRefusal(token: string, verb: WindowVerb, args: Record
   if (callerIsSuper) {
     if (idx.enabled && (verb === 'new' || verb === 'split')) return 'use `dreamcontext super delegate` to start a child (it counts against the cap)';
     for (const t of named) if (!isSuperTab(t) && !childTabs.has(t)) return 'you drive only your own children (`dreamcontext super state` lists them)';
+    // `super update` is the one way to change a child's mode, model or effort: it keeps the
+    // owner's own chats his (--force) and records the change for `super resume`.
+    if (idx.enabled && (verb === 'mode' || verb === 'model' || verb === 'effort') && named.some((t) => childTabs.has(t))) {
+      return 'use `dreamcontext super update <child> --mode|--model|--effort` to change a child';
+    }
     return null;
   }
   if (idx.enabled && idx.children.has(who.sessionId)) {

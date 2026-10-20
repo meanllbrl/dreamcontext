@@ -12,10 +12,10 @@ import {
   type ContainerKind, type ContainerShape, type SuperChild, type SuperState, type SuperStateView, type SuperVerb,
 } from '../../lib/super/types.js';
 import {
-  containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, pumpSuper, superQueueHead,
+  containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, noteResuming, pumpSuper, superQueueHead,
   superSanitizeOpts, superVaultName, superView, writeSuper,
 } from '../../lib/super/inbox.js';
-import { disableSuper, enableSuper } from '../../lib/super/handover.js';
+import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { delegationAllowed, readCapacityFacts } from '../../lib/super/capacity.js';
 import {
   WorktreeRefused, createChildWorktree, discardFreshWorktree, mergeChildren, removeChildWorktree, repoOfWorktree,
@@ -199,6 +199,16 @@ function worktreePreamble(w: CreatedWorktree): string {
     + 'cd there first, then work and commit only there. Never push and never merge into another branch.';
 }
 
+/** A queue item as the agent reads it: its child-derived text fenced (D10), the escalated
+ *  owner text and the brief an `ended` item copies from the child's card. */
+function fenceQueueItem(vault: string, q: SuperState['queue'][number]): SuperState['queue'][number] {
+  return {
+    ...q,
+    ...(q.ownerText ? { ownerText: wrapUntrusted(vault, q.ownerText) } : {}),
+    ...(q.brief ? { brief: wrapUntrusted(vault, q.brief) } : {}),
+  };
+}
+
 const firstLine = (text: string, max: number) => {
   const line = text.split('\n').map((s) => s.trim()).find(Boolean) ?? '';
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
@@ -231,7 +241,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // Container titles can be child text (an adopted chat's tab title or last reply): fenced
     // like every other child-derived string (D10).
     const containers = c.state.containers.map((k) => (k.title ? { ...k, title: wrapUntrusted(vault, k.title) } : k));
-    const fenceQ = (q: SuperState['queue'][number]) => (q.ownerText ? { ...q, ownerText: wrapUntrusted(vault, q.ownerText) } : q);
+    const fenceQ = (q: SuperState['queue'][number]) => fenceQueueItem(vault, q);
     const head = superQueueHead(c.state);
     ok(res, { ...superStateView(root, c.state), children, containers, queue: c.state.queue.map(fenceQ), status, head: head ? fenceQ(head) : null, machine });
   },
@@ -582,7 +592,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   'queue-list': async (c, _b, res) => {
     // An item escalated by the server carries the CHILD's question as its owner text: fenced.
     const vault = vaultNameOf(c.who.contextRoot);
-    const fence = (q: SuperState['queue'][number]) => (q.ownerText ? { ...q, ownerText: wrapUntrusted(vault, q.ownerText) } : q);
+    const fence = (q: SuperState['queue'][number]) => fenceQueueItem(vault, q);
     const head = superQueueHead(c.state);
     ok(res, { queue: c.state.queue.map(fence), head: head ? fence(head) : null });
   },
@@ -720,9 +730,25 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!child) return;
     const root = c.who.contextRoot;
     const ch = c.state.children[child];
+    // The owner's own chat, like `end`, `update` and `adopt`: reopened (or made a child again
+    // while it runs) only on his word.
+    if (ownersChat(child, ch) && b.force !== true) {
+      refuse(res, 409, 'adopted', 'that is the owner\'s own chat; reopen it only when he asks, with --force');
+      return;
+    }
     if (isLiveChat(child)) {
-      if (ch.endedAt !== undefined) await writeSuper(root, (s) => { const x = s.children[child]; if (x) delete x.endedAt; });
-      ok(res, { child, resumed: false, running: true });
+      // Ended yet running: the owner reopened it, and on his word it is a child again (his).
+      let container: string | null = null;
+      if (ch.endedAt !== undefined) {
+        await writeSuper(root, (s) => {
+          const x = s.children[child];
+          if (!x) return;
+          delete x.endedAt;
+          x.adopted = true;
+          container = ensureChatContainer(s, child, x.brief);
+        });
+      }
+      ok(res, { child, resumed: false, running: true, ...(container ? { container } : {}) });
       return;
     }
     const mode = str(b.mode) ?? ch.mode ?? 'basic';
@@ -738,20 +764,120 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     if (!liveTranscriptPath(root, child)) { refuse(res, 404, 'no_transcript', 'that child has no transcript to resume'); return; }
-    const r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
-    if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 502, r.error, 'the window could not reopen the child'); return; }
-    let container: string | null = null;
-    await writeSuper(root, (s) => {
+    // Its new process is this resume's doing, never the owner reopening it (inbox noteChatStarted).
+    noteResuming(child, true);
+    try {
+      const r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
+      if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 502, r.error, 'the window could not reopen the child'); return; }
+      // What the window ACTUALLY started it with: a parked tab comes back as it was parked, so
+      // the record holds that, never a request the window did not apply. An older window that
+      // reports nothing: the request.
+      const used = usedSettings(r.result, { mode, model, effort });
+      let container: string | null = null;
+      await writeSuper(root, (s) => {
+        const x = s.children[child];
+        if (!x) return;
+        delete x.endedAt;
+        if (used.mode === 'basic') delete x.mode; else x.mode = used.mode;
+        if (used.model) x.model = used.model; else if (used.reported) delete x.model;
+        if (used.effort) x.effort = used.effort; else if (used.reported) delete x.effort;
+        container = ensureChatContainer(s, child, x.brief);
+      });
+      const asked = { mode: str(b.mode), model: str(b.model), effort: str(b.effort) };
+      const ignored = (['mode', 'model', 'effort'] as const).filter((k) => asked[k] && asked[k] !== used[k]);
+      ok(res, {
+        child, resumed: true, mode: used.mode, ...(used.model ? { model: used.model } : {}), ...(used.effort ? { effort: used.effort } : {}), container,
+        ...(ignored.length ? { note: `it came back as it was parked (${ignored.join(', ')} unchanged); \`super update\` changes that` } : {}),
+      });
+    } finally {
+      noteResuming(child, false);
+    }
+  },
+
+  update: async (c, b, res) => {
+    // A RUNNING child, through the window's own `model`, `effort` and `mode` verbs into its tab
+    // (the super's token, the child's limits: a delegate's modes, model ids and efforts).
+    if (!requireHandedOver(c, res)) return;
+    const child = childArg(c, b, res);
+    if (!child) return;
+    const ch = c.state.children[child];
+    const mode = str(b.mode);
+    if (mode && !(MODES as readonly string[]).includes(mode)) { refuse(res, 400, 'invalid_args', `mode must be one of ${MODES.join(' | ')}`); return; }
+    const model = str(b.model);
+    if (model && !sanitizeModel(model)) { refuse(res, 400, 'invalid_args', 'model is not a model id'); return; }
+    const effort = str(b.effort);
+    if (effort && !(EFFORTS as readonly string[]).includes(effort)) { refuse(res, 400, 'invalid_args', `effort must be one of ${EFFORTS.join(' | ')}`); return; }
+    if (!mode && !model && !effort) { refuse(res, 400, 'invalid_args', 'name what changes: --mode, --model or --effort'); return; }
+    if (ch.endedAt !== undefined) {
+      refuse(res, 409, 'ended', 'that child was ended; `dreamcontext super resume <child>` with the same flags reopens it with them');
+      return;
+    }
+    if (!isLiveChat(child)) {
+      refuse(res, 409, 'not_running', 'that child is not running; `dreamcontext super resume <child>` with the same flags reopens it with them');
+      return;
+    }
+    if (ch.adopted && b.force !== true) {
+      refuse(res, 409, 'adopted', 'that is the owner\'s own chat; change it only when he asks, with --force');
+      return;
+    }
+    // Model and effort first: they apply in place, and a mode change then respawns the chat
+    // carrying them (a mode sent first would leave the next verb naming a tab being replaced).
+    const steps: Array<{ verb: 'model' | 'effort' | 'mode'; args: Record<string, unknown> }> = [];
+    if (model) steps.push({ verb: 'model', args: { tab: child, model } });
+    if (effort) steps.push({ verb: 'effort', args: { tab: child, level: effort } });
+    if (mode) steps.push({ verb: 'mode', args: { tab: child, mode } });
+    const applied: Record<string, unknown> = {};
+    const record = () => writeSuper(c.who.contextRoot, (s) => {
       const x = s.children[child];
       if (!x) return;
-      delete x.endedAt;
-      x.mode = mode === 'basic' ? undefined : mode;
-      if (model) x.model = model;
-      if (effort) x.effort = effort;
-      if (x.mode === undefined) delete x.mode;
-      container = ensureChatContainer(s, child, x.brief);
+      if ('model' in applied && model) x.model = model;
+      if ('effort' in applied && effort) x.effort = effort;
+      if ('mode' in applied && mode) { if (mode === 'basic') delete x.mode; else x.mode = mode; }
     });
-    ok(res, { child, resumed: true, mode, ...(model ? { model } : {}), ...(effort ? { effort } : {}), container });
+    for (const step of steps) {
+      const r = await sendWindowCommand(c.token, step.verb, step.args);
+      if (!r.ok) {
+        if (Object.keys(applied).length) await record();
+        refuse(res, 409, r.error === 'no_window' ? 'no_window' : 'window_refused', r.error === 'no_window'
+          ? 'no window is showing the Super Agent right now'
+          : `the window did not change its ${step.verb}: ${oneLine(r.error).slice(0, 200)}`, { child, applied });
+        return;
+      }
+      applied[step.verb] = r.result ?? true;
+    }
+    await record();
+    ok(res, { child, applied });
+  },
+
+  adopt: async (c, b, res) => {
+    // An open chat of THIS project becomes a child mid-hand-over. Every chat the super did not
+    // start is the owner's, so it is adopted only on his word (`--force`); the super's own
+    // session, another mode's chat, another vault's and a closed one never.
+    if (!requireHandedOver(c, res)) return;
+    const root = c.who.contextRoot;
+    const sid = str(b.chat);
+    const vault = vaultNameOf(root);
+    if (!sid || !SESSION_ID_RE.test(sid) || isReservedId(sid) || sid === c.state.session) {
+      refuse(res, 404, 'unknown_chat', 'name an open chat of this project by its session id (`dreamcontext window state` lists them)');
+      return;
+    }
+    const have = hasChild(c.state, sid) ? c.state.children[sid] : undefined;
+    if (have && have.endedAt === undefined) { ok(res, { child: sid, adopted: false, already: true }); return; }
+    if (adoptableChats([sid], vault).length !== 1) {
+      if (have) { refuse(res, 409, 'ended', 'that child was ended; `dreamcontext super resume <child>` reopens it'); return; }
+      refuse(res, 404, 'unknown_chat', 'not an open chat of this project (an Assistant, a Super Agent or a closed chat is never adopted)');
+      return;
+    }
+    // Not a running child of yours: a chat you never started, or an ended child he reopened.
+    if (b.force !== true) {
+      refuse(res, 409, 'owners_chat', 'that is the owner\'s own chat; adopt it only when he asks, with --force');
+      return;
+    }
+    const brief = oneLine(str(b.brief) ?? '').slice(0, MAX_BRIEF);
+    let container: string | null = null;
+    await writeSuper(root, (s) => { container = adoptChat(s, sid, brief); });
+    void pumpSuper(root);
+    ok(res, { child: sid, adopted: true, container });
   },
 };
 
@@ -763,6 +889,23 @@ function childStatus(sid: string, now = Date.now()): string {
 
 function isLiveChat(sid: string): boolean {
   return childStatus(sid) !== 'gone';
+}
+
+/** The owner's own chat: adopted (at hand-over, by `super adopt`, or reopened by him), or an
+ *  ended child running again that no `super resume` started (he reopened it before the record
+ *  caught up). Ending, changing, reopening or adopting it takes his word (`--force`). */
+function ownersChat(sid: string, ch: SuperChild): boolean {
+  return ch.adopted || (ch.endedAt !== undefined && isLiveChat(sid));
+}
+
+/** The mode, model and effort a window's `resume` answer says it used, else the request. */
+function usedSettings(result: unknown, asked: { mode: string; model?: string; effort?: string }):
+  { mode: string; model?: string; effort?: string; reported: boolean } {
+  const r = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  if (typeof r.mode !== 'string' || !(MODES as readonly string[]).includes(r.mode)) return { ...asked, reported: false };
+  const model = typeof r.model === 'string' && r.model && sanitizeModel(r.model) ? r.model : undefined;
+  const effort = typeof r.effort === 'string' && (EFFORTS as readonly string[]).includes(r.effort) ? r.effort : undefined;
+  return { mode: r.mode, model, effort, reported: true };
 }
 
 const END_REFUSALS: Partial<Record<ParkOutcome, string>> = {
@@ -786,8 +929,8 @@ async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<En
   const ch = c.state.children[sid];
   if (!ch || sid === c.state.session) return { child: sid, ended: false, reason: 'unknown_child', message: 'not one of your children' };
   if (ch.endedAt !== undefined && !isLiveChat(sid)) return { child: sid, ended: true, reason: 'already' };
-  if (ch.adopted && !force) {
-    return { child: sid, ended: false, reason: 'adopted', message: 'that is the owner\'s own chat (adopted at hand-over); end it only when he asks, with --force' };
+  if (ownersChat(sid, ch) && !force) {
+    return { child: sid, ended: false, reason: 'adopted', message: 'that is the owner\'s own chat; end it only when he asks, with --force' };
   }
   let noProcess = false;
   if (isLiveChat(sid)) {

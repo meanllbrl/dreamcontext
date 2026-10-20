@@ -52,8 +52,12 @@ export interface SuperSurfaceProps {
   onAskAbout: (id: string, title: string) => void;
   /** The owner ended a child from its card (`whenDone`: once its turn ends). */
   onEndChild: (child: string, whenDone: boolean) => void;
+  /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
+  onKeepChild: (child: string) => void;
   /** Children waiting to be ended when their turn ends. */
   endPending: ReadonlySet<string>;
+  /** Children whose end the server did not record (still running; the card says so). */
+  endFailed: ReadonlySet<string>;
 }
 
 /**
@@ -214,6 +218,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
       props.onEndChild(c.ref, whenDone);
       if (!whenDone) focusAfter(id);
     },
+    onKeepRunning: (id: string) => {
+      const c = byId.get(id);
+      if (c?.kind === 'chat') props.onKeepChild(c.ref);
+    },
     onMinimize: (id: string) => {
       onLayout({ view: { mode: 'float' } });
       requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(id)}"]`)?.focus());
@@ -331,6 +339,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               onPress={onPressCard}
               dropTarget={target === c.id}
               endPending={c.kind === 'chat' && props.endPending.has(c.ref)}
+              endFailed={c.kind === 'chat' && props.endFailed.has(c.ref)}
               {...actions}
             />
           );
