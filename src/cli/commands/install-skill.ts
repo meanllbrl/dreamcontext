@@ -67,6 +67,19 @@ const PRE_COMPACT_HOOK = hookCommand('pre-compact');
 const ENSURE_DASHBOARD_HOOK = hookCommand('ensure-dashboard');
 const OLD_HOOK = 'npx dreamcontext snapshot'; // migration target
 
+/**
+ * The 0.33.0 task system (reverted 2026-10-20) installed two hooks this version does not run:
+ * the sub-task Read guard, a script in `.claude/hooks/` that calls `dreamcontext hook read-task`,
+ * and `dreamcontext hook session-end`. Neither subcommand exists here, so a project 0.33.0 set
+ * up would keep a hook that fails on every session end. `update` removes both.
+ */
+export const RETIRED_READ_TASK_GUARD_FILE = 'read-task-guard.cjs';
+const RETIRED_HOOK_COMMANDS = new Set([
+  `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${RETIRED_READ_TASK_GUARD_FILE}"`,
+  hookCommand('session-end'),
+  legacyHookCommand('session-end'),
+]);
+
 // ─── Hook Types ─────────────────────────────────────────────────────────────
 
 interface HookHandler {
@@ -247,6 +260,24 @@ async function resolvePlatforms(projectRoot: string, raw?: string): Promise<Plat
 // ─── Hook Installation (Claude) ────────────────────────────────────────────
 
 /**
+ * Delete the 0.33.0 Read guard script. Only a regular file that is still the guard dreamcontext
+ * wrote goes: a symlink is never followed, a file of the same name that someone else wrote stays.
+ * The `.claude/hooks/` folder goes too when the guard was all it held.
+ */
+function removeRetiredReadTaskGuard(projectRoot: string): void {
+  const dir = join(projectRoot, '.claude', 'hooks');
+  const file = join(dir, RETIRED_READ_TASK_GUARD_FILE);
+  try {
+    if (!lstatSync(file).isFile()) return;
+    if (!readFileSync(file, 'utf-8').includes('dreamcontext Read-hook guard')) return;
+    rmSync(file);
+    if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true });
+  } catch {
+    /* absent or unreadable: nothing to remove */
+  }
+}
+
+/**
  * Ensure all dreamcontext hooks are installed.
  * Migrates old `npx dreamcontext snapshot` hook if present, and rewrites a handler an older
  * installer wrote (`npx dreamcontext hook <name>`) IN PLACE to {@link hookCommand}: matching on
@@ -279,6 +310,25 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
       result.migrated = true;
     }
   }
+
+  // Migration: drop the hooks the reverted 0.33.0 task system installed, and its guard script.
+  for (const event of Object.keys(settings.hooks)) {
+    const groups = settings.hooks[event];
+    if (!Array.isArray(groups)) continue;
+    let removed = false;
+    for (const group of groups) {
+      if (!Array.isArray(group.hooks)) continue;
+      const before = group.hooks.length;
+      group.hooks = group.hooks.filter((h) => !RETIRED_HOOK_COMMANDS.has(h.command));
+      if (group.hooks.length !== before) removed = true;
+    }
+    if (!removed) continue;
+    result.migrated = true;
+    const kept = groups.filter((g) => !Array.isArray(g.hooks) || g.hooks.length > 0);
+    if (kept.length) settings.hooks[event] = kept;
+    else delete settings.hooks[event];
+  }
+  removeRetiredReadTaskGuard(projectRoot);
 
   // Register all hooks via data-driven loop.
   // Dedup key is (command, matcher) — two entries with the same command but

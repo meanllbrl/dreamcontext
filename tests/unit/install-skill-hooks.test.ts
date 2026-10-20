@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import {
-  ensureClaudeHooks, hookCommand, legacyHookCommand, HOOK_SPECS,
+  ensureClaudeHooks, hookCommand, legacyHookCommand, HOOK_SPECS, RETIRED_READ_TASK_GUARD_FILE,
 } from '../../src/cli/commands/install-skill.js';
 
 interface Handler { type: string; command: string; timeout?: number }
@@ -115,6 +117,75 @@ describe('ensureClaudeHooks: legacy npx handlers are rewritten in place', () => 
     const pre = readHooks().PreToolUse;
     expect(pre.map((g) => g.matcher).sort()).toEqual(['Agent', 'Edit|Write|MultiEdit']);
     for (const g of pre) expect(g.hooks).toEqual([{ type: 'command', command: hookCommand('pre-tool-use'), timeout: 5 }]);
+  });
+});
+
+describe('ensureClaudeHooks: the reverted 0.33.0 task hooks are removed', () => {
+  const GUARD_CMD = `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${RETIRED_READ_TASK_GUARD_FILE}"`;
+  const guardPath = () => join(dir, '.claude', 'hooks', RETIRED_READ_TASK_GUARD_FILE);
+  const userRead = { type: 'command', command: 'node my-read-logger.js', timeout: 3 };
+
+  /** What a 0.33.0 install left: the Read guard beside a user's own Read hook, and SessionEnd. */
+  function settings033(): { hooks: Hooks } {
+    return {
+      hooks: {
+        PostToolUse: [
+          { matcher: 'Read', hooks: [{ type: 'command', command: GUARD_CMD, timeout: 10 }, userRead] },
+          { matcher: 'Read', hooks: [{ type: 'command', command: GUARD_CMD, timeout: 10 }] },
+        ],
+        SessionEnd: [{ hooks: [{ type: 'command', command: hookCommand('session-end'), timeout: 5 }] }],
+      },
+    };
+  }
+  function writeGuard(body = '#!/usr/bin/env node\n/** dreamcontext Read-hook guard (PostToolUse, matcher Read). */\n'): void {
+    mkdirSync(join(dir, '.claude', 'hooks'), { recursive: true });
+    writeFileSync(guardPath(), body);
+  }
+
+  it('drops both hooks, keeps the user\'s Read hook, and deletes the guard script and its empty folder', () => {
+    writeSettings(settings033());
+    writeGuard();
+    expect(ensureClaudeHooks(dir).migrated).toBe(true);
+    const hooks = readHooks();
+    const commands = handlers(hooks).map((h) => h.command);
+    expect(commands).not.toContain(GUARD_CMD);
+    expect(commands).not.toContain(hookCommand('session-end'));
+    expect(hooks.SessionEnd).toBeUndefined();
+    expect(hooks.PostToolUse.filter((g) => g.matcher === 'Read')).toEqual([{ matcher: 'Read', hooks: [userRead] }]);
+    expect(existsSync(guardPath())).toBe(false);
+    expect(existsSync(join(dir, '.claude', 'hooks'))).toBe(false);
+  });
+
+  it('a second run reports no migration', () => {
+    writeSettings(settings033());
+    writeGuard();
+    ensureClaudeHooks(dir);
+    expect(ensureClaudeHooks(dir).migrated).toBe(false);
+  });
+
+  it('keeps a same-named file someone else wrote, and the folder it shares with other hooks', () => {
+    writeSettings(settings033());
+    writeGuard('// my own script\n');
+    ensureClaudeHooks(dir);
+    expect(readFileSync(guardPath(), 'utf-8')).toBe('// my own script\n');
+
+    rmSync(guardPath());
+    writeGuard();
+    writeFileSync(join(dir, '.claude', 'hooks', 'mine.sh'), 'echo hi\n');
+    ensureClaudeHooks(dir);
+    expect(existsSync(guardPath())).toBe(false);
+    expect(existsSync(join(dir, '.claude', 'hooks', 'mine.sh'))).toBe(true);
+  });
+
+  it('never deletes through a symlink', () => {
+    writeSettings(settings033());
+    const target = join(dir, 'elsewhere.cjs');
+    writeFileSync(target, '/** dreamcontext Read-hook guard */\n');
+    mkdirSync(join(dir, '.claude', 'hooks'), { recursive: true });
+    symlinkSync(target, guardPath());
+    ensureClaudeHooks(dir);
+    expect(existsSync(target)).toBe(true);
+    expect(lstatSync(guardPath()).isSymbolicLink()).toBe(true);
   });
 });
 
