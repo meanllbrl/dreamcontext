@@ -305,11 +305,21 @@ function disarmSweep(): void {
 export function registerParkable(p: Parkable): () => void {
   if (!p.id) return () => { /* nothing registered */ };
   parkables.set(p.id, p);
+  parkedAt.delete(p.id);
   armSweep();
   return () => {
     if (parkables.get(p.id) === p) parkables.delete(p.id);
     disarmSweep();
   };
+}
+
+/** Tabs parked (dormant, not ended) since their process last registered: `super state` says
+ *  `parked` for them instead of `gone`. In memory: a restart forgets it. */
+const parkedAt = new Map<string, number>();
+
+/** When this tab was parked, or null when it was not (or has run again since). */
+export function parkedSince(id: string): number | null {
+  return parkedAt.get(id) ?? null;
 }
 
 export function findParkable(id: string): Parkable | null {
@@ -329,11 +339,16 @@ export async function parkChat(id: string, reason: string, opts: ParkOptions = {
   if (!p) return 'already';
   if (opts.force) {
     if (p.exempt()) return 'exempt';
-    return p.park(reason, opts);
+    return noteParked(id, await p.park(reason, opts), opts);
   }
   const keep = keepReason(candidateOf(p), 0, Date.now());
   if (keep && keep !== 'focused') return keep;
-  return p.park(reason, opts);
+  return noteParked(id, await p.park(reason, opts), opts);
+}
+
+function noteParked(id: string, outcome: ParkOutcome, opts: ParkOptions): ParkOutcome {
+  if ((outcome === 'parked' || outcome === 'drained') && !opts.end) parkedAt.set(id, Date.now());
+  return outcome;
 }
 
 function candidateOf(p: Parkable): ParkCandidate {
@@ -399,6 +414,7 @@ export async function sweepOnce(deps: SweepDeps = sweepDeps ?? defaultSweepDeps(
 /** Tests only. */
 export function _resetChatParkForTests(deps: SweepDeps | null = null): void {
   parkables.clear();
+  parkedAt.clear();
   if (sweepTimer) { clearInterval(sweepTimer); sweepTimer = null; }
   sweepDeps = deps;
   sweeping = false;

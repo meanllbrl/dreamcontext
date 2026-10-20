@@ -22,13 +22,14 @@ import {
   WorktreeRefused, createChildWorktree, discardFreshWorktree, mergeChildren, removeChildWorktree, repoOfWorktree,
   worktreeStatus, type CreatedWorktree,
 } from '../../lib/super/worktrees.js';
-import { DEFAULT_READ_BYTES, readTail, renderTail } from '../../lib/super/transcript-tail.js';
+import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
 import { activityOf, getChat } from '../../lib/assistant/chat-registry.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
-import { findParkable, parkChat, type ParkOutcome } from '../chat-park.js';
+import { findParkable, parkChat, parkedSince, type ParkOutcome } from '../chat-park.js';
+import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -211,21 +212,23 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const root = c.who.contextRoot;
     const vault = vaultNameOf(root);
     const now = Date.now();
-    const children: Record<string, SuperChild> = {};
+    const children: Record<string, SuperChild & Record<string, unknown>> = {};
     const status: Array<Record<string, unknown>> = [];
     for (const [sid, ch] of Object.entries(c.state.children)) {
       const e = getChat(sid);
-      const last = e?.lastAssistantText[e.lastAssistantText.length - 1] ?? '';
-      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '' };
-      status.push({
-        sessionId: sid,
-        status: ch.endedAt !== undefined && !(e && activityOf(e, now) !== 'gone') ? 'ended' : e ? activityOf(e, now) : 'gone',
+      const live = liveChildStatus(ch, e ? activityOf(e, now) : null, parkedSince(sid) !== null);
+      const { line: last, limit } = childLastLine(e?.lastAssistantText ?? [], live);
+      const row = {
+        status: live,
         ...(ch.endedAt !== undefined ? { endedAt: ch.endedAt } : {}),
         elapsedMs: Math.max(0, now - ch.startedAt),
         lastLine: last ? wrapUntrusted(vault, last.length > 600 ? `${last.slice(0, 600)}…` : last) : '',
+        ...(limit ? { limit: wrapUntrusted(vault, limit) } : {}),
         asking: e?.pendingQuestion ? { requestId: e.pendingQuestion.requestId, kind: e.pendingQuestion.isPermission ? 'permission' : 'question' } : null,
-        ...(ch.worktree ? { worktree: ch.worktree, branch: ch.branch } : {}),
-      });
+      };
+      // The live row rides on the child itself; `status[]` stays for older readers.
+      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...row };
+      status.push({ sessionId: sid, ...row, ...(ch.worktree ? { worktree: ch.worktree, branch: ch.branch } : {}) });
     }
     let machine: unknown = null;
     try { machine = await readCapacityFacts(); } catch { machine = null; }
@@ -513,10 +516,19 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const child = childArg(c, b, res);
     if (!child) return;
     const root = c.who.contextRoot;
-    const want = typeof b.bytes === 'number' && Number.isFinite(b.bytes) && b.bytes > 0 ? Math.min(b.bytes, MAX_READ_BYTES) : DEFAULT_READ_BYTES;
+    const raw = typeof b.bytes === 'number' && Number.isFinite(b.bytes) && b.bytes > 0;
+    const want = raw ? Math.min(b.bytes as number, MAX_READ_BYTES) : DEFAULT_READ_BYTES;
     const path = liveTranscriptPath(root, child);
     if (!path) { refuse(res, 404, 'no_transcript', 'that child has no transcript yet'); return; }
     try {
+      // The default is the child's last reply, whole; `--bytes` asks for the raw tail.
+      if (!raw) {
+        const reply = await readLastReply(path);
+        if (reply.text) {
+          ok(res, { child, reply: true, status: childStatus(child), at: reply.at, size: reply.size, text: wrapUntrusted(vaultNameOf(root), reply.text) });
+          return;
+        }
+      }
       const tail = await readTail(path, want);
       const text = renderTail(tail);
       ok(res, {
@@ -760,6 +772,29 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
 function childStatus(sid: string, now = Date.now()): string {
   const e = getChat(sid);
   return e ? activityOf(e, now) : 'gone';
+}
+
+/** What `super state` says a child is: the registry's activity while a process runs it, else
+ *  `ended` (super end), `parked` (its tab is dormant) or `gone`. Never null. */
+export function liveChildStatus(ch: Pick<SuperChild, 'endedAt'>, activity: string | null, parked: boolean): string {
+  if (activity && activity !== 'gone') return activity;
+  if (ch.endedAt !== undefined) return 'ended';
+  return parked ? 'parked' : 'gone';
+}
+
+const isLimitBanner = (t: string): boolean =>
+  readLimitSignal({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: t }] } }) !== null;
+
+/**
+ * The newest line worth showing, never a usage-limit banner (field 2026-10-21: after an account
+ * switch the old "session limit" line read as a stuck child). The banner is reported as `limit`
+ * only while it is the newest text and nothing runs: a chat that moved on is not limited.
+ */
+export function childLastLine(texts: readonly string[], status: string): { line: string; limit: string | null } {
+  const newest = texts[texts.length - 1] ?? '';
+  const line = [...texts].reverse().find((t) => t && !isLimitBanner(t)) ?? '';
+  const limit = newest && isLimitBanner(newest) && status !== 'working' && status !== 'starting' ? newest : null;
+  return { line, limit };
 }
 
 function isLiveChat(sid: string): boolean {

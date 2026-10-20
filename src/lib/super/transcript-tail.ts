@@ -76,3 +76,95 @@ export function renderTail(t: Pick<TailRead, 'text' | 'truncated'>): string {
   }
   return out.join('\n');
 }
+
+/** How far back `readLastReply` walks before it gives up (a reply is near the end). */
+export const MAX_REPLY_SCAN_BYTES = 64 * 1024 * 1024;
+const REPLY_CHUNK = 256 * 1024;
+
+export interface LastReply {
+  /** The reply's whole text, its text blocks in order; '' when none was found. */
+  text: string;
+  /** Its `timestamp`, when the transcript stamped one. */
+  at: string | null;
+  size: number;
+  /** How many bytes from the end were read to find it. */
+  scanned: number;
+}
+
+/** The text blocks of one assistant line, when it is a main-thread assistant line. */
+function replyBlocks(line: string): { id: string | null; text: string; at: string | null } | null {
+  let obj: Record<string, unknown>;
+  try { obj = JSON.parse(line) as Record<string, unknown>; } catch { return null; }
+  if (obj.type !== 'assistant' || obj.isSidechain === true) return null;
+  const msg = obj.message as { id?: unknown; content?: unknown } | undefined;
+  const id = typeof msg?.id === 'string' ? msg.id : null;
+  const at = typeof obj.timestamp === 'string' ? obj.timestamp : null;
+  if (typeof msg?.content === 'string') return { id, text: msg.content.trim(), at };
+  if (!Array.isArray(msg?.content)) return { id, text: '', at };
+  const text = (msg.content as Array<Record<string, unknown>>)
+    .filter((b) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim())
+    .map((b) => (b.text as string).trim())
+    .join('\n\n');
+  return { id, text, at };
+}
+
+/**
+ * `super read`'s default: the child's LAST assistant reply, whole (field 2026-10-21: a 64 KB tail
+ * of a 16 MB transcript ended in tool output and read as nothing; long replies were cut).
+ *
+ * Walks the file BACKWARD in chunks (never the whole file at once), skipping tool calls, tool
+ * results and sub-agent lines, to the newest assistant line with text; the lines of that same
+ * message (one per content block, same `message.id`) are joined in order. Bounded by
+ * {@link MAX_REPLY_SCAN_BYTES}.
+ */
+export async function readLastReply(path: string, maxScan: number = MAX_REPLY_SCAN_BYTES): Promise<LastReply> {
+  const fh = await fsp.open(path, 'r');
+  try {
+    const { size } = await fh.stat();
+    let pos = size;
+    let carry: Buffer = Buffer.alloc(0);
+    const parts: string[] = [];
+    let id: string | null = null;
+    let at: string | null = null;
+    let found = false;
+    // Returns true when the reply is complete (an older line belongs to another message).
+    const take = (line: string): boolean => {
+      if (!line.trim()) return false;
+      const r = replyBlocks(line);
+      if (!found) {
+        if (!r || !r.text) return false;
+        found = true; id = r.id; at = r.at; parts.unshift(r.text);
+        return id === null;
+      }
+      if (!r || id === null || r.id !== id) return true;
+      if (r.text) parts.unshift(r.text);
+      at = at ?? r.at;
+      return false;
+    };
+    while (pos > 0 && size - pos < maxScan) {
+      const len = Math.min(REPLY_CHUNK, pos);
+      pos -= len;
+      const buf = Buffer.alloc(len);
+      let read = 0;
+      while (read < len) {
+        const { bytesRead } = await fh.read(buf, read, len - read, pos + read);
+        if (bytesRead === 0) break;
+        read += bytesRead;
+      }
+      carry = Buffer.concat([buf.subarray(0, read), carry]);
+      // Every complete line in the window, newest first; the first (maybe partial) stays.
+      let end = carry.length;
+      for (let i = carry.length - 1; i >= 0; i--) {
+        if (carry[i] !== 0x0a) continue;
+        if (take(carry.subarray(i + 1, end).toString('utf-8'))) return { text: parts.join('\n\n'), at, size, scanned: size - pos };
+        end = i;
+      }
+      carry = carry.subarray(0, end);
+    }
+    // The file's first line has no newline before it.
+    if (pos === 0 && carry.length) take(carry.toString('utf-8'));
+    return { text: parts.join('\n\n'), at, size, scanned: size - pos };
+  } finally {
+    await fh.close();
+  }
+}

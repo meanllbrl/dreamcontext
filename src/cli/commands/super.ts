@@ -68,7 +68,7 @@ export function registerSuperCommand(program: Command): void {
     .description('The project\'s Super Agent: delegate to child chats, arrange their cards, answer the queue (only from the Super Agent chat)');
 
   s.command('state')
-    .description('Children (status, brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
+    .description('Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
     .action(() => run('state', {}));
 
   s.command('delegate')
@@ -137,8 +137,8 @@ export function registerSuperCommand(program: Command): void {
     .action((child: string, line: string) => run('brief', { child, line }));
 
   s.command('read <child>')
-    .description('The end of a child\'s transcript (bounded), fenced as the child\'s text')
-    .option('--bytes <n>', 'How much of the end to read (max 262144)')
+    .description('A child\'s last reply, whole (tool calls skipped), fenced as the child\'s text')
+    .option('--bytes <n>', 'Instead: the raw end of its transcript, this many bytes (max 262144)')
     .action((child: string, o: { bytes?: string }) => run('read', { child, bytes: o.bytes ? Number(o.bytes) : undefined }));
 
   s.command('answer <child> <requestId> [choice...]')

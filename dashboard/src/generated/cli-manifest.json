@@ -3175,7 +3175,7 @@
     },
     {
       "path": "super read",
-      "desc": "The end of a child's transcript (bounded), fenced as the child's text",
+      "desc": "A child's last reply, whole (tool calls skipped), fenced as the child's text",
       "args": [
         "<child>"
       ],
@@ -3220,7 +3220,7 @@
     },
     {
       "path": "super state",
-      "desc": "Children (status, brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
+      "desc": "Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
       "args": []
     },
     {
