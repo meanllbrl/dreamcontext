@@ -361,18 +361,36 @@ function stampDir(contextRoot: string): string {
   return join(contextRoot, 'tmp', 'journal-fold');
 }
 
+/**
+ * The stamp folder is used only as a real directory, or created as one. A symlink there is
+ * never written through, and a stamp read through one is never trusted (it could mark
+ * journals as folded so the fold skips them).
+ */
+function stampDirUsable(contextRoot: string): boolean {
+  try {
+    const st = lstatSync(stampDir(contextRoot));
+    return st.isDirectory() && !st.isSymbolicLink();
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+}
+
 function readFoldStamp(contextRoot: string): FoldStamp {
   try {
-    const raw = JSON.parse(readFileSync(join(stampDir(contextRoot), 'stamp.json'), 'utf-8')) as Partial<FoldStamp>;
-    if (raw && raw.version === 1 && raw.journals && typeof raw.journals === 'object') return raw as FoldStamp;
+    const file = join(stampDir(contextRoot), 'stamp.json');
+    if (stampDirUsable(contextRoot) && lstatSync(file).isFile()) {
+      const raw = JSON.parse(readFileSync(file, 'utf-8')) as Partial<FoldStamp>;
+      if (raw && raw.version === 1 && raw.journals && typeof raw.journals === 'object') return raw as FoldStamp;
+    }
   } catch { /* none yet, or unreadable: nothing is known folded */ }
   return { version: 1, journals: {} };
 }
 
 function writeFoldStamp(contextRoot: string, stamp: FoldStamp): void {
+  if (!stampDirUsable(contextRoot)) return;
   const dir = stampDir(contextRoot);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, '.gitignore'), '*\n', 'utf-8');
+  atomicWrite(join(dir, '.gitignore'), '*\n');
   atomicWrite(join(dir, 'stamp.json'), `${JSON.stringify(stamp, null, 2)}\n`);
 }
 
@@ -421,14 +439,16 @@ export function journalsTravelByGit(contextRoot: string): boolean {
   const useGit = insideGitWorkTree(contextRoot) && gitAvailable();
   const gitModule = useGit ? { isGitRepo, getRemoteUrl } : { isGitRepo: () => false, getRemoteUrl: () => null };
   if (resolveBrainSyncEnabled(projectRoot, readSetupConfig(projectRoot), gitModule).enabled) return true;
-  if (!useGit) return false;
+  // A work tree git cannot be asked about (no real git here) keeps its journals: a move it
+  // cannot see could still reach a teammate as a deletion.
+  if (!useGit) return insideGitWorkTree(contextRoot);
   try {
     const out = execFileSync('git', ['ls-files', '-z', '--', join('state', 'journal')], {
       cwd: contextRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
     });
     return out.length > 0;
   } catch {
-    return false;
+    return true; // git could not answer (dubious ownership, a timeout): keep, never move
   }
 }
 

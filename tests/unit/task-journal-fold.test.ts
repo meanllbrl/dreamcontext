@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -488,6 +488,26 @@ describe('a brain that syncs through git keeps its journals in place', () => {
     expect(journalsTravelByGit(ctx)).toBe(false); // a repo, the journals untracked
     git('add', '_dream_context/state/journal/orbit-tiles.md');
     expect(journalsTravelByGit(ctx)).toBe(true); // tracked: a move would push a deletion
+  });
+
+  it('a work tree git cannot answer about keeps its journals rather than risk a deletion', () => {
+    writeVault();
+    mkdirSync(join(root, '.git')); // a .git that `git ls-files` refuses (not a repository)
+    expect(journalsTravelByGit(ctx)).toBe(true);
+  });
+
+  it('never writes the stamp through a symlinked tmp/journal-fold/', () => {
+    writeVault();
+    configWith({ enabled: true, mode: 'full-repo' });
+    const outside = join(root, 'elsewhere');
+    mkdirSync(outside);
+    mkdirSync(join(ctx, 'tmp'), { recursive: true });
+    symlinkSync(outside, join(ctx, 'tmp', 'journal-fold'));
+    const r = foldTaskJournals(ctx, { now: new Date('2026-10-20T12:00:00Z') });
+    expect(r.failed).toEqual([]);
+    expect(r.folded.sort()).toEqual(['orbit-legend', 'orbit-tiles']);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(lstatSync(join(ctx, 'tmp', 'journal-fold')).isSymbolicLink()).toBe(true);
   });
 
   it('folds every journal onto its card and moves none of them, orphans and .deleted included', async () => {
