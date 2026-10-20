@@ -23,6 +23,8 @@ import { webglBudget, type WebglHandle } from './webglBudget';
 
 export interface Capabilities {
   desktop: boolean;
+  /** Local dictation (whisper) is installed on the Mac: the hands-free phone draws its mic. */
+  dictation?: boolean;
   platform: string;
   embeddedTerminal: boolean;
   openTerminal: boolean;

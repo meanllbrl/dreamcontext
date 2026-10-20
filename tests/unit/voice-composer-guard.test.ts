@@ -49,7 +49,9 @@ describe('AC15 — the mic exists in exactly one mode, on exactly one platform',
   it('gates on BOTH the mode and the desktop shell, in one expression', () => {
     // One flag, both conditions, so the two can never drift apart into a mic that renders on
     // the web because someone edited only the mode half.
-    expect(composer).toMatch(/const voiceEnabled = mode === 'assistant' && isDesktop\(\)/);
+    // …or the hands-free phone with the Mac's dictation installed (its takes are transcribed on
+    // the Mac: task the-hands-free-phone-sends-a-voice-message…), still in the same one flag.
+    expect(composer).toMatch(/const voiceEnabled = \(mode === 'assistant' && isDesktop\(\)\) \|\| phoneVoice;/);
   });
 
   it('renders NOTHING mic-related unless that flag is true', () => {

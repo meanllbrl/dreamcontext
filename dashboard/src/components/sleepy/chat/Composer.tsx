@@ -19,7 +19,7 @@ import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
 import { useVault } from '../../../context/VaultContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
-import { useAgentSessionStats, useClaudeAccounts, useUsageLimits } from '../../../hooks/useAgentCapabilities';
+import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
   fmtTokens, CONTEXT_TIGHT_PCT, contextBands,
@@ -1235,7 +1235,11 @@ export function Composer({
   // The mic is drawn ONLY in this mode and ONLY in the desktop app (AC15). The web dashboard
   // has no microphone path at all — there is no Info.plist to carry a usage string and no
   // WKWebView to grant against — so a button there would be a control that cannot work.
-  const voiceEnabled = mode === 'assistant' && isDesktop();
+  // The hands-free phone draws the same mic in any chat mode while the Mac has local dictation
+  // (usePhoneDictation): its take goes to the Mac's whisper. Read-aloud and the hotkey stay the
+  // laptop's (the tunnel refuses their routes), so the few lines below that differ ask `phoneVoice`.
+  const phoneVoice = usePhoneDictation();
+  const voiceEnabled = (mode === 'assistant' && isDesktop()) || phoneVoice;
   /** The draft as it stood when the take began, so a transcript can tell "the owner typed
    *  while I was transcribing" from "nothing changed". */
   const draftAtTakeRef = useRef('');
@@ -1304,7 +1308,8 @@ export function Composer({
     });
   }, [voiceEnabled, session.claudeId]);
   useEffect(() => {
-    if (!voiceEnabled) return;
+    // Not on the phone: warm, prefs and the hotkey are the laptop's routes.
+    if (!voiceEnabled || phoneVoice) return;
     // Load the local transcription model NOW rather than on the first press: it is a 1.5 GB
     // read, and paying it while the owner is still deciding what to say costs them nothing.
     void fetch('/api/agent/voice/warm', { method: 'POST' }).catch(() => {});
@@ -1315,7 +1320,7 @@ export function Composer({
     };
     void refreshVoicePrefs().then(adopt);
     return onVoicePrefs(adopt);
-  }, [voiceEnabled]);
+  }, [voiceEnabled, phoneVoice]);
 
   /**
    * A transcript lands in the box as the local model heard it — no second model rewrites it
@@ -2129,7 +2134,7 @@ export function Composer({
         )}
         {/* Read aloud, beside the mic it pairs with. A switch, not an action: `aria-pressed`
             carries the state and the icon draws it (speaker vs speaker struck through). */}
-        {voiceEnabled && (
+        {voiceEnabled && !phoneVoice && (
           <button
             type="button"
             className="chat-cmp-iconbtn chat-cmp-readaloud"
@@ -2150,12 +2155,13 @@ export function Composer({
           && voice.state !== 'unconfigured' && (
           <span className="chat-cmp-voice-note is-idle" data-rest={voice.state === 'idle' ? '' : undefined}>
             {voice.state === 'recording'
-              ? (effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
+              ? (!phoneVoice && effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
                 ? `Listening — ${hotkeyLabel(pushToTalk)} again to send`
                 : `Listening — let go to send`)
               : voice.state === 'transcribing' ? (voice.attempt > 0 ? `Transcribing… trying again (${voice.attempt} of 2)` : 'Transcribing…')
                 : voice.state === 'too-short' ? 'That was a tap — keep it down while you speak'
                   : voice.state === 'silent' ? 'Nothing was heard — try again'
+                    : phoneVoice ? 'Hold the mic to speak'
                     : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
                       ? `Press ${hotkeyLabel(pushToTalk)} to speak, again to send`
                       : `Hold ${hotkeyLabel(pushToTalk)} or the mic to speak`}
