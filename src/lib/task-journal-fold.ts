@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { canonicalEntry, convertJournalText } from './task-backend/legacy-journal.js';
@@ -6,6 +8,9 @@ import { TaskFileBusyError, withTaskFileLock } from './task-file-lock.js';
 import { readLedger } from './migration-ledger.js';
 import { normalizeSectionName, sectionHeadingName } from './markdown.js';
 import matter from 'gray-matter';
+import { readSetupConfig } from './setup-config.js';
+import { resolveBrainSyncEnabled } from './git-sync/brain-repo.js';
+import { gitAvailable, getRemoteUrl, isGitRepo } from './git-sync/git.js';
 
 /**
  * Fold the reverted 0.33.0 task journals back onto their cards.
@@ -31,6 +36,16 @@ import matter from 'gray-matter';
  *     task lister reads `state/*.md`, recall reads named folders (state/ among
  *     them, tmp/ not). The backup carries its own `.gitignore` (`*`): it is one
  *     machine's undo buffer, not team content.
+ *
+ * In a brain that travels by git (brain sync on, or the journals tracked by git)
+ * the journals are folded but NOT moved: a move reaches every teammate as a git
+ * deletion, and a teammate still on 0.33.0 would lose its only copy (then
+ * re-create it, and the next fold here delete it again). The fold is
+ * idempotent, so they stay in `state/journal/`, read by neither the task lister
+ * nor recall; a per-machine stamp (`tmp/journal-fold/`, self-gitignored) names
+ * each journal as folded, so a later run costs one directory listing and a
+ * stat per journal, and folds again only a journal whose content changed (a
+ * teammate's 0.33.0 appended to it) or an orphan whose card appeared.
  *
  * A journal whose card is busy, unreadable or unwritable stays where it is and
  * counts as failed, so the next run retries; a journal with no card anywhere
@@ -65,6 +80,10 @@ export interface JournalFoldReport {
   ledgerSeeded: number;
   backupDir: string | null;
   lockBusy: boolean;
+  /** The brain travels by git: the journals were folded and left in `state/journal/`. */
+  kept: boolean;
+  /** Slugs whose card this run rewrote. */
+  cardsWritten: string[];
 }
 
 /** Split changelog text into entry texts (newest first): a `###` line outside a fence starts one. */
@@ -326,10 +345,100 @@ function listJournals(contextRoot: string): JournalSet | null {
   return { dir, files, deletedDir: isRealDir(deleted) ? deleted : null };
 }
 
+/**
+ * What this machine has already folded in a brain that keeps its journals (see
+ * the module doc): per journal its size+mtime signature and content hash, and
+ * whether `.deleted/` was seen. Per machine by construction: it lives in tmp/
+ * behind its own `.gitignore` (`*`), whatever the vault's gitignore says.
+ */
+interface FoldStamp {
+  version: 1;
+  journals: Record<string, { sig: string; hash: string; orphan?: boolean }>;
+  deletedSeen?: boolean;
+}
+
+function stampDir(contextRoot: string): string {
+  return join(contextRoot, 'tmp', 'journal-fold');
+}
+
+function readFoldStamp(contextRoot: string): FoldStamp {
+  try {
+    const raw = JSON.parse(readFileSync(join(stampDir(contextRoot), 'stamp.json'), 'utf-8')) as Partial<FoldStamp>;
+    if (raw && raw.version === 1 && raw.journals && typeof raw.journals === 'object') return raw as FoldStamp;
+  } catch { /* none yet, or unreadable: nothing is known folded */ }
+  return { version: 1, journals: {} };
+}
+
+function writeFoldStamp(contextRoot: string, stamp: FoldStamp): void {
+  const dir = stampDir(contextRoot);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, '.gitignore'), '*\n', 'utf-8');
+  atomicWrite(join(dir, 'stamp.json'), `${JSON.stringify(stamp, null, 2)}\n`);
+}
+
+/** Size and mtime: what a later run compares, without reading the file. */
+function sigOf(path: string): string {
+  try {
+    const st = lstatSync(path);
+    return `${st.size}:${st.mtimeMs}`;
+  } catch {
+    return '';
+  }
+}
+
+function cardPathOf(stateDir: string, slug: string): string | null {
+  const live = join(stateDir, `${slug}.md`);
+  const archived = join(stateDir, 'archive', `${slug}.md`);
+  return isRealFile(live) ? live : isRealFile(archived) ? archived : null;
+}
+
+/** The journals a run has to look at: everything not stamped as folded, unchanged, on this machine. */
+function pendingJournals(set: JournalSet, stateDir: string, stamp: FoldStamp): string[] {
+  return set.files.filter((f) => {
+    const e = stamp.journals[basename(f, '.md')];
+    if (!e || e.sig !== sigOf(f)) return true;
+    return e.orphan === true && cardPathOf(stateDir, basename(f, '.md')) !== null;
+  });
+}
+
+function insideGitWorkTree(dir: string): boolean {
+  for (let d = dir; ; d = dirname(d)) {
+    if (pathTaken(join(d, '.git'))) return true;
+    if (dirname(d) === d) return false;
+  }
+}
+
+/**
+ * True when moving a journal out of `state/journal/` would reach other machines
+ * as a git deletion: brain sync is on for this vault (brain-repo.ts
+ * resolveBrainSyncEnabled, the same answer the sync engine acts on), or git
+ * already tracks a journal (a push of any kind would carry the deletion). Git is
+ * only run inside a work tree and when it is really installed (never the macOS
+ * stub, which would pop the Command Line Tools dialog).
+ */
+export function journalsTravelByGit(contextRoot: string): boolean {
+  const projectRoot = dirname(contextRoot);
+  const useGit = insideGitWorkTree(contextRoot) && gitAvailable();
+  const gitModule = useGit ? { isGitRepo, getRemoteUrl } : { isGitRepo: () => false, getRemoteUrl: () => null };
+  if (resolveBrainSyncEnabled(projectRoot, readSetupConfig(projectRoot), gitModule).enabled) return true;
+  if (!useGit) return false;
+  try {
+    const out = execFileSync('git', ['ls-files', '-z', '--', join('state', 'journal')], {
+      cwd: contextRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+    });
+    return out.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** True when `state/journal/` holds anything this fold would act on. Cheap: no file is read. */
 export function hasTaskJournals(contextRoot: string): boolean {
   const j = listJournals(contextRoot);
-  return j !== null && (j.files.length > 0 || j.deletedDir !== null);
+  if (!j) return false;
+  const stamp = readFoldStamp(contextRoot);
+  if (j.deletedDir && !stamp.deletedSeen) return true;
+  return pendingJournals(j, join(contextRoot, 'state'), stamp).length > 0;
 }
 
 /**
@@ -349,15 +458,22 @@ function tmpRefusal(contextRoot: string): string | null {
   }
 }
 
-export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {}): JournalFoldReport {
+export function foldTaskJournals(
+  contextRoot: string,
+  opts: { now?: Date; /** Overrides journalsTravelByGit (tests). */ keepJournals?: boolean } = {},
+): JournalFoldReport {
   const report: JournalFoldReport = {
     journals: 0, folded: [], entriesAdded: 0, entriesPresent: 0, entriesRescued: 0, rescuedCards: [], orphans: [], failed: [],
-    ledgerSeeded: 0, backupDir: null, lockBusy: false,
+    ledgerSeeded: 0, backupDir: null, lockBusy: false, kept: false, cardsWritten: [],
   };
   const set = listJournals(contextRoot);
   if (!set || (set.files.length === 0 && !set.deletedDir)) return report;
-  const { dir: journalDir, files, deletedDir } = set;
+  const { dir: journalDir, deletedDir } = set;
   const stateDir = join(contextRoot, 'state');
+  const stamp = readFoldStamp(contextRoot);
+  // Journals this machine already folded (a brain that keeps them) are not looked at again.
+  const files = pendingJournals(set, stateDir, stamp);
+  if (files.length === 0 && (!deletedDir || stamp.deletedSeen)) return report;
   report.journals = files.length;
 
   const refused = tmpRefusal(contextRoot);
@@ -372,6 +488,8 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
   // then on was written by anything but the reverted CLI's EOF append.
   const split = readLedger(contextRoot).find((e) => e.version === '0.33.0' && e.step === 'task-journal-split');
   const rescueSince = split?.timestamp?.slice(0, 10);
+  const keep = opts.keepJournals ?? journalsTravelByGit(contextRoot);
+  report.kept = keep;
   const ledger = new SyncLedger(contextRoot);
   if (!ledger.acquireSyncLock(now.getTime(), SYNC_LOCK_STALE_MS)) {
     report.lockBusy = true;
@@ -382,11 +500,11 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
   try {
     // Created the first time something is about to be written into it, never before:
     // a run that writes nothing leaves no folder behind.
-    const stamp = now.toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const timeTag = now.toISOString().slice(0, 19).replace(/[:T]/g, '-');
     const backup = (): string => {
       if (report.backupDir) return report.backupDir;
-      let dir = join(contextRoot, 'tmp', `folded-journals-${stamp}`);
-      for (let n = 2; pathTaken(dir); n++) dir = join(contextRoot, 'tmp', `folded-journals-${stamp}-${n}`);
+      let dir = join(contextRoot, 'tmp', `folded-journals-${timeTag}`);
+      for (let n = 2; pathTaken(dir); n++) dir = join(contextRoot, 'tmp', `folded-journals-${timeTag}-${n}`);
       mkdirSync(join(dir, 'journal'), { recursive: true });
       writeFileSync(join(dir, '.gitignore'), '*\n', 'utf-8');
       report.backupDir = dir;
@@ -395,18 +513,29 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
     const syncFile = join(stateDir, '.tasks-sync.json');
 
     const done: Array<{ slug: string; file: string; journal: string; live: boolean; before: string; after: string; rescued: boolean }> = [];
+    /** Each journal this run read, as it was when read: what the stamp records. */
+    const seen = new Map<string, { sig: string; hash: string; orphan?: boolean }>();
     for (const file of files) {
       const slug = basename(file, '.md');
       const live = join(stateDir, `${slug}.md`);
-      const archived = join(stateDir, 'archive', `${slug}.md`);
-      const cardPath = isRealFile(live) ? live : isRealFile(archived) ? archived : null;
+      const cardPath = cardPathOf(stateDir, slug);
+      const sig = sigOf(file); // before the read: a journal changed after it is looked at again
       if (!cardPath) {
         report.orphans.push(slug);
+        try { seen.set(slug, { sig, hash: hashContent(readFileSync(file, 'utf-8')), orphan: true }); } catch { /* not stamped: looked at again */ }
         continue;
       }
       try {
         withTaskFileLock(contextRoot, slug, () => {
           const journal = readFileSync(file, 'utf-8');
+          const hash = hashContent(journal);
+          const known = stamp.journals[slug];
+          if (keep && known && !known.orphan && known.hash === hash) {
+            // Same content as the journal this machine folded: only its mtime moved (a
+            // checkout). Folding it again would put back entries removed from the card since.
+            seen.set(slug, { sig, hash });
+            return;
+          }
           const before = readFileSync(cardPath, 'utf-8');
           const fold = foldJournalIntoCard(before, journal, { rescueSince, today: now.toISOString().slice(0, 10) });
           if (fold.text !== before) {
@@ -414,6 +543,7 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
             mkdirSync(dirname(copy), { recursive: true });
             writeFileSync(copy, before, 'utf-8');
             atomicWrite(cardPath, fold.text);
+            report.cardsWritten.push(slug);
           }
           report.entriesAdded += fold.added;
           report.entriesPresent += fold.present;
@@ -422,6 +552,7 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
             report.rescuedCards.push(slug);
           }
           done.push({ slug, file, journal, live: cardPath === live, before, after: fold.text, rescued: fold.rescued > 0 });
+          seen.set(slug, { sig, hash });
         });
       } catch (err) {
         report.failed.push({
@@ -438,6 +569,19 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
       report.ledgerSeeded = seedSyncLedger(ledger, syncFile, done, () => cpSync(syncFile, join(backup(), '.tasks-sync.json')));
     } catch (err) {
       for (const d of done) report.failed.push({ slug: d.slug, reason: `sync ledger not updated: ${(err as Error).message}` });
+      return report;
+    }
+
+    if (keep) {
+      // Left in place (see the module doc). The stamp names what is now folded on this
+      // machine; a failed journal is not in it, so the next run looks at it again.
+      for (const d of done) report.folded.push(d.slug);
+      const next: FoldStamp = { ...stamp, journals: { ...stamp.journals } };
+      for (const [slug, e] of seen) next.journals[slug] = e;
+      if (deletedDir) next.deletedSeen = true;
+      try {
+        writeFoldStamp(contextRoot, next);
+      } catch { /* best-effort: the next run repeats the no-op fold, nothing else */ }
       return report;
     }
 

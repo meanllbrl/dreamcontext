@@ -1117,7 +1117,10 @@ export function buildCorpusWith(
     docs.push(...loadMarkdownDocs(join(contextRoot, 'theses'), 'thesis', contextRoot, undefined, memo));
   }
   if (types.has('task')) {
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot, undefined, memo));
+    // `state/journal/` holds the reverted 0.33.0 task journals. A brain that syncs through
+    // git keeps them there after their history is folded onto the cards (task-journal-fold.ts):
+    // each is a copy of a card's history, never a task of its own.
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot, ['journal/**'], memo));
     // Session digests fold under the task channel (continuous capture, C1/C3).
     docs.push(...loadDigestDocsMemo(contextRoot, memo));
   }

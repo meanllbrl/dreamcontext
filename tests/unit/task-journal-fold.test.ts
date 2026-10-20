@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import matter from 'gray-matter';
@@ -7,7 +8,7 @@ import matter from 'gray-matter';
 import { convertJournalHeading, canonicalEntry, convertJournalText, MAX_HEADING_LINE } from '../../src/lib/task-backend/legacy-journal.js';
 import { unionChangelog } from '../../src/lib/task-backend/merge.js';
 import { normalizeEntry } from '../../src/lib/task-backend/clickup-map.js';
-import { foldJournalIntoCard, foldTaskJournals, hasTaskJournals } from '../../src/lib/task-journal-fold.js';
+import { foldJournalIntoCard, foldTaskJournals, hasTaskJournals, journalsTravelByGit } from '../../src/lib/task-journal-fold.js';
 import { hashContent } from '../../src/lib/task-backend/sync-state.js';
 import { LocalTaskBackend } from '../../src/lib/task-backend/local.js';
 import { GitHubTaskBackend } from '../../src/lib/task-backend/github.js';
@@ -334,8 +335,10 @@ describe('foldTaskJournals on a vault', () => {
 
   it('folds every journal, moves them out of state/, and neither the lister nor recall sees them', async () => {
     writeVault();
+    // Recall never reads a journal as a task, folded or not (a git-synced brain keeps them).
     const before = buildCorpus(ctx, { types: ['task'] });
-    expect(before.some((d) => d.relPath.startsWith('state/journal/'))).toBe(true);
+    expect(before.some((d) => d.relPath.startsWith('state/journal/'))).toBe(false);
+    expect(before.some((d) => d.relPath === 'state/orbit-tiles.md')).toBe(true);
     const tasksBefore = (await new LocalTaskBackend(join(ctx, 'state')).list()).length;
 
     const r = foldTaskJournals(ctx, { now: new Date('2026-10-20T12:00:00Z') });
@@ -452,6 +455,111 @@ describe('foldTaskJournals on a vault', () => {
   it('a vault that never had journals gets no ledger entry and no ledger file', () => {
     expect(runMigrations(ctx, '0.31.0', '0.32.0').applied).toEqual([]);
     expect(existsSync(join(ctx, 'state', '.migrations.json'))).toBe(false);
+  });
+});
+
+describe('a brain that syncs through git keeps its journals in place', () => {
+  const journalDir = () => join(ctx, 'state', 'journal');
+  const backups = () => (existsSync(join(ctx, 'tmp')) ? readdirSync(join(ctx, 'tmp')).filter((f) => f.startsWith('folded-journals-')) : []);
+  const configWith = (brainRepo: Record<string, unknown>) => writeFileSync(join(ctx, 'state', '.config.json'), JSON.stringify({ platforms: [], packs: [], setupVersion: '0.32.0', brainRepo }));
+  function writeVault(): void {
+    writeFileSync(join(ctx, 'state', 'orbit-tiles.md'), card('Orbit tiles'));
+    writeFileSync(join(journalDir(), 'orbit-tiles.md'), V033_JOURNAL);
+    writeFileSync(join(ctx, 'state', 'orbit-legend.md'), card('Orbit legend'));
+    writeFileSync(join(journalDir(), 'orbit-legend.md'), LEGACY_JOURNAL);
+    writeFileSync(join(journalDir(), 'orbit-gone.md'), LEGACY_JOURNAL);
+    mkdirSync(join(journalDir(), '.deleted'), { recursive: true });
+    writeFileSync(join(journalDir(), '.deleted', 'orbit-old--2026-10-19.md'), LEGACY_JOURNAL);
+  }
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+
+  it('knows which brains travel by git: brain sync on, or a journal git tracks', () => {
+    writeVault();
+    expect(journalsTravelByGit(ctx)).toBe(false); // no repo, no config
+    configWith({ enabled: true, mode: 'full-repo' });
+    expect(journalsTravelByGit(ctx)).toBe(true);
+    configWith({ enabled: false, mode: 'in-tree' });
+    git('init', '-q');
+    expect(journalsTravelByGit(ctx)).toBe(false); // a repo, the journals untracked
+    git('add', '_dream_context/state/journal/orbit-tiles.md');
+    expect(journalsTravelByGit(ctx)).toBe(true); // tracked: a move would push a deletion
+  });
+
+  it('folds every journal onto its card and moves none of them, orphans and .deleted included', async () => {
+    writeVault();
+    configWith({ enabled: true, mode: 'full-repo' });
+    const listed = readdirSync(journalDir()).sort();
+    const r = foldTaskJournals(ctx, { now: new Date('2026-10-20T12:00:00Z') });
+    expect(r.kept).toBe(true);
+    expect(r.failed).toEqual([]);
+    expect(r.folded.sort()).toEqual(['orbit-legend', 'orbit-tiles']);
+    expect(readFileSync(join(ctx, 'state', 'orbit-tiles.md'), 'utf-8')).toContain('### 2026-10-19 - Session Update\n- tiles land square at 1280');
+    expect(readdirSync(journalDir()).sort()).toEqual(listed);
+    expect(readFileSync(join(journalDir(), 'orbit-tiles.md'), 'utf-8')).toBe(V033_JOURNAL);
+    // The backup holds the pre-fold cards, and no journal (none moved).
+    expect(readdirSync(join(r.backupDir!, 'journal'))).toEqual([]);
+    expect(readFileSync(join(r.backupDir!, 'cards', 'orbit-tiles.md'), 'utf-8')).toBe(card('Orbit tiles'));
+    // Neither recall nor the lister reads a journal left in place.
+    expect(buildCorpus(ctx).filter((d) => d.relPath.startsWith('state/journal/'))).toEqual([]);
+    expect((await new LocalTaskBackend(join(ctx, 'state')).list()).length).toBe(2);
+  });
+
+  it('a later run is the cheap check and nothing else: no fold, no backup folder, no ledger entry', () => {
+    writeVault();
+    configWith({ enabled: true, mode: 'full-repo' });
+    const first = runMigrations(ctx, '0.32.0', '0.32.0');
+    expect(first.applied.map((e) => e.step)).toEqual(['fold-task-journals']);
+    expect(first.applied[0].summary).toMatch(/journals stay in state\/journal\//);
+    const cards = readFileSync(join(ctx, 'state', 'orbit-tiles.md'), 'utf-8');
+    const ledger = readLedger(ctx).length;
+    const folders = backups().length;
+    expect(hasTaskJournals(ctx)).toBe(false);
+    for (let i = 0; i < 3; i++) {
+      expect(runMigrations(ctx, '0.32.0', '0.32.0').applied).toEqual([]);
+      expect(foldTaskJournals(ctx).journals).toBe(0);
+    }
+    expect(readLedger(ctx).length).toBe(ledger);
+    expect(backups().length).toBe(folders);
+    expect(readFileSync(join(ctx, 'state', 'orbit-tiles.md'), 'utf-8')).toBe(cards);
+    // The stamp is this machine's: self-gitignored inside tmp/.
+    expect(readFileSync(join(ctx, 'tmp', 'journal-fold', '.gitignore'), 'utf-8')).toBe('*\n');
+  });
+
+  it('a checkout that only touches a journal re-reads it without folding it again (an entry removed since stays removed)', () => {
+    writeVault();
+    foldTaskJournals(ctx, { keepJournals: true });
+    const path = join(ctx, 'state', 'orbit-tiles.md');
+    const trimmed = readFileSync(path, 'utf-8').replace('### 2026-09-01 - Created\n- Task created.\n', '');
+    writeFileSync(path, trimmed);
+    utimesSync(join(journalDir(), 'orbit-tiles.md'), new Date('2026-10-21T00:00:00Z'), new Date('2026-10-21T00:00:00Z'));
+    expect(hasTaskJournals(ctx)).toBe(true); // the cheap check cannot know the content is the same
+    const r = foldTaskJournals(ctx, { keepJournals: true });
+    expect(r.entriesAdded).toBe(0);
+    expect(r.backupDir).toBeNull();
+    expect(readFileSync(path, 'utf-8')).toBe(trimmed);
+    expect(hasTaskJournals(ctx)).toBe(false);
+  });
+
+  it("a teammate's 0.33.0 adding to a journal, or an orphan's card arriving, is folded on the next run", () => {
+    writeVault();
+    foldTaskJournals(ctx, { keepJournals: true });
+    writeFileSync(join(journalDir(), 'orbit-tiles.md'), `### 2026-10-20 09:00 - log [je_Zz9yX8wV7u]\n- legend tiles too\n\n${V033_JOURNAL}`);
+    writeFileSync(join(ctx, 'state', 'orbit-gone.md'), card('Orbit gone'));
+    expect(hasTaskJournals(ctx)).toBe(true);
+    const r = foldTaskJournals(ctx, { keepJournals: true });
+    expect(r.folded.sort()).toEqual(['orbit-gone', 'orbit-tiles']);
+    expect(r.entriesAdded).toBe(1 + 2);
+    expect(readFileSync(join(ctx, 'state', 'orbit-tiles.md'), 'utf-8')).toContain('### 2026-10-20 - Session Update\n- legend tiles too');
+    expect(readFileSync(join(ctx, 'state', 'orbit-gone.md'), 'utf-8')).toContain('### 2026-09-03 - Session Update');
+    expect(hasTaskJournals(ctx)).toBe(false);
+  });
+
+  it('a brain that does not sync through git still moves its journals out (control)', () => {
+    writeVault();
+    configWith({ enabled: false, mode: 'in-tree' });
+    const r = foldTaskJournals(ctx);
+    expect(r.kept).toBe(false);
+    expect(existsSync(journalDir())).toBe(false);
   });
 });
 

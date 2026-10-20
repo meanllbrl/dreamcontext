@@ -11,8 +11,8 @@ import type { Migration, MigrationStepResult } from './types.js';
  * range can never reach it. It costs one directory check everywhere else and
  * reports `detected`, which the runner does not ledger.
  *
- * What it does, the backups it keeps and why the next sync posts nothing:
- * lib/task-journal-fold.ts. A busy lock or an unwritable card counts as failed
+ * What it does, the backups it keeps, why the next sync posts nothing and why a
+ * brain that syncs through git keeps its journals in place: lib/task-journal-fold.ts. A busy lock or an unwritable card counts as failed
  * (retried on the next run, nothing lost); a journal with no card is kept in
  * the backup and named, not counted as failed.
  */
@@ -38,14 +38,21 @@ export const migration0320: Migration = {
           parts.push(`${r.entriesRescued} log entr${r.entriesRescued === 1 ? 'y' : 'ies'} the reverted CLI had appended at the end of ${r.rescuedCards.length} card(s) moved into their Changelog (the next sync posts them as comments): ${r.rescuedCards.join(', ')}`);
         }
         if (r.ledgerSeeded > 0) parts.push(`sync ledger: ${r.ledgerSeeded} task(s) record that history as already posted, so no sync posts it again`);
-        if (r.orphans.length > 0) parts.push(`no card for ${r.orphans.length} journal(s), kept in the backup: ${r.orphans.join(', ')}`);
-        if (r.backupDir) parts.push(`journals and the cards they changed are in ${relative(root, r.backupDir)}/`);
+        if (r.kept) {
+          parts.push('this brain syncs through git, so the journals stay in state/journal/ (moving them would delete every teammate\'s copy); neither the task list nor recall reads them');
+          if (r.orphans.length > 0) parts.push(`no card for ${r.orphans.length} journal(s), left in place: ${r.orphans.join(', ')}`);
+          if (r.backupDir) parts.push(`the cards as they were before are in ${relative(root, r.backupDir)}/`);
+        } else {
+          if (r.orphans.length > 0) parts.push(`no card for ${r.orphans.length} journal(s), kept in the backup: ${r.orphans.join(', ')}`);
+          if (r.backupDir) parts.push(`journals and the cards they changed are in ${relative(root, r.backupDir)}/`);
+        }
       }
       for (const f of r.failed.slice(0, 5)) parts.push(`not folded: ${f.slug} (${f.reason})`);
       if (r.failed.length > 5) parts.push(`…and ${r.failed.length - 5} more not folded`);
       return {
         step,
-        filesTouched: r.folded.map((slug) => join(root, 'state', `${slug}.md`)),
+        // Kept journals: only the cards this run rewrote were touched (the journals stay).
+        filesTouched: (r.kept ? r.cardsWritten : r.folded).map((slug) => join(root, 'state', `${slug}.md`)),
         summary: parts.join('; '),
         detected: false,
         ...(r.failed.length > 0 ? { failedCount: r.failed.length } : {}),
