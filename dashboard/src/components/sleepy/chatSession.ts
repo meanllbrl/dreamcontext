@@ -2057,6 +2057,14 @@ export function createChatSession(
       emitSuper({ kind: 'event', eventKind: ev.eventKind, child: ev.child });
       return;
     }
+    // The owner typed on the Super Agent's other surface: their bubble here too, in order.
+    if (ev.kind === 'owner-echo') {
+      applyAndNotify(() => {
+        const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now() };
+        conv = { ...conv, items: [...conv.items, item] };
+      });
+      return;
+    }
     // Nor is a browser frame: it feeds the small live window in the browser step and nothing else,
     // so six frames a second never re-render the transcript (chat/browserLiveStore.ts).
     if (ev.kind === 'browser-frame') { pushBrowserFrame(session.id, ev.frame); return; }

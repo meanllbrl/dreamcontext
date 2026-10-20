@@ -80,7 +80,7 @@ import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, withBaseGeneration } from '../handsfree/rosterRehydrate';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
-import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire } from '../handsfree/macContract';
+import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire } from '../handsfree/macContract';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
@@ -2092,7 +2092,7 @@ export function AgentSurface() {
   // A conversation that IS already open is brought forward instead of resumed: two live
   // CLIs `--resume`d onto one transcript would interleave their appends, and neither
   // would see the other's turns.
-  const resumePastSession = useCallback((past: PastSession, reattach: '' | '1' = '') => {
+  const resumePastSession = useCallback((past: PastSession, reattach: '' | '1' | 'passive' = '') => {
     setHistoryOpen(false);
     setExpanded(true);
     // The Super Agent's conversation is never reopened as a tab: the hand-over button is its
@@ -2137,6 +2137,13 @@ export function AgentSurface() {
   // ── Mac mode: adopt a chat the Mac runs (the phone drawer's "Mac'te açık") ───────────
   const adoptLiveChat = useCallback((chat: LiveChatWire) => {
     resumePastSession({ id: chat.conversationId, title: chat.title || 'Chat', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, '1');
+  }, [resumePastSession]);
+  // The phone opens a handed-over Super Agent as an ordinary chat tab on its conversation. The
+  // Mac decides it is a MIRROR (agent-chat.ts `phoneSuperOpen`): never `reattach=1`, so not even a
+  // Mac that had stopped recognising the session would evict the window that holds it.
+  const openSuperOnPhone = useCallback((row: SuperChatWire) => {
+    // The product's name, the same in every language (`handsfree.super.title`).
+    resumePastSession({ id: row.conversationId, title: 'Super Agent', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, 'passive');
   }, [resumePastSession]);
   // A tap in another project's drawer parked the adoption for THIS project (macAdopt.ts):
   // taken once the roster has hydrated, so a restored tab of the same chat is reused.
@@ -4867,6 +4874,7 @@ export function AgentSurface() {
             onResume={(past) => { resumePastSession(past); setPhoneView('chat'); }}
             onNewChat={() => { addSession(claudeKind); setPhoneView('chat'); }}
             onExitToDashboard={() => { setMobileEscaped(true); setExpanded(false); }}
+            onOpenSuper={(row) => { openSuperOnPhone(row); setPhoneView('chat'); }}
           />
         )}
         {/* Each pane renders its OWN composer strip (files + skills + that agent's live
