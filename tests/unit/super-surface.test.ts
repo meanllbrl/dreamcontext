@@ -246,7 +246,8 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
 
   it('Allow, Deny and the option buttons go through one latch and are disabled once answered', () => {
     expect(strip).toMatch(/latch\.current = latchSeen\(latch\.current, answerKey, pendingPresent\);/);
-    expect(strip).toMatch(/const next = latchClick\(latch\.current, answerKey, child\?\.status === 'open'\);/);
+    // The answer rides the child's socket, or for the super agent's own ask its own (verify finding).
+    expect(strip).toMatch(/const carrier = head\?\.kind === 'ask' \? superSession : child;\n\s*const next = latchClick\(latch\.current, answerKey, carrier\?\.status === 'open'\);/);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'allow'/);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'deny'/);
     expect(strip).toMatch(/if \(picks\.ok\) answerOnce\(\(\) => child\.answerQuestion\(/);

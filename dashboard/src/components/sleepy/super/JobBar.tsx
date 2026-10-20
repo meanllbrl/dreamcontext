@@ -74,7 +74,9 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   const locked = answerKey !== null && latch.current.key === answerKey;
   const answerOnce = (send: () => void) => {
     if (!answerKey) return;
-    const next = latchClick(latch.current, answerKey, child?.status === 'open');
+    // The socket that carries the answer: the child's, or for the super agent's own `ask` its own.
+    const carrier = head?.kind === 'ask' ? superSession : child;
+    const next = latchClick(latch.current, answerKey, carrier?.status === 'open');
     latch.current = next.latch;
     if (!next.send) return;
     send();
