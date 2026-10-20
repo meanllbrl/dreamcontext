@@ -169,6 +169,11 @@ describe('what a phone open does about the Super Agent (AC2)', () => {
     expect(ask({ sessionId: SUPER, mode: 'super' })).toBe('mirror');
   });
 
+  it('an upper-case copy of the session id is the same session (review r2)', () => {
+    expect(ask({ resumeId: SUPER.toUpperCase(), mode: 'basic' })).toBe('mirror');
+    expect(ask({ resumeId: SUPER.toUpperCase(), index: off })).toBe('refuse');
+  });
+
   it('the handed-over session, not live: refused (never a resume that would race the window)', () => {
     expect(ask({ resumeId: SUPER, liveSuper: false })).toBe('refuse');
   });
@@ -348,6 +353,15 @@ describe('a phone mirror on the live super chat (AC2-AC5)', () => {
     expect(findLiveChat(SUPER)?.mirror?.(new FakeWs() as unknown as import('ws').WebSocket, DEVICE) ?? false).toBe(false);
   });
 
+  it('closeMirrors (the take-back) closes every mirror with 4410 and leaves the window', async () => {
+    await record({ enabled: true });
+    const { ws } = startSuper();
+    const phone = mirror();
+    findLiveChat(SUPER)?.closeMirrors?.();
+    expect(phone.close).toHaveBeenCalledWith(MIRROR_CLOSE_ENDED, expect.any(String));
+    expect(ws.close).not.toHaveBeenCalled();
+  });
+
   it('a non-super chat takes no mirror; a super chat at most a few devices, refused before the handshake', async () => {
     await record({ enabled: true });
     startSuper();
@@ -390,10 +404,20 @@ describe('a mirror\'s lifetime (review r1)', () => {
     expect(branch).toMatch(/rejectUpgrade\(socket, 503\)/);
   });
 
-  it('a phone frame with no window attached is never held for an account switch', async () => {
+  it('a phone frame with no window attached is never held for an account switch, even after a D8 hold', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../../src/server/routes/agent-chat.ts', import.meta.url), 'utf-8');
-    expect(src).toMatch(/mirrorFrameUnheld = detached;/);
-    expect(src).toMatch(/const unheld = mirrorFrameUnheld;\s*switchGate = switchGate\.then\(\(\) => \(unheld \? Promise\.resolve\(false\) : maybeSwitchAccount\(text\)\)/);
+    // The mark rides on the frame (it survives heldOwnerFrames and a successor's replay) and
+    // `detached` is read when the gate reaches the frame.
+    expect(src).toMatch(/const frame = Buffer\.from\(raw, 'utf-8'\);\s*mirrorFrames\.add\(frame\);\s*onWsMessage\(frame\);/);
+    expect(src).toMatch(/const fromMirror = typeof raw !== 'string' && mirrorFrames\.has\(raw\);\s*switchGate = switchGate\.then\(\(\) => \(fromMirror && detached \? Promise\.resolve\(false\) : maybeSwitchAccount\(text\)\)/);
+    expect(src).not.toMatch(/mirrorFrameUnheld/);
+  });
+
+  it('the take-back closes the phone mirrors even if the window keeps the parked child', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../../src/server/routes/super.ts', import.meta.url), 'utf-8');
+    const disable = src.slice(src.indexOf('disable: async'), src.indexOf('layout: async'));
+    expect(disable).toMatch(/findLiveChat\(state\.session\)\?\.closeMirrors\?\.\(\)/);
   });
 });

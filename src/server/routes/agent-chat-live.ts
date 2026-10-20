@@ -96,6 +96,8 @@ export interface LiveChatEntry {
   mirror?: (ws: import('ws').WebSocket, device: { store: 'mac'; idHash: string }) => boolean;
   /** Is there room for this device's mirror (its own earlier one is replaced)? */
   mirrorRoom?: (device: { store: 'mac'; idHash: string }) => boolean;
+  /** Close every phone mirror (the take-back: the phone talks to the Super Agent no more). */
+  closeMirrors?: () => void;
 }
 
 /** How long a cut child gets between SIGTERM and SIGKILL. */

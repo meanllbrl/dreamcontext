@@ -708,6 +708,9 @@ const deviceSessions = new Set<{ device: () => DeviceTag | null; revoke: () => v
 /** The phone mirrors of every live Super Agent (lib/super/phone-mirror.ts): closed by the same
  *  revocation and return as the sessions above. */
 const superMirrorSets = new Set<MirrorSet<DeviceTag>>();
+/** Owner frames that came from a phone mirror (they are re-fed after a D8 hold or to a
+ *  successor; the mark rides on the frame itself). */
+const mirrorFrames = new WeakSet<Buffer>();
 let deviceRevocationArmed = false;
 
 export function tagDeviceSocket(ws: object, tag: DeviceTag): void {
@@ -1815,17 +1818,17 @@ export function startChatSession(
         // Never into a stdin that is ending (a drain or respawn closes the mirrors, this is the
         // race before it).
         if (!alive || stdinEnding()) return;
-        // With no window attached nobody could perform an account switch's restart, so a held
-        // text would die with the idle reap: the phone's words go out on this account.
-        mirrorFrameUnheld = detached;
-        try { onWsMessage(raw); } finally { mirrorFrameUnheld = false; }
+        // The frame carries where it came from (a Buffer the set knows), so the mark survives
+        // the D8 hold and a successor's replay: see `fromMirror` in the user branch.
+        const frame = Buffer.from(raw, 'utf-8');
+        mirrorFrames.add(frame);
+        onWsMessage(frame);
       },
       holder: () => (alive && !detached && ws.readyState === ws.OPEN ? ws : null),
       key: (d) => d.idHash,
     })
     : null;
-  /** Set while a mirror's frame is handed to `onWsMessage` and no window holds the child. */
-  let mirrorFrameUnheld = false;
+
   if (mirrors) superMirrorSets.add(mirrors);
   const windowControl = !isAssistant && !card
     ? mintWindowToken({
@@ -2056,6 +2059,7 @@ export function startChatSession(
     ...(mirrors ? {
       mirror: (sock: import('ws').WebSocket, device: DeviceTag) => addMirror(sock, device),
       mirrorRoom: (device: DeviceTag) => mirrors.room(device),
+      closeMirrors: () => { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super taken back'); },
     } : {}),
   } : null;
   if (live) registerLiveChat(live);
@@ -3512,8 +3516,11 @@ export function startChatSession(
       // now behind a human turn, so the taint clears (autonomy.ts).
       if (isAssistant) clearTaint();
       // Appended to the chain, never fired concurrently — see `switchGate`.
-      const unheld = mirrorFrameUnheld;
-      switchGate = switchGate.then(() => (unheld ? Promise.resolve(false) : maybeSwitchAccount(text))
+      // A phone's words with no window attached WHEN THE GATE REACHES THEM: nobody could perform
+      // an account switch's restart, so a held text would die with the idle reap. They go out on
+      // this account instead (decided here, after any D8 hold, not when they arrived).
+      const fromMirror = typeof raw !== 'string' && mirrorFrames.has(raw);
+      switchGate = switchGate.then(() => (fromMirror && detached ? Promise.resolve(false) : maybeSwitchAccount(text))
         // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
         // never swallowed" would hold for every decision the chooser can make and fail for
         // the one case nobody planned: an unexpected error on the way to making it.

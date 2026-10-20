@@ -227,8 +227,9 @@ export function phoneSuperOpen(o: {
 }): 'mirror' | 'refuse' | 'pass' {
   // The RECORDED session, handed over or parked: a phone never adopts, resumes or respawns it
   // (a parked super child it took would hold the session from the next hand-over).
-  const session = o.index.session;
-  const names = !!session && (o.resumeId === session || o.sessionId === session);
+  // Case-blind: an id is a UUID, and an upper-case copy must not slip past as "another chat".
+  const session = o.index.session?.toLowerCase() ?? null;
+  const names = !!session && (o.resumeId.toLowerCase() === session || o.sessionId.toLowerCase() === session);
   if (names) return o.index.enabled && o.liveSuper ? 'mirror' : 'refuse';
   return o.mode === 'super' ? 'refuse' : 'pass';
 }
