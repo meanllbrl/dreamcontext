@@ -10,3 +10,60 @@
 :is([data-super-tone='asking'], .super-card-frame:has(.super-tile[data-super-tone='asking'])) { --tone: var(--mood-waiting); }
 :is([data-super-tone='ended'], .super-card-frame:has(.super-tile[data-super-tone='ended'])) { --tone: var(--color-error); }
 :is([data-super-tone='starting'], .super-card-frame:has(.super-tile[data-super-tone='starting'])) { --tone: var(--color-warning); }
+
+/* ── A working tile's border ring (owner 2026-10-21) ───────────────────────────────────
+   Motion carries "working"; the colour stays the state's tone (orthogonal channels). A masked
+   2 px band on the tile's edge holds a conic arc that only ROTATES (transform: composited,
+   stepped by lib/motionClock.ts at 15 fps like every endless animation). It is a status the
+   owner reads at a glance in THIS window, so it rests when the window is not focused or Light
+   mode is on (the ambient variable: name `none`), and pauses when hidden. At rest the band is
+   a closed ring (the ::after's base style); under reduced motion a still arc. At most
+   MAX_SPINNING tiles turn at once (spinSlots.ts); the others show the closed ring. */
+.super-tile-spin {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--radius-xl);
+  padding: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.super-tile-spin::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150%;
+  aspect-ratio: 1;
+  background: conic-gradient(var(--tone) 0turn 0.3turn, transparent 0.3turn 1turn);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+}
+.super-tile-spin::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--tone) 70%, transparent);
+}
+.super-tile-spin[data-spin='on']::before {
+  animation: var(--dc-motion-ambient-name, superTileSpin) 1.4s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+.super-tile-spin[data-spin='on']::after {
+  animation: var(--dc-motion-ambient-name, superTileSpinClosed) 1.4s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+@keyframes superTileSpin {
+  from { transform: translate(-50%, -50%) rotate(0turn); opacity: 1; }
+  to { transform: translate(-50%, -50%) rotate(1turn); opacity: 1; }
+}
+@keyframes superTileSpinClosed {
+  from, to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .super-tile-spin[data-spin='on']::before { opacity: 1; }
+  .super-tile-spin[data-spin='on']::after { opacity: 0; }
+}

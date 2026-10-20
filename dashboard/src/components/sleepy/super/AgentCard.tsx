@@ -4,6 +4,7 @@ import { pollMs } from '../../../lib/windowActivity';
 import type { SuperChild } from '../../../lib/superTypes';
 import type { SessionStatusInfo, SessionStatusKind } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
+import { useSpinSlot } from './spinSlots';
 import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, modelChip, toneOfStatus, type DoingLine } from './superHandover';
 
 /**
@@ -102,9 +103,14 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
   const bgCount = bg.shells + bg.agents;
   // The model it really runs (owner 2026-10-21), where the kind word stood: a chat tile is a chat.
   const chip = childModelChip(session, child);
+  // While it works, a thin ring turns on its border (motion carries "working", the colour the
+  // state): one of at most MAX_SPINNING at a time, the rest drawn closed (spinSlots.ts).
+  const working = status.kind === 'working';
+  const spin = useSpinSlot(child?.sessionId ?? session?.claudeId ?? '', working);
   return (
     <div className="super-tile" data-tile="chat" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)} title={child?.branch ? `${title}\n${child.branch}` : title}>
       <span className="super-tile-corners" aria-hidden />
+      {working && <span className="super-tile-spin" data-spin={spin ? 'on' : 'closed'} data-testid="super-tile-spin" aria-hidden />}
       <div className="super-tile-top">
         <StatusRing kind={status.kind} />
         {chip

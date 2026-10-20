@@ -155,7 +155,8 @@ describe('the ONE status tone (owner 2026-10-21)', () => {
     expect(['working', 'ready', 'saved', 'asking', 'ended', 'starting'].map(toneOfStatus)).toEqual(['working', 'idle', 'idle', 'asking', 'ended', 'starting']);
     expect((['working', 'asking', 'done', 'stuck', 'gone'] as const).map(toneOfRow)).toEqual(['working', 'asking', 'idle', 'ended', 'ended']);
     const tone = read(`${SUPER}/superTone.css`).replace(/\/\*[\s\S]*?\*\//g, '');
-    expect(tone).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|hsl\(/i);
+    // Colours are tokens; the only literal is the ring band's alpha mask (`#000`, not a colour).
+    expect(tone.replace(/^\s*(-webkit-)?mask:[^;]*;$/gm, '')).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|hsl\(/i);
     const map = Object.fromEntries([...tone.matchAll(/\[data-super-tone='(\w+)'\][^{]*\{ --tone: (var\([^)]+\)); \}/g)].map((m) => [m[1], m[2]]));
     expect(map).toEqual({ working: 'var(--color-success)', idle: 'var(--color-accent)', asking: 'var(--mood-waiting)', ended: 'var(--color-error)', starting: 'var(--color-warning)' });
   });
@@ -222,5 +223,29 @@ describe('geometry and font', () => {
     const css = read(`${SUPER}/superCentre.css`).replace(/\/\*[\s\S]*?\*\//g, '');
     expect(css.trim()).toBe("[data-super-slot='centre'] .chat-pane {\n  --chat-text: calc(17px * var(--zoom, 1));\n  --font-size-md: calc(15px * var(--zoom, 1));\n}");
     expect(read(`${SUPER}/SuperSurface.tsx`)).toMatch(/import '\.\/superCentre\.css';/);
+  });
+});
+
+describe('a working tile\'s border ring (owner 2026-10-21)', () => {
+  it('rotates only (transform), on the motion contract, rests closed, still arc under reduced motion', () => {
+    const css = read(`${SUPER}/superTone.css`);
+    expect(css).toMatch(/@keyframes superTileSpin \{\n\s*from \{ transform: translate\(-50%, -50%\) rotate\(0turn\); opacity: 1; \}\n\s*to \{ transform: translate\(-50%, -50%\) rotate\(1turn\); opacity: 1; \}/);
+    // Rests when the window is not focused (or Light mode), pauses hidden: the ambient name.
+    expect(css).toMatch(/\.super-tile-spin\[data-spin='on'\]::before \{\n\s*animation: var\(--dc-motion-ambient-name, superTileSpin\) 1\.4s linear infinite;\n\s*animation-play-state: var\(--dc-motion-play, running\);/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\n\s*\.super-tile-spin\[data-spin='on'\]::before \{ opacity: 1; \}/);
+    const card = read(`${SUPER}/AgentCard.tsx`);
+    expect(card).toMatch(/\{working && <span className="super-tile-spin" data-spin=\{spin \? 'on' : 'closed'\}/);
+  });
+
+  it('at most MAX_SPINNING turn at once; a freed slot passes to the next', async () => {
+    const { MAX_SPINNING, claimSpin, releaseSpin, spinAllowed, _resetSpinSlots } = await import('../../dashboard/src/components/sleepy/super/spinSlots.js');
+    _resetSpinSlots();
+    const ids = Array.from({ length: MAX_SPINNING + 2 }, (_, i) => `c${i}`);
+    for (const id of ids) claimSpin(id);
+    expect(ids.filter(spinAllowed)).toEqual(ids.slice(0, MAX_SPINNING));
+    releaseSpin('c1');
+    expect(ids.filter(spinAllowed)).toEqual(['c0', 'c2', 'c3', 'c4']);
+    expect(MAX_SPINNING).toBe(4);
+    _resetSpinSlots();
   });
 });
