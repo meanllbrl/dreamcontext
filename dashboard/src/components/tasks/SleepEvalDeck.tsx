@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { phoneAllows } from '../../lib/phoneSurface';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
+import { createDeckSubmitter, type DeckSubmitter } from './sleepEvalSubmit';
 import './SleepEvalDeck.css';
 
 /**
@@ -162,6 +163,14 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
     },
   });
 
+  // One answer per card: taken before the save, given back once the card has left (see
+  // sleepEvalSubmit.ts). React state is a render late; a held key or a fast second tap is not.
+  const submitter = useRef<DeckSubmitter<LabelInput> | null>(null);
+  const saveRef = useRef(save.mutateAsync);
+  saveRef.current = save.mutateAsync;
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const advance = useCallback((dir: 'left' | 'right') => {
     setLeaving(dir);
     window.setTimeout(() => {
@@ -171,28 +180,35 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
       setRejecting(null);
       setNote('');
       setWhyOpen(false);
+      submitter.current?.release();
     }, 180);
   }, []);
 
-  const submit = useCallback(async (input: LabelInput, dir: 'left' | 'right') => {
+  if (!submitter.current) {
+    submitter.current = createDeckSubmitter<LabelInput>({
+      save: (input) => saveRef.current(input),
+      advance,
+      onError: (e) => {
+        setDx(0);
+        setError((e as Error).message || tRef.current('sleepEval.error'));
+      },
+    });
+  }
+
+  const submit = useCallback((input: LabelInput, dir: 'left' | 'right') => {
+    if (submitter.current?.busy) return;
     setError(null);
-    try {
-      await save.mutateAsync(input);
-      advance(dir);
-    } catch (e) {
-      setDx(0);
-      setError((e as Error).message || t('sleepEval.error'));
-    }
-  }, [save, advance, t]);
+    void submitter.current?.submit(input, dir);
+  }, []);
 
   const choose = useCallback((a: Answer | undefined) => {
-    if (!card || !a || save.isPending) return;
+    if (!card || !a || save.isPending || submitter.current?.busy) return;
     if (a.needsReason) {
       setDx(0);
       setRejecting(a);
       return;
     }
-    void submit({ id: card.id, ...a.input }, a.tone === 'reject' ? 'left' : 'right');
+    submit({ id: card.id, ...a.input }, a.tone === 'reject' ? 'left' : 'right');
   }, [card, save.isPending, submit]);
 
   const first = answers[0];
@@ -201,7 +217,8 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { if (rejecting) setRejecting(null); else onClose(); return; }
-      if (rejecting || (e.target instanceof HTMLElement && e.target.closest('textarea, input'))) return;
+      // A held key repeats: one press is one answer.
+      if (e.repeat || rejecting || (e.target instanceof HTMLElement && e.target.closest('textarea, input'))) return;
       if (e.key === 'ArrowRight') { e.preventDefault(); choose(first); }
       if (e.key === 'ArrowLeft') { e.preventDefault(); choose(last); }
       const n = Number(e.key);
@@ -212,16 +229,17 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
   }, [choose, first, last, answers, rejecting, onClose]);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (rejecting || save.isPending || (e.target as HTMLElement).closest('button, textarea')) return;
+    if (rejecting || leaving || save.isPending || submitter.current?.busy || (e.target as HTMLElement).closest('button, textarea')) return;
     drag.current = { x: e.clientX, id: e.pointerId };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (drag.current?.id === e.pointerId) setDx(e.clientX - drag.current.x);
+    if (!leaving && drag.current?.id === e.pointerId) setDx(e.clientX - drag.current.x);
   };
   const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (drag.current?.id !== e.pointerId) return;
     drag.current = null;
+    if (leaving) return;
     if (dx > SWIPE_COMMIT_PX) choose(first);
     else if (dx < -SWIPE_COMMIT_PX) choose(last);
     else setDx(0);
@@ -265,7 +283,8 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
           <>
             <div
               className={`se-card${leaving ? ' se-card-leaving' : ''}${dx === 0 && !leaving ? ' se-card-rest' : ''}`}
-              style={{ transform: `translateX(${offset}px) rotate(${offset / 24}deg)` }}
+              // While the answered card slides out, it takes no input at all.
+              style={{ transform: `translateX(${offset}px) rotate(${offset / 24}deg)`, pointerEvents: leaving ? 'none' : undefined }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
@@ -322,8 +341,8 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
                         key={r}
                         type="button"
                         className="se-reason"
-                        disabled={save.isPending}
-                        onClick={() => card && void submit({ id: card.id, ...rejecting.input, reason: r, note: note.trim() || undefined }, 'left')}
+                        disabled={save.isPending || !!leaving}
+                        onClick={() => card && submit({ id: card.id, ...rejecting.input, reason: r, note: note.trim() || undefined }, 'left')}
                       >
                         {t(`sleepEval.reason.${r}`)}
                       </button>
@@ -345,7 +364,7 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
                       key={a.key}
                       type="button"
                       className={`se-answer se-answer-${a.tone}`}
-                      disabled={save.isPending}
+                      disabled={save.isPending || !!leaving}
                       onClick={() => choose(a)}
                     >
                       <span className="se-answer-key" aria-hidden="true">{i + 1}</span>
