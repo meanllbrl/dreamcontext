@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
-import { useVoiceCapture } from '../../../lib/voice/useVoiceCapture';
+import { useVoiceCapture, PHONE_MAX_TAKE_MS } from '../../../lib/voice/useVoiceCapture';
 import { publishVoiceActivity, publishVoiceLevel } from '../../../lib/voice/voiceActivity';
 import { VoiceMeter } from './VoiceMeter';
 import {
@@ -1364,7 +1364,7 @@ export function Composer({
     return () => { levelSubsRef.current.delete(fn); };
   }, []);
 
-  const voice = useVoiceCapture({ vault, onTranscript, onLevel });
+  const voice = useVoiceCapture({ vault, onTranscript, onLevel, ...(phoneVoice ? { maxMs: PHONE_MAX_TAKE_MS } : {}) });
 
   // The capture state, published for a surface that draws it bigger (lib/voice/voiceActivity.ts).
   useEffect(() => {

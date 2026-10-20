@@ -52,4 +52,11 @@ describe('the phone composer\'s mic', () => {
     expect(capture).toMatch(/fetch\('\/api\/agent\/voice\/stt'/);
     expect(capture).toMatch(/wavFromTake\(/);
   });
+
+  it('the phone\'s take ends and is sent at its cap, like a release; the laptop has none (edge-cases review)', () => {
+    expect(composer).toMatch(/useVoiceCapture\(\{ vault, onTranscript, onLevel, \.\.\.\(phoneVoice \? \{ maxMs: PHONE_MAX_TAKE_MS \} : \{\}\) \}\)/);
+    const capture = code('dashboard/src/lib/voice/useVoiceCapture.ts');
+    expect(capture).toMatch(/if \(maxMsRef\.current && ms >= maxMsRef\.current\) stopRef\.current\(\);/);
+    expect(capture).toMatch(/stopRef\.current = stop;/);
+  });
 });

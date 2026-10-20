@@ -211,3 +211,19 @@ describe('a forged header over the tunnel (review r1)', () => {
     expect(inference).not.toHaveBeenCalled();
   });
 });
+
+describe('a long phone take (edge-cases review)', () => {
+  it('the inference budget grows with the take: a 2-minute message is not timed out at 15 s', async () => {
+    const { inferenceTimeoutMs } = await import('../../src/lib/voice/whisper.js');
+    expect(inferenceTimeoutMs(0)).toBe(15_000);
+    expect(inferenceTimeoutMs(96_000)).toBe(16_200);
+    expect(inferenceTimeoutMs(120 * 32_000)).toBe(63_000);
+  });
+  it('the phone ends and sends its take before the Mac\'s cap (the margin is held here)', async () => {
+    const { PHONE_MAX_TAKE_MS } = await import('../../dashboard/src/lib/voice/useVoiceCapture.js');
+    expect(PHONE_MAX_TAKE_MS).toBeLessThan(PHONE_MAX_STT_SECONDS * 1000);
+    expect(PHONE_MAX_STT_SECONDS * 1000 - PHONE_MAX_TAKE_MS).toBeGreaterThanOrEqual(3_000);
+    // …and its bytes stay under the phone's body cap, so the Mac answers 413, never a reset.
+    expect((PHONE_MAX_TAKE_MS / 1000) * 32_000 + 44).toBeLessThan(PHONE_MAX_STT_BYTES);
+  });
+});
