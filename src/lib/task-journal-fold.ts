@@ -240,11 +240,62 @@ function atomicWrite(path: string, content: string): void {
   renameSync(tmp, path);
 }
 
+/** Anything at all at `path`, a dangling symlink included (existsSync follows links). */
+function pathTaken(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface JournalSet {
+  dir: string;
+  /** Real `.md` files: no dotfiles, no symlinks, no directories. */
+  files: string[];
+  /** `.deleted/` when it is a real directory. */
+  deletedDir: string | null;
+}
+
+/**
+ * What `state/journal/` holds that the fold acts on. The ONE predicate: the cheap
+ * check (`hasTaskJournals`) and the fold read the same set, so a symlink or a
+ * directory named `x.md` can never make the check say "work" while the fold finds
+ * none (which used to cost a fresh, empty backup folder on every run).
+ */
+function listJournals(contextRoot: string): JournalSet | null {
+  const dir = join(contextRoot, 'state', 'journal');
+  if (!isRealDir(dir)) return null;
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith('.md') && !f.startsWith('.') && isRealFile(join(dir, f)))
+    .sort()
+    .map((f) => join(dir, f));
+  const deleted = join(dir, '.deleted');
+  return { dir, files, deletedDir: isRealDir(deleted) ? deleted : null };
+}
+
 /** True when `state/journal/` holds anything this fold would act on. Cheap: no file is read. */
 export function hasTaskJournals(contextRoot: string): boolean {
-  const dir = join(contextRoot, 'state', 'journal');
-  if (!isRealDir(dir)) return false;
-  return isRealDir(join(dir, '.deleted')) || readdirSync(dir).some((f) => f.endsWith('.md') && !f.startsWith('.'));
+  const j = listJournals(contextRoot);
+  return j !== null && (j.files.length > 0 || j.deletedDir !== null);
+}
+
+/**
+ * `tmp/` may receive the backup only as a real directory, or by being created.
+ * A symlink there (or a file) would send the pre-fold cards and the sync ledger
+ * wherever it points, so the fold refuses before it writes anything.
+ */
+function tmpRefusal(contextRoot: string): string | null {
+  const tmp = join(contextRoot, 'tmp');
+  try {
+    const st = lstatSync(tmp);
+    if (st.isSymbolicLink()) return 'tmp/ is a symlink: the backup would land wherever it points';
+    if (!st.isDirectory()) return 'tmp/ is not a directory';
+    return null;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? null : `tmp/ cannot be read: ${(err as Error).message}`;
+  }
 }
 
 export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {}): JournalFoldReport {
@@ -252,16 +303,18 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
     journals: 0, folded: [], entriesAdded: 0, entriesPresent: 0, entriesRescued: 0, rescuedCards: [], orphans: [], failed: [],
     ledgerSeeded: 0, backupDir: null, lockBusy: false,
   };
-  if (!hasTaskJournals(contextRoot)) return report;
-
+  const set = listJournals(contextRoot);
+  if (!set || (set.files.length === 0 && !set.deletedDir)) return report;
+  const { dir: journalDir, files, deletedDir } = set;
   const stateDir = join(contextRoot, 'state');
-  const journalDir = join(stateDir, 'journal');
-  const deletedDir = join(journalDir, '.deleted');
-  const files = readdirSync(journalDir)
-    .filter((f) => f.endsWith('.md') && !f.startsWith('.') && isRealFile(join(journalDir, f)))
-    .sort()
-    .map((f) => join(journalDir, f));
   report.journals = files.length;
+
+  const refused = tmpRefusal(contextRoot);
+  if (refused) {
+    for (const f of files) report.failed.push({ slug: basename(f, '.md'), reason: refused });
+    if (files.length === 0) report.failed.push({ slug: '.deleted', reason: refused });
+    return report;
+  }
 
   const now = opts.now ?? new Date();
   // The day 0.33.0 split the cards: no CLI-shaped entry at a card's end dated from
@@ -276,14 +329,19 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
   }
 
   try {
+    // Created the first time something is about to be written into it, never before:
+    // a run that writes nothing leaves no folder behind.
     const stamp = now.toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    let backupDir = join(contextRoot, 'tmp', `folded-journals-${stamp}`);
-    for (let n = 2; existsSync(backupDir); n++) backupDir = join(contextRoot, 'tmp', `folded-journals-${stamp}-${n}`);
-    mkdirSync(join(backupDir, 'journal'), { recursive: true });
-    writeFileSync(join(backupDir, '.gitignore'), '*\n', 'utf-8');
-    report.backupDir = backupDir;
+    const backup = (): string => {
+      if (report.backupDir) return report.backupDir;
+      let dir = join(contextRoot, 'tmp', `folded-journals-${stamp}`);
+      for (let n = 2; pathTaken(dir); n++) dir = join(contextRoot, 'tmp', `folded-journals-${stamp}-${n}`);
+      mkdirSync(join(dir, 'journal'), { recursive: true });
+      writeFileSync(join(dir, '.gitignore'), '*\n', 'utf-8');
+      report.backupDir = dir;
+      return dir;
+    };
     const syncFile = join(stateDir, '.tasks-sync.json');
-    if (existsSync(syncFile)) cpSync(syncFile, join(backupDir, '.tasks-sync.json'));
 
     const done: Array<{ slug: string; file: string; journal: string; live: boolean; before: string; after: string; rescued: boolean }> = [];
     for (const file of files) {
@@ -301,7 +359,7 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
           const before = readFileSync(cardPath, 'utf-8');
           const fold = foldJournalIntoCard(before, journal, { rescueSince });
           if (fold.text !== before) {
-            const copy = join(backupDir, 'cards', cardPath === live ? `${slug}.md` : join('archive', `${slug}.md`));
+            const copy = join(backup(), 'cards', cardPath === live ? `${slug}.md` : join('archive', `${slug}.md`));
             mkdirSync(dirname(copy), { recursive: true });
             writeFileSync(copy, before, 'utf-8');
             atomicWrite(cardPath, fold.text);
@@ -326,7 +384,7 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
     // between the two leaves the journals in place, and the rerun (which adds
     // nothing to the cards) seeds again and then moves them.
     try {
-      report.ledgerSeeded = seedSyncLedger(ledger, syncFile, done);
+      report.ledgerSeeded = seedSyncLedger(ledger, syncFile, done, () => cpSync(syncFile, join(backup(), '.tasks-sync.json')));
     } catch (err) {
       for (const d of done) report.failed.push({ slug: d.slug, reason: `sync ledger not updated: ${(err as Error).message}` });
       return report;
@@ -334,7 +392,7 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
 
     const move = (from: string, slug: string): boolean => {
       try {
-        renameSync(from, join(backupDir, 'journal', basename(from)));
+        renameSync(from, join(backup(), 'journal', basename(from)));
         return true;
       } catch (err) {
         report.failed.push({ slug, reason: `journal not moved: ${(err as Error).message}` });
@@ -343,7 +401,7 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
     };
     for (const d of done) if (move(d.file, d.slug)) report.folded.push(d.slug);
     for (const slug of report.orphans) move(join(journalDir, `${slug}.md`), slug);
-    if (isRealDir(deletedDir)) move(deletedDir, '.deleted');
+    if (deletedDir) move(deletedDir, '.deleted');
     try { rmdirSync(journalDir); } catch { /* not empty: what failed stays for the retry */ }
   } finally {
     ledger.releaseSyncLock();
@@ -356,6 +414,8 @@ function seedSyncLedger(
   ledger: SyncLedger,
   syncFile: string,
   done: Array<{ slug: string; journal: string; live: boolean; before: string; after: string; rescued: boolean }>,
+  /** Keeps a copy of the ledger as it was, called once, right before it is rewritten. */
+  beforeWrite: () => void,
 ): number {
   if (!existsSync(syncFile)) return 0;
   const state = ledger.readSyncState();
@@ -379,6 +439,9 @@ function seedSyncLedger(
     }
     if (changed) seeded++;
   }
-  if (seeded > 0) ledger.writeSyncState(state);
+  if (seeded > 0) {
+    beforeWrite();
+    ledger.writeSyncState(state);
+  }
   return seeded;
 }

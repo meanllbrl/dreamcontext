@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { convertJournalHeading, canonicalEntry, convertJournalText, MAX_HEADING_LINE } from '../../src/lib/task-backend/legacy-journal.js';
 import { unionChangelog } from '../../src/lib/task-backend/merge.js';
 import { normalizeEntry } from '../../src/lib/task-backend/clickup-map.js';
-import { foldJournalIntoCard, foldTaskJournals } from '../../src/lib/task-journal-fold.js';
+import { foldJournalIntoCard, foldTaskJournals, hasTaskJournals } from '../../src/lib/task-journal-fold.js';
 import { hashContent } from '../../src/lib/task-backend/sync-state.js';
 import { LocalTaskBackend } from '../../src/lib/task-backend/local.js';
 import { GitHubTaskBackend } from '../../src/lib/task-backend/github.js';
@@ -315,6 +315,59 @@ describe('foldTaskJournals on a vault', () => {
     const ledger = readLedger(ctx).length;
     expect(runMigrations(ctx, '0.32.0', '0.32.0').applied).toEqual([]);
     expect(readLedger(ctx).length).toBe(ledger);
+  });
+
+  const backups = () => (existsSync(join(ctx, 'tmp')) ? readdirSync(join(ctx, 'tmp')).filter((f) => f.startsWith('folded-journals-')) : []);
+
+  it('a journal folder holding no real journal is no work: no backup folder and no ledger entry, however often it runs', () => {
+    writeFileSync(join(root, 'elsewhere.md'), LEGACY_JOURNAL);
+    symlinkSync(join(root, 'elsewhere.md'), join(ctx, 'state', 'journal', 'orbit-link.md'));
+    mkdirSync(join(ctx, 'state', 'journal', 'orbit-dir.md'));
+    expect(hasTaskJournals(ctx)).toBe(false);
+    for (let i = 0; i < 3; i++) {
+      expect(foldTaskJournals(ctx).backupDir).toBeNull();
+      expect(runMigrations(ctx, '0.32.0', '0.32.0').applied).toEqual([]);
+    }
+    expect(backups()).toEqual([]);
+  });
+
+  it('a run that writes nothing (its only card unreadable) leaves no backup folder behind, run after run', () => {
+    writeFileSync(join(ctx, 'state', 'orbit-tiles.md'), card('Orbit tiles'));
+    writeFileSync(join(ctx, 'state', 'journal', 'orbit-tiles.md'), V033_JOURNAL);
+    writeFileSync(join(ctx, 'state', '.tasks-sync.json'), JSON.stringify({ version: 1, watermark: null, tasks: {} }));
+    chmodSync(join(ctx, 'state', 'orbit-tiles.md'), 0o000);
+    try {
+      for (let i = 0; i < 3; i++) {
+        const r = foldTaskJournals(ctx);
+        expect(r.failed.map((f) => f.slug)).toEqual(['orbit-tiles']);
+        expect(r.backupDir).toBeNull();
+      }
+      expect(backups()).toEqual([]);
+      expect(readFileSync(join(ctx, 'state', 'journal', 'orbit-tiles.md'), 'utf-8')).toBe(V033_JOURNAL);
+    } finally {
+      chmodSync(join(ctx, 'state', 'orbit-tiles.md'), 0o644);
+    }
+  });
+
+  it('refuses a tmp/ that is a symlink (or a file): every journal reported, nothing written anywhere', () => {
+    writeVault();
+    const outside = join(root, 'outside');
+    mkdirSync(outside);
+    symlinkSync(outside, join(ctx, 'tmp'));
+    const r = foldTaskJournals(ctx);
+    expect(r.backupDir).toBeNull();
+    expect(r.failed.map((f) => f.slug).sort()).toEqual(['orbit-gone', 'orbit-legend', 'orbit-tiles', 'orbit-v1']);
+    expect(r.failed.every((f) => /tmp\/ is a symlink/.test(f.reason))).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(readFileSync(join(ctx, 'state', 'orbit-tiles.md'), 'utf-8')).toBe(card('Orbit tiles'));
+    expect(readdirSync(join(ctx, 'state', 'journal')).filter((f) => f.endsWith('.md')).length).toBe(4);
+
+    rmSync(join(ctx, 'tmp'));
+    writeFileSync(join(ctx, 'tmp'), 'not a folder');
+    const again = foldTaskJournals(ctx);
+    expect(again.failed.length).toBe(4);
+    expect(again.failed[0].reason).toMatch(/tmp\/ is not a directory/);
+    expect(readFileSync(join(ctx, 'state', 'orbit-tiles.md'), 'utf-8')).toBe(card('Orbit tiles'));
   });
 
   it('a vault that never had journals gets no ledger entry and no ledger file', () => {
