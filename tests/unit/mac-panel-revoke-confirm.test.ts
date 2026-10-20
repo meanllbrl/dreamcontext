@@ -40,4 +40,15 @@ describe('Mac panel: Sign all out asks first', () => {
     }
     expect(I18N).toContain("'handsfree.mac.revokeAllConfirmTitle': 'Bütün telefonlar çıkarılsın mı?'");
   });
+
+  it('every string the confirmation shows, its buttons included, exists in English and Turkish', () => {
+    // The cancel button reads common.cancel: with no Turkish it fell back to "Cancel".
+    const trAt = I18N.indexOf('const TR_PARTIAL');
+    const keys = [...revokeAllBody().matchAll(/\bt\('([\w.-]+)'\)/g)].map((m) => m[1]);
+    expect(keys).toContain('common.cancel');
+    for (const key of keys) {
+      expect(I18N.slice(0, trAt), `${key} (en)`).toContain(`'${key}':`);
+      expect(I18N.slice(trAt), `${key} (tr)`).toContain(`'${key}':`);
+    }
+  });
 });

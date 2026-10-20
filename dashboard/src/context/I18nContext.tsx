@@ -2456,6 +2456,12 @@ const translations: Record<string, Record<string, string>> = {
  * so a half-translated locale can never put `nav.tasks` on screen.
  */
 const TR_PARTIAL: Record<string, string> = {
+  // ─── Shared (`common.*`): any surface may use them, so every one has Turkish ─
+  'common.loading': 'Yükleniyor…',
+  'common.error': 'Hata',
+  'common.empty': 'Henüz burada bir şey yok.',
+  'common.close': 'Kapat',
+  'common.cancel': 'Vazgeç',
     'sleepEval.banner.title': 'Uyku testi',
     'sleepEval.banner.required': '{n} şart kart kaldı (uykunun gerçekten açtığı görevler)',
     'sleepEval.banner.optional': 'Şart kartlar bitti. Ek cevapladığın: {n}. Devamı isteğe bağlı',
