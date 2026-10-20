@@ -8,6 +8,7 @@ import { MAC_BAG_MODE_DEFAULT, type MacDevice, type MacStatus } from './macContr
 import { Toggle } from '../settings/SettingRow';
 import { HandsfreeMark } from '../brand/HandsfreeMark';
 import { LiveBadge } from './LiveBadge';
+import { confirmAction } from '../../lib/desktop';
 
 /**
  * The Hands-free sheet's "Bu Mac'ten" panel: set up once (one admin prompt; the phone password
@@ -86,7 +87,21 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
     if (qrTimer.current) clearTimeout(qrTimer.current);
     qrTimer.current = setTimeout(() => setQr(null), 5 * 60_000);
   };
-  const revokeAll = async () => { await act('revoke', 'post', 'devices/revoke-all'); setQr(null); void loadDevices(); };
+  const revokeAll = async () => {
+    // It cuts a turn a phone is running, so it is asked, in the dashboard's own dialog
+    // (a browser confirm is a silent no-op in the app's webview).
+    const ok = await confirmAction({
+      title: t('handsfree.mac.revokeAllConfirmTitle'),
+      body: fill(t('handsfree.mac.revokeAllConfirmBody'), { n: String(devices.length) }),
+      confirmLabel: t('handsfree.mac.revokeAll'),
+      cancelLabel: t('common.cancel'),
+      destructive: true,
+    });
+    if (!ok) return;
+    await act('revoke', 'post', 'devices/revoke-all');
+    setQr(null);
+    void loadDevices();
+  };
   const stop = async () => { await act('stop', 'post', 'stop'); setQr(null); void refreshMacStatus(); };
 
   return (
