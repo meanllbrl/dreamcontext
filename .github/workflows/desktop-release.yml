@@ -55,11 +55,21 @@ jobs:
 
       - name: Resolve version + tag
         id: ver
+        # The dispatch input is typed by a person: it reaches the shell through env only (an
+        # inline expression would be pasted into this script before bash ever saw it), and
+        # only a plain vX.Y.Z passes, before it is used anywhere or printed.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
           else
-            TAG="${GITHUB_REF_NAME}"
+            TAG="$GITHUB_REF_NAME"
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The release tag must be a plain vX.Y.Z (e.g. v0.32.0)."
+            exit 1
           fi
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -198,9 +208,10 @@ jobs:
 
       - name: Package the release assets
         id: pkg
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
-          VERSION="${{ steps.ver.outputs.version }}"
-          TAG="${{ steps.ver.outputs.tag }}"
           BUNDLE_DIR="desktop/src-tauri/target/release/bundle/macos"
           ASSET="dreamcontext-beta_${VERSION}_${ARCH}.app.tar.gz"
           DMG_ASSET="dreamcontext-beta_${ARCH}.dmg"
@@ -226,9 +237,9 @@ jobs:
       - name: Verify the packaged artifact (extract + checksum + Developer ID bundle)
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          OUT: ${{ steps.pkg.outputs.out }}
+          ASSET: ${{ steps.pkg.outputs.asset }}
         run: |
-          OUT="${{ steps.pkg.outputs.out }}"
-          ASSET="${{ steps.pkg.outputs.asset }}"
           ( cd "$OUT" && shasum -a 256 -c "$ASSET.sha256" )
           TMP="$(mktemp -d)"
           tar -xzf "$OUT/$ASSET" -C "$TMP"
