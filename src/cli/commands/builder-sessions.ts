@@ -148,7 +148,7 @@ export const DEFAULT_SESSION_DEPS: SessionDeps = {
   ps: listProcesses,
   launch: launchDetached,
   logTask: async (slug, line) => {
-    await getTaskBackend().addChangelog(slug, `### ${today()} - Session Update\n- ${line}`, { fallbackAppend: true });
+    await getTaskBackend().addChangelog(slug, `### ${today()} - Session Update\n- ${line}`, { createIfMissing: true });
   },
   goalLive: (spec, opts) => goalLiveActor({ resolveRoot: () => resolveContextRoot(), env: process.env, now: () => new Date() }, spec, opts),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),

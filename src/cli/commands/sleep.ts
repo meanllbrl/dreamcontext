@@ -787,7 +787,7 @@ export function registerSleepCommand(program: Command): void {
           await backend.addChangelog(
             plan.slug,
             `- ${today_}: ${buckets.orphan.length} orphan tag(s) still present — curator pass still needed.`,
-            { fallbackAppend: true },
+            { createIfMissing: true },
           );
           info(plan.action === 'refresh'
             ? `Curator task refreshed: ${plan.slug} (${buckets.orphan.length} orphan tags).`

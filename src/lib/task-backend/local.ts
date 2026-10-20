@@ -624,16 +624,12 @@ ${input.why || '(To be defined)'}
     // and it is a read-modify-write of the same section, so it is exactly where
     // an interleave drops an entry.
     try {
-      withTaskFileLock(this.brainRoot(), slug, () => {
-        try {
-          insertToSection(path, 'Changelog', entry, 'top');
-        } catch (err) {
-          if (!opts?.fallbackAppend) throw err;
-          // No Changelog section: append at EOF (pre-refactor CLI fallback).
-          const existing = readFileSync(path, 'utf-8');
-          writeFileSync(path, existing.trimEnd() + '\n\n' + entry + '\n', 'utf-8');
-        }
-      });
+      // A card without a Changelog (one the reverted 0.33.0 build migrated, or one
+      // written by hand) gets the section created at its end. Appending the raw
+      // entry at EOF used to put it inside whatever section came last, usually
+      // `## Notes`, where a remote backend then pushed it as the description.
+      withTaskFileLock(this.brainRoot(), slug, () =>
+        insertToSection(path, 'Changelog', entry, 'top', opts?.createIfMissing === true));
     } finally {
       forgetTaskRead(path);
     }
@@ -644,7 +640,7 @@ ${input.why || '(To be defined)'}
     await this.addChangelog(
       slug,
       `### ${now} - Completed\n- ${summary ?? 'Task completed.'}`,
-      { fallbackAppend: true },
+      { createIfMissing: true },
     );
     // Completing stamps the REAL end of the window, so the timeline shows what
     // happened rather than what was planned (see lib/task-dates.ts). Lives here

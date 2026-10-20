@@ -196,7 +196,7 @@ async function setTaskLevel(field: 'priority' | 'urgency', name: string, value: 
     return;
   }
 
-  await backend.addChangelog(slug, `### ${today()} - ${field === 'priority' ? 'Priority' : 'Urgency'} changed\n- ${field}: ${current ?? '(none)'} -> ${next}`, { fallbackAppend: true });
+  await backend.addChangelog(slug, `### ${today()} - ${field === 'priority' ? 'Priority' : 'Urgency'} changed\n- ${field}: ${current ?? '(none)'} -> ${next}`, { createIfMissing: true });
   await backend.updateFields(slug, { [field]: next, updated_at: today() });
   success(`${slug} → ${field}: ${current ?? '(none)'} -> ${next}`);
 }
@@ -1600,7 +1600,7 @@ export function registerTasksCommand(program: Command): void {
         ? `### ${today()} - ${headerLabel}\n- ${reason}`
         : `### ${today()} - ${headerLabel}`;
 
-      await backend.addChangelog(slug, logContent, { fallbackAppend: true });
+      await backend.addChangelog(slug, logContent, { createIfMissing: true });
 
       // Stamp real-world timing onto the date window: `in_progress` records when
       // work actually began, `completed` records when it actually ended (see
@@ -1726,7 +1726,7 @@ export function registerTasksCommand(program: Command): void {
 
       const logContent = `### ${today()} - Session Update\n- ${content}`;
 
-      await backend.addChangelog(slug, logContent, { fallbackAppend: true });
+      await backend.addChangelog(slug, logContent, { createIfMissing: true });
       await backend.updateFields(slug, { updated_at: today() });
       success(`Log entry added to ${slug}`);
     });
@@ -1775,7 +1775,7 @@ export function registerTasksCommand(program: Command): void {
       //    tells the next session to read "the latest changelog entry", so the whole
       //    handoff has to land there as ONE entry and nowhere else.
       const note = noteParts.join(' ').trim();
-      await backend.addChangelog(slug, renderHandoffEntry(today(), opts, note), { fallbackAppend: true });
+      await backend.addChangelog(slug, renderHandoffEntry(today(), opts, note), { createIfMissing: true });
 
       // 2. The task must be IN PROGRESS for the fresh session to find it: the nudge's
       //    active-task lookup and the snapshot both key off status. `updated_at` moves

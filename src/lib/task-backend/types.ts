@@ -158,10 +158,11 @@ export interface InsertSectionOptions {
 
 export interface AddChangelogOptions {
   /**
-   * When the task has no `## Changelog` section: append the raw entry at EOF
-   * (CLI behavior) instead of throwing (server-route behavior).
+   * When the task has no `## Changelog` section: create it at the end of the
+   * card and put the entry under it (CLI behavior) instead of throwing
+   * (server-route behavior). Never appends into the last section.
    */
-  fallbackAppend?: boolean;
+  createIfMissing?: boolean;
 }
 
 export interface UpdateFieldsOptions {
