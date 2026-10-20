@@ -198,21 +198,33 @@ export function planAssigneeHeal(
 }
 
 /**
+ * The entries of `entries` that `against` does not account for, compared in the
+ * canonical form (legacy-journal.ts) and counted as a MULTISET: each entry of
+ * `against` covers exactly one equal entry. The canonical form drops a 0.33.0
+ * entry's time and `[je_…]` id, so two entries logged the same day with the
+ * same words are equal there — and still two entries, never one.
+ */
+export function changelogEntriesMissingFrom(entries: string[], against: string[]): string[] {
+  const left = new Map<string, number>();
+  for (const e of against) {
+    const n = canonicalEntry(e);
+    left.set(n, (left.get(n) ?? 0) + 1);
+  }
+  return entries.filter((e) => {
+    const n = canonicalEntry(e);
+    const k = left.get(n) ?? 0;
+    if (k === 0) return true;
+    left.set(n, k - 1);
+    return false;
+  });
+}
+
+/**
  * Union-merge changelog entries (conflict-free by construction).
- * Remote-only entries stack on top (LIFO), local order preserved below.
+ * Remote-only entries stack on top (LIFO), local order preserved below. A
+ * multiset union: an entry held N times on one side and M on the other is
+ * held max(N, M) times after the merge (see changelogEntriesMissingFrom).
  */
 export function unionChangelog(localEntries: string[], remoteEntries: string[]): string[] {
-  // Same comparison form as normalizeEntry (clickup-map): see legacy-journal.ts.
-  const normalize = canonicalEntry;
-  const localNorm = new Set(localEntries.map(normalize));
-  const remoteOnly = remoteEntries.filter((e) => !localNorm.has(normalize(e)));
-  // Dedupe remote-only against each other too.
-  const seen = new Set<string>();
-  const uniqueRemoteOnly = remoteOnly.filter((e) => {
-    const n = normalize(e);
-    if (seen.has(n)) return false;
-    seen.add(n);
-    return true;
-  });
-  return [...uniqueRemoteOnly, ...localEntries];
+  return [...changelogEntriesMissingFrom(remoteEntries, localEntries), ...localEntries];
 }

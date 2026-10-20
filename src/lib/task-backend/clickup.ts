@@ -12,7 +12,6 @@ import {
   startDateFromClickUp,
   startDateToClickUp,
   foldAscii,
-  normalizeEntry,
   priorityFromClickUp,
   priorityToClickUp,
   splitChangelogEntries,
@@ -49,7 +48,7 @@ import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js
 import { foreignProjectOf, projectScopeId, projectTag } from './provenance.js';
 import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
-import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
+import { changelogEntriesMissingFrom, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
@@ -805,8 +804,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       ? changelogEntriesOfBody(entry.base_snapshot.body)
       : [];
     const currentEntries = splitChangelogEntries(task.changelog);
-    const baseNorm = new Set(baseEntries.map(normalizeEntry));
-    const newEntries = currentEntries.filter((e) => !baseNorm.has(normalizeEntry(e)));
+    const newEntries = changelogEntriesMissingFrom(currentEntries, baseEntries);
 
     // assignees: every person:<slug> tag (plus the legacy assignee field),
     // mapped to ClickUp member ids. A slug that maps to NO member is NOT
@@ -1557,8 +1555,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // ── changelog: union (conflict-free by construction) ──
     const localEntries = splitChangelogEntries(local.changelog);
     const mergedEntries = unionChangelog(localEntries, remoteEntries);
-    const remoteNorm = new Set(remoteEntries.map(normalizeEntry));
-    const localOnlyEntries = localEntries.filter((e) => !remoteNorm.has(normalizeEntry(e)));
+    const localOnlyEntries = changelogEntriesMissingFrom(localEntries, remoteEntries);
 
     // ── prose: 3-way with base; missing base → ClickUp wins + conflict copy ──
     const localDesc = bodyToDescription(local.body).trim();

@@ -156,6 +156,23 @@ describe('0.33.0 shape on hostile input', () => {
   });
 });
 
+describe('changelog union keeps multiplicity', () => {
+  // The canonical form drops a 0.33.0 entry's time and id: these two compare equal.
+  const a = '### 2026-10-19 21:04 - log [je_GdiRYGvJEp]\n- ran the orbit suite';
+  const b = '### 2026-10-19 22:10 - log [je_Phk7pS5rMi]\n- ran the orbit suite';
+  const folded = '### 2026-10-19 - Session Update\n- ran the orbit suite';
+
+  it('two same-day entries with the same words stay two, whichever side holds them', () => {
+    expect(canonicalEntry(a)).toBe(canonicalEntry(b));
+    expect(unionChangelog([], [a, b])).toEqual([a, b]);
+    expect(unionChangelog([a], [a, b])).toEqual([b, a]);
+    expect(unionChangelog([a, b], [a])).toEqual([a, b]);
+    expect(unionChangelog([a, b], [b, a])).toEqual([a, b]);
+    // The comments 0.33.0 posted for them still equal the two folded entries: no third copy.
+    expect(unionChangelog([folded, folded], [`${a}\n\n<!-- je:je_GdiRYGvJEp -->`, b])).toEqual([folded, folded]);
+  });
+});
+
 describe('foldJournalIntoCard', () => {
   it('creates the Changelog at the end of a card that has none, newest first, legacy bytes kept', () => {
     const out = foldJournalIntoCard(card('Orbit tiles'), V033_JOURNAL);
@@ -427,6 +444,25 @@ describe('the next GitHub sync after the fold', () => {
     expect(commentPosts()).toEqual([]);
     expect(wireMentions(fake.requests, /queue|rank/)).toEqual([]);
     expect(wireMentions(fake.requests, /Orbit tiles/).length).toBeGreaterThan(0); // the task itself did travel
+  });
+
+  it('a second same-day entry with the same words is posted, not taken for the first', async () => {
+    fake = makeFakeGitHub();
+    clock = 1000;
+    const gh = backend();
+    await gh.create({ name: 'Orbit tiles', variant: 'cli' });
+    const same = '### 2026-10-20 - Session Update\n- ran the orbit suite';
+    await gh.addChangelog('orbit-tiles', same);
+    await gh.sync('push');
+    const issue = Number(JSON.parse(readFileSync(join(ctx, 'state', '.tasks-map.json'), 'utf-8'))[0].remoteId);
+    expect(fake.comments.get(issue)).toHaveLength(2);
+
+    await backend().addChangelog('orbit-tiles', same);
+    fake.requests.length = 0;
+    const report = await backend().sync('push');
+    expect(report.errors).toEqual([]);
+    expect(commentPosts().map((q) => (q.body as { body: string }).body)).toEqual([same]);
+    expect(fake.comments.get(issue)).toHaveLength(3);
   });
 
   it('an entry the reverted CLI misfiled into the description leaves it and becomes a comment; nothing else posts', async () => {

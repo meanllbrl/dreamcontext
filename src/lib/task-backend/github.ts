@@ -19,7 +19,6 @@ import {
   labelNamesOf,
   labelsFromGitHub,
   labelsToGitHub,
-  normalizeEntry,
   splitChangelogEntries,
   statusFromGitHub,
   statusToGitHub,
@@ -46,7 +45,7 @@ import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { resolveActor } from './identity.js';
 import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
-import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
+import { changelogEntriesMissingFrom, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
@@ -742,8 +741,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       ? changelogEntriesOfBody(entry.base_snapshot.body)
       : [];
     const currentEntries = splitChangelogEntries(task.changelog);
-    const baseNorm = new Set(baseEntries.map(normalizeEntry));
-    const newEntries = currentEntries.filter((e) => !baseNorm.has(normalizeEntry(e)));
+    const newEntries = changelogEntriesMissingFrom(currentEntries, baseEntries);
 
     // assignees: every person:<slug> tag (plus the legacy field), resolved to
     // GitHub logins via the collaborator cache. A slug that resolves to NO
@@ -1508,8 +1506,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // ── changelog: union (conflict-free by construction) ──
     const localEntries = splitChangelogEntries(local.changelog);
     const mergedEntries = unionChangelog(localEntries, remoteEntries);
-    const remoteNorm = new Set(remoteEntries.map(normalizeEntry));
-    const localOnlyEntries = localEntries.filter((e) => !remoteNorm.has(normalizeEntry(e)));
+    const localOnlyEntries = changelogEntriesMissingFrom(localEntries, remoteEntries);
 
     // ── prose: 3-way with base; missing base → GitHub wins + conflict copy ──
     const localBody = bodyToIssueBody(local.body).trim();
