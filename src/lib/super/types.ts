@@ -105,6 +105,9 @@ export interface SuperChild {
   /** `super end` closed it (epoch ms): no process, no tab, no card; the transcript stays and
    *  `super resume` reopens it (which clears this). Absent = a child that may be running. */
   endedAt?: number;
+  /** `super delegate --succeeds` handed its card, brief and task to this child (one job, one
+   *  owner); it is ended, and `super state` warns while it still runs. */
+  succeededBy?: string;
 }
 
 /** Ended children the record keeps (newest first); older ones drop out of it. */

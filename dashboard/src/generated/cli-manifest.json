@@ -3084,7 +3084,8 @@
         "--effort",
         "--worktree",
         "--slug",
-        "--base"
+        "--base",
+        "--succeeds"
       ]
     },
     {

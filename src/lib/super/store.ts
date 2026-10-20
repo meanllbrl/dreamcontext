@@ -159,6 +159,7 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     };
     const endedAt = finite(c.endedAt);
     if (endedAt !== undefined) child.endedAt = endedAt;
+    if (typeof c.succeededBy === 'string' && okSessionId(c.succeededBy) && c.succeededBy !== key) child.succeededBy = c.succeededBy;
     if (c.mode === 'basic' || c.mode === 'plan' || c.mode === 'develop') child.mode = c.mode;
     if (typeof c.model === 'string' && /^[A-Za-z0-9._[\]-]{1,60}$/.test(c.model)) child.model = c.model;
     if (typeof c.effort === 'string' && /^(low|medium|high|xhigh|max)$/.test(c.effort)) child.effort = c.effort;

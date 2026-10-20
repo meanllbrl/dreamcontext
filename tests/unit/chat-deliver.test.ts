@@ -1,7 +1,7 @@
 /**
  * `deliverToChat`: how an agent's message (`dreamcontext window send`, `super send`) reaches
  * another chat. Busy -> steered into the running turn (never held until it ends); asking ->
- * queued behind the open card; idle -> a new turn.
+ * queued behind the open card and steered at the first opening after it; idle -> a new turn.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { deliverToChat } from '../../dashboard/src/components/sleepy/chat/postToSession';
@@ -33,11 +33,12 @@ describe('deliverToChat', () => {
     expect(s.enqueue).toHaveBeenCalledWith('hi', { steerWhenPossible: true });
   });
 
-  it('a chat asking a question or permission queues the message behind the card', () => {
+  it('a chat asking a question or permission queues the message behind the card, to steer at the first opening', () => {
     const s = fake({ busy: true, asking: true });
-    expect(deliverToChat(s, 'hi')).toBe('queued');
+    expect(deliverToChat(s, 'stop, a successor has this')).toBe('queued');
     expect(s.steer).not.toHaveBeenCalled();
-    expect(s.enqueue).toHaveBeenCalledWith('hi');
+    // Not held to the end of the turn: the next tool boundary after the card closes.
+    expect(s.enqueue).toHaveBeenCalledWith('stop, a successor has this', { steerWhenPossible: true });
   });
 
   it('an idle chat gets a plain new turn', () => {

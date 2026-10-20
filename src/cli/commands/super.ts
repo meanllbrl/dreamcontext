@@ -81,8 +81,9 @@ export function registerSuperCommand(program: Command): void {
     .option('--worktree <repo>', 'Give it its own worktree of this linked repo, on branch super/<slug>')
     .option('--slug <slug>', 'The worktree and branch name (a-z, 0-9, -)')
     .option('--base <ref>', 'The commit the worktree starts from (default: the repo\'s HEAD)')
-    .action((o: { prompt: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string }) =>
-      run('delegate', { prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base }));
+    .option('--succeeds <child>', 'It takes this child\'s work over (a context handoff): the card, brief and task pass to it, and the old child is ended (told to stop first if busy)')
+    .action((o: { prompt: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string; succeeds?: string }) =>
+      run('delegate', { prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base, succeeds: o.succeeds }));
 
   s.command('open <kind> <ref>')
     .description(`Open a floating card: ${KINDS}. ref = a session id, a slug, a URL or a project path`)

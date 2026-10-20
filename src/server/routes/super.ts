@@ -30,6 +30,7 @@ import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
 import { findParkable, parkChat, parkedSince, type ParkOutcome } from '../chat-park.js';
 import { readLimitSignal } from '../../lib/claude-limit-signal.js';
+import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -237,7 +238,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const containers = c.state.containers.map((k) => (k.title ? { ...k, title: wrapUntrusted(vault, k.title) } : k));
     const fenceQ = (q: SuperState['queue'][number]) => (q.ownerText ? { ...q, ownerText: wrapUntrusted(vault, q.ownerText) } : q);
     const head = superQueueHead(c.state);
-    ok(res, { ...superStateView(root, c.state), children, containers, queue: c.state.queue.map(fenceQ), status, head: head ? fenceQ(head) : null, machine });
+    const warnings = ownershipWarnings(c.state, (sid) => {
+      const st = (children[sid] as { status?: unknown } | undefined)?.status;
+      return st !== 'ended' && st !== 'gone' && st !== 'parked';
+    });
+    ok(res, { ...superStateView(root, c.state), children, containers, queue: c.state.queue.map(fenceQ), status, head: head ? fenceQ(head) : null, machine, ...(warnings.length ? { warnings } : {}) });
   },
 
   delegate: async (c, b, res) => {
@@ -253,7 +258,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const effort = str(b.effort);
     if (effort && !(EFFORTS as readonly string[]).includes(effort)) { refuse(res, 400, 'invalid_args', `effort must be one of ${EFFORTS.join(' | ')}`); return; }
     const brief = oneLine(str(b.brief) ?? '').slice(0, MAX_BRIEF);
-    const title = (brief || firstLine(prompt, 60)).slice(0, MAX_TITLE);
+    // One job, one owner: the child this one takes the work over from (succession.ts).
+    const succeeds = str(b.succeeds);
+    if (succeeds !== undefined && (!SESSION_ID_RE.test(succeeds) || !c.state.children[succeeds] || succeeds === c.state.session)) {
+      refuse(res, 404, 'unknown_child', '--succeeds names none of your children (`dreamcontext super state` lists them)');
+      return;
+    }
+    const title = (brief || (succeeds ? c.state.children[succeeds].brief : '') || firstLine(prompt, 60)).slice(0, MAX_TITLE);
 
     // D11: the cap binds NEW delegations (calls in flight count too).
     const inFlight = delegating.get(root) ?? 0;
@@ -308,9 +319,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
           ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
         };
         delete s.notes[sid];
-        container = ensureChatContainer(s, sid, title);
+        container = (succeeds ? succeedChild(s, succeeds, sid, { brief }) : null) ?? ensureChatContainer(s, sid, title);
       });
-      ok(res, { sessionId: sid, container, ...(wt ? { worktree: wt.path, branch: wt.branch } : {}) });
+      const predecessor = succeeds ? await retirePredecessor(c, succeeds) : null;
+      ok(res, { sessionId: sid, container, ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(predecessor ? { predecessor } : {}) });
     } catch (err) {
       if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
       storeRefusal(res, err);
@@ -843,6 +855,21 @@ async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<En
   }
   await recordEnded(c.who.contextRoot, sid);
   return { child: sid, ended: true, ...(noProcess ? { noProcess } : {}) };
+}
+
+/**
+ * End the child a successor took over from (`super delegate --succeeds`). Idle: ended now, like
+ * `super end`. Still busy or asking: told to stop at once (steered into its turn, or at the first
+ * opening after its card), and `super state` warns until it is ended.
+ */
+async function retirePredecessor(c: SuperCaller, sid: string): Promise<{ child: string; ended: boolean; reason?: string; told?: string | boolean }> {
+  const r = await endChild(c, sid, false);
+  if (r.ended) return { child: sid, ended: true };
+  // The owner's own chat, or one he is looking at, is never told to stop by the agent.
+  if (!isLiveChat(sid) || r.reason === 'adopted' || r.reason === 'focused') return { child: sid, ended: false, reason: r.reason };
+  const sent = await sendWindowCommand(c.token, 'send', { tab: sid, text: SUCCESSOR_STOP_TEXT }).catch(() => null);
+  const how = sent?.ok ? (sent.result as { delivered?: unknown } | undefined)?.delivered : undefined;
+  return { child: sid, ended: false, reason: r.reason, told: typeof how === 'string' ? how : !!sent?.ok };
 }
 
 /** Record a child ended (the agent's `super end` and the owner's card close share it): its card
