@@ -224,7 +224,7 @@ describe('foldJournalIntoCard', () => {
       '### 2026-10-20 - Session Update', '- first log after the revert', '',
       '### 2026-10-20 - Completed', '- shipped', '',
     ].join('\n'));
-    const out = foldJournalIntoCard(misfiled, LEGACY_JOURNAL, { rescueSince: '2026-10-19' });
+    const out = foldJournalIntoCard(misfiled, LEGACY_JOURNAL, { rescueSince: '2026-10-19', today: '2026-10-20' });
     expect(out.rescued).toBe(2);
     const notes = out.text.slice(out.text.indexOf('## Notes'), out.text.indexOf('## Changelog'));
     expect(notes).toContain('an old dated note that belongs to Notes');
@@ -269,6 +269,52 @@ describe('the fold finds the Changelog exactly where the CLI reads it', () => {
     expect(matter(after).data).toEqual(before);
     expect(after.startsWith(withComment.trimEnd())).toBe(true);
     expect(await readChangelog('orbit-tiles')).toContain('### 2026-09-03 - Session Update\n- measured the tile grid');
+  });
+});
+
+describe('the rescue moves only what the reverted CLI wrote', () => {
+  const RESCUE = { rescueSince: '2026-10-19', today: '2026-10-20' };
+  const tailOf = (lines: string[]) => card('Orbit tiles', ['## Plan', '', 'Square tiles first.', '', ...lines, ''].join('\n'));
+  const planOf = (text: string) => text.slice(text.indexOf('## Plan'), text.indexOf('## Changelog'));
+  const cli = ['### 2026-10-20 - Session Update', '- logged after the revert'];
+
+  it('takes the CLI shapes: a log, a bare status line, a handoff', () => {
+    const out = foldJournalIntoCard(tailOf([
+      ...cli, '',
+      '### 2026-10-20 - Status → in_review', '',
+      '### 2026-10-20 - Handoff', '- **Done:** the grid', '- **Next:** the legend',
+    ]), LEGACY_JOURNAL, RESCUE);
+    expect(out.rescued).toBe(3);
+    expect(planOf(out.text)).not.toContain('###');
+  });
+
+  it('leaves a dated heading after today where the owner wrote it', () => {
+    const out = foldJournalIntoCard(tailOf(['### 2026-11-03 - Session Update', '- planned for the beta']), LEGACY_JOURNAL, RESCUE);
+    expect(out.rescued).toBe(0);
+    expect(planOf(out.text)).toContain('### 2026-11-03 - Session Update\n- planned for the beta');
+  });
+
+  it("leaves the owner's own titles, however they are dated", () => {
+    const out = foldJournalIntoCard(tailOf(['### 2026-10-20 - Beta ship', '- twenty testers', '', ...cli]), LEGACY_JOURNAL, RESCUE);
+    expect(out.rescued).toBe(1);
+    expect(planOf(out.text)).toContain('### 2026-10-20 - Beta ship\n- twenty testers');
+    expect(planOf(out.text)).not.toContain('logged after the revert');
+  });
+
+  it('leaves a block whose body is not the CLI bullets', () => {
+    const out = foldJournalIntoCard(tailOf(['### 2026-10-20 - Session Update', 'We decided to ship the grid first.', '- then the legend']), LEGACY_JOURNAL, RESCUE);
+    expect(out.rescued).toBe(0);
+    expect(planOf(out.text)).toContain('We decided to ship the grid first.');
+  });
+
+  it('never takes anything inside a code fence, and never splits one', () => {
+    const fenced = ['```md', ...cli, '```'];
+    const out = foldJournalIntoCard(tailOf(fenced), LEGACY_JOURNAL, RESCUE);
+    expect(out.rescued).toBe(0);
+    expect(planOf(out.text)).toContain(fenced.join('\n'));
+    // An open fence that runs to the end of the card holds the entry too.
+    const open = foldJournalIntoCard(tailOf(['~~~', ...cli]), LEGACY_JOURNAL, RESCUE);
+    expect(open.rescued).toBe(0);
   });
 });
 

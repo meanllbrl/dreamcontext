@@ -147,25 +147,50 @@ export interface CardFold {
   rescued: number;
 }
 
-const CLI_ENTRY = /^### (\d{4}-\d{2}-\d{2}) - \S/;
+const CLI_ENTRY = /^### (\d{4}-\d{2}-\d{2}) - (.+)$/;
+/** The titles the CLI's changelog writers give an entry: tasks log, status/complete, priority/urgency, handoff, builder sessions. */
+const CLI_TITLE = /^(?:Session Update|Completed|Cancelled|Status → [\w-]+|Priority changed|Urgency changed|Handoff)$/;
+/** What those writers put under the heading: `- ` bullets, nothing else. */
+const CLI_BULLET = /^- \S/;
+/** No CLI heading is longer; a longer line is not even looked at. */
+const MAX_ENTRY_HEADING = 500;
 
 /**
  * The entries the reverted CLI appended at EOF: on a card with no Changelog,
  * `tasks log` (and every other changelog writer) used to append the raw entry
  * at the end of the file, inside whatever section came last. They form a run of
- * `### <date> - <title>` blocks at the very end of the card, each dated on or
- * after the 0.33.0 split (nothing else writes such a block after that date).
+ * blocks at the very end of the card, and a block is taken only in the CLI's own
+ * shape, so a dated heading the owner wrote (`### 2026-11-03 - Beta ship` at the
+ * end of `## Plan`) is never moved:
+ *
+ *   - `### <date> - <title>`, the title one the CLI writes (CLI_TITLE);
+ *   - dated between the 0.33.0 split (`since`) and `today`, both included: the
+ *     reverted CLI wrote nothing before the split, and nothing in the future;
+ *   - a body of `- ` bullets only (or none: a bare status line);
+ *   - nowhere inside a code fence, and never taking a fence line: an entry in a
+ *     fence is an example, and a block that took the fence would split it.
+ *
+ * The run ends at the first block that is not, or at a section heading.
  * Returns the card without them and the blocks, oldest first (append order).
  */
-function trailingMisfiled(card: string, since: string): { rest: string; blocks: string[] } {
-  const lines = card.replace(/\s+$/, '').split('\n');
+function trailingMisfiled(card: string, since: string, today: string): { rest: string; blocks: string[] } {
+  const lines = card.trimEnd().split('\n');
+  const fenced: boolean[] = [];
+  let open = false;
+  for (const line of lines) {
+    const fence = FENCE.test(line);
+    fenced.push(open || fence);
+    if (fence) open = !open;
+  }
   const blocks: string[] = [];
   let end = lines.length;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (sectionHeadingName(lines[i]) !== null) break; // a section boundary ends the run
-    const m = CLI_ENTRY.exec(lines[i]);
+    if (fenced[i] || sectionHeadingName(lines[i]) !== null) break; // a fence or a section boundary ends the run
+    const m = lines[i].length <= MAX_ENTRY_HEADING ? CLI_ENTRY.exec(lines[i]) : null;
     if (!m) continue;
-    if (m[1] < since) break;
+    if (m[1] < since || m[1] > today || !CLI_TITLE.test(m[2])) break;
+    const body = lines.slice(i + 1, end).join('\n').trim();
+    if (body !== '' && !body.split('\n').every((l) => CLI_BULLET.test(l))) break;
     blocks.unshift(lines.slice(i, end).join('\n').trim());
     end = i;
   }
@@ -178,12 +203,17 @@ function trailingMisfiled(card: string, since: string): { rest: string; blocks: 
  * for its sync base snapshot, so both end up holding the same history.
  *
  * `rescueSince` (card only, never the base): on a card with no Changelog, the
- * entries the reverted CLI misfiled at its end (dated on/after this date) move
- * into the new Changelog too, on top. They are left out of the base on purpose:
+ * entries the reverted CLI misfiled at its end (dated from this date to `today`,
+ * in the CLI's own shape: see trailingMisfiled) move into the new Changelog too,
+ * on top. They are left out of the base on purpose:
  * the remote holds them only inside the description, so the next push takes
  * them out of it and posts them as the comments they always should have been.
  */
-export function foldJournalIntoCard(card: string, journalRaw: string, opts: { rescueSince?: string } = {}): CardFold {
+export function foldJournalIntoCard(
+  card: string,
+  journalRaw: string,
+  opts: { rescueSince?: string; /** UTC `YYYY-MM-DD`, as the CLI dates entries; defaults to now. */ today?: string } = {},
+): CardFold {
   const converted = convertJournalText(journalRaw).trim();
   const incoming = splitEntryTexts(converted);
   if (incoming.length === 0) return { text: card, added: 0, present: 0, rescued: 0 };
@@ -193,10 +223,11 @@ export function foldJournalIntoCard(card: string, journalRaw: string, opts: { re
   if (!sec) {
     // The journal text is the card's old Changelog body, moved verbatim by 0.33.0:
     // putting it back as-is restores those bytes exactly.
-    const { rest, blocks } = opts.rescueSince ? trailingMisfiled(card, opts.rescueSince) : { rest: card, blocks: [] };
+    const today = opts.today ?? new Date().toISOString().slice(0, 10);
+    const { rest, blocks } = opts.rescueSince ? trailingMisfiled(card, opts.rescueSince, today) : { rest: card, blocks: [] };
     const top = blocks.length > 0 ? `${[...blocks].reverse().join('\n\n')}\n\n` : '';
     return {
-      text: `${rest.replace(/\s+$/, '')}\n\n## Changelog\n${LIFO_NOTE}\n\n${top}${converted}\n`,
+      text: `${rest.trimEnd()}\n\n## Changelog\n${LIFO_NOTE}\n\n${top}${converted}\n`,
       added: incoming.length,
       present: 0,
       rescued: blocks.length,
@@ -377,7 +408,7 @@ export function foldTaskJournals(contextRoot: string, opts: { now?: Date } = {})
         withTaskFileLock(contextRoot, slug, () => {
           const journal = readFileSync(file, 'utf-8');
           const before = readFileSync(cardPath, 'utf-8');
-          const fold = foldJournalIntoCard(before, journal, { rescueSince });
+          const fold = foldJournalIntoCard(before, journal, { rescueSince, today: now.toISOString().slice(0, 10) });
           if (fold.text !== before) {
             const copy = join(backup(), 'cards', cardPath === live ? `${slug}.md` : join('archive', `${slug}.md`));
             mkdirSync(dirname(copy), { recursive: true });
