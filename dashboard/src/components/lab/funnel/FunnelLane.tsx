@@ -5,6 +5,7 @@ import {
   worstDropIndex,
   FUNNEL_COLORS,
 } from './funnelModel';
+import { useI18n } from '../../../context/I18nContext';
 import './FunnelLane.css';
 
 /**
@@ -64,6 +65,7 @@ export function FunnelLane({
   /** Per-segment A→B rows shown inside an arc chip (breakdown mode). */
   arcDetail?: (arc: LaneArc) => { value: string; from: number; to: number }[] | null;
 }) {
+  const { t } = useI18n();
   const rows = useMemo(() => computeStepRows(steps), [steps]);
   const worst = useMemo(() => worstDropIndex(rows), [rows]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -115,7 +117,7 @@ export function FunnelLane({
       {manySteps && !compact && (
         <div className="funnel-lane-tools">
           <button className="funnel-lane-fit" onClick={() => setFit((v) => !v)} aria-pressed={fit}>
-            {fit ? 'Actual size' : 'Zoom to fit'}
+            {fit ? t('lab.funnel.actualSize') : t('lab.funnel.zoomToFit')}
           </button>
         </div>
       )}
@@ -224,7 +226,7 @@ export function FunnelLane({
             if (row.measured === false) {
               // Not measured is not zero: no count, no share, no volume, no drop into it.
               const reason = steps.find((s) => s.key === row.key)?.reason ?? null;
-              const why = `Not measured${reason ? `: ${reason}` : ''}`;
+              const why = reason ? t('lab.explorer.notMeasuredWhy').replace('{reason}', reason) : t('lab.explorer.notMeasured');
               return (
                 <div className="funnel-lane-cell" key={row.key}>
                   {i > 0 && (
@@ -242,7 +244,7 @@ export function FunnelLane({
                     title={why}
                   >
                     <span className="funnel-node-label">{row.label}</span>
-                    <span className="funnel-node-users funnel-node-unmeasured">Not measured</span>
+                    <span className="funnel-node-users funnel-node-unmeasured">{t('lab.explorer.notMeasured')}</span>
                     {reason && <span className="funnel-node-oftop">{reason}</span>}
                   </div>
                 </div>
