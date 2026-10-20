@@ -29,7 +29,7 @@ import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superIndex } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperEnd, handleSuperVerb } from '../../src/server/routes/super.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { _resetChatParkForTests, registerParkable, type ParkOptions, type ParkOutcome } from '../../src/server/chat-park.js';
 
@@ -246,5 +246,31 @@ describe('super resume', () => {
     expect(r.status).toBe(409);
     expect(r.json.error).toBe('ended');
     expect(String(r.json.message)).toMatch(/super resume/);
+  });
+});
+
+describe('the owner ends a child from its card (POST /api/super/end)', () => {
+  async function ownerEnd(child: string) {
+    const r = res();
+    await handleSuperEnd(req({ child }, { origin: 'http://127.0.0.1:4173' }), r, {}, root);
+    return r;
+  }
+
+  it('records it ended like `super end` (his window already closed the tab), even his own chat', async () => {
+    makeVault();
+    const r = await ownerEnd('own');
+    expect(r.status).toBe(200);
+    const s = await readSuperState(root);
+    expect(s.children.own.endedAt).toBeTypeOf('number');
+    expect(s.containers.some((k) => k.ref === 'own')).toBe(false);
+    expect(s.queue.find((q) => q.kind === 'ended')).toMatchObject({ sessionId: 'own', brief: 'the owner\'s chat' });
+  });
+
+  it('an unknown id or the super itself is 404; outside the desktop app it is 403', async () => {
+    makeVault();
+    expect((await ownerEnd('nope')).status).toBe(404);
+    expect((await ownerEnd(SUPER)).status).toBe(404);
+    delete process.env.DREAMCONTEXT_DESKTOP;
+    expect((await ownerEnd('c1')).status).toBe(403);
   });
 });

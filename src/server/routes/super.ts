@@ -805,8 +805,15 @@ async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<En
   } else {
     noProcess = true;
   }
+  await recordEnded(c.who.contextRoot, sid);
+  return { child: sid, ended: true, ...(noProcess ? { noProcess } : {}) };
+}
+
+/** Record a child ended (the agent's `super end` and the owner's card close share it): its card
+ *  goes, its open queue items close, a done `ended` item records who, when and its last brief. */
+async function recordEnded(contextRoot: string, sid: string): Promise<void> {
   const now = Date.now();
-  await writeSuper(c.who.contextRoot, (s) => {
+  await writeSuper(contextRoot, (s) => {
     const x = s.children[sid];
     if (!x) return;
     x.endedAt = now;
@@ -820,7 +827,6 @@ async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<En
     delete s.notes[sid];
     s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'ended', state: 'done', createdAt: now, brief: x.brief });
   });
-  return { child: sid, ended: true, ...(noProcess ? { noProcess } : {}) };
 }
 
 /** POST /api/super/v/:verb */
@@ -860,7 +866,7 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>) => Promise<void>;
 
 /** The owner's verbs (D17 hand-over/take-back, D9 layout, D7 lease, D13 recap). */
@@ -920,6 +926,19 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     await noteOwnerActivity(contextRoot);
     sendJson(res, 200, { ok: true });
   },
+  end: async (_req, res, contextRoot, body) => {
+    // The owner closed a child's card with "end the session": his window already closed the tab
+    // (his own click, so an adopted chat or a running one is his to end); this records it the
+    // way `super end` does, so the card goes and no relaunch brings the tab back.
+    const child = typeof body.child === 'string' ? body.child : '';
+    const current = await readSuperState(contextRoot, superSanitizeOpts());
+    if (!SESSION_ID_RE.test(child) || !hasChild(current, child) || child === current.session) {
+      sendError(res, 404, 'unknown_child', 'not a child of this project\'s Super Agent');
+      return;
+    }
+    await recordEnded(contextRoot, child);
+    sendJson(res, 200, { state: superStateView(contextRoot, await readSuperState(contextRoot, superSanitizeOpts())) });
+  },
   recap: async (_req, res, contextRoot) => {
     const current = await readSuperState(contextRoot, superSanitizeOpts());
     if (!current.enabled || !current.session || current.away.events < 1) { sendJson(res, 200, { queued: false }); return; }
@@ -954,3 +973,4 @@ export const handleSuperDisable = ownerRoute('disable');
 export const handleSuperLayout = ownerRoute('layout');
 export const handleSuperActivity = ownerRoute('activity');
 export const handleSuperRecap = ownerRoute('recap');
+export const handleSuperEnd = ownerRoute('end');

@@ -96,7 +96,7 @@ import {
   windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperLayout, postSuperRecap } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperLayout, postSuperRecap } from './super/superApi';
 import { applyLayoutPatch, patchEchoed, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
@@ -3348,6 +3348,33 @@ export function AgentSurface() {
   // O11: a card dropped on the centre (or its "Ask about this") becomes the subject of the
   // owner's next message: a reference appended to the Super Agent's draft once, focused.
   // Nothing is written to the record; nothing happens while the Super Agent is dormant.
+  // ── The owner ends a child from its card (owner 2026-10-21) ─────────────────────────
+  // His own click, so the tab closes here the way his close does (an adopted or running chat is
+  // his to end) and the server records it ended like `super end`: card gone, no relaunch brings
+  // the tab back, the transcript stays. "End when done" waits for the turn to end first.
+  const [endPending, setEndPending] = useState<ReadonlySet<string>>(new Set());
+  const endChildNow = useCallback((child: string) => {
+    setEndPending((prev) => { if (!prev.has(child)) return prev; const next = new Set(prev); next.delete(child); return next; });
+    const meta = sessionListRef.current.find((m) => m.claudeId === child);
+    if (meta) closeSessionById(meta.id);
+    void postSuperEnd(scopedApi, child).then((st) => { if (st) setSuperState(withPendingEdits(st)); }).catch(() => undefined);
+  }, [closeSessionById, scopedApi]);
+  const endChildFromCard = useCallback((child: string, whenDone: boolean) => {
+    const s = chatByClaudeId(child);
+    if (whenDone && s?.hasLiveWork()) { setEndPending((prev) => new Set(prev).add(child)); return; }
+    endChildNow(child);
+  }, [chatByClaudeId, endChildNow]);
+  useEffect(() => {
+    if (!endPending.size) return undefined;
+    const tick = setInterval(() => {
+      for (const child of endPending) {
+        const s = chatByClaudeId(child);
+        if (!s || !s.hasLiveWork()) endChildNow(child);
+      }
+    }, 1_000);
+    return () => clearInterval(tick);
+  }, [endPending, chatByClaudeId, endChildNow]);
+
   const askAboutCard = useCallback((id: string, title: string) => {
     const cs = superChatRef.current;
     if (!cs || cs.status === 'closed') return;
@@ -4647,6 +4674,8 @@ export function AgentSurface() {
             onSlotsChanged={bumpSuperSlots}
             onStageReady={onStageReady}
             onAskAbout={askAboutCard}
+            onEndChild={endChildFromCard}
+            endPending={endPending}
           />
         )}
         {/* Mac mode's phone has two screens, the Sohbetler list and one chat (owner, 2026-10-17):
