@@ -45,7 +45,8 @@ export interface WindowVerbDeps {
   setMode: (sid: string, mode: ChatMode) => 'now' | 'after-turn';
   setModel: (sid: string, model: string) => boolean;
   setEffort: (sid: string, level: string) => boolean;
-  send: (sid: string, text: string) => 'sent' | 'queued' | false;
+  /** Busy: steered into the running turn; asking: queued behind the open card; idle: sent. */
+  send: (sid: string, text: string) => 'steered' | 'queued' | 'sent' | false;
   close: (sid: string) => void;
 }
 

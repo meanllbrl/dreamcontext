@@ -21,6 +21,7 @@ const REFUSED = Symbol('refused');
 import { contextTokensFromUsage } from '../../lib/context-watch.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
+import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOutcome } from '../chat-park.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { claudeAwarePath, findClaudeBin } from '../../lib/claude-path.js';
 import type { FixOutcome } from '../../lib/onboarding/fixes.js';
@@ -1245,6 +1246,11 @@ export function startPtySession(
   // CLI) simply never writes the file, and the client keeps its screen heuristic.
   let statusEnv: Record<string, string> = {};
   let stopStatusWatch = () => { /* nothing watched */ };
+  /** The hook-reported turn state, '' until the first hook write (a hook-less vault is never
+   *  parked: nothing says its turn ended), and the last sign of life for the park sweep. */
+  let turnState: '' | 'working' | 'ready' = '';
+  let lastIoAt = Date.now();
+  let lastTurnStartedAt = 0;
   if (kind === 'agent') {
     const statusPath = join(tmpdir(), `dreamcontext-agent-status-${randomUUID()}.json`);
     statusEnv = { DREAMCONTEXT_AGENT_STATUS_FILE: statusPath };
@@ -1264,6 +1270,9 @@ export function startPtySession(
       } catch { return; } // torn/garbled content — the hook's write is atomic (tmp+rename)
       if (state !== 'working' && state !== 'ready') return;
       lastRaw = raw;
+      turnState = state;
+      lastIoAt = Date.now();
+      if (state === 'working') lastTurnStartedAt = lastIoAt;
       if (ws.readyState === ws.OPEN) {
         try { ws.send(Buffer.from(JSON.stringify({ type: 'status', state }))); } catch { /* closing */ }
       }
@@ -1348,9 +1357,57 @@ export function startPtySession(
     pause: typeof term.pause === 'function' ? () => term.pause?.() : undefined,
     resume: typeof term.resume === 'function' ? () => term.resume?.() : undefined,
   });
-  term.onData((data) => pump.data(data));
+  term.onData((data) => { lastIoAt = Date.now(); pump.data(data); });
+
+  // ── Parking under load (chat-park.ts) ───────────────────────────────────────────────
+  // A pinned Claude terminal tab: parked only after its Stop hook said `ready`, with no IO,
+  // no shell under it and no transcript write for the idle window; the window re-checks and
+  // closes the tab's socket, which ends the PTY (teardown below), and Resume `--resume`s it.
+  let focusedAt = 0;
+  let parkAsk: { id: string; settle: (o: ParkOutcome) => void; promise: Promise<ParkOutcome> } | null = null;
+  const unregisterPark = kind === 'agent' && heldConversation ? registerParkable({
+    id: pinId,
+    kind: 'terminal',
+    projectRoot,
+    pid: term.pid,
+    exempt: () => null,
+    busy: () => turnState !== 'ready',
+    asking: () => false,
+    backgroundTasks: () => 0,
+    idleSince: () => lastIoAt,
+    focusedAt: () => focusedAt,
+    transcriptPath: () => liveTranscriptPath(contextRoot, pinId),
+    lastTurnStartedAt: () => lastTurnStartedAt,
+    park: (reason) => {
+      if (!alive) return Promise.resolve('already');
+      if (parkAsk) return parkAsk.promise;
+      if (ws.readyState !== ws.OPEN) { try { term.kill(); } catch { /* gone */ } return Promise.resolve('drained'); }
+      const id = randomUUID();
+      let settle!: (o: ParkOutcome) => void;
+      const promise = new Promise<ParkOutcome>((res) => { settle = res; });
+      const timer = setTimeout(() => { if (parkAsk?.id === id) { parkAsk = null; settle('no_answer'); } }, PARK_ANSWER_MS);
+      timer.unref?.();
+      parkAsk = { id, promise, settle: (o) => { clearTimeout(timer); parkAsk = null; settle(o); } };
+      try { ws.send(Buffer.from(JSON.stringify({ type: 'park', id, reason, focusGraceMs: parkFocusGraceMs() }))); } catch { parkAsk.settle('no_answer'); }
+      return promise;
+    },
+  }) : () => { /* never parked */ };
+  const onParkResult = (r: { id?: unknown; ok?: unknown; error?: unknown }): void => {
+    if (!parkAsk || r.id !== parkAsk.id) return;
+    if (r.ok === true) {
+      unregisterPark();
+      const t = setTimeout(() => { if (alive) { try { term.kill(); } catch { /* gone */ } } }, 5_000);
+      t.unref?.();
+      parkAsk.settle('parked');
+      return;
+    }
+    const e = r.error;
+    parkAsk.settle(e === 'busy' || e === 'asking' || e === 'background' || e === 'focused' ? e : 'refused');
+  };
   term.onExit(({ exitCode }) => {
     alive = false;
+    unregisterPark();
+    parkAsk?.settle('already');
     untrack();
     releaseHeld();
     cleanupDeferred();
@@ -1378,19 +1435,22 @@ export function startPtySession(
     // Control frames are JSON ({type:'input'|'resize'|'ack'}); anything else is raw input.
     if (str.startsWith('{')) {
       try {
-        const msg = JSON.parse(str) as { type?: string; data?: string; cols?: number; rows?: number; n?: number };
+        const msg = JSON.parse(str) as { type?: string; data?: string; cols?: number; rows?: number; n?: number; id?: unknown; ok?: unknown; error?: unknown };
         if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
           term.resize(Math.max(1, msg.cols | 0), Math.max(1, msg.rows | 0));
           return;
         }
-        if (msg.type === 'input' && typeof msg.data === 'string') { term.write(msg.data); return; }
+        if (msg.type === 'input' && typeof msg.data === 'string') { lastIoAt = Date.now(); term.write(msg.data); return; }
+        if (msg.type === 'focus') { focusedAt = Date.now(); return; }
+        if (msg.type === 'park_result') { onParkResult(msg); return; }
         if (msg.type === 'ack' && typeof msg.n === 'number') { pump.ack(msg.n); return; }
       } catch { /* not control JSON — fall through to raw */ }
     }
+    lastIoAt = Date.now();
     term.write(str);
   });
 
-  const teardown = () => { if (alive) { alive = false; releaseHeld(); cleanupDeferred(); stopStatusWatch(); pump.dispose(); try { term.kill(); } catch { /* already dead */ } } };
+  const teardown = () => { if (alive) { alive = false; unregisterPark(); parkAsk?.settle('already'); releaseHeld(); cleanupDeferred(); stopStatusWatch(); pump.dispose(); try { term.kill(); } catch { /* already dead */ } } };
   ws.on('close', teardown);
   ws.on('error', teardown);
 }

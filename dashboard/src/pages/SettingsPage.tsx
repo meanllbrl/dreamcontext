@@ -565,6 +565,25 @@ export function SettingsPage({ focus }: SettingsPageProps) {
             </>
           )}
 
+          {/* Parking under load (task idle-chats-are-parked-…): ON by default; off = no chat is
+              ever stopped for load. The server reads the same key (src/server/chat-park.ts). */}
+          {agentCfg && agentCfg.enabled && (
+            <SettingGroup title={t('settings.agents.park')}>
+              <SettingRow
+                title={t('settings.agents.park')}
+                hint={t('settings.agents.park_hint')}
+                more={t('settings.agents.park_more')}
+                control={
+                  <Toggle
+                    label={t('settings.agents.park')}
+                    checked={agentCfg.parkIdleChats}
+                    onChange={(next) => updateAgentCfg({ parkIdleChats: next })}
+                  />
+                }
+              />
+            </SettingGroup>
+          )}
+
           {/* Voice sits LAST and FOLDED, because that is what it is: a beta surface of the
               agent screen, not one of the settings this section is about. Open it and it is
               the same grammar as every group above it; closed it costs one line and does not

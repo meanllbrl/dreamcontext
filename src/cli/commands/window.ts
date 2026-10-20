@@ -119,7 +119,7 @@ export function registerWindowCommand(program: Command): void {
     .action((level: string, o: { tab?: string }) => run('effort', { tab: o.tab, level }));
 
   w.command('send <tab> <text>')
-    .description('Send a message into another chat tab (queued if it is busy)')
+    .description('Send a message into another chat tab (steered into its running turn; queued only while it asks)')
     .action((tab: string, text: string) => run('send', { tab, text }));
 
   w.command('close <tab>')

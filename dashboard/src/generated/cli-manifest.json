@@ -3167,7 +3167,7 @@
     },
     {
       "path": "super send",
-      "desc": "Send a message into a child chat (queued if it is busy)",
+      "desc": "Send a message into a child chat (steered into its running turn; queued only while it asks)",
       "args": [
         "<child>",
         "<text>"
@@ -4096,7 +4096,7 @@
     },
     {
       "path": "window send",
-      "desc": "Send a message into another chat tab (queued if it is busy)",
+      "desc": "Send a message into another chat tab (steered into its running turn; queued only while it asks)",
       "args": [
         "<tab>",
         "<text>"
