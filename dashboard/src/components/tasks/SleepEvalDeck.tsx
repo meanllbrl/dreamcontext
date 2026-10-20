@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { phoneAllows } from '../../lib/phoneSurface';
 import { useApi } from '../../context/VaultContext';
@@ -163,31 +163,28 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
     },
   });
 
-  // One answer per card: taken before the save, given back once the card has left (see
-  // sleepEvalSubmit.ts). React state is a render late; a held key or a fast second tap is not.
+  // One answer per card: taken before the save, given back once the next card is on screen
+  // (see sleepEvalSubmit.ts). React state is a render late; a held key or a fast second tap is not.
   const submitter = useRef<DeckSubmitter<LabelInput> | null>(null);
   const saveRef = useRef(save.mutateAsync);
   saveRef.current = save.mutateAsync;
   const tRef = useRef(t);
   tRef.current = t;
 
-  const advance = useCallback((dir: 'left' | 'right') => {
-    setLeaving(dir);
-    window.setTimeout(() => {
-      setIndex((i) => i + 1);
-      setLeaving(null);
-      setDx(0);
-      setRejecting(null);
-      setNote('');
-      setWhyOpen(false);
-      submitter.current?.release();
-    }, 180);
-  }, []);
-
   if (!submitter.current) {
     submitter.current = createDeckSubmitter<LabelInput>({
       save: (input) => saveRef.current(input),
-      advance,
+      leave: (dir) => setLeaving(dir),
+      // The exit is over: this only QUEUES the next card. The gate stays shut until it commits.
+      next: () => {
+        setIndex((i) => i + 1);
+        setLeaving(null);
+        setDx(0);
+        setRejecting(null);
+        setNote('');
+        setWhyOpen(false);
+      },
+      exitMs: 180,
       onError: (e) => {
         setDx(0);
         setError((e as Error).message || tRef.current('sleepEval.error'));
@@ -195,14 +192,22 @@ function SleepEvalDeck({ data, onClose }: { data: LabelsResponse; onClose: () =>
     });
   }
 
+  // The gate opens once the next card has COMMITTED. Opened in the exit timer, right after
+  // setIndex, a tap landing before React rendered the next card answered the old one again
+  // and advanced a second time, skipping a card unseen.
+  const cardId = card?.id ?? null;
+  useLayoutEffect(() => {
+    submitter.current?.shown(cardId);
+  }, [index, cardId]);
+
   const submit = useCallback((input: LabelInput, dir: 'left' | 'right') => {
-    if (submitter.current?.busy) return;
+    if (!submitter.current?.accepts(input.id)) return;
     setError(null);
-    void submitter.current?.submit(input, dir);
+    void submitter.current.submit(input, dir);
   }, []);
 
   const choose = useCallback((a: Answer | undefined) => {
-    if (!card || !a || save.isPending || submitter.current?.busy) return;
+    if (!card || !a || save.isPending || !submitter.current?.accepts(card.id)) return;
     if (a.needsReason) {
       setDx(0);
       setRejecting(a);
