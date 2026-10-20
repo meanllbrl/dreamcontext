@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { compareVersions } from './version-check.js';
-import { pendingMigrations } from '../migrations/index.js';
+import { migrationsToRun } from '../migrations/index.js';
 import {
   readLedger,
   appendLedger,
@@ -52,12 +51,9 @@ export function runMigrations(
   fromVersion: string,
   toVersion: string,
 ): RunMigrationsResult {
-  // Downgrade guard: if to < from, nothing to run
-  if (compareVersions(toVersion, fromVersion) < 0) {
-    return { applied: [], pendingAgentTasks: [], failedSteps: 0 };
-  }
-
-  const pending = pendingMigrations(fromVersion, toVersion);
+  // Downgrade guard: if to < from, the range is empty and only the `everyRun`
+  // repairs run (they exist for exactly that case — see Migration.everyRun).
+  const pending = migrationsToRun(fromVersion, toVersion);
   if (pending.length === 0) {
     return { applied: [], pendingAgentTasks: [], failedSteps: 0 };
   }
@@ -101,6 +97,13 @@ export function runMigrations(
       // never rewrites the entry. The setupVersion gate uses the live failedSteps
       // value (never the ledger text), so this is cosmetic/audit-only.
       if (isApplied(ledger, migration.version, result.step)) {
+        continue;
+      }
+      // An every-run repair is ledgered by the pass that changed files, never by
+      // one that found nothing (that would write `.migrations.json` and a
+      // CHANGELOG line on every vault) or only failed (its retry would then be
+      // gated out of the ledger and its notice). Failures still counted above.
+      if (migration.everyRun && result.filesTouched.length === 0) {
         continue;
       }
 

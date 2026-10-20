@@ -2,6 +2,7 @@
  * Pure 3-way merge primitives for the sync engine — issue #11 merge rules.
  * Provider-free and I/O-free: operates on markdown bodies and scalar fields.
  */
+import { canonicalEntry } from './legacy-journal.js';
 
 export interface SectionBlock {
   /** '' for the preamble before the first `##` header. */
@@ -201,7 +202,8 @@ export function planAssigneeHeal(
  * Remote-only entries stack on top (LIFO), local order preserved below.
  */
 export function unionChangelog(localEntries: string[], remoteEntries: string[]): string[] {
-  const normalize = (e: string) => e.replace(/\s+/g, ' ').trim();
+  // Same comparison form as normalizeEntry (clickup-map): see legacy-journal.ts.
+  const normalize = canonicalEntry;
   const localNorm = new Set(localEntries.map(normalize));
   const remoteOnly = remoteEntries.filter((e) => !localNorm.has(normalize(e)));
   // Dedupe remote-only against each other too.

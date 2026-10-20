@@ -9,6 +9,7 @@ import { migration0230 } from './0.23.0.js';
 import { migration0230SoulSplit } from './0.23.0-soul-split.js';
 import { migration0280 } from './0.28.0.js';
 import { migration0310 } from './0.31.0.js';
+import { migration0320 } from './0.32.0.js';
 import type { Migration } from './types.js';
 
 /**
@@ -21,7 +22,7 @@ import type { Migration } from './types.js';
 // the runner gates each step by its own id, merges same-version changelog
 // entries, and unfinishedAgentTasks matches each agentTask id separately.
 // The user-split entry stays FIRST so its residue task is printed first.
-export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310];
+export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320];
 
 /**
  * Return all migrations whose version falls in the half-open range (from, to].
@@ -36,6 +37,19 @@ export function pendingMigrations(from: string, to: string): Migration[] {
       compareVersions(m.version, from) > 0 &&
       compareVersions(m.version, to) <= 0,
   ).sort((a, b) => compareVersions(a.version, b.version));
+}
+
+/**
+ * What one runner pass executes: the `(from, to]` range plus every `everyRun`
+ * migration this CLI carries (version <= to), whatever `from` says, a
+ * downgrade (`from` > `to`) included. Same ascending order as the range.
+ */
+export function migrationsToRun(from: string, to: string): Migration[] {
+  const inRange = compareVersions(to, from) >= 0 ? pendingMigrations(from, to) : [];
+  const everyRun = REGISTRY.filter(
+    (m) => m.everyRun && compareVersions(m.version, to) <= 0 && !inRange.includes(m),
+  );
+  return [...inRange, ...everyRun].sort((a, b) => compareVersions(a.version, b.version));
 }
 
 /**

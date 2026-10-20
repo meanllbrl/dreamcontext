@@ -100,7 +100,15 @@ automatically when they run `dreamcontext update` or `dreamcontext sleep start`.
    from a right one. `src/migrations/0.23.0.ts` `resolveOwner()` is the worked
    example; a source tripwire in the 0.23.0 test enforces the class.
 
-7. **Gotchas for agent tasks**:
+7. **`everyRun` is for repairing what a NEWER build wrote**, nothing else. A vault
+   stamped by a build this CLI predates (the reverted 0.33.0) has a
+   `setupVersion` above the CLI, so no `(setupVersion, cli]` range reaches the
+   repair. An `everyRun` migration runs on every pass up to the CLI version, a
+   downgrade included, must cost one cheap check when there is nothing to do,
+   and is ledgered only by the pass that touched files. `src/migrations/0.32.0.ts`
+   is the worked example.
+
+8. **Gotchas for agent tasks**:
    - **Gotcha 2**: wikilink hygiene — always update `[[old-slug]]` → `[[new-slug]]`
      after a file move, or list broken links.
    - **Gotcha 3**: no prose edits — structure only.

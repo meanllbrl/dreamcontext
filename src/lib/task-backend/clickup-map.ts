@@ -5,6 +5,7 @@
  * leak past the backend boundary.
  */
 import { foldAscii } from '../fold-ascii.js';
+import { canonicalEntry } from './legacy-journal.js';
 import { parseProjectTag, stripProjectTags } from './provenance.js';
 import {
   DEFAULT_STATUSES,
@@ -356,7 +357,12 @@ export function splitChangelogEntries(changelogSection: string): string[] {
   return entries.filter((e) => e.length > 0);
 }
 
-/** Normalize an entry for duplicate detection across comment round-trips. */
+/**
+ * Normalize an entry for duplicate detection across comment round-trips.
+ * Canonical, not just whitespace-collapsed: a comment the reverted 0.33.0 sync
+ * posted (its heading shape, its `<!-- je:… -->` marker) equals the entry the
+ * journal fold put back on the card from the same line.
+ */
 export function normalizeEntry(entry: string): string {
-  return entry.replace(/\s+/g, ' ').trim();
+  return canonicalEntry(entry);
 }

@@ -97,4 +97,18 @@ export interface Migration {
   version: string;
   steps: MigrationStep[];
   agentTask?: MigrationAgentTask;
+  /**
+   * Run on EVERY pass whose CLI is at least `version`, outside the
+   * `(setupVersion, cliVersion]` range, a downgrade included. For repairing
+   * what a NEWER build wrote: a vault stamped by the reverted, never-published
+   * 0.33.0 has `setupVersion` 0.33.0 under a 0.32.0 CLI, so no range of this
+   * CLI's can ever include the repair, and the first `update` stamps 0.32.0,
+   * after which the range is empty for good.
+   *
+   * Such a step must be cheap when there is nothing to do. The runner records
+   * an every-run step in the ledger only from a pass that touched files, never
+   * from one that found nothing or only failed (its `failedCount` still pins
+   * `setupVersion` as usual).
+   */
+  everyRun?: boolean;
 }
