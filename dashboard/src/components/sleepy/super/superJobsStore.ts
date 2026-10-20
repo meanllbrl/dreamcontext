@@ -52,5 +52,6 @@ function subscribeCtx(fn: () => void): () => void {
 
 /** The event-line context of `sessionId` (null for any chat that is not a handed-over super). */
 export function useSuperEventContext(sessionId: string | null): SuperEventContext | null {
-  return useSyncExternalStore(subscribeCtx, () => (sessionId ? contexts.get(sessionId) ?? null : null));
+  const read = () => (sessionId ? contexts.get(sessionId) ?? null : null);
+  return useSyncExternalStore(subscribeCtx, read, read);
 }

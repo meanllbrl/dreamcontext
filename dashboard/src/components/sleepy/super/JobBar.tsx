@@ -157,7 +157,22 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
         </div>
       )}
       <div className="super-job-counts" role="group" aria-label={t('super.jobs.label')}>
-        {JOB_SECTIONS.map((sec) => (
+        {/* A question the owner must answer owns the band: the four counts fold into one button,
+            so its options keep their full width (an answer is never a cut label). */}
+        {head && (
+          <button
+            type="button"
+            className="super-job-count"
+            data-testid="super-job-count-all"
+            data-section="all"
+            data-on={open ? 'true' : undefined}
+            aria-expanded={!!open}
+            onClick={() => setOpen((o) => (o ? null : { section: null, row: null }))}
+          >
+            <span className="super-job-count-label">{t('super.jobs.label')}</span>
+          </button>
+        )}
+        {!head && JOB_SECTIONS.map((sec) => (
           <button
             key={sec}
             type="button"

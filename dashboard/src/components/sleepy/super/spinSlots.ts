@@ -40,5 +40,6 @@ export function useSpinSlot(id: string, working: boolean): boolean {
     claimSpin(id);
     return () => releaseSpin(id);
   }, [id, working]);
-  return useSyncExternalStore(subscribe, () => working && spinAllowed(id));
+  const read = () => working && spinAllowed(id);
+  return useSyncExternalStore(subscribe, read, read);
 }
