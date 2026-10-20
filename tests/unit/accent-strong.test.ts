@@ -56,7 +56,6 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/sleepy/SleepyMascot.css::.smascot-hand': 'mascot art',
   'components/sleepy/MobileChat.css::.mchat-dot[data-kind="ready"]': 'state dot',
   "components/sleepy/chat/teamBoard.css::.chat-team-board-phase[data-tone='running'] .chat-team-board-dot": 'state dot',
-  "components/sleepy/super/SuperSurface.css::.super-others-dot[data-status='working']": 'state dot',
   'components/sleepy/super/SuperSurface.css::.super-tile-bar-fill': 'progress bar',
   'components/whiteboard/widgets/wikiWidget.css::.wb-wiki-row.is-drop-before::before, .wb-wiki-row.is-drop-after::after, .wb-wiki-section.is-drop-before::before, .wb-wiki-section.is-drop-after::after': 'drop marker (bar)',
   'pages/whiteboards/BoardTabs.css::.wbt-tab[data-drop]::before, .wbt-chip[data-drop]::before': 'drop marker (2px bar)',

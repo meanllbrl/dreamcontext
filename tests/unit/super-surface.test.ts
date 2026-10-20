@@ -46,14 +46,14 @@ describe('the Super Agent is never a tab (D9, AC1)', () => {
 
   it('it joins the roster with mode super and is placed in NO pane', () => {
     const ensure = surface.slice(surface.indexOf('const ensureSuperSession'), surface.indexOf('// ── What the server pushes'));
-    expect(ensure).toMatch(/spawn\(false, session, !fresh, 'chat', '', '', true, '', false, '', false, 'super'\)/);
+    expect(ensure).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super'\)/);
     expect(ensure).toMatch(/mode: 'super'/);
     expect(ensure).not.toMatch(/setPanes/);
   });
 
   it('it follows the vault\'s permission switch like any chat (decision 14): no explicit bypass on its spawn or its children\'s', () => {
     // Param 11 (explicitBypass) is false, so `spawn`'s chat arm takes the vault's remembered mode.
-    expect(surface).toMatch(/spawn\(false, session, !fresh, 'chat', '', '', true, '', false, '', false, 'super'\)/);
+    expect(surface).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super'\)/);
     expect(surface).toMatch(/spawn\(false, undefined, false, 'chat', prepared\.inline, d\.model, true, prepared\.token, false, d\.effort, false, d\.mode\)/);
   });
 
@@ -220,7 +220,7 @@ describe('quiet children (D16, AC6 client half)', () => {
   });
 
   it('the queue strip raises ONE alarm per new owner head, through headAlarm', () => {
-    const strip = read(`${superDir}/QueueStrip.tsx`);
+    const strip = read(`${superDir}/JobBar.tsx`);
     expect(strip).toMatch(/const next = headAlarm\(alarmKey\.current, head\);/);
     expect(strip).toMatch(/if \(!next\.raise \|\| !head\) return;\s*[\s\S]{0,400}raiseAskAttention\(/);
     expect((strip.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
@@ -242,7 +242,7 @@ describe('quiet children (D16, AC6 client half)', () => {
 });
 
 describe('the strip answers once; the button\'s dot is in its name; ids never read the prototype', () => {
-  const strip = read(`${superDir}/QueueStrip.tsx`);
+  const strip = read(`${superDir}/JobBar.tsx`);
 
   it('Allow, Deny and the option buttons go through one latch and are disabled once answered', () => {
     expect(strip).toMatch(/latch\.current = latchSeen\(latch\.current, answerKey, pendingPresent\);/);
@@ -252,7 +252,9 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect(strip).toMatch(/if \(picks\.ok\) answerOnce\(\(\) => child\.answerQuestion\(/);
     // No answer path bypasses the latch.
     expect((strip.match(/child\.answer(Question)?\(/g) ?? []).length).toBe(3);
-    expect((strip.match(/disabled=\{locked\}/g) ?? []).length).toBe(3);
+    // Allow, Deny, a child's option and the super agent's own `ask` option (plan r4 D7).
+    expect((strip.match(/disabled=\{locked\}/g) ?? []).length).toBe(4);
+    expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => send\(label\)\)\}/);
   });
 
   it('the pill is one row that never reflows: a cut text opens below it, a button never shrinks (end review r8)', () => {
@@ -270,7 +272,7 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect(strip).toMatch(/const next = optionsFit\(fitRef\.current, fitKey, band\.clientWidth, el\.scrollWidth - el\.clientWidth, showRef\.current\);/);
     // Keyed on the row's content (a change inside a full-width pill resizes no box), and run
     // again on every show/hide, before paint (end review r8, round 5).
-    expect(strip).toMatch(/\[answerKey, titleFor\(head\?\.sessionId \?\? ''\), waiting > 1 \? waiting - 1 : 0, t\('super\.queue\.reply'\), \.\.\.optionLabels\]\.join\(/);
+    expect(strip).toMatch(/\[answerKey, titleFor\(head\?\.sessionId \?\? ''\), waiting > 1 \? waiting - 1 : 0, t\('super\.queue\.reply'\), \.\.\.optionLabels, \.\.\.\(head\?\.kind === 'ask' \? head\.options \?\? \[\] : \[\]\)\]\.join\(/);
     expect(strip).toMatch(/\}, \[fitKey, showOptions\]\);/);
     expect(strip).toMatch(/useLayoutEffect\(\(\) => \{\n\s*const el = headRef\.current;/);
     expect(strip).toMatch(/ro\.observe\(band\);\n\s*ro\.observe\(el\);/);
@@ -520,7 +522,7 @@ describe('the window rules (D10, AC12)', () => {
 describe('stable hooks for the lead\'s verify script', () => {
   it('every piece the verify drives carries its test id', () => {
     const all = readdirSync(join(ROOT, superDir)).filter((f) => f.endsWith('.tsx')).map((f) => read(`${superDir}/${f}`)).join('\n');
-    for (const id of ['super-handover-btn', 'super-surface', 'super-container', 'super-queue-strip', 'super-queue-head', 'super-terminals-row']) {
+    for (const id of ['super-handover-btn', 'super-surface', 'super-container', 'super-job-bar', 'super-queue-head', 'super-terminals-row']) {
       expect(all, id).toContain(`data-testid="${id}"`);
     }
     expect(all).toMatch(/data-kind=\{c\.kind\}/);
