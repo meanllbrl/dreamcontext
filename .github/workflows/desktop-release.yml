@@ -66,6 +66,27 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved tag=$TAG version=$VERSION"
 
+      - name: Refuse a tag the sources do not carry
+        # The version surfaces move together (release-publish-checklist). A tag cut from a tree
+        # that says another version would publish an app whose updater manifest, About box and
+        # bundled CLI disagree about what it is, so this fails before anything is built.
+        # Cargo.lock is read by crate NAME: the bare version string also appears in dependencies.
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          PKG="$(jq -r .version package.json)"
+          DESKTOP_PKG="$(jq -r .version desktop/package.json)"
+          TAURI="$(jq -r .version desktop/src-tauri/tauri.conf.json)"
+          CARGO="$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^version *=/{gsub(/[" ]/,""); sub(/^version=/,""); print; exit}' desktop/src-tauri/Cargo.toml)"
+          LOCK="$(awk '/^name = "dreamcontext-desktop"$/{getline; gsub(/[" ]/,""); sub(/^version=/,""); print; exit}' desktop/src-tauri/Cargo.lock)"
+          echo "tag=$VERSION package.json=$PKG desktop/package.json=$DESKTOP_PKG tauri.conf.json=$TAURI Cargo.toml=$CARGO Cargo.lock=$LOCK"
+          for v in "$PKG" "$DESKTOP_PKG" "$TAURI" "$CARGO" "$LOCK"; do
+            if [ "$v" != "$VERSION" ]; then
+              echo "::error::Version mismatch: tag $VERSION, package.json $PKG, desktop/package.json $DESKTOP_PKG, tauri.conf.json $TAURI, Cargo.toml $CARGO, Cargo.lock $LOCK. Move every surface to the tag's version first."
+              exit 1
+            fi
+          done
+
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '20'
