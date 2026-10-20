@@ -65,7 +65,7 @@ import { ReadinessChecklist } from '../../pages/onboarding/ReadinessChecklist';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
 import { dropScratch } from './chat/composerScratch';
-import { postToSession } from './chat/postToSession';
+import { deliverToChat, postToSession } from './chat/postToSession';
 import { parseChatActions } from './chat/chatActions';
 import { cleanTabTitle } from '../../lib/chatViewSpec';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
@@ -2989,9 +2989,9 @@ export function AgentSurface() {
     send: (sid, text) => {
       const chat = liveChat(sid);
       if (!chat) return false;
-      if (chat.busy || chat.asking) { chat.enqueue(text); return 'queued'; }
-      chat.send(text);
-      return 'sent';
+      // Busy: into the running turn (the composer's ⏎); only an open question/permission card
+      // makes it wait (`deliverToChat`).
+      return deliverToChat(chat, text);
     },
     close: (sid) => closeSessionById(sid),
   });

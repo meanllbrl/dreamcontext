@@ -139,7 +139,7 @@ export function registerSuperCommand(program: Command): void {
       run('answer', { child, requestId, choices: choice, text: o.text }));
 
   s.command('send <child> <text>')
-    .description('Send a message into a child chat (queued if it is busy)')
+    .description('Send a message into a child chat (steered into its running turn; queued only while it asks)')
     .action((child: string, text: string) => run('send', { child, text }));
 
   const q = s.command('queue').description('The one question queue');

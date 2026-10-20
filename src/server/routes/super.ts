@@ -489,7 +489,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // child's `writeOwnerTurn`, and its hand-over note rides with it).
     const r = await sendWindowCommand(c.token, 'send', { tab: child, text });
     if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the message did not reach the child'); return; }
-    ok(res, { child, delivered: r.result ?? true });
+    // The window says how: 'steered' (into the running turn), 'queued' (behind an open
+    // question or permission card) or 'sent' (a new turn).
+    const how = (r.result as { delivered?: unknown } | undefined)?.delivered;
+    ok(res, { child, delivered: typeof how === 'string' ? how : true });
   },
 
   'queue-list': async (c, _b, res) => {

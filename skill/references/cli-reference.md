@@ -539,7 +539,7 @@ Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `
 | `window focus <tab>` | Bring a tab to the front of its pane. |
 | `window mode <basic\|plan\|develop> [--tab <id>]` | Switch a chat's mode: a restart on the same conversation, deferred to the end of the current turn when it is busy (always the case for the caller itself). |
 | `window model <id> [--tab <id>]` / `window effort <level> [--tab <id>]` | Live switch, from the next turn. |
-| `window send <tab> "<text>"` | Message another chat tab; queued when it is busy. |
+| `window send <tab> "<text>"` | Message another chat tab; a busy one gets it in its running turn (`steered`), one asking a question gets it after (`queued`). |
 | `window close <tab> [--force]` | Close a tab; a working or asking chat needs `--force`, only on the user's word. A chat cannot close itself. |
 
 ## Super Agent — the project's lead chat after a hand-over
@@ -558,7 +558,7 @@ Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `
 | `super brief <child> "<line>"` | The title a child's card shows. |
 | `super read <child> [--bytes <n>]` | The end of a child's transcript, at most 256 KB, fenced as the child's text. |
 | `super answer <child> <requestId> [choice…] [--text "…"]` | Answer a child's QUESTION (AskUserQuestion). Never a permission: those are answered only by the owner's Allow/Deny in the queue pill. |
-| `super send <child> "<text>"` | Message a child; queued when it is busy. |
+| `super send <child> "<text>"` | Message a child; a busy one gets it in its running turn (`steered`), one asking a question gets it after (`queued`). |
 | `super queue list` / `super queue ask <item> "<text>"` / `super queue done <item>` | The one question queue: escalate a question to the owner in your words (one escalation at a time), or mark an item handled. A permission item can be neither captioned nor closed. A question your event turn leaves unsettled (no `super answer`, `queue ask` or `queue done`) comes back to you once; left a second time, it goes to the owner as the child asked it. |
 | `super merge <child…> --into <topic>` | Merge children's `super/*` branches `--no-ff` into `super/<topic>` in its own worktree; a conflicting one is aborted with its file list and the integration branch is left as it was. Never the default branch, never pushed; server-run git runs with hooks, fsmonitor and commit signing disabled. |
 | `super worktree list` / `super worktree remove <child>` | Children's worktrees; `remove` refuses a dirty or unmerged one. |
