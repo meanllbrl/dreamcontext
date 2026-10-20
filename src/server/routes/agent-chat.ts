@@ -64,7 +64,7 @@ import { isAutomationBoundSession } from '../../lib/automations/session-registry
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
-import { registerChat, isDelegatedConversation, listChats, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { getChat, registerChat, isDelegatedConversation, listChats, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
 import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
 import { ensureIndexBuilt } from './embeddings.js';
@@ -87,6 +87,7 @@ import {
   CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, liveChatsSnapshot, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
   signalGroup, unregisterLiveChat, wsPingMs, type LiveChatEntry,
 } from './agent-chat-live.js';
+import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOutcome } from '../chat-park.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
@@ -1999,6 +2000,62 @@ export function startChatSession(
    *  prompt printed while detached reached no socket, so an adopting socket is handed them
    *  again — otherwise the turn would wait forever on a card nobody can see. */
   const outstandingAsks = new Map<string, string>();
+
+  // ── Parking under load (chat-park.ts) ───────────────────────────────────────────────
+  // A pinned project chat (not the Assistant, not a whiteboard card) can be parked by the
+  // load sweep or `super end`: a `park` frame down THIS socket, answered by the window.
+  const spawnedAt = Date.now();
+  /** The CLI's running background roster (`system:background_tasks_changed`): shells and agents
+   *  a park would kill. */
+  let backgroundTasks = 0;
+  /** The window's last `focus` frame: the owner looked at or typed in this tab. */
+  let focusedAt = 0;
+  let parkAsk: { id: string; settle: (o: ParkOutcome) => void; promise: Promise<ParkOutcome> } | null = null;
+  const PARK_REFUSALS: readonly ParkOutcome[] = ['busy', 'asking', 'background', 'focused'];
+  const parkThis = (reason: string): Promise<ParkOutcome> => {
+    if (!alive || lingerTimer || lingerKillTimer) return Promise.resolve('already');
+    if (parkAsk) return parkAsk.promise;
+    // No socket (the window closed, the phone slept): nobody to ask, the process just ends.
+    if (detached || ws.readyState !== ws.OPEN) { unregisterPark(); drain(); return Promise.resolve('drained'); }
+    const id = randomUUID();
+    let settle!: (o: ParkOutcome) => void;
+    const promise = new Promise<ParkOutcome>((res) => { settle = res; });
+    const timer = setTimeout(() => { if (parkAsk?.id === id) { parkAsk = null; settle('no_answer'); } }, PARK_ANSWER_MS);
+    timer.unref?.();
+    parkAsk = { id, promise, settle: (o) => { clearTimeout(timer); parkAsk = null; settle(o); } };
+    try { ws.send(JSON.stringify({ type: '_meta', subtype: 'park', id, reason, focusGraceMs: parkFocusGraceMs() })); }
+    catch { parkAsk.settle('no_answer'); }
+    return promise;
+  };
+  /** The window answered a park frame. Parked: the tab is dormant and its socket is closing;
+   *  that close ends the child (never a detach), and a socket that lingers is drained anyway. */
+  const onParkResult = (r: { id?: unknown; ok?: unknown; error?: unknown }): void => {
+    if (!parkAsk || r.id !== parkAsk.id) return;
+    if (r.ok === true) {
+      endOnSocketGone = true;
+      unregisterPark();
+      const t = setTimeout(() => { if (alive && !detached) drain(); }, 5_000);
+      t.unref?.();
+      parkAsk.settle('parked');
+      return;
+    }
+    const e = typeof r.error === 'string' ? r.error as ParkOutcome : 'refused';
+    parkAsk.settle(PARK_REFUSALS.includes(e) ? e : 'refused');
+  };
+  const unregisterPark = live && !card ? registerParkable({
+    id: live.conversationId,
+    kind: 'chat',
+    projectRoot,
+    pid: child.pid,
+    exempt: () => (isSuper ? 'super' : ownerDevice?.store === 'mac' ? 'phone' : null),
+    busy: () => turnsInFlight > 0,
+    asking: () => outstandingAsks.size > 0 || (registry ? getChat(chatRegistryId)?.status === 'asking' : false),
+    backgroundTasks: () => backgroundTasks,
+    idleSince: () => Math.max(spawnedAt, live.lastTurnEndedAt ?? 0),
+    focusedAt: () => focusedAt,
+    transcriptPath: () => liveTranscriptPath(contextRoot, live.conversationId),
+    park: parkThis,
+  }) : () => { /* never parked */ };
   /** The context handoff in progress (or the last one), drawn live by the chat as a staged
    *  card — see handoff-progress.ts. Replayed to an adopting socket like `outstandingAsks`. */
   let handoffRun: HandoffRun | null = null;
@@ -2222,6 +2279,8 @@ export function startChatSession(
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     stopPing();
     if (live) unregisterLiveChat(live);
+    unregisterPark();
+    parkAsk?.settle('already');
     untrack();
     releaseHeld();
     cleanupDeferred();
@@ -2465,6 +2524,9 @@ export function startChatSession(
 
       registry?.observe(obj);
       browserMirror?.observe(obj);
+      if (obj.type === 'system' && obj.subtype === 'background_tasks_changed') {
+        backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
+      }
 
       // A prompt the CLI now waits on (or no longer does) — replayed to an adopting socket.
       if (typeof obj.request_id === 'string') {
@@ -3577,6 +3639,10 @@ export function startChatSession(
       }
       return;
     }
+
+    // The window looked at / typed in this tab (at most once per 30 s): it is the owner's.
+    if (msg.type === 'focus') { focusedAt = Date.now(); return; }
+    if (msg.type === 'park_result') { onParkResult(msg as unknown as { id?: unknown; ok?: unknown; error?: unknown }); return; }
 
     if (windowControl && msg.type === 'window_command_result') {
       const r = msg as unknown as { id?: unknown; ok?: unknown; result?: unknown; error?: unknown };

@@ -99,6 +99,10 @@ export interface AgentSettings {
    *  default for everyone while it is being tried: only an explicit `true` shows it. Off never
    *  strands a hand-over already running: its Take back stays until the chats are back. */
   superAgent: boolean;
+  /** Settings → Chat "Park idle chats under load": the server ends chats idle for 10 min
+   *  (3 under hard pressure) when memory, swap or disk run short; the tab stays, dormant, and
+   *  Resume brings the conversation back. ON by default: only an explicit `false` turns it off. */
+  parkIdleChats: boolean;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -115,6 +119,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   chatDefaultEffort: '',
   lightMode: 'auto',
   superAgent: false,
+  parkIdleChats: true,
 };
 
 /** MIRRORED from `sanitizeModel` in `src/server/routes/agent-spawn-shared.ts`. The dashboard
@@ -163,6 +168,8 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     lightMode: r.lightMode === 'on' || r.lightMode === 'off' ? r.lightMode : 'auto',
     // Default-FALSE: only an explicit `true` turns the Super Agent on.
     superAgent: r.superAgent === true,
+    // Default-TRUE: only an explicit `false` stops parking idle chats under load.
+    parkIdleChats: r.parkIdleChats !== false,
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };

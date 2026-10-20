@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
-import { freemem, homedir, loadavg } from 'node:os';
+import { freemem, homedir, loadavg, totalmem } from 'node:os';
 import { dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { activityOf, getChat } from '../assistant/chat-registry.js';
@@ -22,6 +22,16 @@ export interface CapacityFacts {
   availMemGb: number;
   diskFreeGb: number | null;
   load1: number;
+  /** Physical memory. */
+  totalMemGb?: number;
+  /** Swap in use and its current size (`sysctl vm.swapusage` on macOS, `/proc/meminfo` on
+   *  Linux), null when unreadable. macOS grows the swap file on demand, so the share is of
+   *  the size right now. */
+  swapUsedGb?: number | null;
+  swapTotalGb?: number | null;
+  /** Every running process whose command BASENAME is `claude`: app chats, terminal tabs and
+   *  sessions of other projects alike (never the Claude.app helpers). Null when `ps` failed. */
+  claudeSessions?: number | null;
 }
 
 export interface CapacityDeps {
@@ -32,6 +42,12 @@ export interface CapacityDeps {
   loadavg: () => number[];
   worktreeRoot: string;
   now: () => number;
+  /** The readers below are optional so a caller that injects only the old ones (tests) gets
+   *  null facts for them, never a real `sysctl` or `ps`. */
+  totalMem?: () => number;
+  swapUsage?: () => Promise<string>;
+  procMeminfo?: () => Promise<string>;
+  psComm?: () => Promise<string>;
 }
 
 const run = promisify(execFile);
@@ -44,6 +60,10 @@ const defaultDeps = (): CapacityDeps => ({
   loadavg,
   worktreeRoot: superWorktreeRoot(homedir()),
   now: () => Date.now(),
+  totalMem: totalmem,
+  swapUsage: async () => (await run('sysctl', ['vm.swapusage'], { timeout: 5_000 })).stdout,
+  procMeminfo: () => fsp.readFile('/proc/meminfo', 'utf-8'),
+  psComm: async () => (await run('ps', ['-axo', 'comm='], { timeout: 5_000, maxBuffer: 8 * 1024 * 1024 })).stdout,
 });
 
 export const CAPACITY_TTL_MS = 60_000;
@@ -63,6 +83,42 @@ export function parseVmStat(text: string): number | null {
   };
   const total = pages('free') + pages('inactive') + pages('purgeable') + pages('speculative');
   return total * Number(size[1]);
+}
+
+/** `sysctl vm.swapusage` → used and total GB: `total = 20480.00M  used = 19316.50M  free = …`. */
+export function parseSwapUsage(text: string): { usedGb: number; totalGb: number } | null {
+  const num = (label: string): number | null => {
+    const m = new RegExp(`${label}\\s*=\\s*([\\d.]+)([KMGT])`).exec(text);
+    if (!m) return null;
+    const scale = { K: 1 / (1024 * 1024), M: 1 / 1024, G: 1, T: 1024 }[m[2] as 'K' | 'M' | 'G' | 'T'];
+    return Number(m[1]) * scale;
+  };
+  const totalGb = num('total');
+  const usedGb = num('used');
+  return totalGb === null || usedGb === null ? null : { usedGb, totalGb };
+}
+
+/** `/proc/meminfo` → swap used and total GB (SwapTotal − SwapFree, in kB). */
+export function parseProcMeminfoSwap(text: string): { usedGb: number; totalGb: number } | null {
+  const kb = (label: string): number | null => {
+    const m = new RegExp(`^${label}:\\s+(\\d+)\\s*kB`, 'm').exec(text);
+    return m ? Number(m[1]) : null;
+  };
+  const total = kb('SwapTotal');
+  const free = kb('SwapFree');
+  if (total === null || free === null) return null;
+  return { usedGb: (total - free) / (1024 * 1024), totalGb: total / (1024 * 1024) };
+}
+
+/** How many processes in a `ps -axo comm=` listing are `claude` by command basename. */
+export function countClaudeSessions(psComm: string): number {
+  let n = 0;
+  for (const line of psComm.split('\n')) {
+    const comm = line.trim();
+    if (!comm) continue;
+    if (comm.slice(comm.lastIndexOf('/') + 1) === 'claude') n += 1;
+  }
+  return n;
 }
 
 /** The nearest existing directory at or above `path` (statfs needs one that exists). */
@@ -93,7 +149,23 @@ async function measure(deps: CapacityDeps): Promise<CapacityFacts> {
     diskFreeGb = round1((Number(st.bavail) * Number(st.bsize)) / GB);
   } catch { diskFreeGb = null; }
   const load1 = round1(deps.loadavg()[0] ?? 0);
-  return { availMemGb: round1(availBytes / GB), diskFreeGb, load1 };
+  const totalMemGb = deps.totalMem ? round1(deps.totalMem() / GB) : undefined;
+  let swap: { usedGb: number; totalGb: number } | null = null;
+  try {
+    if (deps.platform === 'darwin' && deps.swapUsage) swap = parseSwapUsage(await deps.swapUsage());
+    else if (deps.platform === 'linux' && deps.procMeminfo) swap = parseProcMeminfoSwap(await deps.procMeminfo());
+  } catch { swap = null; }
+  let claudeSessions: number | null = null;
+  try { claudeSessions = deps.psComm ? countClaudeSessions(await deps.psComm()) : null; } catch { claudeSessions = null; }
+  return {
+    availMemGb: round1(availBytes / GB),
+    diskFreeGb,
+    load1,
+    ...(totalMemGb !== undefined ? { totalMemGb } : {}),
+    swapUsedGb: swap ? round1(swap.usedGb) : null,
+    swapTotalGb: swap ? round1(swap.totalGb) : null,
+    claudeSessions,
+  };
 }
 
 /** The facts, memoized for {@link CAPACITY_TTL_MS}. Injectable readers for tests. */
@@ -103,6 +175,73 @@ export function readCapacityFacts(deps: CapacityDeps = defaultDeps()): Promise<C
   const value = measure(deps);
   memo = { at: t, value };
   return value;
+}
+
+/** The facts read fresh, past the memo (the park sweep reads once a minute anyway and must see
+ *  what its last parking freed). Refreshes the memo for the other readers. */
+export function readCapacityFactsFresh(deps: CapacityDeps = defaultDeps()): Promise<CapacityFacts> {
+  const value = measure(deps);
+  memo = { at: deps.now(), value };
+  return value;
+}
+
+// ── Machine room (orchestration plan r5 D11; the parking task P-D1) ────────────────────
+/** Soft limits: do not start more. */
+export const SOFT_SWAP_SHARE = 0.75;
+export const SOFT_DISK_GB = 15;
+export const SOFT_AVAIL_MEM_GB = 2;
+/** One live Claude session per this many GB of RAM (10 on a 16 GB Mac). */
+export const GB_PER_SESSION = 1.6;
+/** Hard limits: tell the owner, and park harder. */
+export const HARD_SWAP_SHARE = 0.9;
+export const HARD_DISK_GB = 8;
+
+export type MachineLimit = 'sessions' | 'swap' | 'disk' | 'availMem' | 'light' | 'swapUnknown';
+
+export interface MachineReason {
+  limit: MachineLimit;
+  /** Over a HARD limit (swap >= 90 %, disk < 8 GB). */
+  hard: boolean;
+  /** What was read and the line it crossed, for the owner's one sentence. */
+  value: number | null;
+  threshold: number;
+}
+
+export interface MachineRoom {
+  ok: boolean;
+  hard: boolean;
+  reasons: MachineReason[];
+}
+
+/**
+ * Is there room on this machine for more Claude work? One pure function, two consumers: the
+ * Super Agent's `delegate` hold and the idle-chat park sweep. A null fact never blocks alone
+ * (fail open toward the observable state), except that an unreadable swap on macOS, where it
+ * is always readable, is reported as `swapUnknown` (it does not make `ok` false).
+ */
+export function machineRoom(facts: CapacityFacts, opts: { lightMode?: boolean; platform?: NodeJS.Platform } = {}): MachineRoom {
+  const reasons: MachineReason[] = [];
+  const { totalMemGb, swapUsedGb, swapTotalGb, claudeSessions, diskFreeGb, availMemGb } = facts;
+  if (typeof claudeSessions === 'number' && typeof totalMemGb === 'number' && totalMemGb > 0) {
+    const max = Math.floor(totalMemGb / GB_PER_SESSION);
+    if (claudeSessions >= max) reasons.push({ limit: 'sessions', hard: false, value: claudeSessions, threshold: max });
+  }
+  if (typeof swapUsedGb === 'number' && typeof swapTotalGb === 'number' && swapTotalGb > 0) {
+    const share = swapUsedGb / swapTotalGb;
+    if (share >= SOFT_SWAP_SHARE) reasons.push({ limit: 'swap', hard: share >= HARD_SWAP_SHARE, value: Math.round(share * 100), threshold: Math.round((share >= HARD_SWAP_SHARE ? HARD_SWAP_SHARE : SOFT_SWAP_SHARE) * 100) });
+  }
+  if (typeof diskFreeGb === 'number' && diskFreeGb < SOFT_DISK_GB) {
+    reasons.push({ limit: 'disk', hard: diskFreeGb < HARD_DISK_GB, value: diskFreeGb, threshold: diskFreeGb < HARD_DISK_GB ? HARD_DISK_GB : SOFT_DISK_GB });
+  }
+  if (typeof availMemGb === 'number' && availMemGb < SOFT_AVAIL_MEM_GB) {
+    reasons.push({ limit: 'availMem', hard: false, value: availMemGb, threshold: SOFT_AVAIL_MEM_GB });
+  }
+  if (opts.lightMode) reasons.push({ limit: 'light', hard: false, value: null, threshold: 0 });
+  const blocking = reasons.slice();
+  if ((opts.platform ?? process.platform) === 'darwin' && (swapUsedGb === null || swapTotalGb === null)) {
+    reasons.push({ limit: 'swapUnknown', hard: false, value: null, threshold: 0 });
+  }
+  return { ok: blocking.length === 0, hard: blocking.some((r) => r.hard), reasons };
 }
 
 /** Tests only. */

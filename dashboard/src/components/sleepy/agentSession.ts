@@ -12,6 +12,7 @@ import { copyPreservingUnicode } from '../../lib/clipboard';
 import { nextLineShadow } from '../../lib/lineShadow';
 import { raiseAskAttention } from '../../lib/attention';
 import { webglBudget, type WebglHandle } from './webglBudget';
+import { FOCUS_FRAME_THROTTLE_MS, parkGraceOf, type ParkHandler, type ParkVerdict } from './chatSession';
 
 /**
  * The imperative session engine behind {@link AgentSurface} — one `node-pty` ↔
@@ -164,6 +165,12 @@ export interface Session {
    *  session's composer for the ChatSession peer) — the kind-agnostic call sites in
    *  AgentSurface use this instead of reaching into `.term` directly. */
   focus: () => void;
+  /** The surface decides a park request for this Claude terminal (src/server/chat-park.ts). */
+  setParkHandler: (fn: ParkHandler | null) => void;
+  /** The owner is looking at or typing in this tab (one frame per 30 s at most). */
+  markFocus: () => void;
+  /** A turn or a waiting prompt is on screen. */
+  hasLiveWork: () => boolean;
   dispose: () => void;
 }
 
@@ -286,8 +293,33 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
     id, bypass, kind, claudeId, container, term, fit, ws,
     status: 'connecting', opened: false,
     busy: false, asking: false, attention: false, minimized: false,
-    ensureOpen, fitAndResize, applyZoom, sendText, runCommand, focus: () => term.focus(), dispose,
+    ensureOpen, fitAndResize, applyZoom, sendText, runCommand, focus: () => term.focus(),
+    setParkHandler: (fn) => { parkHandler = fn; },
+    markFocus,
+    hasLiveWork: () => session.busy || session.asking,
+    dispose,
   };
+
+  // ── Parking under load (the server's binary `park` frame) ──────────────────────────
+  let parkHandler: ParkHandler | null = null;
+  function runPark(req: { id: string; reason: string; focusGraceMs?: number }): void {
+    let verdict: ParkVerdict;
+    if (session.busy || session.asking) verdict = { ok: false, error: session.asking ? 'asking' : 'busy' };
+    else {
+      try { verdict = parkHandler ? parkHandler({ reason: req.reason, focusGraceMs: parkGraceOf(req.focusGraceMs) }) : { ok: false, error: 'refused' }; }
+      catch { verdict = { ok: false, error: 'refused' }; }
+    }
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(verdict.ok ? { type: 'park_result', id: req.id, ok: true } : { type: 'park_result', id: req.id, ok: false, error: verdict.error }));
+    }
+    if (verdict.ok) verdict.commit();
+  }
+  let lastFocusFrameAt = 0;
+  function markFocus(): void {
+    const now = Date.now();
+    if (now - lastFocusFrameAt < FOCUS_FRAME_THROTTLE_MS || ws.readyState !== WebSocket.OPEN) return;
+    try { ws.send(JSON.stringify({ type: 'focus' })); lastFocusFrameAt = now; } catch { /* closing */ }
+  }
 
   function setStatus(s: TermStatus) { session.status = s; notify(); }
 
@@ -463,8 +495,9 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
     // terminal output, which always arrives as text frames.
     if (ev.data instanceof ArrayBuffer) {
       try {
-        const msg = JSON.parse(new TextDecoder().decode(ev.data)) as { type?: string; state?: string };
+        const msg = JSON.parse(new TextDecoder().decode(ev.data)) as { type?: string; state?: string; id?: unknown; reason?: unknown; focusGraceMs?: unknown };
         if (msg.type === 'status' && (msg.state === 'working' || msg.state === 'ready')) onHookState(msg.state);
+        if (msg.type === 'park' && typeof msg.id === 'string') runPark({ id: msg.id, reason: typeof msg.reason === 'string' ? msg.reason : 'machine', focusGraceMs: typeof msg.focusGraceMs === 'number' ? msg.focusGraceMs : undefined });
       } catch { /* malformed control frame — ignore */ }
       return;
     }
