@@ -91,6 +91,9 @@ export interface LiveChatEntry {
   cut?: () => Promise<void>;
   /** The child's pid (it leads its own process group): labels what a process scan finds. */
   pid?: number;
+  /** A handed-over Super Agent only: join a phone socket BESIDE the holder as a read-and-chat
+   *  mirror (lib/super/phone-mirror.ts). False when the child can no longer take one. */
+  mirror?: (ws: import('ws').WebSocket, device: { store: 'mac'; idHash: string }) => boolean;
 }
 
 /** How long a cut child gets between SIGTERM and SIGKILL. */
