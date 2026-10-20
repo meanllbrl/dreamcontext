@@ -663,10 +663,36 @@ export function appUpdatesItself(installed: AppManifest): boolean {
   return installed.source !== 'local' && existsSync(installed.path) && isReleaseSigned(installed.path);
 }
 
-/** App auto-update is on by default; opt out with DREAMCONTEXT_APP_AUTO_UPDATE=0 (or master =0). */
-export function appAutoUpdateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+/**
+ * The persisted opt-out `dreamcontext app auto-update off` writes. The variables below only
+ * reach a process started from a shell; the app's own updater (desktop/src-tauri/src/updater.rs)
+ * runs from Finder, so it reads this marker too.
+ */
+export function appAutoUpdateOffPath(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'app-auto-update-off');
+}
+
+/**
+ * App auto-update is on by default; opt out with `dreamcontext app auto-update off` (persisted,
+ * honoured by the app's in-app updater too), DREAMCONTEXT_APP_AUTO_UPDATE=0, or the master
+ * DREAMCONTEXT_VERSION_CHECK=0.
+ */
+export function appAutoUpdateEnabled(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): boolean {
   if (env.DREAMCONTEXT_VERSION_CHECK === '0') return false;
-  return env.DREAMCONTEXT_APP_AUTO_UPDATE !== '0';
+  if (env.DREAMCONTEXT_APP_AUTO_UPDATE === '0') return false;
+  return !existsSync(appAutoUpdateOffPath(home));
+}
+
+/** Persist the opt-out (`off`) or remove it (`on`). Returns the resulting state. */
+export function setAppAutoUpdate(enabled: boolean, home: string = homedir()): boolean {
+  const marker = appAutoUpdateOffPath(home);
+  if (enabled) {
+    rmSync(marker, { force: true });
+  } else {
+    mkdirSync(dirname(marker), { recursive: true });
+    writeFileSync(marker, 'Written by `dreamcontext app auto-update off`. Delete it (or run `... on`) to update again.\n');
+  }
+  return !existsSync(marker);
 }
 
 export type AppUpdateSpawner = () => void;
@@ -688,11 +714,11 @@ function defaultAppUpdateSpawner(): void {
  */
 export function maybeTriggerAppUpdate(
   env: NodeJS.ProcessEnv = process.env,
-  deps: { spawner?: AppUpdateSpawner; manifest?: AppManifest | null; selfUpdating?: (m: AppManifest) => boolean } = {},
+  deps: { spawner?: AppUpdateSpawner; manifest?: AppManifest | null; selfUpdating?: (m: AppManifest) => boolean; home?: string } = {},
 ): boolean {
   try {
     if (detectPlatform().os !== 'darwin') return false;
-    if (!appAutoUpdateEnabled(env)) return false;
+    if (!appAutoUpdateEnabled(env, deps.home)) return false;
     const installed = deps.manifest !== undefined ? deps.manifest : readAppManifest();
     if (!installed) return false;
     // A published Developer ID release updates itself in-app; a second updater racing it
@@ -900,5 +926,21 @@ export function registerAppCommand(program: Command): void {
     .description('Show the installed desktop app version and state')
     .action(() => {
       doStatus();
+    });
+
+  app
+    .command('auto-update')
+    .description('Turn the desktop app\'s automatic updates on or off (remembered; the app\'s own updater honours it too)')
+    .argument('[state]', 'on | off (omit to show the current setting)')
+    .action((state?: string) => {
+      if (state !== undefined && state !== 'on' && state !== 'off') {
+        console.log(chalk.red('Use `dreamcontext app auto-update on` or `dreamcontext app auto-update off`.'));
+        process.exitCode = 1;
+        return;
+      }
+      const persisted = state === undefined ? !existsSync(appAutoUpdateOffPath()) : setAppAutoUpdate(state === 'on');
+      const effective = appAutoUpdateEnabled();
+      console.log(`App auto-update: ${persisted ? chalk.green('on') : chalk.yellow('off')}`
+        + (persisted && !effective ? chalk.dim(' (but DREAMCONTEXT_APP_AUTO_UPDATE=0 or DREAMCONTEXT_VERSION_CHECK=0 turns it off in this shell)') : ''));
     });
 }

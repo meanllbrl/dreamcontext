@@ -47,23 +47,34 @@ fn mac_mode_allows_update(home: &Path) -> bool {
     }
 }
 
-/// The same opt-out the CLI's background app update honours.
-fn opted_out() -> bool {
+/// The marker `dreamcontext app auto-update off` writes (src/cli/commands/app.ts). A
+/// Finder-launched app never sees the variables a shell exports, so this file is the opt-out
+/// it can honour.
+const AUTO_UPDATE_OFF_MARKER: &str = "app-auto-update-off";
+
+fn persisted_opt_out(home: &Path) -> bool {
+    home.join(".dreamcontext").join(AUTO_UPDATE_OFF_MARKER).exists()
+}
+
+/// The same opt-outs the CLI's background app update honours: the persisted one, and the
+/// variables for an app started from a shell.
+fn opted_out(home: Option<&Path>) -> bool {
     let off = |k: &str| std::env::var(k).map(|v| v == "0").unwrap_or(false);
-    off("DREAMCONTEXT_APP_AUTO_UPDATE") || off("DREAMCONTEXT_VERSION_CHECK")
+    off("DREAMCONTEXT_APP_AUTO_UPDATE") || off("DREAMCONTEXT_VERSION_CHECK") || home.is_some_and(persisted_opt_out)
 }
 
 /// Start the background check loop. A no-op in any build CI did not mark.
 pub fn start<R: Runtime>(app: &AppHandle<R>) {
-    if !compiled_in() || opted_out() {
+    if !compiled_in() {
         return;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FIRST_CHECK).await;
         loop {
-            // Asked every round: Mac mode starts and ends while the app stays open.
-            let allowed = home_dir().as_deref().map_or(true, mac_mode_allows_update);
+            // Asked every round: the opt-out and Mac mode both change while the app stays open.
+            let home = home_dir();
+            let allowed = !opted_out(home.as_deref()) && home.as_deref().map_or(true, mac_mode_allows_update);
             // Once a new bundle is on disk, checking again would fetch it a second time:
             // this process still reports the old version until it is reopened.
             if allowed && check_and_install(&app).await {
@@ -153,5 +164,13 @@ mod tests {
         std::fs::create_dir_all(h.join(".dreamcontext").join("handsfree")).unwrap();
         std::fs::write(h.join(".dreamcontext").join("handsfree").join("state.json"), r#"{"phase":"away"}"#).unwrap();
         assert!(mac_mode_allows_update(&h));
+    }
+
+    #[test]
+    fn the_cli_marker_opts_out() {
+        let h = home("optout");
+        assert!(!persisted_opt_out(&h));
+        std::fs::write(h.join(".dreamcontext").join(AUTO_UPDATE_OFF_MARKER), "").unwrap();
+        assert!(persisted_opt_out(&h));
     }
 }

@@ -381,6 +381,7 @@ A native **Tauri 2** app that wraps the same dashboard server so you manage ever
 dreamcontext app install     # install to ~/Applications (no admin, no quarantine prompt)
 dreamcontext app update      # update to the latest release
 dreamcontext app status      # show installed version and state
+dreamcontext app auto-update off   # stop automatic app updates (remembered; the app's own updater honours it); `on` resumes
 #   --from <path>  : install/update from a local .app/.tar.gz/.zip instead of GitHub Releases
 #   --dir <dir>    : install directory (default ~/Applications)
 ```

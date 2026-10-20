@@ -15,6 +15,8 @@ import {
   installAppBundle,
   readBundleVersion,
   appAutoUpdateEnabled,
+  appAutoUpdateOffPath,
+  setAppAutoUpdate,
   installDirFor,
   defaultInstallDir,
   appRunningIn,
@@ -163,14 +165,32 @@ describe('app manifest round-trip', () => {
 // ─── auto-update gate (pure) ───────────────────────────────────────────────────
 
 describe('appAutoUpdateEnabled', () => {
+  let home: string;
+  beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'dc-autoupd-')); });
+  afterEach(() => { rmSync(home, { recursive: true, force: true }); });
+
   it('is on by default', () => {
-    expect(appAutoUpdateEnabled({})).toBe(true);
+    expect(appAutoUpdateEnabled({}, home)).toBe(true);
   });
   it('opts out with DREAMCONTEXT_APP_AUTO_UPDATE=0', () => {
-    expect(appAutoUpdateEnabled({ DREAMCONTEXT_APP_AUTO_UPDATE: '0' })).toBe(false);
+    expect(appAutoUpdateEnabled({ DREAMCONTEXT_APP_AUTO_UPDATE: '0' }, home)).toBe(false);
   });
   it('is disabled by the master kill-switch', () => {
-    expect(appAutoUpdateEnabled({ DREAMCONTEXT_VERSION_CHECK: '0' })).toBe(false);
+    expect(appAutoUpdateEnabled({ DREAMCONTEXT_VERSION_CHECK: '0' }, home)).toBe(false);
+  });
+  it('`app auto-update off` persists an opt-out a process with no such variable still honours', () => {
+    expect(setAppAutoUpdate(false, home)).toBe(false);
+    // The marker the app's updater (desktop/src-tauri/src/updater.rs AUTO_UPDATE_OFF_MARKER) reads.
+    expect(appAutoUpdateOffPath(home)).toBe(join(home, '.dreamcontext', 'app-auto-update-off'));
+    expect(existsSync(appAutoUpdateOffPath(home))).toBe(true);
+    expect(appAutoUpdateEnabled({}, home)).toBe(false);
+    expect(maybeTriggerAppUpdate({}, { spawner: () => { throw new Error('must not fire'); }, manifest: { version: '0.8.0', path: '/x/dreamcontext-beta.app', installedAt: 0, source: 'local' }, home })).toBe(false);
+    expect(setAppAutoUpdate(true, home)).toBe(true);
+    expect(appAutoUpdateEnabled({}, home)).toBe(true);
+  });
+  it('the marker name is the one the desktop updater reads', () => {
+    const rust = readFileSync(join(__dirname, '..', '..', 'desktop', 'src-tauri', 'src', 'updater.rs'), 'utf-8');
+    expect(rust).toContain('const AUTO_UPDATE_OFF_MARKER: &str = "app-auto-update-off";');
   });
 });
 
@@ -196,7 +216,9 @@ describe('maybeTriggerAppUpdate', () => {
 
   it.skipIf(!isDarwin)('triggers when installed + enabled (macOS)', () => {
     let fired = false;
-    const out = maybeTriggerAppUpdate({}, { spawner: () => { fired = true; }, manifest: installed });
+    const home = mkdtempSync(join(tmpdir(), 'dc-autoupd-'));
+    const out = maybeTriggerAppUpdate({}, { spawner: () => { fired = true; }, manifest: installed, home });
+    rmSync(home, { recursive: true, force: true });
     expect(out).toBe(true);
     expect(fired).toBe(true);
   });

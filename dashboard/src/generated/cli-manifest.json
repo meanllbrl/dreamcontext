@@ -88,6 +88,13 @@
       "group": true
     },
     {
+      "path": "app auto-update",
+      "desc": "Turn the desktop app's automatic updates on or off (remembered; the app's own updater honours it too)",
+      "args": [
+        "[state]"
+      ]
+    },
+    {
       "path": "app install",
       "desc": "Install the desktop app (no quarantine, no admin)",
       "args": [],
