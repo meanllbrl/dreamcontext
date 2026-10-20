@@ -109,7 +109,7 @@
   color: var(--color-accent-text);
   border-color: transparent;
   background: var(--gradient-brand-strong);
-  box-shadow: 0 4px 18px -8px rgba(123, 104, 238, 0.6);
+  box-shadow: 0 4px 18px -8px color-mix(in oklch, var(--color-accent) 60%, transparent);
   position: relative;
 }
 /* The glow's peak rides a pseudo-element whose opacity breathes, so the compositor runs it
@@ -119,7 +119,7 @@
   position: absolute;
   inset: -1px;
   border-radius: inherit;
-  box-shadow: 0 0 0 3px rgba(123, 104, 238, 0.16), 0 6px 22px -8px rgba(123, 104, 238, 0.85);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 16%, transparent), 0 6px 22px -8px color-mix(in oklch, var(--color-accent) 85%, transparent);
   opacity: 0;
   pointer-events: none;
   animation: var(--dc-motion-ambient-name, bsearchGlow) 2.6s ease-in-out infinite;
@@ -134,8 +134,8 @@
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 .bsearch-intel--on .bsearch-intel-dot {
-  background: #fff;
-  box-shadow: 0 0 8px 1px rgba(255, 255, 255, 0.8);
+  background: var(--color-accent-text);
+  box-shadow: 0 0 8px 1px color-mix(in oklch, var(--color-accent-text) 80%, transparent);
   animation: var(--dc-motion-ambient-name, bsearchPulse) 1.5s ease-in-out infinite;
   animation-play-state: var(--dc-motion-play, running);
 }
@@ -306,17 +306,17 @@
   color: var(--color-accent-text);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
-  box-shadow: 0 6px 18px -6px rgba(123, 104, 238, 0.8);
+  box-shadow: 0 6px 18px -6px color-mix(in oklch, var(--color-accent) 80%, transparent);
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
-.bsearch-cta:hover { transform: translateY(-1px); box-shadow: 0 10px 24px -8px rgba(123, 104, 238, 0.9); }
+.bsearch-cta:hover { transform: translateY(-1px); box-shadow: 0 10px 24px -8px color-mix(in oklch, var(--color-accent) 90%, transparent); }
 
 .bsearch-kbd {
   font-family: var(--font-mono);
   font-size: 11px;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.22);
+  background: color-mix(in oklch, var(--color-accent-text) 22%, transparent);
 }
 
 .bsearch-thinking {

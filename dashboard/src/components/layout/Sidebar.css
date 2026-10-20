@@ -785,14 +785,14 @@
   transform: translateX(0);
   visibility: visible;
   transition: transform 220ms ease-out;
-  box-shadow: 0 20px 25px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-xl);
 }
 .sidebar--phone .sidebar-item { min-height: var(--space-11); }
 .sidebar-scrim {
   position: fixed;
   inset: 0;
   z-index: 1199;
-  background: rgba(0, 0, 0, 0.32);
+  background: color-mix(in oklch, var(--color-obsidian) 32%, transparent);
   opacity: 0;
   pointer-events: none;
   transition: opacity 220ms ease-out;
