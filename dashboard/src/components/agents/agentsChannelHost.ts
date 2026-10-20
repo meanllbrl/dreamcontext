@@ -296,7 +296,7 @@ function threadScratchId(slug: string): string {
 }
 
 /**
- * Revoke every thread bucket — called from the Agents page's unmount, beside the channel's.
+ * Revoke every thread bucket — called from the AI Team's unmount, beside the channel's.
  *
  * Leaving the page is what ends these conversations for good; switching views inside it, or
  * closing and reopening a thread panel, is not. Idempotent: `dropScratch` no-ops on a bucket
@@ -324,7 +324,7 @@ interface ThreadBucket {
 
 /**
  * The bucket for one host. Given an id, that id is BOTH the scratch bucket and the draft key,
- * and it is not put on the Agents page's revoke list: whoever minted it owns its death, through
+ * and it is not put on the AI Team page's revoke list: whoever minted it owns its death, through
  * {@link dropThreadBucket}. Without one, the per-slug page bucket as before.
  */
 function threadBucket(slug: string, ownId: string | undefined): ThreadBucket {

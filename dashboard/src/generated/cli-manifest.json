@@ -343,7 +343,8 @@
         "--review",
         "--whiteboard",
         "--agent",
-        "--job"
+        "--job",
+        "--answer"
       ]
     },
     {
@@ -3066,7 +3067,7 @@
     },
     {
       "path": "super close",
-      "desc": "Close a card (a child chat keeps running)",
+      "desc": "Close a card (a child chat keeps running; `super end` ends it)",
       "args": [
         "<card>"
       ]
@@ -3087,10 +3088,27 @@
       ]
     },
     {
+      "path": "super end",
+      "desc": "End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks",
+      "args": [
+        "[children...]"
+      ]
+    },
+    {
       "path": "super float",
-      "desc": "Bring a card from Others back to the floating cards (placed for you)",
+      "desc": "Bring a card or a group from Others back to the stage (placed for you); a grouped card leaves its group",
       "args": [
         "<card>"
+      ]
+    },
+    {
+      "path": "super group",
+      "desc": "Put cards together as one tile on the stage; a group id among them adds the rest to that group",
+      "args": [
+        "<cards...>"
+      ],
+      "valueFlags": [
+        "--name"
       ]
     },
     {
@@ -3166,8 +3184,20 @@
       ]
     },
     {
+      "path": "super resume",
+      "desc": "Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others",
+      "args": [
+        "<child>"
+      ],
+      "valueFlags": [
+        "--mode",
+        "--model",
+        "--effort"
+      ]
+    },
+    {
       "path": "super send",
-      "desc": "Send a message into a child chat (queued if it is busy)",
+      "desc": "Send a message into a child chat (steered into its running turn; queued only while it asks)",
       "args": [
         "<child>",
         "<text>"
@@ -3175,7 +3205,7 @@
     },
     {
       "path": "super shape",
-      "desc": "Make a card square (1:1) or tall (3:4)",
+      "desc": "Record a card's shape (square | tall); kept for older scripts: every floating card is drawn as a 1:1 tile",
       "args": [
         "<card>",
         "<shape>"
@@ -3183,7 +3213,7 @@
     },
     {
       "path": "super stack",
-      "desc": "Put a card in the Others stack (bottom right)",
+      "desc": "Put a card or a group in Others (bottom right); a grouped card leaves its group",
       "args": [
         "<card>"
       ]
@@ -3192,6 +3222,13 @@
       "path": "super state",
       "desc": "Children (status, brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
       "args": []
+    },
+    {
+      "path": "super ungroup",
+      "desc": "Dissolve a group (its cards take its place on the stage or in Others), or take cards out of their group (they float)",
+      "args": [
+        "<targets...>"
+      ]
     },
     {
       "path": "super worktree",
@@ -4096,7 +4133,7 @@
     },
     {
       "path": "window send",
-      "desc": "Send a message into another chat tab (queued if it is busy)",
+      "desc": "Send a message into another chat tab (steered into its running turn; queued only while it asks)",
       "args": [
         "<tab>",
         "<text>"

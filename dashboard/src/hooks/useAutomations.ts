@@ -127,7 +127,7 @@ export interface AutomationSummary {
 
 /**
  * A real automation: a job with a schedule, never an agent's own call target. The
- * Automations page shows only these (on-call agents live on the Agents page), while
+ * Automations page shows only these (on-call agents live on the AI Team page), while
  * Messages and Files keep reading the whole list. An older backend sends no `runKind`;
  * its call targets are the `'call'` rows.
  */
@@ -334,6 +334,9 @@ export interface AutomationDetail {
    *  already runs elsewhere runs it duplicated, and that must be consented to
    *  knowingly, never discovered later. */
   foreignRuns?: AutomationForeignRuns | null;
+  /** Every hashed field as the CLI's approve prints it (`field: value` lines): what Approve
+   *  grants. Absent on an older backend. */
+  review?: string;
   cache: AutomationCache | null;
 }
 
@@ -557,7 +560,7 @@ export function useSetAutomationEnabled() {
  * TWO CREATE SHAPES share this type. With `agent` set, the automation is a JOB
  * bound to that existing agent: the server takes `title`, `job` and the schedule
  * and ignores any identity field (prompt, model, effort are the agent's, edited
- * on the Agents page); it answers 409 `agent_unapproved` while the agent is not
+ * on the AI Team page); it answers 409 `agent_unapproved` while the agent is not
  * approved here for conversation. Without `agent`, it is the legacy self-contained
  * shape, where `prompt` is required.
  */
@@ -580,6 +583,8 @@ export interface AutomationDraft {
   /** The home board, set at CREATE only (the server never changes it on an
    *  update, and the edit dialog never sends it). */
   whiteboard?: string;
+  /** "Ask me before it publishes": `agent` stops to ask, `off` never does. Edit only. */
+  review?: 'off' | 'agent' | 'output';
 }
 
 /**
@@ -832,6 +837,9 @@ export function useAnswerQuestion() {
       // is stale too.
       queryClient.invalidateQueries({ queryKey: ['automations'] });
       queryClient.invalidateQueries({ queryKey: ['automations', data.question.slug] });
+      // The feed carries the open question too (AI Team's composer answers it): an answered
+      // one must leave it now, not at the next 15s poll.
+      queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
     },
   });
 }
@@ -995,7 +1003,7 @@ export interface ThreadEntry {
   id: string;
   runId: string;
   kind: 'system' | 'agent' | 'user';
-  event?: 'started' | 'ok' | 'failed' | 'timeout' | 'asked' | 'replied' | 'skipped';
+  event?: 'started' | 'ok' | 'failed' | 'timeout' | 'asked' | 'replied' | 'skipped' | 'routine';
   at: string;
   text: string;
   files?: string[];
@@ -1110,7 +1118,9 @@ export function useSayInChannel() {
   return useMutation({
     // `board`: the whiteboard the message was sent from (an agent card), so the
     // turn is shown that board. Omitted everywhere else.
-    mutationFn: (v: { slug: string; text: string; board?: string }) =>
+    // `model`/`effort`: a temporary pick for THIS turn only (AI Team), checked server-side
+    // against the model list and never written to the agent.
+    mutationFn: (v: { slug: string; text: string; board?: string; model?: string; effort?: string }) =>
       api.post<{
         /** `kind` says which of the two things the mention STARTED: a `run` is a
          *  fresh fire of a call-mode agent, a `reply` is a resume of a scheduled

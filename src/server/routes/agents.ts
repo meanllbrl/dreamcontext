@@ -381,7 +381,7 @@ export async function handleAgentsDelete(
 }
 
 /** POST /api/agents/:slug/approve — grant the agent's CALL target as it stands
- *  right now, on this machine (the owner reviewed it on the Agents page). */
+ *  right now, on this machine (the owner reviewed it on the AI Team page). */
 export async function handleAgentsApprove(
   _req: IncomingMessage,
   res: ServerResponse,

@@ -13,6 +13,8 @@ import {
   flowForDisplay,
   createAutomation,
   updateAutomation,
+  type UpdateAutomationInput,
+  checkReviewPatch,
   removeAutomation,
   writeFlowSection,
   automationPhotosDir,
@@ -26,10 +28,13 @@ import {
 import { getAgent, removeAgent, withRestamp } from '../../lib/agents/store.js';
 import { agentKeyOf, readManifestFrontmatter } from '../../lib/agents/slot.js';
 import type { AgentIdentityPatch } from '../../lib/agents/types.js';
+import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import {
+  approvalFields,
   checkApproval,
+  renderApprovalReview,
   approveAutomation,
   listRegisteredProjects,
   registerProject,
@@ -94,6 +99,7 @@ import {
   type FlowGraph,
   type RunKind,
   type ScheduleSlot,
+  type SpawnModelOverride,
   type Weekday,
   THREAD_TEXT_MAX_CHARS,
 } from '../../lib/automations/types.js';
@@ -471,6 +477,9 @@ export async function handleAutomationsShow(
       // performed is already running elsewhere, and approving it here runs it
       // duplicated. null ⇒ private manifest, no evidence either way.
       foreignRuns: foreignRunEvidence(contextRoot, manifest),
+      // Every hashed field as the `field: value` lines the CLI's approve prints (the same
+      // renderer the agent profile's review uses): what Approve grants, in one readable block.
+      review: renderApprovalReview(approvalFields(manifest)),
       cache: readAutomationCache(contextRoot, manifest.slug),
     });
   } catch {
@@ -1190,7 +1199,7 @@ export async function handleAutomationsCreate(
  * and nobody approves a prompt by scheduling it. The store's `createAutomation`
  * approves it here (the pair's own `approvePair` for a same-slug pair — its ONE
  * caller), so the route never writes the registry itself. Identity fields in the
- * body are ignored: they are the agent's, edited on the Agents page.
+ * body are ignored: they are the agent's, edited on the AI Team page.
  */
 async function createBoundFromBody(
   res: ServerResponse,
@@ -1208,7 +1217,7 @@ async function createBoundFromBody(
   const projectRoot = dirname(contextRoot);
   if (!checkApproval(projectRoot, agentTarget, undefined, 'identity').approved) {
     sendError(res, 409, 'agent_unapproved',
-      `${agentTarget.agentTitle || agentTarget.title} is not approved on this machine. Approve it on the Agents page first.`);
+      `${agentTarget.agentTitle || agentTarget.title} is not approved on this machine. Approve it on the AI Team page first.`);
     return;
   }
   const slug = (str(body.slug) ?? '').trim() || slugifyTitle(title);
@@ -1288,6 +1297,8 @@ export async function handleAutomationsUpdate(
       return;
     }
     const job = body.job === undefined ? undefined : str(body.job) ?? null;
+    // Refused before the identity half is written and re-stamped (`updateSplitTarget`).
+    checkReviewPatch(str(body.review));
     // Read BEFORE any write: whether the target was approved decides whether this
     // save may approve a soul the dialog never showed (see approveUnlessUnseenSoul).
     const before = getRunTarget(contextRoot, params.slug, 'automation');
@@ -1310,6 +1321,7 @@ export async function handleAutomationsUpdate(
       effort,
       timeoutMinutes: readTimeout(body.timeoutMinutes),
       enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+      review: str(body.review) as UpdateAutomationInput['review'],
       prompt: str(body.prompt),
       job,
     });
@@ -1376,6 +1388,7 @@ function updateSplitTarget(
     at: str(body.at),
     timeoutMinutes: readTimeout(body.timeoutMinutes),
     enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+    review: str(body.review) as UpdateAutomationInput['review'],
     job: identityIn.job,
   });
   return { manifest, stamped: approveUnlessUnseenSoul(contextRoot, before, manifest) };
@@ -2061,7 +2074,12 @@ const sayRefusal = (status: 400 | 404 | 409, code: string, message: string): Say
  */
 export function sayToAgent(
   contextRoot: string,
-  input: { slug: string; text: string; via: SayVia; board?: string | null },
+  input: {
+    slug: string; text: string; via: SayVia; board?: string | null;
+    /** The owner's temporary model for this message, already validated against the
+     *  model list (`parseModelOverride`). It reaches this message's spawn only. */
+    override?: SpawnModelOverride | null;
+  },
 ): SayResult {
   const slug = input.slug.trim();
   const text = input.text.trim();
@@ -2093,6 +2111,7 @@ export function sayToAgent(
     // gets the RAW text and expands it fresh, so it reads each element as it is now.
     const shown = displayText(contextRoot, text);
     const boardOpt = board ? { board } : {};
+    const overrideOpt = input.override ? { override: input.override } : {};
     // ── synchronous from here to the job start ──
     // Per AGENT: only a second run of THIS agent is refused — it would write into the same
     // thread and resume the same session. Another agent's run is no reason to wait.
@@ -2113,7 +2132,7 @@ export function sayToAgent(
         return sayRefusal(409, 'say_busy', `${manifest.title} is still running. Try again when it finishes.`);
       }
       const entry = appendThreadEntry(contextRoot, slug, { runId: liveRun, kind: 'user', text: shown, via });
-      const replyJob = startAutomationReplyJob(contextRoot, slug, { runId: liveRun, text, entryId: entry.id, ...boardOpt });
+      const replyJob = startAutomationReplyJob(contextRoot, slug, { runId: liveRun, text, entryId: entry.id, ...boardOpt, ...overrideOpt });
       return {
         ok: true, status: 200,
         body: {
@@ -2145,7 +2164,7 @@ export function sayToAgent(
         runId, kind: 'user', text: shown, via, now: fireAt,
       });
       const replyJob = startAutomationReplyJob(contextRoot, slug, {
-        runId, text, entryId: entry.id, ...boardOpt,
+        runId, text, entryId: entry.id, ...boardOpt, ...overrideOpt,
       });
       return {
         ok: true, status: 200,
@@ -2154,7 +2173,7 @@ export function sayToAgent(
     }
 
     appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: shown, via, now: fireAt });
-    const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, ...boardOpt });
+    const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, ...boardOpt, ...overrideOpt });
     // Unreachable given the busy check above (nothing can interleave between
     // them), and handled anyway: the ask is already on disk at this point, so
     // a job that was NOT started would leave it in the channel with nothing
@@ -2190,6 +2209,12 @@ export function sayToAgent(
  * the orphan guard, and the ask lands in the prompt fenced and labelled as
  * speech (`buildAskBlock`), never as the job description.
  *
+ * The body's optional `model` / `effort` (the AI Team's temporary model) is the SECOND
+ * present-tense input, for the same reason: the owner picking a model for the message they
+ * are sending. It is checked against the model list (`parseModelOverride`, 400 `bad_model`),
+ * reaches this message's spawn only, and is never written to the manifest, so the approved
+ * envelope of every scheduled fire stays exactly what was approved.
+ *
  * ORDER MATTERS AND THERE IS NO `await` INSIDE IT. The busy check, the thread
  * write and the job start run as one synchronous block (`sayToAgent`), so nothing
  * can slip a second job in between and leave a question in the channel that
@@ -2206,11 +2231,17 @@ export async function handleAutomationsSay(
 ): Promise<void> {
   try {
     const body = await parseJsonBody(req);
+    const picked = parseModelOverride(body, agentModelChoices());
+    if (!picked.ok) {
+      sendError(res, 400, 'bad_model', picked.message);
+      return;
+    }
     const result = sayToAgent(contextRoot, {
       slug: typeof body?.slug === 'string' ? body.slug : '',
       text: typeof body?.text === 'string' ? body.text : '',
       via: 'dashboard',
       board: body?.board as string | null | undefined,
+      override: picked.override,
     });
     if (result.ok) sendJson(res, result.status, result.body);
     else sendError(res, result.status, result.code, result.message);
@@ -2277,6 +2308,12 @@ export async function handleAutomationsThreadReply(
       sendError(res, 400, 'bad_board', 'That whiteboard does not exist in this project.');
       return;
     }
+    // The temporary model, as on `say`: this reply's resume only, never the manifest.
+    const picked = parseModelOverride(body, agentModelChoices());
+    if (!picked.ok) {
+      sendError(res, 400, 'bad_model', picked.message);
+      return;
+    }
 
     // `runId` becomes BOTH a thread grouping key and a `DREAMCONTEXT_AUTOMATION_RUN` env
     // value on a bypassPermissions child, so it is validated for shape AND for identity.
@@ -2330,6 +2367,7 @@ export async function handleAutomationsThreadReply(
     });
     const job = startAutomationReplyJob(contextRoot, slug, {
       runId, text, entryId: entry.id, ...(board ? { board } : {}),
+      ...(picked.override ? { override: picked.override } : {}),
     });
     sendJson(res, 202, { entry, job: { id: job.id, status: job.status } });
   } catch (err) {

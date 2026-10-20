@@ -106,7 +106,7 @@ export function prepareAssignment(
   const title = oneDataLine(target.agentTitle || target.title, 120);
   if (!target.enabled) return refuse('agent_disabled', `${title} is switched off, so it cannot take a task.`);
   if (!checkApproval(dirname(contextRoot), target, opts.home, 'run').approved) {
-    return refuse('agent_not_approved_to_run', `${title} is not approved to run on this machine. Approve it on the Agents page.`);
+    return refuse('agent_not_approved_to_run', `${title} is not approved to run on this machine. Approve it on the AI Team page.`);
   }
   return {
     ok: true,

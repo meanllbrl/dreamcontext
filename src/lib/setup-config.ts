@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PlatformId } from './platforms.js';
 import { sanitizeModel } from './claude-args.js';
+import { KNOWN_SLEEP_MODEL_VALUES } from './model-facts.js';
 
 const CONFIG_REL_PATH = '_dream_context/state/.config.json';
 
@@ -233,14 +234,7 @@ export type SleepEffort = (typeof SLEEP_EFFORT_LEVELS)[number];
  * at the moment it is typed rather than as a specialist that dies mid-cycle.
  * `--allow-unknown` is the escape hatch for a model this build predates.
  */
-export const KNOWN_SLEEP_MODELS = [
-  'claude-opus-5',
-  'claude-sonnet-5',
-  'claude-haiku-4-5',
-  'opus',
-  'sonnet',
-  'haiku',
-] as const;
+export const KNOWN_SLEEP_MODELS: readonly string[] = KNOWN_SLEEP_MODEL_VALUES;
 
 export interface SleepSpecialistConfig {
   model?: string;

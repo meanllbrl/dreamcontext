@@ -110,7 +110,7 @@ export function identityErrorKey(err: unknown): 'agents.identity.truncated' | 'a
  * is the whole prompt, never a preview.
  */
 export function AgentIdentityDialog({
-  slug, whiteboard, onClose, onSaved,
+  slug, whiteboard, onClose, onSaved, inline = false, initial, onDraftTitle, note, submitLabel,
 }: {
   /** The agent to edit, or null to create one. */
   slug: string | null;
@@ -119,6 +119,16 @@ export function AgentIdentityDialog({
   onClose: () => void;
   /** After a save (and the photo, when one was picked). `message` is the toast to show. */
   onSaved: (slug: string, message: string) => void;
+  /** Drawn in the page (AI Team's new teammate) rather than as a modal over it. */
+  inline?: boolean;
+  /** Create only: a starter's name and job, filled in. */
+  initial?: Partial<Pick<IdentityForm, 'title' | 'prompt'>>;
+  /** Create only: the name as it is typed, for the draft row in the team list. */
+  onDraftTitle?: (title: string) => void;
+  /** Replaces the call-settings note (AI Team: where a schedule comes from). */
+  note?: string;
+  /** Replaces the create button's words (AI Team: "Add to team"). */
+  submitLabel?: string;
 }) {
   const { t } = useI18n();
   const editing = slug !== null;
@@ -129,7 +139,10 @@ export function AgentIdentityDialog({
   const upload = useUploadAgentIdentityPhoto();
   const busy = create.isPending || update.isPending || upload.isPending;
 
-  const [form, setForm] = useState<IdentityForm>(() => (editing ? EMPTY_IDENTITY_FORM : createForm(whiteboard)));
+  const [form, setForm] = useState<IdentityForm>(() => (editing ? EMPTY_IDENTITY_FORM : { ...createForm(whiteboard), ...initial }));
+  const draftTitle = useRef(onDraftTitle);
+  draftTitle.current = onDraftTitle;
+  useEffect(() => { if (!editing) draftTitle.current?.(form.title); }, [editing, form.title]);
   const [original, setOriginal] = useState<IdentityForm | null>(editing ? null : EMPTY_IDENTITY_FORM);
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<Blob | null>(null);
@@ -149,10 +162,13 @@ export function AgentIdentityDialog({
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   useEffect(() => {
+    // Drawn in the page, the form owns no overlay: Esc elsewhere on the page (a menu, a picker)
+    // must not throw away what was typed. Cancel is the way out there.
+    if (inline) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, busy]);
+  }, [onClose, busy, inline]);
 
   const ready = original !== null;
   const blocker = identityFormError(form);
@@ -244,9 +260,12 @@ export function AgentIdentityDialog({
   const boardMissing = form.whiteboard && !boardList.some((b) => b.slug === form.whiteboard);
 
   return (
-    <div className="aid-scrim" onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
-      <div className="aid-modal" role="dialog" aria-modal="true" aria-label={heading}>
-        <h2 className="aid-title">{heading}</h2>
+    <div
+      className={inline ? 'aid-inline' : 'aid-scrim'}
+      onClick={inline ? undefined : (e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
+    >
+      <div className="aid-modal" role={inline ? 'form' : 'dialog'} aria-modal={inline ? undefined : true} aria-label={heading}>
+        {!inline && <h2 className="aid-title">{heading}</h2>}
 
         {editing && detail.isError && <p className="aid-error" role="alert">{t('agents.page.loadFailed')}</p>}
 
@@ -396,14 +415,14 @@ export function AgentIdentityDialog({
           <span>{t('agents.identity.learning')}</span>
         </label>
 
-        <p className="aid-note">{t('agents.identity.callSettingsNote')}</p>
+        <p className="aid-note">{note ?? t('agents.identity.callSettingsNote')}</p>
 
         {error && <p className="aid-error" role="alert">{error}</p>}
 
         <div className="aid-foot">
           <button type="button" className="aid-btn" onClick={onClose} disabled={busy}>{t('agents.identity.cancel')}</button>
           <button type="button" className="aid-btn aid-btn--primary" onClick={save} disabled={!ready || busy || !!blocker}>
-            {busy ? t('agents.identity.saving') : editing ? t('agents.identity.save') : t('agents.identity.create')}
+            {busy ? t('agents.identity.saving') : editing ? t('agents.identity.save') : submitLabel ?? t('agents.identity.create')}
           </button>
         </div>
       </div>

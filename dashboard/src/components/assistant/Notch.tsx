@@ -1629,7 +1629,7 @@ export function Notch() {
         <span
           className="dc-notch__ear dc-notch__ear--right"
           role="img"
-          aria-label={`${label}${inbox.running.length ? `, ${inbox.running.length} automation${inbox.running.length === 1 ? '' : 's'} running` : ''}${inboxCount ? `, ${inboxCount} notification${inboxCount === 1 ? '' : 's'}` : ''}`}
+          aria-label={`${label}${inbox.running.length ? `, ${inbox.running.length} teammate${inbox.running.length === 1 ? '' : 's'} working` : ''}${inboxCount ? `, ${inboxCount} notification${inboxCount === 1 ? '' : 's'}` : ''}`}
           title={label}
         >
           {bubbles.length > 0 && (

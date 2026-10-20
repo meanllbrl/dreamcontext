@@ -230,19 +230,6 @@ function AutomationsIcon() {
   );
 }
 
-/** Agents (the agents' own page) — one person, head and shoulders, inside a card with a
- *  name line under it: a profile, which is what the page opens. One figure, not the
- *  Automations pair, so the two rows sitting next to each other never read as the same page. */
-function AgentsIcon() {
-  return (
-    <Svg>
-      <rect x="3.5" y="3" width="17" height="18" rx="2" />
-      <circle cx="12" cy="9" r="2.6" />
-      <path d="M7.4 16.2a4.8 4.8 0 0 1 9.2 0" />
-    </Svg>
-  );
-}
-
 /** Control Panel (page id `whiteboards`) — a board on an easel with a stroke drawn on it:
  *  the canvas you and the agent draw on together. */
 function WhiteboardsIcon() {
@@ -281,7 +268,6 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   hypotheses: HypothesesIcon,
   lab: LabIcon,
   automations: AutomationsIcon,
-  agents: AgentsIcon,
   whiteboards: WhiteboardsIcon,
   council: CouncilIcon,
   core: CoreIcon,

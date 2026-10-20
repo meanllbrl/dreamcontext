@@ -11,7 +11,7 @@ import {
 import {
   resumeWithAnswer, resumeWithMessage, type TalkOutcome, type VerdictOptions,
 } from '../lib/automations/verdict.js';
-import type { BoardTurnInput, RunKind, RunStatus } from '../lib/automations/types.js';
+import type { BoardTurnInput, RunKind, RunStatus, SpawnModelOverride } from '../lib/automations/types.js';
 import type { TaskRef } from '../lib/automations/runner.js';
 import { getAgent } from '../lib/agents/store.js';
 import { logAssignmentResult } from '../lib/agents/task-assignment.js';
@@ -51,6 +51,8 @@ export interface AutomationAsk extends BoardTurnInput {
   /** `'agent'` runs the agent's call target even when a same-slug automation
    *  exists (a task assignment). Omitted ⇒ what `getAutomation` resolves. */
   target?: RunKind;
+  /** The owner's temporary model for this ask (AI Team), already validated. */
+  override?: SpawnModelOverride | null;
 }
 
 /**
@@ -236,6 +238,7 @@ async function runJob(contextRoot: string, job: AutomationJobState, ask?: Automa
       ...(ask?.board ? { board: ask.board } : {}),
       ...(ask?.target ? { target: ask.target } : {}),
       ...(ask?.task ? { task: ask.task } : {}),
+      ...(ask?.override ? { override: ask.override } : {}),
       // CALLBACK form — NEVER trackChild(child). trackChild's ChildProcess
       // branch does `child.kill()`, which signals the PID only; the automation
       // child is `detached: true`, so a PID-only kill leaves its process group
@@ -559,7 +562,11 @@ function settleReplyThread(
 export function startAutomationReplyJob(
   contextRoot: string,
   slug: string,
-  opts: { runId: string; text: string; entryId: string; home?: string; lockPollMs?: number } & BoardTurnInput,
+  opts: {
+    runId: string; text: string; entryId: string; home?: string; lockPollMs?: number;
+    /** The owner's temporary model for this reply (AI Team), already validated. */
+    override?: SpawnModelOverride | null;
+  } & BoardTurnInput,
 ): ReplyJobState {
   pruneSettledReplyJobs();
   const job: ReplyJobState = {
@@ -621,7 +628,7 @@ async function replyOrAnswer(
 async function runReplyJob(
   contextRoot: string,
   job: ReplyJobState,
-  opts: { text: string; home?: string; lockPollMs?: number } & BoardTurnInput,
+  opts: { text: string; home?: string; lockPollMs?: number; override?: SpawnModelOverride | null } & BoardTurnInput,
 ): Promise<void> {
   let outcome: TalkOutcome | null = null;
   try {
@@ -641,6 +648,7 @@ async function runReplyJob(
       onLockAcquired: () => { job.phase = 'delivering'; },
       // The board the reply came from, so the resumed turn carries its context.
       ...(opts.board ? { board: opts.board } : {}),
+      ...(opts.override ? { override: opts.override } : {}),
     };
     outcome = await replyOrAnswer(contextRoot, job.slug, opts.text, verdictOpts);
     job.status = outcome.status === 'ok' ? 'ok' : outcome.status === 'refused' ? 'refused' : 'failed';

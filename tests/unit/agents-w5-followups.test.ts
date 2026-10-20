@@ -74,7 +74,7 @@ describe('the wave 4 fallback strings now have keys', () => {
       'dashboard/src/components/agents/AgentIdentityDialog.tsx',
       'dashboard/src/components/agents/AgentProfilePanel.tsx',
       'dashboard/src/components/agents/AutomationDialog.tsx',
-      'dashboard/src/pages/AutomationsPage.tsx',
+      'dashboard/src/pages/AiTeamPage.tsx',
       'dashboard/src/components/tasks/AssignToAgentComposer.tsx',
       'dashboard/src/components/tasks/TaskDetailPanel.tsx',
       'dashboard/src/lib/assignToAgent.ts',
@@ -165,11 +165,10 @@ describe('New agent on a board presets that board as home', () => {
     expect(readOpenAgentsDetail({ create: true, whiteboard: 7 })).toEqual({ create: true });
   });
 
-  it('the page carries the board into the create intent, and nowhere else', async () => {
-    const { focusIntent } = await import('../../dashboard/src/pages/AgentsPage');
-    expect(focusIntent({ create: true, whiteboard: 'growth-board', nonce: 1 }))
-      .toEqual({ select: null, create: true, whiteboard: 'growth-board' });
-    expect(focusIntent({ create: true, nonce: 2 })).toEqual({ select: null, create: true, whiteboard: null });
+  it('the AI Team carries the board into its new-teammate form, and nowhere else', () => {
+    const page = code(read('dashboard/src/pages/AiTeamPage.tsx'));
+    expect(page).toMatch(/setCreating\(\{ start: 'blank', whiteboard: agentsFocus\.whiteboard, title: '' \}\)/);
+    expect(page).toMatch(/whiteboard=\{creating\.whiteboard\}/);
   });
 
   it('the dialog starts a new agent on that board, and a plain create stays blank', async () => {
@@ -182,9 +181,9 @@ describe('New agent on a board presets that board as home', () => {
   it('wires the board from the canvas, through the page, into the dialog', () => {
     const canvas = code(read('dashboard/src/components/whiteboard/WhiteboardCanvas.tsx'));
     expect(canvas).toMatch(/requestOpenAgents\(\{ create: true, whiteboard: boardSlug \}\)/);
-    const page = code(read('dashboard/src/pages/AgentsPage.tsx'));
-    expect(page).toMatch(/<AgentIdentityDialog slug=\{dialog\.slug\} whiteboard=\{dialog\.whiteboard\}/);
+    const team = code(read('dashboard/src/components/aiteam/NewTeammate.tsx'));
+    expect(team).toMatch(/slug=\{null\}\s+whiteboard=\{whiteboard\}/);
     const dialog = code(read('dashboard/src/components/agents/AgentIdentityDialog.tsx'));
-    expect(dialog).toMatch(/useState<IdentityForm>\(\(\) => \(editing \? EMPTY_IDENTITY_FORM : createForm\(whiteboard\)\)\)/);
+    expect(dialog).toMatch(/useState<IdentityForm>\(\(\) => \(editing \? EMPTY_IDENTITY_FORM : \{ \.\.\.createForm\(whiteboard\), \.\.\.initial \}\)\)/);
   });
 });

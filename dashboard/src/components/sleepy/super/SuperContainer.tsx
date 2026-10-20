@@ -8,10 +8,13 @@ import { DocumentReader } from '../../appLink/DocumentReader';
 import { KnowledgeWidget } from '../../whiteboard/widgets/KnowledgeWidget';
 import { TaskWidget } from '../../whiteboard/widgets/TaskWidget';
 import { WebWidget } from '../../whiteboard/widgets/WebWidget';
+import { targetPath } from '../../whiteboard/pagePopupModel';
 import '../../whiteboard/widgets/widgets.css';
 import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
-import { AgentCard } from './AgentCard';
+import { AgentCard, ChatTile } from './AgentCard';
+import { KindTile, ResolvedTitle, TaskPageHead } from './SuperTiles';
+import { LAYOUT } from './handoverMotion';
 import type { CardPlan } from './superLayout';
 
 export const KIND_GLYPH: Record<Container['kind'], string> = {
@@ -52,6 +55,9 @@ export interface SuperCardActions {
   onToOthers: (id: string) => void;
   onAskAbout: (id: string) => void;
   onClose: (id: string) => void;
+  /** A CHILD CHAT card's close: end its session (`whenDone`: once its turn ends), the same end
+   *  `super end` does. Other cards close at once (`onClose`). */
+  onEndSession: (id: string, whenDone: boolean) => void;
   onMinimize: (id: string) => void;
   onLoadWeb: (id: string) => void;
   onOpenPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
@@ -75,6 +81,10 @@ export interface SuperContainerProps extends SuperCardActions {
   shownSlot: boolean;
   /** A press on a FLOATING card arms its drag (the card is one grab handle; F6, FE1). */
   onPress: (e: PointerEvent<HTMLDivElement>, id: string) => void;
+  /** A card held over this one: releasing groups them (2026-10-20). */
+  dropTarget?: boolean;
+  /** The owner chose "end when done" for this child: it closes when its turn ends. */
+  endPending?: boolean;
 }
 
 /**
@@ -92,6 +102,19 @@ export function SuperContainer(props: SuperContainerProps) {
   const status = c.kind === 'chat' ? chatStatus(session) : null;
   const floating = plan.where === 'float';
   const large = plan.where === 'half' || plan.where === 'present' || plan.where === 'sheet';
+  // A child chat's close asks first (owner 2026-10-21): end the session, or keep it running in
+  // Others. A working or asking child offers "end when done" instead of cutting its turn.
+  const [closeAsk, setCloseAsk] = useState(false);
+  const asksOnClose = c.kind === 'chat';
+  const childBusy = !!session && (status?.kind === 'working' || status?.kind === 'asking' || session.hasLiveWork());
+  useEffect(() => {
+    if (!closeAsk) return undefined;
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setCloseAsk(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [closeAsk]);
+  const onCloseClick = () => (asksOnClose ? setCloseAsk((v) => !v) : props.onClose(c.id));
+  const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget || !floating) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onSideBySide(c.id); }
@@ -107,6 +130,7 @@ export function SuperContainer(props: SuperContainerProps) {
       data-shape={plan.shape}
       data-owner={plan.owner ? 'true' : undefined}
       data-status={status ? glowOf(status) : undefined}
+      data-drop-target={props.dropTarget ? 'card' : undefined}
       role="group"
       aria-label={props.title}
       tabIndex={floating ? 0 : -1}
@@ -119,22 +143,40 @@ export function SuperContainer(props: SuperContainerProps) {
       <div className="super-card-clip">
         {large ? <LargeBody {...props} status={status} /> : <FloatBody {...props} status={status} />}
       </div>
+      <span className="super-drop-ring" aria-hidden />
       <div className="super-card-actions">
         {floating ? (
           <>
             <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} />
             <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />
             <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
-            <IconButton icon="close" label={t('super.container.close')} onClick={() => props.onClose(c.id)} />
+            <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />
           </>
         ) : (
           <>
             <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
             <IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" />
-            <IconButton icon="close" label={t('super.container.close')} onClick={() => props.onClose(c.id)} />
+            <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />
           </>
         )}
       </div>
+      {closeAsk && (
+        <div className="super-close-choice" role="group" aria-label={t('super.close.ask')} data-testid="super-close-choice"
+          onPointerDown={(e) => e.stopPropagation()}>
+          <span className="super-close-choice-q">{t('super.close.ask')}</span>
+          <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-close-end"
+            onClick={() => { setCloseAsk(false); props.onEndSession(c.id, childBusy); }}>
+            {childBusy ? t('super.close.endWhenDone') : t('super.close.end')}
+          </button>
+          <button type="button" className="super-close-choice-btn" data-testid="super-close-others"
+            onClick={() => { setCloseAsk(false); props.onToOthers(c.id); }}>
+            {t('super.close.toOthers')}
+          </button>
+        </div>
+      )}
+      {props.endPending && !closeAsk && (
+        <span className="super-close-pending" data-testid="super-close-pending">{t('super.close.pending')}</span>
+      )}
     </div>
   );
 }
@@ -144,7 +186,7 @@ function glowOf(s: SessionStatusInfo): 'working' | 'asking' | 'idle' {
   return s.kind === 'asking' ? 'asking' : s.kind === 'working' ? 'working' : 'idle';
 }
 
-type IconName = 'side' | 'others' | 'ask' | 'close' | 'minimize';
+type IconName = 'side' | 'others' | 'ask' | 'close' | 'minimize' | 'ungroup';
 
 const ICONS: Record<IconName, ReactNode> = {
   side: <><rect x="2" y="3" width="5" height="10" rx="1.4" /><rect x="9" y="3" width="5" height="10" rx="1.4" /></>,
@@ -152,6 +194,7 @@ const ICONS: Record<IconName, ReactNode> = {
   ask: <><path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v5A1.5 1.5 0 0 1 11.5 11H7l-3 2.4V11h0A1 1 0 0 1 3 10z" /></>,
   close: <><path d="M4.5 4.5l7 7" /><path d="M11.5 4.5l-7 7" /></>,
   minimize: <><path d="M9.5 3.5v3h3" /><path d="M6.5 12.5v-3h-3" /><path d="M9.5 6.5l3.5-3.5" /><path d="M6.5 9.5L3 13" /></>,
+  ungroup: <><rect x="2.5" y="2.5" width="5" height="5" rx="1.2" /><rect x="8.5" y="8.5" width="5" height="5" rx="1.2" /><path d="M10 3.5h2.5V6" /><path d="M6 12.5H3.5V10" /></>,
 };
 
 export function IconButton({ icon, label, onClick, testId }: { icon: IconName; label: string; onClick: () => void; testId?: string }) {
@@ -179,14 +222,15 @@ const widgetSize = (p: CardPlan): WidgetSize => {
   return p.rect.width >= 200 ? 'm' : 's';
 };
 
-/** A floating card: what it is at a glance; the body is inert (the card is a grab handle). */
+/** A floating card: one 1:1 tile, what it is at a glance; the body is inert (the card is a grab
+ *  handle). A web page or a board is live only side by side (2026-10-20). */
 function FloatBody(p: BodyProps): ReactNode {
   const c = p.container;
   return (
     <div className="super-card-body" data-inert="true">
       {c.kind === 'chat'
-        ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall={p.plan.shape === 'tall'} />
-        : <><CardHead kind={c.kind} title={p.title} />{viewFor(p)}</>}
+        ? <ChatTile session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} />
+        : <KindTile container={c} title={p.title} viewReady={p.viewReady} />}
     </div>
   );
 }
@@ -210,7 +254,7 @@ function LargeBody(p: BodyProps): ReactNode {
   }
   return (
     <div className="super-card-large" data-testid={c.kind === 'chat' ? 'super-shown-card' : undefined}>
-      <CardHead kind={c.kind} title={p.title} />
+      <CardHead kind={c.kind} title={p.title} container={c} />
       <div className="super-card-large-body">
         {c.kind === 'chat'
           ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
@@ -220,11 +264,11 @@ function LargeBody(p: BodyProps): ReactNode {
   );
 }
 
-function CardHead({ kind, title }: { kind: Container['kind']; title: string }) {
+function CardHead({ kind, title, container }: { kind: Container['kind']; title: string; container?: Container }) {
   return (
     <div className="super-card-head">
       <span className="super-card-glyph" aria-hidden>{KIND_GLYPH[kind]}</span>
-      <span className="super-card-title" title={title}>{title}</span>
+      {container ? <ResolvedTitle container={container} fallback={title} /> : <span className="super-card-title" title={title}>{title}</span>}
     </div>
   );
 }
@@ -237,9 +281,25 @@ function viewFor(p: BodyProps): ReactNode {
     case 'insight':
       return <div className="super-card-view"><InsightView spec={{ type: 'insight', id: c.ref }} /></div>;
     case 'task':
-      return <div className="super-card-view"><TaskWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'task', ref: c.ref, title: c.title }} active={false} size={size} /></div>;
-    case 'knowledge':
-      return <div className="super-card-view"><KnowledgeWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'knowledge', ref: c.ref, title: c.title }} active={false} size={size} /></div>;
+    case 'knowledge': {
+      // Large (side by side, presented, a sheet): the page itself, read the way a whiteboard's
+      // page popup reads it, so a task shows its criteria and to-dos and a note its body
+      // (owner 2026-10-20: the widget showed a title and two chips over an empty card).
+      const path = targetPath({ kind: c.kind, ref: c.ref });
+      if (path) {
+        return (
+          <div className="super-card-view super-card-view--page">
+            {c.kind === 'task' && <TaskPageHead container={c} />}
+            <AfterLayoutMotion>
+              <DocumentReader key={path} path={path} onOpen={() => { /* read-only */ }} embedded vaultReads variant="page" />
+            </AfterLayoutMotion>
+          </div>
+        );
+      }
+      return c.kind === 'task'
+        ? <div className="super-card-view"><TaskWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'task', ref: c.ref, title: c.title }} active={false} size={size} /></div>
+        : <div className="super-card-view"><KnowledgeWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'knowledge', ref: c.ref, title: c.title }} active={false} size={size} /></div>;
+    }
     case 'web':
       return p.webLive
         ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={size} /></div>
@@ -255,6 +315,23 @@ function viewFor(p: BodyProps): ReactNode {
     default:
       return null;
   }
+}
+
+/** The longest a layout switch runs (the last staggered arrival, then its content fade). */
+const LAYOUT_SETTLE_MS = LAYOUT.duration + (LAYOUT.maxStaggered - 1) * LAYOUT.stagger + LAYOUT.contentFade;
+
+/**
+ * A page body (a task's or a note's markdown) mounts once the layout switch that opened its card
+ * has run (motion r9: a view never lays itself out under a flight). Until then the card shows its
+ * head; one timer, never a poll.
+ */
+function AfterLayoutMotion({ children }: { children: ReactNode }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setReady(true), LAYOUT_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return ready ? <>{children}</> : null;
 }
 
 /** Past the iframe budget: the page's title and a Load button (which makes it the most

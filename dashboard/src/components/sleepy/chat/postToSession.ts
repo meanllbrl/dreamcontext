@@ -22,3 +22,24 @@ export function postToSession(session: ChatSession, text: string): void {
   }
   session.send(text);
 }
+
+/** What {@link deliverToChat} did with the text, reported back to the agent that sent it. */
+export type ChatDelivery = 'steered' | 'queued' | 'sent';
+
+/**
+ * Post an AGENT's message (`dreamcontext window send`, the Super Agent's `super send`) into
+ * another chat. Same chain as {@link postToSession}, with one difference: a chat that is
+ * `asking` (a question or a permission card open, waiting for the owner) is never steered —
+ * the message queues behind the card. A busy chat gets it in the running turn at its next
+ * tool boundary, so a long turn no longer holds the message until it ends.
+ */
+export function deliverToChat(session: ChatSession, text: string): ChatDelivery {
+  if (session.asking) { session.enqueue(text); return 'queued'; }
+  if (session.busy) {
+    if (session.steer(text)) return 'steered';
+    session.enqueue(text, { steerWhenPossible: true });
+    return 'queued';
+  }
+  session.send(text);
+  return 'sent';
+}

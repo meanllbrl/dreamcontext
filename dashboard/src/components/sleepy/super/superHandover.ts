@@ -95,7 +95,19 @@ export function hasOwnKey(record: Readonly<Record<string, unknown>> | null | und
 /** The pin ids of the children the owner is NOT pinged about: only while handed over. */
 export function markedChildren(state: Pick<SuperState, 'enabled' | 'children'> | null | undefined): ReadonlySet<string> {
   if (!state?.enabled) return new Set();
-  return new Set(Object.keys(state.children));
+  return liveChildIds(state.children);
+}
+
+/** The record's children minus the ended ones (`super end`): an ended child is history. */
+export function liveChildIds(children: SuperState['children']): Set<string> {
+  return new Set(Object.entries(children).filter(([, c]) => c?.endedAt === undefined).map(([k]) => k));
+}
+
+/** Pin ids of the children `super end` closed: a tab of theirs restored dormant (a relaunch)
+ *  is closed when the record names them, so an ended child never comes back as a tab. */
+export function endedChildIds(state: Pick<SuperState, 'children'> | null | undefined): Set<string> {
+  if (!state) return new Set();
+  return new Set(Object.entries(state.children).filter(([, c]) => c?.endedAt !== undefined).map(([k]) => k));
 }
 
 /** How long past the server's own delegate deadline a just-opened child stays marked before
@@ -125,11 +137,11 @@ export function childMarks(
   now: number,
 ): { marked: Set<string>; delegated: Map<string, number>; nextExpiry: number | null } {
   if (!state?.enabled) return { marked: new Set(), delegated: new Map(), nextExpiry: null };
-  const marked = new Set(Object.keys(state.children));
+  const marked = liveChildIds(state.children);
   const pending = new Map<string, number>();
   let nextExpiry: number | null = null;
   for (const [id, until] of delegated) {
-    if (hasOwnKey(state.children, id) || until <= now) continue;
+    if (marked.has(id) || until <= now) continue;
     pending.set(id, until);
     marked.add(id);
     nextExpiry = nextExpiry === null ? until : Math.min(nextExpiry, until);

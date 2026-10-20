@@ -949,6 +949,8 @@ interface AgentUiSettings {
   /** The Super Agent's hand-over button (Settings → Chat, last row): OFF by default, only an
    *  explicit `true` shows it. Mirrors dashboard/src/lib/agentSettings. */
   superAgent: boolean;
+  /** Park idle chats under machine load (default true). */
+  parkIdleChats: boolean;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -965,6 +967,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   chatDefaultEffort: '',
   lightMode: 'auto',
   superAgent: false,
+  parkIdleChats: true,
 };
 
 function agentSettingsPath(): string {
@@ -1018,6 +1021,9 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     lightMode: raw.lightMode === 'on' || raw.lightMode === 'off' ? raw.lightMode : 'auto',
     // Default-FALSE: only an explicit `true` turns the Super Agent on.
     superAgent: raw.superAgent === true,
+    // Default-TRUE: only an explicit `false` stops parking idle chats under load
+    // (src/server/chat-park.ts reads the same rule straight from the file).
+    parkIdleChats: raw.parkIdleChats !== false,
   };
 }
 

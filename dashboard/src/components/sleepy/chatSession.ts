@@ -186,6 +186,22 @@ export type AssistantCommandHandler = (cmd: { id: string; verb: string; args: Re
   Promise<{ ok: true; result?: unknown } | { ok: false; error: string } | null>;
 
 /** Runs one window-control verb this chat's own agent issued (`dreamcontext window …`). */
+/** The window's verdict on a park request: refuse with why, or yes plus the step that closes
+ *  the process and turns the tab dormant, run right after the answer is on the wire. */
+export type ParkVerdict =
+  | { ok: true; commit: () => void }
+  | { ok: false; error: 'busy' | 'asking' | 'background' | 'focused' | 'refused' };
+/** `focusGraceMs`: how recently looked-at or typed-in counts as the owner's, as the server
+ *  applies it (2 min; a verify run shortens it), capped at 2 min here. */
+export type ParkHandler = (req: { reason: string; focusGraceMs: number; end?: boolean; force?: boolean }) => ParkVerdict;
+export const PARK_FOCUS_GRACE_MS = 2 * 60_000;
+/** The grace a park frame asks for, never longer than {@link PARK_FOCUS_GRACE_MS}. */
+export function parkGraceOf(asked: unknown): number {
+  return typeof asked === 'number' && Number.isFinite(asked) && asked >= 0 ? Math.min(asked, PARK_FOCUS_GRACE_MS) : PARK_FOCUS_GRACE_MS;
+}
+/** The window sends `focus` at most this often per chat (the server's grace is 2 min). */
+export const FOCUS_FRAME_THROTTLE_MS = 30_000;
+
 export type WindowCommandHandler = (cmd: { verb: string; args: Record<string, unknown> }) =>
   Promise<{ ok: true; result?: unknown } | { ok: false; error: string }>;
 
@@ -565,6 +581,15 @@ export interface ChatSession {
   /** The surface that draws this chat runs the window verbs its agent sends
    *  (`dreamcontext window …`). Without one, every verb answers `no_window`. */
   setWindowHandler: (fn: WindowCommandHandler | null) => void;
+  /** The surface that draws this chat decides a park request (src/server/chat-park.ts).
+   *  Without one every request is refused. */
+  setParkHandler: (fn: ParkHandler | null) => void;
+  /** Tell the server the owner is looking at or typing in this chat (throttled to one frame
+   *  per {@link FOCUS_FRAME_THROTTLE_MS}). */
+  markFocus: () => void;
+  /** Something a park would lose: a turn, a card waiting, agents this conversation started,
+   *  a background shell, or queued messages not sent yet. */
+  hasLiveWork: () => boolean;
   /** The Super Agent's window-side verbs (`delegate`, `answer`). Only the super chat gets one;
    *  without it every `super_command` answers `no_window`. */
   setSuperHandler: (fn: SuperCommandHandler | null) => void;
@@ -1131,6 +1156,9 @@ export function createChatSession(
     answerQuestion,
     setCommandHandler,
     setWindowHandler,
+    setParkHandler,
+    markFocus,
+    hasLiveWork,
     setSuperHandler,
     onSuper,
     setSuperChild: (on: boolean) => { session.superChild = on; },
@@ -2041,6 +2069,7 @@ export function createChatSession(
     if (ev.kind === 'assistant-command') { void runCommand(ev); return; }
     // Nor is a window verb: the surface runs it and the answer goes back up the socket.
     if (ev.kind === 'window-command') { void runWindowCommand(ev); return; }
+    if (ev.kind === 'park-request') { runPark(ev); return; }
     // The Super Agent's window-side verbs, the same way (their own subtype and result frame).
     if (ev.kind === 'super-command') { void runSuperCommand(ev); return; }
     // The Super Agent's state is the surface's, never this conversation's.
@@ -2386,6 +2415,39 @@ export function createChatSession(
     sendControl(out.ok
       ? { type: 'window_command_result', id: cmd.id, ok: true, result: out.result ?? null }
       : { type: 'window_command_result', id: cmd.id, ok: false, error: out.error });
+  }
+
+  // ── Parking under load (src/server/chat-park.ts) ──────────────────────────────────
+  let parkHandler: ParkHandler | null = null;
+  function setParkHandler(fn: ParkHandler | null): void { parkHandler = fn; }
+  function hasLiveWork(): boolean {
+    // Queued composer rows (a paused queue included) die with the process: they count as work.
+    return session.busy || session.asking || session.agentsWorking
+      || conv.queued.length > 0
+      || conv.subAgents.some((r) => r.status === 'running');
+  }
+  function runPark(req: { id: string; reason: string; focusGraceMs?: number; end?: boolean; force?: boolean }): void {
+    let verdict: ParkVerdict;
+    // `force` (`super end --force`, only on the owner's word): live work does not refuse it.
+    if (!req.force && hasLiveWork()) verdict = { ok: false, error: session.asking ? 'asking' : session.busy ? 'busy' : 'background' };
+    else {
+      try {
+        verdict = parkHandler
+          ? parkHandler({ reason: req.reason, focusGraceMs: parkGraceOf(req.focusGraceMs), ...(req.end ? { end: true } : {}), ...(req.force ? { force: true } : {}) })
+          : { ok: false, error: 'refused' };
+      }
+      catch { verdict = { ok: false, error: 'refused' }; }
+    }
+    sendControl(verdict.ok
+      ? { type: 'park_result', id: req.id, ok: true }
+      : { type: 'park_result', id: req.id, ok: false, error: verdict.error });
+    if (verdict.ok) verdict.commit();
+  }
+  let lastFocusFrameAt = 0;
+  function markFocus(): void {
+    const now = Date.now();
+    if (now - lastFocusFrameAt < FOCUS_FRAME_THROTTLE_MS) return;
+    if (sendControl({ type: 'focus' })) lastFocusFrameAt = now;
   }
 
   // ── The Super Agent (its own chat only: the server sends these frames nowhere else) ──

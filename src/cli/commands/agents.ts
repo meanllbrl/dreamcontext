@@ -38,7 +38,7 @@ const SELF_APPROVAL_ENVS = ['CLAUDECODE', AGENT_SELF_ENV, 'DREAMCONTEXT_AUTOMATI
 /** The refusal. It names the page, never a command: a session that reads it
  *  must not be one shell line away from approving the agent itself. */
 export const SELF_APPROVAL_REFUSAL =
-  'Approving is the owner\'s step, and this is a Claude session or an agent run. Approve it on the Agents page in the dashboard.';
+  'Approving is the owner\'s step, and this is a Claude session or an agent run. Approve it on the AI Team page in the dashboard.';
 
 /**
  * A guard against ACCIDENTAL self-approval — not a security boundary (a session

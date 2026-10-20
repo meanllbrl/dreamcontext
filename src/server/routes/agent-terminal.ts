@@ -12,6 +12,8 @@ import { sendJson, sendError } from '../middleware.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cutProcessGroups, pathUnderAny } from '../../lib/automations/runner.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
+import { modelAlias, modelOptionsFrom } from '../../lib/model-list.js';
+import { priceForModelId, SMALL_WINDOW_MODEL, type TokenPrice } from '../../lib/model-facts.js';
 import { foldJsonl } from '../../lib/jsonl-fold.js';
 import { tabSessionEnv } from '../../lib/session-origin.js';
 import { phoneTranscriptRefused } from '../phone-origin.js';
@@ -21,6 +23,7 @@ const REFUSED = Symbol('refused');
 import { contextTokensFromUsage } from '../../lib/context-watch.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
+import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOutcome } from '../chat-park.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { claudeAwarePath, findClaudeBin } from '../../lib/claude-path.js';
 import type { FixOutcome } from '../../lib/onboarding/fixes.js';
@@ -754,16 +757,6 @@ export function attachAgentTerminal(server: Server): void {
 //   • the user's defaults → `~/.claude/settings.json` (`model`, `effortLevel`).
 //   • a session's CURRENT model → the latest `message.model` in its transcript.
 
-/** Map any full model id / alias to our short alias bucket (opus/sonnet/haiku/fable). */
-function modelAlias(full: string): string {
-  const s = (full || '').toLowerCase();
-  if (s.includes('opus')) return 'opus';
-  if (s.includes('sonnet')) return 'sonnet';
-  if (s.includes('haiku')) return 'haiku';
-  if (s.includes('fable')) return 'fable';
-  return full || '';
-}
-
 function readJsonSafe(path: string): Record<string, unknown> | null {
   try { return JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>; } catch { return null; }
 }
@@ -791,7 +784,7 @@ function parseEffortsFromCli(): Promise<string[]> {
 interface ModelOpt { id: string; label: string; }
 /** A model option as the CLIENT receives it: the static option plus its public input rate,
  *  so the composer's model menu can print "$5/M in" without shipping a SECOND price table
- *  that would drift from the one the cost readout already uses (`MODEL_PRICING` below).
+ *  that would drift from the one the cost readout already uses (`priceForModel` below, which reads `model-facts.ts`).
  *  Widened here rather than on `ModelOpt` so `buildStaticModelConfig` — which knows nothing
  *  about pricing and is cached for the server's lifetime — stays untouched. */
 interface PricedModelOpt extends ModelOpt { priceIn: number }
@@ -813,23 +806,9 @@ async function readHomeJson(path: string): Promise<Record<string, unknown> | nul
 
 async function buildStaticModelConfig(): Promise<StaticModelConfig> {
   if (staticModelConfigCache) return staticModelConfigCache;
-  const globalJson = await readHomeJson(join(homedir(), '.claude.json')) ?? {};
-  const base: ModelOpt[] = [
-    { id: 'opus', label: 'Opus' },
-    { id: 'sonnet', label: 'Sonnet' },
-    { id: 'haiku', label: 'Haiku' },
-    { id: 'fable', label: 'Fable' },
-  ];
-  // Extra models the CLI itself has cached as available (e.g. Fable), deduped by alias.
-  const cache = globalJson.additionalModelOptionsCache;
-  const extras: ModelOpt[] = Array.isArray(cache)
-    ? cache
-        .map((m) => { const v = String((m as { value?: unknown })?.value ?? ''); const id = modelAlias(v); return { id, label: String((m as { label?: unknown })?.label ?? id) }; })
-        .filter((m) => m.id)
-    : [];
-  const seen = new Set(base.map((m) => m.id));
-  const models = [...base];
-  for (const e of extras) if (!seen.has(e.id)) { seen.add(e.id); models.push(e); }
+  // The base aliases plus the extras the CLI has cached (e.g. Fable): ONE list, shared with
+  // the AI Team's temporary-model check (`agentModelChoices`).
+  const models: ModelOpt[] = modelOptionsFrom(await readHomeJson(join(homedir(), '.claude.json')));
   const efforts = await parseEffortsFromCli();
   staticModelConfigCache = { models, efforts };
   return staticModelConfigCache;
@@ -924,33 +903,11 @@ export async function handleAgentSessionModel(
 //     turn actually ran on. This is an ESTIMATE "if you paid per token" — a Max/Pro
 //     subscription is flat-rate, so it's a what-if, not a bill.
 
-interface TokenPrice { in: number; out: number; cacheWrite: number; cacheRead: number }
-/** Public API list prices, USD per MILLION tokens (platform.claude.com/docs/en/pricing).
- *  Cache-write is the 5-minute rate (1.25× input); cache-read is 0.1× input. Current
- *  1M-context models carry no long-context premium, so one rate per tier suffices.
- *  `opusLegacy` covers Opus 4.1 / 4.0 / 3, which kept the old $15/$75 rate — Opus 4.5+
- *  lists at $5/$25. */
-const MODEL_PRICING: Record<string, TokenPrice> = {
-  fable:      { in: 10, out: 50, cacheWrite: 12.5,  cacheRead: 1 },
-  opus:       { in: 5,  out: 25, cacheWrite: 6.25,  cacheRead: 0.5 },
-  opusLegacy: { in: 15, out: 75, cacheWrite: 18.75, cacheRead: 1.5 },
-  sonnet:     { in: 3,  out: 15, cacheWrite: 3.75,  cacheRead: 0.3 },
-  haiku:      { in: 1,  out: 5,  cacheWrite: 1.25,  cacheRead: 0.1 },
-};
-
+/** Public API list prices (USD per MILLION tokens) live in ONE place, `src/lib/model-facts.ts`
+ *  (current generation + every legacy id at its own rate); this is just the resolver. */
 export function priceForModel(model: string): TokenPrice {
-  const s = model.toLowerCase();
-  if (s.includes('fable') || s.includes('mythos')) return MODEL_PRICING.fable;
-  if (s.includes('haiku')) return MODEL_PRICING.haiku;
-  if (s.includes('sonnet')) return MODEL_PRICING.sonnet;
-  // Legacy full ids: claude-opus-4-1-20250805, claude-opus-4-20250514, claude-3-opus-*.
-  if (/opus-4-[01]\b|opus-4-\d{8}|3-opus/.test(s)) return MODEL_PRICING.opusLegacy;
-  return MODEL_PRICING.opus; // current opus + unknown models default to the opus tier
+  return priceForModelId(model);
 }
-
-/** Model ids whose context window is 200K rather than 1M: the whole Haiku line, and the
- *  Opus/Sonnet generations before 4.6. */
-const SMALL_WINDOW_MODEL = /haiku|3-opus|3-[57]-sonnet|opus-4-[01]\b|opus-4-5\b|sonnet-4-[05]\b|-4-\d{8}/;
 
 /**
  * The running model's context window, in tokens. MIRRORED on the client
@@ -1249,6 +1206,11 @@ export function startPtySession(
   // CLI) simply never writes the file, and the client keeps its screen heuristic.
   let statusEnv: Record<string, string> = {};
   let stopStatusWatch = () => { /* nothing watched */ };
+  /** The hook-reported turn state, '' until the first hook write (a hook-less vault is never
+   *  parked: nothing says its turn ended), and the last sign of life for the park sweep. */
+  let turnState: '' | 'working' | 'ready' = '';
+  let lastIoAt = Date.now();
+  let lastTurnStartedAt = 0;
   if (kind === 'agent') {
     const statusPath = join(tmpdir(), `dreamcontext-agent-status-${randomUUID()}.json`);
     statusEnv = { DREAMCONTEXT_AGENT_STATUS_FILE: statusPath };
@@ -1268,6 +1230,9 @@ export function startPtySession(
       } catch { return; } // torn/garbled content — the hook's write is atomic (tmp+rename)
       if (state !== 'working' && state !== 'ready') return;
       lastRaw = raw;
+      turnState = state;
+      lastIoAt = Date.now();
+      if (state === 'working') lastTurnStartedAt = lastIoAt;
       if (ws.readyState === ws.OPEN) {
         try { ws.send(Buffer.from(JSON.stringify({ type: 'status', state }))); } catch { /* closing */ }
       }
@@ -1352,9 +1317,57 @@ export function startPtySession(
     pause: typeof term.pause === 'function' ? () => term.pause?.() : undefined,
     resume: typeof term.resume === 'function' ? () => term.resume?.() : undefined,
   });
-  term.onData((data) => pump.data(data));
+  term.onData((data) => { lastIoAt = Date.now(); pump.data(data); });
+
+  // ── Parking under load (chat-park.ts) ───────────────────────────────────────────────
+  // A pinned Claude terminal tab: parked only after its Stop hook said `ready`, with no IO,
+  // no shell under it and no transcript write for the idle window; the window re-checks and
+  // closes the tab's socket, which ends the PTY (teardown below), and Resume `--resume`s it.
+  let focusedAt = 0;
+  let parkAsk: { id: string; settle: (o: ParkOutcome) => void; promise: Promise<ParkOutcome> } | null = null;
+  const unregisterPark = kind === 'agent' && heldConversation ? registerParkable({
+    id: pinId,
+    kind: 'terminal',
+    projectRoot,
+    pid: term.pid,
+    exempt: () => null,
+    busy: () => turnState !== 'ready',
+    asking: () => false,
+    backgroundTasks: () => 0,
+    idleSince: () => lastIoAt,
+    focusedAt: () => focusedAt,
+    transcriptPath: () => liveTranscriptPath(contextRoot, pinId),
+    lastTurnStartedAt: () => lastTurnStartedAt,
+    park: (reason) => {
+      if (!alive) return Promise.resolve('already');
+      if (parkAsk) return parkAsk.promise;
+      if (ws.readyState !== ws.OPEN) { try { term.kill(); } catch { /* gone */ } return Promise.resolve('drained'); }
+      const id = randomUUID();
+      let settle!: (o: ParkOutcome) => void;
+      const promise = new Promise<ParkOutcome>((res) => { settle = res; });
+      const timer = setTimeout(() => { if (parkAsk?.id === id) { parkAsk = null; settle('no_answer'); } }, PARK_ANSWER_MS);
+      timer.unref?.();
+      parkAsk = { id, promise, settle: (o) => { clearTimeout(timer); parkAsk = null; settle(o); } };
+      try { ws.send(Buffer.from(JSON.stringify({ type: 'park', id, reason, focusGraceMs: parkFocusGraceMs() }))); } catch { parkAsk.settle('no_answer'); }
+      return promise;
+    },
+  }) : () => { /* never parked */ };
+  const onParkResult = (r: { id?: unknown; ok?: unknown; error?: unknown }): void => {
+    if (!parkAsk || r.id !== parkAsk.id) return;
+    if (r.ok === true) {
+      unregisterPark();
+      const t = setTimeout(() => { if (alive) { try { term.kill(); } catch { /* gone */ } } }, 5_000);
+      t.unref?.();
+      parkAsk.settle('parked');
+      return;
+    }
+    const e = r.error;
+    parkAsk.settle(e === 'busy' || e === 'asking' || e === 'background' || e === 'focused' ? e : 'refused');
+  };
   term.onExit(({ exitCode }) => {
     alive = false;
+    unregisterPark();
+    parkAsk?.settle('already');
     untrack();
     releaseHeld();
     cleanupDeferred();
@@ -1382,19 +1395,22 @@ export function startPtySession(
     // Control frames are JSON ({type:'input'|'resize'|'ack'}); anything else is raw input.
     if (str.startsWith('{')) {
       try {
-        const msg = JSON.parse(str) as { type?: string; data?: string; cols?: number; rows?: number; n?: number };
+        const msg = JSON.parse(str) as { type?: string; data?: string; cols?: number; rows?: number; n?: number; id?: unknown; ok?: unknown; error?: unknown };
         if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
           term.resize(Math.max(1, msg.cols | 0), Math.max(1, msg.rows | 0));
           return;
         }
-        if (msg.type === 'input' && typeof msg.data === 'string') { term.write(msg.data); return; }
+        if (msg.type === 'input' && typeof msg.data === 'string') { lastIoAt = Date.now(); term.write(msg.data); return; }
+        if (msg.type === 'focus') { focusedAt = Date.now(); return; }
+        if (msg.type === 'park_result') { onParkResult(msg); return; }
         if (msg.type === 'ack' && typeof msg.n === 'number') { pump.ack(msg.n); return; }
       } catch { /* not control JSON — fall through to raw */ }
     }
+    lastIoAt = Date.now();
     term.write(str);
   });
 
-  const teardown = () => { if (alive) { alive = false; releaseHeld(); cleanupDeferred(); stopStatusWatch(); pump.dispose(); try { term.kill(); } catch { /* already dead */ } } };
+  const teardown = () => { if (alive) { alive = false; unregisterPark(); parkAsk?.settle('already'); releaseHeld(); cleanupDeferred(); stopStatusWatch(); pump.dispose(); try { term.kill(); } catch { /* already dead */ } } };
   ws.on('close', teardown);
   ws.on('error', teardown);
 }

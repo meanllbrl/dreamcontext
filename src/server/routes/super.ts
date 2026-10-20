@@ -8,8 +8,8 @@ import {
 import { SuperStoreRefused, isReservedId, readSuperState } from '../../lib/super/store.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_OWNER_TEXT, MAX_PRESENT, MAX_READ_BYTES,
-  MAX_TITLE, SESSION_ID_RE, SUPER_VERBS, defaultShape, type ContainerKind, type ContainerShape,
-  type SuperChild, type SuperState, type SuperStateView, type SuperVerb,
+  MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, applyGroupOp, defaultShape, dissolveGroups, leaveGroups,
+  type ContainerKind, type ContainerShape, type SuperChild, type SuperState, type SuperStateView, type SuperVerb,
 } from '../../lib/super/types.js';
 import {
   containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, pumpSuper, superQueueHead,
@@ -28,6 +28,7 @@ import { activityOf, getChat } from '../../lib/assistant/chat-registry.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
+import { findParkable, parkChat, type ParkOutcome } from '../chat-park.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -177,6 +178,20 @@ function containerArg(c: SuperCaller, b: Record<string, unknown>, res: ServerRes
 
 const ok = (res: ServerResponse, result: unknown) => sendJson(res, 200, { ok: true, result });
 
+/** A card or a group the record holds, by id (`super stack|float` take either). */
+function targetArg(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse): { id: string; group: boolean } | null {
+  const id = str(b.container);
+  if (id && c.state.groups.some((g) => g.id === id)) return { id, group: true };
+  if (id && c.state.containers.some((k) => k.id === id)) return { id, group: false };
+  refuse(res, 404, 'unknown_container', 'no such card or group (`dreamcontext super state` lists them)');
+  return null;
+}
+
+/** A new group's id: never a container id (those start with their kind). */
+function newGroupId(): string {
+  return `grp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 /** `delegate` calls in flight per vault, counted against the cap until they settle. */
 const delegating = new Map<string, number>();
 
@@ -204,7 +219,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '' };
       status.push({
         sessionId: sid,
-        status: e ? activityOf(e, now) : 'gone',
+        status: ch.endedAt !== undefined && !(e && activityOf(e, now) !== 'gone') ? 'ended' : e ? activityOf(e, now) : 'gone',
+        ...(ch.endedAt !== undefined ? { endedAt: ch.endedAt } : {}),
         elapsedMs: Math.max(0, now - ch.startedAt),
         lastLine: last ? wrapUntrusted(vault, last.length > 600 ? `${last.slice(0, 600)}…` : last) : '',
         asking: e?.pendingQuestion ? { requestId: e.pendingQuestion.requestId, kind: e.pendingQuestion.isPermission ? 'permission' : 'question' } : null,
@@ -285,6 +301,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       await writeSuper(root, (s) => {
         s.children[sid] = {
           sessionId: sid, brief: brief || title, adopted: false, startedAt: Date.now(),
+          ...(mode !== 'basic' ? { mode } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}),
           ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
         };
         delete s.notes[sid];
@@ -387,9 +404,17 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   stack: async (c, b, res) => {
-    const id = containerArg(c, b, res);
-    if (!id) return;
+    const t = targetArg(c, b, res);
+    if (!t) return;
+    const id = t.id;
+    if (t.group) {
+      await writeSuper(c.who.contextRoot, (s) => { const g = s.groups.find((x) => x.id === id); if (g) g.place = 'others'; });
+      ok(res, { group: id, place: 'others' });
+      return;
+    }
     await writeSuper(c.who.contextRoot, (s) => {
+      // A card stacked on its own leaves its group.
+      leaveGroups(s, [id]);
       const k = s.containers.find((x) => x.id === id);
       if (k) k.place = 'others';
       // A stacked card leaves the half page or the presentation it was in.
@@ -400,9 +425,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   float: async (c, b, res) => {
-    const id = containerArg(c, b, res);
-    if (!id) return;
+    const t = targetArg(c, b, res);
+    if (!t) return;
+    const id = t.id;
+    if (t.group) {
+      await writeSuper(c.who.contextRoot, (s) => { const g = s.groups.find((x) => x.id === id); if (g) { g.place = 'float'; delete g.pos; } });
+      ok(res, { group: id, place: 'float' });
+      return;
+    }
     await writeSuper(c.who.contextRoot, (s) => {
+      leaveGroups(s, [id]);
       const k = s.containers.find((x) => x.id === id);
       if (!k) return;
       // The agent never positions a card: floating again means placed automatically.
@@ -413,11 +445,59 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   close: async (c, b, res) => {
+    if (typeof b.container === 'string' && c.state.groups.some((g) => g.id === b.container)) {
+      refuse(res, 400, 'invalid_args', 'a group is not closed: `super ungroup` it, or close its cards');
+      return;
+    }
     const id = containerArg(c, b, res);
     if (!id) return;
     // The store drops a closed card from the view (half → float; a presentation keeps the rest).
     await writeSuper(c.who.contextRoot, (s) => { s.containers = s.containers.filter((x) => x.id !== id); });
     ok(res, { closed: id });
+  },
+
+  group: async (c, b, res) => {
+    // Cards put together as one tile (owner decision 2026-10-20). A group id among them: the
+    // cards join it (and --name renames it). Otherwise two or more cards make a new group that
+    // stands where the first of them stands.
+    const raw = Array.isArray(b.containers) ? b.containers : [];
+    const name = typeof b.name === 'string' ? b.name : undefined;
+    if (raw.length > MAX_CONTAINERS + 1 || raw.some((x) => typeof x !== 'string')) { refuse(res, 400, 'invalid_args', 'name the cards (and at most one group) to put together'); return; }
+    const ids = [...new Set(raw as string[])];
+    const groupIds = ids.filter((id) => c.state.groups.some((g) => g.id === id));
+    const cards = ids.filter((id) => !groupIds.includes(id));
+    for (const id of cards) {
+      if (!c.state.containers.some((k) => k.id === id)) { refuse(res, 404, 'unknown_container', `no such card: ${id} (\`dreamcontext super state\` lists them)`); return; }
+    }
+    if (groupIds.length > 1) { refuse(res, 400, 'invalid_args', 'name at most one group; `super ungroup` the other first'); return; }
+    let id = groupIds[0];
+    if (!id) {
+      if (cards.length < MIN_GROUP_CARDS) { refuse(res, 400, 'invalid_args', `a group needs at least ${MIN_GROUP_CARDS} cards`); return; }
+      id = newGroupId();
+    } else if (!cards.length && !name) { refuse(res, 400, 'invalid_args', 'name cards to add to the group, or --name to rename it'); return; }
+    const state = await writeSuper(c.who.contextRoot, (s) => applyGroupOp(s, { id, cards, name }));
+    const made = state.groups.find((g) => g.id === id);
+    if (!made) { refuse(res, 409, 'not_grouped', 'the cards could not be grouped (closed meanwhile?)'); return; }
+    ok(res, { group: made });
+  },
+
+  ungroup: async (c, b, res) => {
+    // A group id dissolves the group (its cards float again where it stood); a card id takes
+    // that card out of its group.
+    const raw = Array.isArray(b.targets) ? b.targets : [];
+    if (!raw.length || raw.length > MAX_CONTAINERS || raw.some((x) => typeof x !== 'string')) { refuse(res, 400, 'invalid_args', 'name a group, or cards to take out of their group'); return; }
+    const ids = [...new Set(raw as string[])];
+    for (const id of ids) {
+      if (!c.state.groups.some((g) => g.id === id) && !c.state.containers.some((k) => k.id === id)) {
+        refuse(res, 404, 'unknown_container', `no such card or group: ${id}`);
+        return;
+      }
+    }
+    const state = await writeSuper(c.who.contextRoot, (s) => {
+      dissolveGroups(s, ids.filter((id) => s.groups.some((g) => g.id === id)));
+      leaveGroups(s, ids);
+    });
+    ok(res, { ungrouped: ids, groups: state.groups });
   },
 
   brief: async (c, b, res) => {
@@ -483,6 +563,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!requireHandedOver(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
+    if (c.state.children[child].endedAt !== undefined && !isLiveChat(child)) {
+      refuse(res, 409, 'ended', 'that child was ended; `dreamcontext super resume <child>` reopens the same conversation');
+      return;
+    }
     const text = typeof b.text === 'string' ? b.text : '';
     if (!text.trim()) { refuse(res, 400, 'invalid_args', 'text is required'); return; }
     if (text.length > MAX_TEXT) { refuse(res, 400, 'invalid_args', 'text is too long'); return; }
@@ -490,7 +574,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // child's `writeOwnerTurn`, and its hand-over note rides with it).
     const r = await sendWindowCommand(c.token, 'send', { tab: child, text });
     if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the message did not reach the child'); return; }
-    ok(res, { child, delivered: r.result ?? true });
+    // The window says how: 'steered' (into the running turn), 'queued' (behind an open
+    // question or permission card) or 'sent' (a new turn).
+    const how = (r.result as { delivered?: unknown } | undefined)?.delivered;
+    ok(res, { child, delivered: typeof how === 'string' ? how : true });
   },
 
   'queue-list': async (c, _b, res) => {
@@ -583,7 +670,165 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       throw err;
     }
   },
+
+  end: async (c, b, res) => {
+    if (!requireHandedOver(c, res)) return;
+    const force = b.force === true;
+    if (b.idle === true) {
+      // `--idle`: the list first; `--idle --yes` ends every one of them.
+      const now = Date.now();
+      const rows = Object.entries(c.state.children)
+        .filter(([, ch]) => ch.endedAt === undefined)
+        .map(([sid, ch]) => ({ sid, ch, status: childStatus(sid, now) }))
+        .filter((r) => r.status === 'idle' || r.status === 'gone');
+      const list = (r: typeof rows[number]) => ({ child: r.sid, status: r.status, brief: wrapUntrusted(vaultNameOf(c.who.contextRoot), r.ch.brief) });
+      const mine = rows.filter((r) => !r.ch.adopted);
+      const owners = rows.filter((r) => r.ch.adopted);
+      if (b.yes !== true) {
+        ok(res, {
+          idle: mine.map(list), ownersChats: owners.map(list),
+          next: mine.length ? 'run `dreamcontext super end --idle --yes` to end these (the owner\'s own chats stay)' : 'nothing idle to end',
+        });
+        return;
+      }
+      const results = [];
+      for (const r of mine) results.push(await endChild(c, r.sid, false));
+      ok(res, { ended: results.filter((x) => x.ended).map((x) => x.child), refused: results.filter((x) => !x.ended) });
+      return;
+    }
+    const raw = Array.isArray(b.children) ? b.children : typeof b.child === 'string' ? [b.child] : [];
+    const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string'))];
+    if (!ids.length || ids.length > MAX_CONTAINERS * 2) { refuse(res, 400, 'invalid_args', 'name the children to end (or --idle)'); return; }
+    for (const id of ids) {
+      if (!SESSION_ID_RE.test(id) || !hasChild(c.state, id)) {
+        refuse(res, 404, 'unknown_child', `${id.slice(0, 80)} is not one of your children (\`dreamcontext super state\` lists them)`);
+        return;
+      }
+    }
+    const results = [];
+    for (const id of ids) results.push(await endChild(c, id, force));
+    if (results.length === 1 && !results[0].ended) {
+      const r = results[0];
+      refuse(res, 409, r.reason ?? 'refused', r.message ?? 'the child was not ended', { child: r.child, ...(r.background ? { background: r.background } : {}) });
+      return;
+    }
+    ok(res, { ended: results.filter((x) => x.ended).map((x) => x.child), refused: results.filter((x) => !x.ended) });
+  },
+
+  resume: async (c, b, res) => {
+    if (!requireHandedOver(c, res)) return;
+    const child = childArg(c, b, res);
+    if (!child) return;
+    const root = c.who.contextRoot;
+    const ch = c.state.children[child];
+    if (isLiveChat(child)) {
+      if (ch.endedAt !== undefined) await writeSuper(root, (s) => { const x = s.children[child]; if (x) delete x.endedAt; });
+      ok(res, { child, resumed: false, running: true });
+      return;
+    }
+    const mode = str(b.mode) ?? ch.mode ?? 'basic';
+    if (!(MODES as readonly string[]).includes(mode)) { refuse(res, 400, 'invalid_args', `mode must be one of ${MODES.join(' | ')}`); return; }
+    const model = str(b.model) ?? ch.model;
+    if (model && !sanitizeModel(model)) { refuse(res, 400, 'invalid_args', 'model is not a model id'); return; }
+    const effort = str(b.effort) ?? ch.effort;
+    if (effort && !(EFFORTS as readonly string[]).includes(effort)) { refuse(res, 400, 'invalid_args', `effort must be one of ${EFFORTS.join(' | ')}`); return; }
+    // A resumed child is a live child again: the same cap as a delegate.
+    const room = delegationAllowed(c.state);
+    if (room.live >= room.max) {
+      refuse(res, 409, 'held', `${room.live} children are running (at most ${room.max}); end one first`, { held: true, live: room.live, max: room.max });
+      return;
+    }
+    if (!liveTranscriptPath(root, child)) { refuse(res, 404, 'no_transcript', 'that child has no transcript to resume'); return; }
+    const r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
+    if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 502, r.error, 'the window could not reopen the child'); return; }
+    let container: string | null = null;
+    await writeSuper(root, (s) => {
+      const x = s.children[child];
+      if (!x) return;
+      delete x.endedAt;
+      x.mode = mode === 'basic' ? undefined : mode;
+      if (model) x.model = model;
+      if (effort) x.effort = effort;
+      if (x.mode === undefined) delete x.mode;
+      container = ensureChatContainer(s, child, x.brief);
+    });
+    ok(res, { child, resumed: true, mode, ...(model ? { model } : {}), ...(effort ? { effort } : {}), container });
+  },
 };
+
+/** A child's registry status right now; `gone` when nothing runs it. */
+function childStatus(sid: string, now = Date.now()): string {
+  const e = getChat(sid);
+  return e ? activityOf(e, now) : 'gone';
+}
+
+function isLiveChat(sid: string): boolean {
+  return childStatus(sid) !== 'gone';
+}
+
+const END_REFUSALS: Partial<Record<ParkOutcome, string>> = {
+  busy: 'it is still working: wait for its turn to end (an idle event comes), or pass --force only if the owner asked',
+  asking: 'it waits on a question or a permission: settle that first, or pass --force only if the owner asked',
+  focused: 'the owner is looking at or typing in that chat right now; leave it to him',
+  exempt: 'that chat is never ended this way (the Assistant, the Super Agent or a phone holds it)',
+  refused: 'the window refused to close it',
+  no_answer: 'the window did not answer in time; check `dreamcontext super state` and try once more',
+};
+
+interface EndResult { child: string; ended: boolean; reason?: string; message?: string; background?: number; noProcess?: boolean }
+
+/**
+ * End one recorded child: park it with `end` (the window closes the tab, so no relaunch brings it
+ * back; the transcript stays), then record it ended: its card goes, its open queue items close, a
+ * done `ended` item records who, when and its last brief. A child with no process is only
+ * recorded (a dormant tab of it is closed by the window when the record arrives).
+ */
+async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<EndResult> {
+  const ch = c.state.children[sid];
+  if (!ch || sid === c.state.session) return { child: sid, ended: false, reason: 'unknown_child', message: 'not one of your children' };
+  if (ch.endedAt !== undefined && !isLiveChat(sid)) return { child: sid, ended: true, reason: 'already' };
+  if (ch.adopted && !force) {
+    return { child: sid, ended: false, reason: 'adopted', message: 'that is the owner\'s own chat (adopted at hand-over); end it only when he asks, with --force' };
+  }
+  let noProcess = false;
+  if (isLiveChat(sid)) {
+    const outcome = await parkChat(sid, 'super-end', { end: true, force }).catch((): ParkOutcome => 'refused');
+    if (outcome === 'background') {
+      const n = findParkable(sid)?.backgroundTasks() ?? 1;
+      return {
+        child: sid, ended: false, reason: 'background', background: n,
+        message: `${n} background task${n === 1 ? '' : 's'} (a shell, a dev server or a sub-agent) still run in it and would die; wait for them, or pass --force only if the owner asked`,
+      };
+    }
+    if (outcome !== 'parked' && outcome !== 'drained' && outcome !== 'already') {
+      return { child: sid, ended: false, reason: outcome, message: END_REFUSALS[outcome] ?? 'the child was not ended' };
+    }
+  } else {
+    noProcess = true;
+  }
+  await recordEnded(c.who.contextRoot, sid);
+  return { child: sid, ended: true, ...(noProcess ? { noProcess } : {}) };
+}
+
+/** Record a child ended (the agent's `super end` and the owner's card close share it): its card
+ *  goes, its open queue items close, a done `ended` item records who, when and its last brief. */
+async function recordEnded(contextRoot: string, sid: string): Promise<void> {
+  const now = Date.now();
+  await writeSuper(contextRoot, (s) => {
+    const x = s.children[sid];
+    if (!x) return;
+    x.endedAt = now;
+    const cards = s.containers.filter((k) => k.kind === 'chat' && k.ref === sid).map((k) => k.id);
+    if (cards.length) {
+      leaveGroups(s, cards);
+      s.containers = s.containers.filter((k) => !cards.includes(k.id));
+    }
+    // Nothing of it is open any more (a forced end may have left a question or permission).
+    for (const q of s.queue) if (q.sessionId === sid && q.state !== 'done') q.state = 'done';
+    delete s.notes[sid];
+    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'ended', state: 'done', createdAt: now, brief: x.brief });
+  });
+}
 
 /** POST /api/super/v/:verb */
 export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse, params: Params): Promise<void> {
@@ -622,7 +867,7 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>) => Promise<void>;
 
 /** The owner's verbs (D17 hand-over/take-back, D9 layout, D7 lease, D13 recap). */
@@ -651,17 +896,29 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       return;
     }
     const view = body.view;
+    // Groups (2026-10-20): `leave` takes cards out of their group, `group` puts cards in one (a
+    // new id makes it, standing where its first card stands), `ungroup` dissolves. A `cards`
+    // entry may name a group: a drop, Others or back, the same as a card.
+    const leave = Array.isArray(body.leave) ? (body.leave as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
+    const ungroup = Array.isArray(body.ungroup) ? (body.ungroup as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
+    const g = body.group && typeof body.group === 'object' && !Array.isArray(body.group) ? body.group as Record<string, unknown> : null;
+    const groupOp = g && typeof g.id === 'string' && Array.isArray(g.cards)
+      ? { id: g.id, cards: (g.cards as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS), name: typeof g.name === 'string' ? g.name : undefined }
+      : null;
     const state = await writeSuper(contextRoot, (s) => {
+      if (leave.length) leaveGroups(s, leave);
       for (const raw of cards as unknown[]) {
         const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
-        const k = p && typeof p.id === 'string' ? s.containers.find((x) => x.id === p.id) : undefined;
+        const k = p && typeof p.id === 'string' ? (s.containers.find((x) => x.id === p.id) ?? s.groups.find((x) => x.id === p.id)) : undefined;
         if (!p || !k) continue;
         if (p.place === 'float' || p.place === 'others') k.place = p.place;
         if (p.pos === null) delete k.pos;
         else if (p.pos && typeof p.pos === 'object') k.pos = p.pos as { x: number; y: number };
         // The card the owner moved last is drawn on top: it goes to the end of the list.
-        if (p.order === 'last') s.containers = [...s.containers.filter((x) => x !== k), k];
+        if (p.order === 'last' && 'kind' in k) s.containers = [...s.containers.filter((x) => x !== k), k];
       }
+      if (groupOp) applyGroupOp(s, groupOp);
+      if (ungroup.length) dissolveGroups(s, ungroup);
       const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
       if (gone.size) s.containers = s.containers.filter((x) => !gone.has(x.id));
       // The store sanitizes what this produced: positions clamped, a view naming no card → float.
@@ -672,6 +929,19 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
   activity: async (_req, res, contextRoot) => {
     await noteOwnerActivity(contextRoot);
     sendJson(res, 200, { ok: true });
+  },
+  end: async (_req, res, contextRoot, body) => {
+    // The owner closed a child's card with "end the session": his window already closed the tab
+    // (his own click, so an adopted chat or a running one is his to end); this records it the
+    // way `super end` does, so the card goes and no relaunch brings the tab back.
+    const child = typeof body.child === 'string' ? body.child : '';
+    const current = await readSuperState(contextRoot, superSanitizeOpts());
+    if (!SESSION_ID_RE.test(child) || !hasChild(current, child) || child === current.session) {
+      sendError(res, 404, 'unknown_child', 'not a child of this project\'s Super Agent');
+      return;
+    }
+    await recordEnded(contextRoot, child);
+    sendJson(res, 200, { state: superStateView(contextRoot, await readSuperState(contextRoot, superSanitizeOpts())) });
   },
   recap: async (_req, res, contextRoot) => {
     const current = await readSuperState(contextRoot, superSanitizeOpts());
@@ -707,3 +977,4 @@ export const handleSuperDisable = ownerRoute('disable');
 export const handleSuperLayout = ownerRoute('layout');
 export const handleSuperActivity = ownerRoute('activity');
 export const handleSuperRecap = ownerRoute('recap');
+export const handleSuperEnd = ownerRoute('end');

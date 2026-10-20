@@ -1,5 +1,6 @@
 /**
- * Wave 4a, lane T6: the Agents page is reachable (rail row, page route, the open-agents request,
+ * AI Team (2026-10-20) replaced the Agents and Automations pages; this file now pins that
+ * the AI Team is reachable from the old keys. History: Wave 4a, lane T6: the Agents page is reachable (rail row, page route, the open-agents request,
  * the `page/agents/<slug>` link), the reversal of ad04364c is RECORDED where the decision lives
  * (S6), and every string the four W4b lanes read already exists in English and Turkish.
  *
@@ -17,7 +18,7 @@ const read = (p: string): string => readFileSync(join(ROOT, p), 'utf-8');
 const SIDEBAR = 'dashboard/src/components/layout/Sidebar.tsx';
 const INSTANCE = 'dashboard/src/ProjectInstance.tsx';
 const I18N = 'dashboard/src/context/I18nContext.tsx';
-const STUB = 'dashboard/src/pages/AgentsPage.tsx';
+const PAGE = 'dashboard/src/pages/AiTeamPage.tsx';
 
 /** Source with comments removed, so prose explaining a rule never satisfies the rule. */
 function code(src: string): string {
@@ -37,38 +38,37 @@ function locales(): { en: Map<string, string>; tr: Map<string, string> } {
   };
 }
 
-describe('the rail has an Agents row again (S6)', () => {
-  it('Page includes agents, and the row sits right after Automations, at Beta, not a hero', () => {
+describe('AI Team: one rail row for agents and automations (A1)', () => {
+  it('the Workspace group runs Chat, Tasks, AI Team; no Agents row, no maturity tag on AI Team', () => {
     const src = code(read(SIDEBAR));
     expect(src).toMatch(/export type Page = [^;]*'agents'/);
-    const row = /\{\s*page:\s*'agents',\s*labelKey:\s*'nav\.agents'([^}]*)\}/.exec(src);
-    expect(row, 'no Agents rail row').toBeTruthy();
-    expect(row![1]).toMatch(/maturity:\s*'beta'/);
-    expect(row![1]).not.toMatch(/hero/);
-    const automations = src.indexOf("page: 'automations'");
-    const agents = src.indexOf("page: 'agents'");
-    const between = src.slice(automations, agents);
-    expect(automations).toBeGreaterThan(-1);
-    expect(agents).toBeGreaterThan(automations);
-    expect([...between.matchAll(/page:\s*'/g)]).toHaveLength(1);
+    expect(src).not.toMatch(/\{\s*page:\s*'agents'/);
+    const row = /\{\s*page:\s*'automations',\s*labelKey:\s*'nav\.aiTeam'([^}]*)\}/.exec(src);
+    expect(row, 'no AI Team rail row').toBeTruthy();
+    expect(row![1]).not.toMatch(/maturity/);
+    const chat = src.indexOf("launch: 'chat'");
+    const tasks = src.indexOf("page: 'tasks'");
+    const team = src.indexOf("page: 'automations'");
+    expect(chat).toBeLessThan(tasks);
+    expect(tasks).toBeLessThan(team);
   });
 
-  it('records the reversal of ad04364c at the rail item AND at the label', () => {
-    const sidebar = read(SIDEBAR);
-    const at = sidebar.indexOf("{ page: 'agents'");
-    const comment = sidebar.slice(Math.max(0, at - 1200), at);
-    expect(comment).toMatch(/REVERSED[\s\S]*ad04364c/);
-    const i18n = read(I18N);
-    const label = i18n.indexOf("'nav.agents': 'Agents'");
-    expect(label).toBeGreaterThan(-1);
-    expect(i18n.slice(Math.max(0, label - 600), label)).toMatch(/REVERSED[\s\S]*ad04364c/);
+  it('the old agents page key lights the AI Team row', () => {
+    expect(code(read(SIDEBAR))).toMatch(/activePage === 'agents' \? 'automations' : activePage/);
+  });
+
+  it('the label is AI Team in English and Turkish', () => {
+    const { en, tr } = locales();
+    expect(en.get('nav.aiTeam')).toBe('AI Team');
+    expect(tr.get('nav.aiTeam')).toBe('AI Team');
   });
 });
 
-describe('routing (S7, requestOpenAgents)', () => {
-  it('the page router renders AgentsPage with the pinned props', () => {
+describe('routing (A1, requestOpenAgents)', () => {
+  it('both page keys render the AI Team with both focus channels', () => {
     const src = code(read(INSTANCE));
-    expect(src).toMatch(/case 'agents':\s*return <AgentsPage focus=\{agentsFocus\} onFocusDone=\{onAgentsFocusDone\} \/>/);
+    expect(src).toMatch(/case 'automations':\s*case 'agents':\s*return \(\s*<AiTeamPage\s+automationFocus=\{automationFocus\}\s+onAutomationFocusDone=\{onAutomationFocusDone\}\s+agentsFocus=\{agentsFocus\}\s+onAgentsFocusDone=\{onAgentsFocusDone\}/);
+    expect(src).not.toMatch(/AgentsPage|AutomationsPage/);
   });
 
   it('a page/agents link lands on the page with the slug as the page\'s own focus', () => {
@@ -99,10 +99,19 @@ describe('routing (S7, requestOpenAgents)', () => {
     expect(src).toMatch(/<NavFocusAgentsBridge nav=\{nav\} onAgentsFocus=\{focusAgents\} \/>/);
   });
 
-  it('the stub keeps the pinned props and reads the roster from useAgents', () => {
-    const src = code(read(STUB));
-    expect(src).toMatch(/export function AgentsPage\(\{ focus, onFocusDone \}: \{ focus: AgentsFocus \| null; onFocusDone: \(\) => void \}\)/);
+  it('the AI Team takes an agent focus (profile or create) and an automation focus (its agent)', () => {
+    const src = code(read(PAGE));
+    expect(src).toMatch(/if \(agentsFocus\.create\)/);
+    expect(src).toMatch(/setPanel\('profile'\)/);
+    expect(src).toMatch(/setSelected\(a\?\.agent \?\? automationFocus\.slug\)/);
     expect(src).toMatch(/useAgents\(\)/);
+  });
+
+  it('the corner Chat button and dock step aside on the AI Team, as on a whiteboard (A9)', () => {
+    const css = read('dashboard/src/components/sleepy/AgentTerminal.css');
+    for (const page of ['automations', 'agents']) {
+      expect(css).toContain(`.project-instance[data-page="${page}"] .agent-fab`);
+    }
   });
 });
 

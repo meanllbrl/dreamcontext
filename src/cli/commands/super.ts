@@ -4,8 +4,8 @@ import { windowEnv } from './window.js';
 
 /**
  * `dreamcontext super …` — the project's Super Agent drives the hand-over screen: its child
- * chats (delegate, brief, read, answer, send), the cards floating around it (open, shape, half,
- * present, stack, float, close), the one question queue, and its children's worktrees.
+ * chats (delegate, brief, read, answer, send), the cards floating around it (open, half, present,
+ * stack, float, close, group, ungroup), the one question queue, and its children's worktrees.
  *
  * A THIN HTTP CLIENT, the `window` command's shape: every verb is one call to
  * `/api/super/v/<verb>` with the window token the server injects into every project chat.
@@ -86,13 +86,13 @@ export function registerSuperCommand(program: Command): void {
 
   s.command('open <kind> <ref>')
     .description(`Open a floating card: ${KINDS}. ref = a session id, a slug, a URL or a project path`)
-    .option('--shape <shape>', 'square (1:1) | tall (3:4); default: tall for chat and web, square for the rest')
+    .option('--shape <shape>', 'square | tall: recorded only; every floating card is a 1:1 tile')
     .option('--title <text>', 'Its label')
     .action((kind: string, ref: string, o: { shape?: string; title?: string }) =>
       run('open', { kind, ref, shape: o.shape, title: o.title }));
 
   s.command('shape <card> <shape>')
-    .description('Make a card square (1:1) or tall (3:4)')
+    .description('Record a card\'s shape (square | tall); kept for older scripts: every floating card is drawn as a 1:1 tile')
     .action((container: string, shape: string) => run('shape', { container, shape }));
 
   s.command('half [card]')
@@ -112,16 +112,25 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('stack <card>')
-    .description('Put a card in the Others stack (bottom right)')
+    .description('Put a card or a group in Others (bottom right); a grouped card leaves its group')
     .action((container: string) => run('stack', { container }));
 
   s.command('float <card>')
-    .description('Bring a card from Others back to the floating cards (placed for you)')
+    .description('Bring a card or a group from Others back to the stage (placed for you); a grouped card leaves its group')
     .action((container: string) => run('float', { container }));
 
   s.command('close <card>')
-    .description('Close a card (a child chat keeps running)')
+    .description('Close a card (a child chat keeps running; `super end` ends it)')
     .action((container: string) => run('close', { container }));
+
+  s.command('group <cards...>')
+    .description('Put cards together as one tile on the stage; a group id among them adds the rest to that group')
+    .option('--name <name>', 'Name the group (or rename it: `super group <group> --name <name>`)')
+    .action((cards: string[], o: { name?: string }) => run('group', { containers: cards, name: o.name }));
+
+  s.command('ungroup <targets...>')
+    .description('Dissolve a group (its cards take its place on the stage or in Others), or take cards out of their group (they float)')
+    .action((targets: string[]) => run('ungroup', { targets }));
 
   s.command('brief <child> <line>')
     .description('Set the one-line reminder a child\'s card shows')
@@ -138,8 +147,26 @@ export function registerSuperCommand(program: Command): void {
     .action((child: string, requestId: string, choice: string[], o: { text?: string }) =>
       run('answer', { child, requestId, choices: choice, text: o.text }));
 
+  s.command('end [children...]')
+    .description('End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks')
+    .option('--idle', 'List the idle children you started; add --yes to end them all')
+    .option('--yes', 'With --idle: end every listed child')
+    .option('--force', 'ONLY when the owner asked: end it even while it works, asks or runs background tasks, or when it is his own chat')
+    .action((children: string[], o: { idle?: boolean; yes?: boolean; force?: boolean }) => {
+      if (!o.idle && children.length === 0) return usage('name the children to end, or pass --idle');
+      return run('end', o.idle ? { idle: true, yes: o.yes === true } : { children, force: o.force === true });
+    });
+
+  s.command('resume <child>')
+    .description('Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others')
+    .option('--mode <mode>', 'basic | plan | develop')
+    .option('--model <id>', 'Model id or alias')
+    .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .action((child: string, o: { mode?: string; model?: string; effort?: string }) =>
+      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort }));
+
   s.command('send <child> <text>')
-    .description('Send a message into a child chat (queued if it is busy)')
+    .description('Send a message into a child chat (steered into its running turn; queued only while it asks)')
     .action((child: string, text: string) => run('send', { child, text }));
 
   const q = s.command('queue').description('The one question queue');

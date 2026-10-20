@@ -455,3 +455,20 @@ describe('chatPermissionMode (per vault, split out of the global blob)', () => {
     expect(cfg.chatView).toBe(true);
   });
 });
+
+describe('parkIdleChats (Settings → Chat → Park idle chats under load)', () => {
+  it('is ON by default on both sides, and for an old blob without the key', () => {
+    expect(DEFAULT_AGENT_SETTINGS.parkIdleChats).toBe(true);
+    expect(coerceAgentSettings({}).parkIdleChats).toBe(true);
+    expect(coerceAgentSettings(null).parkIdleChats).toBe(true);
+    expect(coerceServerAgentSettings({}).parkIdleChats).toBe(true);
+  });
+
+  it('runs one input table through BOTH coercers (lockstep): only an explicit false turns it off', () => {
+    const table: Array<[unknown, boolean]> = [[false, false], [true, true], ['false', true], [0, true], [null, true], [undefined, true]];
+    for (const [input, want] of table) {
+      expect(coerceAgentSettings({ parkIdleChats: input as never }).parkIdleChats).toBe(want);
+      expect(coerceServerAgentSettings({ parkIdleChats: input }).parkIdleChats).toBe(want);
+    }
+  });
+});

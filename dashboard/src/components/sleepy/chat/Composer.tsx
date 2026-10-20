@@ -335,19 +335,21 @@ const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker }: {
 });
 
 /** The model + effort trigger. */
-const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disabled, open, onToggle }: {
+const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disabled, open, onToggle, temporary = false }: {
   modelLabel: string;
   effortValue: string;
   disabled: boolean;
   open: boolean;
   onToggle: () => void;
+  /** The pick is a temporary one (AI Team), not the default: the trigger is tinted. */
+  temporary?: boolean;
 }) {
   return (
     <div className="chat-cmp-model-wrap">
       <button
         type="button"
         {...{ [MENU_TRIGGER_ATTR]: '' }}
-        className="chat-cmp-modeltrigger"
+        className={`chat-cmp-modeltrigger${temporary ? ' chat-cmp-modeltrigger--temp' : ''}`}
         disabled={disabled}
         onClick={onToggle}
         title="Model and reasoning effort — switch applies from the next turn"
@@ -470,6 +472,7 @@ export function Composer({
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
   idlePlaceholder, unavailable,
   showModel = true,
+  modelMenu,
   activeAccountId = '', onAccountChange,
   contextHandoff, onContextHandoffChange,
 }: {
@@ -648,6 +651,12 @@ export function Composer({
    * is something behind it.
    */
   showModel?: boolean;
+  /**
+   * The model menu's extra slots, for a surface whose pick is TEMPORARY rather than a new
+   * default (AI Team): a head above the list, a foot that replaces "Set as default", the row
+   * tagged "Default", and a tinted trigger while the pick differs from it.
+   */
+  modelMenu?: { head?: ReactNode; foot?: ReactNode; defaultId?: string; temporary?: boolean };
   /** Which account THIS conversation is running on, so the picker can mark it. '' means the
    *  server resolved the default and no explicit account was named. */
   activeAccountId?: string;
@@ -1810,6 +1819,9 @@ export function Composer({
             onSetDefault={stableSaveDefault}
             savedDefault={savedDefault}
             close={menu.close}
+            head={modelMenu?.head}
+            foot={modelMenu?.foot}
+            defaultId={modelMenu?.defaultId}
           />
         </div>
       )}
@@ -2083,6 +2095,7 @@ export function Composer({
             disabled={!canCompose}
             open={menu.open === 'model'}
             onToggle={toggleModel}
+            temporary={modelMenu?.temporary}
           />
         )}
 

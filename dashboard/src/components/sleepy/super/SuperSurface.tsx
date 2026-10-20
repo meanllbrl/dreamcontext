@@ -1,29 +1,28 @@
-import {
-  Component, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState,
-  type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
-} from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { isLightMode } from '../../../lib/lightMode';
-import { MAX_CONTAINERS, type SuperContainer as Container, type SuperStateView } from '../../../lib/superTypes';
+import { MAX_CONTAINERS, type SuperContainer as Container, type SuperGroup, type SuperStateView } from '../../../lib/superTypes';
 import { SleepyMascot } from '../SleepyMascot';
-import { armPointerDrag } from '../tabDrag';
 import type { ChatSession } from '../chatSession';
-import { planLayoutMotion, type Rect, type StageBox } from './handoverMotion';
-import { prefersReducedMotion, runLayoutMotion, type LayoutRun } from './motionRunner';
+import { prefersReducedMotion } from './motionRunner';
 import { OthersStack, type OthersItem } from './OthersStack';
+import { GroupPanel } from './GroupPanel';
+import { SuperGroupCard } from './SuperGroupCard';
+import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
+import { StageMotion, cssEsc } from './StageMotion';
+import { useStageDrag, type StageDragDeps } from './useStageDrag';
+import { OrbitPath, PanelChatTile } from './StageParts';
 import { QueueStrip } from './QueueStrip';
 import { SuperContainer, chatStatus, useLiveSession } from './SuperContainer';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import {
-  STAGE, heightOf, overCentre, overOthersZone, planStage, posFromRect,
-  type LayoutPatch, type StagePlan,
-} from './superLayout';
+import { isGroupId, planStage, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
 import { needsOwner, ownerQueueCount, queueHead, shownChild } from './superHandover';
 import { liveWebIds, touchLru, dropFromLru } from './webBudget';
 import './SuperSurface.css';
 
 export { runFlights, prefersReducedMotion, type FlightRun } from './motionRunner';
+export { samePlan } from './StageMotion';
 
 export interface SuperSurfaceProps {
   state: SuperStateView;
@@ -51,19 +50,11 @@ export interface SuperSurfaceProps {
   onStageReady: (stage: { origin: DOMRect; plan: StagePlan }) => void;
   /** O11: the owner dropped a card on the centre (or pressed its "Ask about this"). */
   onAskAbout: (id: string, title: string) => void;
+  /** The owner ended a child from its card (`whenDone`: once its turn ends). */
+  onEndChild: (child: string, whenDone: boolean) => void;
+  /** Children waiting to be ended when their turn ends. */
+  endPending: ReadonlySet<string>;
 }
-
-interface DragState {
-  id: string;
-  /** The card's rect when the drag began (stage coordinates). */
-  rect: Rect;
-  /** The record the drag began over: a push that changes it pins the card (D1). */
-  base: readonly Container[];
-  /** Dragged out of the Others fan (a ghost follows the pointer, not the card). */
-  fromOthers: boolean;
-}
-
-type Hot = 'centre' | 'others' | null;
 
 /**
  * The hand-over screen (plan-r8, owner decisions O1-O11): Claude in the cape EXACTLY in the
@@ -110,13 +101,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return () => ro.disconnect();
   }, []);
 
-  // ── The drag (F6, FE1, D1) ──
-  const [drag, setDrag] = useState<DragState | null>(null);
+  // ── The drag (F6, FE1, D1): the gestures live in useStageDrag; what they read at the moment of
+  // the gesture is refreshed below, once everything it names exists. ──
+  const dragDeps = useRef<StageDragDeps | null>(null);
+  const { drag, hot, target, panelDrag, onPressCard, onPressPanelItem } = useStageDrag(dragDeps);
   // The card dropped last paints on top of the other dropped cards, for this window's session.
   // (A drop never reorders the record: that would move every other card to the other side.)
   const [topped, setTopped] = useState<string[]>([]);
   const liftOnTop = (id: string) => setTopped((prev) => [...prev.filter((x) => x !== id), id]);
-  const [hot, setHot] = useState<Hot>(null);
   const pinned = useMemo(
     () => (drag && !drag.fromOthers && state.containers !== drag.base ? { id: drag.id, rect: drag.rect } : null),
     [drag, state.containers],
@@ -124,8 +116,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
 
   // ── The plan ──
   const plan = useMemo(
-    () => planStage(state.containers, state.view, size, { dragging: pinned }),
-    [state.containers, state.view, size, pinned],
+    () => planStage(stageItems(state.containers, state.groups, state.view), state.view, size, { dragging: pinned }),
+    [state.containers, state.groups, state.view, size, pinned],
   );
   const planRef = useRef(plan);
   planRef.current = plan;
@@ -150,7 +142,25 @@ export function SuperSurface(props: SuperSurfaceProps) {
   useEffect(() => { if (motion === 'idle') setViewsReady(true); }, [motion]);
 
   const byId = useMemo(() => new Map(state.containers.map((c) => [c.id, c] as const)), [state.containers]);
+  const groupsById = useMemo(() => new Map(state.groups.map((g) => [g.id, g] as const)), [state.groups]);
   const titleOf = useCallback((c: Container) => (c.kind === 'chat' ? props.titleFor(c.ref) : c.title || c.ref), [props.titleFor]);
+  /** A group's cards as its tile shows them: kind, title and (a chat's) live state. */
+  const membersOf = (g: SuperGroup): GroupMember[] => g.cards.flatMap((id) => {
+    const c = byId.get(id);
+    return c ? [{ id, kind: c.kind, title: titleOf(c), ...(c.kind === 'chat' ? { status: chatStatus(props.sessionFor(c.ref)).kind } : {}) }] : [];
+  });
+
+  // ── Groups (2026-10-20): the one open panel (a group's, or Others'), and the drop target ──
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  useEffect(() => {
+    // A panel whose group left the stage (dissolved, put in Others, a view change) closes.
+    if (!openGroup) return;
+    if (openGroup === 'others' ? !plan.others.length : plan.cards[openGroup]?.where !== 'float') setOpenGroup(null);
+  }, [openGroup, plan]);
+  const closePanel = useCallback(() => setOpenGroup(null), []);
+  // A stage that is no longer on screen (the overlay folded by a click or the hotkey) closes its
+  // panel: a hidden panel would keep Escape and focus for the whole app.
+  useEffect(() => { if (!props.visible) setOpenGroup(null); }, [props.visible]);
 
   // ── The shown slot: the ONE child chat mounted besides the centre (F11, D10) ──
   const shownRef = shownChild(state);
@@ -163,7 +173,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // ── The web budget: at most two live frames, most recently loaded first ──
   const [lru, setLru] = useState<string[]>([]);
   const webOnScreen = props.visible
-    ? state.containers.filter((c) => c.kind === 'web' && plan.cards[c.id] && plan.cards[c.id].where !== 'others').map((c) => c.id)
+    // A floating tile shows a page's title; the frame lives only side by side or presented.
+    ? state.containers.filter((c) => c.kind === 'web' && plan.cards[c.id] && plan.cards[c.id].where !== 'others' && plan.cards[c.id].where !== 'float').map((c) => c.id)
     : [];
   const liveWeb = liveWebIds(lru, webOnScreen);
   useEffect(() => {
@@ -190,8 +201,19 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onLayout(c.place === 'others' ? { cards: [{ id, place: 'float' }], view: { mode: 'half', card: id } } : { view: { mode: 'half', card: id } });
     },
     onToOthers: (id: string) => { onLayout({ cards: [{ id, place: 'others' }] }); focusAfter(id); },
-    onAskAbout: (id: string) => { const c = byId.get(id); if (c) props.onAskAbout(id, titleOf(c)); },
+    onAskAbout: (id: string) => {
+      const c = byId.get(id);
+      const g = groupsById.get(id);
+      if (c) props.onAskAbout(id, titleOf(c));
+      else if (g) props.onAskAbout(id, g.name);
+    },
     onClose: (id: string) => { setLru((prev) => dropFromLru(prev, id)); onLayout({ closed: [id] }); focusAfter(id); },
+    onEndSession: (id: string, whenDone: boolean) => {
+      const c = byId.get(id);
+      if (c?.kind !== 'chat') return;
+      props.onEndChild(c.ref, whenDone);
+      if (!whenDone) focusAfter(id);
+    },
     onMinimize: (id: string) => {
       onLayout({ view: { mode: 'float' } });
       requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(id)}"]`)?.focus());
@@ -200,99 +222,40 @@ export function SuperSurface(props: SuperSurfaceProps) {
     onOpenPage: props.onOpenPage,
   };
 
-  /** Where a release lands: the centre (ask), the Others corner, or the stage (a drop). */
-  const hotAt = (p: StagePlan, x: number, y: number): Hot => (overCentre(p, x, y) ? 'centre' : overOthersZone(p, x, y) ? 'others' : null);
-
-  const onPressCard = (e: ReactPointerEvent<HTMLDivElement>, id: string) => {
-    if (e.button !== 0 || (e.target as HTMLElement).closest('button, a, input, textarea, select')) return;
-    const el = e.currentTarget;
-    const root = rootRef.current;
-    const card = planRef.current.cards[id];
-    if (!root || !card || card.where !== 'float') return;
-    let origin = root.getBoundingClientRect();
-    let last: Hot = null;
-    let ddx = 0;
-    let ddy = 0;
-    armPointerDrag({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY }, el, {
-      win: window,
-      onBegin: () => {
-        origin = root.getBoundingClientRect();
-        // A settle still running on this card gives way to the hand that took it.
-        for (const a of el.getAnimations?.() ?? []) a.cancel();
-        el.dataset.lifted = 'true';
-        flushSync(() => setDrag({ id, rect: card.rect, base: stateRef.current.containers, fromOthers: false }));
-      },
-      onRemeasure: () => { origin = root.getBoundingClientRect(); },
-      onFrame: (x, y, dx, dy) => {
-        ddx = dx;
-        ddy = dy;
-        // A slight lift, kept centred on the card (origin top-left, F6).
-        el.style.transform = `translate(${dx - card.rect.width * 0.01}px, ${dy - card.rect.height * 0.01}px) scale(1.02)`;
-        const h = hotAt(planRef.current, x - origin.left, y - origin.top);
-        if (h !== last) { last = h; setHot(h); }
-      },
-      onEnd: (drop, x, y) => {
-        setHot(null);
-        const p = planRef.current;
-        const h = drop ? hotAt(p, x - origin.left, y - origin.top) : null;
-        if (drop && h === 'centre') actions.onAskAbout(id);
-        else if (drop && h === 'others') onLayout({ cards: [{ id, place: 'others' }] });
-        else if (drop) {
-          const r = { ...card.rect, x: card.rect.x + ddx, y: card.rect.y + ddy };
-          onLayout({ cards: [{ id, pos: posFromRect(p.free, r), place: 'float' }] });
-          liftOnTop(id);
-        }
-        // The same batch clears the drag: StageMotion swaps the lift for the settle (FE2).
-        setDrag(null);
-      },
-    });
+  const onUngroup = (id: string) => { setOpenGroup(null); onLayout({ ungroup: [id] }); };
+  dragDeps.current = {
+    rootRef, layerRef, planRef, stateRef, byId, groupsById, titleOf, onLayout, actions, liftOnTop, setOpenGroup,
+    groupWord: t('super.group.word'),
   };
+  /** A card clicked in a panel: side by side; a group in Others: back on the stage. */
+  const openFromPanel = (id: string) => {
+    setOpenGroup(null);
+    if (isGroupId(id)) onLayout({ cards: [{ id, place: 'float' }] });
+    else actions.onSideBySide(id);
+  };
+  const returnFocusTo = useCallback((key: string) => () => requestAnimationFrame(() => {
+    const el = key === 'others' ? stackRef.current : rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(key)}"]`);
+    el?.focus();
+  }), []);
+  const returnFocus = useMemo(() => returnFocusTo(openGroup ?? 'others'), [returnFocusTo, openGroup]);
 
-  const onPressOthersItem = (e: ReactPointerEvent<HTMLButtonElement>, id: string) => {
-    if (e.button !== 0) return;
-    const el = e.currentTarget;
-    const root = rootRef.current;
-    const layer = layerRef.current;
+  /** A card as it sits in a panel: the same tile it is on the stage. */
+  const renderPanelItem = (id: string) => {
+    const g = groupsById.get(id);
+    if (g) {
+      return (
+        <div className="super-panel-tile super-panel-tile--group">
+          <TileSheets />
+          <div className="super-panel-clip"><GroupTile group={g} members={membersOf(g)} /></div>
+        </div>
+      );
+    }
     const c = byId.get(id);
-    if (!root || !layer || !c) return;
-    let origin = root.getBoundingClientRect();
-    let ghost: HTMLElement | null = null;
-    let last: Hot = null;
-    // The ghost is the card the stage would draw once it floats again, never a guessed size.
-    const landed = planStage(stateRef.current.containers.map((k) => (k.id === id ? { ...k, place: 'float' as const } : k)), { mode: 'float' }, sizeRef.current).cards[id];
-    const u = Math.max(planRef.current.unit.left, planRef.current.unit.right) || STAGE.U_MIN;
-    const box = landed?.where === 'float' ? { width: landed.rect.width, height: landed.rect.height } : { width: u, height: heightOf(c.shape, u) };
-    const at = (x: number, y: number): Rect => ({ x: x - origin.left - box.width / 2, y: y - origin.top - box.height / 2, ...box });
-    armPointerDrag({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY }, el, {
-      win: window,
-      onBegin: () => {
-        origin = root.getBoundingClientRect();
-        ghost = document.createElement('div');
-        ghost.className = 'super-standin super-standin--card super-drag-ghost';
-        ghost.textContent = titleOf(c);
-        ghost.style.width = `${box.width}px`;
-        ghost.style.height = `${box.height}px`;
-        layer.appendChild(ghost);
-        flushSync(() => setDrag({ id, rect: at(e.clientX, e.clientY), base: stateRef.current.containers, fromOthers: true }));
-      },
-      onRemeasure: () => { origin = root.getBoundingClientRect(); },
-      onFrame: (x, y) => {
-        const r = at(x, y);
-        if (ghost) ghost.style.transform = `translate(${r.x}px, ${r.y}px)`;
-        const h = hotAt(planRef.current, x - origin.left, y - origin.top);
-        if (h !== last) { last = h; setHot(h); }
-      },
-      onEnd: (drop, x, y) => {
-        ghost?.remove();
-        ghost = null;
-        setHot(null);
-        const p = planRef.current;
-        const h = drop ? hotAt(p, x - origin.left, y - origin.top) : null;
-        if (drop && h === 'centre') actions.onAskAbout(id);
-        else if (drop && h !== 'others') { onLayout({ cards: [{ id, place: 'float', pos: posFromRect(p.free, at(x, y)) }] }); liftOnTop(id); }
-        setDrag(null);
-      },
-    });
+    if (!c) return null;
+    if (c.kind === 'chat') {
+      return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.has(c.ref)} />;
+    }
+    return <div className="super-panel-tile"><div className="super-panel-clip"><KindTile container={c} title={titleOf(c)} viewReady={viewsReady} /></div></div>;
   };
 
   // ── The centre ──
@@ -308,6 +271,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const head = queueHead(state);
   const asking = useMemo(() => new Set(state.queue.filter(needsOwner).map((q) => q.sessionId)), [state.queue]);
   const othersItems: OthersItem[] = plan.others.map((id) => {
+    const g = groupsById.get(id);
+    if (g) {
+      const gs = groupStatus(membersOf(g));
+      return { id, title: g.name, kind: 'group' as const, status: gs === 'asking' ? 'asking' as const : gs === 'working' ? 'working' as const : 'idle' as const };
+    }
     const c = byId.get(id)!;
     const st = c.kind === 'chat' ? chatStatus(props.sessionFor(c.ref)).kind : null;
     return { id, title: titleOf(c), kind: c.kind, status: st === 'asking' ? 'asking' : st === 'working' ? 'working' : st ? 'idle' : undefined };
@@ -324,6 +292,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       data-dragging={drag ? 'true' : undefined}
     >
       <div ref={underRef} className="super-stage-under" aria-hidden />
+      {plan.mode === 'float' && !plan.narrow && plan.orbit.length > 0 && <OrbitPath plan={plan} />}
       <StageMotion plan={plan} dragId={drag?.id ?? null} animate={props.visible && motion === 'idle'} rootRef={rootRef} layerRef={layerRef} underRef={underRef}>
         <div
           className={`super-centre${pending.has('centre') ? ' super-centre--pending' : ''}`}
@@ -360,11 +329,44 @@ export function SuperSurface(props: SuperSurfaceProps) {
               asksOwner={c.kind === 'chat' && asking.has(c.ref)}
               shownSlot={shownCard?.id === c.id}
               onPress={onPressCard}
+              dropTarget={target === c.id}
+              endPending={c.kind === 'chat' && props.endPending.has(c.ref)}
               {...actions}
             />
           );
         })}
+        {state.groups.map((g) => {
+          const cp = plan.cards[g.id];
+          if (!cp || cp.where === 'others') return null;
+          const members = membersOf(g);
+          return (
+            <SuperGroupCard
+              key={g.id}
+              group={g}
+              plan={topped.includes(g.id) ? { ...cp, z: cp.z + 2 * MAX_CONTAINERS + topped.indexOf(g.id) } : cp}
+              members={members}
+              sessions={g.cards.map((id) => { const c = byId.get(id); return c?.kind === 'chat' ? props.sessionFor(c.ref) : undefined; })}
+              pending={pending.has(g.id)}
+              dropTarget={target === g.id}
+              onPress={onPressCard}
+              onOpen={setOpenGroup}
+              onToOthers={actions.onToOthers}
+              onAskAbout={actions.onAskAbout}
+              onUngroup={onUngroup}
+            />
+          );
+        })}
       </StageMotion>
+      {target && plan.cards[target] && (
+        <div
+          className="super-drop-label"
+          data-testid="super-drop-label"
+          style={{ left: plan.cards[target].rect.x + plan.cards[target].rect.width / 2, top: plan.cards[target].rect.y - 12 }}
+          aria-hidden
+        >
+          {isGroupId(target) ? t('super.drop.join').replace('{name}', groupsById.get(target)?.name ?? '') : t('super.drop.group')}
+        </div>
+      )}
       <QueueStrip
         head={head}
         waiting={ownerQueueCount(state)}
@@ -389,122 +391,35 @@ export function SuperSurface(props: SuperSurfaceProps) {
           aria-hidden
         />
       )}
-      <OthersStack items={othersItems} rect={plan.othersRect} onOpen={actions.onSideBySide} onPressItem={onPressOthersItem} stackRef={stackRef} />
+      <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={() => setOpenGroup((o) => (o === 'others' ? null : 'others'))} stackRef={stackRef} />
+      {openGroup && (() => {
+        const system = openGroup === 'others';
+        const g = system ? undefined : groupsById.get(openGroup);
+        const ids = system ? plan.others : (g?.cards ?? []).filter((id) => byId.has(id));
+        const anchor = system ? plan.othersRect : plan.cards[openGroup]?.rect;
+        if (!anchor || !ids.length || (!system && !g)) return null;
+        return (
+          <GroupPanel
+            key={openGroup}
+            title={g ? g.name : t('super.others.name')}
+            ids={ids}
+            anchor={anchor}
+            stage={size}
+            system={system}
+            onClose={closePanel}
+            onUngroup={g ? () => onUngroup(g.id) : undefined}
+            onOpenItem={openFromPanel}
+            onPressItem={(e, id) => onPressPanelItem(e, id, openGroup)}
+            renderItem={renderPanelItem}
+            itemTestId={system ? 'super-others-item' : 'super-group-item'}
+            returnFocus={returnFocus}
+            hidden={panelDrag}
+          />
+        );
+      })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
     </div>
   );
-}
-
-const cssEsc = (v: string) => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(v) : v.replace(/["\\]/g, ''));
-
-// ─── The layout motion (F8, FE2-FE4, D1) ───────────────────────────────────────
-
-interface StageMotionProps {
-  plan: StagePlan;
-  /** The card under the owner's hand: the motion never touches it. */
-  dragId: string | null;
-  /** Visible, and no hand-over flight running: changes animate; otherwise they snap. */
-  animate: boolean;
-  rootRef: RefObject<HTMLDivElement | null>;
-  layerRef: RefObject<HTMLDivElement | null>;
-  underRef: RefObject<HTMLDivElement | null>;
-  children: ReactNode;
-}
-
-type Snapshot = { snap: true } | { snap: false; before: Map<string, StageBox> };
-
-const rectIn = (el: Element, origin: DOMRect): Rect => {
-  const r = el.getBoundingClientRect();
-  return { x: r.left - origin.left, y: r.top - origin.top, width: r.width, height: r.height };
-};
-
-const sameRect = (a: Rect, b: Rect) => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
-
-/** Two plans that draw the same screen: a re-render that changed nothing on the stage (a POST's
- *  echo, a slot epoch) must not cancel and restart a motion that is running. */
-export function samePlan(a: StagePlan, b: StagePlan): boolean {
-  if (a.width !== b.width || a.height !== b.height || !sameRect(a.centre, b.centre)) return false;
-  const ka = Object.keys(a.cards);
-  if (ka.length !== Object.keys(b.cards).length) return false;
-  for (const k of ka) {
-    const x = a.cards[k];
-    const y = b.cards[k];
-    if (!y || x.where !== y.where || x.shape !== y.shape || x.z !== y.z || !sameRect(x.rect, y.rect)) return false;
-  }
-  return true;
-}
-
-/**
- * Animates every change of the plan (FE2): `getSnapshotBeforeUpdate` reads the centre's and
- * every card's rect BEFORE the commit touches the DOM (a running transform included, so an
- * interrupted motion starts where the card really is; a card flying as a stand-in is read off
- * its stand-in); `componentDidUpdate` (before paint) cancels what runs, swaps a dropped card's
- * lift for its settle in the same commit, takes the LAST rects from the plan (pure, never the
- * homed chat's DOM) and starts the motion. A change of the stage's size snaps (FE4), as does
- * anything while the surface is hidden or the hand-over flights run.
- */
-class StageMotion extends Component<StageMotionProps> {
-  private run: LayoutRun | null = null;
-
-  getSnapshotBeforeUpdate(prev: StageMotionProps): Snapshot | null {
-    if (prev.dragId === this.props.dragId && (prev.plan === this.props.plan || samePlan(prev.plan, this.props.plan))) return null;
-    const root = this.props.rootRef.current;
-    if (!root || !this.props.animate || !prev.animate) return { snap: true };
-    if (prev.plan.width !== this.props.plan.width || prev.plan.height !== this.props.plan.height) return { snap: true };
-    const origin = root.getBoundingClientRect();
-    const before = new Map<string, StageBox>();
-    for (const el of Array.from(root.querySelectorAll<HTMLElement>('[data-stage-key]'))) {
-      const key = el.dataset.stageKey ?? '';
-      if (!key) continue;
-      const where = key === 'centre' ? 'centre' : prev.plan.cards[key]?.where ?? 'float';
-      before.set(key, { rect: this.run?.standInRect(key, origin) ?? rectIn(el, origin), where });
-    }
-    for (const id of prev.plan.others) before.set(id, { rect: prev.plan.othersRect, where: 'others' });
-    return { snap: false, before };
-  }
-
-  componentDidUpdate(prev: StageMotionProps, _state: unknown, snap: Snapshot | null) {
-    if (!snap) return;
-    const root = this.props.rootRef.current;
-    // A dropped (or cancelled) card loses its lift in this same commit (FE2).
-    for (const el of Array.from(root?.querySelectorAll<HTMLElement>('[data-lifted]') ?? [])) {
-      if (el.dataset.stageKey === this.props.dragId) continue;
-      el.style.transform = '';
-      delete el.dataset.lifted;
-    }
-    this.run?.cancel();
-    this.run = null;
-    if (snap.snap || !root) return;
-    const p = this.props.plan;
-    const after = new Map<string, StageBox>([['centre', { rect: p.centre, where: 'centre' }]]);
-    for (const c of Object.values(p.cards)) after.set(c.id, { rect: c.rect, where: c.where });
-    const reduced = prefersReducedMotion();
-    const light = isLightMode();
-    const skip = [this.props.dragId];
-    // A drop settle snaps under reduced motion and Light mode (dragging itself follows the pointer).
-    if ((reduced || light) && prev.dragId && !this.props.dragId) skip.push(prev.dragId);
-    for (const k of skip) if (k) { snap.before.delete(k); after.delete(k); }
-    const motion = planLayoutMotion(snap.before, after, { reduced, light, othersRect: p.othersRect });
-    const layer = this.props.layerRef.current;
-    const under = this.props.underRef.current;
-    if (motion.kind === 'none' || !layer || !under) return;
-    const run = runLayoutMotion(motion, {
-      layer,
-      under,
-      elFor: (key) => root.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(key)}"]`),
-    });
-    this.run = run;
-    void run.finished.then(() => { if (this.run === run) this.run = null; });
-  }
-
-  componentWillUnmount() {
-    this.run?.cancel();
-    this.run = null;
-  }
-
-  render() {
-    return this.props.children;
-  }
 }
 
 /** Re-render on a bumped nonce (a tiny helper AgentSurface uses for the flight request). */

@@ -266,6 +266,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/super/layout': deny(SUPER),
   'POST /api/super/activity': deny(SUPER),
   'POST /api/super/recap': deny(SUPER),
+  'POST /api/super/end': deny(SUPER),
 
   // The chat's mascot
   'GET /api/sleepy/video': agnostic('read: the mascot clip (mp4 from a fixed set); side-effect free', 'media'),

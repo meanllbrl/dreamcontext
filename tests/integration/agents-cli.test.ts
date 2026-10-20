@@ -101,7 +101,7 @@ describe('the self-approval guard', () => {
       for (const args of [['agents', 'approve', 'scout', '--yes'], ['automations', 'approve', 'digest', '--yes']]) {
         const out = run(args, projectDir, home, env);
         expect(out.exitCode, `${args.join(' ')} under ${Object.keys(env)[0]}`).toBe(1);
-        expect(out.stdout).toContain('Agents page');
+        expect(out.stdout).toContain('AI Team page');
         expect(out.stdout).not.toMatch(/dreamcontext \w+ approve/);
       }
     }
@@ -135,7 +135,7 @@ describe('answering an approval question', () => {
     for (const env of SELF_ENVS) {
       const out = run(['automations', 'answer', id, 'approve'], projectDir, home, env);
       expect(out.exitCode, `answer approve under ${Object.keys(env)[0]}`).toBe(1);
-      expect(out.stdout).toContain('Agents page');
+      expect(out.stdout).toContain('AI Team page');
       expect(out.stdout).not.toMatch(/dreamcontext \w+ (approve|answer)/);
     }
     const listed = run(['automations', 'questions', 'digest'], projectDir, home, { CLAUDECODE: '1' });
@@ -260,6 +260,6 @@ describe('tasks assign-agent', () => {
     seedTask('fix-login');
     const out = run(['tasks', 'assign-agent', 'fix-login', 'writer'], projectDir, home);
     expect(out.exitCode).toBe(1);
-    expect(out.stdout).toContain('Approve it on the Agents page.');
+    expect(out.stdout).toContain('Approve it on the AI Team page.');
   });
 });
