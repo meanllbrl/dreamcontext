@@ -697,12 +697,19 @@ body[data-phone] .agent-dock { display: none; }
   padding: 0 var(--space-2) 0 var(--space-4);
   border-bottom: 1px solid var(--color-border);
 }
+/* The title is the one item in the row that gives way: the mark, the live badge and ＋ do not
+   shrink (flex: none / flex-shrink: 0 on their own classes), so a long title and a long badge
+   on a 320px phone truncate the title instead of pushing ＋ off the screen. */
 .mlist-h {
   flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
   font-size: var(--font-size-lg);
   font-weight: 700;
   color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .mlist-projects,
 .mlist-chips {

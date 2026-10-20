@@ -191,6 +191,23 @@ describe('the list is the Mac phone\'s home (AC21)', () => {
     expect(css).toMatch(/\.mlist-chip::after,\s*\.mlist-clear::after \{ content: ''; position: absolute; inset: calc\(-1 \* var\(--space-1\) - 2px\) 0; \}/);
   });
 
+  it('a long title and a long badge truncate the title, never push ＋ off a 320px screen', () => {
+    const css = code('dashboard/src/components/sleepy/MobileChat.css');
+    const rule = (src: string, sel: string) => {
+      const at = src.indexOf(`\n${sel} {`);
+      expect(at, sel).toBeGreaterThan(-1);
+      return src.slice(at, src.indexOf('}', at));
+    };
+    // The head row: [mark] [title] [badge] [＋].
+    expect(list).toMatch(/<div className="mlist-head">\s*<HandsfreeMark [^>]*className="mlist-mark" \/>\s*<h1 className="mlist-h"[^>]*>[^<]*<\/h1>\s*<PhoneChip \/>\s*<button className="mchat-head-btn" onClick=\{onNewChat\}/);
+    const title = rule(css, '.mlist-h');
+    for (const decl of [/flex: 1 1 auto;/, /min-width: 0;/, /white-space: nowrap;/, /overflow: hidden;/, /text-overflow: ellipsis;/]) expect(title).toMatch(decl);
+    // Everything else in the row keeps its size.
+    expect(rule(css, '.mchat-head-btn')).toMatch(/flex: 0 0 auto;/);
+    expect(rule(code('dashboard/src/components/handsfree/liveBadge.css'), '.dc-hf-chip')).toMatch(/flex-shrink: 0;/);
+    expect(code('dashboard/src/components/brand/handsfreeMark.css')).toMatch(/\.hfm \{[^}]*flex: none;/);
+  });
+
   it('a notification tap opens that chat past the list; on the list no chat counts as on screen', () => {
     expect(surface).toMatch(/OPEN_SESSION_EVENT, \(detail\) => \{\s*if \(!detail\?\.claudeId\) return;\s*setPhoneView\('chat'\);/);
     expect(surface).toMatch(/isMacPhoneSurface\(\) && phoneView === 'chat' \? \(mobileActive\?\.id \?\? ''\) : ''/);
