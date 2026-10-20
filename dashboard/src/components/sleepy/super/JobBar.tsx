@@ -171,8 +171,11 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
             data-on={open ? 'true' : undefined}
             aria-expanded={!!open}
             onClick={() => setOpen((o) => (o ? null : { section: null, row: null }))}
+            aria-label={t('super.jobs.label')}
+            title={t('super.jobs.label')}
           >
-            <span className="super-job-count-label">{t('super.jobs.label')}</span>
+            <span className="super-job-count-glyph" aria-hidden>☰</span>
+            <span className="super-job-count-n">{sections.waiting.length + sections.working.length}</span>
           </button>
         )}
         {!head && JOB_SECTIONS.map((sec) => (

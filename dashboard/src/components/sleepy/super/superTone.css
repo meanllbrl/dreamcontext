@@ -3,14 +3,14 @@
    tile's ring and corner brackets, the card frame's ring and glow, the panel tile, the Others
    dot and the job list's row — reads `--tone`, set here from `data-super-tone`
    (`toneOfStatus` / `toneOfRow` in superHandover.ts). Colour never travels alone: each of them
-   keeps its state word (WORKING / IDLE / ASKING / ENDED). A card frame takes the tone of the
-   tile or tall card it holds, and a frame showing its live chat takes it from its own status
-   (later rules win: a held tile's ended or starting tone beats the frame's idle). Tokens only. */
-:is([data-super-tone='working'], .super-card-frame[data-status='working'], .super-card-frame:has(:is(.super-tile, .super-card)[data-super-tone='working'])) { --tone: var(--color-success); }
-:is([data-super-tone='idle'], .super-card-frame[data-status='idle'], .super-card-frame:has(:is(.super-tile, .super-card)[data-super-tone='idle'])) { --tone: var(--color-accent); }
-:is([data-super-tone='asking'], .super-card-frame[data-status='asking'], .super-card-frame:has(:is(.super-tile, .super-card)[data-super-tone='asking'])) { --tone: var(--mood-waiting); }
-:is([data-super-tone='ended'], .super-card-frame:has(:is(.super-tile, .super-card)[data-super-tone='ended'])) { --tone: var(--color-error); }
-:is([data-super-tone='starting'], .super-card-frame:has(:is(.super-tile, .super-card)[data-super-tone='starting'])) { --tone: var(--color-warning); }
+   keeps its state word (WORKING / IDLE / ASKING / ENDED). A card frame carries its chat's tone
+   itself (SuperContainer), so no rule has to look into it (`:has()` re-ran on every change
+   inside a frame). Tokens only. */
+[data-super-tone='working'] { --tone: var(--color-success); }
+[data-super-tone='idle'] { --tone: var(--color-accent); }
+[data-super-tone='asking'] { --tone: var(--mood-waiting); }
+[data-super-tone='ended'] { --tone: var(--color-error); }
+[data-super-tone='starting'] { --tone: var(--color-warning); }
 
 /* ── A working tile's border ring (owner 2026-10-21) ───────────────────────────────────
    Motion carries "working"; the colour stays the state's tone (orthogonal channels). A masked

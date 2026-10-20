@@ -23,6 +23,10 @@
 .super-job-count[data-on='true'] { border-color: var(--color-border-hover); color: var(--color-text); }
 .super-job-count-n { font-family: var(--font-mono); font-weight: 700; color: var(--color-text); }
 .super-job-count[data-section='waiting'] .super-job-count-n { color: var(--mood-waiting); }
+/* Under a head the four counts fold into one small button (its name in aria-label and title),
+   so the head's options keep their full width at the narrowest band. */
+.super-job-count[data-section='all'] { padding: 0 8px; gap: 4px; }
+.super-job-count-glyph { font-size: var(--font-size-xs); line-height: 1; }
 
 .super-job-list {
   position: absolute;

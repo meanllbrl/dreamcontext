@@ -1400,7 +1400,11 @@ async function motion(engineName, browserType, base) {
               // The job bar beside it: with a head, its counts fold into one "Job list" button (JobBar).
               strip.classList.add('super-job-bar');
               const counts = el('div', 'super-job-counts');
-              counts.append(el('button', 'super-job-count', fx.list));
+              // The folded "Job list" button as drawn: its glyph and a count.
+              const all = el('button', 'super-job-count');
+              all.dataset.section = 'all';
+              all.append(el('span', 'super-job-count-glyph', '☰'), el('span', 'super-job-count-n', '3'));
+              counts.append(all);
               strip.append(head, counts);
               surface.append(strip);
               const hr = head.getBoundingClientRect();
@@ -1535,6 +1539,11 @@ async function board(engineName, browserType, base, full) {
       await until(page, () => surfaceShown(page), 20000);
     }
     ok(`${engineName}: handed over for the board checks`, await surfaceShown(page));
+    // The board reads the floating stage: nothing side by side from an earlier section.
+    if (record().view?.mode !== 'float') {
+      await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+      await until(page, async () => record().view?.mode === 'float', 8000);
+    }
     await until(page, async () => (await superComposer(page).count()) > 0, 20000);
     await page.waitForTimeout(1500);
 
@@ -1608,7 +1617,9 @@ async function board(engineName, browserType, base, full) {
 
     // AC7: the bar and the list, over the centre, without moving it and without a request.
     ok(`${engineName}: the bar shows its four counts`, (await page.locator('[data-testid^="super-job-count-"]').count()) === 4);
-    await page.waitForTimeout(400);
+    // The page settles first (the centre's history pages, the first state): the list is
+    // measured against a quiet page, not the page's own load.
+    await until(page, async () => { const n = apiReqs.length; await page.waitForTimeout(2500); return apiReqs.length === n; }, 30000);
     const centreBefore = (await geo(page)).c;
     const r0 = apiReqs.length;
     await page.getByTestId('super-job-count-working').click();
@@ -1719,6 +1730,9 @@ async function board(engineName, browserType, base, full) {
         ok('a child row in the list opens it side by side', await until(page, async () => record().view?.mode === 'half', 8000), JSON.stringify(record().view));
       } else ok('a child row in the list opens it side by side', false, 'no child row link');
       await page.keyboard.press('Escape').catch(() => {});
+      // Leave the stage as the next sections expect it: floating, nothing side by side.
+      await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+      await until(page, async () => record().view?.mode === 'float', 8000);
     }
     ok(`${engineName}: no console errors on the board`, errors.length === 0, errors.slice(0, 5).join('\n'));
   } finally {

@@ -166,11 +166,12 @@ describe('the ONE status tone (owner 2026-10-21)', () => {
     expect(tone.replace(/^\s*(-webkit-)?mask:[^;]*;$/gm, '')).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|hsl\(/i);
     const map = Object.fromEntries([...tone.matchAll(/\[data-super-tone='(\w+)'\][^{]*\{ --tone: (var\([^)]+\)); \}/g)].map((m) => [m[1], m[2]]));
     expect(map).toEqual({ working: 'var(--color-success)', idle: 'var(--color-accent)', asking: 'var(--mood-waiting)', ended: 'var(--color-error)', starting: 'var(--color-warning)' });
-    // A frame takes the tone of the floating tile OR the tall card it holds (frontend review Major 1).
-    expect((tone.match(/\.super-card-frame:has\(:is\(\.super-tile, \.super-card\)\[data-super-tone='\w+'\]\)/g) ?? []).length).toBe(5);
-    // …and a frame showing its live chat, from its own status (frontend re-check).
-    for (const st of ['working', 'idle', 'asking']) expect(tone).toContain(`.super-card-frame[data-status='${st}']`);
-    expect(tone.indexOf("[data-super-tone='ended']")).toBeGreaterThan(tone.indexOf("[data-super-tone='idle']"));
+    // Every frame carries its chat's tone itself (a tall card, a live chat, a tile alike: frontend
+    // review Major 1 and its re-check), so no rule looks into a frame with :has().
+    expect(read(`${SUPER}/SuperContainer.tsx`)).toMatch(/data-super-tone=\{status \? toneOfStatus\(status\.kind\) : undefined\}/);
+    expect(tone).not.toMatch(/:has\(/);
+    expect(read(`${SUPER}/SuperSurface.css`).replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/data-super-tone[^{]*:has\(|:has\([^)]*data-super-tone/);
+    expect(read(`${SUPER}/AgentCard.tsx`)).toMatch(/<div className="super-card" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}>/);
     expect(read(`${SUPER}/AgentCard.tsx`)).toMatch(/<div className="super-card" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}>/);
   });
 
