@@ -1,14 +1,22 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { raiseAskAttention } from '../../../lib/attention';
-import type { SuperQueueItem } from '../../../lib/superTypes';
+import type { SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission, PendingQuestion } from '../chatSession';
 import {
-  OPEN_LATCH, headAlarm, latchClick, latchSeen, optionsFit, permissionSummary, superAnswerPicks, type AnswerLatch, type OptionsFit,
+  OPEN_LATCH, headAlarm, latchClick, latchSeen, optionsFit, permissionSummary, superAnswerPicks, superJobs, type AnswerLatch, type JobLook, type JobSection, type OptionsFit,
 } from './superHandover';
 import type { Rect } from './superLayout';
+import { JobList, JOB_SECTIONS } from './JobList';
+import { onOpenJobRow } from './superJobsStore';
+import './JobBar.css';
 
 /**
+ * The job bar (plan r4 D1, §2): the top band above the centre. Its head is the ONE question
+ * queue below, unchanged; beside it four counts (Senden bekliyor / Çalışıyor / Havuz / Bitti)
+ * from the same record the super agent reads; a count opens the list over the centre's top
+ * (JobList). Nothing here polls: the record is pushed, the counts are derived.
+ *
  * The ONE question queue (plan-r7 D7, D16, owner decision 2), as a pill centred in the top band
  * directly above the centre window (plan-r8 F7): the owner looks at the centre, so what he must
  * answer sits on its edge. It grows as an overlay anchored to the band (text, options, Reply)
@@ -30,10 +38,17 @@ import type { Rect } from './superLayout';
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
  * request re-sent by the server (the answer never landed), reopens it.
  */
-export function QueueStrip({ head, waiting, vault, rect, sessionFor, titleFor, onReplyToSuper }: {
+export function JobBar({ state, head, waiting, vault, rect, listRect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild, onOpenTask }: {
+  state: SuperStateView;
   head: SuperQueueItem | null;
   /** The top band above the centre (planStage's `queue`). */
   rect: Rect;
+  /** Where the list opens: over the centre's top (`jobListRect`). */
+  listRect: Rect;
+  look: JobLook;
+  superSession: ChatSession | undefined;
+  onShowChild: (sid: string) => void;
+  onOpenTask: (slug: string) => void;
   /** How many items wait on the owner in all (the head included). */
   waiting: number;
   vault: string;
@@ -42,7 +57,8 @@ export function QueueStrip({ head, waiting, vault, rect, sessionFor, titleFor, o
   onReplyToSuper: () => void;
 }) {
   const { t } = useI18n();
-  const child = head ? sessionFor(head.sessionId) : undefined;
+  // An `ask` is the super agent's own question: there is no child behind it.
+  const child = head && head.kind !== 'ask' ? sessionFor(head.sessionId) : undefined;
   const [, force] = useReducer((n: number) => n + 1, 0);
   // Follow the head's child only: its pending request is what the strip draws.
   useEffect(() => (child ? child.subscribe(() => force()) : undefined), [child]);
@@ -75,7 +91,7 @@ export function QueueStrip({ head, waiting, vault, rect, sessionFor, titleFor, o
     ? pendingQuestion.questions[0].options.slice(0, 4).map((o) => o.label)
     : [];
   const fitKey = answerKey === null ? null
-    : [answerKey, titleFor(head?.sessionId ?? ''), waiting > 1 ? waiting - 1 : 0, t('super.queue.reply'), ...optionLabels].join('\u0001');
+    : [answerKey, titleFor(head?.sessionId ?? ''), waiting > 1 ? waiting - 1 : 0, t('super.queue.reply'), ...optionLabels, ...(head?.kind === 'ask' ? head.options ?? [] : [])].join('\u0001');
   const headRef = useRef<HTMLDivElement | null>(null);
   const [showOptions, setShowOptions] = useState(true);
   const showRef = useRef(showOptions);
@@ -114,25 +130,118 @@ export function QueueStrip({ head, waiting, vault, rect, sessionFor, titleFor, o
     });
   }, [head, vault, t]);
 
+  // The list: closed by default; a count, or a name in an event line (superJobsStore), opens it.
+  const [open, setOpen] = useState<{ section: JobSection | null; row: string | null } | null>(null);
+  useEffect(() => onOpenJobRow((row) => setOpen({ section: null, row })), []);
+  const sections = superJobs(state, look);
+  const barRef = useRef<HTMLDivElement | null>(null);
+
   return (
     <div
-      className="super-queue-strip"
-      data-testid="super-queue-strip"
-      data-empty={head ? undefined : 'true'}
+      ref={barRef}
+      className="super-queue-strip super-job-bar"
+      data-testid="super-job-bar"
       role="region"
       aria-label={t('super.queue.label')}
       style={{ left: rect.x, top: rect.y, width: rect.width, minHeight: rect.height }}
     >
       {!head ? null : (
         <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
-          <span className="super-queue-who">{titleFor(head.sessionId)}</span>
+          <span className="super-queue-who">{head.kind === 'ask' ? look.superTitle : titleFor(head.sessionId)}</span>
           {head.kind === 'permission'
             ? <PermissionHead item={head} child={child} locked={locked} answerOnce={answerOnce} />
-            : <EscalatedHead item={head} child={child} locked={locked} answerOnce={answerOnce} onReplyToSuper={onReplyToSuper} showOptions={showOptions} />}
+            : head.kind === 'ask'
+              ? <AskHead item={head} superSession={superSession} locked={locked} answerOnce={answerOnce} onReplyToSuper={onReplyToSuper} showOptions={showOptions} />
+              : <EscalatedHead item={head} child={child} locked={locked} answerOnce={answerOnce} onReplyToSuper={onReplyToSuper} showOptions={showOptions} />}
           {waiting > 1 && <span className="super-queue-more">{t('super.queue.more').replace('{n}', String(waiting - 1))}</span>}
         </div>
       )}
+      <div className="super-job-counts" role="group" aria-label={t('super.jobs.label')}>
+        {JOB_SECTIONS.map((sec) => (
+          <button
+            key={sec}
+            type="button"
+            className="super-job-count"
+            data-testid={`super-job-count-${sec}`}
+            data-section={sec}
+            data-on={open && (open.section === sec || open.section === null) ? 'true' : undefined}
+            aria-expanded={!!open}
+            onClick={() => setOpen((o) => (o && o.section === sec ? null : { section: sec, row: null }))}
+          >
+            <span className="super-job-count-label">{t(`super.jobs.section.${sec}`)}</span>
+            <span className="super-job-count-n">{sections[sec].length}</span>
+          </button>
+        ))}
+      </div>
+      {open && (
+        <JobList
+          sections={sections}
+          rect={listRect}
+          origin={rect}
+          focusSection={open.section}
+          focusRow={open.row}
+          bar={barRef}
+          onClose={() => setOpen(null)}
+          onShowChild={onShowChild}
+          onOpenTask={onOpenTask}
+        />
+      )}
     </div>
+  );
+}
+
+/** The answer an `ask` option sends, exactly as drawn and framed (plan r4 D7). */
+export function askAnswerText(label: string): string {
+  return `Answer to your question: ${label}`;
+}
+
+/**
+ * The super agent's OWN question (`super ask`, D7): its text, its validated options as buttons
+ * and Reply. Each option button measures its own overflow (r2-S): a label that does not fit
+ * whole hides every option (Reply only), never a cut label; no `max-width` ellipsis here. A
+ * click sends exactly the drawn label, framed, into the super chat (a running turn steers).
+ */
+function AskHead({ item, superSession, locked, answerOnce, onReplyToSuper, showOptions }: {
+  item: SuperQueueItem;
+  superSession: ChatSession | undefined;
+  locked: boolean;
+  answerOnce: (send: () => void) => void;
+  onReplyToSuper: () => void;
+  showOptions: boolean;
+}) {
+  const { t } = useI18n();
+  const options = item.options ?? [];
+  const btns = useRef<Array<HTMLButtonElement | null>>([]);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    setCut(btns.current.some((b) => !!b && b.scrollWidth > b.clientWidth + 1));
+  }, [options.join('\u0001'), showOptions]);
+  const send = (label: string) => {
+    const s = superSession;
+    if (!s) return;
+    const text = askAnswerText(label);
+    if (s.busy) { if (!s.steer(text)) s.send(text); } else s.send(text);
+  };
+  return (
+    <>
+      <QueueText full={item.ownerText ?? ''}>{item.ownerText ?? ''}</QueueText>
+      <span className="super-queue-actions">
+        {showOptions && !cut && superSession && options.map((label, i) => (
+          <button
+            key={label}
+            ref={(el) => { btns.current[i] = el; }}
+            type="button"
+            className="super-queue-btn super-job-option"
+            data-testid="super-ask-option"
+            disabled={locked}
+            onClick={() => answerOnce(() => send(label))}
+          >{label}</button>
+        ))}
+        <button type="button" className="super-queue-btn super-queue-btn--reply" onClick={onReplyToSuper}>
+          {t('super.queue.reply')}
+        </button>
+      </span>
+    </>
   );
 }
 

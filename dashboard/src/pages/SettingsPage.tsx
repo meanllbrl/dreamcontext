@@ -35,6 +35,8 @@ import {
   loneModifierToken,
   formatHotkey,
   DOUBLE_TAP_MS,
+  SUPER_EFFORT_CHOICES,
+  SUPER_MODEL_CHOICES,
   type AgentSettings,
 } from '../lib/agentSettings';
 import { useLightMode } from '../lib/lightMode';
@@ -612,6 +614,44 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                   />
                 }
               />
+              {/* Its own model and effort (plan r4 D3, D12): Sonnet at medium unless changed here
+                  or with the super composer's "Set as default"; never the chat default. */}
+              {agentCfg.superAgent && (
+                <>
+                  <SettingRow
+                    title={t('settings.agents.super_model')}
+                    hint={t('settings.agents.super_model_hint')}
+                    control={
+                      <select
+                        className="settings-text-input"
+                        aria-label={t('settings.agents.super_model')}
+                        data-testid="settings-super-model"
+                        value={agentCfg.superModel}
+                        onChange={(e) => updateAgentCfg({ superModel: e.target.value })}
+                      >
+                        {[...SUPER_MODEL_CHOICES, ...((SUPER_MODEL_CHOICES as readonly string[]).includes(agentCfg.superModel) ? [] : [agentCfg.superModel])].map((m) => (
+                          <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>
+                        ))}
+                      </select>
+                    }
+                  />
+                  <SettingRow
+                    title={t('settings.agents.super_effort')}
+                    hint={t('settings.agents.super_effort_hint')}
+                    control={
+                      <select
+                        className="settings-text-input"
+                        aria-label={t('settings.agents.super_effort')}
+                        data-testid="settings-super-effort"
+                        value={agentCfg.superEffort}
+                        onChange={(e) => updateAgentCfg({ superEffort: e.target.value })}
+                      >
+                        {SUPER_EFFORT_CHOICES.map((e) => <option key={e} value={e}>{e}</option>)}
+                      </select>
+                    }
+                  />
+                </>
+              )}
             </SettingGroup>
           )}
         </section>

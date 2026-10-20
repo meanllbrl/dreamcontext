@@ -3169,7 +3169,10 @@ export function AgentSurface() {
     if (!canSpawn) return null;
     const fresh = superFreshRef.current === session;
     superFreshRef.current = null;
-    const s = spawn(false, session, !fresh, 'chat', '', '', true, '', false, '', false, 'super') as ChatSession;
+    // Its own default model and effort (plan r4 D3, D12: Sonnet at medium, Settings -> Chat ->
+    // Super Agent), like the notch Assistant's, never the chat default.
+    const { superModel, superEffort } = agentSettingsRef.current;
+    const s = spawn(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super') as ChatSession;
     // Registered in the roster (so it is portaled and homed) but NEVER in a pane.
     const meta: SessionMeta = { id: s.id, title: 'Claude', kind: 'chat', bypass: s.bypass, claudeId: session, mode: 'super' };
     sessionListRef.current = [...sessionListRef.current, meta];

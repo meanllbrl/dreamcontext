@@ -1,0 +1,12 @@
+/* ── The ONE status -> colour map (owner 2026-10-21) ─────────────────────────────
+   Working green, idle purple, asking pink, ended red (starting amber). Every consumer — the
+   tile's ring and corner brackets, the card frame's ring and glow, the panel tile, the Others
+   dot and the job list's row — reads `--tone`, set here from `data-super-tone`
+   (`toneOfStatus` / `toneOfRow` in superHandover.ts). Colour never travels alone: each of them
+   keeps its state word (WORKING / IDLE / ASKING / ENDED). A card frame takes the tone of the
+   tile it holds. Tokens only. */
+:is([data-super-tone='working'], .super-card-frame:has(.super-tile[data-super-tone='working'])) { --tone: var(--color-success); }
+:is([data-super-tone='idle'], .super-card-frame:has(.super-tile[data-super-tone='idle'])) { --tone: var(--color-accent); }
+:is([data-super-tone='asking'], .super-card-frame:has(.super-tile[data-super-tone='asking'])) { --tone: var(--mood-waiting); }
+:is([data-super-tone='ended'], .super-card-frame:has(.super-tile[data-super-tone='ended'])) { --tone: var(--color-error); }
+:is([data-super-tone='starting'], .super-card-frame:has(.super-tile[data-super-tone='starting'])) { --tone: var(--color-warning); }

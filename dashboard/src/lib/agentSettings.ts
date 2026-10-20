@@ -140,6 +140,9 @@ const CHAT_DEFAULT_MODEL_RE = /^[A-Za-z0-9._-]{1,64}$/;
 /** MIRRORED from `EFFORT_LEVELS` in `src/server/routes/agent-spawn-shared.ts` — the levels
  *  `claude --effort` documents. Same pinning as above. */
 const CHAT_DEFAULT_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** The Super Agent's model and effort rows in Settings (plan r4 D12): the aliases and levels it may take. */
+export const SUPER_MODEL_CHOICES = ['sonnet', 'opus', 'haiku'] as const;
+export const SUPER_EFFORT_CHOICES: readonly string[] = CHAT_DEFAULT_EFFORT_LEVELS;
 
 /** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
  *  and `restoreTabs` default TRUE (only an explicit `false` disables, so a missing key
