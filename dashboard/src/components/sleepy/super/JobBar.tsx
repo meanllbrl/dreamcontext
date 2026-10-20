@@ -38,7 +38,7 @@ import './JobBar.css';
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
  * request re-sent by the server (the answer never landed), reopens it.
  */
-export function JobBar({ state, head, waiting, vault, rect, listRect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild, onOpenTask }: {
+export function JobBar({ state, head, waiting, vault, rect, listRect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild, canShowChild, onOpenTask }: {
   state: SuperStateView;
   head: SuperQueueItem | null;
   /** The top band above the centre (planStage's `queue`). */
@@ -48,6 +48,7 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   look: JobLook;
   superSession: ChatSession | undefined;
   onShowChild: (sid: string) => void;
+  canShowChild: (sid: string) => boolean;
   onOpenTask: (slug: string) => void;
   /** How many items wait on the owner in all (the head included). */
   waiting: number;
@@ -198,6 +199,7 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
           bar={barRef}
           onClose={() => setOpen(null)}
           onShowChild={onShowChild}
+          canShowChild={canShowChild}
           onOpenTask={onOpenTask}
         />
       )}

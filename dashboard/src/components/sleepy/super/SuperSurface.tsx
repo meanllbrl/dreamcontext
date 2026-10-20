@@ -399,6 +399,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         titleFor={props.titleFor}
         onReplyToSuper={props.onReplyToSuper}
         onShowChild={showChild}
+        canShowChild={(sid) => state.containers.some((k) => k.kind === 'chat' && k.ref === sid)}
         onOpenTask={(slug) => props.onOpenPage('tasks', slug)}
       />
       {state.containers.length === 0 && props.terminals.length === 0 && (

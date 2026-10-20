@@ -12,7 +12,7 @@ export const JOB_SECTIONS: readonly JobSection[] = ['waiting', 'working', 'pool'
  * Rows come from the record the bar was handed (0 requests while open). A child row asks for
  * side by side; a task chip opens the task.
  */
-export function JobList({ sections, rect, origin, focusSection, focusRow, bar, onClose, onShowChild, onOpenTask }: {
+export function JobList({ sections, rect, origin, focusSection, focusRow, bar, onClose, onShowChild, canShowChild, onOpenTask }: {
   sections: Record<JobSection, JobRow[]>;
   rect: Rect;
   /** The bar's own rect: the list is placed relative to it (it renders inside the bar). */
@@ -22,6 +22,8 @@ export function JobList({ sections, rect, origin, focusSection, focusRow, bar, o
   bar: RefObject<HTMLDivElement | null>;
   onClose: () => void;
   onShowChild: (sid: string) => void;
+  /** A child row is a button only while a card holds that chat (a gone child's title is text). */
+  canShowChild: (sid: string) => boolean;
   onOpenTask: (slug: string) => void;
 }) {
   const { t } = useI18n();
@@ -51,7 +53,7 @@ export function JobList({ sections, rect, origin, focusSection, focusRow, bar, o
       ref={ref}
       className="super-job-list"
       data-testid="super-job-list"
-      role="dialog"
+      role="region"
       aria-label={t('super.jobs.label')}
       style={{ left: rect.x - origin.x, top: rect.y - origin.y, width: rect.width, maxHeight: rect.height }}
     >
@@ -77,7 +79,7 @@ export function JobList({ sections, rect, origin, focusSection, focusRow, bar, o
               >
                 <span className="super-job-dot" aria-hidden />
                 <div className="super-job-main">
-                  {r.sid && r.section !== 'waiting'
+                  {r.sid && r.section !== 'waiting' && canShowChild(r.sid)
                     ? <button type="button" className="super-job-title super-job-title--link" title={r.title} onClick={() => onShowChild(r.sid as string)}>{r.title}</button>
                     : <span className="super-job-title" title={r.title}>{r.title}</span>}
                   {r.line && <span className="super-job-line">{r.line}</span>}

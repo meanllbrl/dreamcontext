@@ -10,20 +10,27 @@ import { useEffect, useSyncExternalStore } from 'react';
 export const MAX_SPINNING = 4;
 
 let order: string[] = [];
+/** Claims per id: the same chat drawn twice (a stage tile and an open panel) holds ONE slot,
+ *  freed only when its last copy lets go (frontend review Minor 1). */
+const claims = new Map<string, number>();
 const listeners = new Set<() => void>();
 const emit = () => { for (const fn of [...listeners]) fn(); };
 const subscribe = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 
 /** Tests only. */
 export function _spinOrder(): readonly string[] { return order; }
-export function _resetSpinSlots(): void { order = []; emit(); }
+export function _resetSpinSlots(): void { order = []; claims.clear(); emit(); }
 
 export function claimSpin(id: string): void {
+  claims.set(id, (claims.get(id) ?? 0) + 1);
   if (order.includes(id)) return;
   order = [...order, id];
   emit();
 }
 export function releaseSpin(id: string): void {
+  const left = (claims.get(id) ?? 0) - 1;
+  if (left > 0) { claims.set(id, left); return; }
+  claims.delete(id);
   if (!order.includes(id)) return;
   order = order.filter((x) => x !== id);
   emit();

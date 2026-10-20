@@ -166,6 +166,9 @@ describe('the ONE status tone (owner 2026-10-21)', () => {
     expect(tone.replace(/^\s*(-webkit-)?mask:[^;]*;$/gm, '')).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|hsl\(/i);
     const map = Object.fromEntries([...tone.matchAll(/\[data-super-tone='(\w+)'\][^{]*\{ --tone: (var\([^)]+\)); \}/g)].map((m) => [m[1], m[2]]));
     expect(map).toEqual({ working: 'var(--color-success)', idle: 'var(--color-accent)', asking: 'var(--mood-waiting)', ended: 'var(--color-error)', starting: 'var(--color-warning)' });
+    // A frame takes the tone of the floating tile OR the tall card it holds (frontend review Major 1).
+    expect((tone.match(/\.super-card-frame:has\(:is\(\.super-tile, \.super-card\)\[data-super-tone='\w+'\]\)/g) ?? []).length).toBe(5);
+    expect(read(`${SUPER}/AgentCard.tsx`)).toMatch(/<div className="super-card" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}>/);
   });
 
   it('every consumer reads --tone, and keeps its state word', () => {
@@ -252,6 +255,12 @@ describe('a working tile\'s border ring (owner 2026-10-21)', () => {
     expect(ids.filter(spinAllowed)).toEqual(ids.slice(0, MAX_SPINNING));
     releaseSpin('c1');
     expect(ids.filter(spinAllowed)).toEqual(['c0', 'c2', 'c3', 'c4']);
+    // The same chat drawn twice holds one slot until its last copy lets go (frontend review Minor 1).
+    claimSpin('c0');
+    releaseSpin('c0');
+    expect(spinAllowed('c0')).toBe(true);
+    releaseSpin('c0');
+    expect(spinAllowed('c0')).toBe(false);
     expect(MAX_SPINNING).toBe(4);
     _resetSpinSlots();
   });
