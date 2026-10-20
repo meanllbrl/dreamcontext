@@ -32,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { markAnnouncementsSeen } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-handsfree-super-phone');
@@ -169,6 +170,8 @@ try {
 
   browser = await chromium.launch();
   const ctx = await browser.newContext({ ...devices['iPhone 13'], viewport: { width: 390, height: 844 } });
+  // The What's New popup would cover the list a few seconds in: seen already, like a returning owner.
+  await markAnnouncementsSeen(ctx, `http://127.0.0.1:${port}`);
   const phone = await ctx.newPage();
   const errors = []; const forbidden = []; const phoneSockets = [];
   phone.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });

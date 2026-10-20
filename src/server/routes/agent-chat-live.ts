@@ -94,6 +94,8 @@ export interface LiveChatEntry {
   /** A handed-over Super Agent only: join a phone socket BESIDE the holder as a read-and-chat
    *  mirror (lib/super/phone-mirror.ts). False when the child can no longer take one. */
   mirror?: (ws: import('ws').WebSocket, device: { store: 'mac'; idHash: string }) => boolean;
+  /** Is there room for this device's mirror (its own earlier one is replaced)? */
+  mirrorRoom?: (device: { store: 'mac'; idHash: string }) => boolean;
 }
 
 /** How long a cut child gets between SIGTERM and SIGKILL. */

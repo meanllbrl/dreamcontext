@@ -71,7 +71,7 @@ const { SUPER_STATE_REL, readSuperState, resetSuperIndex } = await import('../..
 const { emptySuperState } = await import('../../src/lib/super/types.js');
 const { _resetSuperInbox, _superInboxFor } = await import('../../src/lib/super/inbox.js');
 const {
-  MAX_MIRRORS, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, mirrorCarriesLine, mirrorOwnerText, phoneLiveChats, phoneSuperOpen,
+  MAX_MIRRORS, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REPLACED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorCarriesLine, mirrorOwnerText, phoneLiveChats, phoneSuperOpen,
 } = await import('../../src/lib/super/phone-mirror.js');
 
 class FakeWs extends EventEmitter {
@@ -178,9 +178,14 @@ describe('what a phone open does about the Super Agent (AC2)', () => {
     expect(ask({ mode: 'super', resumeId: SUPER, index: off })).toBe('refuse');
   });
 
-  it('super off, or another chat: today\'s path', () => {
-    expect(ask({ resumeId: SUPER, index: off })).toBe('pass');
+  it('the parked session after a take-back is refused too: a phone never adopts, resumes or respawns it', () => {
+    expect(ask({ resumeId: SUPER, index: off })).toBe('refuse');
+    expect(ask({ sessionId: SUPER, index: off, liveSuper: false })).toBe('refuse');
+  });
+
+  it('any other chat, and a vault with no recorded session: today\'s path', () => {
     expect(ask({ resumeId: OTHER })).toBe('pass');
+    expect(ask({ resumeId: OTHER, index: off })).toBe('pass');
     expect(ask({ index: { session: null, enabled: false } })).toBe('pass');
   });
 
@@ -197,8 +202,10 @@ describe('what a phone open does about the Super Agent (AC2)', () => {
 });
 
 describe('the mirror\'s frame rules (AC3)', () => {
-  it('only a user text frame goes up', () => {
+  it('only a user text frame goes up, and never a slash command', () => {
     expect(mirrorOwnerText(JSON.stringify({ type: 'user', text: 'hi' }))).toBe('hi');
+    for (const t of ['/effort low', '  /model haiku', '/compact']) expect(mirrorOwnerText(JSON.stringify({ type: 'user', text: t }))).toBeNull();
+    expect(mirrorOwnerText(JSON.stringify({ type: 'user', text: 'run tests in a/b' }))).toBe('run tests in a/b');
     for (const f of [
       { type: 'user', text: '   ' }, { type: 'answer', requestId: 'r', behavior: 'allow' }, { type: 'interrupt' },
       { type: 'setModel', model: 'opus' }, { type: 'setPermissionMode', mode: 'bypass' }, { type: 'rewind', targetUuid: SUPER },
@@ -319,17 +326,74 @@ describe('a phone mirror on the live super chat (AC2-AC5)', () => {
     await vi.waitFor(() => expect(d.close).toHaveBeenCalledWith(MIRROR_CLOSE_ENDED, expect.any(String)), { timeout: 10_000 });
   });
 
-  it('a non-super chat takes no mirror; a super chat at most a few', async () => {
+  it('one mirror per device: the same phone again replaces its half-open one', async () => {
     await record({ enabled: true });
     startSuper();
-    for (let i = 0; i < MAX_MIRRORS; i++) mirror();
+    const first = mirror();
+    const second = mirror();
+    expect(first.close).toHaveBeenCalledWith(MIRROR_CLOSE_REPLACED, expect.any(String));
+    expect(second.close).not.toHaveBeenCalled();
+  });
+
+  it('a draining or respawning child closes its mirrors first (their words never go into an ended stdin)', async () => {
+    await record({ enabled: true });
+    const { ws, child } = startSuper();
+    const phone = mirror();
+    ws.emit('message', JSON.stringify({ type: 'end' }));
+    ws.emit('close');
+    expect(phone.close).toHaveBeenCalledWith(MIRROR_CLOSE_ENDED, expect.any(String));
+    const before = child.stdin.write.mock.calls.length;
+    phone.emit('message', JSON.stringify({ type: 'user', text: 'too late' }));
+    expect(child.stdin.write.mock.calls.length).toBe(before);
+    expect(findLiveChat(SUPER)?.mirror?.(new FakeWs() as unknown as import('ws').WebSocket, DEVICE) ?? false).toBe(false);
+  });
+
+  it('a non-super chat takes no mirror; a super chat at most a few devices, refused before the handshake', async () => {
+    await record({ enabled: true });
+    startSuper();
+    for (let i = 0; i < MAX_MIRRORS; i++) { signedIn.add(`dev-${i}`); mirror({ store: 'mac', idHash: `dev-${i}` }); }
     const extra = new FakeWs();
-    expect(findLiveChat(SUPER)?.mirror?.(extra as unknown as import('ws').WebSocket, DEVICE)).toBe(false);
+    const other = { store: 'mac' as const, idHash: 'dev-extra' };
+    expect(findLiveChat(SUPER)?.mirrorRoom?.(other)).toBe(false);
+    expect(findLiveChat(SUPER)?.mirrorRoom?.({ store: 'mac', idHash: 'dev-0' })).toBe(true);
+    expect(findLiveChat(SUPER)?.mirror?.(extra as unknown as import('ws').WebSocket, other)).toBe(false);
     const ws = new FakeWs();
     startChatSession(ws as unknown as import('ws').WebSocket, project, {
       bypass: false, sessionId: OTHER, resumeId: '', model: '', effort: '', initialPrompt: '', deferPrompt: false,
       account: '', mode: 'basic' as never, vault: 'acme',
     });
     expect(findLiveChat(OTHER)?.mirror).toBeUndefined();
+  });
+});
+
+describe('a mirror\'s lifetime (review r1)', () => {
+  it('a mirror that misses a pong is terminated, and the ping stops with the last mirror', async () => {
+    const set = new MirrorSet<string>({ valid: () => true, onOwnerFrame: () => {}, holder: () => null, key: (d) => d, pingMs: 20 });
+    const alive = Object.assign(new FakeWs(), { ping: vi.fn(function (this: FakeWs) { this.emit('pong'); }), terminate: vi.fn() });
+    const dead = Object.assign(new FakeWs(), { ping: vi.fn(), terminate: vi.fn() });
+    set.add(alive as never, 'a');
+    set.add(dead as never, 'b');
+    await vi.waitFor(() => expect(dead.terminate).toHaveBeenCalled(), { timeout: 2000 });
+    expect(alive.terminate).not.toHaveBeenCalled();
+    expect(set.size).toBe(1);
+    set.closeAll(MIRROR_CLOSE_ENDED, 'end');
+    expect(set.size).toBe(0);
+  });
+
+  it('the upgrade gives a refused mirror an error sink before anything can refuse it, and checks room first', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../../src/server/routes/agent-chat.ts', import.meta.url), 'utf-8');
+    const branch = src.slice(src.indexOf("if (phoneSuper === 'mirror') {"), src.indexOf('const superRefused = superUpgradeRefusal('));
+    expect(branch.indexOf("ws.on('error'")).toBeGreaterThan(0);
+    expect(branch.indexOf("ws.on('error'")).toBeLessThan(branch.indexOf('liveSuper.mirror?.('));
+    expect(branch.indexOf('mirrorRoom?.(')).toBeLessThan(branch.indexOf('handleUpgrade('));
+    expect(branch).toMatch(/rejectUpgrade\(socket, 503\)/);
+  });
+
+  it('a phone frame with no window attached is never held for an account switch', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../../src/server/routes/agent-chat.ts', import.meta.url), 'utf-8');
+    expect(src).toMatch(/mirrorFrameUnheld = detached;/);
+    expect(src).toMatch(/const unheld = mirrorFrameUnheld;\s*switchGate = switchGate\.then\(\(\) => \(unheld \? Promise\.resolve\(false\) : maybeSwitchAccount\(text\)\)/);
   });
 });

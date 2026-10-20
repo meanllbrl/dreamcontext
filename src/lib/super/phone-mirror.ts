@@ -12,9 +12,13 @@
  *     `super_event` chips, and the owner's words typed on another surface (`owner_echo`). Never a
  *     `super_command`, `window_command` or `super_state`: the window's channel is not fanned out.
  *   • IN: ONLY a `user` text frame (the owner chatting). An answer, an interrupt, a model, mode or
- *     effort switch, a rewind or any `*_command_result` is dropped here, so the phone can talk to
- *     the Super Agent and never drive it. Its text joins the SAME path the desktop's does, so the
- *     inbox's hold (D8) orders both surfaces' messages as one queue.
+ *     effort switch, a rewind, any `*_command_result`, and a slash command (`/effort`, `/model`…
+ *     ride the text path into the CLI) are dropped here, so the phone can talk to the Super Agent
+ *     and never drive it. Its text joins the SAME path the desktop's does, so the inbox's hold
+ *     (D8) orders both surfaces' messages as one queue.
+ *   • LIFETIME: one mirror per device (a reconnect replaces the half-open socket it left behind),
+ *     pinged like the holder (a socket that misses a pong is terminated), at most
+ *     {@link MAX_MIRRORS} devices; closed when the child drains, respawns or ends.
  *
  * Trust is per socket (`[[pattern-a-tunnel-makes-every]]`): a mirror is added only for a socket
  * the phone listener accepted, carries that socket's device, and is closed the moment that device
@@ -27,8 +31,10 @@ export interface MirrorSocket {
   readonly OPEN: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
+  ping?(): void;
+  terminate?(): void;
   on(event: 'message', fn: (raw: Buffer | string) => void): unknown;
-  on(event: 'close' | 'error', fn: () => void): unknown;
+  on(event: 'close' | 'error' | 'pong', fn: () => void): unknown;
 }
 
 /** Closed: the device behind the mirror signed out, or Mac mode returned. */
@@ -38,8 +44,12 @@ export const MIRROR_CLOSE_REVOKED = 4401;
 export const MIRROR_CLOSE_ENDED = 4410;
 /** A phone message longer than this is not chat: dropped. */
 export const MIRROR_MAX_TEXT = 100_000;
-/** At most this many phone mirrors on one super child. */
+/** At most this many phone mirrors (devices) on one super child. */
 export const MAX_MIRRORS = 4;
+/** Closed: the same device joined again; its newer socket is the mirror now. */
+export const MIRROR_CLOSE_REPLACED = 4409;
+/** How often a mirror is pinged; one missed pong and it is terminated. */
+export const MIRROR_PING_MS = 25_000;
 
 export interface MirrorOpts<D> {
   /** Is this device still signed in? Asked on every frame the mirror sends up. */
@@ -48,9 +58,13 @@ export interface MirrorOpts<D> {
   onOwnerFrame: (raw: string) => void;
   /** The socket holding the child right now (the desktop window), or null while detached. */
   holder: () => MirrorSocket | null;
+  /** Which device a mirror belongs to (one mirror per device). */
+  key: (device: D) => string;
+  /** Ping interval (tests shorten it). */
+  pingMs?: number;
 }
 
-interface Mirror<D> { ws: MirrorSocket; device: D }
+interface Mirror<D> { ws: MirrorSocket; device: D; waiting: boolean }
 
 /** The one frame a mirror may send up, or null. */
 export function mirrorOwnerText(raw: Buffer | string): string | null {
@@ -62,6 +76,8 @@ export function mirrorOwnerText(raw: Buffer | string): string | null {
   const m = msg as { type?: unknown; text?: unknown };
   if (m.type !== 'user' || typeof m.text !== 'string') return null;
   const text = m.text;
+  // A slash command is not chat: `/effort`, `/model` and the like are run by the CLI itself.
+  if (text.trimStart().startsWith('/')) return null;
   return text.trim() && text.length <= MIRROR_MAX_TEXT ? text : null;
 }
 
@@ -82,19 +98,31 @@ export function ownerEchoFrame(text: string): string {
 
 export class MirrorSet<D> {
   private readonly mirrors = new Set<Mirror<D>>();
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly opts: MirrorOpts<D>) {}
 
   get size(): number { return this.mirrors.size; }
 
-  /** Join `ws` as a mirror owned by `device`. False when the set is full (the caller refuses). */
+  /** Is there room for `device`? Its own earlier mirror counts as room: it is replaced. */
+  room(device: D): boolean {
+    const k = this.opts.key(device);
+    return this.mirrors.size < MAX_MIRRORS || [...this.mirrors].some((m) => this.opts.key(m.device) === k);
+  }
+
+  /** Join `ws` as a mirror owned by `device`, replacing that device's earlier one. False when
+   *  the set is full of other devices (the caller refuses). */
   add(ws: MirrorSocket, device: D): boolean {
-    if (this.mirrors.size >= MAX_MIRRORS) return false;
-    const m: Mirror<D> = { ws, device };
+    if (!this.room(device)) return false;
+    const k = this.opts.key(device);
+    for (const old of [...this.mirrors]) if (this.opts.key(old.device) === k) this.drop(old, MIRROR_CLOSE_REPLACED, 'replaced');
+    const m: Mirror<D> = { ws, device, waiting: false };
     this.mirrors.add(m);
-    const gone = (): void => { this.mirrors.delete(m); };
+    const gone = (): void => { this.mirrors.delete(m); this.idle(); };
     ws.on('close', gone);
     ws.on('error', gone);
+    ws.on('pong', () => { m.waiting = false; });
+    this.arm();
     ws.on('message', (raw) => {
       if (!this.mirrors.has(m)) return;
       if (!this.opts.valid(device)) { this.drop(m, MIRROR_CLOSE_REVOKED, 'device signed out'); return; }
@@ -145,6 +173,35 @@ export class MirrorSet<D> {
   private drop(m: Mirror<D>, code: number, reason: string): void {
     this.mirrors.delete(m);
     try { m.ws.close(code, reason); } catch { /* gone */ }
+    // A peer that never answers the close frame is cut after a second.
+    const t = setTimeout(() => { try { m.ws.terminate?.(); } catch { /* gone */ } }, 1000);
+    t.unref?.();
+    this.idle();
+  }
+
+  /** Ping every mirror; one that did not answer the last ping is terminated (a half-open
+   *  socket — the phone locked without a FIN — must not hold a device's place for hours). */
+  private arm(): void {
+    if (this.pingTimer) return;
+    this.pingTimer = setInterval(() => {
+      for (const m of [...this.mirrors]) {
+        if (m.waiting) {
+          this.mirrors.delete(m);
+          try { m.ws.terminate?.(); } catch { /* gone */ }
+          continue;
+        }
+        m.waiting = true;
+        try { m.ws.ping?.(); } catch { /* closing */ }
+      }
+      this.idle();
+    }, this.opts.pingMs ?? MIRROR_PING_MS);
+    this.pingTimer.unref?.();
+  }
+
+  private idle(): void {
+    if (this.mirrors.size || !this.pingTimer) return;
+    clearInterval(this.pingTimer);
+    this.pingTimer = null;
   }
 }
 
@@ -158,19 +215,21 @@ function safeSend(ws: MirrorSocket, data: string): void {
  *   • `mirror` — the vault is handed over, the open names its recorded super session, and the
  *     super child is live: join it as a mirror.
  *   • `refuse` — a super open the phone may not make: `mode=super` anywhere else (the hand-over is
- *     the desktop's, D4), or ANY open naming the handed-over super session that cannot mirror (no
- *     live child, a plain-chat resume or reattach that would supersede or evict the window's).
- *   • `pass` — nothing to do with the Super Agent: the open goes on as before. A vault that is
- *     not handed over is always `pass` unless `mode=super` (today's behaviour, unchanged).
+ *     the desktop's, D4), or ANY open naming the vault's recorded super session — handed over or
+ *     parked after a take-back — that cannot mirror (no live child, or the mode is off): a resume
+ *     or reattach of it would supersede, evict or respawn the window's Super Agent.
+ *   • `pass` — nothing to do with the Super Agent: the open goes on as before.
  */
 export function phoneSuperOpen(o: {
   mode: string; resumeId: string; sessionId: string;
   index: { session: string | null; enabled: boolean };
   liveSuper: boolean;
 }): 'mirror' | 'refuse' | 'pass' {
-  const session = o.index.enabled ? o.index.session : null;
+  // The RECORDED session, handed over or parked: a phone never adopts, resumes or respawns it
+  // (a parked super child it took would hold the session from the next hand-over).
+  const session = o.index.session;
   const names = !!session && (o.resumeId === session || o.sessionId === session);
-  if (names) return o.liveSuper ? 'mirror' : 'refuse';
+  if (names) return o.index.enabled && o.liveSuper ? 'mirror' : 'refuse';
   return o.mode === 'super' ? 'refuse' : 'pass';
 }
 
