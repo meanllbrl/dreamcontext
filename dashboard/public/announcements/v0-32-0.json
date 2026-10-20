@@ -1,8 +1,8 @@
 {
   "hero": {
-    "eyebrow": "v0.32.0  ·  15 October 2026",
-    "headline": "Install once, and macOS remembers",
-    "sub": "The desktop app is now signed with an Apple Developer ID and notarized by Apple. It installs from one DMG, opens without a warning, keeps the permissions you gave it, and updates itself.",
+    "eyebrow": "v0.32.0  ·  20 October 2026",
+    "headline": "Install once, then run your Mac from your phone",
+    "sub": "The desktop app is now signed with an Apple Developer ID and notarized by Apple. It installs from one DMG, keeps the permissions you gave it and updates itself. And hands-free is back: your phone drives the Claude sessions on this Mac.",
     "shot": {
       "src": "shots/v0-32-0/dmg.png",
       "alt": "The dreamcontext-beta disk image open in Finder: the dreamcontext-beta.app icon on the left and the Applications folder on the right, ready to drag across.",
@@ -15,50 +15,85 @@
       "kind": "points",
       "title": "What changes on your Mac",
       "items": [
-        { "title": "Permissions stay given", "text": "The microphone, Photos or automation access you allow once survives every update. The app no longer asks again each day." },
+        { "title": "Permissions stay given", "text": "The microphone, Photos or automation access you allow once survives every update. macOS asks one last time when you move to 0.32.0, because to macOS the new signature is a new app." },
         { "title": "No Gatekeeper warning", "text": "Apple has checked the app, so a copy downloaded in the browser opens like any other Mac app." },
+        { "title": "It updates itself", "text": "It checks a minute after launch, then every six hours, and installs in the background. It never restarts under you, and it waits while your phone is driving the Mac." },
         { "title": "One link, always current", "text": "releases/latest/download/dreamcontext-beta_aarch64.dmg always points at the newest release. Send it to a teammate and they are set up." }
       ]
     },
     {
-      "kind": "points",
-      "title": "The app updates itself",
-      "items": [
-        { "title": "It checks on its own", "text": "A minute after launch, then every six hours." },
-        { "title": "It never interrupts you", "text": "The new version downloads and installs in the background. The app does not restart on its own; a notification tells you a restart picks it up." },
-        { "title": "The CLI stays out of the way", "text": "The CLI's background update skips a release that updates itself, and dreamcontext app update never re-signs it." }
-      ]
+      "kind": "note",
+      "text": "0.32.0 is the last version published to npm. From here on dreamcontext ships as this desktop app, which keeps itself current. If you installed with npm, install the app from the DMG: your npm copy keeps working, but it will not get another version."
     },
     {
-      "kind": "terminal",
-      "title": "Check it yourself",
-      "lines": [
-        "$ spctl -a -vv /Applications/dreamcontext-beta.app",
-        "/Applications/dreamcontext-beta.app: accepted",
-        "source=Notarized Developer ID",
-        "origin=Developer ID Application: VANGO YAZILIM TEKNOLOJI TICARET VE SANAYI LIMITED SIRKETI (PP8PX5BB5P)",
-        "$ dreamcontext app status",
-        "  signing:   Developer ID (PP8PX5BB5P) — notarized release, updates itself"
-      ]
+      "kind": "split",
+      "side": "right",
+      "title": "Hands-free: your phone drives this Mac",
+      "body": "Hidden in 0.31.0, hands-free is back and rebuilt around your own Mac. Open Hands-free, pick the projects your phone may open and press Start. The work stays on the Mac, which stays awake with the lid closed, and your phone reaches it through a link.",
+      "shot": {
+        "src": "shots/v0-32-0/handsfree-mac.png",
+        "alt": "The Hands-free mode sheet over a demo project's task board: the hands-free mark and 'Your Mac, from your phone. The work stays here. Your phone reaches it through a link; the Mac stays awake with the lid closed.', the projects the phone can open (orbit and atlas-mobile, both ticked), a Bag mode switch, and New password and Start buttons."
+      }
+    },
+    {
+      "kind": "shot",
+      "title": "On your phone, it is an app",
+      "body": "Sign in with the six-word password or the QR code on the Mac, then add it to your Home Screen: it installs as its own app with the new hands-free mark, and buzzes when Claude asks something, needs a permission or finishes a turn. The list searches your chats, a live Mac badge shows the link is up, and a chat the Mac is running opens right where it is.",
+      "shot": {
+        "src": "shots/v0-32-0/handsfree-phone.png",
+        "alt": "Three phone screens side by side. Left: 'Sign in to your Mac' under the hands-free mark (the gem with two sound waves), with a password field and a Sign in button. Middle: the Chats list of the orbit project with a green Mac badge, a search box, Open 1 and Closed 4 filters, the open chat 'Trial-to-paid drop' marked Mac, four closed chats, and the hint to add the page to the Home Screen for notifications. Right: the Trial-to-paid drop chat open on the phone, showing the conversation the Mac is running.",
+        "caption": "On an iPhone, notifications need the Home Screen app and a fixed address on your own Cloudflare domain.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "shot",
+      "title": "Super Agent: hand everything to one Claude",
+      "body": "Press Hand over in the Chat header and one Claude takes every open chat of the project; you talk only to it. It starts more chats, lays out the task, the numbers and the notes it needs as 3:4 cards around itself, and tells you as each chat finishes. Take back returns your chats.",
+      "shot": {
+        "src": "shots/v0-32-0/super-stage.png",
+        "alt": "The Super Agent in a demo project: Claude, 'Super Agent · you talk only to me', in the centre, saying it took the trial-to-paid chat, started two more and put the task, its insight and the September interviews on the stage, then reporting each finished chat. Around it, cards for the chats Trial-to-paid drop, Day-1 prompt and Cohort split, the Trial-to-paid insight chart, the task Investigate trial-to-paid drop and the note Trial interviews, September. A Take back button sits top right."
+      }
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "Two switches in Settings → Chat",
+      "body": "The Super Agent is off by default while it is being tried: Show the Super Agent adds the Hand over button. Above it, Light mode keeps the app light on an 8 GB Mac. Auto turns it on there, in Low Power Mode and on a low battery, and status animations now step at 15 fps.",
+      "shot": {
+        "src": "shots/v0-32-0/settings-chat.png",
+        "alt": "Settings, Chat section: the Light mode row ('Stops endless animations and blur, draws terminals as text and polls half as often. Auto turns it on for 8 GB Macs, in Low Power Mode, or on battery at 20 % or below.') set to Auto, and below it the Super Agent group (Beta) with the Show the Super Agent switch turned on.",
+        "frame": "plain"
+      }
     },
     {
       "kind": "split",
       "side": "right",
       "title": "Every funnel in one table",
-      "body": "The funnel explorer gains a Table tab: each funnel is one row with its spend, users, purchases and rates, the change against the previous window, and low-sample and benchmark marks. Click a row and the whole card switches to that funnel.",
+      "body": "The funnel explorer gains a Table tab: each funnel is one row with its spend, users, purchases and rates, the change against the previous window, and benchmark marks. Click a row and the whole card switches to that funnel.",
       "shot": {
         "src": "shots/v0-32-0/funnel-table.png",
-        "alt": "The funnel explorer's Table tab in a demo project: three funnels, Quiz checkout v3, Trial start and Gift card, one per row, with spend, users, purchases, revenue, second page rate, lead rate, finish rate and lead to purchase, each with a green or red change chip. A Search funnels box, a Columns 10 button and Copy MD sit above the table.",
+        "alt": "The funnel explorer's Table tab in a demo project: three funnels, Quiz checkout v3, Trial start and Gift card, one per row, with spend, users, purchases, revenue, second page rate, lead rate, finish rate, lead to purchase and visit to purchase, each with a green or red change chip. A Search funnels box, a Columns 10 button and Copy MD sit above the table.",
         "frame": "plain"
       }
     },
     {
-      "kind": "note",
-      "text": "The switch from the old signature happens once. Install 0.32.0 from the DMG (or let the CLI update you to it) and macOS asks for each permission one last time, because to macOS the new signature is a new app. After that it stops asking."
+      "kind": "terminal",
+      "title": "An agent's whiteboard edits land in free space",
+      "lines": [
+        "$ dreamcontext whiteboard add trial-to-paid-review note --text \"Next: a day-1 prompt to connect a second source\" --at 0,0",
+        "✗ refusing to add this note widget: its box 0,0,376,180 overlaps 1 live element on trial-to-paid-review",
+        "$ dreamcontext whiteboard place trial-to-paid-review --size m --right-of metrics",
+        "784,0",
+        "$ dreamcontext whiteboard add trial-to-paid-review note --text \"Next: a day-1 prompt to connect a second source\" --right-of metrics",
+        "✓ Added note widget to trial-to-paid-review @784,0,376,180",
+        "$ dreamcontext whiteboard render trial-to-paid-review --out board.png",
+        "✓ Rendered trial-to-paid-review → board.png  (1240x456px, 5 elements)"
+      ]
     }
   ],
   "closer": {
     "title": "Get the app",
-    "body": "Download dreamcontext-beta_aarch64.dmg from the latest GitHub release, drag it into Applications, and it keeps itself current from there."
+    "body": "Download dreamcontext-beta_aarch64.dmg from the latest GitHub release and drag it into Applications. Then open Hands-free on the Mac and sign in from your phone."
   }
 }

@@ -179,12 +179,13 @@
   },
   {
     "id": "v0-32-0",
-    "date": "2026-10-15",
+    "date": "2026-10-20",
     "version": "0.32.0",
-    "title": "Install once, and macOS remembers",
-    "summary": "The desktop app is signed with an Apple Developer ID and notarized: it installs from one DMG, opens without a Gatekeeper warning, keeps the permissions you gave it across updates, and updates itself in the background. The funnel explorer also gains a Table tab with every funnel as one row.",
+    "title": "Install once, then run your Mac from your phone",
+    "summary": "The desktop app is signed with an Apple Developer ID and notarized: one DMG, no Gatekeeper warning, permissions kept across updates and in-app updates, and 0.32.0 is the last npm release. Hands-free returns as Mac mode, where your phone, installed as an app, drives this Mac's own Claude sessions; the Super Agent chat mode, Light mode for 8 GB Macs, the funnel explorer's Table tab and whiteboard placement ship with it.",
     "tags": [
       "desktop",
+      "chat",
       "insights"
     ],
     "story": "v0-32-0.json"
