@@ -31,20 +31,58 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-/// Mac mode (src/lib/handsfree/mac/session.ts) keeps `~/.dreamcontext/handsfree-mac/state.json`
-/// with `on: true` while a phone drives this Mac through the tunnel, and removes it on Return
-/// (the next boot repairs a crashed run's file). No update lands under a live session. Fails
-/// CLOSED: a state file that exists but cannot be read, or is not a JSON object, blocks it.
+/// Mac mode (src/lib/handsfree/mac/session.ts `MacState`) keeps
+/// `~/.dreamcontext/handsfree-mac/state.json` with `on: true` and the desktop server's
+/// `serverPid` while a phone drives this Mac through the tunnel, and removes it on Return. No
+/// update lands under a live session. A crash leaves `on: true` behind until the next server
+/// boot repairs it, so a state whose server is provably gone (`kill(pid, 0)` says ESRCH) does
+/// not hold the update: no phone drives a Mac through a server that is dead. Everything else
+/// fails CLOSED and blocks it: a state file that exists but cannot be read or is not a JSON
+/// object, `on: true` without a positive integer `serverPid` (nothing proves it stale), and a
+/// pid that answers, even one reused by another process since (the next boot clears that).
 fn mac_mode_allows_update(home: &Path) -> bool {
     let file = home.join(".dreamcontext").join("handsfree-mac").join("state.json");
     let raw = match std::fs::read_to_string(&file) {
         Ok(raw) => raw,
         Err(_) => return !file.exists(),
     };
-    match serde_json::from_str::<serde_json::Value>(&raw) {
-        Ok(serde_json::Value::Object(state)) => state.get("on").and_then(|on| on.as_bool()) != Some(true),
-        _ => false,
+    let state = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(serde_json::Value::Object(state)) => state,
+        _ => return false,
+    };
+    if state.get("on").and_then(|on| on.as_bool()) != Some(true) {
+        return true;
     }
+    // 0 and negatives are never asked: kill(0, …) is our process group, kill(-1, …) every process.
+    let server_pid = state
+        .get("serverPid")
+        .and_then(|p| p.as_u64())
+        .and_then(|p| i32::try_from(p).ok())
+        .filter(|p| *p > 0);
+    match server_pid {
+        Some(pid) => !pid_alive(pid),
+        None => false,
+    }
+}
+
+/// True unless the process is provably gone. Signal 0 sends nothing, it only checks; EPERM
+/// means the process exists under another user, so only ESRCH means dead.
+#[cfg(unix)]
+fn pid_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return true;
+    }
+    // SAFETY: kill with signal 0 delivers no signal; it reads no memory of ours.
+    if unsafe { libc::kill(pid as libc::pid_t, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+/// No liveness probe off unix: assume the server is alive, so the update stays held.
+#[cfg(not(unix))]
+fn pid_alive(_pid: i32) -> bool {
+    true
 }
 
 /// The marker `dreamcontext app auto-update off` writes (src/cli/commands/app.ts). A
@@ -134,8 +172,41 @@ mod tests {
     #[test]
     fn mac_mode_on_blocks_the_update() {
         let h = home("on");
-        mac_state(&h, r#"{"on":true,"serverPid":4242,"url":"https://orbit.example"}"#);
+        // A live server: this test process.
+        let me = std::process::id();
+        mac_state(&h, &format!(r#"{{"on":true,"serverPid":{me},"url":"https://orbit.example"}}"#));
         assert!(!mac_mode_allows_update(&h));
+        // A process of another user (launchd as root): EPERM still means alive.
+        mac_state(&h, r#"{"on":true,"serverPid":1}"#);
+        assert!(!mac_mode_allows_update(&h));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mac_mode_left_on_by_a_dead_server_allows_it() {
+        let h = home("dead");
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap(); // reaped: kill(pid, 0) now says ESRCH
+        mac_state(&h, &format!(r#"{{"on":true,"serverPid":{pid},"url":"https://orbit.example"}}"#));
+        assert!(mac_mode_allows_update(&h));
+    }
+
+    #[test]
+    fn mac_mode_on_without_a_provable_server_pid_fails_closed() {
+        let h = home("nopid");
+        for raw in [
+            r#"{"on":true}"#,
+            r#"{"on":true,"serverPid":null}"#,
+            r#"{"on":true,"serverPid":"4242"}"#,
+            r#"{"on":true,"serverPid":0}"#,
+            r#"{"on":true,"serverPid":-1}"#,
+            r#"{"on":true,"serverPid":4242.5}"#,
+            r#"{"on":true,"serverPid":4294967296}"#,
+        ] {
+            mac_state(&h, raw);
+            assert!(!mac_mode_allows_update(&h), "{raw} must block the update");
+        }
     }
 
     #[test]
