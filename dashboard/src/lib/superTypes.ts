@@ -77,9 +77,21 @@ export interface SuperChild {
   worktree?: string;
   branch?: string;
   startedAt: number;
+  /** The job list's row, written by the server from the registry (absent in an older record). */
+  row?: ChildRow;
+  rowAt?: number;
+  /** The 30 s settle window runs ("bitiyor"). */
+  settling?: boolean;
+  task?: string;
+  stuckReason?: StuckReason;
 }
 
-export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover'] as const;
+export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone'] as const;
+export type ChildRow = typeof CHILD_ROWS[number];
+export const STUCK_REASONS = ['error', 'stale'] as const;
+export type StuckReason = typeof STUCK_REASONS[number];
+
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -93,7 +105,29 @@ export interface SuperQueueItem {
   state: QueueState;
   ownerText?: string;
   createdAt: number;
+  /** The event turn that carried it (an `ask`: the turn it was asked in). */
+  batch?: string;
+  /** An `ask`'s answers, validated by the server: drawn whole or not at all. */
+  options?: string[];
 }
+
+/** A job kept for later (the list's "Havuz"). The prompt never reaches the window. */
+export interface SuperPoolItem {
+  id: string;
+  title: string;
+  prompt?: string;
+  note?: string;
+  task?: string;
+  mode?: string;
+  held?: boolean;
+  maybeStarted?: boolean;
+  createdAt: number;
+}
+
+export const MAX_ASK_OPTIONS = 4;
+export const MAX_ASK_OPTION = 24;
+export const DONE_SETTLE_MS = 30_000;
+export const MAX_BATCH = 8;
 
 export const SUPER_NOTES = ['handover', 'takeback'] as const;
 export type SuperNote = typeof SUPER_NOTES[number];
@@ -109,6 +143,9 @@ export interface SuperState {
   queue: SuperQueueItem[];
   notes: Record<string, SuperNote>;
   away: { since: number | null; events: number };
+  pool: SuperPoolItem[];
+  /** Batch ids of event turns that render in full (the super agent asked the owner). */
+  ownerBatches: string[];
 }
 
 export interface SuperStateView extends SuperState {
@@ -118,9 +155,9 @@ export interface SuperStateView extends SuperState {
 export const SUPER_WINDOW_VERBS = ['delegate', 'answer'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]'] as const;
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]'] as const;
 
-export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover'] as const;
+export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover', 'batch'] as const;
 export type SuperEventKind = typeof SUPER_EVENT_KINDS[number];
 
 // ─── Groups (MIRRORED from the server, behaviour pinned by super-types-mirror.test.ts) ──
@@ -268,6 +305,10 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
   const notes: Record<string, SuperNote> = {};
   for (const [k, n] of Object.entries(v.notes)) if (oneOf(SUPER_NOTES, n)) notes[k] = n;
   const since = v.away.since;
+  // Absent in a push from an older server: no pool, nothing renders in full.
+  const pool = Array.isArray(v.pool) ? v.pool.filter((p): p is SuperPoolItem =>
+    isRecord(p) && typeof p.id === 'string' && typeof p.title === 'string' && typeof p.createdAt === 'number') : [];
+  const ownerBatches = Array.isArray(v.ownerBatches) ? v.ownerBatches.filter((b): b is string => typeof b === 'string') : [];
   return {
     v: SUPER_STATE_VERSION,
     vault: v.vault,
@@ -280,5 +321,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     queue,
     notes,
     away: { since: typeof since === 'number' ? since : null, events: typeof v.away.events === 'number' ? v.away.events : 0 },
+    pool,
+    ownerBatches,
   };
 }

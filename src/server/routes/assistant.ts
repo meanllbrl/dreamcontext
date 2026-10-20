@@ -756,8 +756,8 @@ export async function handleAssistantGlance(req: IncomingMessage, res: ServerRes
 
 /**
  * At most ONE row per handed-over project (D16): its queue head, when that is a permission
- * (drawn from the child's own pending request) or a question the Super Agent escalated (its
- * words, fenced like project text: they may echo the child).
+ * (drawn from the child's own pending request), a question the Super Agent escalated (its
+ * words, fenced like project text: they may echo the child), or its own `ask`.
  */
 function superGlanceRows(clip: (s: string) => string): Array<Record<string, unknown>> {
   const rows: Array<Record<string, unknown>> = [];
@@ -770,6 +770,13 @@ function superGlanceRows(clip: (s: string) => string): Array<Record<string, unkn
         sessionId: c.sessionId, vault, activity: 'asking', since: c.updatedAt, super: true,
         title: c.title ? wrapUntrusted(vault, clip(c.title)) : '',
         ask: { id: pq.requestId, kind: 'permission', tool: pq.toolName, text: wrapUntrusted(vault, clip(pq.text)) },
+      });
+    } else if (item.kind === 'ask') {
+      // The Super Agent's OWN question (plan r4 D7): no child id, no child title; its words fenced.
+      rows.push({
+        sessionId: item.sessionId, vault, activity: 'asking', since: new Date(item.createdAt).toISOString(), super: true,
+        title: '',
+        ask: { id: item.id, kind: 'question', tool: 'SuperAsk', text: wrapUntrusted(vault, clip(item.ownerText ?? '')), ...(item.options?.length ? { options: item.options } : {}) },
       });
     } else {
       rows.push({

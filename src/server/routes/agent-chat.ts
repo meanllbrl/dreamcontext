@@ -75,7 +75,7 @@ import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { clearSuperNote, peekSuperNote, superIndex, superRootOfChild } from '../../lib/super/store.js';
 import { SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
 import {
-  attachSuperInbox, markSuperEventTurn, stashHeldOwnerTexts, superSocketAttached, superTurnEnded, takeHeldOwnerTexts,
+  attachSuperInbox, markSuperEventTurn, superOwnerSpoke, superSocketAttached, superTurnEnded,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -1865,12 +1865,9 @@ export function startChatSession(
    * idle child emits no `init`, so that rule cannot open a turn that is not running.
    */
   let turnsInFlight = 0;
-  /** The Super Agent only (D8): a turn its inbox opened is running. Owner frames that arrive
-   *  meanwhile are held and written after that turn's `result`, as their own turn. */
+  /** The Super Agent only: a turn its inbox opened is running. An owner frame that arrives
+   *  meanwhile is written AT ONCE and folded into it, like a steer in any chat (plan r4 D4). */
   let superEventTurnOpen = false;
-  const heldOwnerFrames: Array<Buffer | string> = [];
-  /** Set while a held frame is handed to `onWsMessage`, so it is not held a second time. */
-  let releasingHeld = false;
   /** The request id of the interrupt last written, so ITS `control_response` can be told apart
    *  from a model or mode switch's. */
   let interruptRequestId: string | null = null;
@@ -2084,12 +2081,9 @@ export function startChatSession(
     // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
     reannounceSwitch();
     armDetachReap();
-    // The Super Agent's event turn is over: what the owner typed during it goes now, ONE
-    // message per turn, in order (D8); the next waits for this one's turn to close.
+    // The Super Agent's event turn is over (an owner message steered into it was answered in
+    // the same `result`); the queue's next batch may go now (D7).
     if (superEventTurnOpen) superEventTurnOpen = false;
-    if (isSuper && heldOwnerFrames.length > 0) setImmediate(releaseOneHeldOwnerFrame);
-    // The queue's next item may go now (D7): queued AFTER the held owner frames, so an owner
-    // message the event turn held still runs first and the pump then finds the chat busy.
     if (isSuper) setImmediate(() => superTurnEnded(chatRegistryId));
   };
   /**
@@ -2168,6 +2162,9 @@ export function startChatSession(
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
+    // Written, and not a slash command: the owner's lease, the running event turn marked
+    // steered, an open `ask` answered (plan r4 D4, D7, D18).
+    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId);
     if (note && wrote) {
       void clearSuperNote(superRootOfChild(chatRegistryId) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }
@@ -2266,8 +2263,6 @@ export function startChatSession(
   const teardown = (): void => {
     if (!alive) return;
     alive = false;
-    // Owner messages held for the Super Agent outlive this process (M2).
-    stashHeldOwnerFrames();
     deviceSessions.delete(deviceSession);
     // A gone child cannot be mid-turn. `armAccountSwitch` checks `exited` too, but leaving a
     // stale count here would be a lie about the one thing only this side can report.
@@ -3105,6 +3100,8 @@ export function startChatSession(
       return;
     }
     if (listClaudeAccounts().length < 2) return;   // nothing to switch to
+    // A switch really happens from here on: the refused turn is not a stuck child (plan r4 D6).
+    registry?.markLimited();
 
     // The turn that was refused may not be one WE sent: a background task finishing, or a
     // sub-agent, starts a turn inside the CLI with no user frame from us. Or it was ours but
@@ -3282,31 +3279,27 @@ export function startChatSession(
     });
   }
 
-  // The Super Agent's inbox (lib/super/inbox.ts): ONE injected event per turn, down the same
-  // chain as an owner message (account switch evaluated first), only while nothing else runs.
-  // The pump decides WHEN (D7); this only writes, and says so with a `super_event` frame first
-  // so the window draws the injected turn as an event chip.
+  // The Super Agent's inbox (lib/super/inbox.ts): ONE injected `[super events]` turn at a time,
+  // down the same chain as an owner message (account switch evaluated first), only while
+  // nothing else runs. The pump decides WHEN (D7); this only writes, and says so with a
+  // `super_event` frame first (the batch and its items) so the window draws the turn as one line.
   if (isSuper && pinId) {
-    // What a previous process of this super session held when it died: written here first, one
-    // per turn, before any event (M2).
-    for (const text of takeHeldOwnerTexts(chatRegistryId)) heldOwnerFrames.push(JSON.stringify({ type: 'user', text }));
-    if (heldOwnerFrames.length > 0) setImmediate(releaseOneHeldOwnerFrame);
     detachInbox = attachSuperInbox({
       id: randomUUID(),
       sessionId: chatRegistryId,
       attached: () => alive && !detached && ws.readyState === ws.OPEN,
-      idle: () => turnsInFlight === 0 && !superEventTurnOpen && heldOwnerFrames.length === 0 && !stdinEnding(),
-      deliver: (text, kind, childId, cancelled) => new Promise<boolean>((resolve) => {
-        // `cancelled`: the inbox gave up waiting (a slow account switch); the item is still
+      idle: () => turnsInFlight === 0 && !superEventTurnOpen && !stdinEnding(),
+      deliver: (text, event, cancelled) => new Promise<boolean>((resolve) => {
+        // `cancelled`: the inbox gave up waiting (a slow account switch); the items are still
         // pending there, so this turn must never be written late.
-        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || heldOwnerFrames.length > 0 || stdinEnding() || !!cancelled?.();
+        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || !!cancelled?.();
         if (blocked()) return resolve(false);
         switchGate = switchGate.then(() => maybeSwitchAccount(text, { resubmit: false })
           .catch(() => false)
           .then((held) => {
             // An owner message that went first in the chain wins: this event waits for idle.
             if (held || blocked()) return resolve(false);
-            sendMeta({ subtype: SUPER_FRAME_EVENT, kind, child: childId });
+            sendMeta({ subtype: SUPER_FRAME_EVENT, ...event });
             openTurn();
             lastSentText = null;
             superEventTurnOpen = true;
@@ -3319,28 +3312,6 @@ export function startChatSession(
     });
   }
 
-  /** The oldest owner frame held for the Super Agent, written now as its own turn (D8). A dead
-   *  process never drops them: they go to its successor (M2). */
-  function releaseOneHeldOwnerFrame(): void {
-    if (!alive) { stashHeldOwnerFrames(); return; }
-    if (superEventTurnOpen || turnsInFlight > 0 || heldOwnerFrames.length === 0) return;
-    const raw = heldOwnerFrames.shift() as Buffer | string;
-    releasingHeld = true;
-    try { onWsMessage(raw); } finally { releasingHeld = false; }
-  }
-
-  /** Hand every held owner text to the next process of this super session (exactly once). */
-  function stashHeldOwnerFrames(): void {
-    if (!isSuper || heldOwnerFrames.length === 0) return;
-    const texts: string[] = [];
-    for (const raw of heldOwnerFrames.splice(0)) {
-      try {
-        const m = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf-8')) as { text?: unknown };
-        if (typeof m.text === 'string' && m.text) texts.push(m.text);
-      } catch { /* not a user frame */ }
-    }
-    stashHeldOwnerTexts(chatRegistryId, texts);
-  }
 
   // ── Autonomy changed under a live Assistant → respawn in place with --resume ─────────
   //
@@ -3458,10 +3429,8 @@ export function startChatSession(
       // is for the successor — it must not run under the old permissions. (Only user frames:
       // an answer or an interrupt belongs to the turn in flight.)
       if (respawnTo !== null) { holdForSuccessor(raw); return; }
-      // The Super Agent is answering an injected event: the owner's message waits for that
-      // turn's end and then runs as its own turn (D8), never folded into the event's.
-      // Held too while earlier held messages wait their turn, so the owner's order is kept.
-      if (isSuper && !releasingHeld && (superEventTurnOpen || heldOwnerFrames.length > 0)) { heldOwnerFrames.push(raw); return; }
+      // The Super Agent's owner message is never held behind an event turn: it is written at
+      // once and folded into whatever turn runs (plan r4 D4), as Enter does in every chat.
       // Auto-switch evaluates BEFORE the turn goes to the CLI — the whole point is that the
       // message does not have to fail first. `maybeSwitchAccount` either sends the turn on
       // this account (the overwhelmingly common answer, and the answer whenever anything is

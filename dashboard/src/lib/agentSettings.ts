@@ -103,6 +103,11 @@ export interface AgentSettings {
    *  (3 under hard pressure) when memory, swap or disk run short; the tab stays, dormant, and
    *  Resume brings the conversation back. ON by default: only an explicit `false` turns it off. */
   parkIdleChats: boolean;
+  /** The Super Agent session's own model and effort (Settings → Chat → Super Agent, and its
+   *  composer's "Set as default"): `sonnet` / `medium` by default, like the notch Assistant's
+   *  own pair, never the chat default. An unusable value reads as the default. */
+  superModel: string;
+  superEffort: string;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -120,6 +125,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   lightMode: 'auto',
   superAgent: false,
   parkIdleChats: true,
+  superModel: 'sonnet',
+  superEffort: 'medium',
 };
 
 /** MIRRORED from `sanitizeModel` in `src/server/routes/agent-spawn-shared.ts`. The dashboard
@@ -170,6 +177,8 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     superAgent: r.superAgent === true,
     // Default-TRUE: only an explicit `false` stops parking idle chats under load.
     parkIdleChats: r.parkIdleChats !== false,
+    superModel: typeof r.superModel === 'string' && CHAT_DEFAULT_MODEL_RE.test(r.superModel) ? r.superModel : DEFAULT_AGENT_SETTINGS.superModel,
+    superEffort: typeof r.superEffort === 'string' && CHAT_DEFAULT_EFFORT_LEVELS.includes(r.superEffort) ? r.superEffort : DEFAULT_AGENT_SETTINGS.superEffort,
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };
