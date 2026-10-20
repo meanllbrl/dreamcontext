@@ -168,6 +168,9 @@ describe('the ONE status tone (owner 2026-10-21)', () => {
     expect(map).toEqual({ working: 'var(--color-success)', idle: 'var(--color-accent)', asking: 'var(--mood-waiting)', ended: 'var(--color-error)', starting: 'var(--color-warning)' });
     // A frame takes the tone of the floating tile OR the tall card it holds (frontend review Major 1).
     expect((tone.match(/\.super-card-frame:has\(:is\(\.super-tile, \.super-card\)\[data-super-tone='\w+'\]\)/g) ?? []).length).toBe(5);
+    // …and a frame showing its live chat, from its own status (frontend re-check).
+    for (const st of ['working', 'idle', 'asking']) expect(tone).toContain(`.super-card-frame[data-status='${st}']`);
+    expect(tone.indexOf("[data-super-tone='ended']")).toBeGreaterThan(tone.indexOf("[data-super-tone='idle']"));
     expect(read(`${SUPER}/AgentCard.tsx`)).toMatch(/<div className="super-card" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}>/);
   });
 

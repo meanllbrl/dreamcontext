@@ -894,9 +894,14 @@ export function resolveAnswered(s: SuperState, sid: string, pendingRequest: stri
  *  when something changes is anything written. */
 async function onMoved(root: string, sid: string, status: 'working' | 'starting' | 'idle'): Promise<void> {
   const apply = (s: SuperState): { changed: boolean; resolved: boolean } => {
-    const resolved = resolveAnswered(s, sid, null);
+    // Read the child as it is NOW, inside the locked write: a turn that starts and asks at once
+    // (working, then asking, in one burst of frames) lands its asking write first, and this one
+    // must neither close the request it just opened nor move its row off `asking`.
+    const live = getChat(sid);
+    const asking = live?.status === 'asking';
+    const resolved = resolveAnswered(s, sid, asking ? live?.pendingQuestion?.requestId ?? null : null);
     let changed = resolved;
-    const ch = s.enabled ? s.children[sid] : undefined;
+    const ch = s.enabled && !asking ? s.children[sid] : undefined;
     if (ch && status === 'working') {
       if (setRow(ch, 'working')) changed = true;
       if (ch.settling) { delete ch.settling; changed = true; }

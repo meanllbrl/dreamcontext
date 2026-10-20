@@ -218,6 +218,19 @@ describe('only decisions reach the super (AC2)', { timeout: 30_000 }, () => {
     expect(s.children.c1.row).toBe('working');
   });
 
+  it('a child that starts a turn and asks at once keeps its permission open (verify finding: the working write raced the asking one)', async () => {
+    const { hs } = await boot(['c1']);
+    hs[0].observe({ type: 'result' });
+    await advance(1_000);
+    hs[0].userSent('do it');
+    askPermission(hs[0], 'perm-race');
+    await drain();
+    await advance(1_000);
+    const q = (await items('permission', 'c1')).find((x) => x.requestId === 'perm-race');
+    expect(q?.state).toBe('pending');
+    expect((await readSuperState(root)).children.c1.row).toBe('asking');
+  });
+
   it('a permission never reaches the super', async () => {
     const { hs, delivered } = await boot(['c1']);
     askPermission(hs[0], 'perm-1');
