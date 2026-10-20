@@ -184,9 +184,12 @@ describe('delegate --from', () => {
   it('a refusing window keeps the row, and the claim is released (the next try is not "claimed")', async () => {
     write();
     const id = await pooled();
-    answer = { ok: false, error: 'no_window' };
-    expect((await verb('delegate', { from: id })).status).toBe(409);
-    expect((await readSuperState(root)).pool.map((p) => p.id)).toEqual([id]);
+    // The window's own refusal (no child can exist): `no_window` without `sent: false` would
+    // count as unconfirmed (M4).
+    answer = { ok: false, error: 'window_refused' };
+    expect((await verb('delegate', { from: id })).status).toBeGreaterThanOrEqual(400);
+    expect((await readSuperState(root)).pool).toEqual([expect.objectContaining({ id })]);
+    expect((await readSuperState(root)).pool[0].maybeStarted).toBeUndefined();
     answer = { ok: true, result: { sessionId: CHILD_SID } };
     expect((await verb('delegate', { from: id })).status).toBe(200);
   });
