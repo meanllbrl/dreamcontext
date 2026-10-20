@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir, userInfo } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   MAC_BATTERY_FLOOR_PERCENT, MAC_BATTERY_POLL_MS, MAC_LOGIN_TOKEN_PARAM, MAC_PROBE_HEADER,
   type MacBattery, type MacDevice, type MacErrorCode, type MacPhase, type MacStatus, type MacThermal, type MacThermalState,
@@ -105,6 +105,8 @@ export interface MacSessionDeps {
   isAlive?: (pid: number) => boolean;
   kill?: (pid: number, sig: NodeJS.Signals) => void;
   platform?: NodeJS.Platform;
+  /** The clock (epoch ms): how old a `power-pending.json` is. Defaults to Date.now. */
+  now?: () => number;
 }
 
 function macDirOf(home: string): string { return join(home, '.dreamcontext', 'handsfree-mac'); }
@@ -137,6 +139,40 @@ function clearState(home: string): void {
 export function powerPendingPathOf(home: string = homedir()): string { return join(macDirOf(home), 'power-pending.json'); }
 
 interface PowerPending { priorLpm: power.LpmBySource | null; at: string }
+
+/** A pending restore older than this is never re-applied: a week on, the Mac's power settings
+ *  are whatever its owner has lived with (or set by hand) since, and forcing a week-old Low
+ *  Power Mode back would be a surprise, not a repair. */
+export const POWER_PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+const isLpmValue = (v: unknown): boolean => v === 0 || v === 1 || v === null || v === undefined;
+
+/** The writer's shape (`writePowerPending`), or null: anything else is never guessed at. */
+function parsePowerPending(raw: string): PowerPending | null {
+  let v: unknown;
+  try { v = JSON.parse(raw); } catch { return null; }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const { priorLpm, at } = v as Record<string, unknown>;
+  if (typeof at !== 'string' || !Number.isFinite(Date.parse(at))) return null;
+  if (priorLpm === null || priorLpm === undefined) return { priorLpm: null, at };
+  if (typeof priorLpm !== 'object' || Array.isArray(priorLpm)) return null;
+  const { battery, ac } = priorLpm as Record<string, unknown>;
+  if (!isLpmValue(battery) || !isLpmValue(ac)) return null;
+  return { priorLpm: { battery: (battery ?? null) as 0 | 1 | null, ac: (ac ?? null) as 0 | 1 | null }, at };
+}
+
+/** `power-pending.json` → `power-pending.<why>-<stamp>.json` in the same folder: kept and
+ *  named, never deleted, so nothing retries it and the owner can still read it. Null when the
+ *  rename failed (the file then stays where it was). */
+function setPowerPendingAside(path: string, why: 'corrupt' | 'stale', nowMs: number): string | null {
+  const stamp = new Date(nowMs).toISOString().replace(/[:.]/g, '-');
+  // A rename onto an earlier set-aside would overwrite it: the next free name instead.
+  let aside = join(dirname(path), `power-pending.${why}-${stamp}.json`);
+  for (let n = 2; existsSync(aside); n++) aside = join(dirname(path), `power-pending.${why}-${stamp}-${n}.json`);
+  try { renameSync(path, aside); return aside; } catch { return null; }
+}
+
+const POWER_BY_HAND = 'If this Mac does not sleep with its lid closed, run "sudo pmset -a disablesleep 0" in Terminal, and set Low Power Mode back in System Settings > Battery.';
 
 function writePowerPending(home: string, priorLpm: power.LpmBySource | null): void {
   try {
@@ -226,13 +262,20 @@ export class MacSession {
     try { await thermal.releasePendingThermal({ ...this.thermalReleaseOpts(), path: thermal.thermalPendingPathOf(this.home) }); } catch { /* never blocks */ }
   }
 
-  /** Restore what an earlier end could not (`power-pending.json`). True when nothing is left pending. Never throws. */
+  /** Restore what an earlier end could not (`power-pending.json`). True when nothing is left
+   *  pending. A file that is not the writer's shape, or older than {@link POWER_PENDING_MAX_AGE_MS},
+   *  is never applied: it is set aside (renamed, never deleted) and reported, so no boot retries
+   *  it forever. Never throws. */
   async releasePendingPower(): Promise<boolean> {
     const path = powerPendingPathOf(this.home);
-    let pending: PowerPending;
-    try { pending = JSON.parse(readFileSync(path, 'utf8')) as PowerPending; } catch { return !existsSync(path); }
     try {
-      await power.restorePower(pending?.priorLpm ?? null, this.d.powerRun);
+      let raw = '';
+      try { raw = readFileSync(path, 'utf8'); } catch { if (!existsSync(path)) return true; }
+      const nowMs = (this.d.now ?? Date.now)();
+      const pending = parsePowerPending(raw);
+      if (!pending) return this.setPendingPowerAside(path, 'corrupt', nowMs);
+      if (nowMs - Date.parse(pending.at) > POWER_PENDING_MAX_AGE_MS) return this.setPendingPowerAside(path, 'stale', nowMs, pending.at);
+      await power.restorePower(pending.priorLpm, this.d.powerRun);
       rmSync(path, { force: true });
       return true;
     } catch {
@@ -240,11 +283,33 @@ export class MacSession {
     }
   }
 
+  /** A pending file that must not be applied: kept under a new name, logged, and the owner told
+   *  what was not restored and what to do by hand. True when it is no longer pending. */
+  private setPendingPowerAside(path: string, why: 'corrupt' | 'stale', nowMs: number, at?: string): boolean {
+    const aside = setPowerPendingAside(path, why, nowMs);
+    const kept = aside ? `kept as ${aside}` : 'and it could not be moved aside, so the next start asks again';
+    const lead = why === 'corrupt'
+      ? 'An earlier Mac mode end left power settings dreamcontext could not read, so nothing was restored.'
+      : `An earlier Mac mode end could not restore this Mac's power settings, and that was over a week ago (${(at ?? '').slice(0, 10)}), so they were not restored now.`;
+    console.warn(`[handsfree-mac] ${why === 'corrupt' ? 'unreadable' : 'stale (over 7 days)'} power-pending.json not applied, ${kept}`);
+    try { this.d.notify('Hands-free: old sleep settings not restored', `${lead} ${POWER_BY_HAND}`); } catch { /* logged above */ }
+    return aside !== null;
+  }
+
   /** The tunnel gave up: nothing on the phone can press Return, so end Mac mode as Return does. */
   private endAfterGiveUp(): void {
+    // Neither branch may reject: an unhandled rejection takes the whole server down with it.
     void this.stop().then(() => {
       this.lastError = 'mac_tunnel_failed';
-      this.d.notify('Hands-free ended: the tunnel stopped', endedBody('Your phone could not reach this Mac any more, so Mac mode ended.', this.lastEnd));
+      try {
+        this.d.notify('Hands-free ended: the tunnel stopped', endedBody('Your phone could not reach this Mac any more, so Mac mode ended.', this.lastEnd));
+      } catch (err) { console.warn(`[handsfree-mac] could not post the tunnel give-up notice: ${(err as Error)?.message ?? String(err)}`); }
+    }, (err: unknown) => {
+      this.lastError = 'mac_tunnel_failed';
+      console.warn(`[handsfree-mac] the tunnel gave up and ending Mac mode failed: ${(err as Error)?.message ?? String(err)}`);
+      try {
+        this.d.notify('Hands-free: Mac mode did not fully end', 'The tunnel stopped, but ending Mac mode failed part way, so this Mac may still be kept awake. Press Return in Hands-free on this Mac, or quit and reopen dreamcontext to finish ending it.');
+      } catch { /* logged above */ }
     });
   }
 

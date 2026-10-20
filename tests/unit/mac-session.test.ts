@@ -1,7 +1,7 @@
 // Mac mode's orchestrator (AC2 setup, AC3 start, AC10 Return, AC12 crash recovery, AC13, AC15).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MacSession, MacModeError, powerPendingPathOf, readMacState, statePathOf, type MacSessionDeps } from '../../src/lib/handsfree/mac/session.js';
@@ -592,6 +592,101 @@ describe('the tunnel gives up: Mac mode ends instead of staying armed', () => {
     await vi.waitFor(() => expect(s.status().phase).toBe('off'));
     expect(events).toContain('/usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0');
     expect(existsSync(statePathOf(home))).toBe(false);
+  });
+
+  it('an end that throws part way is caught, logged and said: never an unhandled rejection that would kill the server', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (r: unknown) => { unhandled.push(r); };
+    process.on('unhandledRejection', onUnhandled);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const sink: { ev: Events | null } = { ev: null };
+      const s = new MacSession(deps({
+        makeSupervisor: capturing(sink) as never,
+        // Teardown clears the probe nonce: a registry that throws there rejects stop().
+        setProbeNonce: (n) => { if (n === null) throw new Error('probe registry gone'); },
+      }));
+      await s.start({ vaults: ['proj'] });
+      sink.ev!.onGiveUp('restart_budget');
+      await vi.waitFor(() => expect(notes.length + unhandled.length).toBeGreaterThan(0));
+      // Past the tick in which Node reports an unhandled rejection.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(unhandled).toEqual([]);
+      expect(notes).toEqual([['Hands-free: Mac mode did not fully end', expect.stringMatching(/may still be kept awake\. Press Return in Hands-free on this Mac, or quit and reopen dreamcontext/)]]);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[handsfree-mac\] the tunnel gave up and ending Mac mode failed: probe registry gone/));
+      expect(s.status().lastError).toBe('mac_tunnel_failed');
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('a power-pending.json that must not be applied is set aside, never retried forever and never deleted', () => {
+  const NOW = Date.parse('2026-10-20T12:00:00.000Z');
+  const DAY = 24 * 60 * 60 * 1000;
+  const macDir = () => join(home, '.dreamcontext', 'handsfree-mac');
+  const aside = (why: string) => readdirSync(macDir()).filter((f) => f.startsWith(`power-pending.${why}-`)).sort();
+  const pmsetWrites = () => events.filter((e) => e.startsWith('/usr/bin/sudo -n /usr/bin/pmset'));
+  const pending = (raw: string) => writeFileSync(powerPendingPathOf(home), raw, { mode: 0o600 });
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => { warn.mockRestore(); });
+
+  it('corrupt or wrong-shape: moved aside with its bytes kept, logged, nothing applied, and the next boot does not ask again', async () => {
+    const bad = [
+      '{"priorLpm": {"batt',
+      '[]',
+      '{"priorLpm":{"battery":"x","ac":1},"at":"2026-10-19T00:00:00.000Z"}',
+      '{"priorLpm":null}',
+    ];
+    const s = new MacSession(deps({ now: () => NOW }));
+    for (const raw of bad) {
+      pending(raw);
+      expect(await s.releasePendingPower()).toBe(true);
+      expect(existsSync(powerPendingPathOf(home))).toBe(false);
+    }
+    expect(pmsetWrites()).toEqual([]);
+    // Same clock, four files: none overwrote another.
+    const kept = aside('corrupt');
+    expect(kept).toHaveLength(4);
+    expect(kept.map((f) => readFileSync(join(macDir(), f), 'utf8')).sort()).toEqual([...bad].sort());
+    expect(warn).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[handsfree-mac\] unreadable power-pending\.json not applied, kept as .*power-pending\.corrupt-2026-10-20T12-00-00-000Z\.json/));
+    expect(notes.every(([t, b]) => t === 'Hands-free: old sleep settings not restored' && /could not read, so nothing was restored\. .*sudo pmset -a disablesleep 0/.test(b))).toBe(true);
+    // The next boot: nothing pending, nothing said again.
+    const said = notes.length;
+    expect(await s.recoverOnBoot()).toBe(false);
+    expect(notes).toHaveLength(said);
+    expect(warn).toHaveBeenCalledTimes(4);
+  });
+
+  it('older than 7 days (by the file\'s own "at"): not applied, moved aside, and the owner told what to do by hand', async () => {
+    pending(JSON.stringify({ priorLpm: { battery: 1, ac: 0 }, at: new Date(NOW - 8 * DAY).toISOString() }));
+    const s = new MacSession(deps({ now: () => NOW }));
+    expect(await s.releasePendingPower()).toBe(true);
+    expect(pmsetWrites()).toEqual([]);
+    expect(existsSync(powerPendingPathOf(home))).toBe(false);
+    expect(aside('stale')).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(macDir(), aside('stale')[0]), 'utf8')).priorLpm).toEqual({ battery: 1, ac: 0 });
+    expect(notes).toHaveLength(1);
+    expect(notes[0][0]).toBe('Hands-free: old sleep settings not restored');
+    expect(notes[0][1]).toMatch(/over a week ago \(2026-10-12\), so they were not restored now\. If this Mac does not sleep .*sudo pmset -a disablesleep 0.*Low Power Mode/);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/stale \(over 7 days\) power-pending\.json not applied, kept as .*power-pending\.stale-/));
+  });
+
+  it('a fresh one (6 days old) is still restored and removed as before, with no notice', async () => {
+    pending(JSON.stringify({ priorLpm: { battery: 1, ac: 0 }, at: new Date(NOW - 6 * DAY).toISOString() }));
+    const s = new MacSession(deps({ now: () => NOW }));
+    expect(await s.releasePendingPower()).toBe(true);
+    expect(pmsetWrites()).toEqual([
+      '/usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0',
+      '/usr/bin/sudo -n /usr/bin/pmset -b lowpowermode 1',
+      '/usr/bin/sudo -n /usr/bin/pmset -c lowpowermode 0',
+    ]);
+    expect(readdirSync(macDir()).filter((f) => f.startsWith('power-pending'))).toEqual([]);
+    expect(notes).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 
