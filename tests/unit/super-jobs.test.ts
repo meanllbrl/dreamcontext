@@ -249,3 +249,13 @@ describe('a working tile\'s border ring (owner 2026-10-21)', () => {
     _resetSpinSlots();
   });
 });
+
+describe('Esc closes the list, never the stage (verify finding)', () => {
+  it('the surface\'s Esc yields to an open job list, as it does to a group panel', () => {
+    const surface = read('dashboard/src/components/sleepy/AgentSurface.tsx');
+    const at = surface.indexOf("if (document.querySelector('.super-group-panel')) return;");
+    expect(at).toBeGreaterThan(0);
+    expect(surface.slice(at, at + 400)).toMatch(/if \(document\.querySelector\('\.super-job-list'\)\) return;/);
+    expect(read(`${SUPER}/JobList.tsx`)).toMatch(/className="super-job-list"/);
+  });
+});

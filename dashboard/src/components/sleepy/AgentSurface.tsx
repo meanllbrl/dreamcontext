@@ -4069,6 +4069,9 @@ export function AgentSurface() {
       // An open group (or Others) on the Super Agent's stage owns Esc: it closes the panel and
       // gives focus back to its tile (GroupPanel). Same presence test, same registration order.
       if (document.querySelector('.super-group-panel')) return;
+      // The job list open under the bar owns Esc the same way: it closes the list (JobList), never
+      // the stage, and its listener is added when it opens, after this one (plan r4 AC7).
+      if (document.querySelector('.super-job-list')) return;
       // A card held on that stage owns Esc too: the drag's own listener cancels it, but it is
       // added at the press, after this one, so its stopPropagation cannot reach us.
       if (document.querySelector('.super-surface[data-dragging]')) return;
