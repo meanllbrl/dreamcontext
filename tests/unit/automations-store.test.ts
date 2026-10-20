@@ -1200,6 +1200,11 @@ describe('whiteboard (a board agent\'s home board)', () => {
     expect(write('whiteboard: null')).toBeNull();
   });
 
+  it('AI Team: a legacy routine edit writes review too', () => {
+    createAutomation(contextRoot, { ...base });
+    expect(updateAutomation(contextRoot, base.slug, { review: 'agent' }).review).toBe('agent');
+  });
+
   it('survives learn, a schedule change and a dialog edit untouched', () => {
     createAutomation(contextRoot, { ...base, whiteboard: 'growth' });
     recordLesson(contextRoot, base.slug, { lesson: 'Keep notes short.', now: new Date('2026-10-01T09:00:00Z') });
@@ -1320,6 +1325,15 @@ describe('bound automations through the automation store', () => {
     expect(agentStoreForBound.getAgent(boundCtx, 'scout')?.title).toBe('Market scout');
     expect(() => storeForBound.updateAutomation(boundCtx, 'scout', { days: 'daily', at: '10:00' })).toThrow(/only call/);
     expect(() => storeForBound.updateAutomation(boundCtx, 'scout-daily', { mode: 'call' })).toThrow(/runs on a schedule/);
+  });
+
+  it('AI Team: a routine edit sets "ask me before it publishes" (review) on the job file only', () => {
+    const on = storeForBound.updateAutomation(boundCtx, 'scout-daily', { review: 'agent' });
+    expect(on.review).toBe('agent');
+    expect(readFileSync(join(boundCtx, 'automations', 'scout-daily.md'), 'utf-8')).toMatch(/^review: agent$/m);
+    expect(storeForBound.updateAutomation(boundCtx, 'scout-daily', { review: 'off' }).review).toBe('off');
+    expect(() => storeForBound.updateAutomation(boundCtx, 'scout-daily', { review: 'sometimes' as never })).toThrow(/Invalid review mode/);
+    expect(() => storeForBound.updateAutomation(boundCtx, 'scout', { review: 'agent' })).toThrow(/only call/);
   });
 
   it('listAutomations lists an agent with no automation file as its call target, beside the jobs', () => {

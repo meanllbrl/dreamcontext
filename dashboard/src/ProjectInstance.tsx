@@ -12,8 +12,7 @@ import { TasksPage } from './pages/TasksPage';
 import { RoadmapPage } from './pages/RoadmapPage';
 import { HypothesesPage } from './pages/HypothesesPage';
 import { LabPage } from './pages/LabPage';
-import { AutomationsPage, type AutomationsFocus } from './pages/AutomationsPage';
-import { AgentsPage } from './pages/AgentsPage';
+import { AiTeamPage, type AutomationsFocus } from './pages/AiTeamPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
 import { KnowledgePage } from './pages/KnowledgePage';
@@ -363,9 +362,17 @@ const PageRouter = memo(function PageRouter({
     case 'lab':
       return <LabPage focus={focus} />;
     case 'automations':
-      return <AutomationsPage focus={automationFocus} onFocusDone={onAutomationFocusDone} />;
     case 'agents':
-      return <AgentsPage focus={agentsFocus} onFocusDone={onAgentsFocusDone} />;
+      // ONE page for both keys: the AI Team. `agents` is its old Agents page key, kept so its
+      // deep links (`page/agents/<slug>`, `requestOpenAgents`) land on that teammate.
+      return (
+        <AiTeamPage
+          automationFocus={automationFocus}
+          onAutomationFocusDone={onAutomationFocusDone}
+          agentsFocus={agentsFocus}
+          onAgentsFocusDone={onAgentsFocusDone}
+        />
+      );
     case 'sleep':
       return <SleepPage />;
     case 'core':

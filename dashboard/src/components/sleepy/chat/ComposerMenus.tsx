@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   CONTEXT_TIGHT_PCT,
   contextBands,
@@ -61,7 +61,7 @@ const Check = () => (
  *
  * Conversation asks the CHAT verdict (`approvedForChat`), never the run one. An agent approved
  * for chat is one row, picked as is. One that is not is still listed, with a note, and picking
- * it opens it on the Agents page, where approval happens in place: the composer never approves.
+ * it opens it on the AI Team page, where approval happens in place: the composer never approves.
  *
  * Picking an agent opens a NEW conversation with it (AgentSurface's `pickChatAgent`). "Claude"
  * is the way back, so it is only listed while an agent holds the chat: otherwise the modes
@@ -275,11 +275,13 @@ export function ModeMenu({
 // ── Model + effort ───────────────────────────────────────────────────────────────────
 
 function ModelRow({
-  option, active, onSelect,
+  option, active, onSelect, isDefault = false,
 }: {
   option: ModelOption;
   active: boolean;
   onSelect: () => void;
+  /** This row is the agent's own default (AI Team's temporary picker), tagged as such. */
+  isDefault?: boolean;
 }) {
   const note = modelNoteFor(option.id);
   return (
@@ -298,6 +300,7 @@ function ModelRow({
             and grey out the one word in the menu whose job is to stand out. It keeps
             `.chat-cmp-badge`'s accent rules, which now exist for this row alone. */}
         {note?.badge && <span className="chat-cmp-badge">{note.badge}</span>}
+        {isDefault && <span className="chat-cmp-modelrow-default">Default</span>}
         {/* Price is the SERVER's number (one table, the same one the cost estimate charges
             with). A server that can't price this id simply omits it and the row carries its
             name and sentence alone — never "$undefined/M". */}
@@ -312,6 +315,7 @@ function ModelRow({
 
 export function ModelMenu({
   config, model, effort, onModelChange, onEffortChange, onSetDefault, savedDefault, close,
+  head, foot, defaultId,
 }: {
   config: ModelConfig;
   model: string;
@@ -327,6 +331,12 @@ export function ModelMenu({
   onSetDefault?: () => void;
   savedDefault: boolean;
   close: () => void;
+  /** Drawn above the model list (AI Team: whose default this is). */
+  head?: ReactNode;
+  /** Replaces the set-default footer (AI Team: "Temporary · Back to default"). */
+  foot?: ReactNode;
+  /** The model the row list tags "Default". */
+  defaultId?: string;
 }) {
   const [otherOpen, setOtherOpen] = useState(false);
   const { primary, other } = splitModels(config, model);
@@ -335,6 +345,7 @@ export function ModelMenu({
 
   return (
     <div className="chat-cmp-modelmenu" role="menu" aria-label="Model and reasoning effort">
+      {head}
       <span className="chat-cmp-grouplabel">Model</span>
       <div className="chat-cmp-scroll">
         {primary.map((m) => (
@@ -342,6 +353,7 @@ export function ModelMenu({
             key={m.id}
             option={m}
             active={m.id === model}
+            isDefault={m.id === defaultId}
             onSelect={() => { onModelChange(m.id); close(); }}
           />
         ))}
@@ -361,6 +373,7 @@ export function ModelMenu({
             key={m.id}
             option={m}
             active={m.id === model}
+            isDefault={m.id === defaultId}
             onSelect={() => { onModelChange(m.id); close(); }}
           />
         ))}
@@ -398,7 +411,8 @@ export function ModelMenu({
       {/* KEPT here (owner call), unlike the mode menu's: model and effort are a cost/quality
           preference that genuinely is the same in every new chat, and re-picking it at every
           spawn is the friction this button removes. */}
-      {onSetDefault && (
+      {foot && <div className="chat-cmp-menu-foot">{foot}</div>}
+      {!foot && onSetDefault && (
         <div className="chat-cmp-menu-foot">
           <button type="button" className="chat-cmp-setdefault" onClick={onSetDefault}>
             {savedDefault ? 'Saved as default' : 'Set as default'}

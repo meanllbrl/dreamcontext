@@ -129,7 +129,7 @@ describe('the create dialog picks an agent (S2)', () => {
     expect(existsSync(join(DASH, 'components/agents/AgentDialog.css'))).toBe(false);
     expect(dialog).toMatch(/export function AutomationDialog\(/);
     expect(dialog).toContain("import './AutomationDialog.css';");
-    for (const rel of ['pages/AutomationsPage.tsx', 'components/agents/AgentsMembers.tsx', 'components/automations/AutomationsEmptyState.tsx']) {
+    for (const rel of ['components/agents/AgentsMembers.tsx', 'components/automations/AutomationsEmptyState.tsx']) {
       const src = read(rel);
       expect(src, rel).not.toMatch(/agents\/AgentDialog'|\.\/AgentDialog'/);
       expect(src, rel).toMatch(/AutomationDialog/);
@@ -152,7 +152,7 @@ describe('the create dialog picks an agent (S2)', () => {
     expect(dialog).toContain("t('automations.job')");
   });
 
-  it('a 409 agent_unapproved is shown in place, with a link that opens that agent on the Agents page', () => {
+  it('a 409 agent_unapproved is shown in place, with a link that opens that agent on the AI Team page', () => {
     expect(dialog).toMatch(/err instanceof RequestError && err\.code === 'agent_unapproved'/);
     expect(dialog).toMatch(/setRefusedSlug\(choice\)/);
     expect(dialog).toContain("t('automations.agentUnapproved')");
@@ -183,7 +183,6 @@ describe('every face on this page is the agent\'s', () => {
       'components/agents/AgentMemberCard.tsx',
       'components/agents/AgentProfilePopover.tsx',
       'components/agents/AgentThreadPanel.tsx',
-      'pages/AutomationsPage.tsx',
     ]) {
       const src = read(rel);
       expect(src, rel).toMatch(/agentFaceOf\(/);
@@ -192,6 +191,14 @@ describe('every face on this page is the agent\'s', () => {
     const filters = read('components/agents/AgentsFeedFilters.tsx');
     expect(filters.match(/of=\{c\.face\?\.of\}/g)?.length).toBe(2);
     expect(read('components/agents/AgentsFeed.tsx')).toMatch(/face: agentFaceOf\(/);
+  });
+
+  it('the AI Team draws every face from the agent route under the agent slug', () => {
+    for (const rel of ['components/aiteam/TeamRoster.tsx', 'components/aiteam/TeamConversation.tsx']) {
+      const src = read(rel);
+      expect(src, rel).toMatch(/<AgentAvatar of="agent" slug=\{(row|agent)\.slug\}|<AgentAvatar of="agent" slug=\{slug\}/);
+      expect(src, rel).not.toMatch(/<AgentAvatar\s+slug=/);
+    }
   });
 });
 

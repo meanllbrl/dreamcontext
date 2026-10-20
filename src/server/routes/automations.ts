@@ -13,6 +13,8 @@ import {
   flowForDisplay,
   createAutomation,
   updateAutomation,
+  type UpdateAutomationInput,
+  checkReviewPatch,
   removeAutomation,
   writeFlowSection,
   automationPhotosDir,
@@ -1192,7 +1194,7 @@ export async function handleAutomationsCreate(
  * and nobody approves a prompt by scheduling it. The store's `createAutomation`
  * approves it here (the pair's own `approvePair` for a same-slug pair — its ONE
  * caller), so the route never writes the registry itself. Identity fields in the
- * body are ignored: they are the agent's, edited on the Agents page.
+ * body are ignored: they are the agent's, edited on the AI Team page.
  */
 async function createBoundFromBody(
   res: ServerResponse,
@@ -1210,7 +1212,7 @@ async function createBoundFromBody(
   const projectRoot = dirname(contextRoot);
   if (!checkApproval(projectRoot, agentTarget, undefined, 'identity').approved) {
     sendError(res, 409, 'agent_unapproved',
-      `${agentTarget.agentTitle || agentTarget.title} is not approved on this machine. Approve it on the Agents page first.`);
+      `${agentTarget.agentTitle || agentTarget.title} is not approved on this machine. Approve it on the AI Team page first.`);
     return;
   }
   const slug = (str(body.slug) ?? '').trim() || slugifyTitle(title);
@@ -1290,6 +1292,8 @@ export async function handleAutomationsUpdate(
       return;
     }
     const job = body.job === undefined ? undefined : str(body.job) ?? null;
+    // Refused before the identity half is written and re-stamped (`updateSplitTarget`).
+    checkReviewPatch(str(body.review));
     // Read BEFORE any write: whether the target was approved decides whether this
     // save may approve a soul the dialog never showed (see approveUnlessUnseenSoul).
     const before = getRunTarget(contextRoot, params.slug, 'automation');
@@ -1312,6 +1316,7 @@ export async function handleAutomationsUpdate(
       effort,
       timeoutMinutes: readTimeout(body.timeoutMinutes),
       enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+      review: str(body.review) as UpdateAutomationInput['review'],
       prompt: str(body.prompt),
       job,
     });
@@ -1378,6 +1383,7 @@ function updateSplitTarget(
     at: str(body.at),
     timeoutMinutes: readTimeout(body.timeoutMinutes),
     enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+    review: str(body.review) as UpdateAutomationInput['review'],
     job: identityIn.job,
   });
   return { manifest, stamped: approveUnlessUnseenSoul(contextRoot, before, manifest) };

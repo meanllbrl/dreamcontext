@@ -51,7 +51,7 @@ describe('snapshot agent lines', () => {
     createAgent(ctx, { slug: 'scout', title: 'Scout', prompt: 'Scout.' });
     const out = lines();
     const line = out.find((l) => l.includes('scout'));
-    expect(line).toBe('- agent scout: Scout needs approval on the Agents page');
+    expect(line).toBe('- agent scout: Scout needs approval on the AI Team page');
     expect(line).not.toContain('dreamcontext');
     expect(buildAutomationsSnapshot(ctx, { home, now: NOW }).hasBlocked).toBe(true);
   });

@@ -235,7 +235,7 @@ function createBoundFromFlags(
     if (!agentTarget) throw new AutomationError(`There is no agent "${agentSlug}" in this project. See \`dreamcontext agents list\`.`);
     const projectRoot = projectRootFor(root);
     if (!checkApproval(projectRoot, agentTarget, undefined, 'identity').approved) {
-      throw new AutomationError(`${agentTarget.agentTitle || agentTarget.title} is not approved on this machine. Approve it on the Agents page first.`);
+      throw new AutomationError(`${agentTarget.agentTitle || agentTarget.title} is not approved on this machine. Approve it on the AI Team page first.`);
     }
     if (opts.mode !== undefined && parseModeFlag(opts.mode) === 'call') {
       throw new AutomationError('An automation runs on a schedule. An agent you only call needs no automation.');

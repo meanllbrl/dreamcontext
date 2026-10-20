@@ -23,7 +23,7 @@ import { listVaults, RESERVED_ASSISTANT_NAME, type Vault } from './vaults.js';
  *   dreamcontext://project/<vault>/view?path=<project-relative path>
  *   dreamcontext://inbox
  *
- * `page/agents/<slug>` opens that agent's profile on the Agents page; its id is an agent SLUG
+ * `page/agents/<slug>` opens that agent's profile on the AI Team page; its id is an agent SLUG
  * (the automation slug rule), stricter than the generic item id.
  */
 

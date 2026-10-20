@@ -55,11 +55,11 @@ afterEach(() => {
 
 describe('assign to agent: the refusal reaches the caller TYPED (T7)', () => {
   it('maps the 409 agent_not_approved_to_run to its own code, keeping status and message', () => {
-    const err = toAssignAgentError(new RequestError('Approve it on the Agents page.', 409, 'agent_not_approved_to_run'));
+    const err = toAssignAgentError(new RequestError('Approve it on the AI Team page.', 409, 'agent_not_approved_to_run'));
     expect(err).toBeInstanceOf(AssignAgentError);
     expect(err.code).toBe('agent_not_approved_to_run');
     expect(err.status).toBe(409);
-    expect(err.message).toBe('Approve it on the Agents page.');
+    expect(err.message).toBe('Approve it on the AI Team page.');
   });
 
   it('keeps every refusal the route answers with', () => {

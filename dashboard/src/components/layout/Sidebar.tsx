@@ -34,8 +34,8 @@ interface SidebarProps {
 
 /** The i18n key of each page's name (the phone's top bar shows it). */
 export const PAGE_LABEL_KEY: Record<Page, string> = {
-  tasks: 'nav.tasks', roadmap: 'nav.roadmap', hypotheses: 'nav.hypotheses', lab: 'nav.labpage', automations: 'nav.automations',
-  agents: 'nav.agents', core: 'nav.core', knowledge: 'nav.knowledge', sleep: 'nav.sleep', brain: 'nav.brain', council: 'nav.council',
+  tasks: 'nav.tasks', roadmap: 'nav.roadmap', hypotheses: 'nav.hypotheses', lab: 'nav.labpage', automations: 'nav.aiTeam',
+  agents: 'nav.aiTeam', core: 'nav.core', knowledge: 'nav.knowledge', sleep: 'nav.sleep', brain: 'nav.brain', council: 'nav.council',
   settings: 'nav.settings', packs: 'nav.packs', about: 'nav.about', taxonomy: 'nav.taxonomy', announcements: 'nav.announcements',
   whiteboards: 'nav.whiteboard',
 };
@@ -100,8 +100,11 @@ const NAV_GROUPS: NavGroup[] = [
       // top to bottom instead of alternating.
       { launch: 'chat', labelKey: 'nav.chat' },
       { page: 'tasks', labelKey: 'nav.tasks' },
-      { page: 'automations', labelKey: 'nav.automations', maturity: 'beta', hero: true },
-      { page: 'agents', labelKey: 'nav.agents', maturity: 'beta' },
+      // AI TEAM (owner, 2026-10-20): Agents and Automations are ONE row now. A teammate is an
+      // agent, its automations are its routines, and you talk to each one in its own
+      // conversation. Production from day one, so no maturity tag. The page key stays
+      // `automations` (persisted nav state); `agents` lands on the same page.
+      { page: 'automations', labelKey: 'nav.aiTeam', hero: true },
       { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
       { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
       { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
@@ -218,7 +221,8 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   // While the overlay covers the page, Chat is where the user IS — one active row, not two.
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
-  const current: Page | null = chatOpen && showChat ? null : activePage;
+  // `agents` is the AI Team too (its old deep links land there), so its row lights up.
+  const current: Page | null = chatOpen && showChat ? null : activePage === 'agents' ? 'automations' : activePage;
   const vaultLabel = vault ?? '';
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no

@@ -597,7 +597,7 @@ describe('snapshot (integration)', () => {
       expect(output).toContain('eod-digest');
       expect(output).toContain('blocked pending approval');
       expect(output).toContain('eod-digest: blocked pending approval');
-      expect(output).toContain('needs approval on the Automations page');
+      expect(output).toContain('needs approval on the AI Team page');
       expect(output).not.toContain('automations approve eod-digest');
     });
   });

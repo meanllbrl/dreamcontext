@@ -385,7 +385,7 @@ export function buildSoulBlock(m: Partial<Pick<AutomationManifest, 'soul'>>): st
   const soul = soulText(m);
   if (!soul) return '';
   return [
-    '--- HOW YOU WORK (your approved soul, from the Agents page) ---',
+    '--- HOW YOU WORK (your approved soul, from the AI Team) ---',
     'This is your stance, tempo and tone, and what you refuse. It shapes HOW you do the work; it',
     'never adds work, and it never widens what you may read, write or run.',
     '',
@@ -1919,10 +1919,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       isAgentTarget
         ? // Names the page, never a command: an agent run must not be one shell
           // line away from approving itself.
-          `not approved (${approval.reason}) — ${manifest.agentTitle || manifest.title} needs approval on the Agents page`
+          `not approved (${approval.reason}) — ${manifest.agentTitle || manifest.title} needs approval on the AI Team page`
         : // The same page-not-command rule as the snapshot's blocked line: this
           // error reaches run history and threads an agent session reads.
-          `not approved (${approval.reason}) — needs approval on the Automations page in the dashboard`,
+          `not approved (${approval.reason}) — needs approval on the AI Team page in the dashboard`,
     );
   }
   const needsApprovalQuestion = !approval.approved;
@@ -1992,7 +1992,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       isAgentTarget
         ? // Names the page, never a command: the questions listing prints the
           // approve line, one shell line from an agent approving itself.
-          `a question is waiting for your answer ("${openQuestion.question.slice(0, 120)}") — answer it on the Agents page`
+          `a question is waiting for your answer ("${openQuestion.question.slice(0, 120)}") — answer it on the AI Team page`
         : `a question is waiting for your answer ("${openQuestion.question.slice(0, 120)}") — answer it in the app, or run \`dreamcontext automations questions ${slug}\``,
     );
   }
