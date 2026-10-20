@@ -21,7 +21,7 @@
  *   dreamcontext://project/<vault>/page/<page>[/<id>]
  *   dreamcontext://project/<vault>/view?path=<project-relative path>
  *
- * `page/agents/<slug>` lands on the Agents page with that agent's profile open; its id must be
+ * `page/agents/<slug>` lands on the AI Team page with that agent's profile open; its id must be
  * an agent slug, stricter than the generic item id.
  *
  * ROUTING NEVER DUPLICATES A WINDOW. A project link goes to the window that already holds that

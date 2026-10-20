@@ -1,6 +1,7 @@
 import { useI18n } from '../../context/I18nContext';
 import { approvalState, type AgentApprovalState, type AgentSummary } from '../../hooks/useAgents';
 import { AgentAvatar } from './AgentAvatar';
+import './AgentRosterCard.css';
 
 /** A translated string, or `fallback` when the key has no copy yet (the W4b rule: lanes add no keys). */
 export function tx(t: (key: string) => string, key: string, fallback: string): string {

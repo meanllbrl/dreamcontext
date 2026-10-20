@@ -27,8 +27,10 @@ import type { ApprovalPayloadFields } from '../../src/lib/automations/types';
 const ROOT = join(import.meta.dirname, '..', '..');
 const read = (p: string): string => readFileSync(join(ROOT, p), 'utf-8');
 
-const PAGE = 'dashboard/src/pages/AgentsPage.tsx';
-const PAGE_CSS = 'dashboard/src/pages/AgentsPage.css';
+// The Agents page was retired into the AI Team (2026-10-20): the page checks read the AI Team,
+// and the roster card's rules moved to the card's own stylesheet.
+const PAGE = 'dashboard/src/pages/AiTeamPage.tsx';
+const PAGE_CSS = 'dashboard/src/components/agents/AgentRosterCard.css';
 const CARD = 'dashboard/src/components/agents/AgentRosterCard.tsx';
 const PANEL = 'dashboard/src/components/agents/AgentProfilePanel.tsx';
 const PANEL_CSS = 'dashboard/src/components/agents/AgentProfilePanel.css';
@@ -287,43 +289,7 @@ describe('the identity dialog: create and edit', () => {
   });
 });
 
-describe('the page: focus and deep link (S7)', () => {
-  it('reads a focus as select, create, or both', async () => {
-    const { focusIntent, rosterCountKey } = await import('../../dashboard/src/pages/AgentsPage');
-    expect(focusIntent(null)).toBeNull();
-    expect(focusIntent({ slug: 'scout', nonce: 1 })).toEqual({ select: 'scout', create: false, whiteboard: null });
-    expect(focusIntent({ create: true, nonce: 2 })).toEqual({ select: null, create: true, whiteboard: null });
-    expect(focusIntent({ create: true, whiteboard: 'growth', nonce: 3 })).toEqual({ select: null, create: true, whiteboard: 'growth' });
-    expect(focusIntent({ slug: 'scout', whiteboard: 'growth', nonce: 4 })).toEqual({ select: 'scout', create: false, whiteboard: null });
-    expect(rosterCountKey(0)).toBe('agents.page.empty');
-    expect(rosterCountKey(1)).toBe('agents.roster.count.one');
-    expect(rosterCountKey(7)).toBe('agents.roster.count.many');
-  });
-
-  it('keeps the pinned props, opens the profile or the dialog, and hands the focus back once', () => {
-    const src = code(read(PAGE));
-    expect(src).toMatch(/export function AgentsPage\(\{ focus, onFocusDone \}: \{ focus: AgentsFocus \| null; onFocusDone: \(\) => void \}\)/);
-    expect(src).toMatch(/useAgents\(\)/);
-    const effect = src.slice(src.indexOf('const intent = focusIntent(focus);'), src.indexOf('}, [focus, onFocusDone]);'));
-    expect(effect).toMatch(/if \(intent\.select\) setSelected\(intent\.select\);/);
-    expect(effect).toMatch(/if \(intent\.create\) setDialog\(intent\.whiteboard \? \{ slug: null, whiteboard: intent\.whiteboard \} : \{ slug: null \}\);/);
-    expect(effect).toMatch(/onFocusDone\(\);/);
-    expect(src).toMatch(/<AgentProfilePanel\s+slug=\{selected\}/);
-    expect(src).toMatch(/<AgentIdentityDialog slug=\{dialog\.slug\}/);
-  });
-
-  it('reads as a team: one "Team" page heading, the count muted beside it, then the lead', () => {
-    const src = code(read(PAGE));
-    expect(src.match(/<h1\b/g)).toHaveLength(1);
-    expect(src).toMatch(/<h1 className="page-title arp-title">\{t\('agents\.team\.title'\)\}<\/h1>/);
-    const head = src.slice(src.indexOf('<div className="arp-titleline">'), src.indexOf('<p className="arp-lead">'));
-    expect(head).toMatch(/className="arp-count"/);
-    expect(src.indexOf('arp-titleline')).toBeLessThan(src.indexOf('arp-lead'));
-    const i18n = read('dashboard/src/context/I18nContext.tsx');
-    expect(i18n).toContain("'agents.team.title': 'Team',");
-    expect(i18n).toContain("'agents.team.title': 'Takım',");
-  });
-
+describe('headings and states (S7)', () => {
   it('the 20px headings keep their word gap: no 40px heading tracking on them', () => {
     for (const [f, cls] of [[PANEL_CSS, '.agp-name {'], [DIALOG_CSS, '.aid-title {']] as const) {
       const css = read(f);
@@ -399,23 +365,7 @@ describe('the team: three approval states, never folded into one (D8, U2)', () =
     for (const w of words) expect(w.toLowerCase()).not.toMatch(/only|yalnızca|sadece/);
   });
 
-  it('the seat is the last grid item, always, also when the team is empty', () => {
-    const src = code(read(PAGE));
-    const grid = src.slice(src.indexOf('<ul className="arp-grid">'), src.indexOf('</ul>', src.indexOf('<ul className="arp-grid">')));
-    expect(grid).toMatch(/agents\.map\(/);
-    expect(grid.indexOf('<AgentTeamSeat')).toBeGreaterThan(grid.indexOf('agents.map('));
-    expect(grid.trim().endsWith('</li>')).toBe(true);
-    expect(grid.slice(grid.indexOf('<AgentTeamSeat'))).not.toMatch(/<AgentRosterCard/);
-    // Rendered whenever the list has loaded, not only when it is non-empty.
-    expect(src).toMatch(/\{agents && \(\s*<ul className="arp-grid">/);
-    const card = code(read(CARD));
-    expect(card).toMatch(/className="agr-seat" onClick=\{onAdd\} title=\{t\('agents\.team\.addHint'\)\} data-add-to-team/);
-    expect(card).toMatch(/t\('agents\.team\.add'\)/);
-  });
-
-  it('the roster spends no filled accent: New agent is neutral', () => {
-    const src = code(read(PAGE));
-    expect(src).not.toMatch(/arp-new--primary/);
+  it('the roster spends no filled accent', () => {
     expect(read(PAGE_CSS)).not.toMatch(/gradient-brand/);
   });
 });

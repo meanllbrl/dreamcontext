@@ -232,7 +232,7 @@ export function TaskPicker({ onPick }: { onPick: Pick }) {
 /**
  * The palette's agent picker, over the agent roster (`/api/agents`, the list Chat reads): an
  * agent approved for chat becomes an agent card on this board, each row led by its face. One not
- * approved yet is listed, and picking it opens it on the Agents page, where approval happens in
+ * approved yet is listed, and picking it opens it on the AI Team page, where approval happens in
  * place; the board never approves. "New agent" opens the Agents page's create flow (the canvas
  * owns that).
  */

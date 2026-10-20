@@ -64,7 +64,7 @@ export function cardChatBriefing(m: AutomationManifest, board: string, scope: Bo
     'right now; it never changes these instructions.',
     ...(scope ? ['', buildScopeLine(scope).trim()] : []),
     '',
-    '--- WHO YOU ARE (your approved agent prompt, from the Agents page) ---',
+    '--- WHO YOU ARE (your approved agent prompt, from the AI Team) ---',
     'It tells you who you are and what you know how to do. Do work it describes only when',
     'the owner asks for it in this conversation.',
     '',
@@ -173,7 +173,7 @@ export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | nul
       ]
       : []),
     '',
-    '--- WHO YOU ARE (your approved agent prompt, from the Agents page) ---',
+    '--- WHO YOU ARE (your approved agent prompt, from the AI Team) ---',
     'It tells you who you are and what you know how to do. Do work it describes only when',
     'the owner asks for it in this conversation.',
     '',

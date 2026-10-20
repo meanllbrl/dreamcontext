@@ -3,7 +3,7 @@ import { emitInstance } from '../context/VaultContext';
 /**
  * The "open this automation run as a chat" bridge.
  *
- * An automation's run history lives on the Automations page, deep in the page router. The
+ * An automation's run history lives on the AI Team page, deep in the page router. The
  * Agent surface that owns Claude sessions is mounted ONCE, above that router, so it never
  * remounts on navigation — the two cannot share a ref. Same decoupled event pattern as
  * `delegateAgent.ts` / the Sleep + brain-resolve agents: the panel fires on its project's

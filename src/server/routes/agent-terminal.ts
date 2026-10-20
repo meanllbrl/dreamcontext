@@ -12,6 +12,7 @@ import { sendJson, sendError } from '../middleware.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cutProcessGroups, pathUnderAny } from '../../lib/automations/runner.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
+import { modelAlias, modelOptionsFrom } from '../../lib/model-list.js';
 import { foldJsonl } from '../../lib/jsonl-fold.js';
 import { tabSessionEnv } from '../../lib/session-origin.js';
 import { phoneTranscriptRefused } from '../phone-origin.js';
@@ -751,16 +752,6 @@ export function attachAgentTerminal(server: Server): void {
 //   • the user's defaults → `~/.claude/settings.json` (`model`, `effortLevel`).
 //   • a session's CURRENT model → the latest `message.model` in its transcript.
 
-/** Map any full model id / alias to our short alias bucket (opus/sonnet/haiku/fable). */
-function modelAlias(full: string): string {
-  const s = (full || '').toLowerCase();
-  if (s.includes('opus')) return 'opus';
-  if (s.includes('sonnet')) return 'sonnet';
-  if (s.includes('haiku')) return 'haiku';
-  if (s.includes('fable')) return 'fable';
-  return full || '';
-}
-
 function readJsonSafe(path: string): Record<string, unknown> | null {
   try { return JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>; } catch { return null; }
 }
@@ -810,23 +801,9 @@ async function readHomeJson(path: string): Promise<Record<string, unknown> | nul
 
 async function buildStaticModelConfig(): Promise<StaticModelConfig> {
   if (staticModelConfigCache) return staticModelConfigCache;
-  const globalJson = await readHomeJson(join(homedir(), '.claude.json')) ?? {};
-  const base: ModelOpt[] = [
-    { id: 'opus', label: 'Opus' },
-    { id: 'sonnet', label: 'Sonnet' },
-    { id: 'haiku', label: 'Haiku' },
-    { id: 'fable', label: 'Fable' },
-  ];
-  // Extra models the CLI itself has cached as available (e.g. Fable), deduped by alias.
-  const cache = globalJson.additionalModelOptionsCache;
-  const extras: ModelOpt[] = Array.isArray(cache)
-    ? cache
-        .map((m) => { const v = String((m as { value?: unknown })?.value ?? ''); const id = modelAlias(v); return { id, label: String((m as { label?: unknown })?.label ?? id) }; })
-        .filter((m) => m.id)
-    : [];
-  const seen = new Set(base.map((m) => m.id));
-  const models = [...base];
-  for (const e of extras) if (!seen.has(e.id)) { seen.add(e.id); models.push(e); }
+  // The base aliases plus the extras the CLI has cached (e.g. Fable): ONE list, shared with
+  // the AI Team's temporary-model check (`agentModelChoices`).
+  const models: ModelOpt[] = modelOptionsFrom(await readHomeJson(join(homedir(), '.claude.json')));
   const efforts = await parseEffortsFromCli();
   staticModelConfigCache = { models, efforts };
   return staticModelConfigCache;

@@ -106,7 +106,7 @@ describe("runAutomation picks the target, and an agent's call target needs a dir
       home, spawnImpl: spawn.impl, now: () => NOW, fireAt: NOW, target: 'agent',
     });
     expect(outcome.status).toBe('blocked');
-    expect(outcome.error).toContain('Scout needs approval on the Agents page');
+    expect(outcome.error).toContain('Scout needs approval on the AI Team page');
     expect(outcome.error).not.toContain('automations approve');
     expect(outcome.error).not.toContain('agents approve');
     expect(spawn.calls).toHaveLength(0);
@@ -256,7 +256,7 @@ describe('A5b: conversations never carry call settings, and a synced strip block
     for (const opts of [{ target: 'agent' as const }, {}]) {
       const outcome = await runAutomation(contextRoot, 'helper', { home, spawnImpl: spawn.impl, now: () => NOW, fireAt: NOW, ...opts });
       expect(outcome.status).toBe('blocked');
-      expect(outcome.error).toContain('needs approval on the Agents page');
+      expect(outcome.error).toContain('needs approval on the AI Team page');
     }
     expect(spawn.calls).toHaveLength(0);
     // The slot is empty, so the plain slug resolves to the same call target.
@@ -385,7 +385,7 @@ describe("an agent-target approval question, and a pending gate per target", () 
       home, spawnImpl: spawn.impl, now: () => NOW, fireAt: NOW, target: 'agent', task,
     });
     expect(again.status).toBe('awaiting-approval');
-    expect(again.error).toContain('answer it on the Agents page');
+    expect(again.error).toContain('answer it on the AI Team page');
     expect(again.error).not.toContain('dreamcontext');
 
     // The job's scheduled fire still runs.

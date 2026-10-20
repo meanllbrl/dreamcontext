@@ -54,10 +54,17 @@ import {
  *
  * NEVER IMPORTS `runner.ts` OR `verdict.ts` — they import this.
  *
- * THE THREAD FILE IS NEVER INJECTED INTO A PROMPT. It is a teammate-writable
- * synced file; treating it as an instruction source would make "anyone who can
- * push to the brain can steer a bypassPermissions run" true. It is a record to
- * be READ by humans and rendered by the dashboard, nothing else.
+ * THE THREAD FILE IS NEVER INJECTED INTO A PROMPT VERBATIM, AND NEVER FOR A
+ * SHARED AGENT. A shared thread is a teammate-writable synced file; treating it
+ * as an instruction source would make "anyone who can push to the brain can
+ * steer a bypassPermissions run" true. It is a record to be READ by humans and
+ * rendered by the dashboard.
+ *
+ * The one exception is `history.ts`: a PRIVATE agent's own recent agent/owner
+ * lines (its threads are gitignored, so only this machine writes them),
+ * flattened to plain text, capped, and fenced under a fresh nonce as a record
+ * that loses to the instructions. A shared agent, or a shared automation of a
+ * private one, contributes nothing.
  */
 
 // ─── Paths ───────────────────────────────────────────────────────────────────

@@ -66,7 +66,7 @@ export function subagentPrompt(m: AutomationManifest): string {
     'This is NOT your automation thread: nothing here is posted to the Agents channel and your scheduled runs never see it, so never',
     'use `dreamcontext automations post` or `say`.',
     '',
-    '--- WHO YOU ARE (your approved agent prompt, from the Agents page) ---',
+    '--- WHO YOU ARE (your approved agent prompt, from the AI Team) ---',
     'It tells you who you are and what you know how to do. Do work it describes only when',
     'the request asks for it.',
     '',
@@ -104,7 +104,7 @@ export function chatSubagents(contextRoot: string, opts: { exclude?: string; hom
   }
   const roster = [
     "## This project's agents",
-    'The owner made these agents on the Agents page. You can call any of them as a sub-agent: the Agent tool with `subagent_type` set',
+    'The owner made these agents on the AI Team page. You can call any of them as a sub-agent: the Agent tool with `subagent_type` set',
     'to its slug. When the owner names one ("ask the funnel agent…") or asks for its job, dispatch it with a complete, self-contained',
     'request, relay what it returns, and say which agent answered. Do its job yourself only when the owner asks you to.',
     ...callable.map((m) => `- \`${m.slug}\` ${nameOf(m)}: ${summaryOf(m)}`),

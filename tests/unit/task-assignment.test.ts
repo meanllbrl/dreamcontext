@@ -238,7 +238,7 @@ describe('prepareAssignment and commitAssignment', () => {
     expect(prep.ok).toBe(false);
     if (prep.ok) return;
     expect(prep.code).toBe('agent_not_approved_to_run');
-    expect(prep.message).toContain('Approve it on the Agents page.');
+    expect(prep.message).toContain('Approve it on the AI Team page.');
     expect(prep.message).not.toContain('dreamcontext');
     expect(prep.message).not.toContain('approve writer');
   });

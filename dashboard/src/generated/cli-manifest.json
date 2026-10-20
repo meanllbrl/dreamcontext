@@ -343,7 +343,8 @@
         "--review",
         "--whiteboard",
         "--agent",
-        "--job"
+        "--job",
+        "--answer"
       ]
     },
     {

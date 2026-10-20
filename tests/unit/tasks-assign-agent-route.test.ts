@@ -104,7 +104,7 @@ describe('POST /api/tasks/:slug/assign-agent', () => {
     expect(text).toContain('- Run ');
   });
 
-  it('409 for an agent approved only through its job, naming the Agents page; nothing written or run', async () => {
+  it('409 for an agent approved only through its job, naming the AI Team page; nothing written or run', async () => {
     createAgent(contextRoot, { slug: 'writer', title: 'Writer', prompt: 'Write.' });
     createAutomation(contextRoot, { slug: 'daily-notes', title: 'Daily notes', agent: 'writer', days: 'daily', at: '08:00' }, { approve: { now: NOW } });
     writeTask('fix-login');
@@ -113,7 +113,7 @@ describe('POST /api/tasks/:slug/assign-agent', () => {
     await handleTasksAssignAgent(req('POST', { agent: 'writer' }), res, { slug: 'fix-login' }, contextRoot);
     expect(status()).toBe(409);
     expect(body().error).toBe('agent_not_approved_to_run');
-    expect(String(body().message)).toContain('Agents page');
+    expect(String(body().message)).toContain('AI Team page');
     expect(String(body().message)).not.toContain('dreamcontext');
     expect(readFileSync(taskPath('fix-login'), 'utf-8')).toBe(before);
     expect(runAutomation).not.toHaveBeenCalled();

@@ -1,123 +1,14 @@
 /*
- * The Agents page: the roster on the left, one agent's profile docked on the right.
- *
- * The page reads as a team: a real page heading ("Team", the shared `.page-title`), the count
- * muted beside it, then one line on what an agent is. The roster is a team: portrait cards, then an "Add to team" seat. No filled accent on the
- * roster at all; the one filled button belongs to the open profile (Talk to it). The approval
- * chips (`agr-chip`) live here because the profile reuses them; the cards carry none.
+ * The roster card and its approval chips (`agr-*`), moved here from the retired Agents page
+ * (AI Team, 2026-10-20). The profile panel reuses the chips and the tag; the card itself is
+ * still the roster's own shape for any surface that lists agents as portraits.
  */
 
-.arp {
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  position: relative;
-  background: var(--color-bg);
-}
 
-.arp-roster {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--space-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.arp-head {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-}
-
-.arp-head-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.arp-titleline {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-3);
-}
-
-/* The shared page heading; the lead line below spaces it, not its own margin. */
-.page-title.arp-title {
-  margin: 0;
-}
-
-.arp-count {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-normal);
-  color: var(--color-text-secondary);
-}
-
-.arp-lead {
-  margin: 0;
-  max-width: 64ch;
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
-  color: var(--color-text-secondary);
-}
-
-.arp-note {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-}
-
-.arp-note--error {
-  color: var(--color-error-ink);
-}
-
-.arp-new {
-  flex-shrink: 0;
-  height: var(--space-10);
-  padding: 0 var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  cursor: pointer;
-  transition: border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
-}
-
-.arp-new:hover {
-  border-color: var(--color-border-hover);
-  background: var(--color-bg-secondary);
-}
-
-.arp-new:active {
-  transform: scale(0.98);
-}
-
-.arp-new:focus-visible,
 .agr-card:focus-visible {
   outline: 2px solid var(--color-border-focus);
   outline-offset: 2px;
 }
-
-/* ─── Roster: the team ─── */
-
-.arp-grid {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-24) * 2), 1fr));
-  gap: var(--space-4);
-}
-
-/* A portrait: face, name, role, soul, where it works, then the quiet state at the foot. */
 .agr-card,
 .agr-seat {
   width: 100%;
@@ -341,38 +232,9 @@
   font-weight: var(--font-weight-semibold);
 }
 
-/* ─── Toast ─── */
-
-.arp-toast {
-  position: absolute;
-  left: 50%;
-  bottom: var(--space-5);
-  transform: translateX(-50%);
-  max-width: calc(100% - var(--space-10));
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--color-text);
-  color: var(--color-bg);
-  font-size: var(--font-size-sm);
-  box-shadow: var(--shadow-lg);
-  z-index: 50;
-}
-
-/* Narrow window: the profile takes the page, the roster waits behind it. */
-@media (max-width: 52rem) {
-  .arp > .agp-panel {
-    position: absolute;
-    inset: 0 0 0 auto;
-    width: 100%;
-    border-left: 0;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .arp-new,
   .agr-card,
   .agr-seat { transition: none; }
-  .arp-new:active,
   .agr-card:active,
   .agr-seat:active { transform: none; }
 }

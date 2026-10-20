@@ -1257,7 +1257,7 @@ describe('automations bound to an agent (create picks an agent)', () => {
     await handleAutomationsCreate(makePostReqWithBody({ title: 'Daily scout', agent: 'scout' }), res, {}, contextRoot);
     expect(status()).toBe(409);
     expect(body().error).toBe('agent_unapproved');
-    expect(String(body().message)).toContain('Agents page');
+    expect(String(body().message)).toContain('AI Team page');
     expect(getAutomation(contextRoot, 'daily-scout')).toBeNull();
   });
 

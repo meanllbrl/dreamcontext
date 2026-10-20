@@ -24,11 +24,12 @@ const FILES = [
   'components/agents/AgentsFeedFilters.css',
   'components/agents/AgentMemberCard.css',
   'components/agents/AgentsMembers.css',
-  'pages/AutomationsPage.css',
+  // The AI Team page (2026-10-20), which replaced the Automations and Agents pages.
+  'pages/AiTeamPage.css',
   'components/automations/AutomationsDispatcherBar.css',
   'components/automations/AutomationsEmptyState.css',
-  // The team roster, the profile, the identity dialog and the face (agent soul task, T9).
-  'pages/AgentsPage.css',
+  // The profile, the identity dialog and the face (agent soul task, T9).
+  'components/agents/AgentRosterCard.css',
   'components/agents/AgentProfilePanel.css',
   'components/agents/AgentIdentityDialog.css',
   'components/agents/AgentAvatar.css',

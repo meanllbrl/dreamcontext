@@ -134,7 +134,7 @@ export function AgentProfilePopover({
             button that starts the same run from a profile card is a second,
             differently-worded way to say the same thing. */}
         <button type="button" className="agent-btn" onClick={() => { onEdit(summary.slug); onClose(); }}>Edit</button>
-        {/* Who it runs as is edited where that agent lives: its own profile on the Agents page. */}
+        {/* Who it runs as is edited where that agent lives: its own profile on the AI Team page. */}
         {face.of === 'agent' && (
           <button type="button" className="agent-btn" onClick={() => { requestOpenAgents({ slug: face.slug }); onClose(); }}>
             {t('automations.openAgent').replace('{name}', face.title)}

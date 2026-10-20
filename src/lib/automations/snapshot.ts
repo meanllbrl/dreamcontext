@@ -185,7 +185,7 @@ export function buildAutomationsSnapshot(
     const verdict = manifest.runKind === 'agent' ? null : checkApproval(projectRoot, manifest, opts.home, 'run');
     if (verdict && !verdict.approved) {
       blockedLines.push(
-        `- ${manifest.slug}: blocked pending approval (${verdict.reason}) — needs approval on the Automations page in the dashboard`,
+        `- ${manifest.slug}: blocked pending approval (${verdict.reason}) — needs approval on the AI Team page in the dashboard`,
       );
     }
 
@@ -228,7 +228,7 @@ export function buildAutomationsSnapshot(
     if (blockedSlugs.has(target.slug)) continue;
     if (checkApproval(projectRoot, target, opts.home, 'run').approved) continue;
     if (target.bindings.length > 0 && checkApproval(projectRoot, target, opts.home, 'identity').approved) continue;
-    agentLines.push(`- agent ${target.slug}: ${target.agentTitle || target.title} needs approval on the Agents page`);
+    agentLines.push(`- agent ${target.slug}: ${target.agentTitle || target.title} needs approval on the AI Team page`);
   }
   blockedLines.push(...agentLines);
 
