@@ -24,6 +24,7 @@ import { foreignRunEvidence, recordAutomationSession } from './session-registry.
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
 import { appendThreadEntry, plainPostText, readThreadRun } from './threads.js';
+import { buildRecentHistoryBlock, HISTORY_MAX_BYTES } from './history.js';
 import { fireSlotLabel, formatLocalFire, formatSchedule } from './schedule.js';
 import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
@@ -65,8 +66,10 @@ import {
   type AutomationManifest,
   type RunKind,
   type BoardTurnInput,
+  type EffortLevel,
   type RunEvent,
   type RunStatus,
+  type SpawnModelOverride,
   type ThreadSystemEvent,
 } from './types.js';
 
@@ -146,6 +149,28 @@ export function askClause(m: Pick<AutomationManifest, 'slug' | 'review'>): strin
     : ' This automation cannot stop to ask (review is off, so `propose` refuses): do not call it. ' +
       'When something needs the human, post what it is and what you recommend; they reply in the ' +
       'thread, and a command they must run goes in a run card.';
+}
+
+/**
+ * How a CONVERSATION sets up a routine (AI Team): the owner asks for something on a schedule,
+ * the agent proposes it with buttons and stops, and only the owner pressing the first one lets
+ * it run `automations create`. The CLI holds it to that: inside a run, `create` needs
+ * `--answer <question id>` naming this agent's routine proposal, answered with its first
+ * choice. `propose --routine` works in a conversation turn whatever `review` says, since the
+ * owner is right there; it is the one proposal a `review: off` agent may make.
+ *
+ * Only in the ask and thread-reply briefs. A scheduled run never sets up routines.
+ */
+export function routineClause(m: Pick<AutomationManifest, 'slug'> & Partial<Pick<AutomationManifest, 'agent'>>): string {
+  const agent = m.agent || m.slug;
+  return [
+    'ROUTINES: if they ask for something to happen on a schedule ("every morning", "each Monday"),',
+    'do not set it up yet. Propose it and stop (this works even when you cannot otherwise propose):',
+    `  dreamcontext automations propose ${m.slug} --routine --title "<routine name>" --body "<what it does, and when>" --choice "Set it up" --choice "Change it"`,
+    'Only after they press the FIRST choice, create it as yourself, naming that question:',
+    `  dreamcontext automations create <routine-slug> --agent ${agent} --answer <question id> --title "<routine name>" --job "<what it does>" --slot mon-fri@09:00`,
+    'Then post one line: what was set up and when it runs. Any other answer: change the proposal or drop it.',
+  ].join('\n');
 }
 
 /**
@@ -542,6 +567,10 @@ export function composePrompt(
   /** A task assigned to this agent (see {@link buildTaskAssignmentBlock}). Absent ⇒
    *  the prompt is exactly what it was before task assignment existed. */
   task?: TaskRef | null,
+  /** The agent's recent history (`buildRecentHistoryBlock`), built for the byte budget this
+   *  prompt has left. A function so the budget is known before the block is: the history
+   *  shrinks to fit, never the owner's message. Absent ⇒ no history block. */
+  history?: ((maxBytes: number) => string) | null,
 ): string {
   const parts = [
     buildPreamble(m, projectRoot, fireAt, outputPath, telegramChatId, board?.scope ?? null), '', m.prompt.trim(),
@@ -568,6 +597,9 @@ export function composePrompt(
   if (board?.refs) parts.push('', board.refs);
   const pattern = buildPatternBlock(m, board?.nonce);
   if (pattern) parts.push('', pattern);
+  // The agent's recent history goes right under its pattern: both are notes, both lose to
+  // everything approved above, and the owner's live message still comes after them.
+  const historyAt = parts.length;
   const learning = buildLearningDirective(m);
   if (learning) parts.push('', learning);
   // The assigned task: DATA under its own fresh nonce, after every approved block
@@ -585,6 +617,13 @@ export function composePrompt(
       : buildAskBlock(ask, m, board?.nonce)
     : '';
   if (askBlock) parts.push('', askBlock);
+  if (history) {
+    // Measured on the finished prompt, so the cap below never reaches the ask: a prompt
+    // with no room left gets no history at all.
+    const room = MAX_PROMPT_BYTES - Buffer.byteLength(parts.join('\n'), 'utf-8') - 2;
+    const block = room > 0 ? history(Math.min(room, HISTORY_MAX_BYTES)) : '';
+    if (block) parts.splice(historyAt, 0, '', block);
+  }
   return sanitizeAutomationPrompt(parts.join('\n'));
 }
 
@@ -696,7 +735,7 @@ function buildTaskNoteBlock(
  */
 export function buildAskBlock(
   ask: string,
-  m?: Pick<AutomationManifest, 'slug' | 'review'>,
+  m?: Pick<AutomationManifest, 'slug' | 'review'> & Partial<Pick<AutomationManifest, 'agent'>>,
   /** The turn's nonce in a board turn, so board text cannot forge this fence. */
   nonce?: string | null,
   /** `'task'` ⇒ the owner's note on a task assigned to this agent: no channel
@@ -734,6 +773,7 @@ export function buildAskBlock(
         'and stop. That is drawn as buttons; a question written as plain text has nothing to press.',
       ]
       : ['If something needs their go-ahead before it happens, do not do it: say so in your post and stop.']),
+    ...(m ? [routineClause(m)] : []),
     THREAD_BLOCKS.trim(),
     // The channel's `/` menu offers this project's skills and commands, so a `/name`
     // in the ask is a PICK from that menu, not punctuation. Inside a `-p` brief the
@@ -954,21 +994,47 @@ const CONTINUE_AFTER_SWITCH_PROMPT = [
   'exactly as the original instructions say, ending with the final document they ask for.',
 ].join(' ');
 
-/** Resume the run's own session under the same approved envelope (model, effort, scope). */
-export function buildContinueArgs(m: AutomationManifest, sessionId: string, scopeArgs?: readonly string[] | null): string[] {
-  return ['--resume', sessionId, ...buildClaudeArgs(m, CONTINUE_AFTER_SWITCH_PROMPT, scopeArgs)];
+/** Resume the run's own session under the same envelope (model, effort, scope) the run
+ *  started with, the owner's temporary model included. */
+export function buildContinueArgs(
+  m: AutomationManifest,
+  sessionId: string,
+  scopeArgs?: readonly string[] | null,
+  override?: SpawnModelOverride | null,
+): string[] {
+  return ['--resume', sessionId, ...buildClaudeArgs(m, CONTINUE_AFTER_SWITCH_PROMPT, scopeArgs, override)];
+}
+
+/**
+ * The model and effort a spawn runs on: the manifest's, unless the owner picked another for
+ * THIS message (the AI Team's temporary model). The pick is the owner typing right now, the
+ * same present-tense authority that lets their words into the prompt (`sayToAgent`); it is
+ * validated against the model list before it gets here and is never stored, so a scheduled
+ * fire, which carries no override, always runs on exactly what was approved.
+ */
+export function spawnModel(
+  m: Pick<AutomationManifest, 'model' | 'effort'>,
+  override?: SpawnModelOverride | null,
+): { model: string | null; effort: EffortLevel | null } {
+  return { model: override?.model || m.model, effort: override?.effort || m.effort };
 }
 
 /** `scopeArgs` (from `boardScopeArgs`) replace `--permission-mode bypassPermissions` for a
  *  home-board agent; absent, the argv is byte-for-byte what it always was. */
-export function buildClaudeArgs(m: AutomationManifest, prompt: string, scopeArgs?: readonly string[] | null): string[] {
+export function buildClaudeArgs(
+  m: AutomationManifest,
+  prompt: string,
+  scopeArgs?: readonly string[] | null,
+  override?: SpawnModelOverride | null,
+): string[] {
   const permission = scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
   const args = ['-p', prompt, ...permission, '--output-format', 'json'];
-  if (m.model) args.push('--model', m.model);
+  const { model, effort } = spawnModel(m, override);
+  if (model) args.push('--model', model);
   // `effort` is hashed alongside `model` (both execution-envelope levers on an
   // already-approved prompt) and, like `model`, is OMITTED ENTIRELY when
   // null — never a placeholder token — so `claude` picks its own default.
-  if (m.effort) args.push('--effort', m.effort);
+  if (effort) args.push('--effort', effort);
   return args;
 }
 
@@ -1468,6 +1534,9 @@ interface RunOptionsBase extends BoardTurnInput {
    *  `--note`), so it is data too. A task run keeps every flow and review gate:
    *  it is not a conversation even when `ask` carries the owner's note. */
   task?: TaskRef | null;
+  /** The owner's temporary model for THIS message (see {@link spawnModel}). Only a
+   *  person's ask sets it; the scheduler never does. */
+  override?: SpawnModelOverride | null;
   /** Injectable so no test spawns a real `claude /usage` while the account is picked. */
   probeUsage?: (configDir: string) => Promise<ProbeOutcome>;
 }
@@ -2155,6 +2224,11 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       // sentence that says the board could not be read.
       turn ? { ...turn, scope } : null,
       opts.task ?? null,
+      // What the agent and the owner said lately, private agents only. This fire's own
+      // entries (the ask that started it) are already in the prompt.
+      (maxBytes) => buildRecentHistoryBlock(contextRoot, manifest.agent, {
+        nonce: newTurnNonce(), now: nowFn(), totalBytes: maxBytes, excludeRunId: fireAt.toISOString(),
+      }),
     );
 
     // Steps 7–12 — spawn (detached, own process group), wire the host, collect,
@@ -2162,7 +2236,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // `executeClaudeDetached`; the sidecar and host wiring happen in `onSpawned`,
     // which it calls synchronously before any await for exactly that reason.
     const timeoutMs = manifest.timeoutMinutes * 60_000;
-    const claudeArgs = buildClaudeArgs(manifest, prompt, scopeArgs);
+    const claudeArgs = buildClaudeArgs(manifest, prompt, scopeArgs, opts.override);
     // Per-automation account PINNING stays out of scope by owner decision (no manifest field,
     // parser or UI for it): the account is the one `pickAutomationAccount` chose above, and a
     // limit met mid-run moves the run to the next one below. `firstSpawn` keeps the thread's
@@ -2297,7 +2371,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       // since there is nothing to continue and a resume of an empty session can fail.
       const sessionId = execution.result.sessionId;
       const args = sessionId && (execution.result.numTurns ?? 0) > 1
-        ? buildContinueArgs(manifest, sessionId, scopeArgs)
+        ? buildContinueArgs(manifest, sessionId, scopeArgs, opts.override)
         : claudeArgs;
       execution = await runOn(next, args, budgetMs);
     }

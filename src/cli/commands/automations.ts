@@ -62,6 +62,7 @@ import {
   threadUnread,
 } from '../../lib/automations/threads.js';
 import { approvalQuestionTarget, proposeFromRun, resumeWithAnswer } from '../../lib/automations/verdict.js';
+import { checkRoutineCreate, ownerInTurn, recordRoutineCreated } from '../../lib/automations/routine-gate.js';
 import { refuseSelfApproval } from './agents.js';
 import { logAssignmentResult } from '../../lib/agents/task-assignment.js';
 import { getAgent, setAgentShared } from '../../lib/agents/store.js';
@@ -227,7 +228,7 @@ function createBoundFromFlags(
   slug: string,
   opts: { title: string; slot: string[]; days?: string; at?: string; mode?: string; timeout?: string; catchup?: string;
     disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string },
-): void {
+): AutomationManifest | null {
   try {
     const agentSlug = (opts.agent ?? '').trim();
     const agentTarget = getRunTarget(root, agentSlug, 'agent');
@@ -265,8 +266,10 @@ function createBoundFromFlags(
     }, { approve: { now: new Date() } });
     success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}" (approved on this machine).`);
     if (opts.shared) printPublishedPaths(manifest.slug, shareWithAgent(root, manifest.slug, agentSlug));
+    return manifest;
   } catch (err) {
     handleAutomationsError(err);
+    return null;
   }
 }
 
@@ -830,15 +833,28 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--whiteboard <board>', 'Home this agent on a whiteboard (its slug): every run is scoped to that board')
     .option('--agent <slug>', 'Run as this existing agent (see `dreamcontext agents list`): the file holds only the job')
     .option('--job <text>', 'With --agent: what this automation asks of the agent, on top of its prompt')
+    .option(
+      '--answer <question-id>',
+      'Inside a run: the routine proposal (`propose --routine`) the owner answered with its first choice',
+    )
     .action((slug: string, opts: {
       title: string; slot: string[]; days?: string; at?: string; mode?: string; photo?: string; model?: string;
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
-      learning?: boolean; review?: string; whiteboard?: string; agent?: string; job?: string;
+      learning?: boolean; review?: string; whiteboard?: string; agent?: string; job?: string; answer?: string;
     }) => {
       const root = ensureContextRoot();
+      // A run sets up a routine only on the owner's yes (see routine-gate.ts). Checked before
+      // anything is parsed or written; a person at a terminal passes straight through.
+      const gate = checkRoutineCreate(root, { agent: opts.agent, answer: opts.answer });
+      if (!gate.ok) {
+        error(gate.reason);
+        process.exitCode = 1;
+        return;
+      }
       if (opts.agent !== undefined) {
-        createBoundFromFlags(root, slug, opts);
+        const created = createBoundFromFlags(root, slug, opts);
+        if (created) recordRoutineCreated(root, gate, created);
         return;
       }
       try {
@@ -1294,7 +1310,11 @@ export function registerAutomationsCommand(program: Command): void {
       collectChoice,
       [],
     )
-    .action((slug: string, opts: { title?: string; summary?: string; body?: string; bodyFile?: string; choice: string[] }) => {
+    .option(
+      '--routine',
+      'Propose a scheduled routine for yourself; the first choice sets it up (works in a conversation even with review off)',
+    )
+    .action((slug: string, opts: { title?: string; summary?: string; body?: string; bodyFile?: string; choice: string[]; routine?: boolean }) => {
       if (refuseOtherAgent(slug, 'propose')) return;
       const root = ensureContextRoot();
       try {
@@ -1304,7 +1324,13 @@ export function registerAutomationsCommand(program: Command): void {
         // when learning is off: a proposal nobody is watching for is a run
         // that stops and waits forever, and this automation's manifest says
         // plainly that it does not do that.
-        if (manifest.review === 'off') {
+        //
+        // The one exception is a ROUTINE proposed in a conversation turn: the owner
+        // started this turn by typing, so they are watching for the answer, and a
+        // routine is never set up without one (`create --answer`).
+        const conversationRoutine = !!opts.routine
+          && ownerInTurn(root, slug, process.env.DREAMCONTEXT_AUTOMATION_RUN);
+        if (manifest.review === 'off' && !conversationRoutine) {
           warn(`"${slug}" has review off — a proposal would be created that nothing is watching for.`);
           console.log(chalk.dim(`  Set \`review: agent\` in automations/${slug}.md, then re-approve (it is a hashed field).`));
           console.log(chalk.dim('  That applies to --choice too: buttons nobody is watching for are still nobody watching.'));
@@ -1339,9 +1365,15 @@ export function registerAutomationsCommand(program: Command): void {
           process.exitCode = 1;
           return;
         }
+        if (opts.routine && choices.length === 0) {
+          error('A routine proposal needs --choice: the first one sets the routine up.');
+          process.exitCode = 1;
+          return;
+        }
         const result = proposeFromRun(root, slug, {
           title: opts.title, summary: opts.summary, body,
           ...(choices.length > 0 ? { choices } : {}),
+          ...(opts.routine ? { routine: true } : {}),
         });
         if (!result.ok) {
           error(result.reason);
