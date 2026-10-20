@@ -193,7 +193,7 @@ export type ParkVerdict =
   | { ok: false; error: 'busy' | 'asking' | 'background' | 'focused' | 'refused' };
 /** `focusGraceMs`: how recently looked-at or typed-in counts as the owner's, as the server
  *  applies it (2 min; a verify run shortens it), capped at 2 min here. */
-export type ParkHandler = (req: { reason: string; focusGraceMs: number }) => ParkVerdict;
+export type ParkHandler = (req: { reason: string; focusGraceMs: number; end?: boolean; force?: boolean }) => ParkVerdict;
 export const PARK_FOCUS_GRACE_MS = 2 * 60_000;
 /** The grace a park frame asks for, never longer than {@link PARK_FOCUS_GRACE_MS}. */
 export function parkGraceOf(asked: unknown): number {
@@ -2418,11 +2418,16 @@ export function createChatSession(
       || conv.queued.length > 0
       || conv.subAgents.some((r) => r.status === 'running');
   }
-  function runPark(req: { id: string; reason: string; focusGraceMs?: number }): void {
+  function runPark(req: { id: string; reason: string; focusGraceMs?: number; end?: boolean; force?: boolean }): void {
     let verdict: ParkVerdict;
-    if (hasLiveWork()) verdict = { ok: false, error: session.asking ? 'asking' : session.busy ? 'busy' : 'background' };
+    // `force` (`super end --force`, only on the owner's word): live work does not refuse it.
+    if (!req.force && hasLiveWork()) verdict = { ok: false, error: session.asking ? 'asking' : session.busy ? 'busy' : 'background' };
     else {
-      try { verdict = parkHandler ? parkHandler({ reason: req.reason, focusGraceMs: parkGraceOf(req.focusGraceMs) }) : { ok: false, error: 'refused' }; }
+      try {
+        verdict = parkHandler
+          ? parkHandler({ reason: req.reason, focusGraceMs: parkGraceOf(req.focusGraceMs), ...(req.end ? { end: true } : {}), ...(req.force ? { force: true } : {}) })
+          : { ok: false, error: 'refused' };
+      }
       catch { verdict = { ok: false, error: 'refused' }; }
     }
     sendControl(verdict.ok

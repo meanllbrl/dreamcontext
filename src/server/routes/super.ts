@@ -27,6 +27,7 @@ import { activityOf, getChat } from '../../lib/assistant/chat-registry.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
+import { findParkable, parkChat, type ParkOutcome } from '../chat-park.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -217,7 +218,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '' };
       status.push({
         sessionId: sid,
-        status: e ? activityOf(e, now) : 'gone',
+        status: ch.endedAt !== undefined && !(e && activityOf(e, now) !== 'gone') ? 'ended' : e ? activityOf(e, now) : 'gone',
+        ...(ch.endedAt !== undefined ? { endedAt: ch.endedAt } : {}),
         elapsedMs: Math.max(0, now - ch.startedAt),
         lastLine: last ? wrapUntrusted(vault, last.length > 600 ? `${last.slice(0, 600)}…` : last) : '',
         asking: e?.pendingQuestion ? { requestId: e.pendingQuestion.requestId, kind: e.pendingQuestion.isPermission ? 'permission' : 'question' } : null,
@@ -298,6 +300,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       await writeSuper(root, (s) => {
         s.children[sid] = {
           sessionId: sid, brief: brief || title, adopted: false, startedAt: Date.now(),
+          ...(mode !== 'basic' ? { mode } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}),
           ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
         };
         delete s.notes[sid];
@@ -559,6 +562,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!requireHandedOver(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
+    if (c.state.children[child].endedAt !== undefined && !isLiveChat(child)) {
+      refuse(res, 409, 'ended', 'that child was ended; `dreamcontext super resume <child>` reopens the same conversation');
+      return;
+    }
     const text = typeof b.text === 'string' ? b.text : '';
     if (!text.trim()) { refuse(res, 400, 'invalid_args', 'text is required'); return; }
     if (text.length > MAX_TEXT) { refuse(res, 400, 'invalid_args', 'text is too long'); return; }
@@ -662,7 +669,159 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       throw err;
     }
   },
+
+  end: async (c, b, res) => {
+    if (!requireHandedOver(c, res)) return;
+    const force = b.force === true;
+    if (b.idle === true) {
+      // `--idle`: the list first; `--idle --yes` ends every one of them.
+      const now = Date.now();
+      const rows = Object.entries(c.state.children)
+        .filter(([, ch]) => ch.endedAt === undefined)
+        .map(([sid, ch]) => ({ sid, ch, status: childStatus(sid, now) }))
+        .filter((r) => r.status === 'idle' || r.status === 'gone');
+      const list = (r: typeof rows[number]) => ({ child: r.sid, status: r.status, brief: wrapUntrusted(vaultNameOf(c.who.contextRoot), r.ch.brief) });
+      const mine = rows.filter((r) => !r.ch.adopted);
+      const owners = rows.filter((r) => r.ch.adopted);
+      if (b.yes !== true) {
+        ok(res, {
+          idle: mine.map(list), ownersChats: owners.map(list),
+          next: mine.length ? 'run `dreamcontext super end --idle --yes` to end these (the owner\'s own chats stay)' : 'nothing idle to end',
+        });
+        return;
+      }
+      const results = [];
+      for (const r of mine) results.push(await endChild(c, r.sid, false));
+      ok(res, { ended: results.filter((x) => x.ended).map((x) => x.child), refused: results.filter((x) => !x.ended) });
+      return;
+    }
+    const raw = Array.isArray(b.children) ? b.children : typeof b.child === 'string' ? [b.child] : [];
+    const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string'))];
+    if (!ids.length || ids.length > MAX_CONTAINERS * 2) { refuse(res, 400, 'invalid_args', 'name the children to end (or --idle)'); return; }
+    for (const id of ids) {
+      if (!SESSION_ID_RE.test(id) || !hasChild(c.state, id)) {
+        refuse(res, 404, 'unknown_child', `${id.slice(0, 80)} is not one of your children (\`dreamcontext super state\` lists them)`);
+        return;
+      }
+    }
+    const results = [];
+    for (const id of ids) results.push(await endChild(c, id, force));
+    if (results.length === 1 && !results[0].ended) {
+      const r = results[0];
+      refuse(res, 409, r.reason ?? 'refused', r.message ?? 'the child was not ended', { child: r.child, ...(r.background ? { background: r.background } : {}) });
+      return;
+    }
+    ok(res, { ended: results.filter((x) => x.ended).map((x) => x.child), refused: results.filter((x) => !x.ended) });
+  },
+
+  resume: async (c, b, res) => {
+    if (!requireHandedOver(c, res)) return;
+    const child = childArg(c, b, res);
+    if (!child) return;
+    const root = c.who.contextRoot;
+    const ch = c.state.children[child];
+    if (isLiveChat(child)) {
+      if (ch.endedAt !== undefined) await writeSuper(root, (s) => { const x = s.children[child]; if (x) delete x.endedAt; });
+      ok(res, { child, resumed: false, running: true });
+      return;
+    }
+    const mode = str(b.mode) ?? ch.mode ?? 'basic';
+    if (!(MODES as readonly string[]).includes(mode)) { refuse(res, 400, 'invalid_args', `mode must be one of ${MODES.join(' | ')}`); return; }
+    const model = str(b.model) ?? ch.model;
+    if (model && !sanitizeModel(model)) { refuse(res, 400, 'invalid_args', 'model is not a model id'); return; }
+    const effort = str(b.effort) ?? ch.effort;
+    if (effort && !(EFFORTS as readonly string[]).includes(effort)) { refuse(res, 400, 'invalid_args', `effort must be one of ${EFFORTS.join(' | ')}`); return; }
+    // A resumed child is a live child again: the same cap as a delegate.
+    const room = delegationAllowed(c.state);
+    if (room.live >= room.max) {
+      refuse(res, 409, 'held', `${room.live} children are running (at most ${room.max}); end one first`, { held: true, live: room.live, max: room.max });
+      return;
+    }
+    if (!liveTranscriptPath(root, child)) { refuse(res, 404, 'no_transcript', 'that child has no transcript to resume'); return; }
+    const r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
+    if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 502, r.error, 'the window could not reopen the child'); return; }
+    let container: string | null = null;
+    await writeSuper(root, (s) => {
+      const x = s.children[child];
+      if (!x) return;
+      delete x.endedAt;
+      x.mode = mode === 'basic' ? undefined : mode;
+      if (model) x.model = model;
+      if (effort) x.effort = effort;
+      if (x.mode === undefined) delete x.mode;
+      container = ensureChatContainer(s, child, x.brief);
+    });
+    ok(res, { child, resumed: true, mode, ...(model ? { model } : {}), ...(effort ? { effort } : {}), container });
+  },
 };
+
+/** A child's registry status right now; `gone` when nothing runs it. */
+function childStatus(sid: string, now = Date.now()): string {
+  const e = getChat(sid);
+  return e ? activityOf(e, now) : 'gone';
+}
+
+function isLiveChat(sid: string): boolean {
+  return childStatus(sid) !== 'gone';
+}
+
+const END_REFUSALS: Partial<Record<ParkOutcome, string>> = {
+  busy: 'it is still working: wait for its turn to end (an idle event comes), or pass --force only if the owner asked',
+  asking: 'it waits on a question or a permission: settle that first, or pass --force only if the owner asked',
+  focused: 'the owner is looking at or typing in that chat right now; leave it to him',
+  exempt: 'that chat is never ended this way (the Assistant, the Super Agent or a phone holds it)',
+  refused: 'the window refused to close it',
+  no_answer: 'the window did not answer in time; check `dreamcontext super state` and try once more',
+};
+
+interface EndResult { child: string; ended: boolean; reason?: string; message?: string; background?: number; noProcess?: boolean }
+
+/**
+ * End one recorded child: park it with `end` (the window closes the tab, so no relaunch brings it
+ * back; the transcript stays), then record it ended: its card goes, its open queue items close, a
+ * done `ended` item records who, when and its last brief. A child with no process is only
+ * recorded (a dormant tab of it is closed by the window when the record arrives).
+ */
+async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<EndResult> {
+  const ch = c.state.children[sid];
+  if (!ch || sid === c.state.session) return { child: sid, ended: false, reason: 'unknown_child', message: 'not one of your children' };
+  if (ch.endedAt !== undefined && !isLiveChat(sid)) return { child: sid, ended: true, reason: 'already' };
+  if (ch.adopted && !force) {
+    return { child: sid, ended: false, reason: 'adopted', message: 'that is the owner\'s own chat (adopted at hand-over); end it only when he asks, with --force' };
+  }
+  let noProcess = false;
+  if (isLiveChat(sid)) {
+    const outcome = await parkChat(sid, 'super-end', { end: true, force }).catch((): ParkOutcome => 'refused');
+    if (outcome === 'background') {
+      const n = findParkable(sid)?.backgroundTasks() ?? 1;
+      return {
+        child: sid, ended: false, reason: 'background', background: n,
+        message: `${n} background task${n === 1 ? '' : 's'} (a shell, a dev server or a sub-agent) still run in it and would die; wait for them, or pass --force only if the owner asked`,
+      };
+    }
+    if (outcome !== 'parked' && outcome !== 'drained' && outcome !== 'already') {
+      return { child: sid, ended: false, reason: outcome, message: END_REFUSALS[outcome] ?? 'the child was not ended' };
+    }
+  } else {
+    noProcess = true;
+  }
+  const now = Date.now();
+  await writeSuper(c.who.contextRoot, (s) => {
+    const x = s.children[sid];
+    if (!x) return;
+    x.endedAt = now;
+    const cards = s.containers.filter((k) => k.kind === 'chat' && k.ref === sid).map((k) => k.id);
+    if (cards.length) {
+      leaveGroups(s, cards);
+      s.containers = s.containers.filter((k) => !cards.includes(k.id));
+    }
+    // Nothing of it is open any more (a forced end may have left a question or permission).
+    for (const q of s.queue) if (q.sessionId === sid && q.state !== 'done') q.state = 'done';
+    delete s.notes[sid];
+    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'ended', state: 'done', createdAt: now, brief: x.brief });
+  });
+  return { child: sid, ended: true, ...(noProcess ? { noProcess } : {}) };
+}
 
 /** POST /api/super/v/:verb */
 export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse, params: Params): Promise<void> {

@@ -29,7 +29,7 @@ const GUIDE = readFileSync(join(ROOT, GUIDE_REL), 'utf-8');
 const FLAT = GUIDE.replace(/\s+/g, ' ');
 
 /** Verbs and flags named by the guide that other branches are still adding. */
-const PENDING_COMMANDS = ['super pool', 'super ask', 'super end'];
+const PENDING_COMMANDS = ['super pool', 'super ask'];
 const PENDING_FLAGS = ['--from', '--task', '--mcp', '--options'];
 
 const program = createProgram();

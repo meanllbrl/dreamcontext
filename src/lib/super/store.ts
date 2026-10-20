@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
-  CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_PRESENT,
+  CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_ENDED_CHILDREN, MAX_PRESENT,
   MAX_OWNER_TEXT, MAX_QUEUE, MAX_REF, MAX_TITLE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, VIEW_MODES, defaultShape,
   SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
   type SuperChild, type SuperContainer, type SuperNote, type SuperQueueItem, type SuperState, type SuperView,
@@ -157,6 +157,11 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
       adopted: c.adopted === true,
       startedAt,
     };
+    const endedAt = finite(c.endedAt);
+    if (endedAt !== undefined) child.endedAt = endedAt;
+    if (c.mode === 'basic' || c.mode === 'plan' || c.mode === 'develop') child.mode = c.mode;
+    if (typeof c.model === 'string' && /^[A-Za-z0-9._[\]-]{1,60}$/.test(c.model)) child.model = c.model;
+    if (typeof c.effort === 'string' && /^(low|medium|high|xhigh|max)$/.test(c.effort)) child.effort = c.effort;
     // A worktree and its branch travel together; either one hostile drops both.
     if (c.worktree !== undefined || c.branch !== undefined) {
       if (acceptableWorktree(c.worktree, opts) && typeof c.branch === 'string' && SUPER_BRANCH_RE.test(c.branch)) {
@@ -166,6 +171,9 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     }
     out[key] = child;
   }
+  // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record.
+  const ended = Object.values(out).filter((c) => c.endedAt !== undefined).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+  for (const c of ended.slice(MAX_ENDED_CHILDREN)) delete out[c.sessionId];
   return out;
 }
 
@@ -189,6 +197,7 @@ function sanitizeQueue(raw: unknown): SuperQueueItem[] {
       id: q.id, sessionId: q.sessionId, kind: q.kind, state: q.state, createdAt,
       ...(requestId ? { requestId } : {}),
       ...(ownerText ? { ownerText } : {}),
+      ...(q.kind === 'ended' && typeof q.brief === 'string' ? { brief: stripControls(cap(q.brief, MAX_BRIEF) ?? '') } : {}),
       // How many delivered turns ended with the item unsettled (wave 2, M1).
       ...(typeof q.attempts === 'number' && Number.isInteger(q.attempts) && q.attempts > 0 ? { attempts: Math.min(q.attempts, 9) } : {}),
     });
@@ -364,7 +373,8 @@ function indexState(key: string, state: SuperState): void {
   index.set(key, {
     session: state.session,
     enabled: state.enabled,
-    children: new Set(Object.keys(state.children)),
+    // An ended child is history, not a child: no events, the notch shows it if reopened.
+    children: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined)),
     notes,
   });
 }

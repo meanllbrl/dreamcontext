@@ -120,7 +120,7 @@ export function registerSuperCommand(program: Command): void {
     .action((container: string) => run('float', { container }));
 
   s.command('close <card>')
-    .description('Close a card (a child chat keeps running)')
+    .description('Close a card (a child chat keeps running; `super end` ends it)')
     .action((container: string) => run('close', { container }));
 
   s.command('group <cards...>')
@@ -146,6 +146,24 @@ export function registerSuperCommand(program: Command): void {
     .option('--text <text>', 'A free-text answer instead of an option')
     .action((child: string, requestId: string, choice: string[], o: { text?: string }) =>
       run('answer', { child, requestId, choices: choice, text: o.text }));
+
+  s.command('end [children...]')
+    .description('End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks')
+    .option('--idle', 'List the idle children you started; add --yes to end them all')
+    .option('--yes', 'With --idle: end every listed child')
+    .option('--force', 'ONLY when the owner asked: end it even while it works, asks or runs background tasks, or when it is his own chat')
+    .action((children: string[], o: { idle?: boolean; yes?: boolean; force?: boolean }) => {
+      if (!o.idle && children.length === 0) return usage('name the children to end, or pass --idle');
+      return run('end', o.idle ? { idle: true, yes: o.yes === true } : { children, force: o.force === true });
+    });
+
+  s.command('resume <child>')
+    .description('Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others')
+    .option('--mode <mode>', 'basic | plan | develop')
+    .option('--model <id>', 'Model id or alias')
+    .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .action((child: string, o: { mode?: string; model?: string; effort?: string }) =>
+      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort }));
 
   s.command('send <child> <text>')
     .description('Send a message into a child chat (steered into its running turn; queued only while it asks)')
