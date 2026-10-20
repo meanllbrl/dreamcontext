@@ -220,9 +220,14 @@ describe('sectionHeadingName: the one rule every section reader shares', () => {
 
   it('decides a 100k-character line in linear time (the regex took 1.9 s at 20k)', () => {
     for (const line of [`## ${' '.repeat(100_000)}\rx\r`, `##${' \t'.repeat(50_000)}\u2028`, `## ${'a'.repeat(100_000)}\r`]) {
-      const t = performance.now();
-      sectionHeadingName(line);
-      expect(performance.now() - t).toBeLessThan(50);
+      // Best of three: backtracking is slow every time, a GC pause under load is not.
+      let best = Infinity;
+      for (let attempt = 0; attempt < 3 && best >= 50; attempt++) {
+        const t = performance.now();
+        sectionHeadingName(line);
+        best = Math.min(best, performance.now() - t);
+      }
+      expect(best).toBeLessThan(50);
     }
   });
 });

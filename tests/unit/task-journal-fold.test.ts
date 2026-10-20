@@ -105,10 +105,15 @@ describe('0.33.0 headings', () => {
  * 500-blank line, 49 s at 4,000); the marker pattern was quadratic on any blank run.
  */
 describe('0.33.0 shape on hostile input', () => {
+  // Best of three: a backtracking pattern is slow on every attempt, while one GC pause or a
+  // descheduled worker under a full parallel run (seen once at 100k) is not a regression.
   const within = (ms: number, fn: () => unknown) => {
-    const t = performance.now();
-    fn();
-    return performance.now() - t < ms;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const t = performance.now();
+      fn();
+      if (performance.now() - t < ms) return true;
+    }
+    return false;
   };
   const hostile = (n: number) => [
     `### 2026-01-01 - ${' '.repeat(n)}x`,
