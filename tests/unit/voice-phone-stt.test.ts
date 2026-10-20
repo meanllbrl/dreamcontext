@@ -21,13 +21,15 @@ import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
 import { MAC_DENIED_API_ROUTES, phoneAllows, setPhoneSurfaceForTests } from '../../dashboard/src/lib/phoneSurface.js';
 
 /** A PCM16 mono WAV of `seconds` at `rate`, with an honest (or a lying) data size. */
-function wav(seconds: number, rate = 16_000, declared?: number): Buffer {
-  const n = Math.round(seconds * rate) * 2;
+function wav(seconds: number, rate = 16_000, declared?: number, o: { byteRate?: number; bits?: number } = {}): Buffer {
+  const bits = o.bits ?? 16;
+  const align = bits / 8;
+  const n = Math.round(seconds * rate) * align;
   const h = Buffer.alloc(44);
   h.write('RIFF', 0); h.writeUInt32LE(36 + n, 4); h.write('WAVE', 8); h.write('fmt ', 12);
   h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
-  h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32);
-  h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(declared ?? n, 40);
+  h.writeUInt32LE(rate, 24); h.writeUInt32LE(o.byteRate ?? rate * align, 28); h.writeUInt16LE(align, 32);
+  h.writeUInt16LE(bits, 34); h.write('data', 36); h.writeUInt32LE(declared ?? n, 40);
   return Buffer.concat([h, Buffer.alloc(n)]);
 }
 
@@ -93,9 +95,16 @@ afterEach(() => {
 });
 
 describe('wavSeconds (the phone take\'s length, from its own header)', () => {
-  it('reads a PCM WAV\'s duration', () => {
+  it('reads the recorder\'s format (PCM mono 16 kHz 16-bit)', () => {
     expect(wavSeconds(wav(2))).toBeCloseTo(2, 5);
-    expect(wavSeconds(wav(1.5, 48_000))).toBeCloseTo(1.5, 5);
+  });
+  it('a forged byteRate cannot shrink a take: the length comes from rate x block align (review r1)', () => {
+    expect(wavSeconds(wav(130, 16_000, undefined, { byteRate: 0x7fffffff }))).toBeCloseTo(130, 3);
+  });
+  it('any other format is refused, not measured: another rate, 8-bit, 8 kHz', () => {
+    expect(wavSeconds(wav(1.5, 48_000))).toBeNull();
+    expect(wavSeconds(wav(1, 8_000, undefined, { bits: 8 }))).toBeNull();
+    expect(wavSeconds(wav(1, 16_000, undefined, { bits: 8 }))).toBeNull();
   });
   it('a declared size smaller than the bytes present counts the bytes (no smuggling)', () => {
     expect(wavSeconds(wav(10, 16_000, 32))).toBeCloseTo(10, 3);
@@ -185,5 +194,20 @@ describe('the route policy opens exactly one voice route (AC2)', () => {
         expect(phoneAllows(m, p)).toBe(false);
       }
     } finally { setPhoneSurfaceForTests(null); }
+  });
+});
+
+describe('a forged header over the tunnel (review r1)', () => {
+  it('a phone take with a forged byteRate past 2 minutes is refused before whisper runs', async () => {
+    const r = makeRes();
+    await handleVoiceStt(makeReq(wav(PHONE_MAX_STT_SECONDS + 5, 16_000, undefined, { byteRate: 0x7fffffff }), true), r.res, {}, home);
+    expect(r.status()).toBe(413);
+    expect(inference).not.toHaveBeenCalled();
+  });
+  it('a phone take in an 8 kHz 8-bit shape is refused', async () => {
+    const r = makeRes();
+    await handleVoiceStt(makeReq(wav(3, 8_000, undefined, { bits: 8 }), true), r.res, {}, home);
+    expect(r.status()).toBe(413);
+    expect(inference).not.toHaveBeenCalled();
   });
 });

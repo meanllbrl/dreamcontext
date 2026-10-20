@@ -44,12 +44,24 @@ export function useAgentCapabilities() {
 /**
  * The hands-free phone's hold-to-talk (task the-hands-free-phone-sends-a-voice-message…): on Mac
  * mode's phone only, and only while the Mac has local dictation installed — its takes are
- * transcribed there (`POST /api/agent/voice/stt`, the one voice route the phone reaches). The
- * capabilities query is the shared one, so this costs no request of its own.
+ * transcribed there (`POST /api/agent/voice/stt`, the one voice route the phone reaches).
+ *
+ * Every chat pane calls this, so it is a PASSIVE reader of the shared capabilities cache: off the
+ * phone it never fetches (`enabled: false`), and it runs no interval of its own anywhere (one
+ * timer per mounted pane would multiply the poll). The surface's own subscriber keeps the cache
+ * fresh; a pane mounting over a stale entry refreshes it once.
  */
 export function usePhoneDictation(): boolean {
-  const { data } = useAgentCapabilities();
-  return isMacPhoneSurface() && data?.dictation === true;
+  const api = useApi();
+  const phone = isMacPhoneSurface();
+  const { data } = useQuery({
+    queryKey: ['agent-capabilities'],
+    queryFn: () => api.get<Capabilities>('/agent/capabilities'),
+    enabled: phone,
+    staleTime: 30_000,
+    retry: false,
+  });
+  return phone && data?.dictation === true;
 }
 
 /**

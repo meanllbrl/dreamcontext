@@ -15,9 +15,24 @@ describe('the phone composer\'s mic', () => {
   it('is on only on Mac mode\'s phone and only while the Mac reports dictation installed (AC3)', () => {
     const hook = code('dashboard/src/hooks/useAgentCapabilities.ts');
     const fn = hook.slice(hook.indexOf('export function usePhoneDictation'), hook.indexOf('export function isSleepAgentReady'));
-    expect(fn).toMatch(/return isMacPhoneSurface\(\) && data\?\.dictation === true;/);
+    expect(fn).toMatch(/return phone && data\?\.dictation === true;/);
+    expect(fn).toMatch(/const phone = isMacPhoneSurface\(\);/);
     const caps = code('src/server/routes/agent-terminal.ts');
     expect(caps).toMatch(/dictation: desktop && findWhisper\(\) !== null,/);
+  });
+
+  it('reads the capabilities cache passively: no fetch off the phone, no interval per pane (review r1)', () => {
+    const hook = code('dashboard/src/hooks/useAgentCapabilities.ts');
+    const fn = hook.slice(hook.indexOf('export function usePhoneDictation'), hook.indexOf('export function isSleepAgentReady'));
+    expect(fn).toMatch(/queryKey: \['agent-capabilities'\]/);
+    expect(fn).toMatch(/enabled: phone,/);
+    expect(fn).not.toMatch(/refetchInterval/);
+  });
+
+  it('a hold on a touch screen is never a scroll, zoom, selection or callout (review r1)', () => {
+    const css = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/chat/composer.css'), 'utf-8');
+    const rule = css.slice(css.lastIndexOf('.chat-cmp-mic {'));
+    for (const d of ['touch-action: none;', 'user-select: none;', '-webkit-user-select: none;', '-webkit-touch-callout: none;']) expect(rule).toContain(d);
   });
 
   it('turns the existing push-to-talk on with ONE added term on the gate line (AC1, AC5)', () => {
