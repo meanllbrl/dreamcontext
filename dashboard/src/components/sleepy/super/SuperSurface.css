@@ -49,7 +49,24 @@
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: var(--color-bg);
+  background-color: var(--color-bg);
+}
+/* The stage (2026-10-20, "Cam HUD"): a faint dot grid on the 24 px rhythm and a quiet accent
+   haze behind the centre. Static, on its OWN compositor layer: painted as the surface's own
+   background, the two gradients were re-rastered on every frame of a layout switch (measured: one
+   dropped frame per half switch); as a layer it is rastered once and only composited. */
+.super-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(52% 46% at 50% 52%, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 70%),
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-text) 7%, transparent) 1px, transparent 1.4px);
+  background-size: 100% 100%, 24px 24px;
+  background-position: 0 0, 12px 12px;
+  will-change: transform;
 }
 .super-stage-under,
 .super-stage-layer {
@@ -337,8 +354,9 @@
 .super-web-placeholder { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; }
 .super-web-title { font-size: var(--font-size-sm); color: var(--color-text-secondary); word-break: break-all; }
 
-/* ── Others (O4-O6): a small stack in the bottom-right corner, a fan list above it ── */
+/* ── Others (O4-O6, 2026-10-20): the stage's own group, docked bottom-right; it opens the panel ── */
 .super-others { position: absolute; z-index: 40; }
+.super-others[data-open] { z-index: 92; }
 .super-others-stack {
   position: relative;
   display: flex;
@@ -346,16 +364,17 @@
   gap: 8px;
   width: 100%;
   height: 100%;
-  padding: 0 12px 0 8px;
+  padding: 0 8px 0 12px;
   border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 7%, transparent), var(--shadow-md);
   color: var(--color-text);
   font-size: var(--font-size-sm);
   cursor: pointer;
 }
 .super-others-stack:hover { border-color: var(--color-border-hover); }
+.super-others-stack[aria-expanded='true'] { border-color: var(--color-accent); }
 .super-others-stack:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .super-others-sheets { position: relative; flex: none; width: 22px; height: 18px; }
 .super-others-sheets > span {
@@ -363,67 +382,32 @@
   width: 16px;
   height: 12px;
   border-radius: 3px;
-  border: 1px solid var(--color-border-hover);
-  background: var(--color-bg-secondary);
+  border: 1px solid color-mix(in srgb, var(--color-text) 30%, transparent);
+  background: var(--color-bg-elevated);
 }
-.super-others-sheets > span:nth-child(1) { left: 6px; top: 0; }
-.super-others-sheets > span:nth-child(2) { left: 3px; top: 3px; }
-.super-others-sheets > span:nth-child(3) { left: 0; top: 6px; background: var(--color-bg-elevated); }
+.super-others-sheets > span:nth-child(1) { left: 6px; top: 0; opacity: 0.5; }
+.super-others-sheets > span:nth-child(2) { left: 3px; top: 3px; opacity: 0.75; }
+.super-others-sheets > span:nth-child(3) { left: 0; top: 6px; }
 .super-others-name { flex: 1 1 auto; min-width: 0; text-align: left; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-others-dots { flex: none; display: flex; gap: 4px; }
+.super-others-dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: color-mix(in srgb, var(--color-text) 30%, transparent); }
+.super-others-dot[data-status='working'] { background: var(--color-accent); }
+.super-others-dot[data-status='asking'] { background: var(--mood-waiting); }
 .super-others-count {
   flex: none;
   min-width: 20px;
   height: 20px;
   padding: 0 6px;
   border-radius: var(--radius-full);
-  background: var(--color-bg-tertiary);
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   line-height: 20px;
   text-align: center;
 }
 .super-others-stack[data-asking] .super-others-count { background: color-mix(in srgb, var(--mood-waiting) 20%, transparent); color: var(--mood-waiting); }
-.super-others-fan {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  width: 260px;
-  max-height: min(60vh, 420px);
-  overflow: auto;
-  margin: 0;
-  padding: 6px;
-  list-style: none;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  box-shadow: var(--shadow-lg);
-  transform-origin: 100% 100%;
-  animation: super-fan-in 160ms ease-out;
-}
-.super-others-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: none;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-  touch-action: none;
-}
-.super-others-item:hover,
-.super-others-item:focus-visible { background: var(--color-bg-tertiary); outline: none; }
-.super-others-glyph { flex: none; color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
-.super-others-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.super-others-dot { flex: none; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--kind-color); }
-.super-others-dot[data-status='working'] { --kind-color: var(--color-success); }
-.super-others-dot[data-status='asking'] { --kind-color: var(--mood-waiting); }
 /* The corner a dragged card is dropped into (lit while the pointer is over it). */
 .super-others-zone {
   position: absolute;
@@ -437,6 +421,333 @@
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 .super-others-zone[data-lit] { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+
+/* ── Tiles (owner decision 2026-10-20, direction "Cam HUD") ─────────────────
+   Every floating card is ONE 1:1 glass tile: a status ring and its kind on top, the title, what
+   it does, telemetry in mono at the foot. Corner brackets light while it works or asks. A group
+   is a tile on a deck of sheets. Tokens only; nothing here moves on its own. */
+.super-card-frame[data-where='float'],
+.super-card-frame[data-where='float'] .super-card-clip { border-radius: var(--radius-xl); }
+.super-card-frame[data-where='float']::before,
+.super-card-frame[data-where='float']::after { border-radius: var(--radius-xl); }
+.super-card-frame[data-where='float'] .super-card-clip,
+.super-panel-clip {
+  border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--color-bg-elevated) 88%, var(--color-text) 6%) 0%, color-mix(in srgb, var(--color-bg-elevated) 92%, transparent) 100%), var(--color-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 8%, transparent), var(--shadow-md);
+}
+.super-tile {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 12px;
+  color: var(--color-text);
+}
+.super-tile-corners {
+  position: absolute;
+  inset: 4px;
+  pointer-events: none;
+  opacity: 0;
+  --c: var(--color-accent);
+  --l: 8px;
+  --t: 2px;
+  background:
+    linear-gradient(var(--c), var(--c)) left top / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) left top / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right top / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) right top / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) left bottom / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) right bottom / var(--t) var(--l) no-repeat;
+  transition: opacity 400ms ease-out;
+}
+.super-tile[data-kind='working'] .super-tile-corners { opacity: 0.85; }
+.super-tile[data-kind='asking'] .super-tile-corners { opacity: 0.9; --c: var(--mood-waiting); }
+.super-tile-top { display: flex; align-items: center; gap: 8px; min-height: 20px; min-width: 0; }
+.super-tile-kind {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+.super-tile-glyph {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+}
+.super-tile-asks {
+  margin-left: auto;
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--mood-waiting) 18%, transparent);
+  color: var(--mood-waiting);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  font-weight: 700;
+  line-height: 20px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.super-tile-title,
+.super-tile-name {
+  font-size: calc(var(--font-size-sm) - 1px);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.1px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.super-tile-name { font-family: var(--font-family-display); font-size: var(--font-size-base); font-weight: 700; -webkit-line-clamp: 1; }
+.super-tile-line {
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.super-tile-line--one { -webkit-line-clamp: 1; }
+.super-tile-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.super-tile-foot--name { font-family: var(--font-family-text); font-size: var(--font-size-xs); color: var(--color-text-secondary); white-space: normal; }
+.super-tile-state { color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
+.super-tile[data-kind='working'] .super-tile-state { color: var(--color-accent); }
+.super-tile[data-kind='asking'] .super-tile-state { color: var(--mood-waiting); }
+.super-tile[data-kind='ready'] .super-tile-state { color: var(--color-success); }
+.super-tile[data-kind='ended'] .super-tile-state { color: var(--color-error); }
+.super-tile-chip {
+  margin-left: auto;
+  flex: none;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-text) 9%, transparent);
+  color: var(--color-text-secondary);
+  line-height: 16px;
+}
+.super-tile-count {
+  margin-left: auto;
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+.super-tile[data-kind='asking'] .super-tile-count { background: color-mix(in srgb, var(--mood-waiting) 22%, transparent); color: var(--mood-waiting); }
+/* The status ring: colour is the state, the mark says it again. */
+.super-ring { flex: none; --ring: var(--color-text-tertiary); }
+.super-ring[data-kind='working'] { --ring: var(--color-accent); }
+.super-ring[data-kind='asking'] { --ring: var(--mood-waiting); }
+.super-ring[data-kind='ready'] { --ring: var(--color-success); }
+.super-ring[data-kind='starting'] { --ring: var(--color-warning); }
+.super-ring[data-kind='ended'] { --ring: var(--color-error); }
+.super-ring-track { stroke: color-mix(in srgb, var(--color-text) 12%, transparent); }
+.super-ring-arc { stroke: var(--ring); }
+.super-ring-mark { fill: var(--ring); }
+.super-ring-check { stroke: var(--ring); }
+/* A task: how far its criteria are, and the next one. */
+.super-tile-status-dot { margin-left: auto; flex: none; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--color-text-tertiary); }
+.super-tile-status-dot[data-status='in_progress'] { background: var(--color-status-in-progress); }
+.super-tile-status-dot[data-status='in_review'] { background: var(--color-status-in-review); }
+.super-tile-status-dot[data-status='completed'] { background: var(--color-status-completed); }
+.super-tile-status-dot[data-status='todo'] { background: var(--color-status-todo); }
+.super-tile-status { text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-secondary); }
+.super-tile-progress { display: flex; align-items: center; gap: 8px; }
+.super-tile-bar { flex: 1 1 auto; height: 4px; border-radius: var(--radius-full); background: color-mix(in srgb, var(--color-text) 10%, transparent); overflow: hidden; }
+.super-tile-bar-fill { display: block; height: 100%; background: var(--color-accent); transform-origin: 0 50%; }
+.super-tile-progress-text { flex: none; font-family: var(--font-mono); font-size: var(--font-size-2xs); color: var(--color-text-secondary); }
+.super-tile-next { color: var(--color-text-secondary); }
+/* An insight: its number. */
+.super-tile-value { margin-top: 4px; font-family: var(--font-family-display); font-size: var(--font-size-xl); font-weight: 700; line-height: 1; letter-spacing: -0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-tile-delta { font-family: var(--font-mono); font-size: var(--font-size-2xs); font-weight: 600; color: var(--color-text-secondary); }
+.super-tile-delta[data-dir='up'] { color: var(--color-success); }
+.super-tile-delta[data-dir='down'] { color: var(--color-error); }
+/* An image: the picture is the tile. */
+.super-tile--image { padding: 0; }
+.super-tile-picture { position: absolute; inset: 0; overflow: hidden; }
+.super-tile-picture :is(img, .viewer-media) { width: 100%; height: 100%; object-fit: cover; display: block; }
+.super-tile--image .super-tile-top {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 2px 8px 2px 2px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-bg) 78%, transparent);
+}
+.super-tile-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 24px 12px 12px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--color-bg) 92%, transparent));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A group: its name and its first cards. */
+.super-tile-members { list-style: none; margin: auto 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.super-tile-members li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); white-space: nowrap; }
+.super-tile-member { overflow: hidden; text-overflow: ellipsis; }
+.super-tile-mini { flex: none; width: 12px; text-align: center; font-size: var(--font-size-2xs); color: var(--color-text-tertiary); }
+.super-tile-more { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: var(--font-size-2xs); }
+/* The deck under a group: two sheets peeking above its tile (outside the clip, behind it). */
+.super-tile-sheet {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: -8px;
+  bottom: 8px;
+  z-index: -1;
+  border-radius: var(--radius-xl);
+  border: 1px solid color-mix(in srgb, var(--color-text) 13%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 86%, var(--color-text) 6%);
+  pointer-events: none;
+}
+.super-tile-sheet--far { left: 16px; right: 16px; top: -12px; bottom: 12px; z-index: -2; opacity: 0.7; }
+
+/* ── Grouping: a held card over a tile (2026-10-20) ─────────────────────────
+   The target shrinks a little inside its frame (the frame's transform belongs to the layout
+   motion) and a ring fades in; a label above it says what releasing does. */
+.super-card-clip { transition: transform 120ms ease-out; }
+.super-card-frame[data-drop-target] .super-card-clip { transform: scale(0.94); }
+.super-drop-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: calc(var(--radius-xl) + 4px);
+  box-shadow: 0 0 0 2px var(--color-accent), 0 0 0 8px color-mix(in srgb, var(--color-accent) 18%, transparent), 0 0 36px color-mix(in srgb, var(--color-accent) 30%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.super-card-frame[data-drop-target] .super-drop-ring { opacity: 1; }
+.super-drop-label {
+  position: absolute;
+  z-index: 1001;
+  transform: translate(-50%, -100%);
+  height: 24px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 24px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+.super-card-frame[data-lifted] .super-card-clip { background: var(--color-bg-elevated); }
+
+/* ── An open group, or Others: a scrim and the panel the tile grows into ─── */
+.super-panel-scrim { position: absolute; inset: 0; z-index: 80; background: color-mix(in srgb, var(--color-bg) 62%, transparent); }
+/* A card being dragged out: the panel stays mounted (its item holds the pointer), not drawn. */
+:is(.super-panel-scrim, .super-group-panel)[data-hidden] { opacity: 0; pointer-events: none; }
+.super-group-panel {
+  position: absolute;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  transform-origin: 0 0;
+  border-radius: var(--radius-2xl);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
+  background: linear-gradient(165deg, color-mix(in srgb, var(--color-bg-elevated) 94%, var(--color-text) 5%), var(--color-bg-elevated));
+  box-shadow: var(--shadow-xl), 0 0 40px color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+.super-group-panel-head { height: 48px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; min-width: 0; }
+.super-group-panel-head .super-tile-count { margin-left: 0; }
+.super-group-panel-title { font-family: var(--font-family-display); font-size: var(--font-size-base); font-weight: 700; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.super-group-panel-hint { flex: 1 1 auto; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.super-group-panel-btn {
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+.super-group-panel-btn:hover { border-color: var(--color-border-hover); color: var(--color-text); }
+.super-group-panel-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-group-panel-grid { display: grid; gap: 16px; padding: 0 16px 16px; grid-auto-rows: var(--super-tile, 160px); }
+.super-panel-item {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  border-radius: var(--radius-xl);
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+.super-panel-item:focus-visible .super-panel-clip { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-panel-tile { position: absolute; inset: 0; isolation: isolate; border-radius: var(--radius-xl); }
+.super-panel-clip { position: absolute; inset: 0; display: flex; flex-direction: column; border-radius: var(--radius-xl); overflow: hidden; }
+.super-panel-tile[data-status='working'] .super-panel-clip { box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 60%, transparent), 0 0 24px 2px color-mix(in srgb, var(--color-accent) 28%, transparent); }
+.super-panel-tile[data-status='asking'] .super-panel-clip { box-shadow: 0 0 0 1px color-mix(in srgb, var(--mood-waiting) 65%, transparent), 0 0 24px 2px color-mix(in srgb, var(--mood-waiting) 30%, transparent); }
+.super-panel-item .super-tile { pointer-events: none; user-select: none; }
+
+/* Over a task's page side by side: status, priority, how far its criteria are. */
+.super-card-view--page { overflow: auto; }
+.super-page-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px 0; }
+.super-page-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-transform: capitalize;
+}
+.super-page-chip .super-tile-status-dot { margin-left: 0; }
+.super-page-progress { display: inline-flex; align-items: center; gap: 8px; width: 160px; }
+
+/* ── The orbit: a faint, static arc through each side's tiles, under the centre ── */
+.super-orbit { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none; overflow: visible; }
+.super-orbit-stop { stop-color: var(--color-accent); }
 
 /* ── The queue pill (F7): centred in the top band, grows downward as an overlay ── */
 .super-queue-strip {
@@ -617,27 +928,24 @@
   50% { opacity: 0.45; transform: scale(0.8); }
 }
 
-@keyframes super-fan-in {
-  from { opacity: 0; transform: translateY(6px) scale(0.98); }
-  to { opacity: 1; transform: none; }
-}
 @keyframes super-pill-in {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: none; }
 }
 
 /* Light mode: the pill and the fan appear without moving (a crossfade-only surface). */
-:root[data-light='true'] .super-others-fan,
 :root[data-light='true'] .super-queue-head { animation: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .super-card-dot { animation: none !important; }
-  .super-others-fan,
   .super-queue-head { animation: none; }
   .super-centre::before,
   .super-centre::after,
   .super-card-frame::before,
   .super-card-frame::after,
   .super-card-lift,
-  .super-card-actions { transition: none; }
+  .super-card-actions,
+  .super-card-clip,
+  .super-drop-ring,
+  .super-tile-corners { transition: none; }
 }

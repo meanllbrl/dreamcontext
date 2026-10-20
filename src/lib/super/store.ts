@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_PRESENT,
   MAX_OWNER_TEXT, MAX_QUEUE, MAX_REF, MAX_TITLE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, VIEW_MODES, defaultShape,
-  SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState,
+  SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
   type SuperChild, type SuperContainer, type SuperNote, type SuperQueueItem, type SuperState, type SuperView,
 } from './types.js';
 
@@ -207,7 +207,9 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
   if (!isRecord(raw) || raw.v !== SUPER_STATE_VERSION) return base;
   const session = typeof raw.session === 'string' && okSessionId(raw.session) ? raw.session : null;
   const children = sanitizeChildren(raw.children, session, opts);
-  const containers = sanitizeContainers(raw.containers);
+  // Groups settle against the cards (a closed card leaves its group, a group of one dissolves
+  // into its card), so they come back with the cards they may have changed.
+  const { containers, groups } = normalizeGroups(sanitizeContainers(raw.containers), raw.groups);
   const notes: Record<string, SuperNote> = {};
   if (isRecord(raw.notes)) {
     for (const [k, n] of Object.entries(raw.notes)) {
@@ -222,6 +224,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     session,
     enabled: raw.enabled === true && session !== null,
     containers,
+    groups,
     view: sanitizeView(raw.view, containers),
     children,
     queue: sanitizeQueue(raw.queue),

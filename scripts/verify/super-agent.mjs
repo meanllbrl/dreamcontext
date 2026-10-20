@@ -24,8 +24,12 @@
  * every card in Others and side by side opens as a sheet.
  *
  * THE STAGE (plan-r8, owner decisions O1-O11): the centre centred in both axes with >= 24 px to
- * every card; every card between 1:1 and 3:4 on one rhythm (one width, one gap, full columns
- * spanning the centre, the centre >= 55%: stage v2); a card dragged with the mouse lands where it
+ * every card; every card one 160 px 1:1 tile on the ORBIT (each side's column on the midline, its
+ * ends next to the centre, its middle standing out; the centre 56%: owner decision 2026-10-20); a
+ * card dropped on another makes a group, the agent groups with `super group`, a group opens into
+ * its panel, Escape closes the panel and not the screen, a card dragged out leaves its group,
+ * Ungroup dissolves it, groups survive a reload; a task side by side shows its criteria; a card
+ * dragged with the mouse lands where it
  * was dropped and stays there after a reload (and, at the very end, a server restart); dropped in
  * the bottom-right corner it joins Others; clicked there it is side by side; minimize floats it;
  * the agent's half / present / present --off; a card dropped on the centre (or "Ask about this")
@@ -40,7 +44,8 @@
  * apart (half → present, present --off) with the centre and its composer at opacity 1 in every
  * frame and the draft, focus and caret kept; nothing moves for 500 ms after; a resize snaps;
  * reduced motion = crossfade; a filmstrip, a recording and screenshots at 1280, 1440 and 1920 in
- * light and dark with the queue pill and the Others stack, each checked for stage v2's rhythm.
+ * light and dark (and 1800 x 1130, the owner's window) with the queue pill and the Others stack,
+ * each checked for the orbit.
  *
  * Collect, don't fail fast: every check prints ✓/✗ and the run continues. Exit 0 iff all pass.
  */
@@ -132,7 +137,7 @@ async function superTurn(text) {
     return 'handled';
   }
   if (text.startsWith('[super recap]')) { report({ kind: 'recap', text: text.slice(0, 1000) }); return 'recap'; }
-  const m = text.match(/GO-(ASK|PERM|SIBLING|MERGE|REFUSE|HALF|PRESENTOFF|PRESENT|TWO|BUSY|SLOW|LATEROPEN|CLOSE)\\s*(\\S*)\\s*(\\S*)/);
+  const m = text.match(/GO-(ASK|PERM|SIBLING|MERGE|REFUSE|HALF|PRESENTOFF|PRESENT|TWO|BUSY|SLOW|LATEROPEN|CLOSE|GROUP)\\s*(\\S*)\\s*(\\S*)/);
   if (m) {
     const [, verb, a, b] = m;
     const steps = [];
@@ -154,6 +159,7 @@ async function superTurn(text) {
     if (verb === 'SLOW') await sleep(3000);
     if (verb === 'LATEROPEN') { await sleep(1500); steps.push(cli('super', 'open', 'web', 'https://example.org/later', '--title', 'Later')); }
     if (verb === 'CLOSE') steps.push(cli('super', 'close', a));
+    if (verb === 'GROUP') steps.push(cli('super', 'group', a, b, '--name', 'Formlar'));
     if (verb === 'ASK') steps.push(cli('super', 'send', a, 'ASK-Q'));
     if (verb === 'PERM') steps.push(cli('super', 'send', a, 'ASK-PERM'));
     if (verb === 'SIBLING') steps.push(cli('super', 'send', a, 'TRY-SIBLING ' + b));
@@ -285,6 +291,8 @@ function setupScratch() {
     ['link add', dc('link', 'add', 'acme-code', CODE)],
     ['task', dc('tasks', 'create', 'Fix the login form', '-w', 'The login form loses its input on a slow network.')],
     ['whiteboard', dc('whiteboard', 'create', 'Login flow')],
+    ['criteria', dc('tasks', 'insert', 'fix-the-login-form', 'acceptance_criteria', '--',
+      '- [x] The form keeps its input on a slow network\n- [ ] The draft survives a reload\n- [ ] Unit tests for the draft store')],
   ]) if (r.status !== 0) throw new Error(`${what} failed: ${r.stderr || r.stdout}`);
   // A board the size of a real project's behind the chat (the owner's has ~470 tasks): the
   // motion is measured with that page mounted, not an empty one. Synthetic, cloned from the
@@ -393,39 +401,38 @@ const geo = (page) => page.evaluate(() => {
     s: s ? box(s) : null,
     c: c ? box(c) : null,
     cards: [...document.querySelectorAll('.super-card-frame')].map((e) => ({
-      id: e.dataset.containerId, kind: e.dataset.kind, where: e.dataset.where, shape: e.dataset.shape,
+      id: e.dataset.containerId || e.dataset.groupId, kind: e.dataset.kind || 'group', where: e.dataset.where, shape: e.dataset.shape,
       owner: e.dataset.owner === 'true', status: e.dataset.status, r: box(e),
     })),
     others: Number(document.querySelector('.super-others-count')?.textContent || 0),
   };
 });
 const cardIn = (g, id) => g.cards.find((c) => c.id === id);
-/** Stage v2's rhythm, read off the drawn stage: every auto-placed card one width, one 24 px gap
- *  down a column, a full column spanning the centre's top to bottom and a shorter one on its
- *  midline, the outer margins mirrored, the centre >= 55% of the stage. An owner-placed card and
- *  the columns it crosses are the owner's arrangement, not the stage's. */
-function rhythmOf(g) {
+/** The 2026-10-20 stage, read off the drawn one: every auto-placed card one 160 px 1:1 tile; each
+ *  side's inner column one gap apart and centred on the midline, its ends one gap from the centre
+ *  and its middle standing out (the orbit); the centre 56% of the stage, within its floor and
+ *  ceiling. An owner-placed card and the columns it crosses are the owner's arrangement. */
+function orbitOf(g) {
+  const T = 160, GAP = 24, DEPTH = 112;
   const owned = g.cards.filter((c) => c.where === 'float' && c.owner).map((c) => c.r);
-  const crosses = (r) => owned.some((o) => o.x < r.x + r.w && r.x < o.x + o.w);
-  const autos = g.cards.filter((c) => c.where === 'float' && !c.owner && !crosses(c.r)).map((c) => c.r);
-  const cols = new Map();
-  for (const r of autos) { const k = Math.round(r.x); cols.set(k, [...(cols.get(k) ?? []), r]); }
-  const list = [...cols.values()].map((col) => col.sort((a, b) => a.y - b.y));
+  const crosses = (r) => owned.some((o) => o.x < r.x + r.w && r.x < o.x + o.w && o.y < r.y + r.h && r.y < o.y + o.h);
+  const autos = g.cards.filter((c) => c.where === 'float' && !c.owner).map((c) => c.r);
+  const free = autos.filter((r) => !crosses(r));
+  const oneSize = autos.every((r) => Math.abs(r.w - T) <= 1 && Math.abs(r.h - T) <= 1);
   const mid = g.c.y + g.c.h / 2;
-  const oneWidth = autos.every((r) => Math.abs(r.w - autos[0].w) <= 1);
-  const oneGap = list.every((col) => col.every((r, i) => i === 0 || Math.abs(r.y - (col[i - 1].y + col[i - 1].h) - 24) <= 1));
-  const columns = list.map((col) => {
-    const top = col[0].y;
-    const bottom = col[col.length - 1].y + col[col.length - 1].h;
-    return { n: col.length, top: Math.round(top - g.c.y), bottom: Math.round(g.c.y + g.c.h - bottom), spans: Math.abs(top - g.c.y) <= 1 && Math.abs(bottom - (g.c.y + g.c.h)) <= 1, midline: Math.abs((top + bottom) / 2 - mid) <= 1 };
+  const sides = [['L', g.c.x - GAP - T], ['R', g.c.x + g.c.w + GAP]].map(([side, inner]) => {
+    const col = free.filter((r) => (side === 'L' ? r.x < g.c.x : r.x > g.c.x) && Math.abs(r.x - inner) <= DEPTH + 1).sort((a, b) => a.y - b.y);
+    if (col.length < 2 || owned.length) return { side, n: col.length, ok: true };
+    const out = (r) => (side === 'L' ? inner - r.x : r.x - inner);
+    const oneGap = col.every((r, i) => i === 0 || Math.abs(r.y - (col[i - 1].y + col[i - 1].h) - GAP) <= 1);
+    const centred = Math.abs((col[0].y + col[col.length - 1].y + col[col.length - 1].h) / 2 - mid) <= 1;
+    const ends = [col[0], col[col.length - 1]].every((r) => Math.abs(out(r)) <= 1);
+    const middle = col.length < 3 || out(col[Math.floor(col.length / 2)]) > 1;
+    return { side, n: col.length, ok: oneGap && centred && ends && middle, oneGap, centred, ends, middle };
   });
-  const aligned = columns.every((c) => c.spans || c.midline);
-  const L = autos.filter((r) => r.x < g.c.x);
-  const R = autos.filter((r) => r.x > g.c.x);
-  const margins = L.length && R.length ? [Math.round(Math.min(...L.map((r) => r.x)) - g.s.x), Math.round(g.s.x + g.s.w - Math.max(...R.map((r) => r.x + r.w)))] : null;
-  const mirror = owned.length > 0 || !margins || Math.abs(margins[0] - margins[1]) <= 1;
-  const share = g.c.w / g.s.w;
-  return { ok: autos.length > 0 && oneWidth && oneGap && aligned && mirror && share >= 0.55 - 1 / g.s.w, detail: { oneWidth, oneGap, aligned, mirror, share: Number(share.toFixed(4)), columns, margins, owned: owned.length } };
+  const want = Math.min(1120, Math.max(560, 0.56 * g.s.w));
+  const centreOk = Math.abs(g.c.w - want) <= 1;
+  return { ok: autos.length > 0 && oneSize && sides.every((x) => x.ok) && centreOk, detail: { oneSize, sides, centre: Math.round(g.c.w), want: Math.round(want), owned: owned.length } };
 }
 /** Two rects at least `gap` apart on some axis. */
 const apart = (a, b, gap = 23.5) => a.x + a.w + gap <= b.x || b.x + b.w + gap <= a.x || a.y + a.h + gap <= b.y || b.y + b.h + gap <= a.y;
@@ -490,9 +497,12 @@ async function stage(page, base, adopted = []) {
   ok('>= 24 px between the centre and every floating card', floats.every((c) => apart(c.r, g.c)), JSON.stringify(floats.map((c) => c.r)));
   const autos = floats.filter((c) => !c.owner);
   ok('>= 24 px between auto-placed cards', autos.every((a, i) => autos.every((b, j) => j <= i || apart(a.r, b.r))), JSON.stringify(autos.map((c) => c.r)));
-  ok('each floating card is drawn between 1:1 and 3:4, never taller (stage v2)', floats.every((c) => c.r.h / c.r.w >= 0.99 && c.r.h / c.r.w <= 4 / 3 + 0.01), JSON.stringify(floats.map((c) => [c.kind, c.shape, c.r.w, c.r.h])));
-  const rh = rhythmOf(g);
-  ok('one rhythm: one card width and gap, full columns span the centre, margins mirror, the centre >= 55% (stage v2)', rh.ok, JSON.stringify(rh.detail));
+  ok('each floating card is one 160 px 1:1 tile (2026-10-20)', floats.every((c) => Math.abs(c.r.w - 160) <= 1 && Math.abs(c.r.h - 160) <= 1), JSON.stringify(floats.map((c) => [c.kind, c.r.w, c.r.h])));
+  const rh = orbitOf(g);
+  ok('the orbit: each side\'s column on the midline, its ends next to the centre, its middle out; the centre 56%', rh.ok, JSON.stringify(rh.detail));
+  ok('the orbit is drawn: a faint arc through each side\'s column', (await page.locator('.super-orbit polyline').count()) >= 1);
+  const prog = await page.locator('[data-testid="super-tile-progress"]').first().innerText().catch(() => '');
+  ok('the task tile says how far its criteria are (owner 2026-10-20: a small card still shows what is in it)', /1\s*\/\s*3/.test(prog), prog);
   ok('the record: chat and web cards tall, the rest square', rec0.containers.length > 0 && rec0.containers.every((c) => c.shape === (c.kind === 'chat' || c.kind === 'web' ? 'tall' : 'square')), JSON.stringify(rec0.containers.map((c) => [c.kind, c.shape])));
   ok('>= 4 cards float around the centre', floats.length >= 4, `${floats.length} floating, ${g.others} in Others`);
   ok('a card the stage cannot fit is drawn in Others, its record still float', g.others === rec0.containers.length - g.cards.length && rec0.containers.every((c) => c.place === 'float'), JSON.stringify({ drawn: g.cards.length, others: g.others, record: rec0.containers.map((c) => c.place) }));
@@ -528,7 +538,7 @@ async function stage(page, base, adopted = []) {
   ok('the card left the stage for the Others stack', !cardIn(g, B.id) && g.others >= 1, JSON.stringify({ onStage: !!cardIn(g, B.id), others: g.others }));
   ok('…written as place: others', record().containers.find((c) => c.id === B.id)?.place === 'others');
   await page.getByTestId('super-others-stack').click();
-  ok('the Others stack opens a list with it', await until(page, async () => (await page.locator(`[data-testid="super-others-item"][data-container-id="${B.id}"]`).count()) === 1, 3000));
+  ok('the Others stack opens its panel with it', await until(page, async () => (await page.locator(`[data-testid="super-others-item"][data-container-id="${B.id}"]`).count()) === 1, 3000));
   await page.screenshot({ path: join(OUT, 'stage-02-others-fan.png') });
   await page.locator(`[data-testid="super-others-item"][data-container-id="${B.id}"]`).click();
   await page.waitForTimeout(900);
@@ -548,6 +558,10 @@ async function stage(page, base, adopted = []) {
   const knowId = record().containers.find((c) => c.kind === 'knowledge')?.id;
   await sayToSuper(page, `GO-HALF ${taskId}`);
   ok('super half: the task card is the right half', await until(page, async () => cardIn(await geo(page), taskId)?.where === 'half', 30000));
+  ok('…side by side the task shows its page: its criteria under its status head (owner 2026-10-20)', await until(page, async () =>
+    /Acceptance Criteria/.test(await page.locator(`.super-card-frame[data-container-id="${taskId}"] .super-card-view--page`).innerText().catch(() => ''))
+    && (await page.locator(`.super-card-frame[data-container-id="${taskId}"] [data-testid="super-task-head"]`).count()) === 1, 15000));
+  await page.screenshot({ path: join(OUT, 'stage-03b-task-half.png') });
   await sayToSuper(page, `GO-PRESENT ${taskId} ${knowId}`);
   ok('super present: the agent left, the two cards right', await until(page, async () => {
     const x = await geo(page);
@@ -601,13 +615,14 @@ async function stage(page, base, adopted = []) {
   await sayToSuper(page, `GO-BUSY ${wRef}`);
   const rise = await riseP;
   ok('the working card\'s glow rises to opacity 1 within 0.8 s', rise.ms !== null && rise.ms <= 800 && !rise.late, JSON.stringify(rise));
-  ok('its doing-line names the tool in flight', /Wait for the build/.test(await page.locator(`${wSel} [data-testid="super-card-doing"]`).innerText().catch(() => '')),
-    await page.locator(`${wSel} [data-testid="super-card-doing"]`).innerText().catch(() => 'none'));
-  ok('a background chip shows the shell it runs', await until(page, async () => /1 shell/.test(await page.locator(`${wSel} [data-testid="super-card-bg"]`).innerText().catch(() => '')), 3000),
-    await page.locator(`${wSel} .super-card-meta`).innerText().catch(() => 'none'));
+  // The crop while it surely works: the child's work lasts 6 s and the checks below take a while.
   const wr = cardIn(await geo(page), W.id).r;
   const clip = { x: Math.round(wr.x - 14), y: Math.round(wr.y + wr.h / 3), width: 10, height: 40 };
   const workingShot = await page.screenshot({ clip });
+  ok('its doing-line names the tool in flight', /Wait for the build/.test(await page.locator(`${wSel} [data-testid="super-card-doing"]`).innerText().catch(() => '')),
+    await page.locator(`${wSel} [data-testid="super-card-doing"]`).innerText().catch(() => 'none'));
+  ok('a background chip shows the shell it runs', await until(page, async () => /1 shell/.test(await page.locator(`${wSel} [data-testid="super-card-bg"]`).getAttribute('aria-label').catch(() => '') ?? ''), 3000),
+    await page.locator(`${wSel} .super-card-meta`).innerText().catch(() => 'none'));
   await page.screenshot({ path: join(OUT, 'stage-05-working-glow.png') });
   const fall = await glowTiming(page, wSel, '::before', 'idle', 0);
   ok('when it goes idle the glow fades to 0 within 1.6 s', fall.ms !== null && fall.ms <= 1600, JSON.stringify(fall));
@@ -653,6 +668,72 @@ async function stage(page, base, adopted = []) {
     await sayToSuper(page, `GO-CLOSE ${later.id}`);
     await until(page, async () => !record().containers.some((c) => c.id === later.id), 20000);
   }
+  await page.waitForTimeout(1000);
+
+  console.log('\n── groups (owner decision 2026-10-20): the agent groups, the owner drops a card on another');
+  // A clean stage: the owner's drops from the sections above would otherwise sit where a new
+  // group stands and push it to Others (the stage's rule for a covered card with no free spot).
+  // They are put back at the end of this section (the server-restart check reads one of them).
+  const dropsBefore = record().containers.filter((c) => c.pos).map((c) => ({ id: c.id, pos: c.pos }));
+  await page.evaluate(async (ids) => fetch('/api/super/layout', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ cards: ids.map((id) => ({ id, pos: null })) }),
+  }), dropsBefore.map((d) => d.id));
+  await page.waitForTimeout(1000);
+  const chatsNow = record().containers.filter((c) => c.kind === 'chat' && c.place === 'float' && !c.pos).slice(0, 2);
+  const [ga, gb] = chatsNow;
+  await sayToSuper(page, `GO-GROUP ${ga.id} ${gb.id}`);
+  ok('super group: two chats become ONE tile on the stage', await until(page, async () => {
+    const x = await geo(page);
+    return x.cards.filter((c) => c.kind === 'group').length === 1 && !x.cards.some((c) => c.id === ga.id || c.id === gb.id);
+  }, 30000), JSON.stringify((await geo(page)).cards.map((c) => [c.id, c.kind, c.where])));
+  const agentGroup = (record().groups ?? [])[0];
+  ok('…recorded as a group named Formlar holding both', agentGroup?.name === 'Formlar' && JSON.stringify(agentGroup?.cards) === JSON.stringify([ga.id, gb.id]), JSON.stringify(record().groups));
+  await page.locator(`[data-group-id="${agentGroup?.id}"]`).click();
+  ok('clicking the group opens its panel with both cards', await until(page, async () => (await page.locator('[data-testid="super-group-panel"] [data-testid="super-group-item"]').count()) === 2, 4000));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: join(OUT, 'stage-06-group-open.png') });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+  ok('Escape closes the panel and never the hand-over screen', (await page.getByTestId('super-group-panel').count()) === 0 && await surfaceShown(page)
+    && (await page.locator('.agent-surface.expanded').count()) > 0);
+  g = await geo(page);
+  const singles = g.cards.filter((c) => c.where === 'float' && c.kind !== 'group' && !c.owner && c.id);
+  const [X, Y] = singles;
+  let label = 0;
+  let ring = 0;
+  await drag(page, grabPoint(X.r), { x: Y.r.x + Y.r.w / 2, y: Y.r.y + Y.r.h / 2 }, { hold: async () => {
+    label = await page.getByTestId('super-drop-label').count();
+    ring = await page.locator(`.super-card-frame[data-container-id="${Y.id}"][data-drop-target]`).count();
+  } });
+  ok('a card held over another lights it and says "Release to group"', label === 1 && ring === 1, JSON.stringify({ label, ring }));
+  ok('…released, the two are one group standing where the target stood', await until(page, async () => (record().groups ?? []).some((x) => JSON.stringify(x.cards) === JSON.stringify([Y.id, X.id])), 6000), JSON.stringify(record().groups));
+  const ownGroup = (record().groups ?? []).find((x) => x.cards[0] === Y.id);
+  await page.waitForTimeout(900);
+  g = await geo(page);
+  ok('…drawn as one tile; its cards are not on the stage', !!cardIn(g, ownGroup?.id) && !cardIn(g, X.id) && !cardIn(g, Y.id), JSON.stringify(g.cards.map((c) => [c.id, c.kind])));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  if (!(await until(page, () => surfaceShown(page), 12000))) await openChat(page, base);
+  ok('after a reload both groups are still on the stage', await until(page, async () => (await geo(page)).cards.filter((c) => c.kind === 'group').length === 2, 15000));
+  await page.waitForTimeout(1200);
+  await page.locator(`[data-group-id="${ownGroup?.id}"]`).click();
+  await until(page, async () => (await page.locator('[data-testid="super-group-item"]').count()) === 2, 4000);
+  const item = await page.locator(`[data-testid="super-group-item"][data-container-id="${X.id}"]`).boundingBox();
+  g = await geo(page);
+  const outTo = { x: g.s.x + 110, y: g.s.y + 150 };
+  if (item) await drag(page, { x: item.x + item.width / 2, y: item.y + item.height / 2 }, outTo);
+  ok('dragged out of its group, a card floats where it was dropped and leaves the group (a group of one dissolves)', await until(page, async () =>
+    !(record().groups ?? []).some((x) => x.id === ownGroup?.id) && !!record().containers.find((c) => c.id === X.id)?.pos, 6000), JSON.stringify({ groups: record().groups, x: record().containers.find((c) => c.id === X.id) }));
+  await page.waitForTimeout(900);
+  g = await geo(page);
+  ok('…both cards are tiles on the stage again', cardIn(g, X.id)?.where === 'float' && cardIn(g, Y.id)?.where === 'float', JSON.stringify(g.cards.map((c) => [c.id, c.where])));
+  await page.locator(`[data-group-id="${agentGroup?.id}"]`).click();
+  await until(page, async () => (await page.getByTestId('super-group-panel-ungroup').count()) === 1, 4000);
+  await page.getByTestId('super-group-panel-ungroup').click();
+  ok('Ungroup dissolves the group: its cards float again', await until(page, async () => (record().groups ?? []).length === 0 && !!cardIn(await geo(page), ga.id) && !!cardIn(await geo(page), gb.id), 6000), JSON.stringify(record().groups));
+  // Back to the stage as the sections above left it: this section's drop cleared, theirs put back.
+  await page.evaluate(async (cards) => fetch('/api/super/layout', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ cards }),
+  }), [{ id: X.id, pos: null }, ...dropsBefore.map((d) => ({ id: d.id, pos: d.pos }))]);
   await page.waitForTimeout(1000);
 }
 
@@ -1088,9 +1169,11 @@ async function motion(engineName, browserType, base) {
     handovers.push(h);
     await page.waitForTimeout(1200);
     h.rectsOk = within1(h.rectsAtEnd, await rectsOf(page, '[data-testid="super-container"]'));
+    // Every card that is not a chat shows what it holds once the cards landed: a floating tile
+    // its data (2026-10-20 tiles), a large card its view.
     h.views = await page.evaluate(() => ({
-      mounted: document.querySelectorAll('[data-testid="super-container"] .super-card-view').length,
-      want: [...document.querySelectorAll('[data-testid="super-container"]')].filter((c) => ['task', 'knowledge', 'image', 'insight', 'whiteboard', 'board'].includes(c.dataset.kind)).length,
+      mounted: document.querySelectorAll('[data-testid="super-container"] :is(.super-tile[data-view="ready"], .super-card-view)').length,
+      want: [...document.querySelectorAll('[data-testid="super-container"]')].filter((c) => ['task', 'knowledge', 'image', 'insight', 'whiteboard', 'board', 'web'].includes(c.dataset.kind)).length,
     }));
     if (i === 0) {
       const cover = await coverOf();
@@ -1231,7 +1314,7 @@ async function motion(engineName, browserType, base) {
       ok('chromium: the owner\'s drops cleared for the screenshots', st === 200 && !record().containers.some((c) => c.pos), `status ${st}`);
     }
     await page.waitForTimeout(800);
-    for (const [w, h] of [[1280, 800], [1440, 900], [1920, 1080]]) {
+    for (const [w, h] of [[1280, 800], [1440, 900], [1800, 1130], [1920, 1080]]) {
       for (const scheme of ['light', 'dark']) {
         await page.setViewportSize({ width: w, height: h });
         await page.emulateMedia({ colorScheme: scheme });
@@ -1241,9 +1324,9 @@ async function motion(engineName, browserType, base) {
           const gw = await geo(page);
           ok(`chromium ${w}x${h}: >= 4 cards float, the centre centred (<= 1 px)`, gw.cards.filter((c) => c.where === 'float').length >= 4
             && Math.abs((gw.c.x - gw.s.x) - (gw.s.x + gw.s.w - gw.c.x - gw.c.w)) <= 1, JSON.stringify({ floating: gw.cards.filter((c) => c.where === 'float').length, s: gw.s, c: gw.c }));
-          const rw = rhythmOf(gw);
-          ok(`chromium ${w}x${h}: one rhythm, the centre >= 55% (stage v2)`, rw.ok, JSON.stringify(rw.detail));
-          ok(`chromium ${w}x${h}: every floating card between 1:1 and 3:4`, gw.cards.filter((c) => c.where === 'float').every((c) => c.r.h / c.r.w >= 0.99 && c.r.h / c.r.w <= 4 / 3 + 0.01),
+          const rw = orbitOf(gw);
+          ok(`chromium ${w}x${h}: the orbit, the centre 56% (2026-10-20)`, rw.ok, JSON.stringify(rw.detail));
+          ok(`chromium ${w}x${h}: every floating card one 160 px 1:1 tile`, gw.cards.filter((c) => c.where === 'float').every((c) => Math.abs(c.r.w - 160) <= 1 && Math.abs(c.r.h - 160) <= 1),
             JSON.stringify(gw.cards.filter((c) => c.where === 'float').map((c) => [c.r.w, c.r.h])));
           // At rest the pill keeps one row in its band: it never half-covers the centre's header.
           const pill = await page.getByTestId('super-queue-head').boundingBox();
@@ -1313,8 +1396,8 @@ async function motion(engineName, browserType, base) {
       const floats = g5.cards.filter((c) => c.where === 'float');
       const drawnOthers = [...seven].filter((id) => !floats.some((c) => c.id === id)).length;
       await page.screenshot({ path: join(OUT, `stage-v2-5t2s-${w}.png`) });
-      const r5 = rhythmOf(g5);
-      ok(`chromium ${w}x${h}: 5 tall + 2 square: ${want} float, ${7 - want} drawn in Others, on one rhythm`, floats.length === want && drawnOthers === 7 - want && floats.every((c) => seven.has(c.id)) && r5.ok,
+      const r5 = orbitOf(g5);
+      ok(`chromium ${w}x${h}: 5 chats + 2 others: ${want} float, ${7 - want} drawn in Others, on the orbit`, floats.length === want && drawnOthers === 7 - want && floats.every((c) => seven.has(c.id)) && r5.ok,
         JSON.stringify({ floating: floats.length, drawnOthers, rhythm: r5.detail }));
       ok(`chromium ${w}x${h}: 5 tall + 2 square: every chat floats (the other cards go to Others first)`, chats.every((c) => floats.some((f) => f.id === c.id)), JSON.stringify(floats.map((c) => c.kind)));
     }

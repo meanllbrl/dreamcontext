@@ -14,8 +14,9 @@ export const SUPER_STATE_VERSION = 1 as const;
 export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
 
-/** A floating card is square (1:1) or tall (3:4): owner decisions 2026-10-18 (plan-r8 F1) and
- *  2026-10-19 (stage v2: 3:4, not 9:16; drawn anywhere between 1:1 and 3:4 to keep the rhythm). */
+/** A card's recorded shape, square (1:1) or tall (3:4): plan-r8 F1 and stage v2. Since the
+ *  2026-10-20 redesign every FLOATING card is drawn as one 1:1 tile whatever its shape; the field
+ *  stays so older records and scripts read and run unchanged. */
 export const CONTAINER_SHAPES = ['square', 'tall'] as const;
 export type ContainerShape = typeof CONTAINER_SHAPES[number];
 
@@ -54,6 +55,28 @@ export interface SuperContainer {
   pos?: { x: number; y: number };
   title?: string;
 }
+
+/**
+ * Cards put together, drawn on the stage as ONE tile (owner decision 2026-10-20): the owner
+ * drops a card on another (or on a group), the agent runs `super group`. Membership lives here,
+ * never on the card: a card is in at most one group, a group holds at least two cards, and it
+ * stands in the record where its FIRST card stands (so grouping moves no other card to the other
+ * side). Others is not one of these: it is the stage's own group, derived from `place`.
+ */
+export interface SuperGroup {
+  /** `grp-…`: never a container id (those start with their kind). */
+  id: string;
+  name: string;
+  /** Its cards in order; the first one's place in the record is the group's. */
+  cards: string[];
+  place: ContainerPlace;
+  /** The owner's drop, like a card's. */
+  pos?: { x: number; y: number };
+}
+
+export const GROUP_ID_RE = /^grp-[a-z0-9-]{1,36}$/;
+export const MAX_GROUP_NAME = 60;
+export const MIN_GROUP_CARDS = 2;
 
 /** The stage's arrangement. `card` names the half-page card; `cards` the presented ones. */
 export interface SuperView {
@@ -108,6 +131,8 @@ export interface SuperState {
   /** Handed over right now. */
   enabled: boolean;
   containers: SuperContainer[];
+  /** Cards drawn together as one tile (2026-10-20). Absent in an older record = none. */
+  groups: SuperGroup[];
   view: SuperView;
   children: Record<string, SuperChild>;
   queue: SuperQueueItem[];
@@ -117,7 +142,110 @@ export interface SuperState {
 }
 
 export function emptySuperState(): SuperState {
-  return { v: SUPER_STATE_VERSION, session: null, enabled: false, containers: [], view: { mode: 'float' }, children: {}, queue: [], notes: {}, away: { since: null, events: 0 } };
+  return { v: SUPER_STATE_VERSION, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children: {}, queue: [], notes: {}, away: { since: null, events: 0 } };
+}
+
+// ─── Groups (MIRRORED in the window, behaviour pinned by super-types-mirror.test.ts) ──
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const clampUnit = (n: unknown): number | undefined => (typeof n === 'number' && Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : undefined);
+
+/** A group's name as stored: one line, no control characters, at most MAX_GROUP_NAME. */
+export function cleanGroupName(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_GROUP_NAME).trim();
+}
+
+/** "Group N" with the smallest N no group is named. */
+export function nextGroupName(groups: readonly Pick<SuperGroup, 'name'>[], word = 'Group'): string {
+  const used = new Set(groups.map((g) => g.name));
+  for (let n = 1; ; n++) if (!used.has(`${word} ${n}`)) return `${word} ${n}`;
+}
+
+/**
+ * The groups a record may hold, against its cards: an id once, a card in one group at most (the
+ * first group that names it keeps it), a closed card dropped from its group. A group left with
+ * fewer than two cards dissolves; its one remaining card takes the group's place and spot, so
+ * the tile the owner was looking at stays where it was. Pure: returns new lists.
+ */
+export function normalizeGroups(containers: readonly SuperContainer[], raw: unknown): { containers: SuperContainer[]; groups: SuperGroup[] } {
+  const out = containers.map((c) => ({ ...c }));
+  const byId = new Map(out.map((c) => [c.id, c] as const));
+  const taken = new Set<string>();
+  const seen = new Set<string>();
+  const groups: SuperGroup[] = [];
+  for (const g of Array.isArray(raw) ? raw : []) {
+    if (!isObj(g) || typeof g.id !== 'string' || !GROUP_ID_RE.test(g.id) || seen.has(g.id)) continue;
+    seen.add(g.id);
+    const cards: string[] = [];
+    for (const id of Array.isArray(g.cards) ? g.cards : []) {
+      if (typeof id === 'string' && byId.has(id) && !taken.has(id) && !cards.includes(id)) cards.push(id);
+    }
+    const place: ContainerPlace = (CONTAINER_PLACES as readonly unknown[]).includes(g.place) ? g.place as ContainerPlace : 'float';
+    const px = isObj(g.pos) ? clampUnit(g.pos.x) : undefined;
+    const py = isObj(g.pos) ? clampUnit(g.pos.y) : undefined;
+    const pos = px !== undefined && py !== undefined ? { x: px, y: py } : undefined;
+    if (cards.length < MIN_GROUP_CARDS) {
+      const last = cards.length === 1 ? byId.get(cards[0]) : undefined;
+      if (last) {
+        last.place = place;
+        if (pos) last.pos = pos; else delete last.pos;
+      }
+      continue;
+    }
+    for (const id of cards) taken.add(id);
+    groups.push({ id: g.id, name: cleanGroupName(g.name) || nextGroupName(groups), cards, place, ...(pos ? { pos } : {}) });
+  }
+  return { containers: out, groups };
+}
+
+/** Put cards in a group: `id` names an existing group (they join it; `name` renames it) or a new
+ *  one (made of them, standing where its first card stood). A card leaves any other group. */
+export interface GroupOp { id: string; cards: readonly string[]; name?: string }
+
+/** A card leaving its group floats again, placed automatically. */
+export function leaveGroups(state: { containers: SuperContainer[]; groups: SuperGroup[] }, ids: readonly string[]): void {
+  const gone = new Set(ids);
+  const left = new Set<string>();
+  for (const g of state.groups) {
+    for (const c of g.cards) if (gone.has(c)) left.add(c);
+    g.cards = g.cards.filter((c) => !gone.has(c));
+  }
+  for (const c of state.containers) if (left.has(c.id)) { c.place = 'float'; delete c.pos; }
+}
+
+/** Apply a GroupOp in place (unknown cards ignored); `normalizeGroups` settles the rest. */
+export function applyGroupOp(state: { containers: SuperContainer[]; groups: SuperGroup[] }, op: GroupOp): void {
+  if (!GROUP_ID_RE.test(op.id)) return;
+  const live = new Set(state.containers.map((c) => c.id));
+  const cards = [...new Set(op.cards)].filter((id) => live.has(id));
+  const name = cleanGroupName(op.name);
+  for (const g of state.groups) if (g.id !== op.id) g.cards = g.cards.filter((c) => !cards.includes(c));
+  const have = state.groups.find((g) => g.id === op.id);
+  if (have) {
+    for (const id of cards) if (!have.cards.includes(id)) have.cards.push(id);
+    if (name) have.name = name;
+    return;
+  }
+  if (!cards.length) return;
+  const first = state.containers.find((c) => c.id === cards[0]);
+  state.groups.push({
+    id: op.id, name: name || nextGroupName(state.groups), cards,
+    place: first?.place ?? 'float', ...(first?.pos ? { pos: { ...first.pos } } : {}),
+  });
+}
+
+/** Dissolve groups: their cards take the group's place, the first one its spot too. */
+export function dissolveGroups(state: { containers: SuperContainer[]; groups: SuperGroup[] }, ids: readonly string[]): void {
+  for (const g of state.groups.filter((x) => ids.includes(x.id))) {
+    g.cards.forEach((id, i) => {
+      const c = state.containers.find((k) => k.id === id);
+      if (!c) return;
+      c.place = g.place;
+      if (i === 0 && g.pos) c.pos = { ...g.pos }; else delete c.pos;
+    });
+  }
+  state.groups = state.groups.filter((g) => !ids.includes(g.id));
 }
 
 // ─── Identifiers ────────────────────────────────────────────────────────────────
@@ -139,7 +267,7 @@ export const MAX_QUEUE = 200;
 // ─── The agent's verbs (`dreamcontext super <verb>` → POST /api/super/v/:verb) ────
 
 export const SUPER_VERBS = [
-  'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'brief', 'read',
+  'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
   'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];

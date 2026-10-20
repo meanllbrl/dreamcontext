@@ -8,8 +8,8 @@ import {
 import { SuperStoreRefused, isReservedId, readSuperState } from '../../lib/super/store.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_OWNER_TEXT, MAX_PRESENT, MAX_READ_BYTES,
-  MAX_TITLE, SESSION_ID_RE, SUPER_VERBS, defaultShape, type ContainerKind, type ContainerShape,
-  type SuperChild, type SuperState, type SuperStateView, type SuperVerb,
+  MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, applyGroupOp, defaultShape, dissolveGroups, leaveGroups,
+  type ContainerKind, type ContainerShape, type SuperChild, type SuperState, type SuperStateView, type SuperVerb,
 } from '../../lib/super/types.js';
 import {
   containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, pumpSuper, superQueueHead,
@@ -175,6 +175,20 @@ function containerArg(c: SuperCaller, b: Record<string, unknown>, res: ServerRes
 }
 
 const ok = (res: ServerResponse, result: unknown) => sendJson(res, 200, { ok: true, result });
+
+/** A card or a group the record holds, by id (`super stack|float` take either). */
+function targetArg(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse): { id: string; group: boolean } | null {
+  const id = str(b.container);
+  if (id && c.state.groups.some((g) => g.id === id)) return { id, group: true };
+  if (id && c.state.containers.some((k) => k.id === id)) return { id, group: false };
+  refuse(res, 404, 'unknown_container', 'no such card or group (`dreamcontext super state` lists them)');
+  return null;
+}
+
+/** A new group's id: never a container id (those start with their kind). */
+function newGroupId(): string {
+  return `grp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 /** `delegate` calls in flight per vault, counted against the cap until they settle. */
 const delegating = new Map<string, number>();
@@ -386,9 +400,17 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   stack: async (c, b, res) => {
-    const id = containerArg(c, b, res);
-    if (!id) return;
+    const t = targetArg(c, b, res);
+    if (!t) return;
+    const id = t.id;
+    if (t.group) {
+      await writeSuper(c.who.contextRoot, (s) => { const g = s.groups.find((x) => x.id === id); if (g) g.place = 'others'; });
+      ok(res, { group: id, place: 'others' });
+      return;
+    }
     await writeSuper(c.who.contextRoot, (s) => {
+      // A card stacked on its own leaves its group.
+      leaveGroups(s, [id]);
       const k = s.containers.find((x) => x.id === id);
       if (k) k.place = 'others';
       // A stacked card leaves the half page or the presentation it was in.
@@ -399,9 +421,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   float: async (c, b, res) => {
-    const id = containerArg(c, b, res);
-    if (!id) return;
+    const t = targetArg(c, b, res);
+    if (!t) return;
+    const id = t.id;
+    if (t.group) {
+      await writeSuper(c.who.contextRoot, (s) => { const g = s.groups.find((x) => x.id === id); if (g) { g.place = 'float'; delete g.pos; } });
+      ok(res, { group: id, place: 'float' });
+      return;
+    }
     await writeSuper(c.who.contextRoot, (s) => {
+      leaveGroups(s, [id]);
       const k = s.containers.find((x) => x.id === id);
       if (!k) return;
       // The agent never positions a card: floating again means placed automatically.
@@ -412,11 +441,59 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   close: async (c, b, res) => {
+    if (typeof b.container === 'string' && c.state.groups.some((g) => g.id === b.container)) {
+      refuse(res, 400, 'invalid_args', 'a group is not closed: `super ungroup` it, or close its cards');
+      return;
+    }
     const id = containerArg(c, b, res);
     if (!id) return;
     // The store drops a closed card from the view (half → float; a presentation keeps the rest).
     await writeSuper(c.who.contextRoot, (s) => { s.containers = s.containers.filter((x) => x.id !== id); });
     ok(res, { closed: id });
+  },
+
+  group: async (c, b, res) => {
+    // Cards put together as one tile (owner decision 2026-10-20). A group id among them: the
+    // cards join it (and --name renames it). Otherwise two or more cards make a new group that
+    // stands where the first of them stands.
+    const raw = Array.isArray(b.containers) ? b.containers : [];
+    const name = typeof b.name === 'string' ? b.name : undefined;
+    if (raw.length > MAX_CONTAINERS + 1 || raw.some((x) => typeof x !== 'string')) { refuse(res, 400, 'invalid_args', 'name the cards (and at most one group) to put together'); return; }
+    const ids = [...new Set(raw as string[])];
+    const groupIds = ids.filter((id) => c.state.groups.some((g) => g.id === id));
+    const cards = ids.filter((id) => !groupIds.includes(id));
+    for (const id of cards) {
+      if (!c.state.containers.some((k) => k.id === id)) { refuse(res, 404, 'unknown_container', `no such card: ${id} (\`dreamcontext super state\` lists them)`); return; }
+    }
+    if (groupIds.length > 1) { refuse(res, 400, 'invalid_args', 'name at most one group; `super ungroup` the other first'); return; }
+    let id = groupIds[0];
+    if (!id) {
+      if (cards.length < MIN_GROUP_CARDS) { refuse(res, 400, 'invalid_args', `a group needs at least ${MIN_GROUP_CARDS} cards`); return; }
+      id = newGroupId();
+    } else if (!cards.length && !name) { refuse(res, 400, 'invalid_args', 'name cards to add to the group, or --name to rename it'); return; }
+    const state = await writeSuper(c.who.contextRoot, (s) => applyGroupOp(s, { id, cards, name }));
+    const made = state.groups.find((g) => g.id === id);
+    if (!made) { refuse(res, 409, 'not_grouped', 'the cards could not be grouped (closed meanwhile?)'); return; }
+    ok(res, { group: made });
+  },
+
+  ungroup: async (c, b, res) => {
+    // A group id dissolves the group (its cards float again where it stood); a card id takes
+    // that card out of its group.
+    const raw = Array.isArray(b.targets) ? b.targets : [];
+    if (!raw.length || raw.length > MAX_CONTAINERS || raw.some((x) => typeof x !== 'string')) { refuse(res, 400, 'invalid_args', 'name a group, or cards to take out of their group'); return; }
+    const ids = [...new Set(raw as string[])];
+    for (const id of ids) {
+      if (!c.state.groups.some((g) => g.id === id) && !c.state.containers.some((k) => k.id === id)) {
+        refuse(res, 404, 'unknown_container', `no such card or group: ${id}`);
+        return;
+      }
+    }
+    const state = await writeSuper(c.who.contextRoot, (s) => {
+      dissolveGroups(s, ids.filter((id) => s.groups.some((g) => g.id === id)));
+      leaveGroups(s, ids);
+    });
+    ok(res, { ungrouped: ids, groups: state.groups });
   },
 
   brief: async (c, b, res) => {
@@ -650,17 +727,29 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       return;
     }
     const view = body.view;
+    // Groups (2026-10-20): `leave` takes cards out of their group, `group` puts cards in one (a
+    // new id makes it, standing where its first card stands), `ungroup` dissolves. A `cards`
+    // entry may name a group: a drop, Others or back, the same as a card.
+    const leave = Array.isArray(body.leave) ? (body.leave as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
+    const ungroup = Array.isArray(body.ungroup) ? (body.ungroup as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
+    const g = body.group && typeof body.group === 'object' && !Array.isArray(body.group) ? body.group as Record<string, unknown> : null;
+    const groupOp = g && typeof g.id === 'string' && Array.isArray(g.cards)
+      ? { id: g.id, cards: (g.cards as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS), name: typeof g.name === 'string' ? g.name : undefined }
+      : null;
     const state = await writeSuper(contextRoot, (s) => {
+      if (leave.length) leaveGroups(s, leave);
       for (const raw of cards as unknown[]) {
         const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
-        const k = p && typeof p.id === 'string' ? s.containers.find((x) => x.id === p.id) : undefined;
+        const k = p && typeof p.id === 'string' ? (s.containers.find((x) => x.id === p.id) ?? s.groups.find((x) => x.id === p.id)) : undefined;
         if (!p || !k) continue;
         if (p.place === 'float' || p.place === 'others') k.place = p.place;
         if (p.pos === null) delete k.pos;
         else if (p.pos && typeof p.pos === 'object') k.pos = p.pos as { x: number; y: number };
         // The card the owner moved last is drawn on top: it goes to the end of the list.
-        if (p.order === 'last') s.containers = [...s.containers.filter((x) => x !== k), k];
+        if (p.order === 'last' && 'kind' in k) s.containers = [...s.containers.filter((x) => x !== k), k];
       }
+      if (groupOp) applyGroupOp(s, groupOp);
+      if (ungroup.length) dissolveGroups(s, ungroup);
       const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
       if (gone.size) s.containers = s.containers.filter((x) => !gone.has(x.id));
       // The store sanitizes what this produced: positions clamped, a view naming no card → float.

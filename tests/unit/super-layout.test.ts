@@ -1,20 +1,22 @@
 /**
- * The hand-over stage (plan-r8 F4, §0 C1/C2/C3/D1, AC Layout, stage v2): the Super Agent's
- * window exactly in the centre and the larger share, cards on one rhythm around it (one width,
- * one gap, full columns spanning the centre, 1:1 to 3:4), half / present / narrow, the owner's
- * drop kept, overflow DRAWN in Others without touching the record. Invariants, not pixels.
+ * The hand-over stage (plan-r8 F4, §0 C1/C2/C3/D1, AC Layout, the 2026-10-20 redesign): the Super
+ * Agent's window exactly in the centre and the larger share, every card a 1:1 tile on an orbit
+ * around it (a side's middle tile stands out, its ends tuck in), groups as one tile, half /
+ * present / narrow, the owner's drop kept, overflow DRAWN in Others without touching the record.
+ * Invariants, not pixels.
  */
 import { describe, it, expect } from 'vitest';
 import {
-  NARROW_STAGE_PX, STAGE, applyLayoutPatch, centreFloor, columnHeights, overCentre, overOthersZone, patchEchoed, planStage,
-  posFromRect, preferredCentre, rectFromPos, type Rect, type StagePlan,
+  NARROW_STAGE_PX, STAGE, applyLayoutPatch, dropTargetAt, overCentre, overOthersZone, patchEchoed, planStage,
+  posFromRect, preferredCentre, rectFromPos, stageItems, type Rect, type StagePlan,
 } from '../../dashboard/src/components/sleepy/super/superLayout.js';
-import { MAX_CONTAINERS, type SuperContainer, type SuperView } from '../../dashboard/src/lib/superTypes.js';
+import { MAX_CONTAINERS, MAX_PRESENT, type SuperContainer, type SuperGroup, type SuperView } from '../../dashboard/src/lib/superTypes.js';
 
 const card = (id: string, shape: SuperContainer['shape'] = 'tall', extra: Partial<SuperContainer> = {}): SuperContainer =>
   ({ id, kind: shape === 'tall' ? 'chat' : 'insight', ref: `ref-${id}`, shape, place: 'float', ...extra });
 const FLOAT: SuperView = { mode: 'float' };
 const EPS = 0.5;
+const T = STAGE.TILE;
 
 /** The stage a window of this size leaves, as the app draws it handed over: the 56 px rail and
  *  the 86 px of header (title bar + the Chat toolbar) off (measured in the verify's screenshots). */
@@ -34,6 +36,8 @@ const gapBetween = (a: Rect, b: Rect) => {
 };
 const inStage = (p: StagePlan, r: Rect) =>
   r.x >= -EPS && r.y >= -EPS && r.x + r.width <= p.width + EPS && r.y + r.height <= p.height + EPS;
+const floats = (p: StagePlan) => Object.values(p.cards).filter((c) => c.where === 'float');
+const sideOf = (p: StagePlan, r: Rect) => (r.x + r.width / 2 < p.width / 2 ? 'L' : 'R');
 
 function expectCentred(p: StagePlan) {
   const left = p.centre.x;
@@ -44,26 +48,27 @@ function expectCentred(p: StagePlan) {
   expect(Math.abs(top - bottom)).toBeLessThanOrEqual(1);
 }
 
-describe('floating cards (O1, O2, stage v2)', () => {
+describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
   for (const s of STAGES) {
-    it(`5 tall + 2 square at ${s.width}x${s.height}: centred, gaps >= 24, readable, 1:1 to 3:4`, () => {
+    it(`5 chats + 2 others at ${s.width}x${s.height}: centred, every card one ${T} px tile, gaps >= 24`, () => {
       const p = planStage(fiveTallTwoSquare(), FLOAT, s);
       expect(p.narrow).toBe(false);
       expectCentred(p);
-      const floating = Object.values(p.cards).filter((c) => c.where === 'float');
-      // 1600 and 1920 hold four a side, all seven float; 1280 and 1440 hold three a side, the
-      // seventh in Others.
+      const floating = floats(p);
+      // 1280 and 1440 hold three a side (the seventh in Others); 1600 and 1920 hold them all.
       expect(floating.length + p.others.length).toBe(7);
       expect(floating).toHaveLength(s.width >= 1500 ? 7 : 6);
       const rects = floating.map((c) => c.rect);
-      for (const r of rects) {
-        expect(gapBetween(r, p.centre)).toBeGreaterThanOrEqual(STAGE.GAP - EPS);
-        expect(inStage(p, r)).toBe(true);
-        expect(r.y).toBeGreaterThanOrEqual(p.centre.y - EPS);
-        expect(r.y + r.height).toBeLessThanOrEqual(p.centre.y + p.centre.height + EPS);
-        expect(r.width).toBeGreaterThanOrEqual(STAGE.U_MIN - EPS);
-        expect(r.height / r.width).toBeGreaterThanOrEqual(1 - 1e-6);
-        expect(r.height / r.width).toBeLessThanOrEqual(4 / 3 + 1e-6);
+      for (const c of floating) {
+        expect(c.rect.width).toBe(T);
+        expect(c.rect.height).toBe(T);
+        expect(c.shape).toBe('square');
+        expect(gapBetween(c.rect, p.centre)).toBeGreaterThanOrEqual(STAGE.GAP - EPS);
+        expect(inStage(p, c.rect)).toBe(true);
+        expect(c.rect.x).toBeGreaterThanOrEqual(STAGE.MARGIN - EPS);
+        expect(c.rect.x + c.rect.width).toBeLessThanOrEqual(p.width - STAGE.MARGIN + EPS);
+        expect(c.rect.y).toBeGreaterThanOrEqual(p.centre.y - EPS);
+        expect(c.rect.y + c.rect.height).toBeLessThanOrEqual(p.centre.y + p.centre.height + EPS);
       }
       for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
         expect(gapBetween(rects[i], rects[j])).toBeGreaterThanOrEqual(STAGE.GAP - EPS);
@@ -71,78 +76,72 @@ describe('floating cards (O1, O2, stage v2)', () => {
     });
   }
 
-  it('one calm rhythm: one card width, one gap, symmetric margins; full columns span the centre, shorter ones sit on its midline', () => {
-    const mixes: SuperContainer[][] = [];
-    for (let n = 1; n <= 9; n++) mixes.push(Array.from({ length: n }, (_, i) => card(`k${i}`, i % 3 === 2 ? 'square' : 'tall')));
-    for (const s of STAGES) for (const list of mixes) {
-      const p = planStage(list, FLOAT, s);
-      const label = `${list.length} cards at ${s.width}`;
-      const floating = Object.values(p.cards).filter((c) => c.where === 'float').map((c) => c.rect);
-      if (!floating.length) continue;
-      // One width for every card.
-      for (const r of floating) expect(Math.abs(r.width - floating[0].width), label).toBeLessThanOrEqual(EPS);
-      const cols = new Map<number, Rect[]>();
-      for (const r of floating) { const k = Math.round(r.x); cols.set(k, [...(cols.get(k) ?? []), r]); }
-      const sorted = [...cols.values()].map((c) => c.sort((a, b) => a.y - b.y));
-      const fullest = Math.max(...sorted.map((c) => c.length));
+  it('the orbit: each side\'s column sits on the midline, its ends next to the centre, its middle standing out', () => {
+    for (const s of STAGES) for (let n = 2; n <= 10; n++) {
+      const p = planStage(Array.from({ length: n }, (_, i) => card(`k${i}`)), FLOAT, s);
+      const label = `${n} cards at ${s.width}`;
       const mid = p.centre.y + p.centre.height / 2;
-      for (const col of sorted) {
-        // One gap between the cards of a column.
-        for (let i = 1; i < col.length; i++) expect(Math.abs(col[i].y - (col[i - 1].y + col[i - 1].height) - STAGE.GAP), label).toBeLessThanOrEqual(EPS);
-        const top = col[0].y;
-        const bottom = col[col.length - 1].y + col[col.length - 1].height;
-        if (col.length === fullest && fullest > 1 && Math.abs(top - p.centre.y) <= 1) {
-          expect(Math.abs(bottom - (p.centre.y + p.centre.height)), `${label}: a column that starts at the centre's top ends at its bottom`).toBeLessThanOrEqual(1);
-        } else {
-          expect(Math.abs((top + bottom) / 2 - mid), `${label}: a shorter column sits on the midline`).toBeLessThanOrEqual(1);
-        }
-      }
-      // The inner columns sit one gap from the centre; the outer margins mirror each other.
-      const lefts = floating.filter((r) => r.x < p.centre.x);
-      const rights = floating.filter((r) => r.x > p.centre.x);
-      if (lefts.length) expect(Math.abs(p.centre.x - Math.max(...lefts.map((r) => r.x + r.width)) - STAGE.GAP), label).toBeLessThanOrEqual(EPS);
-      if (rights.length) expect(Math.abs(Math.min(...rights.map((r) => r.x)) - (p.centre.x + p.centre.width) - STAGE.GAP), label).toBeLessThanOrEqual(EPS);
-      if (lefts.length && rights.length) {
-        const lm = Math.min(...lefts.map((r) => r.x));
-        const rm = p.width - Math.max(...rights.map((r) => r.x + r.width));
-        expect(Math.abs(lm - rm), label).toBeLessThanOrEqual(1);
-        expect(lm, label).toBeGreaterThanOrEqual(STAGE.MARGIN - EPS);
+      for (const side of ['L', 'R'] as const) {
+        const inner = side === 'L' ? p.centre.x - STAGE.GAP - T : p.centre.x + p.centre.width + STAGE.GAP;
+        // The inner column: the tiles whose x is within the orbit's depth of the inner edge.
+        const col = floats(p).map((c) => c.rect).filter((r) => sideOf(p, r) === side && Math.abs(r.x - inner) <= STAGE.ORBIT_DEPTH + EPS)
+          .sort((a, b) => a.y - b.y);
+        if (col.length < 2) continue;
+        // One gap between the tiles of a column; the column centred on the centre's midline.
+        for (let i = 1; i < col.length; i++) expect(Math.abs(col[i].y - (col[i - 1].y + T) - STAGE.GAP), label).toBeLessThanOrEqual(EPS);
+        expect(Math.abs((col[0].y + col[col.length - 1].y + T) / 2 - mid), label).toBeLessThanOrEqual(1);
+        // The ends tuck in, one gap from the centre.
+        for (const end of [col[0], col[col.length - 1]]) expect(Math.abs(end.x - inner), label).toBeLessThanOrEqual(EPS);
+        // Nearer the midline, farther out (never into the centre's gap).
+        const out = (r: Rect) => (side === 'L' ? inner - r.x : r.x - inner);
+        for (const r of col) expect(out(r), label).toBeGreaterThanOrEqual(-EPS);
+        const byDist = [...col].sort((a, b) => Math.abs(a.y + T / 2 - mid) - Math.abs(b.y + T / 2 - mid));
+        for (let i = 1; i < byDist.length; i++) expect(out(byDist[i - 1]) + EPS, label).toBeGreaterThanOrEqual(out(byDist[i]));
+        if (col.length >= 3) expect(out(byDist[0]), `${label}: the middle stands out`).toBeGreaterThan(0);
       }
     }
   });
 
-  it('two cards a side span the centre at all four window sizes, at 3:4', () => {
-    for (const s of STAGES) {
-      const p = planStage([card('a'), card('b'), card('c'), card('d')], FLOAT, s);
-      for (const id of ['a', 'b', 'c', 'd']) expect(p.cards[id].where).toBe('float');
-      for (const [hi, lo] of [['a', 'c'], ['b', 'd']]) {
-        expect(Math.abs(p.cards[hi].rect.y - p.centre.y)).toBeLessThanOrEqual(1);
-        expect(Math.abs(p.cards[lo].rect.y + p.cards[lo].rect.height - (p.centre.y + p.centre.height))).toBeLessThanOrEqual(1);
+  it('the plan carries each side\'s arc, and it runs through the tiles\' centres', () => {
+    const p = planStage(Array.from({ length: 7 }, (_, i) => card(`k${i}`)), FLOAT, STAGES[2]);
+    expect(p.orbit.map((a) => a.side).sort()).toEqual(['left', 'right']);
+    for (const a of p.orbit) {
+      const xAt = (y: number) => a.x0 + a.dir * a.depth * (1 - ((y - a.cy) / a.ymax) ** 2);
+      const mine = floats(p).filter((c) => (a.side === 'left' ? c.rect.x < p.centre.x : c.rect.x > p.centre.x));
+      for (const c of mine) expect(Math.abs(xAt(c.rect.y + T / 2) - (c.rect.x + T / 2))).toBeLessThanOrEqual(EPS);
+    }
+    // A side with one tile has no arc to draw.
+    expect(planStage([card('a'), card('b')], FLOAT, STAGES[2]).orbit).toEqual([]);
+  });
+
+  it('a lone tile, and two a side, stand straight next to the centre on its midline', () => {
+    for (const n of [2, 4]) {
+      const p = planStage(Array.from({ length: n }, (_, i) => card(`k${i}`)), FLOAT, STAGES[1]);
+      const mid = p.centre.y + p.centre.height / 2;
+      for (const c of floats(p)) {
+        const inner = c.rect.x < p.centre.x ? p.centre.x - STAGE.GAP - T : p.centre.x + p.centre.width + STAGE.GAP;
+        expect(Math.abs(c.rect.x - inner)).toBeLessThanOrEqual(EPS);
       }
-      for (const id of ['a', 'b', 'c', 'd']) expect(p.cards[id].rect.height / p.cards[id].rect.width).toBeCloseTo(4 / 3, 2);
+      const left = floats(p).filter((c) => c.rect.x < p.centre.x).map((c) => c.rect);
+      expect(Math.abs((Math.min(...left.map((r) => r.y)) + Math.max(...left.map((r) => r.y + T))) / 2 - mid)).toBeLessThanOrEqual(1);
     }
   });
 
-  it('a lone chat card is 3:4 and a lone square card 1:1, centred on the midline', () => {
-    const p = planStage([card('a'), card('s', 'square')], FLOAT, STAGES[1]);
-    const a = p.cards.a.rect;
-    const s = p.cards.s.rect;
-    expect(a.height / a.width).toBeCloseTo(4 / 3, 5);
-    expect(s.height).toBeCloseTo(s.width, 5);
-    expect(p.cards.a.shape).toBe('tall');
-    expect(p.cards.s.shape).toBe('square');
-    for (const r of [a, s]) {
-      expect(r.width).toBeGreaterThanOrEqual(STAGE.U_MIN - EPS);
-      expect(r.width).toBeLessThanOrEqual(STAGE.U_MAX + EPS);
-    }
-  });
-
-  it('alternates left/right in record order, each column centred on the midline', () => {
+  it('alternates left/right in record order', () => {
     const p = planStage([card('a', 'square'), card('b', 'square')], FLOAT, STAGES[2]);
     expect(p.cards.a.rect.x + p.cards.a.rect.width).toBeLessThanOrEqual(p.centre.x);
     expect(p.cards.b.rect.x).toBeGreaterThanOrEqual(p.centre.x + p.centre.width);
-    const mid = p.centre.y + p.centre.height / 2;
-    expect(Math.abs(p.cards.a.rect.y + p.cards.a.rect.height / 2 - mid)).toBeLessThanOrEqual(1);
+  });
+
+  it('an outer column opens only once the inner one is full, and only where the side has the room', () => {
+    const many = Array.from({ length: MAX_CONTAINERS }, (_, i) => card(`k${i}`));
+    const wide = planStage(many, FLOAT, STAGES[3]);
+    expect(wide.others).toEqual([]);
+    const xs = new Set(floats(wide).filter((c) => c.rect.x < wide.centre.x).map((c) => Math.round(c.rect.x)));
+    expect(xs.size).toBeGreaterThan(1);
+    const narrowish = planStage(many, FLOAT, STAGES[0]);
+    expect(narrowish.others.length).toBeGreaterThan(0);
+    expect(floats(narrowish).every((c) => c.rect.x >= STAGE.MARGIN - EPS)).toBe(true);
   });
 
   it('an empty stage is just the centre, at its preferred width', () => {
@@ -157,24 +156,21 @@ describe('floating cards (O1, O2, stage v2)', () => {
     expect(p.others.length).toBeGreaterThan(0);
     for (const id of p.others) expect(p.cards[id].where).toBe('others');
     expect(many.every((c) => c.place === 'float')).toBe(true);
-    const floating = Object.values(p.cards).filter((c) => c.where === 'float').map((c) => c.rect);
+    const floating = floats(p).map((c) => c.rect);
     for (let i = 0; i < floating.length; i++) for (let j = i + 1; j < floating.length; j++) {
       expect(gapBetween(floating[i], floating[j])).toBeGreaterThanOrEqual(STAGE.GAP - EPS);
     }
   });
 
-  it('what does not fit goes to Others before a card gets unreadably small (the record keeps every shape)', () => {
+  it('what does not fit goes to Others, the last ones first; a tile never shrinks', () => {
     const many = Array.from({ length: MAX_CONTAINERS }, (_, i) => card(`k${i}`));
-    for (const s of STAGES) {
+    for (const s of STAGES.slice(0, 3)) {
       const p = planStage(many, FLOAT, s);
-      const floating = Object.values(p.cards).filter((c) => c.where === 'float');
       expect(p.others.length).toBeGreaterThan(0);
-      for (const c of floating) expect(c.rect.width).toBeGreaterThanOrEqual(STAGE.U_MIN - EPS);
-      // The last cards go: what is drawn is the start of the record on each side.
+      for (const c of floats(p)) expect(c.rect.width).toBe(T);
       expect(p.others).toEqual(many.map((c) => c.id).filter((id) => p.others.includes(id)));
       expect(p.others).toContain(`k${MAX_CONTAINERS - 1}`);
     }
-    expect(many.every((c) => c.shape === 'tall')).toBe(true);
   });
 
   it('chats stay on the stage longest: other cards go to Others first', () => {
@@ -182,7 +178,7 @@ describe('floating cards (O1, O2, stage v2)', () => {
     const list = [...['t', 'k', 'w', 'i', 'b2'].map((id) => card(id, 'square')), ...['a', 'b', 'c', 'd', 'e'].map((id) => card(id))];
     for (const s of STAGES) {
       const p = planStage(list, FLOAT, s);
-      const floating = Object.values(p.cards).filter((c) => c.where === 'float').map((c) => c.id);
+      const floating = floats(p).map((c) => c.id);
       expect(floating.length).toBeGreaterThanOrEqual(5);
       for (const id of ['a', 'b', 'c', 'd', 'e']) expect(floating, `${id} at ${s.width}`).toContain(id);
     }
@@ -194,51 +190,121 @@ describe('floating cards (O1, O2, stage v2)', () => {
     expect(p.cards.b.rect).toEqual(p.othersRect);
   });
 
-  it('never lays out more than 12', () => {
-    const many = Array.from({ length: MAX_CONTAINERS + 1 }, (_, i) => card(`k${i}`, 'square'));
-    expect(Object.keys(planStage(many, FLOAT, STAGES[3]).cards)).toHaveLength(MAX_CONTAINERS);
+  it('never lays out more than the record\'s 12 cards plus the 4 a view may present beside their group', () => {
+    const many = Array.from({ length: MAX_CONTAINERS + MAX_PRESENT + 1 }, (_, i) => card(`k${i}`, 'square'));
+    expect(Object.keys(planStage(many, FLOAT, STAGES[3]).cards)).toHaveLength(MAX_CONTAINERS + MAX_PRESENT);
   });
 });
 
-describe('the centre takes the larger share and stays put (stage v2)', () => {
-  it('>= 55% of the stage at every window size and every card count', () => {
+describe('the centre takes the larger share and never moves (stage v2, 2026-10-20)', () => {
+  it('56% of the stage (within its floor and ceiling), centred, whatever opens or closes', () => {
     for (const s of STAGES) for (let n = 0; n <= MAX_CONTAINERS; n++) {
       const p = planStage(Array.from({ length: n }, (_, i) => card(`k${i}`, i % 2 ? 'square' : 'tall')), FLOAT, s);
-      expect(p.centre.width / s.width, `${n} cards at ${s.width}`).toBeGreaterThanOrEqual(0.55 - 1e-9);
+      expect(p.centre.width, `${n} cards at ${s.width}`).toBeCloseTo(preferredCentre(s.width), 6);
+      expect(p.centre.width / s.width).toBeGreaterThanOrEqual(0.55);
       expectCentred(p);
     }
   });
+});
 
-  it('a card opening or closing moves the centre by at most 1% of the stage', () => {
+describe('groups on the stage (2026-10-20)', () => {
+  const eight = () => [card('a'), card('b'), card('c'), card('s1', 'square'), card('d'), card('s2', 'square'), card('e'), card('f')];
+  const grouped = (list: SuperContainer[], groups: SuperGroup[], view: SuperView = FLOAT) => stageItems(list, groups, view);
+
+  it('a group is ONE tile at its first card\'s place in the record; its cards are not on the stage', () => {
+    const list = eight();
+    const g: SuperGroup = { id: 'grp-1', name: 'Forms', cards: ['b', 'f'], place: 'float' };
+    const items = grouped(list, [g]);
+    expect(items.map((i) => i.id)).toEqual(['a', 'grp-1', 'c', 's1', 'd', 's2', 'e']);
+    expect(items[1]).toMatchObject({ kind: 'group', slot: 1, shape: 'square' });
+    const p = planStage(items, FLOAT, STAGES[2]);
+    expect(p.cards['grp-1'].where).toBe('float');
+    expect(p.cards['grp-1'].rect.width).toBe(T);
+    expect(p.cards.b).toBeUndefined();
+    expect(p.cards.f).toBeUndefined();
+  });
+
+  it('grouping two cards moves no other card to the other side', () => {
+    const list = eight();
     for (const s of STAGES) {
-      const widths = Array.from({ length: MAX_CONTAINERS + 1 }, (_, n) =>
-        planStage(Array.from({ length: n }, (_, i) => card(`k${i}`)), FLOAT, s).centreWidth);
-      for (const w of widths) {
-        expect(w).toBeLessThanOrEqual(preferredCentre(s.width) + EPS);
-        expect(w).toBeGreaterThanOrEqual(centreFloor(s.width) - EPS);
-        expect(preferredCentre(s.width) - w).toBeLessThanOrEqual(0.01 * s.width + EPS);
+      const before = planStage(list, FLOAT, s);
+      for (const pair of [['b', 'f'], ['c', 'a'], ['s1', 'd'], ['e', 'b']]) {
+        const after = planStage(grouped(list, [{ id: 'grp-x', name: 'X', cards: pair, place: 'float' }]), FLOAT, s);
+        for (const c of floats(before)) {
+          if (pair.includes(c.id) || after.cards[c.id]?.where !== 'float') continue;
+          expect(sideOf(after, after.cards[c.id].rect), `${pair} at ${s.width}: ${c.id}`).toBe(sideOf(before, c.rect));
+        }
+        // The group stands on its first card's side.
+        if (before.cards[pair[0]].where === 'float' && after.cards['grp-x'].where === 'float') {
+          expect(sideOf(after, after.cards['grp-x'].rect)).toBe(sideOf(before, before.cards[pair[0]].rect));
+        }
       }
     }
   });
-});
 
-describe('a column\'s heights (stage v2)', () => {
-  it('span the room exactly when they can, each between 1:1 and 3:4, nearest their own shapes', () => {
-    const u = 200;
-    const span = 3 * 250 + 2 * STAGE.GAP;
-    const { heights, short } = columnHeights([4 / 3, 1, 4 / 3], u, span);
-    expect(short).toBe(false);
-    expect(heights.reduce((a, b) => a + b, 0) + 2 * STAGE.GAP).toBeCloseTo(span, 6);
-    for (const h of heights) { expect(h).toBeGreaterThanOrEqual(u - 1e-6); expect(h).toBeLessThanOrEqual((4 / 3) * u + 1e-6); }
-    // The square card grows, the chat cards keep 3:4 (they have no room to grow).
-    expect(heights[0]).toBeCloseTo((4 / 3) * u, 6);
-    expect(heights[1]).toBeGreaterThan(u);
+  it('a group keeps its own place and drop: in Others it is drawn there, dropped it stands where it was put', () => {
+    const list = eight();
+    const inOthers = planStage(grouped(list, [{ id: 'grp-1', name: 'X', cards: ['a', 'b'], place: 'others' }]), FLOAT, STAGES[2]);
+    expect(inOthers.others).toContain('grp-1');
+    const dropped = planStage(grouped(list, [{ id: 'grp-1', name: 'X', cards: ['a', 'b'], place: 'float', pos: { x: 0, y: 0 } }]), FLOAT, STAGES[2]);
+    expect(dropped.cards['grp-1'].owner).toBe(true);
+    expect(dropped.cards['grp-1'].rect).toMatchObject({ x: dropped.free.x, y: dropped.free.y, width: T, height: T });
   });
 
-  it('keep their own shapes when too few to span (the column is short)', () => {
-    const { heights, short } = columnHeights([4 / 3, 1], 200, 900);
-    expect(short).toBe(true);
-    expect(heights).toEqual([(4 / 3) * 200, 200]);
+  it('a grouped card shown side by side is drawn there; its group waits in Others', () => {
+    const list = eight();
+    const g: SuperGroup = { id: 'grp-1', name: 'X', cards: ['a', 'b'], place: 'float' };
+    const view: SuperView = { mode: 'half', card: 'b' };
+    const p = planStage(grouped(list, [g], view), view, STAGES[2]);
+    expect(p.cards.b.where).toBe('half');
+    expect(p.cards['grp-1'].where).toBe('others');
+  });
+
+  it('12 cards, a group of two presented beside two others: every card has a place (end review)', () => {
+    const list = Array.from({ length: MAX_CONTAINERS }, (_, i) => card(`c${i}`));
+    const g: SuperGroup = { id: 'grp-1', name: 'X', cards: ['c0', 'c1'], place: 'float' };
+    const view: SuperView = { mode: 'present', cards: ['c0', 'c1', 'c2', 'c3'] };
+    const p = planStage(grouped(list, [g], view), view, STAGES[2]);
+    for (const c of list) expect(p.cards[c.id], c.id).toBeDefined();
+    for (const id of ['c0', 'c1', 'c2', 'c3']) expect(p.cards[id].where).toBe('present');
+    expect(p.cards['grp-1'].where).toBe('others');
+    expect(p.others).toContain('c11');
+  });
+
+  it('the drop target is the tile under the pointer, never the held card itself; a held group groups with nothing', () => {
+    const list = eight();
+    const p = planStage(grouped(list, [{ id: 'grp-1', name: 'X', cards: ['e', 'f'], place: 'float' }]), FLOAT, STAGES[2]);
+    const at = (id: string) => ({ x: p.cards[id].rect.x + T / 2, y: p.cards[id].rect.y + T / 2 });
+    expect(dropTargetAt(p, at('c').x, at('c').y, 'a')).toBe('c');
+    expect(dropTargetAt(p, at('grp-1').x, at('grp-1').y, 'a')).toBe('grp-1');
+    expect(dropTargetAt(p, at('a').x, at('a').y, 'a')).toBeNull();
+    expect(dropTargetAt(p, at('c').x, at('c').y, 'grp-1')).toBeNull();
+    expect(dropTargetAt(p, p.centre.x + 10, p.centre.y + 10, 'a')).toBeNull();
+  });
+
+  it('the owner\'s group patch, applied locally: a drop on a card groups at the target, a drop on a group joins, out and Ungroup', () => {
+    const list = [card('a'), card('b', 'tall', { pos: { x: 0.9, y: 0.2 } }), card('c'), card('d')];
+    const s0 = { containers: list, groups: [] as SuperGroup[], view: FLOAT };
+    const s1 = applyLayoutPatch(s0, { group: { id: 'grp-o1', cards: ['b', 'a'], name: 'Grup 1' } });
+    expect(s1.groups).toEqual([{ id: 'grp-o1', name: 'Grup 1', cards: ['b', 'a'], place: 'float', pos: { x: 0.9, y: 0.2 } }]);
+    expect(patchEchoed(s1, { group: { id: 'grp-o1', cards: ['b', 'a'], name: 'Grup 1' } })).toBe(true);
+    expect(patchEchoed(s0, { group: { id: 'grp-o1', cards: ['b', 'a'], name: 'Grup 1' } })).toBe(false);
+    const s2 = applyLayoutPatch(s1, { group: { id: 'grp-o1', cards: ['c'] } });
+    expect(s2.groups[0].cards).toEqual(['b', 'a', 'c']);
+    const s3 = applyLayoutPatch(s2, { leave: ['a'], cards: [{ id: 'a', place: 'float', pos: { x: 0.1, y: 0.5 } }] });
+    expect(s3.groups[0].cards).toEqual(['b', 'c']);
+    expect(s3.containers.find((c) => c.id === 'a')?.pos).toEqual({ x: 0.1, y: 0.5 });
+    expect(patchEchoed(s2, { leave: ['a'] })).toBe(false);
+    expect(patchEchoed(s3, { leave: ['a'] })).toBe(true);
+    const s4 = applyLayoutPatch(s3, { ungroup: ['grp-o1'] });
+    expect(s4.groups).toEqual([]);
+    // The first card takes the group's spot.
+    expect(s4.containers.find((c) => c.id === 'b')?.pos).toEqual({ x: 0.9, y: 0.2 });
+    expect(patchEchoed(s4, { ungroup: ['grp-o1'] })).toBe(true);
+    // A cards entry may move a whole group.
+    const s5 = applyLayoutPatch(s2, { cards: [{ id: 'grp-o1', place: 'others' }] });
+    expect(s5.groups[0].place).toBe('others');
+    expect(patchEchoed(s5, { cards: [{ id: 'grp-o1', place: 'others' }] })).toBe(true);
   });
 });
 
