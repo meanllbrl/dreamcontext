@@ -319,6 +319,13 @@ export interface VoiceCapture {
   stop: () => void;
 }
 
+/**
+ * The hands-free phone's longest take, ended and sent like a release. Under the Mac's own cap
+ * for a phone take (`PHONE_MAX_STT_SECONDS` = 120 in src/lib/voice/limits.ts; the drift test holds
+ * the margin): a message held past it is sent, never recorded in full and then refused.
+ */
+export const PHONE_MAX_TAKE_MS = 115_000;
+
 export interface VoiceCaptureOptions {
   /** The vault this take belongs to — `/stt` is vault-scoped. */
   vault: string | null;
@@ -332,9 +339,15 @@ export interface VoiceCaptureOptions {
    * so a caller that re-creates the callback every render does not rebuild the audio graph.
    */
   onLevel?: (level: number) => void;
+  /** End (and send) the take at this length, as letting go would. Unset: no limit (the laptop). */
+  maxMs?: number;
 }
 
-export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOptions): VoiceCapture {
+export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCaptureOptions): VoiceCapture {
+  /** Read by the recording tick; `stopRef` is the stop below, which the tick cannot name yet. */
+  const maxMsRef = useRef(maxMs);
+  maxMsRef.current = maxMs;
+  const stopRef = useRef<() => void>(() => {});
   const [state, setState] = useState<CaptureState>('idle');
   /** See {@link VoiceCaptureOptions.onLevel}: the audio callback reads the CURRENT listener,
    *  so a new closure each render never touches the graph. */
@@ -804,7 +817,9 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
       phaseRef.current = 'recording';
       setState('recording');
       tickRef.current = window.setInterval(() => {
-        setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
+        const ms = Date.now() - startedAtRef.current;
+        setElapsed(Math.floor(ms / 1000));
+        if (maxMsRef.current && ms >= maxMsRef.current) stopRef.current();
       }, 250);
     })();
   }, [teardown, finishTake, startNativeTake]);
@@ -835,6 +850,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel }: VoiceCaptureOp
     if (nativeIdRef.current !== null) finishNativeTake();
     else finishTake();
   }, [vault, teardown, finishTake, finishNativeTake]);
+  stopRef.current = stop;
 
   return {
     state,

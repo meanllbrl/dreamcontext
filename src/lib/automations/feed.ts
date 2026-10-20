@@ -542,11 +542,6 @@ export function buildFeed(
     if (entries.length === 0) continue;
 
     const watermark = threadReadWatermark(contextRoot, manifest.slug, home);
-    // `kind: 'user'` excluded — you do not badge yourself for your own reply.
-    // Same rule as the store's own `threadUnread`, kept identical on purpose.
-    const count = entries.filter((e) => e.kind !== 'user' && (watermark === null || e.id > watermark)).length;
-    if (count > 0) unreadBySlug[manifest.slug] = count;
-
     const cache = readAutomationCache(contextRoot, manifest.slug);
     const runsByFire = new Map((cache?.history ?? []).map((e) => [e.firedAt, e]));
 
@@ -555,6 +550,19 @@ export function buildFeed(
       const list = byRun.get(e.runId);
       if (list) list.push(e); else byRun.set(e.runId, [e]);
     }
+
+    // Counted in MESSAGES, the unit the reader sees: each unread post, and a run that posted
+    // nothing counts once (its card still says what happened). The runner's own bookkeeping
+    // (`started`, `ok`) is never a message of its own: counting it made one reply read as
+    // three. `kind: 'user'` excluded — you do not badge yourself for your own reply, the same
+    // rule as the store's own `threadUnread`. A run is unread here exactly when its
+    // `message.unread` below is true, so the chip and the per-message bars still agree.
+    let count = 0;
+    for (const runEntries of byRun.values()) {
+      const fresh = runEntries.filter((e) => e.kind !== 'user' && (watermark === null || e.id > watermark));
+      if (fresh.length > 0) count += Math.max(1, fresh.filter((e) => e.kind === 'agent').length);
+    }
+    if (count > 0) unreadBySlug[manifest.slug] = count;
     for (const [runId, runEntries] of byRun) {
       messages.push(
         buildFeedMessage(

@@ -369,6 +369,9 @@ export type ChatEvent =
   | { kind: 'super-state'; state: Record<string, unknown> }
   /** The turn that just opened was injected by the super inbox: render it as an event chip. */
   | { kind: 'super-event'; eventKind: string; child: string }
+  /** The owner's words typed on ANOTHER surface of the same Super Agent chat (the phone's mirror,
+   *  or the window when the phone watches): drawn as the owner's own bubble. */
+  | { kind: 'owner-echo'; text: string }
   /** The server's fresh-session branch guard reporting what it did to the working tree.
    *  `warn` for a refusal, `info` for a move it made. See `fromMeta`. */
   | { kind: 'branch-start'; tone: 'info' | 'warn'; message: string }
@@ -1184,6 +1187,10 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   }
   if (subtype === 'super_state') {
     return isRecord(obj.state) ? { kind: 'super-state', state: obj.state } : ignored('_meta:super_state');
+  }
+  if (subtype === 'owner_echo') {
+    const text = str(obj.text);
+    return text && text.trim() ? { kind: 'owner-echo', text: text.trim() } : ignored('_meta:owner_echo');
   }
   if (subtype === 'super_event') {
     const eventKind = str(obj.kind);

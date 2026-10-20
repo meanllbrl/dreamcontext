@@ -288,7 +288,7 @@ describe('the pill while the Assistant works (notchModel.ts)', () => {
     const base = { name: 'Dreamy', asker: null, proposals: 0, finished: null, handoffs: [] };
     expect(pillHeadline({ ...base, self: 'Asking larkspur…' })).toBe('Asking larkspur…');
     expect(pillHeadline({ ...base, self: 'Asking larkspur…', asker: 'korus' })).toBe('korus needs you');
-    expect(pillHeadline({ ...base, running: [{ vault: 'a', slug: 'digest', title: 'Daily digest', hasPhoto: false, since: 1, runId: null }] })).toBe('Daily digest is running');
+    expect(pillHeadline({ ...base, running: [{ vault: 'a', slug: 'digest', title: 'Daily digest', hasPhoto: false, since: 1, runId: null }] })).toBe('Daily digest is working');
   });
 
   it('reads the inbox through a forward-compatible cast', () => {

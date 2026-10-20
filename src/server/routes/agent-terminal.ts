@@ -41,6 +41,7 @@ import {
   claudeConversationExists, redeemPromptToken,
   sanitizeExecCommand, sanitizeRelativeDir,
 } from './agent-spawn-shared.js';
+import { findWhisper } from '../../lib/voice/whisper.js';
 
 // Re-exported so src/server/index.ts's existing import keeps working unchanged —
 // the prompt-token mint/redeem store now lives in agent-spawn-shared.ts (shared
@@ -287,6 +288,9 @@ export async function handleAgentCapabilities(
     ...(desktop && claudeCli ? { claudeUpdate: readClaudeUpdateStatus() } : {}),
     npm,
     git: gitOk,
+    // Is local dictation installed (whisper-server + a model)? A boolean only, never a path: the
+    // hands-free phone reads it to draw its hold-to-talk mic (its takes are transcribed here).
+    dictation: desktop && findWhisper() !== null,
   });
 }
 

@@ -16,6 +16,7 @@ import {
   superSanitizeOpts, superVaultName, superView, writeSuper,
 } from '../../lib/super/inbox.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
+import { findLiveChat } from './agent-chat-live.js';
 import { delegationAllowed, readCapacityFacts } from '../../lib/super/capacity.js';
 import {
   WorktreeRefused, createChildWorktree, discardFreshWorktree, mergeChildren, removeChildWorktree, repoOfWorktree,
@@ -1020,6 +1021,9 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
   },
   disable: async (_req, res, contextRoot) => {
     const state = await disableSuper(contextRoot);
+    // The phone talked to the Super Agent only while it was handed over: its mirrors go now,
+    // whether or not the window keeps the parked child alive.
+    if (state.session) findLiveChat(state.session)?.closeMirrors?.();
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
   layout: async (_req, res, contextRoot, body) => {

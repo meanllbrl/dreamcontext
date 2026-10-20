@@ -63,10 +63,8 @@
 .aiteam-event--good .aiteam-event-mark { background: var(--color-success-subtle, var(--color-bg-tertiary)); color: var(--color-success); }
 .aiteam-event--accent .aiteam-event-mark { background: var(--color-accent-soft); color: var(--color-accent-ink); }
 .aiteam-col .chat-msg-user-row { max-width: min(560px, 80%); }
-.aiteam-col .chat-msg-user-bubble { font-size: var(--font-size-sm); line-height: 1.6; padding: var(--space-2) var(--space-4); }
 .aiteam-col .agent-report { margin-top: var(--space-2); }
 .aiteam-col .agent-msg-ask { margin-top: var(--space-3); }
-.aiteam-live { display: flex; align-items: center; gap: var(--space-2); padding-left: 44px; font-size: var(--font-size-sm); color: var(--color-text-secondary); }
 .aiteam-composer { padding: 0 var(--space-6) var(--space-4); max-width: 848px; width: 100%; margin: 0 auto; }
 .aiteam-replying { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2) var(--space-2); font-size: var(--font-size-xs); color: var(--color-text-secondary); }
 .aiteam-replying b { color: var(--color-text); font-weight: var(--font-weight-semibold); }
@@ -123,7 +121,10 @@
 .aiteam-pill svg { flex-shrink: 0; }
 .aiteam-new-card .aid-textarea { min-height: 88px; }
 /* The real profile, hosted inside the AI Team panel: no own border, width or entrance. */
-.aiteam-panel .agp-panel { width: 100%; border-left: 0; background: transparent; padding: var(--space-4); animation: none; }
+/* `flex: 1; min-height: 0` is load-bearing: unbounded, the profile grew past the page, the app
+   shell's own scroller took the overflow, and wheeling over the panel (or "Review approval")
+   slid the whole page up, leaving the list blank and the composer mid-screen. */
+.aiteam-panel .agp-panel { flex: 1; min-height: 0; width: 100%; border-left: 0; background: transparent; padding: var(--space-4); animation: none; }
 .aiteam-panel .agp-panel-top .agp-btn--ghost { display: none; }
 .aiteam-convo-id { flex: 1; min-width: 0; }
 .aiteam-convo-name { white-space: nowrap; }
@@ -131,7 +132,8 @@
 .aiteam-convo-name { overflow: hidden; }
 
 /* ── page frame ── */
-.aiteam { position: relative; container-type: inline-size; }
+/* The page is exactly the shell's height and never lends it overflow: each column scrolls itself. */
+.aiteam { position: relative; container-type: inline-size; overflow: hidden; }
 .aiteam--narrow { grid-template-columns: minmax(0, 1fr); }
 .aiteam--narrow .aiteam-roster { border-right: 0; }
 .aiteam-roster-next { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -219,3 +221,49 @@
 .aiteam-temp-dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--color-accent); }
 .aiteam-linkbtn { border: 0; background: transparent; padding: 0; color: var(--color-text); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); text-decoration: underline; text-underline-offset: 2px; }
 .aiteam-you { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ── Chat's typography: the conversation reads at Chat's own size and leading ──
+   The posts reuse the channel's atoms, which set a smaller channel size; here the reader is in a
+   conversation, so prose, lists and the owner's bubble (cards.css, untouched) read like Chat. */
+.aiteam-col .agent-msg-md .md-preview .markdown-body,
+.aiteam-col .agent-msg-md .md-preview .markdown-body li { font-size: var(--chat-text); line-height: var(--chat-line-height); }
+.aiteam-col .agent-msg-name { font-size: var(--font-size-sm); }
+
+/* ── the agent at work: its face, its name, and Chat's working indicator under them ── */
+.aiteam-working .chat-working { margin-top: var(--space-1); }
+
+/* ── a notification landed here: the message is marked for a moment ── */
+.aiteam-col [data-flash] { border-radius: var(--radius-lg); animation: aiteam-flash 2.4s ease-out; }
+@keyframes aiteam-flash {
+  0%, 35% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-accent) 22%, transparent); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+  100% { box-shadow: 0 0 0 6px transparent; background: transparent; }
+}
+
+/* ── what waits for your approval, at the top of the conversation ── */
+.aiteam-approval { display: flex; flex-direction: column; gap: var(--space-2); flex-shrink: 0; padding: var(--space-3) var(--space-6) 0; max-height: 55%; overflow: auto; }
+.aiteam-approval-row { border: 1px solid color-mix(in srgb, var(--color-warning) 45%, var(--color-border)); border-radius: var(--radius-lg); background: var(--color-warning-subtle); }
+.aiteam-approval-line { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
+.aiteam-approval-mark { display: inline-grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border-radius: var(--radius-full); background: var(--color-bg); color: var(--color-warning-ink); }
+.aiteam-approval-text { flex: 1; min-width: 0; font-size: var(--font-size-sm); line-height: 1.45; color: var(--color-text); }
+.aiteam-approval-btn { flex-shrink: 0; }
+.aiteam-approval-review { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--space-3) var(--space-3); }
+.aiteam-approval-lead { margin: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-approval-pre { margin: 0; max-height: 280px; overflow: auto; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font-family: var(--font-mono); font-size: var(--font-size-xs); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.aiteam-approval-foot { display: flex; justify-content: flex-end; gap: var(--space-2); }
+@container (max-width: 759px) {
+  .aiteam-approval { padding: var(--space-2) var(--space-3) 0; }
+  .aiteam-approval-line { flex-wrap: wrap; }
+  .aiteam-approval-text { flex-basis: calc(100% - 40px); }
+  .aiteam-approval-btn { margin-left: 36px; }
+}
+/* Phone: the conversation's name keeps the head; the routines open from the panel button. */
+@container (max-width: 460px) {
+  .aiteam-convo-head [data-team-routines] { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aiteam-col [data-flash] { animation: none; outline: 2px solid color-mix(in srgb, var(--color-accent) 40%, transparent); }
+}
+
+/* The head's name block already takes the free width (flex: 1): a spacer beside it split that
+   width in two and cut the name short, at phone width down to three letters. */
+.aiteam-convo-head > .aiteam-spacer { display: none; }
