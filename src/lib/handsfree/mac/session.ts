@@ -129,6 +129,38 @@ function clearState(home: string): void {
   rmSync(statePathOf(home), { force: true });
 }
 
+/**
+ * Power an end could not restore (sudo refused, pmset failed): kept here, like the thermal
+ * pending file, and retried at the next start and the next boot. Without it a failed restore
+ * was swallowed, the state cleared, and the Mac stayed sleepless with nothing left to retry.
+ */
+export function powerPendingPathOf(home: string = homedir()): string { return join(macDirOf(home), 'power-pending.json'); }
+
+interface PowerPending { priorLpm: power.LpmBySource | null; at: string }
+
+function writePowerPending(home: string, priorLpm: power.LpmBySource | null): void {
+  try {
+    const p = powerPendingPathOf(home);
+    const tmp = `${p}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ priorLpm, at: new Date().toISOString() } satisfies PowerPending), { mode: 0o600 });
+    renameSync(tmp, p);
+  } catch { /* the state file still carries it until it is cleared */ }
+}
+
+/** What an end did: a step that failed is said, never claimed. */
+export interface MacEnd { revoked: boolean; powerRestored: boolean }
+
+export function endedBody(lead: string, end: MacEnd): string {
+  const done = ['the tunnel is closed'];
+  const failed: string[] = [];
+  if (end.revoked) done.push('every phone is signed out');
+  else failed.push('the phones could not be signed out: open Hands-free on this Mac and press Revoke all');
+  if (end.powerRestored) done.push('sleep is allowed again');
+  else failed.push('sleep could not be allowed again yet: dreamcontext retries the next time it starts');
+  const list = done.length > 1 ? `${done.slice(0, -1).join(', ')} and ${done[done.length - 1]}` : done[0];
+  return `${lead} ${list[0].toUpperCase()}${list.slice(1)}.${failed.length ? ` But ${failed.join(', and ')}.` : ''}`;
+}
+
 const defaultAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } };
 const defaultCommandOf = (pid: number): string => {
   try { return execFileSync('/bin/ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).trim(); } catch { return ''; }
@@ -147,6 +179,10 @@ export class MacSession {
   private vaults: string[] = [];
   /** This run's Bag mode (chosen at start); null while off. */
   private bagMode: boolean | null = null;
+  /** What the last end did, for the notification that reports it. */
+  private lastEnd: MacEnd = { revoked: true, powerRestored: true };
+  /** The tunnel gave up while start was still arming: start ends Mac mode once it is on. */
+  private gaveUpWhileStarting = false;
   private readonly home: string;
 
   constructor(private readonly d: MacSessionDeps) {
@@ -188,6 +224,28 @@ export class MacSession {
   /** Release what an earlier run could not (`thermal-pending.json`). Never throws. */
   async releasePendingThermal(): Promise<void> {
     try { await thermal.releasePendingThermal({ ...this.thermalReleaseOpts(), path: thermal.thermalPendingPathOf(this.home) }); } catch { /* never blocks */ }
+  }
+
+  /** Restore what an earlier end could not (`power-pending.json`). True when nothing is left pending. Never throws. */
+  async releasePendingPower(): Promise<boolean> {
+    const path = powerPendingPathOf(this.home);
+    let pending: PowerPending;
+    try { pending = JSON.parse(readFileSync(path, 'utf8')) as PowerPending; } catch { return !existsSync(path); }
+    try {
+      await power.restorePower(pending?.priorLpm ?? null, this.d.powerRun);
+      rmSync(path, { force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The tunnel gave up: nothing on the phone can press Return, so end Mac mode as Return does. */
+  private endAfterGiveUp(): void {
+    void this.stop().then(() => {
+      this.lastError = 'mac_tunnel_failed';
+      this.d.notify('Hands-free ended: the tunnel stopped', endedBody('Your phone could not reach this Mac any more, so Mac mode ended.', this.lastEnd));
+    });
   }
 
   devices(): MacDevice[] {
@@ -239,6 +297,8 @@ export class MacSession {
   async start(opts: { vaults: string[]; bagMode?: boolean }): Promise<MacStatus> {
     if (this.phase !== 'off') throw new MacModeError('mac_already_on', 'Mac mode is already on.');
     await this.releasePendingThermal();
+    await this.releasePendingPower();
+    this.gaveUpWhileStarting = false;
     const vaults = [...new Set((opts?.vaults ?? []).filter((v) => typeof v === 'string' && v))];
     if (!vaults.length) throw new MacModeError('mac_no_project', 'Choose at least one project.');
     if ((this.d.platform ?? process.platform) !== 'darwin') throw new MacModeError('mac_unsupported_platform', 'Mac mode runs on macOS only.');
@@ -275,7 +335,10 @@ export class MacSession {
             this.lastError = 'mac_tunnel_failed';
             this.d.setPublicOrigin(null);
             if (this.state) { this.state = { ...this.state, url: null, tunnelPid: null }; writeState(this.home, this.state); }
-            this.d.notify('Hands-free: the tunnel stopped', 'Your phone cannot reach this Mac. Open Hands-free on the Mac and press Return, then start again.');
+            // Left armed, the Mac would stay sleepless with Low Power Mode forced and the
+            // governor running, and the phone that could press Return can no longer reach it.
+            if (this.phase === 'on') this.endAfterGiveUp();
+            else if (this.phase === 'starting') this.gaveUpWhileStarting = true;
           },
         },
       );
@@ -317,6 +380,10 @@ export class MacSession {
         thermal: this.governor?.snapshot() ?? { state: null, slowed: 0 },
       }));
       this.phase = 'on';
+      if (this.gaveUpWhileStarting) {
+        this.gaveUpWhileStarting = false;
+        this.endAfterGiveUp();
+      }
       return this.status();
     } catch (e) {
       this.lastError = e instanceof MacModeError ? e.code : 'mac_tunnel_failed';
@@ -338,15 +405,18 @@ export class MacSession {
     this.stopping = (async () => {
       // Planned: phone-held chats let go FIRST (4401, detach), so the revocation cuts nothing.
       try { this.d.releasePhoneSessions(); } catch { /* best-effort */ }
-      try { this.d.auth().clearLoginToken(); this.d.auth().store.revokeAllLocal(); } catch { /* best-effort */ }
+      let revoked = true;
+      try { this.d.auth().clearLoginToken(); this.d.auth().store.revokeAllLocal(); } catch { revoked = false; }
       // Signed out, so no phone save can race it: what the phone had open lands on the desktop.
       try { await this.d.landPhoneTabs?.(this.vaults, { waitMs: o.shutdown ? 200 : 2_000 }); } catch { /* best-effort */ }
-      await this.teardown(this.state?.priorLpm ?? null, this.state?.sleepDisabledByUs ?? false, releaseDeadlineAt);
+      const powerRestored = await this.teardown(this.state?.priorLpm ?? null, this.state?.sleepDisabledByUs ?? false, releaseDeadlineAt);
+      this.lastEnd = { revoked, powerRestored };
     })().finally(() => { this.stopping = null; });
     return this.stopping;
   }
 
-  private async teardown(prior: power.LpmBySource | null, sleepDisabled: boolean, releaseDeadlineAt?: number): Promise<void> {
+  /** True when power is as it was before Mac mode (or was never touched). */
+  private async teardown(prior: power.LpmBySource | null, sleepDisabled: boolean, releaseDeadlineAt?: number): Promise<boolean> {
     // No new clamp from here on; the release itself waits until power is restored.
     const governor = this.governor;
     this.governor = null;
@@ -362,8 +432,14 @@ export class MacSession {
     this.d.setExposedVaults?.([]);
     this.vaults = [];
     this.bagMode = null;
+    let powerRestored = true;
     if (sleepDisabled || prior) {
-      try { await power.restorePower(prior, this.d.powerRun); } catch { this.lastError = this.lastError ?? 'mac_sudo_missing'; }
+      try { await power.restorePower(prior, this.d.powerRun); } catch {
+        powerRestored = false;
+        this.lastError = this.lastError ?? 'mac_sudo_missing';
+        // BEFORE clearState, like the thermal leftovers: the next start and boot retry it.
+        writePowerPending(this.home, prior);
+      }
     }
     if (governor) {
       let leftover: thermal.LedgerEntry[] = [];
@@ -375,6 +451,7 @@ export class MacSession {
     clearState(this.home);
     this.state = null;
     this.phase = 'off';
+    return powerRestored;
   }
 
   /**
@@ -384,6 +461,7 @@ export class MacSession {
    */
   async recoverOnBoot(): Promise<boolean> {
     await this.releasePendingThermal();
+    await this.releasePendingPower();
     const s = readMacState(this.home);
     if (!s) return false;
     const alive = this.d.isAlive ?? defaultAlive;
@@ -391,11 +469,13 @@ export class MacSession {
     if (s.tunnelPid && alive(s.tunnelPid) && tunnel.isOurCloudflared((this.d.commandOf ?? defaultCommandOf)(s.tunnelPid), this.home)) {
       try { (this.d.kill ?? ((p, sig) => process.kill(p, sig)))(s.tunnelPid, 'SIGTERM'); } catch { /* gone */ }
     }
-    try { this.d.auth().store.revokeAllLocal(); } catch { /* best-effort */ }
+    let revoked = true;
+    try { this.d.auth().store.revokeAllLocal(); } catch { revoked = false; }
     // The crashed run's phone tabs land too: the next launch resumes them on the desktop.
     try { await this.d.landPhoneTabs?.(s.exposedVaults ?? [], { waitMs: 2_000 }); } catch { /* best-effort */ }
+    let powerRestored = true;
     if (s.sleepDisabledByUs || s.priorLpm) {
-      try { await power.restorePower(s.priorLpm, this.d.powerRun); } catch { /* reported by status */ }
+      try { await power.restorePower(s.priorLpm, this.d.powerRun); } catch { powerRestored = false; writePowerPending(this.home, s.priorLpm); }
     }
     const clamped = (s.clamped ?? []).filter(thermal.isLedgerEntry);
     if (clamped.length) {
@@ -403,7 +483,7 @@ export class MacSession {
       thermal.addPendingThermal(thermal.thermalPendingPathOf(this.home), r.leftover);
     }
     clearState(this.home);
-    this.d.notify('Hands-free ended', 'dreamcontext closed while Mac mode was on. The tunnel is closed, every phone is signed out and sleep is allowed again.');
+    this.d.notify('Hands-free ended', endedBody('dreamcontext closed while Mac mode was on.', { revoked, powerRestored }));
     return true;
   }
 
@@ -427,6 +507,8 @@ export class MacSession {
   /** Uninstall: Return if on, remove the drop-in (one admin prompt), then the Mac dir. */
   async uninstall(): Promise<void> {
     await this.stop();
+    // While the sleep permission still exists: the Mac folder (and its pending file) goes below.
+    await this.releasePendingPower();
     if (this.sudoersInstalled()) {
       const r = await (this.d.removeSudoers ?? (() => power.removeSudoers(this.d.powerRun)))();
       if (r === 'cancelled') throw new MacModeError('mac_admin_cancelled', 'The administrator prompt was cancelled.');

@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MacSession, MacModeError, readMacState, statePathOf, type MacSessionDeps } from '../../src/lib/handsfree/mac/session.js';
+import { MacSession, MacModeError, powerPendingPathOf, readMacState, statePathOf, type MacSessionDeps } from '../../src/lib/handsfree/mac/session.js';
 import { HandsfreeAuth, ensureMacHandsfreeDir, generatePassphrase, hashPassphrase, sha256Hex } from '../../src/server/handsfree-auth.js';
 import type { PowerRunner } from '../../src/lib/handsfree/mac/power.js';
 import { ThermalGovernor, thermalPendingPathOf, type LedgerEntry } from '../../src/lib/handsfree/mac/thermal.js';
@@ -544,5 +544,107 @@ describe('fixed address: an existing DNS record is never replaced unasked', () =
     expect(err.code).toBe('mac_hostname_in_use');
     expect((await s.setupFixed('www.example.com', undefined, { overwriteDns: true })).hostname).toBe('www.example.com');
     expect(seen).toEqual([false, true]);
+  });
+});
+
+describe('the tunnel gives up: Mac mode ends instead of staying armed', () => {
+  beforeEach(async () => { auth.store.setPassphrase(await hashPassphrase('a b c d e f')); });
+
+  type Events = Parameters<NonNullable<MacSessionDeps['makeSupervisor']>>[1];
+  const capturing = (sink: { ev: Events | null }) => (_o: unknown, e: Events) => {
+    sink.ev = e;
+    const f = fakeSupervisor()();
+    const st = f.start;
+    f.start = vi.fn(async () => { const r = await st(); e.onUrl(r.url, false); return r; });
+    return f;
+  };
+
+  it('ends it the way Return does: phones signed out, power restored, governor gone, state cleared, and the notice says so', async () => {
+    const sink: { ev: Events | null } = { ev: null };
+    const s = new MacSession(deps({ makeSupervisor: capturing(sink) as never }));
+    await s.start({ vaults: ['proj'] });
+    const id = auth.store.createDevice('iPhone');
+    events = [];
+    sink.ev!.onGiveUp('restart_budget');
+    await vi.waitFor(() => expect(notes.some(([t]) => /Hands-free ended/.test(t))).toBe(true));
+    expect(s.status().phase).toBe('off');
+    expect(s.status().lastError).toBe('mac_tunnel_failed');
+    expect(auth.store.isValidDevice(id)).toBe(false);
+    expect(events).toEqual(expect.arrayContaining(['release', 'tunnel:stop', 'listener:stop', '/usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0']));
+    expect(s.status().thermal).toEqual({ state: null, slowed: 0 });
+    expect(existsSync(statePathOf(home))).toBe(false);
+    const [, body] = notes.find(([t]) => /Hands-free ended/.test(t))!;
+    expect(body).toBe('Your phone could not reach this Mac any more, so Mac mode ended. The tunnel is closed, every phone is signed out and sleep is allowed again.');
+  });
+
+  it('a give-up while start is still arming power ends Mac mode as soon as it is on', async () => {
+    const sink: { ev: Events | null } = { ev: null };
+    const base = powerRun();
+    const s = new MacSession(deps({
+      makeSupervisor: capturing(sink) as never,
+      powerRun: async (file, args) => {
+        const r = await base(file, args);
+        if (args.join(' ') === '-n /usr/bin/pmset -a disablesleep 1') sink.ev!.onGiveUp('restart_budget');
+        return r;
+      },
+    }));
+    await s.start({ vaults: ['proj'] });
+    await vi.waitFor(() => expect(s.status().phase).toBe('off'));
+    expect(events).toContain('/usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0');
+    expect(existsSync(statePathOf(home))).toBe(false);
+  });
+});
+
+describe('an end that could not restore power or sign the phones out says so, and retries', () => {
+  beforeEach(async () => { auth.store.setPassphrase(await hashPassphrase('a b c d e f')); });
+
+  const refusing = (o: { refuse: boolean }): PowerRunner => {
+    const base = powerRun();
+    return async (file, args) => {
+      if (o.refuse && args.join(' ') === '-n /usr/bin/pmset -a disablesleep 0') { events.push('restore:refused'); return { code: 1, stdout: '', stderr: 'sudo: a password is required' }; }
+      return base(file, args);
+    };
+  };
+
+  it('a failed restore at Return leaves power-pending.json (state still cleared); the next start restores it first and deletes it', async () => {
+    const o = { refuse: true };
+    const s = new MacSession(deps({ powerRun: refusing(o) }));
+    await s.start({ vaults: ['proj'] });
+    await s.stop();
+    expect(events).toContain('restore:refused');
+    expect(existsSync(statePathOf(home))).toBe(false);
+    expect(JSON.parse(readFileSync(powerPendingPathOf(home), 'utf8')).priorLpm).toEqual({ battery: 0, ac: 1 });
+    expect(statSync(powerPendingPathOf(home)).mode & 0o777).toBe(0o600);
+    expect(s.status().lastError).toBe('mac_sudo_missing');
+
+    o.refuse = false;
+    events = [];
+    await s.start({ vaults: ['proj'] });
+    expect(existsSync(powerPendingPathOf(home))).toBe(false);
+    expect(events.indexOf('/usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0'))
+      .toBeLessThan(events.indexOf('/usr/bin/sudo -n /usr/bin/pmset -a disablesleep 1'));
+    await s.stop();
+  });
+
+  it('boot recovery names what failed instead of claiming every phone signed out and sleep allowed', async () => {
+    writeFileSync(statePathOf(home), JSON.stringify({ on: true, serverPid: 99999, tunnelPid: null, tunnelBin: 'x', startedAt: 'x', priorLpm: { battery: 1, ac: 0 }, sleepDisabledByUs: true, url: null, mode: 'quick' }), { mode: 0o600 });
+    vi.spyOn(auth.store, 'revokeAllLocal').mockImplementation(() => { throw new Error('devices.json is locked'); });
+    const s = new MacSession(deps({ powerRun: refusing({ refuse: true }) }));
+    expect(await s.recoverOnBoot()).toBe(true);
+    expect(notes).toHaveLength(1);
+    const [, body] = notes[0];
+    expect(body).not.toMatch(/every phone is signed out/);
+    expect(body).not.toMatch(/sleep is allowed again/);
+    expect(body).toMatch(/could not be signed out/);
+    expect(body).toMatch(/retries the next time it starts/);
+    expect(JSON.parse(readFileSync(powerPendingPathOf(home), 'utf8')).priorLpm).toEqual({ battery: 1, ac: 0 });
+  });
+
+  it('a clean boot recovery still says everything it did', async () => {
+    writeFileSync(statePathOf(home), JSON.stringify({ on: true, serverPid: 99999, tunnelPid: null, tunnelBin: 'x', startedAt: 'x', priorLpm: { battery: 1, ac: 0 }, sleepDisabledByUs: true, url: null, mode: 'quick' }), { mode: 0o600 });
+    const s = new MacSession(deps());
+    expect(await s.recoverOnBoot()).toBe(true);
+    expect(notes[0][1]).toBe('dreamcontext closed while Mac mode was on. The tunnel is closed, every phone is signed out and sleep is allowed again.');
+    expect(existsSync(powerPendingPathOf(home))).toBe(false);
   });
 });
