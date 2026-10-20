@@ -32,7 +32,9 @@ import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-ch
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import {
+  approvalFields,
   checkApproval,
+  renderApprovalReview,
   approveAutomation,
   listRegisteredProjects,
   registerProject,
@@ -475,6 +477,9 @@ export async function handleAutomationsShow(
       // performed is already running elsewhere, and approving it here runs it
       // duplicated. null ⇒ private manifest, no evidence either way.
       foreignRuns: foreignRunEvidence(contextRoot, manifest),
+      // Every hashed field as the `field: value` lines the CLI's approve prints (the same
+      // renderer the agent profile's review uses): what Approve grants, in one readable block.
+      review: renderApprovalReview(approvalFields(manifest)),
       cache: readAutomationCache(contextRoot, manifest.slug),
     });
   } catch {

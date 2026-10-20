@@ -1069,6 +1069,12 @@ function defaultNotify(
   }
 }
 
+/** A run's banner title: "<teammate> · <routine>" for a routine run as an agent, else its own title. */
+export function bannerTitle(m: Pick<AutomationManifest, 'title' | 'agentTitle'>): string {
+  const who = (m.agentTitle ?? '').trim();
+  return who && who !== m.title ? `${who} · ${m.title}` : m.title;
+}
+
 /**
  * The banner's `dreamcontext://` link: this agent's thread, plus the document when it lives
  * inside the brain (a custom output dir outside it cannot ride `?file=`, so the thread alone is
@@ -1789,8 +1795,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // file for the viewer. The absolute path stays the fallback, so a machine
         // without the desktop app still opens the document as before.
         const clickFile = params.reviewCardId ? params.reviewStagedPath ?? null : params.outputPath;
+        // Named as the AI Team page names it: the teammate first, then the routine that ran.
+        const who = bannerTitle(manifest);
         notifyFn(
-          params.reviewCardId ? `${manifest.title} — needs your verdict` : manifest.title,
+          params.reviewCardId ? `${who} — needs your verdict` : who,
           summary,
           NOTIFY_SOUND_OK,
           clickFile,
@@ -1802,7 +1810,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // truncate — badly, mid-word, with no ellipsis.
         const reason = params.error ?? `the run ended ${params.status}`;
         notifyFn(
-          `${manifest.title} — ${params.status}`,
+          `${bannerTitle(manifest)} — ${params.status}`,
           reason.length <= NOTIFY_BODY_MAX_CHARS
             ? reason
             : `${reason.slice(0, NOTIFY_BODY_MAX_CHARS - 1).trimEnd()}…`,
