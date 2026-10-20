@@ -3,7 +3,9 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync,
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { convertJournalHeading, canonicalEntry } from '../../src/lib/task-backend/legacy-journal.js';
+import { convertJournalHeading, canonicalEntry, convertJournalText, MAX_HEADING_LINE } from '../../src/lib/task-backend/legacy-journal.js';
+import { unionChangelog } from '../../src/lib/task-backend/merge.js';
+import { normalizeEntry } from '../../src/lib/task-backend/clickup-map.js';
 import { foldJournalIntoCard, foldTaskJournals } from '../../src/lib/task-journal-fold.js';
 import { hashContent } from '../../src/lib/task-backend/sync-state.js';
 import { LocalTaskBackend } from '../../src/lib/task-backend/local.js';
@@ -92,6 +94,65 @@ describe('0.33.0 headings', () => {
   it('a comment 0.33.0 posted (its heading, its marker) compares equal to the folded entry', () => {
     const posted = '### 2026-10-19 21:04 - log [je_GdiRYGvJEp]\n- tiles land square at 1280\n\n<!-- je:je_GdiRYGvJEp -->';
     expect(canonicalEntry(posted)).toBe(canonicalEntry('### 2026-10-19 - Session Update\n- tiles land square at 1280'));
+  });
+});
+
+/**
+ * Raw ClickUp/GitHub comments and teammates' cards reach these functions on every
+ * sync. The first heading pattern backtracked catastrophically (0.8 s for one
+ * 500-blank line, 49 s at 4,000); the marker pattern was quadratic on any blank run.
+ */
+describe('0.33.0 shape on hostile input', () => {
+  const within = (ms: number, fn: () => unknown) => {
+    const t = performance.now();
+    fn();
+    return performance.now() - t < ms;
+  };
+  const hostile = (n: number) => [
+    `### 2026-01-01 - ${' '.repeat(n)}x`,
+    `### 2026-01-01 - ${' '.repeat(n)}[je_`,
+    `### 2026-01-01 21:04 -${' \t'.repeat(n / 2)}log${' '.repeat(n)}[je_abcd]x`,
+    `### 2026-01-01 - log [je_abcd] (by ${' '.repeat(n)}`,
+    `a${' '.repeat(n)}b`,
+    `a${' \t'.repeat(n / 2)}<!-- je:x`,
+    `${' '.repeat(n)}<!-- je:${'-'.repeat(n)}x`,
+    `<!--${' '.repeat(n)}je:x`,
+  ];
+
+  it('a heading-sized line (under the length cap) is still decided in linear time', () => {
+    const room = MAX_HEADING_LINE - 30;
+    for (const line of hostile(room)) {
+      const capped = line.slice(0, MAX_HEADING_LINE);
+      expect(within(50, () => convertJournalHeading(capped)), JSON.stringify(capped.slice(0, 40))).toBe(true);
+      expect(within(50, () => canonicalEntry(capped)), JSON.stringify(capped.slice(0, 40))).toBe(true);
+    }
+  });
+
+  it.each([10_000, 100_000])('a %i-character line finishes in under 50 ms on every sync path', (n) => {
+    for (const line of hostile(n)) {
+      const label = JSON.stringify(line.slice(0, 40));
+      expect(within(50, () => convertJournalHeading(line)), label).toBe(true);
+      expect(within(50, () => convertJournalText(line)), label).toBe(true);
+      expect(within(50, () => canonicalEntry(line)), label).toBe(true);
+      expect(within(50, () => normalizeEntry(line)), label).toBe(true);
+      expect(within(50, () => unionChangelog([line], [line, `${line}y`])), label).toBe(true);
+    }
+  });
+
+  it('the linear rewrite reads the same headings and markers as before', () => {
+    expect(convertJournalHeading('### 2026-10-19 21:04 -  [je_GdiRYGvJEp]')).toBe('### 2026-10-19 - ');
+    expect(convertJournalHeading('### 2026-10-19 21:04 - [je_GdiRYGvJEp]')).toBeNull();
+    expect(convertJournalHeading('### 2026-10-19 21:04 - log[je_GdiRYGvJEp]')).toBeNull();
+    expect(convertJournalHeading('### 2026-10-19 21:04 - log [je_GdiRYGvJEp] trailing')).toBeNull();
+    expect(convertJournalHeading('### 2026-10-19 21:04 - log [je_GdiRYGvJEp]\r')).toBe('### 2026-10-19 - Session Update');
+    expect(convertJournalHeading('### 2026-10-19T21:04 - status: Status → done [je_GdiRYGvJEp]  (by remote:kerem) ')).toBe('### 2026-10-19 - Status → done (by kerem)');
+    expect(convertJournalHeading('### 2026-10-19 - Fix the [je_ parser [je_GdiRYGvJEp]')).toBe('### 2026-10-19 - Fix the [je_ parser');
+    expect(convertJournalText('- shipped \t<!-- je:je_GdiRYGvJEp -->')).toBe('- shipped');
+    expect(convertJournalText('a <!-- je:je_A --> b\t<!--je:je_B-->')).toBe('a b');
+    expect(convertJournalText('a <!-- not a marker --> b')).toBe('a <!-- not a marker --> b');
+    // Past the cap a line is not a 0.33.0 heading: it stays exactly as written.
+    const long = `### 2026-10-19 21:04 - log: ${'x'.repeat(MAX_HEADING_LINE)} [je_GdiRYGvJEp]`;
+    expect(convertJournalHeading(long)).toBeNull();
   });
 });
 
