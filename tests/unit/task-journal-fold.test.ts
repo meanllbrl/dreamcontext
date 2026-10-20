@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import matter from 'gray-matter';
 
 import { convertJournalHeading, canonicalEntry, convertJournalText, MAX_HEADING_LINE } from '../../src/lib/task-backend/legacy-journal.js';
 import { unionChangelog } from '../../src/lib/task-backend/merge.js';
@@ -236,6 +237,38 @@ describe('foldJournalIntoCard', () => {
     ]);
     // Without a split date (no 0.33.0 ledger entry) nothing is moved.
     expect(foldJournalIntoCard(misfiled, LEGACY_JOURNAL).rescued).toBe(0);
+  });
+});
+
+describe('the fold finds the Changelog exactly where the CLI reads it', () => {
+  const readChangelog = async (slug: string) => (await new LocalTaskBackend(join(ctx, 'state')).get(slug))!.changelog;
+
+  it('a CRLF card: its "## Changelog\\r" is no section to the reader, so the history goes where the reader looks', async () => {
+    const crlf = card('Orbit tiles', '## Notes\n\nx\n\n## Changelog\n<!-- LIFO: newest entry at top -->\n\n### 2026-09-20 - Session Update\n- written on Windows\n').replace(/\n/g, '\r\n');
+    writeFileSync(join(ctx, 'state', 'orbit-tiles.md'), crlf);
+    expect(await readChangelog('orbit-tiles')).toBe(''); // the premise: the reader sees no CRLF section
+    writeFileSync(join(ctx, 'state', 'journal', 'orbit-tiles.md'), V033_JOURNAL);
+
+    const r = foldTaskJournals(ctx);
+    expect(r.failed).toEqual([]);
+    const seen = await readChangelog('orbit-tiles');
+    expect(seen).toContain('### 2026-10-19 - Session Update\n- tiles land square at 1280');
+    expect(seen).toContain('### 2026-09-01 - Created');
+    // The CRLF section and its bytes are left as they were.
+    expect(readFileSync(join(ctx, 'state', 'orbit-tiles.md'), 'utf-8').startsWith(crlf.trimEnd())).toBe(true);
+  });
+
+  it('a "## Changelog" line inside the frontmatter is YAML, not the section: the frontmatter is left intact', async () => {
+    const withComment = card('Orbit tiles').replace('\nqueue: next\n', '\nqueue: next\n## Changelog\n');
+    writeFileSync(join(ctx, 'state', 'orbit-tiles.md'), withComment);
+    writeFileSync(join(ctx, 'state', 'journal', 'orbit-tiles.md'), LEGACY_JOURNAL);
+    const before = matter(withComment).data;
+
+    expect(foldTaskJournals(ctx).failed).toEqual([]);
+    const after = readFileSync(join(ctx, 'state', 'orbit-tiles.md'), 'utf-8');
+    expect(matter(after).data).toEqual(before);
+    expect(after.startsWith(withComment.trimEnd())).toBe(true);
+    expect(await readChangelog('orbit-tiles')).toContain('### 2026-09-03 - Session Update\n- measured the tile grid');
   });
 });
 

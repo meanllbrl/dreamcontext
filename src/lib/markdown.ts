@@ -8,6 +8,34 @@ interface Section {
   endLine: number;
 }
 
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
+
+/**
+ * The name of a `## ` section heading line, or null when the line is not one.
+ * THE rule: every reader of `## ` sections (parseSections below, the 0.33.0
+ * journal fold) decides through this, so a section one of them sees is a section
+ * all of them see. It is exactly `/^(#{2})\s+(.+)$/` (name = group 2, trimmed),
+ * decided without backtracking: `.` stops at a line terminator, so `.+$` can
+ * only start after the line's last one, and everything between `##` and there
+ * must be the heading's whitespace. A CRLF line (`## Changelog\r`) is therefore
+ * NOT a heading, here as in every earlier version of this reader.
+ */
+export function sectionHeadingName(line: string): string | null {
+  if (!line.startsWith('##')) return null;
+  const rest = line.slice(2);
+  if (rest.length < 2 || !/\s/.test(rest[0])) return null;
+  let cut = -1;
+  for (let i = rest.length - 1; i >= 0; i--) {
+    if (LINE_TERMINATOR.test(rest[i])) {
+      cut = i;
+      break;
+    }
+  }
+  if (cut < 0) return rest.trim();
+  if (cut === rest.length - 1 || !/^\s*$/.test(rest.slice(0, cut + 1))) return null;
+  return rest.slice(cut + 1).trim();
+}
+
 /**
  * Parse a markdown file into sections based on ## headers.
  * Only top-level (##) headers create sections. Sub-headers (###, ####, etc.)
@@ -18,14 +46,14 @@ function parseSections(content: string): Section[] {
   const sections: Section[] = [];
 
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^(#{2})\s+(.+)$/);
-    if (match) {
+    const name = sectionHeadingName(lines[i]);
+    if (name !== null) {
       if (sections.length > 0) {
         sections[sections.length - 1].endLine = i - 1;
       }
       sections.push({
-        name: match[2].trim(),
-        level: match[1].length,
+        name,
+        level: 2,
         startLine: i,
         endLine: lines.length - 1,
       });
@@ -38,6 +66,10 @@ function parseSections(content: string): Section[] {
 /**
  * Normalize a section name for comparison.
  */
+export function normalizeSectionName(name: string): string {
+  return normalizeName(name);
+}
+
 function normalizeName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }

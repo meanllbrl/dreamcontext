@@ -7,6 +7,7 @@ import {
   listSections,
   readSection,
   insertToSection,
+  sectionHeadingName,
 } from '../../src/lib/markdown.js';
 
 function makeTmpDir(): string {
@@ -192,5 +193,36 @@ describe('markdown', () => {
       const content = readSection(file, 'Empty Section');
       expect(content).toContain('First entry');
     });
+  });
+});
+
+describe('sectionHeadingName: the one rule every section reader shares', () => {
+  // The rule as it was written for years; the helper must decide every line the same way.
+  const regex = (line: string): string | null => {
+    const m = line.match(/^(#{2})\s+(.+)$/);
+    return m ? m[2].trim() : null;
+  };
+
+  it('agrees with /^(#{2})\\s+(.+)$/ on every short line over a hostile alphabet', () => {
+    const alphabet = ['#', ' ', '\t', '\r', '\u2028', 'a', '-', '\u00a0'];
+    let seed = 7;
+    const rand = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    const fixed = ['## Changelog', '## Changelog\r', '##', '## ', '##  ', '##\tA', '###  A', '## \r x', '## \rx\r', ' ## A', '##A', '## a\u2028b', '## \u2028 b'];
+    const lines = [...fixed];
+    for (let i = 0; i < 20000; i++) {
+      let l = '##';
+      const len = rand(9);
+      for (let k = 0; k < len; k++) l += alphabet[rand(alphabet.length)];
+      lines.push(rand(4) === 0 ? l.slice(rand(3)) : l);
+    }
+    for (const l of lines) expect(sectionHeadingName(l), JSON.stringify(l)).toBe(regex(l));
+  });
+
+  it('decides a 100k-character line in linear time (the regex took 1.9 s at 20k)', () => {
+    for (const line of [`## ${' '.repeat(100_000)}\rx\r`, `##${' \t'.repeat(50_000)}\u2028`, `## ${'a'.repeat(100_000)}\r`]) {
+      const t = performance.now();
+      sectionHeadingName(line);
+      expect(performance.now() - t).toBeLessThan(50);
+    }
   });
 });

@@ -4,6 +4,8 @@ import { canonicalEntry, convertJournalText } from './task-backend/legacy-journa
 import { SyncLedger, hashContent } from './task-backend/sync-state.js';
 import { TaskFileBusyError, withTaskFileLock } from './task-file-lock.js';
 import { readLedger } from './migration-ledger.js';
+import { normalizeSectionName, sectionHeadingName } from './markdown.js';
+import matter from 'gray-matter';
 
 /**
  * Fold the reverted 0.33.0 task journals back onto their cards.
@@ -39,7 +41,6 @@ import { readLedger } from './migration-ledger.js';
 
 const SYNC_LOCK_STALE_MS = 3 * 60 * 1000;
 const FENCE = /^\s*(```|~~~)/;
-const SECTION = /^##\s+(.+)$/;
 const ENTRY_HEADING = /^###\s/;
 const ENTRY_DATE = /^###\s+(\d{4}-\d{2}-\d{2})\b/;
 const COMMENT_LINE = /^\s*<!--.*-->\s*$/;
@@ -86,19 +87,38 @@ export function splitEntryTexts(content: string): string[] {
 }
 
 /**
+ * The first line of the card's body: the line after the frontmatter, exactly
+ * where gray-matter (which every CLI reader parses with) starts the content. A
+ * `## ` line inside the frontmatter is YAML, not a section, to every reader.
+ */
+function bodyStartLine(card: string): number {
+  let content: string;
+  try {
+    content = matter(card).content;
+  } catch {
+    return 0; // unparseable frontmatter: the readers see no sections either; nothing to skip
+  }
+  if (!card.endsWith(content)) return 0;
+  return card.slice(0, card.length - content.length).split('\n').length - 1;
+}
+
+/**
  * Line range [start, end) of the `## Changelog` section (start = its heading), or
  * null. Found EXACTLY the way the CLI's reader finds it (markdown.ts parseSections
- * + findSection: the first `## ` line whose name normalises to "changelog", fences
- * not considered), so the history lands in the section `tasks show`, `tasks log`
- * and the sync read, never in a second one they would not see.
+ * + findSection: in the body after the frontmatter, the first line
+ * sectionHeadingName reads as a heading whose name normalises to "changelog",
+ * fences not considered; a CRLF `## Changelog\r` is no heading there, so not
+ * here), so the history lands in the section `tasks show`, `tasks log` and the
+ * sync read, never in one they would not see.
  */
-function changelogSection(lines: string[]): { start: number; end: number } | null {
-  const start = lines.findIndex((l) => {
-    const h = SECTION.exec(l);
-    return h !== null && h[1].toLowerCase().replace(/[^a-z0-9]/g, '') === 'changelog';
+function changelogSection(lines: string[], from: number): { start: number; end: number } | null {
+  const start = lines.findIndex((l, i) => {
+    if (i < from) return false;
+    const name = sectionHeadingName(l);
+    return name !== null && normalizeSectionName(name) === 'changelog';
   });
   if (start < 0) return null;
-  const next = lines.findIndex((l, i) => i > start && SECTION.test(l));
+  const next = lines.findIndex((l, i) => i > start && sectionHeadingName(l) !== null);
   return { start, end: next < 0 ? lines.length : next };
 }
 
@@ -142,7 +162,7 @@ function trailingMisfiled(card: string, since: string): { rest: string; blocks: 
   const blocks: string[] = [];
   let end = lines.length;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (/^##\s/.test(lines[i])) break; // a section boundary ends the run
+    if (sectionHeadingName(lines[i]) !== null) break; // a section boundary ends the run
     const m = CLI_ENTRY.exec(lines[i]);
     if (!m) continue;
     if (m[1] < since) break;
@@ -169,7 +189,7 @@ export function foldJournalIntoCard(card: string, journalRaw: string, opts: { re
   if (incoming.length === 0) return { text: card, added: 0, present: 0, rescued: 0 };
 
   const lines = card.split('\n');
-  const sec = changelogSection(lines);
+  const sec = changelogSection(lines, bodyStartLine(card));
   if (!sec) {
     // The journal text is the card's old Changelog body, moved verbatim by 0.33.0:
     // putting it back as-is restores those bytes exactly.
