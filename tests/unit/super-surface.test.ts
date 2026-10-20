@@ -354,20 +354,20 @@ describe('the window rules (D10, AC12)', () => {
     expect(flight).toMatch(/last = onStage\(stage\.plan\.centre\)/);
     expect(flight).toMatch(/cp\.where === 'others' \? stage\.plan\.othersRect : cp\.rect/);
     expect(surface).toMatch(/onStageReady=\{onStageReady\}/);
-    const stage = read(`${superDir}/SuperSurface.tsx`);
+    const stage = ['SuperSurface.tsx', 'useStageDrag.ts', 'StageMotion.tsx'].map((f) => read(`${superDir}/${f}`)).join('\n');
     // Ready only once the measured size is the rendered one, and once per mount.
     expect(stage).toMatch(/if \(el\.clientWidth !== size\.width \|\| el\.clientHeight !== size\.height\) return;/);
     expect(stage).toMatch(/readyRef\.current = true;\n\s*props\.onStageReady/);
   });
 
   it('a drop never reorders the record; the card dropped last is lifted on top for the session', () => {
-    const stage = read(`${superDir}/SuperSurface.tsx`);
+    const stage = ['SuperSurface.tsx', 'useStageDrag.ts', 'StageMotion.tsx'].map((f) => read(`${superDir}/${f}`)).join('\n');
     expect(stage).not.toMatch(/order: 'last'/);
     expect(stage).toMatch(/onLayout\(\{ cards: \[\{ id, pos: posFromRect\(p\.free, r\), place: 'float' \}\] \}\);\n\s*liftOnTop\(id\);/);
   });
 
   it('a re-render that draws the same stage never restarts a running motion (FE2)', () => {
-    const stage = read(`${superDir}/SuperSurface.tsx`);
+    const stage = ['SuperSurface.tsx', 'useStageDrag.ts', 'StageMotion.tsx'].map((f) => read(`${superDir}/${f}`)).join('\n');
     expect(stage).toMatch(/if \(prev\.dragId === this\.props\.dragId && \(prev\.plan === this\.props\.plan \|\| samePlan\(prev\.plan, this\.props\.plan\)\)\) return null;/);
   });
 
@@ -402,7 +402,7 @@ describe('the window rules (D10, AC12)', () => {
     expect(ask).toMatch(/cs\.sendText\(cardReference\(id, title, cs\.getModel\(\)\.draft\)\)/);
     expect(ask).not.toMatch(/postSuperLayout|editSuperLayout/);
     expect(surface).toMatch(/onAskAbout=\{askAboutCard\}/);
-    const stage = read(`${superDir}/SuperSurface.tsx`);
+    const stage = ['SuperSurface.tsx', 'useStageDrag.ts', 'StageMotion.tsx'].map((f) => read(`${superDir}/${f}`)).join('\n');
     // A drop on the centre asks; it posts no layout.
     expect(stage).toMatch(/if \(drop && h === 'centre'\) actions\.onAskAbout\(id\);\n\s*else if/);
   });
@@ -553,6 +553,7 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
     // Keys built from a value: every value the code can produce.
     for (const k of ['saved', 'starting', 'working', 'asking', 'ready', 'ended']) keys.add(`super.card.state.${k}`);
     for (const k of ['question', 'idle', 'gone', 'recap', 'handover', 'other']) keys.add(`super.event.${k}`);
+    for (const k of ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'group']) keys.add(`super.tile.kind.${k}`);
     expect(keys.size).toBeGreaterThan(30);
     for (const k of keys) {
       expect(en, `EN ${k}`).toContain(`'${k}':`);

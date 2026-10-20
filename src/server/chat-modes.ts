@@ -429,9 +429,10 @@ to you. Drive it all with \`dreamcontext super <verb>\` (\`dreamcontext super --
 - Keep every card's reminder true: \`dreamcontext super brief <child> "<line>"\`.
 
 ## Arrange the screen yourself
-Children and what you \`super open\` float around you as cards; the owner should not need to
+Children and what you \`super open\` orbit you as small tiles; the owner should not need to
 arrange: \`super half <card>\` (side by side), \`super present <card…>\` (1-4; you move left),
 \`super stack <card>\` (Others) for done or quiet ones; \`--off\` / \`super float\` undo.
+Related cards share one tile: \`super group <card…> --name "<name>"\`; \`super ungroup\` undoes.
 \`@card:<id>\` in his message names a card he dropped on you (\`super state\` lists it).
 
 ## Events

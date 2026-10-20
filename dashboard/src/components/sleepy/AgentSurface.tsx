@@ -3972,6 +3972,12 @@ export function AgentSurface() {
       // reason (it portals no focus of its own). Without this the one key closed the drawer
       // AND collapsed the surface behind it, which on a phone means the chat vanishes.
       if (document.querySelector('.mchat-drawer[data-open]')) return;
+      // An open group (or Others) on the Super Agent's stage owns Esc: it closes the panel and
+      // gives focus back to its tile (GroupPanel). Same presence test, same registration order.
+      if (document.querySelector('.super-group-panel')) return;
+      // A card held on that stage owns Esc too: the drag's own listener cancels it, but it is
+      // added at the press, after this one, so its stopPropagation cannot reach us.
+      if (document.querySelector('.super-surface[data-dragging]')) return;
       const ae = document.activeElement as Element | null;
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
       // Any centered command surface on top of us owns Esc — ⌘K palette, ⌘P switcher,

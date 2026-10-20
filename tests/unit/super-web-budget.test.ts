@@ -51,6 +51,8 @@ describe('webBudget', () => {
     expect(src).toMatch(/liveWebIds\(lru, webOnScreen\)/);
     // On screen = drawn on the stage: a web card in Others holds no frame.
     expect(src).toMatch(/plan\.cards\[c\.id\]\.where !== 'others'/);
+    // …and a floating tile (2026-10-20): a page is live only side by side or presented.
+    expect(src).toMatch(/plan\.cards\[c\.id\]\.where !== 'float'/);
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
     // Past the budget a web container is a title + Load placeholder, never an iframe.
     expect(container).toMatch(/p\.webLive\s*\?\s*<div className="super-card-view super-card-view--web"><WebWidget/);

@@ -1,10 +1,11 @@
 /**
- * The hand-over stage, pure (plan-r8 F4 + §0 C1/C2/D1, owner decisions O1-O8, stage v2): the
- * Super Agent's window EXACTLY in the centre and the larger share of the stage, every other card
- * on one calm rhythm around it (a column per side, one card width, one gap, a full column
- * spanning the centre's height, each card between 1:1 and 3:4), an "Others" stack bottom-right,
- * the queue pill above the centre and the terminals dock bottom-left. `half` puts one card beside the centre, `present` moves the
- * centre left and shows 1-4 cards on the right; a narrow stage puts every card in Others.
+ * The hand-over stage, pure (plan-r8 F4 + §0 C1/C2/D1, owner decisions O1-O8, stage v2, the
+ * 2026-10-20 redesign): the Super Agent's window EXACTLY in the centre and the larger share of the
+ * stage, every other card a small 1:1 tile on an ORBIT around it (a side's tiles on an arc, the
+ * middle one standing out, the ends tucked in toward the centre), groups drawn as one tile, an
+ * "Others" stack bottom-right, the queue pill above the centre and the terminals dock
+ * bottom-left. `half` puts one card beside the centre, `present` moves the centre left and shows
+ * 1-4 cards on the right; a narrow stage puts every card in Others.
  *
  * `planStage` turns the record (cards, view) and the stage's size into a rect for everything
  * the window draws. The window positions cards absolutely from it and the layout motion reads
@@ -13,8 +14,8 @@
  * Coordinates are the stage's own (origin = its top-left), in CSS px.
  */
 import {
-  MAX_CONTAINERS, MAX_PRESENT,
-  type ContainerShape, type SuperContainer, type SuperView,
+  MAX_CONTAINERS, MAX_PRESENT, applyGroupOp, dissolveGroups, leaveGroups, normalizeGroups,
+  type ContainerShape, type GroupOp, type SuperContainer, type SuperGroup, type SuperView,
 } from '../../../lib/superTypes';
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -30,23 +31,17 @@ export const STAGE = {
   /** The queue pill's widest: no card is ever in the top band, so it may outgrow the centre and
    *  keep one row (a who, the text, two or three buttons) inside the band. */
   QUEUE_MAX: 720,
-  /** A card's width: never under what its title and line still read at (what does not fit goes
-   *  to Others instead), never over what a lone card would dwarf the centre at. */
-  U_MIN: 176,
-  U_MAX: 360,
-  /** Height : width. A chat (and a web page) prefers 3:4, the rest 1:1; any card may be drawn
-   *  between 1:1 and 3:4 so a column spans the centre's height exactly, never taller (stage v2). */
-  TALL: 4 / 3,
-  RATIO_MIN: 1,
-  RATIO_MAX: 4 / 3,
-  /** The centre's share of the stage. It narrows toward `CENTRE_FLOOR` (at most 1% of the stage)
-   *  only to let a column of cards span its height, so a card opening or closing moves it by that
-   *  much at most; otherwise it stays put whatever opens or closes. */
+  /** A floating card is ONE 1:1 tile this wide, whatever it shows (owner 2026-10-20: small square
+   *  cards; the stage v2 3:4 cards stood half empty). A group is one tile too. */
+  TILE: 160,
+  /** The orbit (owner 2026-10-20): how far the middle of a side's arc stands out from its ends,
+   *  at most; never more than the side's free room. */
+  ORBIT_DEPTH: 112,
+  /** The centre's share of the stage: put whatever opens or closes. */
   CENTRE_FRAC: 0.56,
-  CENTRE_FLOOR: 0.55,
   CENTRE_MIN: 560,
   CENTRE_MAX: 1120,
-  /** Columns per side: one, a second only on a stage wide enough for two readable ones. */
+  /** Columns per side: an outer one only once the inner one is full and the side has the room. */
   MAX_COLS: 2,
   /** `present`: the centre's left column. */
   PRESENT_FRAC: 0.34,
@@ -55,7 +50,7 @@ export const STAGE = {
   /** The Others drop target in the bottom-right corner (lit during a drag), and the stack. */
   OTHERS_ZONE_W: 168,
   OTHERS_ZONE_H: 128,
-  OTHERS_W: 148,
+  OTHERS_W: 172,
   /** A narrow stage's sheet sits this far inside the centre. */
   SHEET_INSET: 16,
 } as const;
@@ -70,7 +65,7 @@ export interface CardPlan {
   id: string;
   rect: Rect;
   where: CardWhere;
-  /** The shape it is DRAWN in: 'tall' when drawn taller than wide (room for its last lines). */
+  /** The shape it is DRAWN in: a floating tile is always 'square'; a large view keeps the record's. */
   shape: ContainerShape;
   /** Placed by the owner's drop (or held by a running drag), not by the stage. */
   owner: boolean;
@@ -99,6 +94,46 @@ export interface StagePlan {
   unit: { left: number; right: number };
   /** Card ids in record order (the hand-over flights' stagger order). */
   order: string[];
+  /** Each side's orbit, for the faint path drawn through its inner column (none on a side
+   *  with fewer than two tiles there). */
+  orbit: OrbitArc[];
+}
+
+/** A side's orbit: x = x0 + dir * depth * (1 - ((y - cy) / ymax)^2), through tile centres. */
+export interface OrbitArc { side: 'left' | 'right'; x0: number; cy: number; ymax: number; depth: number; dir: -1 | 1 }
+
+/** What the stage places: a card, or a group drawn as one tile (`kind: 'group'`). `slot` is its
+ *  place in the record (a group's is its first card's), so sides never shift under a grouping. */
+export interface StageItem {
+  id: string;
+  kind: SuperContainer['kind'] | 'group';
+  shape: ContainerShape;
+  place: SuperContainer['place'];
+  pos?: { x: number; y: number };
+  slot?: number;
+}
+
+/**
+ * The record as the stage sees it: an ungrouped card is itself; a group is one item standing at
+ * its first card's place in the record, with the group's own place and drop; its cards are drawn
+ * inside it. A grouped card the view shows side by side or presents is drawn there too.
+ */
+export function stageItems(containers: readonly SuperContainer[], groups: readonly SuperGroup[], view: SuperView): StageItem[] {
+  const shown = new Set(view.mode === 'half' && view.card ? [view.card] : view.mode === 'present' ? view.cards ?? [] : []);
+  const index = new Map(containers.map((c, i) => [c.id, i] as const));
+  const groupOf = new Map<string, SuperGroup>();
+  for (const g of groups) for (const id of g.cards) if (index.has(id)) groupOf.set(id, g);
+  const out: StageItem[] = [];
+  const placed = new Set<string>();
+  containers.forEach((c, i) => {
+    const g = groupOf.get(c.id);
+    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i });
+    if (g && !placed.has(g.id) && g.cards[0] !== undefined && index.has(g.cards[0])) {
+      placed.add(g.id);
+      out.push({ id: g.id, kind: 'group', shape: 'square', place: g.place, ...(g.pos ? { pos: g.pos } : {}), slot: index.get(g.cards[0])! });
+    }
+  });
+  return out.sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
 }
 
 export interface PlanOptions {
@@ -108,175 +143,100 @@ export interface PlanOptions {
 
 const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
-/** A shape's preferred height : width. */
-export function ratioOf(shape: ContainerShape): number {
-  return shape === 'tall' ? STAGE.TALL : STAGE.RATIO_MIN;
+/** A floating tile's height: every tile is 1:1 (2026-10-20). Kept for callers sizing a ghost. */
+export function heightOf(_shape: ContainerShape, u: number): number {
+  return u;
 }
 
-export function heightOf(shape: ContainerShape, u: number): number {
-  return u * ratioOf(shape);
-}
-
-/** The centre's preferred width on this stage (it narrows to `centreFloor` at most). */
+/** The centre's width on this stage: its share, between its floor and its ceiling. */
 export function preferredCentre(width: number): number {
   return Math.min(STAGE.CENTRE_MAX, Math.max(STAGE.CENTRE_MIN, STAGE.CENTRE_FRAC * width));
-}
-
-/** The narrowest the centre goes to let a column span its height. */
-export function centreFloor(width: number): number {
-  return Math.min(preferredCentre(width), Math.max(STAGE.CENTRE_MIN, STAGE.CENTRE_FLOOR * width));
 }
 
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 const inflate = (r: Rect, d: number): Rect => ({ x: r.x - d, y: r.y - d, width: r.width + 2 * d, height: r.height + 2 * d });
 export const contains = (r: Rect, x: number, y: number) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
 
-// ─── The columns (stage v2) ─────────────────────────────────────────────────────
+// ─── The orbit (2026-10-20) ─────────────────────────────────────────────────────
 
-/** One card in a side's list, in record order. `chat`: a child chat, kept on the stage first. */
-interface Slot { id: string; ratio: number; owner: boolean; chat: boolean }
+/** One item in a side's list, in record order. `chat`: a child chat (or a group), kept longest. */
+interface Slot { id: string; owner: boolean; chat: boolean }
 
-/** The room `n` cards share in a column `span` tall, once the gaps between them are taken. */
-const roomOf = (n: number, span: number) => span - (n - 1) * STAGE.GAP;
-
-/** The widths at which `n` cards span `span` exactly, each drawn between 1:1 and 3:4. */
-function spanRange(n: number, span: number): [number, number] {
-  const room = roomOf(n, span);
-  return [room / (n * STAGE.RATIO_MAX), room / (n * STAGE.RATIO_MIN)];
-}
-
-/** How many cards one column holds at width `u` (each at 1:1, its shortest). */
-function capacity(u: number, span: number): number {
-  return Math.max(0, Math.floor((span + STAGE.GAP) / (u * STAGE.RATIO_MIN + STAGE.GAP) + 1e-9));
-}
-
-/**
- * The heights of one column's cards at width `u`. When they can (each between 1:1 and 3:4) they
- * span `span` exactly, each moved from its preferred shape in proportion to the room it has;
- * when they cannot (too few cards), they keep their preferred shapes and the column is short.
- */
-export function columnHeights(ratios: readonly number[], u: number, span: number): { heights: number[]; short: boolean } {
-  const pref = ratios.map((r) => r * u);
-  const room = roomOf(ratios.length, span);
-  const lo = ratios.length * u * STAGE.RATIO_MIN;
-  const hi = ratios.length * u * STAGE.RATIO_MAX;
-  if (!ratios.length || room > hi + 0.01 || room < lo - 0.01) return { heights: pref, short: true };
-  const sum = pref.reduce((a, b) => a + b, 0);
-  const grow = room >= sum;
-  const head = pref.map((p) => (grow ? u * STAGE.RATIO_MAX - p : p - u * STAGE.RATIO_MIN));
-  const total = head.reduce((a, b) => a + b, 0);
-  const k = total > 0 ? Math.abs(room - sum) / total : 0;
-  return { heights: pref.map((p, i) => (grow ? p + head[i] * k : p - head[i] * k)), short: false };
-}
-
-/** A side's cards split into `cols` columns, inner column first, the fuller columns inside. */
-function splitColumns<T>(items: readonly T[], cols: number): T[][] {
-  const out: T[][] = [];
-  let at = 0;
-  for (let k = 0; k < cols; k++) {
-    const n = Math.ceil((items.length - at) / (cols - k));
-    out.push(items.slice(at, at + n));
-    at += n;
-  }
-  return out;
+/** How many tiles one column holds in a column `span` tall. */
+function capacity(span: number): number {
+  return Math.max(0, Math.floor((span + STAGE.GAP) / (STAGE.TILE + STAGE.GAP) + 1e-9));
 }
 
 interface FloatSolution {
   centre: Rect;
   u: number;
-  cols: number;
   rects: Map<string, Rect>;
   /** Ids that fit nowhere: drawn in Others. */
   overflow: Set<string>;
+  orbit: OrbitArc[];
 }
 
 /**
- * Both sides around the centre (stage v2): one column per side (two on a very wide stage), the
- * same card width on both, every gap `GAP`, the inner column `GAP` from the centre. A column
- * full enough spans the centre's height exactly; a shorter one sits centred on its midline.
- * Cards past what a column holds at `U_MIN` overflow: the side's last, the auto-placed ones
- * before the owner's and, among those, every other card before a chat (the chats are why the
- * owner handed over: they stay on the stage longest).
+ * Both sides around the centre: every item one 1:1 tile, a side's tiles in its inner column
+ * first (an outer column only once that is full and the side has the room), each column a stack
+ * one gap apart centred on the centre's midline, bent into an arc (the ORBIT): a tile stands out
+ * from the centre by depth * (1 - (dy / ymax)^2), dy its distance from the midline and ymax the
+ * column's farthest, so the middle stands out and the ends tuck in. Items past what a side holds
+ * overflow: the side's last, the auto-placed ones before the owner's and, among those, every other
+ * card before a chat (the chats are why the owner handed over: they stay on the stage longest).
  */
 function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): FloatSolution {
-  const { GAP, MARGIN, U_MIN, U_MAX } = STAGE;
+  const { GAP, MARGIN, TILE: T, MAX_COLS, ORBIT_DEPTH } = STAGE;
   const W = f.width;
   const span = f.content.height;
-  const pref = preferredCentre(W);
-  const floor = centreFloor(W);
-  const sideRoom = (cw: number) => (W - cw) / 2 - GAP - MARGIN;
-  const uCap = (cw: number, c: number) => Math.min(U_MAX, (sideRoom(cw) - (c - 1) * GAP) / c);
-  const centreFor = (u: number, c: number) => Math.min(pref, W - 2 * (MARGIN + c * u + c * GAP));
-
-  type Try = { c: number; u: number; cols: { side: 'left' | 'right'; slots: Slot[] }[]; overflow: Set<string> };
-  let best: Try | null = null;
-  for (let c = 1; c <= STAGE.MAX_COLS; c++) {
-    const hi = uCap(floor, c);
-    if (hi < U_MIN - 1e-9) continue;
-    const perCol = capacity(U_MIN, span);
-    const overflow = new Set<string>();
-    const keep = (slots: readonly Slot[]) => {
-      const room = perCol * c;
-      if (slots.length <= room) return [...slots];
-      // Drop from the end: auto-placed before the owner's, any other card before a chat.
-      const out = [...slots];
-      for (const [owner, chat] of [[false, false], [false, true], [true, false], [true, true]]) {
-        for (let i = out.length - 1; i >= 0 && out.length > room; i--) {
-          if (out[i].owner === owner && out[i].chat === chat) { overflow.add(out[i].id); out.splice(i, 1); }
-        }
-      }
-      return out;
-    };
-    const cols = [
-      ...splitColumns(keep(left), c).map((slots) => ({ side: 'left' as const, slots })),
-      ...splitColumns(keep(right), c).map((slots) => ({ side: 'right' as const, slots })),
-    ].filter((k) => k.slots.length);
-    const fullest = Math.max(0, ...cols.map((k) => k.slots.length));
-    let u = Math.min(uCap(pref, c), U_MAX);
-    if (fullest) {
-      const [lo, top] = spanRange(fullest, span);
-      const a = Math.max(lo, U_MIN);
-      const z = Math.min(top, hi);
-      if (a <= z + 1e-9) {
-        // The fullest columns span: at the width where their cards are nearest their own shapes.
-        const spanning = cols.filter((k) => k.slots.length === fullest);
-        const want = spanning.reduce((s, k) => s + roomOf(fullest, span) / k.slots.reduce((r, x) => r + x.ratio, 0), 0) / spanning.length;
-        u = Math.min(z, Math.max(a, want));
+  const centre = centreAt(f, preferredCentre(W));
+  const room = (W - centre.width) / 2 - GAP - MARGIN;
+  const cols = Math.max(0, Math.min(MAX_COLS, Math.floor((room + GAP) / (T + GAP) + 1e-9)));
+  const perCol = capacity(span);
+  const rects = new Map<string, Rect>();
+  const overflow = new Set<string>();
+  const orbit: OrbitArc[] = [];
+  if (cols < 1 || perCol < 1) {
+    for (const s of [...left, ...right]) overflow.add(s.id);
+    return { centre, u: 0, rects, overflow, orbit };
+  }
+  const keep = (slots: readonly Slot[]) => {
+    const roomFor = perCol * cols;
+    const out = [...slots];
+    // Drop from the end: auto-placed before the owner's, any other card before a chat.
+    for (const [owner, chat] of [[false, false], [false, true], [true, false], [true, true]]) {
+      for (let i = out.length - 1; i >= 0 && out.length > roomFor; i--) {
+        if (out[i].owner === owner && out[i].chat === chat) { overflow.add(out[i].id); out.splice(i, 1); }
       }
     }
-    u = Math.max(U_MIN, u);
-    const t: Try = { c, u, cols, overflow };
-    if (!best || overflow.size < best.overflow.size) best = t;
-    if (!overflow.size) break;
+    return out;
+  };
+  const mid = centre.y + centre.height / 2;
+  for (const [side, slots] of [['left', keep(left)], ['right', keep(right)]] as const) {
+    if (!slots.length) continue;
+    const used = Math.ceil(slots.length / perCol);
+    const depth = Math.max(0, Math.min(ORBIT_DEPTH, room - used * T - (used - 1) * GAP));
+    const dir = side === 'left' ? -1 : 1;
+    for (let k = 0; k < used; k++) {
+      const col = slots.slice(k * perCol, (k + 1) * perCol);
+      const total = col.length * T + (col.length - 1) * GAP;
+      const y0 = mid - total / 2;
+      const x0 = side === 'left' ? centre.x - GAP - T - k * (T + GAP) : centre.x + centre.width + GAP + k * (T + GAP);
+      const ymax = (total - T) / 2;
+      col.forEach((s, i) => {
+        const y = y0 + i * (T + GAP);
+        const dy = y + T / 2 - mid;
+        const off = ymax > 0 ? depth * (1 - (dy / ymax) ** 2) : 0;
+        rects.set(s.id, { x: x0 + dir * off, y, width: T, height: T });
+      });
+      if (k === 0 && col.length >= 2 && depth > 0) orbit.push({ side, x0: x0 + T / 2, cy: mid, ymax, depth, dir });
+    }
   }
-
-  const rects = new Map<string, Rect>();
-  if (!best) {
-    // Not even one readable column beside the centre: every card is drawn in Others.
-    const overflow = new Set([...left, ...right].map((s) => s.id));
-    return { centre: centreAt(f, pref), u: 0, cols: 0, rects, overflow };
-  }
-  const { c, u } = best;
-  const centre = centreAt(f, centreFor(u, c));
-  const colIndex = { left: 0, right: 0 };
-  for (const col of best.cols) {
-    const k = colIndex[col.side]++;
-    const x = col.side === 'left'
-      ? centre.x - GAP - u - k * (u + GAP)
-      : centre.x + centre.width + GAP + k * (u + GAP);
-    const { heights, short } = columnHeights(col.slots.map((s) => s.ratio), u, span);
-    const total = heights.reduce((a, b) => a + b, 0) + (heights.length - 1) * GAP;
-    let y = f.content.y + (short ? (span - total) / 2 : 0);
-    col.slots.forEach((s, i) => {
-      rects.set(s.id, { x, y, width: u, height: heights[i] });
-      y += heights[i] + GAP;
-    });
-  }
-  return { centre, u, cols: c, rects, overflow: best.overflow };
+  return { centre, u: T, rects, overflow, orbit };
 }
 
-/** Where a pushed-aside card goes: the free spot of its own column nearest where it stood. */
-function reseat(want: Rect, f: Frame, blocks: readonly Rect[], u: number): Rect | null {
+/** Where a pushed-aside tile goes: the free spot of its own column nearest where it stood. */
+function reseat(want: Rect, f: Frame, blocks: readonly Rect[]): Rect | null {
   const top = f.content.y;
   const bottom = f.content.y + f.content.height;
   const cuts = blocks
@@ -292,16 +252,13 @@ function reseat(want: Rect, f: Frame, blocks: readonly Rect[], u: number): Rect 
     cursor = Math.max(cursor, z);
   }
   if (bottom > cursor) free.push([cursor, bottom]);
-  for (const h of [want.height, u * STAGE.RATIO_MIN]) {
-    let pick: Rect | null = null;
-    for (const [a, z] of free) {
-      if (z - a < h - 0.01) continue;
-      const y = Math.min(Math.max(want.y, a), z - h);
-      if (!pick || Math.abs(y - want.y) < Math.abs(pick.y - want.y)) pick = { ...want, y, height: h };
-    }
-    if (pick) return pick;
+  let pick: Rect | null = null;
+  for (const [a, z] of free) {
+    if (z - a < want.height - 0.01) continue;
+    const y = Math.min(Math.max(want.y, a), z - want.height);
+    if (!pick || Math.abs(y - want.y) < Math.abs(pick.y - want.y)) pick = { ...want, y };
   }
-  return null;
+  return pick;
 }
 
 // ─── Owner placement ────────────────────────────────────────────────────────────
@@ -391,29 +348,32 @@ function grid(region: Rect, n: number): Rect[] {
  * same screen. A card that does not fit is DRAWN in Others; the record is never touched.
  */
 export function planStage(
-  containers: readonly SuperContainer[],
+  containers: readonly StageItem[],
   view: SuperView,
   stage: { width: number; height: number },
   opts: PlanOptions = {},
 ): StagePlan {
-  const list = containers.slice(0, MAX_CONTAINERS);
+  // Items: at most the record's 12 cards, plus a grouped card the view presents beside its group.
+  const list = containers.slice(0, MAX_CONTAINERS + MAX_PRESENT);
   const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height));
   const narrow = f.width < NARROW_STAGE_PX;
   const ids = new Set(list.map((c) => c.id));
-  const z = new Map(list.map((c, i) => [c.id, i] as const));
+  // An item's place in the RECORD (a group stands at its first card's), not in this list: a
+  // grouping removes cards from the list and must not move any other card to the other side.
+  const z = new Map(list.map((c, i) => [c.id, c.slot ?? i] as const));
   const cards: Record<string, CardPlan> = {};
   const others: string[] = [];
-  const toOthers = (c: SuperContainer) => {
+  const toOthers = (c: StageItem) => {
     cards[c.id] = { id: c.id, rect: f.othersRect, where: 'others', shape: c.shape, owner: false, z: z.get(c.id) ?? 0 };
     others.push(c.id);
   };
-  const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }): StagePlan => {
+  const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = []): StagePlan => {
     // Others in record order, whatever order they were sent there in.
     others.sort((a, b) => (z.get(a) ?? 0) - (z.get(b) ?? 0));
     return {
       width: f.width, height: f.height, narrow, mode, centre, cards, others,
       othersRect: f.othersRect, othersZone: f.othersZone, ...bands(f, centre), free: f.free,
-      centreWidth, unit, order: list.map((c) => c.id),
+      centreWidth, unit, order: list.map((c) => c.id), orbit,
     };
   };
 
@@ -457,7 +417,7 @@ export function planStage(
   const floating = list.filter((c) => c.place === 'float');
   for (const c of list) if (c.place !== 'float') toOthers(c);
   const drag = opts.dragging && ids.has(opts.dragging.id) ? opts.dragging : null;
-  const isOwner = (c: SuperContainer) => !!c.pos || c.id === drag?.id;
+  const isOwner = (c: StageItem) => !!c.pos || c.id === drag?.id;
   const owned = floating.filter(isOwner);
 
   // Every floating card has a side by its place in the WHOLE record (Others included),
@@ -480,22 +440,16 @@ export function planStage(
     sideOf.set(mover.id, to);
   }
   const slotsOn = (side: 'left' | 'right'): Slot[] =>
-    floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, ratio: ratioOf(c.shape), owner: isOwner(c), chat: c.kind === 'chat' }));
+    floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, owner: isOwner(c), chat: c.kind === 'chat' || c.kind === 'group' }));
 
-  // One pass with every card in its column, the owner's cards included where they would stand:
-  // it sets the stage (the card width, the centre) and the size an owner card is drawn at, the
-  // one it had before it was dropped, so a drop never resizes the card under the hand and a
-  // reload draws it at the same size again.
+  // One pass with every item on its side's orbit, the owner's included where they would stand:
+  // it sets the stage. An owner tile is drawn at the one tile size wherever he dropped it.
   const sol = solveFloat(f, slotsOn('left'), slotsOn('right'));
   const centre = sol.centre;
   const ownerRects = new Map<string, Rect>();
   for (const c of owned) {
     if (c.id === drag?.id) { ownerRects.set(c.id, drag.rect); continue; }
-    const at = sol.rects.get(c.id);
-    const u = sol.u || STAGE.U_MIN;
-    const w = at?.width ?? u;
-    const h = at?.height ?? heightOf(c.shape, u);
-    ownerRects.set(c.id, pushOut(rectFromPos(f.free, c.pos!, w, h), centre, f.free));
+    ownerRects.set(c.id, pushOut(rectFromPos(f.free, c.pos!, STAGE.TILE, STAGE.TILE), centre, f.free));
   }
 
   // The owner's cards sit where they were dropped. An auto card clear of them keeps its place;
@@ -504,8 +458,8 @@ export function planStage(
   const owners = [...ownerRects.values()];
   const covered = (r: Rect) => owners.some((b) => overlaps(r, inflate(b, STAGE.GAP - 0.5)));
   const blocks: Rect[] = [...owners];
-  const moved: SuperContainer[] = [];
-  const auto = (c: SuperContainer, rect: Rect) => {
+  const moved: StageItem[] = [];
+  const auto = (c: StageItem, rect: Rect) => {
     cards[c.id] = { id: c.id, rect, where: 'float', shape: drawnShape(rect), owner: false, z: z.get(c.id) ?? 0 };
   };
   for (const c of floating) {
@@ -516,7 +470,7 @@ export function planStage(
     else { blocks.push(at); auto(c, at); }
   }
   for (const c of moved) {
-    const rect = reseat(sol.rects.get(c.id)!, f, blocks, sol.u);
+    const rect = reseat(sol.rects.get(c.id)!, f, blocks);
     if (!rect) { toOthers(c); continue; }
     blocks.push(rect);
     auto(c, rect);
@@ -527,10 +481,10 @@ export function planStage(
     cards[c.id] = { id: c.id, rect, where: 'float', shape: drawnShape(rect), owner: true, z: MAX_CONTAINERS + (z.get(c.id) ?? 0) };
   }
   const width = (side: 'left' | 'right') => (floating.some((c) => sideOf.get(c.id) === side && cards[c.id]?.where === 'float') ? sol.u : 0);
-  return finish(centre, centre.width, 'float', { left: width('left'), right: width('right') });
+  return finish(centre, centre.width, 'float', { left: width('left'), right: width('right') }, sol.orbit);
 }
 
-/** Taller than wide by more than a hair: drawn as a tall card (room for its last lines). */
+/** Taller than wide by more than a hair: 'tall'. A floating tile is always square. */
 function drawnShape(r: Rect): ContainerShape {
   return r.height > r.width * 1.1 ? 'tall' : 'square';
 }
@@ -547,9 +501,27 @@ export function overCentre(plan: StagePlan, x: number, y: number): boolean {
   return contains(plan.centre, x, y);
 }
 
+/**
+ * The floating tile a held card would be grouped with (2026-10-20): the topmost card or group
+ * under the pointer, never the held one itself. A group held over anything groups with nothing
+ * (groups do not nest).
+ */
+export function dropTargetAt(plan: StagePlan, x: number, y: number, heldId: string): string | null {
+  if (isGroupId(heldId)) return null;
+  let best: CardPlan | null = null;
+  for (const c of Object.values(plan.cards)) {
+    if (c.id === heldId || c.where !== 'float' || !contains(c.rect, x, y)) continue;
+    if (!best || c.z > best.z) best = c;
+  }
+  return best?.id ?? null;
+}
+
+export const isGroupId = (id: string) => id.startsWith('grp-');
+
 // ─── The owner's edits as a patch (F3 / §0 C3) ─────────────────────────────────
 
 export interface LayoutPatchCard {
+  /** A card's id, or a group's (a drop, Others or back move the whole group). */
   id: string;
   pos?: { x: number; y: number } | null;
   place?: 'float' | 'others';
@@ -560,27 +532,41 @@ export interface LayoutPatch {
   cards?: LayoutPatchCard[];
   closed?: string[];
   view?: SuperView;
+  /** Cards put in a group: a new id makes one where its first card stands (a drop on a card),
+   *  a known id adds to it (a drop on a group). */
+  group?: GroupOp;
+  /** Cards taken out of their group (dragged out of an open group). */
+  leave?: string[];
+  /** Groups dissolved (the panel's Ungroup). */
+  ungroup?: string[];
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
+type Staged = { containers: SuperContainer[]; groups?: SuperGroup[]; view: SuperView };
+
 /**
  * The server's patch semantics, applied locally: what the window shows the moment the owner
- * drops (and keeps showing over a push until the POST's answer echoes it). Unknown ids are
+ * drops (and keeps showing over a push until the POST's answer echoes it). The server's order:
+ * leave, cards, group, ungroup, closed, then the groups settle against the cards. Unknown ids are
  * ignored, the list is never replaced, a view naming no card falls back to float.
  */
-export function applyLayoutPatch<S extends { containers: SuperContainer[]; view: SuperView }>(state: S, patch: LayoutPatch): S {
-  let containers = state.containers.map((c) => ({ ...c }));
+export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch): S {
+  const st = { containers: state.containers.map((c) => ({ ...c })), groups: (state.groups ?? []).map((g) => ({ ...g, cards: [...g.cards] })) };
+  if (patch.leave?.length) leaveGroups(st, patch.leave);
   for (const p of patch.cards ?? []) {
-    const k = containers.find((x) => x.id === p.id);
+    const k: SuperContainer | SuperGroup | undefined = st.containers.find((x) => x.id === p.id) ?? st.groups.find((x) => x.id === p.id);
     if (!k) continue;
     if (p.place === 'float' || p.place === 'others') k.place = p.place;
     if (p.pos === null) delete k.pos;
     else if (p.pos && Number.isFinite(p.pos.x) && Number.isFinite(p.pos.y)) k.pos = { x: clamp01(p.pos.x), y: clamp01(p.pos.y) };
-    if (p.order === 'last') containers = [...containers.filter((x) => x !== k), k];
+    if (p.order === 'last' && 'kind' in k) st.containers = [...st.containers.filter((x) => x !== k), k];
   }
+  if (patch.group) applyGroupOp(st, patch.group);
+  if (patch.ungroup?.length) dissolveGroups(st, patch.ungroup);
   const gone = new Set(patch.closed ?? []);
-  if (gone.size) containers = containers.filter((x) => !gone.has(x.id));
+  if (gone.size) st.containers = st.containers.filter((x) => !gone.has(x.id));
+  const { containers, groups } = normalizeGroups(st.containers, st.groups);
   const live = new Set(containers.map((c) => c.id));
   const v = patch.view ?? state.view;
   let view: SuperView = { mode: 'float' };
@@ -589,19 +575,28 @@ export function applyLayoutPatch<S extends { containers: SuperContainer[]; view:
     const cards = [...new Set((v.cards ?? []).filter((id) => live.has(id)))].slice(0, MAX_PRESENT);
     if (cards.length) view = { mode: 'present', cards };
   }
-  return { ...state, containers, view };
+  return { ...state, containers, groups, view };
 }
 
 /** Does this pushed state already carry the patch (so the pending edit can go)? */
-export function patchEchoed(state: { containers: SuperContainer[]; view: SuperView }, patch: LayoutPatch): boolean {
+export function patchEchoed(state: Staged, patch: LayoutPatch): boolean {
+  const groups = state.groups ?? [];
   for (const p of patch.cards ?? []) {
-    const k = state.containers.find((x) => x.id === p.id);
+    const k = state.containers.find((x) => x.id === p.id) ?? groups.find((x) => x.id === p.id);
     if (!k) continue;
     if (p.place && k.place !== p.place) return false;
     if (p.pos === null && k.pos) return false;
     if (p.pos && (!k.pos || Math.abs(k.pos.x - clamp01(p.pos.x)) > 1e-6 || Math.abs(k.pos.y - clamp01(p.pos.y)) > 1e-6)) return false;
   }
   for (const id of patch.closed ?? []) if (state.containers.some((x) => x.id === id)) return false;
+  for (const id of patch.leave ?? []) if (groups.some((g) => g.cards.includes(id))) return false;
+  for (const id of patch.ungroup ?? []) if (groups.some((g) => g.id === id)) return false;
+  if (patch.group) {
+    // Echoed once the server's groups read the same as the patch applied to them (a group that
+    // dissolved again meanwhile reads the same on both sides too).
+    const want = applyLayoutPatch(state, { group: patch.group }).groups;
+    if (JSON.stringify(want) !== JSON.stringify(groups)) return false;
+  }
   // The whole view, not its mode: a push still on `half A` must not swallow the owner's
   // `half B` (end review r8). Compared as the server would store it (a gone card is float).
   if (patch.view && !sameView(applyLayoutPatch(state, patch).view, state.view)) return false;
