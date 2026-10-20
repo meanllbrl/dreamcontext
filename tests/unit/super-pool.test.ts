@@ -131,6 +131,10 @@ describe('pool add | remove | list', () => {
     expect(String(list[0].title)).not.toBe('users migration');
     expect(String(list[0].note)).toMatch(/after the auth job/);
     expect(String(list[0].note)).not.toBe('after the auth job');
+    // `super state` reads the same record: the same pool rows, fenced, and each child's row.
+    const st = result(await verb('state'));
+    expect((st.pool as Array<Record<string, unknown>>).map((p) => p.id)).toEqual([id]);
+    expect((st.pool as Array<Record<string, unknown>>)[0].prompt).toBeUndefined();
     expect((await verb('pool-remove', { id })).status).toBe(200);
     expect((await readSuperState(root)).pool).toEqual([]);
     expect((await verb('pool-remove', { id })).status).toBe(404);
@@ -179,6 +183,7 @@ describe('delegate --from', () => {
     const s = await readSuperState(root);
     expect(s.pool).toEqual([]);
     expect(s.children[CHILD_SID]).toMatchObject({ row: 'working' });
+    expect((result(await verb('state')).children as Record<string, Record<string, unknown>>)[CHILD_SID]).toMatchObject({ row: 'working' });
   });
 
   it('a refusing window keeps the row, and the claim is released (the next try is not "claimed")', async () => {
