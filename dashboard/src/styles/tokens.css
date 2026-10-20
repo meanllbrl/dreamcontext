@@ -137,6 +137,23 @@
   --gradient-brand: linear-gradient(135deg, #6647f0, #7b68ee);
   --gradient-brand-subtle: linear-gradient(135deg, rgba(123, 104, 238, 0.08), rgba(0, 145, 255, 0.08));
 
+  /* ─── The dream gem's own colours ───
+     The palette logo.png and the app icon are made of (the vector fit's GEM_COLORS in
+     marketing/remotion/src/splash/geometry.ts). The brand tokens above are the UI's violet, not
+     the mark's: `--color-accent` is the mark's DARK tone, so a gem filled from it loses its light
+     left half. Painted only by a drawn mark (components/brand/handsfreeMark.css); never a UI fill
+     and never text. Not retinted for dark: the mark is the same mark in both themes.
+     node-setup.html and the phone's sign-in page mirror this block (tests/unit/handsfree-mark.test.ts). */
+  --gem-body-hi: #c3a5ff;
+  --gem-body-lo: #bb9dff;
+  --gem-chevron-hi: #c2a3ff;
+  --gem-chevron-lo: #ad8fff;
+  --gem-dark: #7562df;
+  --gem-dark-lo: #6d59da;
+  --gem-dark-edge: #5142cb;
+  --gem-hairline: rgba(110, 84, 232, 0.5);
+  --gem-ring: #b696ff;
+
   /* ─── Surfaces — ClickUp's white-canvas layered system ─── */
   --color-bg: var(--color-snow);               /* #ffffff page canvas */
   --color-bg-secondary: var(--color-snow);     /* #ffffff cards */

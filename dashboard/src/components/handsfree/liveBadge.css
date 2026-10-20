@@ -1,0 +1,88 @@
+/* The hands-free live badge (LiveBadge.tsx): the phone's "connected to your Mac" and the Mac
+   panel's "the phone link is live". Theme tokens only, no baked colours. Colour is the Mac's
+   state (green, or amber when its battery is low or it is cooling down); the pulse is the link,
+   and nothing else moves. The class keeps its first name (`dc-hf-chip`): verify scripts read it. */
+.dc-hf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  min-width: 0;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 22%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-tertiary));
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.dc-hf-chip-dot {
+  position: relative;
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-success) 22%, transparent);
+}
+
+.dc-hf-chip[data-mac='low'] .dc-hf-chip-dot,
+.dc-hf-chip[data-mac='warm'] .dc-hf-chip-dot {
+  background: var(--color-warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-warning) 22%, transparent);
+}
+
+/* Opening or closing the link: the neutral ink, still. */
+.dc-hf-chip[data-mac='busy'] .dc-hf-chip-dot {
+  background: var(--color-text-tertiary);
+  box-shadow: none;
+}
+
+/* The link dropped: a hollow ring in the secondary ink, still. Shape, not a third hue. */
+.dc-hf-chip[data-live='false']:not([data-mac='busy']) .dc-hf-chip-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--color-text-secondary);
+}
+
+/* The pulse: a ring leaving the dot, slow (2 breaths of --motion-breath), composited only
+   (transform + opacity). AMBIENT, not status: "connected" lasts for hours and says no work is
+   happening, so it rests (the name goes `none`) in an unfocused window and in Light mode, pauses
+   in a hidden one, runs on the 15 fps motion clock (lib/motionClock.ts) like every endless
+   animation, and stands down under reduced motion. Its base style is invisible, so a rested
+   badge is a plain dot. A `data-quiet` badge (the one beside an open chat's title, where the
+   transcript is what is read) never pulses: only the home list's and the Mac panel's do. */
+.dc-hf-chip[data-live='true']:not([data-quiet]) .dc-hf-chip-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: inherit;
+  opacity: 0;
+  animation: var(--dc-motion-ambient-name, dc-hf-live) calc(var(--motion-breath) * 2) var(--ease-out) infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+
+@keyframes dc-hf-live {
+  0% { transform: scale(1); opacity: 0.55; }
+  60%, 100% { transform: scale(2.8); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-hf-chip[data-live='true']:not([data-quiet]) .dc-hf-chip-dot::after { animation: none; }
+}
+
+/* Read by a screen reader before the label ("Connected to your Mac. Mac · 80%"), not shown. */
+.dc-hf-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

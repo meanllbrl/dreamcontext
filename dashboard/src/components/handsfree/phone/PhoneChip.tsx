@@ -1,6 +1,7 @@
 import { useI18n } from '../../../context/I18nContext';
-import { usePhoneState, type PhoneState } from './phoneState';
-import './phone.css';
+import { fill } from '../HandsfreeParts';
+import { LiveBadge } from '../LiveBadge';
+import { usePhoneLink, type PhoneState } from './phoneState';
 
 /** What the chip says: a low battery first (the Mac may sleep), then cooling down, then the battery. */
 export function phoneChipView(s: PhoneState): { mac: 'low' | 'warm' | 'ok'; key: string; pct: number | null } {
@@ -11,20 +12,17 @@ export function phoneChipView(s: PhoneState): { mac: 'low' | 'warm' | 'ok'; key:
 }
 
 /**
- * The phone's Mac chip: the laptop's battery, a warning once it may sleep again (battery
- * floor), and "cooling down" while the Mac slows heavy work. No props; renders null off the
- * phone surface.
+ * The phone's "connected to your Mac" badge: the laptop's battery, a warning once it may sleep
+ * again (battery floor), and "cooling down" while the Mac slows heavy work. Two channels that do
+ * not share (orthogonal-encoding-channels): the dot's COLOUR is the Mac's state, the PULSE is the
+ * link, on only while the last poll reached the Mac; a dropped link is a hollow, still dot and
+ * says so. `quiet`: never pulse (beside an open chat's title). Renders null off the phone surface.
  */
-export function PhoneChip() {
+export function PhoneChip({ quiet = false }: { quiet?: boolean }) {
   const { t } = useI18n();
-  const s = usePhoneState();
+  const { state: s, reachable } = usePhoneLink();
   if (!s) return null;
   const v = phoneChipView(s);
-  const label = v.pct !== null ? t(v.key).replace('{pct}', String(v.pct)) : t(v.key);
-  return (
-    <span className="dc-hf-chip" data-mac={v.mac} role="status">
-      <span className="dc-hf-chip-dot" aria-hidden="true" />
-      {label}
-    </span>
-  );
+  const label = !reachable ? t('handsfree.mac.chipReaching') : v.pct !== null ? fill(t(v.key), { pct: v.pct }) : t(v.key);
+  return <LiveBadge tone={v.mac} live={reachable} label={label} sr={reachable ? t('handsfree.mac.live') : undefined} quiet={quiet} testId="phone-live-badge" />;
 }

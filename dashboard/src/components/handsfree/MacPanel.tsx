@@ -6,6 +6,8 @@ import { CopyButton, fill, HandsfreeQr } from './HandsfreeParts';
 import { macAction, macDevices, refreshMacStatus, useMacStatus } from './macStore';
 import { MAC_BAG_MODE_DEFAULT, type MacDevice, type MacStatus } from './macContract';
 import { Toggle } from '../settings/SettingRow';
+import { HandsfreeMark } from '../brand/HandsfreeMark';
+import { LiveBadge } from './LiveBadge';
 
 /**
  * The Hands-free sheet's "Bu Mac'ten" panel: set up once (one admin prompt; the phone password
@@ -99,7 +101,13 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
 
       {phase === 'off' && !ready && (
         <>
-          <p className="hf-lead">{t('handsfree.mac.setupLead')}</p>
+          <div className="hf-card hf-card--hero" data-testid="hf-mac-hero">
+            <HandsfreeMark height={40} />
+            <div className="hf-hero-text">
+              <p className="hf-hero-title">{t('handsfree.mac.heroTitle')}</p>
+              <p className="hf-lead">{t('handsfree.mac.setupLead')}</p>
+            </div>
+          </div>
           <div className="hf-actions hf-actions--end">
             <button type="button" className="hf-btn" onClick={onClose}>{t('handsfree.cancel')}</button>
             <button type="button" className="hf-btn hf-btn--primary" data-testid="hf-mac-setup" disabled={!!busy} onClick={() => void setup()}>
@@ -111,18 +119,26 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
 
       {phase === 'off' && ready && (
         <>
-          <p className="hf-lead">{t('handsfree.mac.modeMacSub')}</p>
-          <p className="hf-quiet">{status?.mode === 'fixed' && status.fixedHostname ? fill(t('handsfree.mac.fixedCurrent'), { host: status.fixedHostname }) : t('handsfree.mac.fixedLead')}</p>
-          <fieldset className="hf-mac-projects" data-testid="hf-mac-projects">
-            <legend className="hf-quiet">{t('handsfree.mac.projects')}</legend>
-            {projects.map((name) => (
-              <label key={name} className="hf-mac-project">
-                <input type="checkbox" checked={chosen.includes(name)} onChange={() => toggle(name)} disabled={!!busy} />
-                <span>{name}</span>
-              </label>
-            ))}
-          </fieldset>
-          <label className="hf-mac-bag" data-testid="hf-mac-bag-row">
+          <div className="hf-card hf-card--hero" data-testid="hf-mac-hero">
+            <HandsfreeMark height={40} />
+            <div className="hf-hero-text">
+              <p className="hf-hero-title">{t('handsfree.mac.heroTitle')}</p>
+              <p className="hf-lead">{t('handsfree.mac.modeMacSub')}</p>
+              <p className="hf-quiet">{status?.mode === 'fixed' && status.fixedHostname ? fill(t('handsfree.mac.fixedCurrent'), { host: status.fixedHostname }) : t('handsfree.mac.fixedLead')}</p>
+            </div>
+          </div>
+          <div className="hf-card">
+            <fieldset className="hf-mac-projects" data-testid="hf-mac-projects">
+              <legend className="hf-quiet">{t('handsfree.mac.projects')}</legend>
+              {projects.map((name) => (
+                <label key={name} className="hf-mac-project">
+                  <input type="checkbox" checked={chosen.includes(name)} onChange={() => toggle(name)} disabled={!!busy} />
+                  <span>{name}</span>
+                </label>
+              ))}
+            </fieldset>
+          </div>
+          <label className="hf-card hf-mac-bag" data-testid="hf-mac-bag-row">
             <span className="hf-mac-bag-text">
               <span className="hf-mac-bag-title">{t('handsfree.mac.bag')}</span>
               <span className="hf-quiet">{t('handsfree.mac.bagHint')}</span>
@@ -138,11 +154,27 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
         </>
       )}
 
-      {phase === 'starting' && <p className="hf-quiet" role="status">{t('handsfree.mac.starting')}</p>}
+      {phase === 'starting' && (
+        <div className="hf-card hf-card--hero">
+          <div className="hf-card-row">
+            <HandsfreeMark height={28} />
+            <LiveBadge tone="busy" live={false} label={t('handsfree.mac.starting')} />
+          </div>
+        </div>
+      )}
 
       {(phase === 'on' || phase === 'stopping') && status && (
         <>
-          <div className="hf-mac-address">
+          <div className="hf-card hf-card--hero hf-mac-address">
+            <div className="hf-card-row">
+              <HandsfreeMark height={28} />
+              <LiveBadge
+                tone={phase === 'on' ? 'ok' : 'busy'}
+                live={phase === 'on' && !!status.url}
+                label={phase === 'on' ? t('handsfree.mac.badgeOn') : t('handsfree.mac.badgeStopping')}
+                testId="hf-mac-live"
+              />
+            </div>
             <p className="hf-quiet">{t('handsfree.mac.address')}</p>
             {status.url && <code className="hf-mono hf-url" data-testid="hf-mac-url">{status.url}</code>}
             <div className="hf-actions">
@@ -162,7 +194,7 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
             {status.mode === 'quick' && <p className="hf-quiet" data-testid="hf-mac-push-needs-fixed">{t('handsfree.mac.pushNeedsFixed')}</p>}
           </div>
 
-          <div className="hf-mac-power" data-testid="hf-mac-power">
+          <div className="hf-card hf-mac-power" data-testid="hf-mac-power">
             <p className="hf-quiet">
               {status.sleepAllowed ? t('handsfree.mac.sleepAllowed') : t('handsfree.mac.power')}
               {status.battery.percent !== null && <> · {fill(t('handsfree.mac.battery'), { pct: String(status.battery.percent) })}</>}
@@ -175,7 +207,7 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
             )}
           </div>
 
-          <div className="hf-mac-devices" data-testid="hf-mac-devices">
+          <div className="hf-card hf-mac-devices" data-testid="hf-mac-devices">
             <div className="hf-mac-row">
               <p className="hf-quiet">{t('handsfree.mac.devices')}</p>
               <button type="button" className="hf-btn hf-btn--sm hf-btn--danger-quiet" data-testid="hf-mac-revoke-all" disabled={!!busy || devices.length === 0} onClick={() => void revokeAll()}>{t('handsfree.mac.revokeAll')}</button>

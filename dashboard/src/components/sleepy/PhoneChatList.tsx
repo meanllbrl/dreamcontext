@@ -7,6 +7,7 @@ import { useChrome } from '../layout/WindowChrome';
 import { pollMs } from '../../lib/windowActivity';
 import type { LiveChatWire, LiveChatsWire } from '../handsfree/macContract';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
+import { HandsfreeBackdrop, HandsfreeMark } from '../brand/HandsfreeMark';
 import { PushOptIn } from '../handsfree/phone/PushOptIn';
 import type { PastSession } from './ChatHistoryPicker';
 import type { ChatSession } from './chatSession';
@@ -210,7 +211,9 @@ export function PhoneChatList({
 
   return (
     <div className="mlist-screen" data-testid="phone-list" ref={rootRef}>
+      <HandsfreeBackdrop />
       <div className="mlist-head">
+        <HandsfreeMark height={22} className="mlist-mark" />
         <h1 className="mlist-h" tabIndex={-1}>{t('handsfree.list.title')}</h1>
         <PhoneChip />
         <button className="mchat-head-btn" onClick={onNewChat} aria-label={t('handsfree.list.new')}>

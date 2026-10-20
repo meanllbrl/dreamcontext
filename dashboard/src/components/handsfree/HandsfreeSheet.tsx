@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
 import { MacPanel } from './MacPanel';
+import { HandsfreeMark } from '../brand/HandsfreeMark';
 import '../sleepy/chat/ChatViews.css';
 
 /** The hands-free sheet: Mac mode's panel (setup, start/stop, the phone link, devices) for the
@@ -30,7 +31,10 @@ export function HandsfreeSheet({ vault, onClose }: { vault: string; onClose: () 
         data-testid="hf-sheet"
       >
         <header className="hf-sheet-head">
-          <h2 id="hf-sheet-title">{t('handsfree.sheet.title')}</h2>
+          <div className="hf-sheet-brand">
+            <HandsfreeMark height={22} />
+            <h2 id="hf-sheet-title">{t('handsfree.sheet.title')}</h2>
+          </div>
           <button type="button" className="hf-icon-btn" onClick={onClose} aria-label={t('handsfree.close')}>✕</button>
         </header>
         <MacPanel vault={vault} onClose={onClose} />

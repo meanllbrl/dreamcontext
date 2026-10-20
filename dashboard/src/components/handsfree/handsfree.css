@@ -148,3 +148,32 @@
 .hf-mac-risk { margin: 0; font-size: var(--font-size-xs); color: var(--color-warning-ink, var(--color-text-secondary)); }
 .hf-input { flex: 1; min-width: 0; min-height: 28px; padding: 0 var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text-primary); font: inherit; font-size: var(--font-size-sm); }
 .hf-input:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+
+/* ─── The hands-free card language (shared with the phone's pages) ──────────
+   One card shape for every block of the Mac panel: the theme surface, a 1px border, the large
+   card radius. The first card is the hero: the hands-free mark with a tinted surface (accent a
+   little way into the card, further into its border, body text on top; tinted-surface-not-
+   filled-swatch), the same tint the phone's sign-in card and badge wear. */
+.hf-sheet-brand { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.hf-mac .hf-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+}
+.hf-mac .hf-card--hero {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+}
+.hf-mac .hf-card--hero.hf-mac-address { flex-direction: column; gap: var(--space-2); }
+.hf-hero-text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.hf-hero-title { margin: 0; font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.hf-card-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-1); }
+.hf-mac .hf-card.hf-mac-bag { flex-direction: row; align-items: center; }

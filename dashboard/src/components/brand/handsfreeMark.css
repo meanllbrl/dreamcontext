@@ -1,0 +1,37 @@
+/* The hands-free mark (HandsfreeMark.tsx) and the gem outlines in a hands-free page's corners.
+   The mark paints from the gem's own tokens (`--gem-*`, styles/tokens.css): it is the real mark,
+   not the UI's violet. src/server/handsfree-login.ts carries the same paint rules for the phone's
+   sign-in page; tests/unit/handsfree-mark.test.ts holds the two to one set of classes. */
+
+.hfm { display: block; flex: none; width: auto; overflow: visible; }
+
+.hfm-stroke-ring { stroke: var(--gem-ring); }
+.hfm-stop-body-hi { stop-color: var(--gem-body-hi); }
+.hfm-stop-body-lo { stop-color: var(--gem-body-lo); }
+.hfm-stop-chevron-hi { stop-color: var(--gem-chevron-hi); }
+.hfm-stop-chevron-lo { stop-color: var(--gem-chevron-lo); }
+.hfm-stop-dark { stop-color: var(--gem-dark); }
+.hfm-stop-dark-lo { stop-color: var(--gem-dark-lo); }
+.hfm-stroke-dark-edge { stroke: var(--gem-dark-edge); }
+.hfm-stroke-hairline { stroke: var(--gem-hairline); }
+.hfm-stroke-wave-near { stroke: var(--gem-dark); }
+.hfm-stroke-wave-far { stroke: var(--gem-ring); }
+
+/* ─── Corner decoration ───
+   Two of the gem's outlines (ring, body, rhombus) as hairlines, cropped by the page's corners:
+   top right and bottom left. Accent ink at a whisper, so text over them keeps its contrast
+   (the lines change the paper under a row by under 1 % luminance). Behind everything in its
+   stacking context, never hit by a tap. */
+.hfm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.hfm-decor { position: absolute; width: calc(var(--space-24) * 2.25); height: auto; opacity: 0.07; }
+/* Below the list's search field (an opaque box in the light theme would cut the lines). */
+.hfm-decor--a { top: calc(var(--space-24) * 1.75); right: calc(var(--space-24) * -1.25); transform: rotate(-14deg); }
+.hfm-decor--b { bottom: var(--space-24); left: calc(var(--space-24) * -0.9); width: calc(var(--space-24) * 1.7); transform: rotate(12deg); }
+.hfm-decor-line { stroke: var(--color-accent); }
+[data-theme='dark'] .hfm-decor { opacity: 0.1; }

@@ -4713,7 +4713,7 @@ export function AgentSurface() {
                 {mobileActive && <span className="mchat-dot" data-kind={mobileActive.info.kind} aria-hidden />}
                 {mobileActive?.title ?? 'Chat'}
               </span>
-              <PhoneChip />
+              <PhoneChip quiet />
               <button
                 className="mchat-head-btn"
                 onClick={() => addSession(claudeKind)}

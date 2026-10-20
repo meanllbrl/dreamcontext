@@ -11,6 +11,7 @@ import { liveChatsSnapshot } from './routes/agent-chat-live.js';
 import { MAC_LOGIN_TOKEN_PARAM, MAC_SURFACE_HEADER, type MacPhonePayload } from '../lib/handsfree/mac/contract.js';
 import { sendError } from './middleware.js';
 import { OFFLINE_PATH, SW_PATH, serviceWorkerSource, shortHash } from './handsfree-sw.js';
+import { HANDSFREE_DECOR_SVG, HANDSFREE_MARK_CSS, HANDSFREE_MARK_SVG } from './handsfree-mark.js';
 
 /**
  * The phone's server-rendered pages on Mac mode's phone listener (hands-free): `/login`, the
@@ -71,27 +72,51 @@ function csp(script: string, style: string): string {
   ].join('; ');
 }
 
-const STYLE = `
-:root{color-scheme:light dark;--bg:#fafaf9;--fg:#1c1917;--muted:#57534e;--line:#d6d3d1;--accent:#1c1917;--accent-fg:#fafaf9;--err:#b91c1c}
-@media (prefers-color-scheme:dark){:root{--bg:#0c0a09;--fg:#f5f5f4;--muted:#a8a29e;--line:#44403c;--accent:#f5f5f4;--accent-fg:#0c0a09;--err:#f87171}}
+/**
+ * The pages' stylesheet. A standalone page cannot load the dashboard's CSS, so it carries a copy
+ * of the tokens it uses, in three labelled blocks that `tests/unit/handsfree-mark.test.ts` holds
+ * equal to `dashboard/src/styles/tokens.css` (light, dark, and the gem's own colours); outside
+ * them it only USES tokens. The look is the dashboard's: the hands-free mark over the welcome,
+ * the gem's outlines in two corners, one tinted card for the form, the strong accent button.
+ */
+export const MAC_PAGE_STYLE = `
+/* tokens: mirrored from dashboard/src/styles/tokens.css (:root) */
+:root{color-scheme:light dark;--color-bg:#ffffff;--color-bg-secondary:#ffffff;--color-bg-tertiary:#e9ebf0;--color-text:#292d34;--color-text-secondary:#646464;--color-text-placeholder:#757575;--color-border:#e8e8e8;--color-border-focus:#7b68ee;--color-accent:#7b68ee;--color-accent-ink:#6647f0;--color-accent-strong:#6647f0;--color-accent-text:#ffffff;--color-error-ink:hsl(0 72% 40%);--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;--space-10:40px;--space-12:48px;--radius-lg:12px;--radius-xl:16px}
+/* tokens: mirrored from dashboard/src/styles/tokens.css ([data-theme='dark']) */
+@media (prefers-color-scheme:dark){:root{--color-bg:#14171f;--color-bg-secondary:#1c1f2a;--color-bg-tertiary:#2a2f3d;--color-text:#f5f6fa;--color-text-secondary:#c8ccd9;--color-text-placeholder:#9aa0b3;--color-border:#2f3445;--color-border-focus:#9d8cff;--color-accent:#9d8cff;--color-accent-ink:#9d8cff;--color-error-ink:hsl(0 100% 72%)}}
+/* tokens: gem colours mirrored from dashboard/src/styles/tokens.css */
+:root{--gem-body-hi:#c3a5ff;--gem-body-lo:#bb9dff;--gem-chevron-hi:#c2a3ff;--gem-chevron-lo:#ad8fff;--gem-dark:#7562df;--gem-dark-lo:#6d59da;--gem-dark-edge:#5142cb;--gem-hairline:rgba(110, 84, 232, 0.5);--gem-ring:#b696ff}
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--fg)}
-body{font:17px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;padding:max(24px,env(safe-area-inset-top)) 20px max(24px,env(safe-area-inset-bottom));min-height:100vh}
-main{max-width:420px;margin:0 auto}
-h1{font-size:24px;line-height:1.25;margin:32px 0 8px}
-p{margin:8px 0;color:var(--muted)}
-label{display:block;font-weight:600;margin:24px 0 8px}
-.row{display:flex;gap:8px}
-input{flex:1;min-width:0;font:inherit;padding:14px 12px;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--fg)}
-button,a.btn{display:block;width:100%;font:inherit;font-weight:600;margin:16px 0 0;padding:14px;border:0;border-radius:12px;background:var(--accent);color:var(--accent-fg);text-align:center;text-decoration:none;cursor:pointer}
-button.ghost{width:auto;margin:0;padding:0 14px;background:transparent;color:var(--fg);border:1px solid var(--line)}
+html,body{margin:0;background:var(--color-bg);color:var(--color-text)}
+body{position:relative;overflow-x:hidden;font:17px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;padding:max(var(--space-6),env(safe-area-inset-top)) var(--space-5) max(var(--space-6),env(safe-area-inset-bottom));min-height:100vh}
+.hf-backdrop{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.hfm-decor{position:absolute;width:270px;height:auto;opacity:.07}
+.hfm-decor--a{top:-56px;right:-150px;transform:rotate(-14deg)}
+.hfm-decor--b{bottom:var(--space-12);left:-108px;width:204px;transform:rotate(12deg)}
+.hfm-decor-line{stroke:var(--color-accent)}
+@media (prefers-color-scheme:dark){.hfm-decor{opacity:.1}}
+main{position:relative;z-index:1;max-width:420px;margin:0 auto}
+.hf-hero{display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:var(--space-10)}
+.hf-hero-mark{display:block;height:88px;width:auto;margin-bottom:var(--space-5);filter:drop-shadow(0 10px 24px color-mix(in srgb,var(--gem-dark) 28%,transparent))}
+.hf-eyebrow{margin:0;font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent-ink)}
+h1{font-size:26px;line-height:1.25;margin:var(--space-2) 0}
+p{margin:var(--space-2) 0;color:var(--color-text-secondary)}
+.hf-card{margin-top:var(--space-6);padding:var(--space-5) var(--space-5) var(--space-3);border:1px solid color-mix(in srgb,var(--color-accent) 28%,var(--color-border));border-radius:var(--radius-xl);background:color-mix(in srgb,var(--color-accent) 5%,var(--color-bg-secondary))}
+label{display:block;font-weight:600;margin:0 0 var(--space-2)}
+.row{display:flex;gap:var(--space-2)}
+input{flex:1;min-width:0;font:inherit;padding:14px 12px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-bg);color:var(--color-text)}
+input::placeholder{color:var(--color-text-placeholder)}
+input:focus-visible,button:focus-visible{outline:2px solid var(--color-border-focus);outline-offset:2px}
+button,a.btn{display:block;width:100%;font:inherit;font-weight:600;margin:var(--space-4) 0 0;padding:14px;border:0;border-radius:var(--radius-lg);background:var(--color-accent-strong);color:var(--color-accent-text);text-align:center;text-decoration:none;cursor:pointer}
+button.ghost{width:auto;margin:0;padding:0 14px;background:var(--color-bg);color:var(--color-text);border:1px solid var(--color-border)}
 button:disabled{opacity:.5;cursor:default}
-a{color:var(--fg)}
-ol{padding-left:20px;color:var(--muted)}
+a{color:var(--color-text)}
+ol{padding-left:var(--space-5);color:var(--color-text-secondary)}
 li{margin:6px 0}
-.msg{min-height:1.5em;margin-top:12px}
-.err{color:var(--err)}
+.msg{min-height:1.5em;margin-top:var(--space-3)}
+.err{color:var(--color-error-ink)}
 .small{font-size:14px}
+${HANDSFREE_MARK_CSS}
 `;
 
 function page(lang: Lang, title: string, body: string, script: string, dataJson: string | null): { html: string; csp: string } {
@@ -105,16 +130,17 @@ function page(lang: Lang, title: string, body: string, script: string, dataJson:
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
 <title>${esc(title)}</title>
-<style>${STYLE}</style>
+<style>${MAC_PAGE_STYLE}</style>
 </head>
 <body>
+<div class="hf-backdrop" aria-hidden="true">${HANDSFREE_DECOR_SVG}</div>
 <main>
 ${body}
 </main>
 ${data}${scriptTag}</body>
 </html>
 `;
-  return { html, csp: csp(script, STYLE) };
+  return { html, csp: csp(script, MAC_PAGE_STYLE) };
 }
 
 function sendPage(res: ServerResponse, status: number, p: { html: string; csp: string }, extra: Record<string, string | string[]> = {}): void {
@@ -134,6 +160,7 @@ function sendPage(res: ServerResponse, status: number, p: { html: string; csp: s
 const MAC_LOGIN_STRINGS = {
   en: {
     title: 'Sign in · dreamcontext',
+    eyebrow: 'Hands-free · dreamcontext',
     heading: 'Sign in to your Mac',
     lead: 'Type the six-word password your Mac showed you, or scan the QR code on its screen.',
     label: 'Password',
@@ -152,6 +179,7 @@ const MAC_LOGIN_STRINGS = {
   },
   tr: {
     title: 'Giriş · dreamcontext',
+    eyebrow: 'Eller serbest · dreamcontext',
     heading: 'Mac\'ine giriş yap',
     lead: 'Mac\'inin gösterdiği altı kelimelik şifreyi yaz ya da ekrandaki QR kodu okut.',
     label: 'Şifre',
@@ -209,9 +237,13 @@ const MAC_LOGIN_JS = `(function(){
 
 export function renderMacLoginPage(lang: Lang, opts: { revoked: boolean; qrFailed: boolean }): { html: string; csp: string } {
   const s = MAC_LOGIN_STRINGS[lang];
-  const body = `<h1>${esc(s.heading)}</h1>
+  const body = `<header class="hf-hero">
+${HANDSFREE_MARK_SVG}
+<p class="hf-eyebrow">${esc(s.eyebrow)}</p>
+<h1>${esc(s.heading)}</h1>
 <p>${esc(opts.revoked ? s.revoked : s.lead)}</p>
-<form id="f" method="post" action="/login" novalidate>
+</header>
+<form id="f" class="hf-card" method="post" action="/login" novalidate>
 <label for="p">${esc(s.label)}</label>
 <div class="row">
 <input id="p" name="passphrase" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" required>
@@ -311,6 +343,7 @@ export function setMacPhoneSource(source: (() => MacPhonePayload) | null): void 
 const OFFLINE_STRINGS = {
   en: {
     title: 'Mac not reachable · dreamcontext',
+    eyebrow: 'Hands-free · dreamcontext',
     checking: 'Reaching your Mac…',
     down: 'Your Mac is not reachable',
     lead: 'Hands-free is off, or the Mac is asleep or offline. Open the dreamcontext app on your Mac and start Hands-free again.',
@@ -320,6 +353,7 @@ const OFFLINE_STRINGS = {
   },
   tr: {
     title: 'Mac\'e ulaşılamıyor · dreamcontext',
+    eyebrow: 'Eller serbest · dreamcontext',
     checking: 'Mac\'ine ulaşılıyor…',
     down: 'Mac\'ine ulaşılamıyor',
     lead: 'Eller serbest kapalı ya da Mac uyuyor veya çevrimdışı. Mac\'inde dreamcontext uygulamasını açıp Eller serbest\'i yeniden başlat.',
@@ -336,7 +370,7 @@ const OFFLINE_JS = `(function(){
   var langs=(navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||'en']);
   var lang='en';for(var i=0;i<langs.length;i++){var l=String(langs[i]).toLowerCase();if(l==='tr'||l.indexOf('tr-')===0){lang='tr';break;}if(l==='en'||l.indexOf('en-')===0){break;}}
   var s=d.strings[lang];document.documentElement.lang=lang;document.title=s.title;
-  document.getElementById('lead').textContent=s.lead;
+  document.getElementById('lead').textContent=s.lead;document.getElementById('eb').textContent=s.eyebrow;
   var h=document.getElementById('h'),st=document.getElementById('st'),more=document.getElementById('more');
   h.textContent=s.checking;st.textContent=s.first;
   var fails=0,last=0,busy=false,done=false;
@@ -365,11 +399,15 @@ const OFFLINE_JS = `(function(){
 
 export function renderOfflinePage(lang: Lang): { html: string; csp: string } {
   const s = OFFLINE_STRINGS[lang];
-  const body = `<h1 id="h">${esc(s.checking)}</h1>
+  const body = `<header class="hf-hero">
+${HANDSFREE_MARK_SVG}
+<p class="hf-eyebrow" id="eb">${esc(s.eyebrow)}</p>
+<h1 id="h">${esc(s.checking)}</h1>
 <p class="small" id="st" role="status" aria-live="polite">${esc(s.first)}</p>
 <div id="more" hidden>
 <p id="lead">${esc(s.lead)}</p>
-</div>`;
+</div>
+</header>`;
   return page(lang, s.title, body, OFFLINE_JS, jsonData({ strings: OFFLINE_STRINGS, header: MAC_SURFACE_HEADER }));
 }
 
