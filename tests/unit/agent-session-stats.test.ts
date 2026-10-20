@@ -2,7 +2,7 @@
  * Unit tests for the agent-terminal route's session-stats math:
  *   - `priceForModel` — current-generation list prices per tier, legacy-Opus detection,
  *     Fable/Mythos priced at their own tier (not the old Opus placeholder)
- *   - `contextLimitFor` — 1M is the default and 200K the exception (Haiku, pre-4.6
+ *   - `contextLimitFor` — 1M is the default and 200K the exception (Haiku 4.x, pre-4.6
  *     Opus/Sonnet); the `[1m]` marker and an oversized observed footprint both promote
  *   - `computeSessionStats` — cost is summed per unique `message.id` (Claude Code writes
  *     one JSONL line per content block, all repeating the same usage), sidechain turns
@@ -38,31 +38,43 @@ const writeTranscript = (lines: string[]): string => {
 };
 
 describe('priceForModel — tier resolution', () => {
-  it('prices current Opus at $5/$25 (not the legacy $15/$75)', () => {
-    for (const id of ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5', 'opus']) {
+  it('prices the current generation from model-facts (Opus 5.5 4/20, Sonnet 5.5 2/10, Haiku 5.5 0.10/0.50, Fable 5.1 10/50)', () => {
+    expect(priceForModel('claude-opus-5-5')).toEqual({ in: 4, out: 20, cacheWrite: 5, cacheRead: 0.2 });
+    expect(priceForModel('claude-sonnet-5-5')).toEqual({ in: 2, out: 10, cacheWrite: 2.5, cacheRead: 0.1 });
+    expect(priceForModel('claude-haiku-5-5')).toEqual({ in: 0.1, out: 0.5, cacheWrite: 0.125, cacheRead: 0.01 });
+    expect(priceForModel('claude-fable-5-1')).toEqual({ in: 10, out: 50, cacheWrite: 12.5, cacheRead: 0.25 });
+  });
+
+  it('prices the picker aliases as the current model of their family', () => {
+    expect(priceForModel('opus')).toMatchObject({ in: 4, out: 20 });
+    expect(priceForModel('sonnet')).toMatchObject({ in: 2, out: 10 });
+    expect(priceForModel('haiku')).toMatchObject({ in: 0.1, out: 0.5 });
+    expect(priceForModel('fable')).toMatchObject({ in: 10, out: 50 });
+  });
+
+  it('prices every older id still served at its own rate', () => {
+    expect(priceForModel('claude-opus-5')).toEqual({ in: 5, out: 25, cacheWrite: 6.25, cacheRead: 0.5 });
+    for (const id of ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5']) {
       expect(priceForModel(id)).toMatchObject({ in: 5, out: 25, cacheWrite: 6.25, cacheRead: 0.5 });
     }
-  });
-
-  it('prices legacy Opus (4.1 / 4.0 / 3) at $15/$75', () => {
     for (const id of ['claude-opus-4-1-20250805', 'claude-opus-4-1', 'claude-opus-4-20250514', 'claude-3-opus-20240229']) {
-      expect(priceForModel(id)).toMatchObject({ in: 15, out: 75 });
+      expect(priceForModel(id)).toMatchObject({ in: 15, out: 75, cacheWrite: 18.75, cacheRead: 1.5 });
     }
+    expect(priceForModel('claude-sonnet-5')).toEqual({ in: 2, out: 10, cacheWrite: 2.5, cacheRead: 0.2 });
+    expect(priceForModel('claude-sonnet-4-6')).toEqual({ in: 3, out: 15, cacheWrite: 3.75, cacheRead: 0.3 });
+    expect(priceForModel('claude-3-5-sonnet-20241022')).toMatchObject({ in: 3, out: 15 });
+    expect(priceForModel('claude-haiku-4-5-20251001')).toEqual({ in: 1, out: 5, cacheWrite: 1.25, cacheRead: 0.1 });
+    expect(priceForModel('claude-fable-5')).toEqual({ in: 10, out: 50, cacheWrite: 12.5, cacheRead: 1 });
   });
 
-  it('prices Fable/Mythos at $10/$50', () => {
-    expect(priceForModel('claude-fable-5')).toMatchObject({ in: 10, out: 50, cacheWrite: 12.5, cacheRead: 1 });
-    expect(priceForModel('claude-mythos-5')).toMatchObject({ in: 10, out: 50 });
-  });
-
-  it('prices Sonnet at $3/$15 and Haiku at $1/$5', () => {
-    expect(priceForModel('claude-sonnet-5')).toMatchObject({ in: 3, out: 15, cacheWrite: 3.75, cacheRead: 0.3 });
-    expect(priceForModel('claude-haiku-4-5-20251001')).toMatchObject({ in: 1, out: 5 });
+  it('prices Mythos as Fable', () => {
+    expect(priceForModel('claude-mythos-5')).toMatchObject({ in: 10, out: 50, cacheRead: 1 });
+    expect(priceForModel('claude-mythos-6')).toEqual(priceForModel('claude-fable-5-1'));
   });
 
   it('defaults unknown models to the current Opus tier', () => {
-    expect(priceForModel('')).toMatchObject({ in: 5, out: 25 });
-    expect(priceForModel('some-future-model')).toMatchObject({ in: 5, out: 25 });
+    expect(priceForModel('')).toMatchObject({ in: 4, out: 20 });
+    expect(priceForModel('some-future-model')).toMatchObject({ in: 4, out: 20 });
   });
 });
 
@@ -113,6 +125,7 @@ describe('contextLimitFor — window per model', () => {
     for (const id of [
       'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6',
       'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-fable-5', 'claude-mythos-5',
+      'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1', 'haiku',
     ]) {
       expect(contextLimitFor(1000, id)).toBe(1_000_000);
     }
@@ -120,7 +133,7 @@ describe('contextLimitFor — window per model', () => {
 
   it('keeps 200K for Haiku and the pre-4.6 Opus/Sonnet generations', () => {
     for (const id of [
-      'claude-haiku-4-5-20251001', 'haiku',
+      'claude-haiku-4-5-20251001',
       'claude-opus-4-5-20251101', 'claude-opus-4-1-20250805', 'claude-opus-4-20250514', 'claude-3-opus-20240229',
       'claude-sonnet-4-5-20250929', 'claude-sonnet-4-20250514', 'claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022',
     ]) {

@@ -5,7 +5,9 @@
  * data, never drive the dashboard through raw HTTP or WebSocket. Short: it rides every turn.
  */
 import { describe, it, expect } from 'vitest';
-import { SUPER_MODE_HEADING, modeBriefing, superBriefing } from '../../src/server/chat-modes.js';
+import {
+  SUPER_MODE_HEADING, SUPER_ORCHESTRATION_GUIDE, modeBriefing, superBriefing,
+} from '../../src/server/chat-modes.js';
 import { modeFromSystemPrompt } from '../../src/server/chat-mode-drift.js';
 
 describe('superBriefing', () => {
@@ -52,5 +54,38 @@ describe('superBriefing', () => {
 
   it('stays short', () => {
     expect(brief.length).toBeLessThan(2600);
+  });
+
+  describe('the orchestration slot', () => {
+    const PATH = '.claude/skills/dreamcontext/references/super-orchestration.md';
+    const bullet = `- Before you split work, read the orchestration guide: ${PATH}.`;
+    const lead = (b: string): string[] => b.split('## Lead, do not do\n')[1].split('\n');
+
+    it('while no guide is set, names no guide path and emits no bullet', () => {
+      expect(superBriefing(null)).not.toContain('orchestration guide');
+      expect(superBriefing(null)).not.toContain('super-orchestration');
+      expect(superBriefing(null)).toBe(brief); // the shipped default is the empty slot
+      expect(SUPER_ORCHESTRATION_GUIDE === null || SUPER_ORCHESTRATION_GUIDE === PATH).toBe(true);
+    });
+
+    it('while a guide is set, the first "Lead, do not do" bullet is exactly the pointer', () => {
+      const set = superBriefing(PATH);
+      expect(lead(set)[0]).toBe(bullet);
+      expect(set.split(bullet).length).toBe(2);
+      expect(set.match(/^# Mode:/gm)).toHaveLength(1);
+      expect(superBriefing(null).match(/^# Mode:/gm)).toHaveLength(1);
+    });
+
+    it('treats an empty or blank guide as unset and refuses a line break', () => {
+      expect(superBriefing('  ')).toBe(superBriefing(null));
+      expect(superBriefing('')).toBe(superBriefing(null));
+      expect(() => superBriefing('a\nb')).toThrow();
+    });
+
+    it('adds only the one pointer line when set (the job-list task\'s length rule replaces the cap)', () => {
+      expect(superBriefing(null).length).toBeLessThan(2600);
+      expect(superBriefing(PATH).length).toBeLessThan(2800);
+      expect(superBriefing(PATH).length - superBriefing(null).length).toBe(bullet.length + 1);
+    });
   });
 });

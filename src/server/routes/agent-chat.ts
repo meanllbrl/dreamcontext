@@ -87,7 +87,7 @@ import {
   CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, liveChatsSnapshot, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
   signalGroup, unregisterLiveChat, wsPingMs, type LiveChatEntry,
 } from './agent-chat-live.js';
-import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOutcome } from '../chat-park.js';
+import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOptions, type ParkOutcome } from '../chat-park.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
@@ -2012,7 +2012,7 @@ export function startChatSession(
   let focusedAt = 0;
   let parkAsk: { id: string; settle: (o: ParkOutcome) => void; promise: Promise<ParkOutcome> } | null = null;
   const PARK_REFUSALS: readonly ParkOutcome[] = ['busy', 'asking', 'background', 'focused'];
-  const parkThis = (reason: string): Promise<ParkOutcome> => {
+  const parkThis = (reason: string, opts: ParkOptions = {}): Promise<ParkOutcome> => {
     if (!alive || lingerTimer || lingerKillTimer) return Promise.resolve('already');
     if (parkAsk) return parkAsk.promise;
     // No socket (the window closed, the phone slept): nobody to ask, the process just ends.
@@ -2023,7 +2023,7 @@ export function startChatSession(
     const timer = setTimeout(() => { if (parkAsk?.id === id) { parkAsk = null; settle('no_answer'); } }, PARK_ANSWER_MS);
     timer.unref?.();
     parkAsk = { id, promise, settle: (o) => { clearTimeout(timer); parkAsk = null; settle(o); } };
-    try { ws.send(JSON.stringify({ type: '_meta', subtype: 'park', id, reason, focusGraceMs: parkFocusGraceMs() })); }
+    try { ws.send(JSON.stringify({ type: '_meta', subtype: 'park', id, reason, focusGraceMs: parkFocusGraceMs(), ...(opts.end ? { end: true } : {}), ...(opts.force ? { force: true } : {}) })); }
     catch { parkAsk.settle('no_answer'); }
     return promise;
   };

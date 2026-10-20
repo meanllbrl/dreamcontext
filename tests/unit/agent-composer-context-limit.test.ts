@@ -20,6 +20,7 @@ describe('contextLimitFor — window per model', () => {
     for (const id of [
       'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6',
       'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-fable-5', 'claude-mythos-5',
+      'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1',
     ]) {
       expect(contextLimitFor(1000, id)).toBe(1_000_000);
     }
@@ -29,7 +30,7 @@ describe('contextLimitFor — window per model', () => {
     expect(contextLimitFor(1000, 'opus')).toBe(1_000_000);
     expect(contextLimitFor(1000, 'sonnet')).toBe(1_000_000);
     expect(contextLimitFor(1000, 'fable')).toBe(1_000_000);
-    expect(contextLimitFor(1000, 'haiku')).toBe(200_000);
+    expect(contextLimitFor(1000, 'haiku')).toBe(1_000_000); // Haiku 5.5 has the 1M window
   });
 
   it('keeps 200K for Haiku and the pre-4.6 Opus/Sonnet generations', () => {

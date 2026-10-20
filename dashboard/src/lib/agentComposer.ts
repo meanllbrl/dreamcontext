@@ -257,10 +257,12 @@ export interface ModelNote {
 }
 
 export const MODEL_INSIGHTS: Record<ModelFamily, ModelNote> = {
-  fable: { insight: 'Strongest overall. Best reasoning, writing, and tool use.' },
-  opus: { insight: 'Deep reasoning. Best for hard refactors and long plans.', badge: 'Recommended' },
-  sonnet: { insight: 'Balanced. Fast enough for everyday agent loops.' },
-  haiku: { insight: 'Cheapest and quickest. Good for lookups and small edits.' },
+  // The insight texts MIRROR `note` in src/lib/model-facts.ts (pinned by model-facts.test.ts);
+  // the badge is UI-only.
+  fable: { insight: 'Demanding reasoning and long-horizon agentic work.' },
+  opus: { insight: 'Long-running agentic coding and knowledge work.', badge: 'Recommended' },
+  sonnet: { insight: 'The best combination of speed and intelligence.' },
+  haiku: { insight: 'High-volume, latency-sensitive work: classification, extraction, routing.' },
 };
 
 /**
@@ -692,10 +694,11 @@ export interface SessionStats {
  */
 export type ContextUsage = { used: number; limit: number; pct: number };
 
-/** Model ids whose context window is 200K rather than 1M: the whole Haiku line, and the
+/** Model ids whose context window is 200K rather than 1M: the Haiku 4.x/3 line, and the
  *  Opus/Sonnet generations before 4.6. Everything the CLI can run today — Opus 4.6+, Opus 5,
- *  Sonnet 4.6+, Sonnet 5, Fable, Mythos — ships a 1M window. */
-const SMALL_WINDOW_MODEL = /haiku|3-opus|3-[57]-sonnet|opus-4-[01]\b|opus-4-5\b|sonnet-4-[05]\b|-4-\d{8}/;
+ *  Sonnet 4.6+, Sonnet 5, Haiku 5.5, Fable, Mythos — ships a 1M window. MIRRORS
+ *  `SMALL_WINDOW_MODEL` in src/lib/model-facts.ts (pinned by model-facts.test.ts). */
+export const SMALL_WINDOW_MODEL = /haiku-4|haiku-3|3-haiku|3-opus|3-[57]-sonnet|opus-4-[01]\b|opus-4-5\b|sonnet-4-[05]\b|-4-\d{8}/;
 
 export const CONTEXT_WINDOW_SMALL = 200_000;
 export const CONTEXT_WINDOW_LARGE = 1_000_000;

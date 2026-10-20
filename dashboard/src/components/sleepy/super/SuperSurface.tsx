@@ -50,6 +50,10 @@ export interface SuperSurfaceProps {
   onStageReady: (stage: { origin: DOMRect; plan: StagePlan }) => void;
   /** O11: the owner dropped a card on the centre (or pressed its "Ask about this"). */
   onAskAbout: (id: string, title: string) => void;
+  /** The owner ended a child from its card (`whenDone`: once its turn ends). */
+  onEndChild: (child: string, whenDone: boolean) => void;
+  /** Children waiting to be ended when their turn ends. */
+  endPending: ReadonlySet<string>;
 }
 
 /**
@@ -204,6 +208,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
       else if (g) props.onAskAbout(id, g.name);
     },
     onClose: (id: string) => { setLru((prev) => dropFromLru(prev, id)); onLayout({ closed: [id] }); focusAfter(id); },
+    onEndSession: (id: string, whenDone: boolean) => {
+      const c = byId.get(id);
+      if (c?.kind !== 'chat') return;
+      props.onEndChild(c.ref, whenDone);
+      if (!whenDone) focusAfter(id);
+    },
     onMinimize: (id: string) => {
       onLayout({ view: { mode: 'float' } });
       requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(id)}"]`)?.focus());
@@ -320,6 +330,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               shownSlot={shownCard?.id === c.id}
               onPress={onPressCard}
               dropTarget={target === c.id}
+              endPending={c.kind === 'chat' && props.endPending.has(c.ref)}
               {...actions}
             />
           );

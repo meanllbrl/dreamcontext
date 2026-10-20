@@ -97,9 +97,20 @@ export interface SuperChild {
   /** `super/<slug>`, beside `worktree`. */
   branch?: string;
   startedAt: number;
+  /** What it was started with (`super delegate --mode/--model/--effort`), so `super resume`
+   *  reopens it the same way. Absent = basic, the default model and effort. */
+  mode?: string;
+  model?: string;
+  effort?: string;
+  /** `super end` closed it (epoch ms): no process, no tab, no card; the transcript stays and
+   *  `super resume` reopens it (which clears this). Absent = a child that may be running. */
+  endedAt?: number;
 }
 
-export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover'] as const;
+/** Ended children the record keeps (newest first); older ones drop out of it. */
+export const MAX_ENDED_CHILDREN = 30;
+
+export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover', 'ended'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -118,6 +129,9 @@ export interface SuperQueueItem {
   createdAt: number;
   /** Delivered turns that ended with this question unsettled (server-only bookkeeping). */
   attempts?: number;
+  /** An `ended` item's record of the child's last brief (who and when are `sessionId` and
+   *  `createdAt`). Born `done`: a record, never delivered as a turn. */
+  brief?: string;
 }
 
 /** The note a child's next OWNER message carries (D17). */
@@ -269,11 +283,12 @@ export const MAX_QUEUE = 200;
 export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
   'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
+  'end', 'resume',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 
 /** The verbs the WINDOW runs (sent down the super chat's own socket as `super_command`). */
-export const SUPER_WINDOW_VERBS = ['delegate', 'answer'] as const;
+export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
 // ─── Frames (`_meta` subtypes on the super chat's socket) ──────────────────────

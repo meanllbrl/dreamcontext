@@ -91,12 +91,12 @@ import { HandoverButton } from './super/HandoverButton';
 import { SuperSurface, prefersReducedMotion, runFlights, type FlightRun } from './super/SuperSurface';
 import type { TerminalRowItem } from './super/TerminalsRow';
 import {
-  actionGeneration, adoptionBody, cardReference, childMarks, delegateArgs, delegateExpired, delegateMarkUntil, hasOwnKey,
+  actionGeneration, adoptionBody, cardReference, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
   homedSessions, isSuperSession, markedChildren, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
   windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperLayout, postSuperRecap } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperLayout, postSuperRecap } from './super/superApi';
 import { applyLayoutPatch, patchEchoed, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
@@ -706,7 +706,7 @@ export function AgentSurface() {
   /** When the owner last looked at or typed in each tab (by session id). */
   const ownerTouchRef = useRef(new Map<string, number>());
   /** Decides a park request for one tab; replaced every render (see its assignment). */
-  const parkVerdictRef = useRef<(sid: string, focusGraceMs: number) => ParkVerdict>(() => ({ ok: false, error: 'refused' }));
+  const parkVerdictRef = useRef<(sid: string, req: { focusGraceMs: number; end?: boolean; force?: boolean }) => ParkVerdict>(() => ({ ok: false, error: 'refused' }));
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
@@ -1404,7 +1404,7 @@ export function AgentSurface() {
       armAuthRestart(cs);
       armAccountSwitch(cs);
       armAgentTitle(cs);
-      cs.setParkHandler((req) => parkVerdictRef.current(cs.id, req.focusGraceMs));
+      cs.setParkHandler((req) => parkVerdictRef.current(cs.id, req));
       cs.setWindowHandler(async ({ verb, args }) => {
         // The browser's re-check of the server's D4b refusals while handed over.
         const refusal = superWindowGuardRef.current(cs, verb, args);
@@ -1427,7 +1427,7 @@ export function AgentSurface() {
     const s = createSession(vault ?? '', kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial, promptToken, deferPrompt);
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
-    if (kind === 'agent') s.setParkHandler((req) => parkVerdictRef.current(s.id, req.focusGraceMs));
+    if (kind === 'agent') s.setParkHandler((req) => parkVerdictRef.current(s.id, { focusGraceMs: req.focusGraceMs }));
     return s;
   }, [chatPermissionMode, vault, armAuthRestart, armAgentTitle]);
 
@@ -1595,7 +1595,7 @@ export function AgentSurface() {
 
   /** The owner is looking at this surface right now (its project chip, opened, window focused). */
   const ownerLooking = (): boolean => isActive && expanded && document.visibilityState === 'visible' && document.hasFocus();
-  parkVerdictRef.current = (sid, focusGraceMs) => {
+  parkVerdictRef.current = (sid, { focusGraceMs, end, force }) => {
     const s = sessions.current.get(sid);
     const meta = sessionListRef.current.find((m) => m.id === sid);
     if (!s || !meta || meta.dormant) return { ok: false, error: 'refused' };
@@ -1603,12 +1603,18 @@ export function AgentSurface() {
     // own chat receives its children's events, so it never parks either.
     if (isMacPhoneSurface()) return { ok: false, error: 'refused' };
     if (s.kind === 'chat' && (s as ChatSession).mode === 'super') return { ok: false, error: 'refused' };
-    if (s.hasLiveWork()) return { ok: false, error: s.asking ? 'asking' : s.busy ? 'busy' : 'background' };
-    if (Date.now() - (ownerTouchRef.current.get(sid) ?? 0) < focusGraceMs) return { ok: false, error: 'focused' };
-    if (ownerLooking() && focusedSessionId === sid) return { ok: false, error: 'focused' };
-    // An unsent draft is the owner's half-written message.
-    if (s.kind === 'chat' && (s as ChatSession).getModel().draft.trim()) return { ok: false, error: 'focused' };
-    return { ok: true, commit: () => parkTab(sid) };
+    // `force` (`super end --force`) is the owner's own word: nothing below keeps the tab.
+    if (!force) {
+      if (s.hasLiveWork()) return { ok: false, error: s.asking ? 'asking' : s.busy ? 'busy' : 'background' };
+      if (Date.now() - (ownerTouchRef.current.get(sid) ?? 0) < focusGraceMs) return { ok: false, error: 'focused' };
+      if (ownerLooking() && focusedSessionId === sid) return { ok: false, error: 'focused' };
+      // An unsent draft is the owner's half-written message.
+      if (s.kind === 'chat' && (s as ChatSession).getModel().draft.trim()) return { ok: false, error: 'focused' };
+    }
+    // `super end`: the tab CLOSES (gone from the roster, so no relaunch restores it); the
+    // transcript stays on disk and `super resume` / Past chats reopen it. A park keeps a
+    // dormant tab instead.
+    return { ok: true, commit: () => (end ? closeSessionById(sid) : parkTab(sid)) };
   };
 
   // The owner looked at or typed in a tab: remembered here (the window's own re-check) and
@@ -3206,6 +3212,19 @@ export function AgentSurface() {
     return () => clearTimeout(timer);
   }, [superState, sessionList, superDelegated]);
 
+  // ── Ended children never come back as tabs (`super end`) ──────────────────────────
+  // `super end` closes a live child's tab itself (the park frame's `end`). A child ended while
+  // no window held it (drained), or restored dormant by a relaunch before the record arrived,
+  // still has a DORMANT roster entry: closed here once the record names it ended. A live tab is
+  // never touched (the owner reopened it from Past chats: his to keep).
+  useEffect(() => {
+    const ended = endedChildIds(superState);
+    if (!ended.size) return;
+    for (const m of sessionList) {
+      if (m.dormant && m.claudeId && ended.has(m.claudeId)) closeSessionById(m.id);
+    }
+  }, [superState, sessionList, closeSessionById]);
+
   // ── The owner-activity lease: one POST per 5 s at most, and only while typing ─────────
   useEffect(() => {
     // Only while handed over; the pending trailing post dies with take-back or the unmount.
@@ -3277,6 +3296,31 @@ export function AgentSurface() {
       cs.answerQuestion(requestId, q.questions, picks.picked, picks.notes);
       return { ok: true };
     }
+    if (verb === 'resume') {
+      // `super resume <child>`: the same conversation (`--resume <id>`), as a child again. A
+      // parked tab resumes in place; an ended child (no tab) gets a new one, opened like a
+      // delegate's. A child already running is only reported.
+      const child = typeof args.child === 'string' ? args.child : '';
+      if (!hasOwnKey(st.children, child) || child === st.session) return { ok: false, error: 'not_a_child' };
+      const existing = sessionListRef.current.find((m) => m.claudeId === child);
+      if (existing && !existing.dormant) return { ok: true, result: { sessionId: child, running: true } };
+      if (!canSpawn || !vault) return { ok: false, error: 'cannot_spawn' };
+      setSuperDelegated((prev) => new Map(prev).set(child, Date.now() + DELEGATE_MARK_GRACE_MS));
+      if (existing) {
+        resumeSession(existing.id);
+        return { ok: true, result: { sessionId: child } };
+      }
+      const r = delegateArgs({ prompt: '-', mode: args.mode, model: args.model, effort: args.effort, title: args.title });
+      if (!r.ok) return r;
+      const s = spawn(false, child, true, 'chat', '', r.model, true, '', false, r.effort, false, r.mode) as ChatSession;
+      s.setSuperChild(true);
+      setSessionList((prev) => [...prev, {
+        id: s.id, title: r.title || titleFor(s), kind: 'chat', bypass: s.bypass, claudeId: s.claudeId,
+        ...(r.mode !== DEFAULT_CHAT_MODE ? { mode: r.mode } : {}),
+      }]);
+      setPanes((prev) => placeDelegatedChild(prev, activePaneId, s.id, nextPaneId).panes);
+      return { ok: true, result: { sessionId: child } };
+    }
     return { ok: false, error: 'unknown_verb' };
   };
 
@@ -3304,6 +3348,33 @@ export function AgentSurface() {
   // O11: a card dropped on the centre (or its "Ask about this") becomes the subject of the
   // owner's next message: a reference appended to the Super Agent's draft once, focused.
   // Nothing is written to the record; nothing happens while the Super Agent is dormant.
+  // ── The owner ends a child from its card (owner 2026-10-21) ─────────────────────────
+  // His own click, so the tab closes here the way his close does (an adopted or running chat is
+  // his to end) and the server records it ended like `super end`: card gone, no relaunch brings
+  // the tab back, the transcript stays. "End when done" waits for the turn to end first.
+  const [endPending, setEndPending] = useState<ReadonlySet<string>>(new Set());
+  const endChildNow = useCallback((child: string) => {
+    setEndPending((prev) => { if (!prev.has(child)) return prev; const next = new Set(prev); next.delete(child); return next; });
+    const meta = sessionListRef.current.find((m) => m.claudeId === child);
+    if (meta) closeSessionById(meta.id);
+    void postSuperEnd(scopedApi, child).then((st) => { if (st) setSuperState(withPendingEdits(st)); }).catch(() => undefined);
+  }, [closeSessionById, scopedApi]);
+  const endChildFromCard = useCallback((child: string, whenDone: boolean) => {
+    const s = chatByClaudeId(child);
+    if (whenDone && s?.hasLiveWork()) { setEndPending((prev) => new Set(prev).add(child)); return; }
+    endChildNow(child);
+  }, [chatByClaudeId, endChildNow]);
+  useEffect(() => {
+    if (!endPending.size) return undefined;
+    const tick = setInterval(() => {
+      for (const child of endPending) {
+        const s = chatByClaudeId(child);
+        if (!s || !s.hasLiveWork()) endChildNow(child);
+      }
+    }, 1_000);
+    return () => clearInterval(tick);
+  }, [endPending, chatByClaudeId, endChildNow]);
+
   const askAboutCard = useCallback((id: string, title: string) => {
     const cs = superChatRef.current;
     if (!cs || cs.status === 'closed') return;
@@ -4603,6 +4674,8 @@ export function AgentSurface() {
             onSlotsChanged={bumpSuperSlots}
             onStageReady={onStageReady}
             onAskAbout={askAboutCard}
+            onEndChild={endChildFromCard}
+            endPending={endPending}
           />
         )}
         {/* Mac mode's phone has two screens, the Sohbetler list and one chat (owner, 2026-10-17):

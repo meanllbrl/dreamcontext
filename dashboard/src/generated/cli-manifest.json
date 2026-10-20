@@ -3067,7 +3067,7 @@
     },
     {
       "path": "super close",
-      "desc": "Close a card (a child chat keeps running)",
+      "desc": "Close a card (a child chat keeps running; `super end` ends it)",
       "args": [
         "<card>"
       ]
@@ -3085,6 +3085,13 @@
         "--worktree",
         "--slug",
         "--base"
+      ]
+    },
+    {
+      "path": "super end",
+      "desc": "End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks",
+      "args": [
+        "[children...]"
       ]
     },
     {
@@ -3174,6 +3181,18 @@
       ],
       "valueFlags": [
         "--bytes"
+      ]
+    },
+    {
+      "path": "super resume",
+      "desc": "Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others",
+      "args": [
+        "<child>"
+      ],
+      "valueFlags": [
+        "--mode",
+        "--model",
+        "--effort"
       ]
     },
     {

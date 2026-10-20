@@ -55,6 +55,9 @@ export interface SuperCardActions {
   onToOthers: (id: string) => void;
   onAskAbout: (id: string) => void;
   onClose: (id: string) => void;
+  /** A CHILD CHAT card's close: end its session (`whenDone`: once its turn ends), the same end
+   *  `super end` does. Other cards close at once (`onClose`). */
+  onEndSession: (id: string, whenDone: boolean) => void;
   onMinimize: (id: string) => void;
   onLoadWeb: (id: string) => void;
   onOpenPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
@@ -80,6 +83,8 @@ export interface SuperContainerProps extends SuperCardActions {
   onPress: (e: PointerEvent<HTMLDivElement>, id: string) => void;
   /** A card held over this one: releasing groups them (2026-10-20). */
   dropTarget?: boolean;
+  /** The owner chose "end when done" for this child: it closes when its turn ends. */
+  endPending?: boolean;
 }
 
 /**
@@ -97,6 +102,19 @@ export function SuperContainer(props: SuperContainerProps) {
   const status = c.kind === 'chat' ? chatStatus(session) : null;
   const floating = plan.where === 'float';
   const large = plan.where === 'half' || plan.where === 'present' || plan.where === 'sheet';
+  // A child chat's close asks first (owner 2026-10-21): end the session, or keep it running in
+  // Others. A working or asking child offers "end when done" instead of cutting its turn.
+  const [closeAsk, setCloseAsk] = useState(false);
+  const asksOnClose = c.kind === 'chat';
+  const childBusy = !!session && (status?.kind === 'working' || status?.kind === 'asking' || session.hasLiveWork());
+  useEffect(() => {
+    if (!closeAsk) return undefined;
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setCloseAsk(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [closeAsk]);
+  const onCloseClick = () => (asksOnClose ? setCloseAsk((v) => !v) : props.onClose(c.id));
+  const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget || !floating) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onSideBySide(c.id); }
@@ -132,16 +150,33 @@ export function SuperContainer(props: SuperContainerProps) {
             <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} />
             <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />
             <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
-            <IconButton icon="close" label={t('super.container.close')} onClick={() => props.onClose(c.id)} />
+            <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />
           </>
         ) : (
           <>
             <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
             <IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" />
-            <IconButton icon="close" label={t('super.container.close')} onClick={() => props.onClose(c.id)} />
+            <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />
           </>
         )}
       </div>
+      {closeAsk && (
+        <div className="super-close-choice" role="group" aria-label={t('super.close.ask')} data-testid="super-close-choice"
+          onPointerDown={(e) => e.stopPropagation()}>
+          <span className="super-close-choice-q">{t('super.close.ask')}</span>
+          <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-close-end"
+            onClick={() => { setCloseAsk(false); props.onEndSession(c.id, childBusy); }}>
+            {childBusy ? t('super.close.endWhenDone') : t('super.close.end')}
+          </button>
+          <button type="button" className="super-close-choice-btn" data-testid="super-close-others"
+            onClick={() => { setCloseAsk(false); props.onToOthers(c.id); }}>
+            {t('super.close.toOthers')}
+          </button>
+        </div>
+      )}
+      {props.endPending && !closeAsk && (
+        <span className="super-close-pending" data-testid="super-close-pending">{t('super.close.pending')}</span>
+      )}
     </div>
   );
 }

@@ -9,26 +9,22 @@
  * A LEAF module: no disk, no process. The caller reads `~/.claude.json` and passes it in.
  */
 
+import { MODEL_FACTS } from './model-facts.js';
+
 export interface ModelOption {
   id: string;
   label: string;
 }
 
 /** The aliases every Claude Code install understands. */
-export const BASE_MODEL_OPTIONS: readonly ModelOption[] = Object.freeze([
-  { id: 'opus', label: 'Opus' },
-  { id: 'sonnet', label: 'Sonnet' },
-  { id: 'haiku', label: 'Haiku' },
-  { id: 'fable', label: 'Fable' },
-]);
+export const BASE_MODEL_OPTIONS: readonly ModelOption[] = Object.freeze(
+  MODEL_FACTS.map((m) => ({ id: m.alias, label: m.alias.charAt(0).toUpperCase() + m.alias.slice(1) })),
+);
 
 /** Map any full model id / alias to our short alias bucket (opus/sonnet/haiku/fable). */
 export function modelAlias(full: string): string {
   const s = (full || '').toLowerCase();
-  if (s.includes('opus')) return 'opus';
-  if (s.includes('sonnet')) return 'sonnet';
-  if (s.includes('haiku')) return 'haiku';
-  if (s.includes('fable')) return 'fable';
+  for (const m of MODEL_FACTS) if (s.includes(m.family)) return m.alias;
   return full || '';
 }
 

@@ -31,6 +31,12 @@ import {
 
 export type ParkKind = 'chat' | 'terminal';
 
+/** What a caller asks beyond a plain park. `end` (`super end`): the window CLOSES the tab
+ *  instead of keeping it dormant, so it is gone from the roster and no relaunch restores it;
+ *  the transcript stays on disk. `force` (only when the owner asked): a turn, a question or
+ *  background work does not keep the tab; the Assistant, the Super Agent and the phone still do. */
+export interface ParkOptions { end?: boolean; force?: boolean }
+
 /** Why a parkable is never parked, whatever the load. */
 export type ParkExempt = 'assistant' | 'super' | 'phone';
 
@@ -67,7 +73,7 @@ export interface Parkable {
    *  the tab until a later turn. */
   lastTurnStartedAt?: () => number;
   /** Send the park frame (or drain when there is no socket). Idempotent. */
-  park: (reason: string) => Promise<ParkOutcome>;
+  park: (reason: string, opts?: ParkOptions) => Promise<ParkOutcome>;
 }
 
 /** Every parkable minimum the window and the policy agree on. */
@@ -318,12 +324,16 @@ export function findParkable(id: string): Parkable | null {
  * sub-agent transcripts) live in the sweep: a future caller that parks a TERMINAL by id (super
  * end only targets chats) must run them too.
  */
-export async function parkChat(id: string, reason: string): Promise<ParkOutcome> {
+export async function parkChat(id: string, reason: string, opts: ParkOptions = {}): Promise<ParkOutcome> {
   const p = parkables.get(id);
   if (!p) return 'already';
+  if (opts.force) {
+    if (p.exempt()) return 'exempt';
+    return p.park(reason, opts);
+  }
   const keep = keepReason(candidateOf(p), 0, Date.now());
   if (keep && keep !== 'focused') return keep;
-  return p.park(reason);
+  return p.park(reason, opts);
 }
 
 function candidateOf(p: Parkable): ParkCandidate {

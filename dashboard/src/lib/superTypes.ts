@@ -77,9 +77,14 @@ export interface SuperChild {
   worktree?: string;
   branch?: string;
   startedAt: number;
+  mode?: string;
+  model?: string;
+  effort?: string;
+  /** `super end` closed it: no process, tab or card; `super resume` clears it. */
+  endedAt?: number;
 }
 
-export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover', 'ended'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -93,6 +98,8 @@ export interface SuperQueueItem {
   state: QueueState;
   ownerText?: string;
   createdAt: number;
+  /** An `ended` item's last brief of the child. */
+  brief?: string;
 }
 
 export const SUPER_NOTES = ['handover', 'takeback'] as const;
@@ -115,7 +122,7 @@ export interface SuperStateView extends SuperState {
   vault: string;
 }
 
-export const SUPER_WINDOW_VERBS = ['delegate', 'answer'] as const;
+export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
 export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]'] as const;
