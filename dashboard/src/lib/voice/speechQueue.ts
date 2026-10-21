@@ -35,24 +35,39 @@ import {
 // ── The chunker ────────────────────────────────────────────────────────────────────────
 
 /**
- * ── WHERE A CHUNK ENDS, AND WHY IT IS NOT "40 CHARACTERS" ───────────────────────────────
+ * ── WHERE A CHUNK ENDS ──────────────────────────────────────────────────────────────────
  *
- * The rule this replaces broke at the last SPACE once the buffer passed 40 characters, which
- * meant every sentence longer than that was cut mid-clause: the model was handed a fragment
- * with no punctuation, read it with a falling intonation, and the next fragment started cold.
- * That is the "kesik kesik, cümlenin ortasından" the owner heard, and no amount of prefetch
- * fixes it, because the damage is done before the audio is ever requested.
+ * A chunk is read by the speech model ON ITS OWN, so wherever it ends, the voice lands: the
+ * pitch falls, and every generated chunk carries ~0.3–0.7 s of silence after its last word
+ * (measured, 2026-10-21). Cut at a comma, that is a full stop and half a second of dead air in
+ * the MIDDLE of a sentence — the "robotik, yanlış yerde bölüyor" the owner heard: in their
+ * voice.jsonl of 2026-10-21, 46 of 176 chunks (26%) ended on a comma, semicolon or colon,
+ * three of them inside a parenthesis ("Makine yüklüydü (yük 39,").
  *
- * Boundaries are now PUNCTUATION, in three tiers:
- *   1. a closed sentence — always, however short ("Tamam." is a legitimate chunk);
- *   2. a clause end (comma, semicolon, colon, dash) once the chunk is long enough to be
- *      worth speaking on its own;
- *   3. a word boundary only past a HARD cap, so an unpunctuated monologue still gets spoken
- *      rather than accumulating in silence.
+ * The old rule cut early ON PURPOSE, believing a short chunk is generated much faster. It is
+ * not. Measured against the live speech model the same day: 17 characters in ~1.7 s, 76 in
+ * ~1.85 s, 129 in ~2.2 s, 194 in ~2.4–3.3 s. Almost all of it is a fixed round trip, so cutting
+ * a 90-character sentence at its first comma saved ~0.2 s and cost the sentence its shape.
  *
- * The FIRST chunk of a turn takes tier 2 much earlier than later ones. Time-to-first-word is
- * the number the owner actually feels; after that, playback is the clock and longer chunks
- * read better.
+ * So the unit of speech is now the SENTENCE, and a clause break is a fallback for a sentence
+ * genuinely too long to wait for:
+ *   1. a closed sentence — always, however short ("Tamam." is a legitimate chunk). A
+ *      terminator closes one only when whitespace follows it (closing quotes, brackets and
+ *      markdown emphasis may sit in between: `**Bitti.** Sonra`), and never after a number
+ *      (`3.5`, `0.33.0`, the Turkish ordinal `3. görev`), an abbreviation (`vb.`, `Dr.`,
+ *      `e.g.`) or an initial;
+ *   2. a clause end, only once a sentence has run past {@link FIRST_CLAUSE_CHUNK_CHARS} (the
+ *      first chunk of a block, where the first word is waiting) or {@link CLAUSE_CHUNK_CHARS}
+ *      (later, where playback is the clock). Never inside brackets, quotes or inline code,
+ *      never between two numbers ("3, 4 ve 5"), never leaving a fragment shorter than
+ *      {@link MIN_SPEAKABLE_CHARS}; and the BEST one wins — a semicolon, colon or dash over a
+ *      comma, and a comma before "ama / çünkü / but / because…" over a bare one;
+ *   3. a word boundary only past {@link HARD_CHUNK_CHARS}, so an unpunctuated monologue still
+ *      gets spoken rather than accumulating in silence — before a conjunction when there is one.
+ *
+ * Short sentences are NOT merged: a sentence is also the unit the transcript marks while it is
+ * spoken, and with the seam silence trimmed (`trimSpeechTail`, server) and the previous chunk
+ * sent along as context, a sentence-per-chunk reply reads as one voice.
  */
 
 export interface SpeechChunker {
@@ -69,28 +84,62 @@ function couldBeFence(line: string): boolean {
   return /^\s*`{0,3}$/.test(line) || /^\s*```/.test(line);
 }
 
-/** How much text must be buffered before a CLAUSE break is taken at all, mid-turn. */
-export const CLAUSE_CHUNK_CHARS = 80;
+/** A markdown TABLE line (`| a | b |`) or a horizontal rule: structure, never speech. Such a
+ *  line is held whole and dropped at its newline, so it costs no request at all. */
+function isStructureLine(line: string): boolean {
+  return /^\s*\|/.test(line) || /^\s*([-*_]\s*){3,}$/.test(line);
+}
 
-/** No chunk shorter than this is worth a network round trip of its own: every chunk costs a
- *  fixed ~1.3s generation whatever its length, so a four-word fragment spends the same as the
- *  sentence it was carved out of. */
+/** A chunk with not one letter or digit in it — an emoji, a stray `**` — has nothing to say,
+ *  and asking the route anyway spends a request and a gate slot on a 204. */
+function hasWords(chunk: string): boolean {
+  return /[\p{L}\p{N}]/u.test(chunk);
+}
+
+/** A line that must not flow into speech before its newline says what it is. */
+function holdLine(line: string): boolean {
+  return couldBeFence(line) || /^\s*\|/.test(line) || /^\s*[-*_](\s*[-*_])*\s*$/.test(line);
+}
+
+/** A sentence still open past this many characters may be cut at a clause, mid-reply. Measured
+ *  generation cost is nearly flat in length, so this only bounds how long the NEXT chunk waits
+ *  for its text — it is not a latency knob. */
+export const CLAUSE_CHUNK_CHARS = 200;
+
+/** No chunk shorter than this is carved out of a sentence: a fragment that short costs the
+ *  whole round trip, lands like a sentence, and is the kind of line the speech model is
+ *  likeliest to answer instead of read. */
 export const MIN_SPEAKABLE_CHARS = 24;
 
-/** …and for the FIRST chunk of a turn, where latency beats prosody. */
-export const FIRST_CLAUSE_CHUNK_CHARS = 40;
+/** …and for the FIRST chunk of a block, where the owner is waiting for the first word. A
+ *  first sentence up to this length is read whole: ~0.2 s more generation than a 40-character
+ *  fragment (measured), against a sentence that keeps its intonation. */
+export const FIRST_CLAUSE_CHUNK_CHARS = 110;
 
-/** Past this, break at a space rather than stay silent. Deliberately far above the clause
- *  threshold: reaching it means the text genuinely has no punctuation. */
+/** Past this, break at a space rather than stay silent. Reaching it means the text genuinely
+ *  has no usable punctuation. */
 export const HARD_CHUNK_CHARS = 240;
 
 /** A sentence terminator, in the shapes real replies use. */
 const TERMINATOR = /[.!?…]/;
 
-/** A clause boundary. Includes the em/en dash this project's prose actually uses, and the
- *  Turkish and English comma alike — both are U+002C, which is the point: nothing here is
- *  language-specific except the abbreviation list below. */
+/** What may sit between a terminator and the whitespace after it without un-closing the
+ *  sentence: closing quotes and brackets, and markdown emphasis or code. */
+const CLOSER = /[)\]"'”’»*_`]/;
+
+/** A clause boundary, and how good a place it is to pause. A semicolon, colon or dash is a
+ *  pause the writer asked for; a comma is weaker. */
+const STRONG_CLAUSE = /[;:—–]/;
 const CLAUSE = /[,;:—–]/;
+
+/** Words that open a new clause — a comma right before one is where a speaker breathes.
+ *  Lower-cased; Turkish first, then English. */
+const CONJUNCTIONS = new Set([
+  've', 'veya', 'ya', 'ama', 'fakat', 'ancak', 'lakin', 'çünkü', 'zira', 'yani', 'oysa', 'ki',
+  'sonra', 'böylece', 'dolayısıyla', 'ayrıca', 'üstelik', 'yoksa', 'hem', 'ne', 'eğer',
+  'and', 'or', 'but', 'because', 'so', 'which', 'while', 'though', 'although', 'then', 'unless',
+  'whereas', 'since', 'if', 'when', 'yet',
+]);
 
 /**
  * Words that end in a period WITHOUT ending a sentence.
@@ -102,23 +151,26 @@ const CLAUSE = /[,;:—–]/;
 const ABBREVIATIONS = new Set([
   // Turkish
   'vb', 'vs', 'bkz', 'örn', 'ör', 'dr', 'doç', 'prof', 'sn', 'av', 'mah', 'cad', 'sok', 'apt',
-  'no', 'tl', 'sa', 'dk', 'sn', 'yy', 'çev', 'haz', 'ed', 'age', 'agm', 'yak', 'yön', 'md',
+  'no', 'tl', 'sa', 'dk', 'yy', 'çev', 'haz', 'ed', 'age', 'agm', 'yak', 'yön', 'md', 'gör',
+  'yrd', 'öğr', 'müh', 'ltd', 'şti', 'tel', 'nr',
   // English
-  'mr', 'mrs', 'ms', 'st', 'etc', 'eg', 'ie', 'fig', 'vol', 'approx', 'inc', 'ltd', 'jr', 'sr',
-  'min', 'max', 'sec', 'hrs', 'pp', 'ca', 'cf', 'al',
+  'mr', 'mrs', 'ms', 'st', 'etc', 'eg', 'ie', 'fig', 'vol', 'approx', 'inc', 'jr', 'sr',
+  'min', 'max', 'sec', 'hrs', 'pp', 'ca', 'cf', 'al', 'vs', 'dept', 'est', 'no', 'v',
 ]);
 
 /**
  * Does the terminator at `i` actually close a sentence?
  *
- * Three ways it does not, and all three are ordinary in a real answer:
- *   • a DECIMAL or a Turkish ORDINAL — `3.5`, and `3. görev` (which would otherwise be
- *     spoken as a chunk consisting of the single word "three");
- *   • an ABBREVIATION — `vb.`, `örn.`, `etc.`;
+ * Ways it does not, and all are ordinary in a real answer:
+ *   • a DECIMAL, a VERSION or a Turkish ORDINAL — `3.5`, `0.33.0`, and `3. görev` (which would
+ *     otherwise be spoken as a chunk consisting of the single word "three");
+ *   • an ABBREVIATION — `vb.`, `örn.`, `etc.`, and the dotted kind `e.g.`, `i.e.`, `a.m.`;
  *   • an INITIAL — `A. Yılmaz`.
  */
 function closesSentence(buf: string, i: number): boolean {
   if (buf[i] !== '.') return true;            // ! ? … are never abbreviations
+  // An ellipsis written as dots closes like `…` does.
+  if (buf[i - 1] === '.') return true;
   const before = buf.slice(0, i);
   const lastWord = /([\p{L}\p{N}]+)$/u.exec(before)?.[1] ?? '';
   if (!lastWord) return true;
@@ -126,44 +178,94 @@ function closesSentence(buf: string, i: number): boolean {
   if (/^\p{N}+$/u.test(lastWord)) return false;
   // A single capital letter: an initial, not a sentence.
   if (lastWord.length === 1 && lastWord === lastWord.toUpperCase()) return false;
+  // A dotted abbreviation: `e.g.`, `i.e.`, `a.m.` — a single letter right after another dot.
+  if (lastWord.length === 1 && before[before.length - 2] === '.') return false;
   return !ABBREVIATIONS.has(lastWord.toLocaleLowerCase('tr'));
 }
 
-/** Where to cut `buf`, or -1 to keep accumulating. `first` relaxes the clause threshold for
- *  the opening chunk of a turn. */
-export function boundaryOf(buf: string, first = false): number {
-  // ── Tier 1: a closed sentence ─────────────────────────────────────────────────────────
-  // A terminator followed by WHITESPACE. The whitespace is what makes it a sentence rather
-  // than a decimal point, and it is why the end of the buffer is not a boundary: mid-stream
-  // the next character has not arrived, so "It took 1." would split `1.5` the instant the
-  // dot did. `flush()` handles the true end of turn, the only moment we know nothing follows.
+/** Every place in `buf` where a sentence ends: the index just past the terminator and any
+ *  closers after it, where whitespace follows. */
+function sentenceEnd(buf: string): number {
   for (let i = buf.length - 2; i >= 0; i--) {
     if (!TERMINATOR.test(buf[i])) continue;
-    if (!/\s/.test(buf[i + 1])) continue;
+    let j = i + 1;
+    while (j < buf.length && CLOSER.test(buf[j])) j++;
+    if (j >= buf.length || !/\s/.test(buf[j])) continue;
+    // An unbalanced closer run (`**Bitti.**` is balanced; `.**` opening bold is not) is fine
+    // either way: the cut is AFTER it, so no emphasis is split from its words.
     if (!closesSentence(buf, i)) continue;
-    return i + 1;
+    return j;
   }
+  return -1;
+}
 
-  // ── Tier 2: a clause, once there is enough text to be worth speaking ──────────────────
-  // Two numbers, and they answer different questions. `trigger` is WHEN to start looking —
-  // below it, keep accumulating, because a sentence that is about to close reads better
-  // whole. `MIN_SPEAKABLE_CHARS` is WHERE the cut may fall, and the search runs FORWARDS from
-  // it: the earliest clause boundary makes the shortest chunk, which both starts sooner and
-  // lets the next one generate while it plays.
+/**
+ * The best clause boundary in `buf`, or -1. A boundary is the index just past the punctuation.
+ * Scored: strong punctuation 3, a comma before a conjunction 2, a bare comma 1. Ties go to the
+ * EARLIEST for the first chunk (the first word is waiting) and the LATEST otherwise (fewer,
+ * fuller chunks).
+ */
+function clauseBoundary(buf: string, first: boolean): number {
+  let depth = 0;           // ( [ {
+  let quoted = false;      // " “ ” « »
+  let code = false;        // `inline code`
+  let best = -1;
+  let bestScore = 0;
+  for (let i = 0; i <= buf.length - 2; i++) {
+    const ch = buf[i];
+    if (ch === '`') { code = !code; continue; }
+    if (code) continue;
+    if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
+    if (ch === ')' || ch === ']' || ch === '}') { depth = Math.max(0, depth - 1); continue; }
+    if (ch === '"' || ch === '“' || ch === '”' || ch === '«' || ch === '»') {
+      quoted = ch === '“' || ch === '«' ? true : ch === '”' || ch === '»' ? false : !quoted;
+      continue;
+    }
+    if (!CLAUSE.test(ch) || !/\s/.test(buf[i + 1])) continue;
+    if (depth > 0 || quoted) continue;
+    // `- 1` because cutting AT index `i` yields a chunk of `i + 1` characters.
+    if (i < MIN_SPEAKABLE_CHARS - 1) continue;
+    const next = /^\s+([\p{L}\p{N}]+)/u.exec(buf.slice(i + 1))?.[1] ?? '';
+    // "3, 4 ve 5" — a list of numbers is one phrase.
+    if (ch === ',' && /\p{N}$/u.test(buf.slice(0, i)) && /^\p{N}/u.test(next)) continue;
+    const score = STRONG_CLAUSE.test(ch) ? 3 : CONJUNCTIONS.has(next.toLocaleLowerCase('tr')) ? 2 : 1;
+    if (score > bestScore || (score === bestScore && !first)) { best = i + 1; bestScore = score; }
+  }
+  return best;
+}
+
+/** A word boundary past the hard cap — before a conjunction when there is one, so the cut
+ *  falls where a speaker could breathe. */
+function wordBoundary(buf: string): number {
+  const words = [...buf.matchAll(/\s+([\p{L}]+)/gu)];
+  for (let k = words.length - 1; k >= 0; k--) {
+    const at = words[k].index ?? 0;
+    if (at < MIN_SPEAKABLE_CHARS) break;
+    if (CONJUNCTIONS.has(words[k][1].toLocaleLowerCase('tr'))) return at;
+  }
+  const at = buf.lastIndexOf(' ');
+  return at > 0 ? at : -1;
+}
+
+/** Where to cut `buf`, or -1 to keep accumulating. `first` is the opening chunk of a block. */
+export function boundaryOf(buf: string, first = false): number {
+  // ── Tier 1: a closed sentence ─────────────────────────────────────────────────────────
+  // WHITESPACE after the terminator is what makes it a sentence rather than a decimal point,
+  // and it is why the end of the buffer is not a boundary: mid-stream the next character has
+  // not arrived, so "It took 1." would split `1.5` the instant the dot did. `flush()` handles
+  // the true end of turn, the only moment we know nothing follows.
+  const end = sentenceEnd(buf);
+  if (end >= 0) return end;
+
+  // ── Tier 2: a clause, only in a sentence too long to wait for ─────────────────────────
   const trigger = first ? FIRST_CLAUSE_CHUNK_CHARS : CLAUSE_CHUNK_CHARS;
   if (buf.length >= trigger) {
-    // `- 1` because cutting AT index `i` yields a chunk of `i + 1` characters: the bound is
-    // on the chunk, not on the index.
-    for (let i = MIN_SPEAKABLE_CHARS - 1; i <= buf.length - 2; i++) {
-      if (CLAUSE.test(buf[i]) && /\s/.test(buf[i + 1])) return i + 1;
-    }
-  }
-
-  // ── Tier 3: no punctuation at all ─────────────────────────────────────────────────────
-  if (buf.length >= HARD_CHUNK_CHARS) {
-    const at = buf.lastIndexOf(' ');
+    const at = clauseBoundary(buf, first);
     if (at > 0) return at;
   }
+
+  // ── Tier 3: no usable punctuation at all ──────────────────────────────────────────────
+  if (buf.length >= HARD_CHUNK_CHARS) return wordBoundary(buf);
   return -1;
 }
 
@@ -176,7 +278,7 @@ export function createSpeechChunker(): SpeechChunker {
   let pending = '';
   /** Inside a fenced block — everything is discarded until the closing fence. */
   let inFence = false;
-  /** Nothing has been spoken yet this turn, so the first clause break is taken early —
+  /** Nothing has been spoken yet this block, so a long first sentence may be cut earlier —
    *  time-to-first-word is the latency the owner actually feels. */
   let first = true;
 
@@ -186,7 +288,7 @@ export function createSpeechChunker(): SpeechChunker {
       if (at < 0) return;
       const chunk = pending.slice(0, at).trim();
       pending = pending.slice(at);
-      if (chunk) { out.push(chunk); first = false; }
+      if (hasWords(chunk)) { out.push(chunk); first = false; }
     }
   };
 
@@ -195,7 +297,7 @@ export function createSpeechChunker(): SpeechChunker {
     if (/^\s*```/.test(line)) {
       // The fence marker line itself is never spoken, opening or closing.
       inFence = !inFence;
-    } else if (!inFence) {
+    } else if (!inFence && !(taken === 0 && isStructureLine(line))) {
       pending += `${line.slice(taken)} `;
     }
     line = '';
@@ -204,7 +306,7 @@ export function createSpeechChunker(): SpeechChunker {
       drain(out);
       // A newline closes a sentence even without punctuation — a heading, a one-line answer.
       const rest = pending.trim();
-      if (rest) { out.push(rest); first = false; }
+      if (hasWords(rest)) { out.push(rest); first = false; }
       pending = '';
     }
   };
@@ -215,9 +317,9 @@ export function createSpeechChunker(): SpeechChunker {
       for (const ch of delta) {
         if (ch === '\n') { endLine(out); continue; }
         line += ch;
-        // Hold a line back only while it might still be a fence. Everything else flows
-        // straight through, which is what lets speech start mid-line.
-        if (!inFence && !couldBeFence(line)) {
+        // Hold a line back only while it might still be a fence or a table row. Everything
+        // else flows straight through, which is what lets speech start mid-line.
+        if (!inFence && !(taken === 0 && holdLine(line))) {
           pending += line.slice(taken);
           taken = line.length;
           drain(out);
@@ -228,7 +330,7 @@ export function createSpeechChunker(): SpeechChunker {
 
     flush(): string[] {
       const out: string[] = [];
-      if (!inFence && !/^\s*```/.test(line)) {
+      if (!inFence && !/^\s*```/.test(line) && !(taken === 0 && isStructureLine(line))) {
         pending += line.slice(taken);
       }
       line = '';
@@ -244,7 +346,7 @@ export function createSpeechChunker(): SpeechChunker {
       // transcript and the UI looking entirely normal. Found in review.
       inFence = false;
       first = true;
-      if (rest) out.push(rest);
+      if (hasWords(rest)) out.push(rest);
       return out;
     },
 
@@ -266,9 +368,27 @@ export type SkipReason = 'nothing-speakable' | 'busy' | 'failed' | 'refused' | '
 /** A chunk the fetcher gave up on, and why. */
 export interface SpeakSkip { skipped: SkipReason }
 
+/**
+ * What the voice needs to know about a chunk's NEIGHBOURS to read it as part of one answer.
+ *
+ * Each chunk is generated by its own request, so without this every sentence is read cold: the
+ * model has no idea it is the second sentence of a thought. `prev` is the chunk spoken just
+ * before it in this turn — context only, the route never reads it aloud. (Whether the line
+ * itself stops mid-sentence the route reads off the line: see `lineContinues` there.)
+ */
+export interface SpeakContext {
+  prev?: string;
+}
+
+/** How much of the previous chunk travels as context. Enough for a sentence; a cap so a long
+ *  one does not double the request. */
+export const PREV_CONTEXT_CHARS = 240;
+
 /** Fetch one chunk's audio. Injectable so the queue is testable without a network. `id` names
  *  the chunk to the server, so its `tts` line and the queue's `speech` line can be matched. */
-export type SpeakFetcher = (text: string, signal: AbortSignal, id?: string) => Promise<Blob | SpeakSkip | null>;
+export type SpeakFetcher = (
+  text: string, signal: AbortSignal, id?: string, context?: SpeakContext,
+) => Promise<Blob | SpeakSkip | null>;
 
 /**
  * How long to wait before asking again after the server said BUSY (429), attempt by attempt.
@@ -296,7 +416,7 @@ function pause(ms: number, signal: AbortSignal): Promise<boolean> {
 /** POST one chunk to the TTS route. A skip says why: a 204 (nothing speakable survived the
  *  stripper), a failure, or a refusal that outlasted {@link BUSY_RETRY_MS}. */
 export function createSpeakFetcher(wait: typeof pause = pause): SpeakFetcher {
-  return async (text, signal, id) => {
+  return async (text, signal, id, context) => {
     // Speech is the laptop's: the phone listener refuses the route, so the phone never asks.
     if (!phoneAllows('POST', '/api/agent/voice/tts')) return { skipped: 'phone' };
     turnTrace.markSpeech('ttsAsked');
@@ -305,7 +425,11 @@ export function createSpeakFetcher(wait: typeof pause = pause): SpeakFetcher {
         const res = await fetch('/api/agent/voice/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(id ? { text, id } : { text }),
+          body: JSON.stringify({
+            text,
+            ...(id ? { id } : {}),
+            ...(context?.prev ? { prev: context.prev.slice(-PREV_CONTEXT_CHARS) } : {}),
+          }),
           signal,
         });
         if (res.status === 204) return { skipped: 'nothing-speakable' };
@@ -415,6 +539,8 @@ interface Job {
   text: string;
   /** Which transcript item this chunk's words came from, for the on-screen marker. */
   itemId?: string;
+  /** Its neighbours, for the voice — see {@link SpeakContext}. */
+  context?: SpeakContext;
   audio?: Promise<Blob | SpeakSkip | null>;
   controller: AbortController;
   /** The last outcome logged for it, so a stop never reports a chunk twice. */
@@ -503,6 +629,8 @@ export class SpeechQueue {
    */
   private generation = 0;
   private readonly chunker = createSpeechChunker();
+  /** The chunk enqueued last this turn — the next one's {@link SpeakContext.prev}. */
+  private lastSpoken: string | undefined;
 
   // ── The audio graph ──────────────────────────────────────────────────────────────────
   private ctx: AudioContext | null = null;
@@ -700,6 +828,8 @@ export class SpeechQueue {
   /** End of turn — speak the trailing partial chunk (`result`, chatSession.ts). */
   flushTurn(): void {
     this.endBlock();
+    // The next turn is a new answer: its first sentence is not a continuation of this one.
+    this.lastSpoken = undefined;
   }
 
   /**
@@ -736,6 +866,7 @@ export class SpeechQueue {
     this.releaseFocus();
     this.cutAll(reason);
     this.chunker.reset();
+    this.lastSpoken = undefined;
     this.silenceSources();
     this.clearMarks();
     if (this.audio) {
@@ -816,7 +947,9 @@ export class SpeechQueue {
     // Rises with the HOLD, not with playback — see `speakingSubs`. A chunk has been accepted,
     // so this turn is going to be heard.
     this.setSpeaking(true);
-    this.jobs.push({ id: this.nextId(), text, itemId: this.pushItemId, controller: new AbortController() });
+    const context: SpeakContext = this.lastSpoken ? { prev: this.lastSpoken } : {};
+    this.lastSpoken = text;
+    this.jobs.push({ id: this.nextId(), text, itemId: this.pushItemId, context, controller: new AbortController() });
     // Start the look-ahead HERE, not only inside the play loop. A chunk enqueued while an
     // earlier one is already playing arrives after the loop has passed its own prefetch
     // point, so without this the fetch for chunk N+1 would not begin until chunk N finished.
@@ -997,7 +1130,7 @@ export class SpeechQueue {
     };
     let asked: Promise<Blob | SpeakSkip | null>;
     try {
-      asked = this.fetcher(job.text, job.controller.signal, job.id);
+      asked = this.fetcher(job.text, job.controller.signal, job.id, job.context);
     } catch (err) {
       asked = Promise.reject(err);
     }
