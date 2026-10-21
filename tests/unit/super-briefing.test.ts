@@ -34,7 +34,7 @@ describe('superBriefing', () => {
     expect(brief).toContain('Permission requests never reach you: the owner answers them.');
     for (const prefix of ['[super events]', '[super handover]', '[super recap]']) expect(brief).toContain(prefix);
     expect(brief).toContain('only a question, done, gone or stuck reaches\nyou, batched, and nothing while a question is open with the owner');
-    expect(brief).toContain('He sees an event turn as one line: write no text there unless he wrote to you, you escalate\n  a question, or an event says `awaited=owner` (a job he waits on): then give him its result.');
+    expect(brief).toContain('He sees an event turn as one line: write no text there unless he wrote to you, or an event\n  says `awaited=owner` (a job he waits on): then give him its result.');
   });
 
   it('names the job list verbs: the row line, the pool, --from, --task, the own question (plan r4)', () => {
@@ -85,7 +85,7 @@ describe('superBriefing', () => {
   // characters main 3da65546 already ran over this budget.
   const OWNER_QUESTION_2026_10_21 = 250;
   // A job the owner waits on (Tilki field, 2026-10-21): the Events line names `awaited=owner`
-  // (+78 characters), and since the owner-question merge also "you escalate a question" (+24).
+  // (+78 characters). This test was already 35 over on main 3da65546 (5794 vs 5759).
   const AWAITED_EVENT_2026_10_21 = 80;
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
