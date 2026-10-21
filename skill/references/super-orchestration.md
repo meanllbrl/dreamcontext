@@ -18,9 +18,10 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
 6. **Capacity.** At most 8 live children, and on a 16 GB machine at most 4 awake at once (a 16 GB
    machine fell over at 24 processes, swap 19 of 20 GB). `dreamcontext super state` shows `machine`: when it is
    short of room (`availMemGb` < 2, `diskFreeGb` < 15, swap above 75 %, many Claude sessions,
-   `light` mode) `delegate` answers `held` with reason `machine`. Then: put the job in the pool, `super end`
-   every idle child, tell the owner ONCE which limit is hit and how many sessions closing would
-   free, retry once. Never loop, never try to override the hold.
+   `light` mode) `delegate` answers `held` with reason `machine` and KEEPS the job in the pool (its id
+   in the answer, `--from` re-checks). Then: `super end` every idle child, tell the owner ONCE which
+   limit is hit and how many sessions closing would free (`closeSessions`), retry once. Never
+   loop, never try to override the hold.
 7. **Publish at once.** Wave 1 via `dreamcontext super delegate`; every later unit via
    `dreamcontext super pool add` with "after <unit>" in its brief, so the job list shows the whole
    split immediately. Each `--brief` reads `<job> · <mode> <model>/<effort>`. Wait for no approval.

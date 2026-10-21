@@ -54,7 +54,8 @@ describe('the Super Agent is never a tab (D9, AC1)', () => {
   it('it follows the vault\'s permission switch like any chat (decision 14): no explicit bypass on its spawn or its children\'s', () => {
     // Param 11 (explicitBypass) is false, so `spawn`'s chat arm takes the vault's remembered mode.
     expect(surface).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super'\)/);
-    expect(surface).toMatch(/spawn\(false, undefined, false, 'chat', prepared\.inline, d\.model, true, prepared\.token, false, d\.effort, false, d\.mode\)/);
+    // The child's id is minted first so its lean MCP set (orchestration plan r5 D14) is known at the spawn.
+    expect(surface).toMatch(/spawn\(false, childId, false, 'chat', prepared\.inline, d\.model, true, prepared\.token, false, d\.effort, false, d\.mode\)/);
   });
 
   it('past chats never reopen its conversation as a tab', () => {

@@ -96,7 +96,7 @@ import {
   actionGeneration, adoptionBody, cardReference, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
   homedSessions, isSuperSession, markedChildren, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
-  linkOpensSuperStage, presenceChatId,
+  linkOpensSuperStage, presenceChatId, leanMcpFor,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperLayout, postSuperRecap } from './super/superApi';
@@ -631,6 +631,9 @@ export function AgentSurface() {
   // predicate, `isSuperSession`). While handed over it is homed into the centre slot.
   const [superState, setSuperState] = useState<SuperStateView | null>(null);
   const superStateRef = useRef(superState);
+  /** Delegated children being opened right now, before the server's record names them: their
+   *  lean MCP set (orchestration plan r5 D14). Read by `spawn` with the record. */
+  const leanOpeningRef = useRef<Map<string, string[]>>(new Map());
   superStateRef.current = superState;
   /** The project's super record has been read (or there is none to read here): until then a
    *  chat's question alarm waits, since it may be a child's (super/childAlarm.ts). */
@@ -1416,7 +1419,11 @@ export function AgentSurface() {
       // chatSession.ts's header note).
       // '' = let the server resolve the default (the preferred account, else account #0).
       // The picker and the auto-switch restart are the only callers that name one.
-      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, claudeId ?? newClaudeId(), resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach);
+      // A delegated Super Agent child runs LEAN (plan r5 D14): only the MCP servers its job named,
+      // on EVERY spawn of its conversation (Resume, account switch, reconnect), from its record.
+      const cid = claudeId ?? newClaudeId();
+      const lean = mode === 'super' ? null : leanMcpFor(superStateRef.current, cid, leanOpeningRef.current);
+      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, cid, resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach, lean);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
       // Every chat spawned anywhere in this surface follows the signed-in account, for the
@@ -3341,7 +3348,9 @@ export function AgentSurface() {
       // …checked again after the prompt is prepared: that wait can be what ran past it.
       if (delegateExpired(args)) return { ok: false, error: 'expired' };
       // Follows the vault's permission switch like any chat (decision 13): no explicit bypass.
-      const s = spawn(false, undefined, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, false, d.mode) as ChatSession;
+      const childId = newClaudeId();
+      leanOpeningRef.current.set(childId, d.mcp);
+      const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, false, d.mode) as ChatSession;
       s.setSuperChild(true);
       // …and it STAYS marked until the server's push names it (the mark effect would otherwise
       // unmark it on the next roster change, before the push lands).

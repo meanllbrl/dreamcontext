@@ -3,11 +3,9 @@
  * names must exist, its model table must equal MODEL_FACTS, and the briefing's pointer to it
  * must equal the install destination.
  *
- * PENDING lists the verbs the guide names that are still being built on other branches
- * (the job list's `super pool` / `super ask` / `delegate --from|--task`, lane D's `super end`
- * and `--mcp`). The guide is not referenced from the briefing until they exist
- * (`SUPER_ORCHESTRATION_GUIDE` is null), and a pending entry that now EXISTS fails the
- * "stale" test below, so the list can only shrink: when it is empty, flip the constant.
+ * PENDING lists verbs the guide may name before they exist (empty since `delegate --mcp`
+ * landed and the slot was set); a pending entry that EXISTS fails the "stale" test below, so
+ * the list can only shrink, and the slot stays set only while it is empty.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
@@ -30,7 +28,7 @@ const FLAT = GUIDE.replace(/\s+/g, ' ');
 
 /** Verbs and flags named by the guide that other branches are still adding. */
 const PENDING_COMMANDS: string[] = [];
-const PENDING_FLAGS = ['--mcp'];
+const PENDING_FLAGS: string[] = [];
 
 const program = createProgram();
 
@@ -200,8 +198,11 @@ describe('super-orchestration guide: the briefing slot', () => {
     expect(SUPER_ORCHESTRATION_GUIDE_PATH).toBe(rel);
   });
 
-  it('the slot is empty or points at the guide, never anywhere else', () => {
-    expect([null, SUPER_ORCHESTRATION_GUIDE_PATH]).toContain(SUPER_ORCHESTRATION_GUIDE);
+  it('the slot is set to the guide (every verb it names exists), and the briefing leads with it', () => {
+    expect(PENDING_COMMANDS.length + PENDING_FLAGS.length).toBe(0);
+    expect(SUPER_ORCHESTRATION_GUIDE).toBe('.claude/skills/dreamcontext/references/super-orchestration.md');
+    const lead = superBriefing().split('## Lead, do not do\n')[1];
+    expect(lead.startsWith('- Before you split work, read the orchestration guide: .claude/skills/dreamcontext/references/super-orchestration.md.\n')).toBe(true);
   });
 
   it('the briefing names the guide path only through the slot, and no model id, price or alias table', () => {

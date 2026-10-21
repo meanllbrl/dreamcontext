@@ -240,3 +240,30 @@ describe('parkChat (the primitive super end reuses)', () => {
     expect(b.park).not.toHaveBeenCalled();
   });
 });
+
+describe('the done-child backstop (orchestration plan r5 D13)', () => {
+  beforeEach(() => _resetChatParkForTests());
+
+  it('a DELEGATED super child idle >= 10 min is parked with no load and the setting off; adopted, younger or busy ones are not; twice is a no-op', async () => {
+    const { noteSuperState, resetSuperIndex } = await import('../../src/lib/super/store.js');
+    const { emptySuperState } = await import('../../src/lib/super/types.js');
+    resetSuperIndex();
+    const child = (adopted: boolean) => ({ sessionId: '', brief: '', adopted, startedAt: 1 });
+    noteSuperState('/vault/_dream_context', {
+      ...emptySuperState(), session: 'sup', enabled: true,
+      children: { kid: { ...child(false), sessionId: 'kid' }, young: { ...child(false), sessionId: 'young' }, busy: { ...child(false), sessionId: 'busy' }, mine: { ...child(true), sessionId: 'mine' } },
+    });
+    const kid = parkable('kid', 11);
+    const young = parkable('young', 9);
+    const busy = parkable('busy', 30, { busy: () => true });
+    const mine = parkable('mine', 60);
+    const stranger = parkable('stranger', 60);
+    const r = await sweepOnce(deps(quiet, { enabled: () => false }));
+    expect(r.parked).toEqual([]);
+    expect(kid.parked).toEqual(['super-done']);
+    for (const p of [young, busy, mine, stranger]) expect(p.parked).toEqual([]);
+    // Parking twice: the tab is no longer registered, so the primitive answers `already`.
+    expect(await parkChat('kid', 'super-done')).toBe('already');
+    resetSuperIndex();
+  });
+});

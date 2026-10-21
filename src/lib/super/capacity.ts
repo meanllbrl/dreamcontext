@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
-import { promises as fsp } from 'node:fs';
+import { promises as fsp, readFileSync } from 'node:fs';
 import { freemem, homedir, loadavg, totalmem } from 'node:os';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { activityOf, getChat } from '../assistant/chat-registry.js';
+import { heavySlotDir, heavySlotsHeld } from '../builder-tools.js';
 import { MAX_LIVE_CHILDREN, type SuperState } from './types.js';
 import { superWorktreeRoot } from './store.js';
 
@@ -32,6 +33,8 @@ export interface CapacityFacts {
   /** Every running process whose command BASENAME is `claude`: app chats, terminal tabs and
    *  sessions of other projects alike (never the Claude.app helpers). Null when `ps` failed. */
   claudeSessions?: number | null;
+  /** Machine heavy slots (`builder heavy` / `builder test`, every repo) held right now. */
+  heavySteps?: number | null;
 }
 
 export interface CapacityDeps {
@@ -48,6 +51,7 @@ export interface CapacityDeps {
   swapUsage?: () => Promise<string>;
   procMeminfo?: () => Promise<string>;
   psComm?: () => Promise<string>;
+  heavySlots?: () => number;
 }
 
 const run = promisify(execFile);
@@ -64,6 +68,7 @@ const defaultDeps = (): CapacityDeps => ({
   swapUsage: async () => (await run('sysctl', ['vm.swapusage'], { timeout: 5_000 })).stdout,
   procMeminfo: () => fsp.readFile('/proc/meminfo', 'utf-8'),
   psComm: async () => (await run('ps', ['-axo', 'comm='], { timeout: 5_000, maxBuffer: 8 * 1024 * 1024 })).stdout,
+  heavySlots: () => heavySlotsHeld(heavySlotDir()),
 });
 
 export const CAPACITY_TTL_MS = 60_000;
@@ -157,6 +162,8 @@ async function measure(deps: CapacityDeps): Promise<CapacityFacts> {
   } catch { swap = null; }
   let claudeSessions: number | null = null;
   try { claudeSessions = deps.psComm ? countClaudeSessions(await deps.psComm()) : null; } catch { claudeSessions = null; }
+  let heavySteps: number | null = null;
+  try { heavySteps = deps.heavySlots ? deps.heavySlots() : null; } catch { heavySteps = null; }
   return {
     availMemGb: round1(availBytes / GB),
     diskFreeGb,
@@ -165,11 +172,20 @@ async function measure(deps: CapacityDeps): Promise<CapacityFacts> {
     swapUsedGb: swap ? round1(swap.usedGb) : null,
     swapTotalGb: swap ? round1(swap.totalGb) : null,
     claudeSessions,
+    heavySteps,
   };
 }
 
+/** Tests only: what the no-argument readers answer instead of this machine (null = measure). */
+let factsOverride: CapacityFacts | null = null;
+export function setCapacityFactsForTests(facts: CapacityFacts | null): void {
+  factsOverride = facts;
+}
+
 /** The facts, memoized for {@link CAPACITY_TTL_MS}. Injectable readers for tests. */
-export function readCapacityFacts(deps: CapacityDeps = defaultDeps()): Promise<CapacityFacts> {
+export function readCapacityFacts(injected?: CapacityDeps): Promise<CapacityFacts> {
+  if (!injected && factsOverride) return Promise.resolve({ ...factsOverride });
+  const deps = injected ?? defaultDeps();
   const t = deps.now();
   if (memo && t - memo.at < CAPACITY_TTL_MS) return memo.value;
   const value = measure(deps);
@@ -179,7 +195,9 @@ export function readCapacityFacts(deps: CapacityDeps = defaultDeps()): Promise<C
 
 /** The facts read fresh, past the memo (the park sweep reads once a minute anyway and must see
  *  what its last parking freed). Refreshes the memo for the other readers. */
-export function readCapacityFactsFresh(deps: CapacityDeps = defaultDeps()): Promise<CapacityFacts> {
+export function readCapacityFactsFresh(injected?: CapacityDeps): Promise<CapacityFacts> {
+  if (!injected && factsOverride) return Promise.resolve({ ...factsOverride });
+  const deps = injected ?? defaultDeps();
   const value = measure(deps);
   memo = { at: deps.now(), value };
   return value;
@@ -242,6 +260,40 @@ export function machineRoom(facts: CapacityFacts, opts: { lightMode?: boolean; p
     reasons.push({ limit: 'swapUnknown', hard: false, value: null, threshold: 0 });
   }
   return { ok: blocking.length === 0, hard: blocking.some((r) => r.hard), reasons };
+}
+
+/**
+ * Is light mode on, as the server can tell (Settings -> Performance, `agent-ui.json`)? `on` is
+ * on; `auto` is on for a machine of 8 GB or less (the window also counts battery, which the
+ * server cannot see: fail open); `off`, or an unreadable file, is off.
+ */
+export function lightModeOn(facts: Pick<CapacityFacts, 'totalMemGb'>, home: string = homedir()): boolean {
+  let mode: unknown = 'auto';
+  try { mode = (JSON.parse(readFileSync(join(home, '.dreamcontext', 'agent-ui.json'), 'utf-8')) as Record<string, unknown>).lightMode ?? 'auto'; } catch { mode = 'auto'; }
+  if (mode === 'on') return true;
+  if (mode === 'off') return false;
+  return typeof facts.totalMemGb === 'number' && facts.totalMemGb > 0 && facts.totalMemGb <= 8;
+}
+
+/**
+ * The owner's one sentence for a machine hold: which limits are crossed, and how many Claude
+ * sessions closing would get under the session limit (when that is one of them). English facts; the Super Agent says it
+ * in the owner's language.
+ */
+export function machineHoldLine(room: MachineRoom): { line: string; closeSessions: number | null } {
+  const parts: string[] = [];
+  let closeSessions: number | null = null;
+  for (const r of room.reasons) {
+    if (r.limit === 'sessions') {
+      closeSessions = (r.value ?? 0) - r.threshold + 1;
+      parts.push(`${r.value} Claude sessions are open on this machine (room for ${r.threshold - 1})`);
+    } else if (r.limit === 'swap') parts.push(`swap is ${r.value} % full (limit ${r.threshold} %)`);
+    else if (r.limit === 'disk') parts.push(`${r.value} GB disk free (needs ${r.threshold} GB)`);
+    else if (r.limit === 'availMem') parts.push(`${r.value} GB memory free (needs ${r.threshold} GB)`);
+    else if (r.limit === 'light') parts.push('light mode is on');
+  }
+  const close = closeSessions !== null && closeSessions > 0 ? `; closing ${closeSessions} session(s) would make room` : '';
+  return { line: `${parts.join(', ')}${close}`, closeSessions: closeSessions !== null && closeSessions > 0 ? closeSessions : null };
 }
 
 /** Tests only. */

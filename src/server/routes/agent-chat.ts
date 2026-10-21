@@ -87,6 +87,9 @@ import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assis
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
+import {
+  knownMcpServers, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unknownMcpNames, writeLeanMcpConfig,
+} from '../../lib/super/lean-mcp.js';
 import { deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import {
@@ -407,6 +410,20 @@ export function withoutShellJobControlNoise(stderr: string): string {
 export function mcpConfigArgs(paths: Array<string | null>): string[] {
   const files = paths.filter((p): p is string => !!p);
   return files.length ? ['--mcp-config', ...files] : [];
+}
+
+/**
+ * The MCP argv of a spawn: today's ({@link mcpConfigArgs} over `normal`) for every chat, or, for
+ * a LEAN Super Agent child (orchestration plan r5 D14), `--strict-mcp-config` and only its
+ * subset, the project's `.mcp.json` and the browser override (still last). A lean child with no
+ * servers named and no project file gets `--strict-mcp-config` alone: no user MCP process.
+ */
+export function leanChildMcpArgs(
+  lean: { leanMcpPath: string | null; projectMcp: string | null; browser: string | null } | null,
+  normal: Array<string | null>,
+): string[] {
+  if (!lean) return mcpConfigArgs(normal);
+  return ['--strict-mcp-config', ...mcpConfigArgs([lean.leanMcpPath, lean.projectMcp, lean.browser])];
 }
 
 /**
@@ -955,7 +972,11 @@ export async function passiveAdopt(entry: LiveChatEntry, ws: import('ws').WebSoc
  * (see `remote-access.ts` for why that gate wants all three facts at once). `networkToken`
  * is the server's per-process credential, null on a loopback bind where none is minted.
  */
+/** Lean MCP subsets a killed server left behind are swept once, at the first attach (D14). */
+let leanSwept = false;
+
 export function attachAgentChat(server: Server, opts: { networkToken?: string | null; windowControlPort?: number } = {}): void {
+  if (!leanSwept) { leanSwept = true; try { sweepLeanMcpDir(); } catch { /* next start */ } }
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     let url: URL;
     try { url = new URL(req.url || '/', `http://${req.headers.host}`); }
@@ -1005,6 +1026,17 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // Selects a system-prompt append, not an argv element — an unknown value degrades to
     // plain Claude Code rather than to a half-applied mode. See sanitizeChatMode.
     const mode = sanitizeChatMode(url.searchParams.get('mode'), vault);
+    // A Super Agent's delegated child (orchestration plan r5 D14): `lean=1` and the MCP servers
+    // its job named (`mcp=a,b`). Lean only ever NARROWS what a chat gets, so a forged `lean=1`
+    // costs its sender servers; the names are re-checked here against the servers the user
+    // really has (own keys), and again when the subset is written. Never the Assistant or a
+    // Super Agent's own session.
+    let leanMcp: string[] | undefined;
+    if (url.searchParams.get('lean') === '1' && !assistant && mode !== 'super' && mode !== 'assistant') {
+      const parsed = parseMcpNames(url.searchParams.get('mcp') ?? '');
+      if ('error' in parsed || unknownMcpNames(parsed.names, knownMcpServers(projectRoot)).length > 0) { rejectUpgrade(socket, 400); return; }
+      leanMcp = parsed.names;
+    }
     // The project's Super Agent (plan-r7 D3): exactly ONE super session per vault, the one the
     // hand-over recorded (`POST /api/super/enable` mints it). A different id is a second super
     // agent and is refused; a same-id respawn (account switch, Resume, reattach) passes. The
@@ -1147,7 +1179,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           void passiveAdopt(adoptable, ws).then((outcome) => {
             if (outcome === 'aborted') { settleSupersede(false); return; }
             if (outcome !== 'unadoptable') return;
-            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
+            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
           });
           return;
         }
@@ -1155,7 +1187,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
           return;
         }
         // The Assistant's CLI reaches `/api/assistant/*` with these two — injected into THIS
@@ -1169,7 +1201,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
         let accepted = false;
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
         settleSupersede(accepted);
       });
     })();
@@ -1243,6 +1275,9 @@ interface ChatSpawnOpts {
   /** An agent spoken to in an ordinary Chat tab (lib/whiteboards/card-chat.ts `prepareAgentChat`):
    *  its identity and envelope as on a card, while the tab stays a Chat tab in every other way. */
   agent?: string;
+  /** A LEAN Super Agent child (orchestration plan r5 D14): `--strict-mcp-config` with only these
+   *  of the user's MCP servers plus the app's own configs. Absent = every chat as before. */
+  leanMcp?: string[];
 }
 
 /** Interrupt watchdog: if no result/exit follows an interrupt request within this window,
@@ -1571,6 +1606,18 @@ export function startChatSession(
   // The project's Playwright MCP, re-declared headless with a loopback CDP port so its browser
   // never takes the screen and the pane can show it live (browser-override.ts). Not for a
   // scoped card (no MCP at all).
+  // A lean child's own MCP subset (D14): written per spawn, removed when it exits. An unknown
+  // name now (the config changed since the upgrade) refuses the spawn rather than widening it.
+  let leanMcpPath: string | null = null;
+  if (opts.leanMcp && !scopedCard) {
+    try {
+      leanMcpPath = writeLeanMcpConfig(opts.leanMcp, knownMcpServers(projectRoot));
+    } catch (err) {
+      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'mcp_refused', message: `This child cannot start: ${(err as Error).message}.` })); } catch { /* gone */ }
+      try { ws.close(); } catch { /* already closed */ }
+      return;
+    }
+  }
   const browserOverride = scopedCard ? null : prepareBrowserOverride(projectRoot);
 
   const heldConversation = resumeTarget || freshPin;
@@ -1793,7 +1840,9 @@ export function startChatSession(
     // No MCP for a scoped card (its allowlist names no MCP tool; out of scope by decision).
     // The browser override rides LAST: between two `--mcp-config` files the later one wins,
     // and the shared config may carry the owner's headed `playwright` too.
-    ...(scopedCard ? [] : mcpConfigArgs([mcpConfigPath, computerMcpPath, browserOverride?.configPath ?? null])),
+    // A LEAN child (D14) instead: strict, and only its subset, the project's own `.mcp.json`
+    // (strict would drop it) and the browser override, LAST as above. Never the shared config.
+    ...(scopedCard ? [] : leanChildMcpArgs(opts.leanMcp ? { leanMcpPath, projectMcp: projectMcpJson(projectRoot), browser: browserOverride?.configPath ?? null } : null, [mcpConfigPath, computerMcpPath, browserOverride?.configPath ?? null])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
@@ -2427,6 +2476,7 @@ export function startChatSession(
     cleanupModeNote();
     browserMirror?.dispose();
     browserOverride?.dispose();
+    removeLeanMcpConfig(leanMcpPath);
     envelope?.dispose();
     unwatchAuth();
     registry?.exited();

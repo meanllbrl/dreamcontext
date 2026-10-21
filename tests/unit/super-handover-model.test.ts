@@ -401,7 +401,7 @@ describe('`super delegate` arguments', () => {
     expect(delegateArgs({ prompt: 'go', mode: 'super' })).toMatchObject({ ok: true, mode: 'basic' });
     expect(delegateArgs({ prompt: 'go', mode: 'assistant' })).toMatchObject({ ok: true, mode: 'basic' });
     expect(delegateArgs({ prompt: 'go', mode: 'develop', brief: 'Ship\nit', model: 'opus', effort: 'high' }))
-      .toEqual({ ok: true, prompt: 'go', mode: 'develop', model: 'opus', effort: 'high', title: 'Ship it' });
+      .toEqual({ ok: true, prompt: 'go', mode: 'develop', model: 'opus', effort: 'high', title: 'Ship it', mcp: [] });
   });
 });
 

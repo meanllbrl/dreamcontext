@@ -728,7 +728,7 @@ export function delegateExpired(args: Record<string, unknown>, now: number = Dat
 /** The `delegate` command's arguments, validated: the mode is one an agent may spawn, the
  *  prompt is present. */
 export function delegateArgs(args: Record<string, unknown>): {
-  ok: true; prompt: string; mode: AgentSpawnMode; model: string; effort: string; title: string;
+  ok: true; prompt: string; mode: AgentSpawnMode; model: string; effort: string; title: string; mcp: string[];
 } | { ok: false; error: string } {
   const prompt = typeof args.prompt === 'string' ? args.prompt : '';
   if (!prompt.trim()) return { ok: false, error: 'no_prompt' };
@@ -736,7 +736,42 @@ export function delegateArgs(args: Record<string, unknown>): {
   // eslint-disable-next-line no-control-regex
   const str = (v: unknown, n: number) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, n) : '');
   const title = str(args.title, MAX_TITLE) || str(args.brief, MAX_TITLE);
-  return { ok: true, prompt, mode, model: str(args.model, 80), effort: str(args.effort, 20), title };
+  return { ok: true, prompt, mode, model: str(args.model, 80), effort: str(args.effort, 20), title, mcp: mcpNames(args.mcp) };
+}
+
+// ─── Lean children (orchestration plan r5 D14) ──────────────────────────────────
+
+/** Mirrors `src/lib/super/lean-mcp.ts` (`MCP_NAME_RE`, `MAX_LEAN_MCP`); the server re-checks. */
+const MCP_NAME_RE = /^[a-z0-9_-]{1,40}$/;
+const MAX_LEAN_MCP = 6;
+
+/** The well-formed server names in `v` (a list), at most six; anything else drops out. */
+export function mcpNames(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const n of v) if (typeof n === 'string' && MCP_NAME_RE.test(n) && !out.includes(n)) out.push(n);
+  return out.slice(0, MAX_LEAN_MCP);
+}
+
+/**
+ * The MCP servers a chat runs with when it is a DELEGATED Super Agent child, or null for every
+ * other chat (the owner's own adopted chats, the super's own session, anything not a child). A
+ * child the window is opening right now, before the server's record names it, is in `opening`.
+ * Every spawn of the same conversation (Resume, an account switch, a reconnect) asks again, so
+ * a child never comes back with the owner's full MCP set.
+ */
+export function leanMcpFor(state: { session: string | null; children: Record<string, { adopted: boolean; mcp?: string[] }> } | null, claudeId: string, opening?: ReadonlyMap<string, string[]>): string[] | null {
+  const now = opening?.get(claudeId);
+  if (now) return now;
+  if (!state || claudeId === state.session || !hasOwnKey(state.children, claudeId)) return null;
+  const c = Object.entries(state.children).find(([k]) => k === claudeId)?.[1];
+  return !c || c.adopted ? null : mcpNames(c.mcp);
+}
+
+/** The WS URL part of a lean child (`&lean=1&mcp=a,b`); '' for any other chat. */
+export function leanMcpParam(names: readonly string[] | null): string {
+  if (!names) return '';
+  return `&lean=1${names.length ? `&mcp=${encodeURIComponent(names.join(','))}` : ''}`;
 }
 
 // ─── The return recap (D13) ────────────────────────────────────────────────────

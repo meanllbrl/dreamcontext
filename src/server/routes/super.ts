@@ -27,7 +27,10 @@ import {
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
-import { delegationAllowed, readCapacityFacts } from '../../lib/super/capacity.js';
+import {
+  delegationAllowed, lightModeOn, machineHoldLine, machineRoom, readCapacityFacts, type CapacityFacts,
+} from '../../lib/super/capacity.js';
+import { knownMcpServers, unknownMcpNames } from '../../lib/super/lean-mcp.js';
 import {
   WorktreeRefused, createChildWorktree, discardFreshWorktree, mergeChildren, removeChildWorktree, repoOfWorktree,
   worktreeStatus, type CreatedWorktree,
@@ -254,6 +257,17 @@ function worktreePreamble(w: CreatedWorktree): string {
     + 'cd there first, then work and commit only there. Never push and never merge into another branch.';
 }
 
+/** `--mcp`: every name must be one of the user's MCP servers for this project (D14). The 400
+ *  names the known ones so the agent can fix its call; names only, never a config. */
+function mcpRefused(root: string, job: Job, res: ServerResponse): boolean {
+  if (!job.mcp?.length) return false;
+  const known = knownMcpServers(dirname(root));
+  const missing = unknownMcpNames(job.mcp, known);
+  if (!missing.length) return false;
+  refuse(res, 400, 'unknown_mcp', `no MCP server named ${missing.join(', ')}; this project has: ${[...known.keys()].join(', ') || 'none'}`, { known: [...known.keys()] });
+  return true;
+}
+
 /** Pool rows a `delegate --from` is starting right now, per vault: a second claim is refused. */
 const claims = new Map<string, Set<string>>();
 
@@ -287,6 +301,7 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(job.mode !== 'basic' ? { mode: job.mode } : {}),
       ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}),
       ...(job.worktree ? { worktree: job.worktree } : {}), ...(job.slug ? { slug: job.slug } : {}), ...(job.base ? { base: job.base } : {}),
+      ...(job.mcp ? { mcp: job.mcp } : {}),
       ...(extra.held ? { held: true } : {}),
     };
     if (Buffer.byteLength(JSON.stringify([...s.pool, row]), 'utf-8') > MAX_POOL_BYTES) { out = { error: 'pool_full' }; return; }
@@ -318,11 +333,19 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
   // D11: the cap binds NEW delegations (calls in flight count too).
   const inFlight = delegating.get(root) ?? 0;
   const room = delegationAllowed(c.state);
-  if (room.live + inFlight >= room.max) {
-    let machine: unknown = null;
-    try { machine = await readCapacityFacts(); } catch { machine = null; }
-    const facts = { held: true, live: room.live + inFlight, max: room.max, machine };
-    const running = `${room.live + inFlight} children are running (at most ${room.max})`;
+  let machine: CapacityFacts | null = null;
+  try { machine = await readCapacityFacts(); } catch { machine = null; }
+  // Orchestration plan r5 D11: the whole machine's room binds too. A null fact never holds
+  // alone (fail open); nobody overrides a hold: the way out is room (end idle children).
+  const mroom = machine ? machineRoom(machine, { lightMode: lightModeOn(machine) }) : null;
+  const capFull = room.live + inFlight >= room.max;
+  if (capFull || (mroom && !mroom.ok)) {
+    const hold = !capFull && mroom ? machineHoldLine(mroom) : null;
+    const facts = {
+      held: true, live: room.live + inFlight, max: room.max, machine,
+      ...(hold && mroom ? { reason: 'machine', hard: mroom.hard, reasons: mroom.reasons, ...(hold.closeSessions ? { closeSessions: hold.closeSessions } : {}) } : { reason: 'cap' }),
+    };
+    const running = hold ? `this machine has no room for another session: ${hold.line}` : `${room.live + inFlight} children are running (at most ${room.max})`;
     if (fromRow) {
       refuse(res, 409, 'held', `${running}; the job stays in the pool as ${fromRow.id}`, { ...facts, pooled: fromRow.id });
       return;
@@ -354,6 +377,8 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     const r = await sendSuperCommand(c.token, 'delegate', {
       prompt: `${wt ? `${worktreePreamble(wt)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`,
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
+      // The child runs LEAN (D14): only these of the user's MCP servers ([] = none).
+      mcp: job.mcp ?? [],
     }, { timeoutMs: DELEGATE_TIMEOUT_MS + DELEGATE_GRACE_MS });
     const sid = r.ok && r.result && typeof r.result === 'object' ? (r.result as { sessionId?: unknown }).sessionId : undefined;
     if (!r.ok || typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) {
@@ -389,6 +414,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       s.children[sid] = {
         sessionId: sid, brief: job.brief || job.title, adopted: false, startedAt: now, row: 'working', rowAt: now,
         ...(job.mode !== 'basic' ? { mode: job.mode } : {}), ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}),
+        ...(job.mcp ? { mcp: job.mcp } : {}),
         ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
         ...(job.task ? { task: job.task } : {}),
       };
@@ -471,6 +497,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     ok(res, {
       ...view, children, containers, queue: settled.queue.map(fenceQ), status,
       head: head ? fenceQ(head) : null, machine, pool: poolRows(vault, settled.pool), team, ...(warnings.length ? { warnings } : {}),
+      // The MCP servers `delegate --mcp` can grant (D14): names only, each one the narrow
+      // [a-z0-9_-] shape (a name of any other shape is never listed, so nothing here is prose).
+      mcpServers: [...knownMcpServers(dirname(root)).keys()],
     });
   },
 
@@ -489,6 +518,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if ('error' in parsed) { refuse(res, 400, 'invalid_args', parsed.error); return; }
     const job = parsed.job;
     if (job.task && !(await taskFileOk(root, job.task))) { refuse(res, 404, 'unknown_task', `no task "${job.task}" in this project (state/<slug>.md)`); return; }
+    if (mcpRefused(root, job, res)) return;
     // One job, one owner: the child this one takes the work over from (succession.ts).
     const succeeds = str(b.succeeds);
     if (succeeds !== undefined && (!SESSION_ID_RE.test(succeeds) || !c.state.children[succeeds] || succeeds === c.state.session)) {
@@ -883,6 +913,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const job = parsed.job;
     if (Buffer.byteLength(job.prompt, 'utf-8') > MAX_POOL_PROMPT) { refuse(res, 400, 'too_large', `a pooled prompt is at most ${MAX_POOL_PROMPT} bytes`); return; }
     if (job.task && !(await taskFileOk(root, job.task))) { refuse(res, 404, 'unknown_task', `no task "${job.task}" in this project (state/<slug>.md)`); return; }
+    if (mcpRefused(root, job, res)) return;
     const note = oneLine(str(b.note) ?? '').slice(0, MAX_BRIEF);
     const kept = await keepInPool(root, job, { note });
     if ('error' in kept) { refuse(res, 409, 'pool_full', `the pool is full (at most ${MAX_POOL} jobs, ${MAX_POOL_BYTES / 1024} KB); the job was NOT kept`); return; }

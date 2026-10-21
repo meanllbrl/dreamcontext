@@ -95,6 +95,8 @@ export interface SuperChild {
   mode?: string;
   model?: string;
   effort?: string;
+  /** The MCP servers it runs with (`delegate --mcp`): a delegated child is LEAN, only these. */
+  mcp?: string[];
   /** `super end` closed it: no process, tab or card; `super resume` clears it. */
   endedAt?: number;
 }

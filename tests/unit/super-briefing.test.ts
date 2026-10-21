@@ -47,10 +47,11 @@ describe('superBriefing', () => {
     expect(brief).toContain('dreamcontext super ask "<question>" --options "a|b"');
   });
 
-  it('names capacity and worktrees: 8 children, held, the machine thresholds, merge, never push', () => {
+  it('names capacity and worktrees: 8 children, held, the machine hold, merge, never push', () => {
     expect(brief).toContain('At most 8 children');
     expect(brief).toContain('`held`');
-    expect(brief).toContain('availMemGb < 2, diskFreeGb < 10 or light mode on');
+    // The machine's limits are enforced by `delegate` now (orchestration plan r5 D11).
+    expect(brief).toContain('No room on the machine: `held`, reason machine; end idle\n  children, tell the owner once, never retry.');
     expect(brief).toContain('--worktree <repo> --slug');
     expect(brief).toContain('dreamcontext super merge <child…> --into <topic>');
     expect(brief).toContain('Never\n  `git push` and never merge into the default branch yourself');
@@ -136,10 +137,10 @@ describe('how the super agent talks to the owner', () => {
 describe('the orchestration guide slot', () => {
   const BULLET = '- Before you split work, read the orchestration guide: ';
 
-  it('ships empty: no bullet, no guide path', () => {
-    expect(SUPER_ORCHESTRATION_GUIDE).toBeNull();
+  it('ships set to the installed guide (orchestration plan r5 D1); null or blank emits no bullet', () => {
+    expect(SUPER_ORCHESTRATION_GUIDE).toBe('.claude/skills/dreamcontext/references/super-orchestration.md');
+    expect(superBriefing()).toBe(superBriefing(SUPER_ORCHESTRATION_GUIDE));
     const b = superBriefing(null);
-    expect(b).toBe(superBriefing());
     expect(b).not.toContain('orchestration guide');
     expect(superBriefing('  ')).toBe(b);
   });
@@ -179,8 +180,8 @@ describe('the child lifecycle and the installed guide path', () => {
     it('while no guide is set, names no guide path and emits no bullet', () => {
       expect(superBriefing(null)).not.toContain('orchestration guide');
       expect(superBriefing(null)).not.toContain('super-orchestration');
-      expect(superBriefing(null)).toBe(brief); // the shipped default is the empty slot
-      expect(SUPER_ORCHESTRATION_GUIDE === null || SUPER_ORCHESTRATION_GUIDE === PATH).toBe(true);
+      expect(superBriefing(null)).toBe(brief.replace(`${bullet}\n`, '')); // the eval's before arm
+      expect(SUPER_ORCHESTRATION_GUIDE).toBe(PATH); // the shipped default is the set slot
     });
 
     it('while a guide is set, the first "Lead, do not do" bullet is exactly the pointer', () => {

@@ -10,6 +10,7 @@ import {
   type SuperChild, type SuperContainer, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
+import { parseMcpNames } from './lean-mcp.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 
 /**
@@ -190,6 +191,7 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (c.mode === 'basic' || c.mode === 'plan' || c.mode === 'develop') child.mode = c.mode;
     if (typeof c.model === 'string' && /^[A-Za-z0-9._[\]-]{1,60}$/.test(c.model)) child.model = c.model;
     if (typeof c.effort === 'string' && /^(low|medium|high|xhigh|max)$/.test(c.effort)) child.effort = c.effort;
+    if (c.mcp !== undefined) { const m = parseMcpNames(c.mcp); if (!('error' in m) && m.names.length) child.mcp = m.names; }
     // A worktree and its branch travel together; either one hostile drops both.
     if (c.worktree !== undefined || c.branch !== undefined) {
       if (acceptableWorktree(c.worktree, opts) && typeof c.branch === 'string' && SUPER_BRANCH_RE.test(c.branch)) {
@@ -331,6 +333,7 @@ function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
       ...(j.worktree ? { worktree: j.worktree } : {}),
       ...(j.slug ? { slug: j.slug } : {}),
       ...(j.base ? { base: j.base } : {}),
+      ...(j.mcp ? { mcp: j.mcp } : {}),
       ...(p.held === true ? { held: true } : {}),
       ...(p.maybeStarted === true ? { maybeStarted: true } : {}),
     };
@@ -505,6 +508,8 @@ interface IndexEntry {
   session: string | null;
   enabled: boolean;
   children: Set<string>;
+  /** The live children `super delegate` started (never the owner's adopted chats). */
+  delegated: Set<string>;
   /** Children `super end` closed: a NEW process of one is the owner reopening it. */
   ended: Set<string>;
   notes: Map<string, SuperNote>;
@@ -531,6 +536,7 @@ function indexState(key: string, state: SuperState): void {
     enabled: state.enabled,
     // An ended child is history, not a child: no events, the notch shows it if reopened.
     children: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined)),
+    delegated: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined && !state.children[k].adopted)),
     ended: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt !== undefined)),
     notes,
   });
@@ -581,6 +587,13 @@ export function superRootOfSession(sessionId: string): string | null {
 /** A recorded child of a vault that is handed over RIGHT NOW (D16: the owner is not pinged). */
 export function isSuperChild(sessionId: string): boolean {
   for (const e of index.values()) if (e.enabled && e.children.has(sessionId)) return true;
+  return false;
+}
+
+/** A child `super delegate` started, of a vault handed over right now (never an adopted chat
+ *  of the owner's): what the done-child park backstop may park (orchestration plan r5 D13). */
+export function isDelegatedSuperChild(sessionId: string): boolean {
+  for (const e of index.values()) if (e.enabled && e.delegated.has(sessionId)) return true;
   return false;
 }
 

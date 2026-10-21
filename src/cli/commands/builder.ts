@@ -5,18 +5,21 @@ import { constants } from 'node:os';
 import {
   HEAVY_DEFAULT_WAIT_S,
   HEAVY_LOCK_BUSY_EXIT,
+  HEAVY_MACHINE_SLOTS,
   TASK_ID_RE,
+  acquireHeavy,
   classifyBuilderResult,
   findOrphanChecks,
   formatLoad,
   heavyLockPath,
+  heavySlotDir,
+  heavySlotsHeld,
   heavySpawnPlan,
   listProcesses,
   machineLoad,
   repoToplevel,
   type OrphanCheck,
 } from '../../lib/builder-tools.js';
-import { acquireFileLockWithin, releaseFileLock } from '../../lib/file-lock.js';
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
 
@@ -42,8 +45,6 @@ import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps 
 /** `report`'s exit code for anything but `reported`. */
 export const BUILDER_REPORT_NOT_DONE_EXIT = 3;
 
-/** Lock age past which a holder whose pid is gone is reclaimed. A live holder never is. */
-const HEAVY_LOCK_STALE_MS = 5_000;
 
 export interface BuilderDeps {
   cwd: () => string;
@@ -51,6 +52,8 @@ export interface BuilderDeps {
   printErr: (line: string) => void;
   ps: () => string;
   kill: (pid: number) => void;
+  /** The machine-wide heavy slots' folder (tests pass a scratch one). */
+  heavySlotDir?: () => string;
 }
 
 const DEFAULT_DEPS: BuilderDeps = {
@@ -144,12 +147,14 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
     return 2;
   }
   const lockPath = heavyLockPath(deps.cwd());
+  const slotDir = deps.heavySlotDir?.() ?? heavySlotDir();
   const started = Date.now();
-  const held = await acquireFileLockWithin(lockPath, {
-    waitMs: waitS * 1000, staleMs: HEAVY_LOCK_STALE_MS, pollMs: 1000, verifyPidLiveness: true,
-  });
+  const held = await acquireHeavy(deps.cwd(), { waitMs: waitS * 1000, slotDir, repoLock: lockPath });
   if (!held) {
-    deps.printErr(`builder heavy: the heavy lock is held by ${holderOf(lockPath, deps.ps)} and stayed busy for ${waitS}s; NOTHING ran. Run the same command again.`);
+    const machineFull = heavySlotsHeld(slotDir) >= HEAVY_MACHINE_SLOTS;
+    deps.printErr(machineFull
+      ? `builder heavy: all ${HEAVY_MACHINE_SLOTS} heavy slots of this machine stayed busy for ${waitS}s (other repos' checks); NOTHING ran. Run the same command again.`
+      : `builder heavy: the heavy lock is held by ${holderOf(lockPath, deps.ps)} and stayed busy for ${waitS}s; NOTHING ran. Run the same command again.`);
     return HEAVY_LOCK_BUSY_EXIT;
   }
   const waited = Math.round((Date.now() - started) / 1000);
@@ -164,7 +169,7 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
     const done = (code: number) => {
       process.off('SIGTERM', onTerm);
       process.off('SIGINT', onInt);
-      releaseFileLock(lockPath);
+      held.release();
       resolveExit(code);
     };
     child.on('error', (err) => {
@@ -190,7 +195,7 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .command('heavy')
     .argument('<command...>', 'The check to run, after --')
     .option('--max-wait <seconds>', `How long to wait for the lock (default ${HEAVY_DEFAULT_WAIT_S})`)
-    .description(`Run a type-check or test run holding this repo's heavy lock, one at a time across builders (exit: the command's, or ${HEAVY_LOCK_BUSY_EXIT} = lock busy, nothing ran)`)
+    .description(`Run a type-check, build or test run holding this repo's heavy lock and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together), one at a time per repo (exit: the command's, or ${HEAVY_LOCK_BUSY_EXIT} = busy, nothing ran)`)
     .action(async (command: string[], opts: { maxWait?: string }) => {
       process.exitCode = await builderHeavy(deps, command, opts);
     });

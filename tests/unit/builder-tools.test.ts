@@ -130,7 +130,7 @@ describe('builder commands (real processes, a scratch dir outside git)', () => {
     dir = mkdtempSync(join(tmpdir(), 'dc-builder-'));
     out = [];
     err = [];
-    deps = { cwd: () => dir, print: (l) => out.push(l), printErr: (l) => err.push(l), ps: () => '', kill: () => {} };
+    deps = { cwd: () => dir, print: (l) => out.push(l), printErr: (l) => err.push(l), ps: () => '', kill: () => {}, heavySlotDir: () => join(dir, 'heavy') };
   });
   afterEach(() => {
     releaseFileLock(heavyLockPath(dir, () => null));

@@ -1,4 +1,5 @@
 import { scrubSpawnEnv } from '../../src/lib/session-origin.js';
+import { setCapacityFactsForTests } from '../../src/lib/super/capacity.js';
 
 // The suite must score sessions the same whether a human or a spawned builder runs `npm test`.
 //
@@ -13,3 +14,10 @@ import { scrubSpawnEnv } from '../../src/lib/session-origin.js';
 //    the test (the same mechanism as tests/integration/hook.test.ts's explicit SERVER_PID).
 scrubSpawnEnv(process.env);
 process.env.DREAMCONTEXT_SERVER_PID = String(process.pid);
+
+// 3. `super delegate` holds a job when THIS machine is short of room (orchestration plan r5 D11).
+//    The suite must not pass or fail by the developer's swap: every test sees a roomy machine
+//    unless it sets its own facts (`setCapacityFactsForTests`), or injects readers.
+setCapacityFactsForTests({
+  availMemGb: 12, diskFreeGb: 200, load1: 1, totalMemGb: 32, swapUsedGb: 0, swapTotalGb: 4, claudeSessions: 1, heavySteps: 0,
+});

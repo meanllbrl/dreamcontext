@@ -18,7 +18,7 @@ import { runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } fro
 import * as queue from './chat/chatQueue';
 import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
-import { superEventText } from './super/superHandover';
+import { leanMcpParam, superEventText } from './super/superHandover';
 import { createChildAlarmGate } from './super/childAlarm';
 
 /**
@@ -925,6 +925,9 @@ export function createChatSession(
    *  automatic restore (adopt a detached chat, never evict another screen); '1' = an explicit tap
    *  that takes the chat from whichever screen holds it ("Mac'te açık" in the drawer). */
   reattach: '' | typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = '',
+  /** A Super Agent's delegated child (orchestration plan r5 D14): `--strict-mcp-config` and only
+   *  these of the user's MCP servers ([] = none). Null = every other chat, its URL unchanged. */
+  leanMcp: readonly string[] | null = null,
 ): ChatSession {
   const id = `chat-${++chatSessionSeq}`;
   const container = document.createElement('div');
@@ -965,6 +968,8 @@ export function createChatSession(
   // The agent this Chat tab speaks as, on BOTH URLs for the same reason. Never beside a card.
   const agent = card ? '' : chatAgentFor(claudeId);
   const agentParam = agent ? `&chatAgent=${encodeURIComponent(agent)}` : '';
+  // On BOTH URLs too: a reconnect that respawns a lean child must respawn it lean.
+  const leanParam = leanMcpParam(leanMcp);
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -974,7 +979,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${leanParam}`;
   /** The reconnect after a DROPPED socket: the same conversation, `reattach` so the server
    *  adopts the live child instead of spawning a twin — PASSIVE, because it is automatic: a
    *  live screen holding the chat is never evicted by it (the server answers 4409 instead).
@@ -983,7 +988,7 @@ export function createChatSession(
    *  a live permission switch may have moved it. */
   const reconnectUrl = (how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=${how}`
-    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}`;
+    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${leanParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
 

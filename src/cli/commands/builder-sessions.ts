@@ -43,7 +43,7 @@ import {
   type SessionMode,
   type SessionRecord,
 } from '../../lib/builder-spawn.js';
-import { HEAVY_DEFAULT_WAIT_S, HEAVY_LOCK_BUSY_EXIT, heavyLockPath, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
+import { HEAVY_DEFAULT_WAIT_S, HEAVY_LOCK_BUSY_EXIT, acquireHeavy, heavySlotDir, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
 import {
   ownerOf,
   parseTestReport,
@@ -124,8 +124,8 @@ function launchDetached(argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv
 }
 
 async function runCheckLocked(argv: string[], cwd: string, logFile: string): Promise<number | null> {
-  const lock = heavyLockPath(cwd);
-  const held = await acquireFileLockWithin(lock, { waitMs: HEAVY_DEFAULT_WAIT_S * 1000, staleMs: 5_000, pollMs: 1000, verifyPidLiveness: true });
+  // The repo's heavy lock, then one of the machine's heavy slots (plan r5 D12).
+  const held = await acquireHeavy(cwd, { waitMs: HEAVY_DEFAULT_WAIT_S * 1000, slotDir: heavySlotDir() });
   if (!held) return null;
   const fd = openSync(logFile, 'w');
   try {
@@ -136,7 +136,7 @@ async function runCheckLocked(argv: string[], cwd: string, logFile: string): Pro
     });
   } finally {
     closeSync(fd);
-    releaseFileLock(lock);
+    held.release();
   }
 }
 

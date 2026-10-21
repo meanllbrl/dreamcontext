@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { recordNotification } from '../lib/notification-log.js';
+import { isDelegatedSuperChild } from '../lib/super/store.js';
 import {
   SOFT_AVAIL_MEM_GB, SOFT_DISK_GB, SOFT_SWAP_SHARE,
   machineRoom, readCapacityFactsFresh, type CapacityFacts, type MachineLimit, type MachineRoom,
@@ -391,11 +392,30 @@ function candidateOf(p: Parkable): ParkCandidate {
   };
 }
 
+/** A delegated Super Agent child idle this long after its turn ended is parked (D13). */
+export const DONE_CHILD_IDLE_MS = 10 * 60_000;
+
+async function parkDoneChildren(now: number): Promise<string[]> {
+  const out: string[] = [];
+  for (const p of [...parkables.values()]) {
+    if (p.kind !== 'chat' || !isDelegatedSuperChild(p.id)) continue;
+    if (keepReason(candidateOf(p), DONE_CHILD_IDLE_MS, now, parkFocusGraceMs())) continue;
+    const outcome = await parkChat(p.id, 'super-done').catch((): ParkOutcome => 'refused');
+    if (outcome === 'parked' || outcome === 'drained') out.push(p.id);
+  }
+  return out;
+}
+
 /** One sweep. Exported for tests (with injected deps) and the verify route. */
 export async function sweepOnce(deps: SweepDeps = sweepDeps ?? defaultSweepDeps()): Promise<{ parked: string[]; pressure: ParkPressure | null }> {
   if (sweeping || parkables.size === 0) return { parked: [], pressure: null };
   sweeping = true;
   try {
+    // The done-child backstop (orchestration plan r5 D13): a Super Agent's DELEGATED child idle
+    // this long has handed in its result; it is parked whatever the load, by the same primitive
+    // (so this, the pressure policy and `super end` never fight). Not behind the load switch:
+    // it is the super's own housekeeping, not the owner's "park under load" setting.
+    await parkDoneChildren(deps.now());
     if (!deps.enabled()) return { parked: [], pressure: null };
     const facts = await deps.readFacts();
     const forced = forcedPressure();

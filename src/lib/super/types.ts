@@ -130,6 +130,9 @@ export interface SuperChild {
   mode?: string;
   model?: string;
   effort?: string;
+  /** The MCP servers it was started with (`delegate --mcp`, plan r5 D14): a delegated child
+   *  runs lean, with only these; Resume keeps the same set. */
+  mcp?: string[];
   /** `super end` closed it (epoch ms): no process, no tab, no card; the transcript stays and
    *  `super resume` reopens it (which clears this). Absent = a child that may be running. */
   endedAt?: number;
@@ -251,7 +254,8 @@ export interface SuperPoolItem {
   worktree?: string;
   slug?: string;
   base?: string;
-  /** Kept because `delegate` hit the cap. */
+  mcp?: string[];
+  /** Kept because `delegate` hit the cap (or the machine had no room). */
   held?: boolean;
   /** A `delegate --from` went unconfirmed: the child may be running. */
   maybeStarted?: boolean;

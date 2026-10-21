@@ -415,12 +415,11 @@ export const SUPER_ORCHESTRATION_GUIDE_PATH = '.claude/skills/dreamcontext/refer
 
 /**
  * The orchestration guide the Super Agent reads before it splits work (plan r4 D20): an absolute
- * path, or one relative to the project root, e.g. {@link SUPER_ORCHESTRATION_GUIDE_PATH}. `null`
- * until every verb the guide names exists (`delegate --mcp` does not yet); while `null` the
- * briefing carries NO bullet about it (no dead reference ships). A constant in code, never user
- * or child text.
+ * path, or one relative to the project root. Set to the installed copy now that every verb the
+ * guide names exists (orchestration plan r5 D1); `null` would drop the bullet. A constant in
+ * code, never user or child text.
  */
-export const SUPER_ORCHESTRATION_GUIDE: string | null = null;
+export const SUPER_ORCHESTRATION_GUIDE: string | null = SUPER_ORCHESTRATION_GUIDE_PATH;
 
 /** The guide's one bullet, first in "Lead, do not do"; '' while there is no guide. */
 function orchestrationBullet(guide: string | null): string {
@@ -461,7 +460,8 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   \`git push\` and never merge into the default branch yourself (the owner does).
 - At most 8 children run at once; beyond that \`delegate\` answers \`held\` and keeps the job in
   the pool. Later work: \`super pool add\`; a slot frees: \`super delegate --from <id>\` (check
-  \`super state\` first). With availMemGb < 2, diskFreeGb < 10 or light mode on, ask the owner first.
+  \`super state\` first). No room on the machine: \`held\`, reason machine; end idle
+  children, tell the owner once, never retry.
 - Keep each row's line true (doing / next): \`dreamcontext super brief <child> "<line>"\`; with 3
   or more jobs, set every row in your first turn and update each row an event touches.
 - Your own question to him: \`dreamcontext super ask "<question>" --options "a|b"\`.

@@ -689,7 +689,7 @@
     },
     {
       "path": "builder heavy",
-      "desc": "Run a type-check or test run holding this repo's heavy lock, one at a time across builders (exit: the command's, or 75 = lock busy, nothing ran)",
+      "desc": "Run a type-check, build or test run holding this repo's heavy lock and one of the machine's 2 heavy slots (every repo together), one at a time per repo (exit: the command's, or 75 = busy, nothing ran)",
       "args": [
         "<command...>"
       ],
@@ -3102,7 +3102,7 @@
     },
     {
       "path": "super delegate",
-      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap the job is kept in the pool",
+      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap, or when this machine has no room (`held`, reason machine), the job is kept in the pool",
       "args": [],
       "valueFlags": [
         "--prompt",
@@ -3115,7 +3115,8 @@
         "--worktree",
         "--slug",
         "--base",
-        "--task"
+        "--task",
+        "--mcp"
       ]
     },
     {
@@ -3192,7 +3193,8 @@
         "--worktree",
         "--slug",
         "--base",
-        "--task"
+        "--task",
+        "--mcp"
       ]
     },
     {

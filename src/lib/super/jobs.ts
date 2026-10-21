@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { sanitizeModel } from '../claude-args.js';
 import { MAX_BRIEF, MAX_TITLE, SUPER_SLUG_RE, TASK_SLUG_RE } from './types.js';
+import { parseMcpNames } from './lean-mcp.js';
 
 /**
  * One job as `super delegate`, `super pool add` and `delegate --from` take it (plan r4 D9): ONE
@@ -27,6 +28,9 @@ export interface Job {
   slug?: string;
   base?: string;
   task?: string;
+  /** The user's MCP servers this child may use (`--mcp a,b`, orchestration plan r5 D14); a
+   *  delegated child gets ONLY these. Syntax here; existence is the route's (it needs the vault). */
+  mcp?: string[];
 }
 
 // eslint-disable-next-line no-control-regex
@@ -62,6 +66,8 @@ export function parseJob(b: Record<string, unknown>): { job: Job } | { error: st
   if (base && (!BASE_RE.test(base) || base.startsWith('-') || base.includes('..'))) return { error: 'base must be a branch, tag or commit' };
   const task = str(b.task);
   if (task && !TASK_SLUG_RE.test(task)) return { error: 'task is a task slug (a-z, 0-9, -)' };
+  const mcp = parseMcpNames(b.mcp);
+  if ('error' in mcp) return { error: mcp.error };
   const brief = oneLine(str(b.brief) ?? '').slice(0, MAX_BRIEF);
   const title = (brief || firstLine(prompt, 60)).slice(0, MAX_TITLE);
   return {
@@ -70,6 +76,7 @@ export function parseJob(b: Record<string, unknown>): { job: Job } | { error: st
       ...(model ? { model } : {}), ...(effort ? { effort } : {}),
       ...(worktree ? { worktree } : {}), ...(slug ? { slug } : {}), ...(base ? { base } : {}),
       ...(task ? { task } : {}),
+      ...(mcp.names.length ? { mcp: mcp.names } : {}),
     },
   };
 }
