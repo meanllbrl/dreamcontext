@@ -24,6 +24,8 @@ describe('the briefing carries the jarvis sections and its revision', () => {
       // Owner, 2026-10-21 (eval): never name the items, and a full stage is still two sentences.
       expect(t).toContain('never name them in a sentence either, not even\n  three');
       expect(t).toContain('do not tell what you\n  moved to make room');
+      // 2026-10-21 (eval re-run): the one real full-stage miss named Others and said "nothing closed".
+      expect(t).toContain('never name or count what went to Others, never say that nothing was\n  closed');
     }
     expect(SUPER_BRIEF_TEXT.startsWith('<')).toBe(true);
     expect(OWNER_VOICE_TEXT.startsWith('<')).toBe(true);

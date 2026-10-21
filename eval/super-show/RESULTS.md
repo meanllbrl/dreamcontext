@@ -57,3 +57,13 @@ Total cost $10.95 across 25 runs. PASS: `görevlerimi göster` 5/5, `açık işl
 ### 2026-10-21 re-run summary (claude-sonnet-5-5 / medium, the two failing prompts, 5 runs each)
 
 Changes before it: the reader takes the LAST assistant text of the prompt's turn (up to the next owner message or event chip), and the briefing's "Show, don't tell" says never to name the items, not even three, and that a full stage is still two sentences without telling what was moved. Total cost $3.36. `insight'ları göster` 4/5 PASS. Full stage `görevlerimi göster` 3/5 FAIL: one real miss (a third sentence, "Hiçbir kartı kapatmadım", after naming the stacked cards), and two runs (insights #2, full stage #5) where the reader got the HAND-OVER turn's reply ("Chat 1 is idle … I updated its card reminder") instead of the prompt's, i.e. the hand-over turn had not finished when the prompt was sent; those two are harness misses, not model answers. Most full-stage replies still mention what went to Others, inside two sentences. AC11b is still not met; stopped here per the owner.
+
+## 2026-10-21 — model: claude-sonnet-5-5 / medium, runs per prompt: 5, threshold 4/5, total cost $1.89
+
+| prompt | text | passed | verdict | cost |
+|---|---|---|---|---|
+| tasks-full-stage | `görevlerimi göster` | 5/5 | PASS | $1.89 |
+
+### 2026-10-21 full-stage re-run summary (claude-sonnet-5-5 / medium, 5 runs)
+
+Changes before it: the runner waits for the hand-over turn's OWN reply (an assistant text after its event chip, the centre idle across three looks a second apart) before typing the prompt, and reads the prompt's turn the same way. The briefing's full-stage rule now also says never to name or count what went to Others and never to say that nothing was closed. Result: `görevlerimi göster` on a full stage 5/5 PASS, $1.89. Every run opened all 5 open tasks in one group, no finished task, closed no card; one reply (#4) still said in its second sentence that old cards went to Others (within two sentences, so a PASS). No harness misses. The other four prompts were not re-run on this briefing: tasks-tr, open-work-tr and tasks-en passed 5/5 on Opus 5.5, insights-tr 4/5 on Sonnet 5.5 / medium.

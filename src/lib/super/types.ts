@@ -382,8 +382,9 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   'Tasks'"). Stage full (409 too_many_containers): first \`super stack\` finished or idle
   cards into Others, then open. Never close a card to make room and never skip an item. A full
   stage changes nothing in the reply: still at most two sentences, and do not tell what you
-  moved to make room. Only when the record itself is full, open what fits and say in one
-  sentence how many did not.
+  moved to make room: never name or count what went to Others, never say that nothing was
+  closed. Only when the record itself is full, open what fits and say in one sentence how
+  many did not.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
 - The owner has to decide something visual (a mockup, a layout): open the options as cards
   (png, svg, html, a board), \`super present <card…>\`, then ask with AskUserQuestion; after his

@@ -103,6 +103,27 @@ const until = async (page, fn, ms) => {
   for (const end = Date.now() + ms; Date.now() < end;) { if (await fn().catch(() => false)) return true; await page.waitForTimeout(500); }
   return false;
 };
+// Has the turn that starts at the LAST node matching `startSel` (optionally containing `text`)
+// written its reply, with the centre idle? The reply is an assistant body after that node; the
+// centre must stay idle across three looks a second apart, so a turn that has not started yet
+// (idle between the event and its first token) is not mistaken for a settled one.
+const replied = (page, startSel, text) => page.evaluate(({ startSel, text }) => {
+  const root = document.querySelector('.super-centre');
+  if (!root || root.getAttribute('data-status') !== 'idle') return false;
+  const nodes = [...root.querySelectorAll(`${startSel}, .chat-msg-assistant-body`)];
+  let at = -1;
+  nodes.forEach((n, i) => { if (n.matches(startSel) && (!text || (n.textContent ?? '').includes(text))) at = i; });
+  return at >= 0 && nodes.slice(at + 1).some((n) => n.classList.contains('chat-msg-assistant-body') && (n.innerText ?? '').trim());
+}, { startSel, text });
+async function settled(page, startSel, text, ms) {
+  for (const end = Date.now() + ms; Date.now() < end;) {
+    let ok = true;
+    for (let i = 0; i < 3 && ok; i++) { ok = await replied(page, startSel, text).catch(() => false); if (ok) await page.waitForTimeout(1000); }
+    if (ok) return true;
+    await page.waitForTimeout(500);
+  }
+  return false;
+}
 const recordOf = (run) => { try { return JSON.parse(readFileSync(join(run.proj, '_dream_context', 'state', '.super-agent.json'), 'utf-8')); } catch { return null; } };
 
 async function once(pw, prompt, n) {
@@ -152,8 +173,9 @@ async function once(pw, prompt, n) {
     // The hand-over event turn first (its chip drawn, the super chat settled), so the prompt's
     // turn is not interleaved with it.
     await until(page, async () => (await page.locator('[data-testid="super-event-chip"]').count()) > 0, 180000);
-    await page.waitForTimeout(3000);
-    await until(page, async () => (await page.locator('.super-centre[data-status="idle"]').count()) > 0, 180000);
+    // Wait for the hand-over turn's OWN reply (not only its chip): a prompt sent before it lands
+    // is read as that turn's answer (2026-10-21 re-run: two harness misses).
+    if (!(await settled(page, '[data-testid="super-event-chip"]', '', 300000))) throw new Error('the hand-over turn never replied');
     await page.waitForTimeout(2000);
     let preOpen = [];
     if (prompt.capacity) {
@@ -169,7 +191,7 @@ async function once(pw, prompt, n) {
     await input.fill(prompt.text);
     await page.keyboard.press('Enter');
     await page.waitForTimeout(4000);
-    await until(page, async () => (await page.locator('.super-centre[data-status="idle"]').count()) > 0, 300000);
+    await settled(page, '.chat-msg-user-row', prompt.text, 300000);
     await page.waitForTimeout(2000);
     // The reply to THIS prompt: the assistant text right after the prompt's bubble in the centre
     // (an event turn's reply, e.g. the hand-over's, can land before or after it).
