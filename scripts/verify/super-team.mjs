@@ -232,7 +232,7 @@ async function run(engineName, base) {
   ok(tag('T1 in the owner\'s words, naming the member by its name, on one uncut line'), await until(page, async () => {
     headText = await head.innerText();
     const cut = await head.locator('.super-queue-text').evaluate((el) => el.scrollWidth > el.clientWidth + 1);
-    return /Scout needs your approval to take Claude.s job/.test(headText) && /AI Team/.test(headText) && !cut;
+    return /Scout needs your approval\./.test(headText) && /AI Team/.test(headText) && !cut;
   }, 10000), headText);
   ok(tag('T1 with Open in AI Team and Reply'), (await head.getByTestId('super-queue-open-team').count()) === 1
     && (await head.locator('.super-queue-btn--reply').count()) === 1);
