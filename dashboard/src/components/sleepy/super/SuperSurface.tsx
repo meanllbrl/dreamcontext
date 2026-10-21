@@ -271,12 +271,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const batchKey = state.ownerBatches.join(',');
   const titleForRef = useRef(props.titleFor);
   titleForRef.current = props.titleFor;
+  // Published once the stage has landed, never mid-flight: a change re-renders the centre's
+  // transcript, which must not cost a frame of the hand-over. Kept across a take-back (only the
+  // super session's own chat reads it), so the next hand-over re-renders nothing.
   useEffect(() => {
-    if (!superId) return undefined;
+    if (!superId || motion === 'running') return;
     publishSuperEventContext(superId, { ownerBatches: state.ownerBatches, titleFor: (c) => titleForRef.current(c) }, `${batchKey}\u0002${titleKey}`);
-    return undefined;
-  }, [superId, batchKey, titleKey, state.ownerBatches]);
-  useEffect(() => (superId ? () => publishSuperEventContext(superId, null) : undefined), [superId]);
+  }, [superId, batchKey, titleKey, state.ownerBatches, motion]);
   // The job bar reads the same record and the children's live sessions (0 requests).
   const jobLook: JobLook = {
     live: (sid) => { const cs = props.sessionFor(sid); return cs ? chatStatus(cs).kind : null; },
