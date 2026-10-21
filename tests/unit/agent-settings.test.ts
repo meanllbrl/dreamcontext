@@ -37,6 +37,7 @@ import {
 } from '../../dashboard/src/lib/agentSettings.js';
 import { coerceAgentSettings as coerceServerAgentSettings } from '../../src/server/routes/launcher.js';
 import { SCOPE_PREFIX } from '../../dashboard/src/lib/scopedStorage.js';
+import { SUPER_AGENT_DEFAULT } from '../../src/lib/model-facts.js';
 
 function makeLocalStorageStub(): Storage {
   const store = new Map<string, string>();
@@ -96,6 +97,42 @@ describe('superAgent (Settings → Chat → Super Agent)', () => {
     for (const [input, want] of table) {
       expect(coerceAgentSettings({ superAgent: input as never }).superAgent).toBe(want);
       expect(coerceServerAgentSettings({ superAgent: input }).superAgent).toBe(want);
+    }
+  });
+});
+
+describe('superModel / superEffort (the Super Agent session opens on Opus · high)', () => {
+  it('defaults to SUPER_AGENT_DEFAULT on both sides (the dashboard mirror is pinned to model-facts)', () => {
+    expect(SUPER_AGENT_DEFAULT).toEqual({ model: 'opus', effort: 'high' });
+    expect(DEFAULT_AGENT_SETTINGS.superModel).toBe(SUPER_AGENT_DEFAULT.model);
+    expect(DEFAULT_AGENT_SETTINGS.superEffort).toBe(SUPER_AGENT_DEFAULT.effort);
+    for (const blob of [{}, { superModel: '', superEffort: 'turbo' }, { superModel: 'a b;rm' }]) {
+      expect(coerceAgentSettings(blob as never)).toMatchObject({ superModel: 'opus', superEffort: 'high' });
+      expect(coerceServerAgentSettings(blob)).toMatchObject({ superModel: 'opus', superEffort: 'high' });
+    }
+    expect(coerceAgentSettings(null)).toMatchObject({ superModel: 'opus', superEffort: 'high' });
+  });
+
+  it('never overrides a saved pick, on either side, including the old Sonnet · medium pair', () => {
+    for (const saved of [{ superModel: 'sonnet', superEffort: 'medium' }, { superModel: 'haiku', superEffort: 'low' }, { superModel: 'claude-fable-5-1', superEffort: 'max' }]) {
+      expect(coerceAgentSettings(saved)).toMatchObject(saved);
+      expect(coerceServerAgentSettings(saved)).toMatchObject(saved);
+    }
+  });
+
+  it('leaves the chat default alone: a fresh blob still inherits the CLI for ordinary chats', () => {
+    expect(coerceAgentSettings({})).toMatchObject({ chatDefaultModel: '', chatDefaultEffort: '' });
+    expect(coerceServerAgentSettings({})).toMatchObject({ chatDefaultModel: '', chatDefaultEffort: '' });
+  });
+});
+
+describe('readAloud (the speech switch, persisted so a relaunch keeps it)', () => {
+  it('runs one input table through BOTH coercers: OFF by default, only an explicit true turns it on', () => {
+    expect(DEFAULT_AGENT_SETTINGS.readAloud).toBe(false);
+    const table: Array<[unknown, boolean]> = [[true, true], [false, false], ['true', false], [1, false], [null, false], [undefined, false]];
+    for (const [input, want] of table) {
+      expect(coerceAgentSettings({ readAloud: input as never }).readAloud).toBe(want);
+      expect(coerceServerAgentSettings({ readAloud: input }).readAloud).toBe(want);
     }
   });
 });

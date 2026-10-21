@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
-import { useVoiceCapture, PHONE_MAX_TAKE_MS } from '../../../lib/voice/useVoiceCapture';
+import { useVoiceCapture, PHONE_MAX_TAKE_MS, STT_RETRIES } from '../../../lib/voice/useVoiceCapture';
 import { publishVoiceActivity, publishVoiceLevel } from '../../../lib/voice/voiceActivity';
 import { VoiceMeter } from './VoiceMeter';
 import {
@@ -8,16 +8,20 @@ import {
 } from '../../../lib/voice/hotkey';
 import { voicePrefs, refreshVoicePrefs, onVoicePrefs } from '../../../lib/voice/voicePrefs';
 import { onSpeechMuted } from '../../../lib/voice/audioFocus';
-import { readAloudEnabled, setReadAloud, onReadAloud } from '../../../lib/voice/readAloud';
+import { readAloudEnabled, onReadAloud } from '../../../lib/voice/readAloud';
+import { toggleReadAloud, wireReadAloudPersistence } from '../../../lib/voice/readAloudPersist';
 
 /** The exact text of the unspoken-answer notice, named so it can be RETRACTED without
  *  clobbering an unrelated message sharing the same row. */
-const SPEECH_MUTED_NOTICE = 'Another window was speaking — this answer was not read aloud.';
+/** The voice row's notices are i18n KEYS (`voice.note.*`), drawn through `t()`. */
+const SPEECH_MUTED_NOTICE = 'voice.note.muted';
+const ADDED_TO_DRAFT_NOTICE = 'voice.note.added';
 import { registerPushToTalk, ownsPushToTalk } from '../../../lib/voice/pushToTalkScope';
 import { onExternalPushToTalk, pushToTalkAction } from '../../../lib/voice/externalPushToTalk';
 import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
 import { useVault } from '../../../context/VaultContext';
+import { useI18n } from '../../../context/I18nContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
@@ -669,6 +673,7 @@ export function Composer({
   // with several projects live in one window the bytes would otherwise land in the temp dir of
   // whichever chip the user last touched.
   const { vault } = useVault();
+  const { t } = useI18n();
   // Re-read on every render (the pane re-renders on every applied event — see ChatPane): this
   // is the live conversation model, not a snapshot.
   const conv = session.getModel();
@@ -1293,6 +1298,7 @@ export function Composer({
   const [readAloud, setReadAloudState] = useState(readAloudEnabled);
   useEffect(() => {
     if (!voiceEnabled) return;
+    wireReadAloudPersistence();
     setReadAloudState(readAloudEnabled());
     return onReadAloud((on) => {
       setReadAloudState(on);
@@ -1352,7 +1358,7 @@ export function Composer({
     setDraft(next);
     session.syncDraft(next);
     if (!untouched) {
-      setVoiceNotice('Added to what you typed — press send when it reads right.');
+      setVoiceNotice(ADDED_TO_DRAFT_NOTICE);
       return;
     }
     setVoiceSubmitTick((n) => n + 1);
@@ -1419,6 +1425,17 @@ export function Composer({
    *  a listener rebuilt mid-take would be re-registered while the key is still down. */
   const voiceStateRef = useRef(voice.state);
   voiceStateRef.current = voice.state;
+
+  /** A tap instead of a hold: the mic gives a short nudge (and a buzz where the device has one)
+   *  instead of a sentence telling the owner off. Motion is skipped under reduced motion. */
+  const [micNudge, setMicNudge] = useState(false);
+  useEffect(() => {
+    if (voice.state !== 'too-short') { setMicNudge(false); return; }
+    setMicNudge(true);
+    try { navigator.vibrate?.(30); } catch { /* no vibration motor */ }
+    const id = window.setTimeout(() => setMicNudge(false), 420);
+    return () => window.clearTimeout(id);
+  }, [voice.state]);
 
   useEffect(() => {
     if (voiceSubmitTick > 0) {
@@ -2052,7 +2069,7 @@ export function Composer({
               aria-label="Stop reading aloud"
             >
               <HushIcon />
-              <span>Hush</span>
+              <span>{t('voice.hush')}</span>
             </button>
             {/* The rate, WHERE IT APPLIES. It is a Settings row the rest of the time, and it
                 spent weeks doing nothing at all without anything on screen to contradict it.
@@ -2119,13 +2136,42 @@ export function Composer({
             otherwise have left "not this turn, the next one" with no way to say it at all.
             Both text buttons appear only once there is something to send, so an idle-handed
             Stop stays the single obvious control. */}
+        {/* THE VOICE LINE: two to four words, one line, cut with an ellipsis — never a sentence
+            (owner, 2026-10-21: the long ones overflowed the narrow composer). What it does not
+            say, the mic's `title` does. It sits LEFT of the mic on purpose: its width changes
+            with every state, and on the mic's right it slid the button out from under a
+            holding pointer the moment a take began (pointerleave ended the take, which then
+            read as "that was a tap"). On this side only the model trigger moves.
+            Resting, it names the binding ("Shift+V to talk") and a narrow pane drops it
+            (`data-rest`); the phone's mic needs no caption. */}
+        {voiceEnabled && !voiceNotice && voice.state !== 'error' && voice.state !== 'unconfigured'
+          && !(phoneVoice && voice.state === 'idle') && (
+          <span className="chat-cmp-voice-note is-idle" data-rest={voice.state === 'idle' ? '' : undefined}>
+            {voice.state === 'recording' ? t('voice.note.listening')
+              : voice.state === 'transcribing'
+                ? (voice.attempt > 0 ? t('voice.note.retry').replace('{n}', String(voice.attempt)).replace('{max}', String(STT_RETRIES)) : t('voice.note.transcribing'))
+                : voice.state === 'too-short' ? t('voice.note.tap')
+                  : voice.state === 'silent' ? t('voice.note.silent')
+                    : t('voice.note.rest').replace('{key}', hotkeyLabel(pushToTalk))}
+          </span>
+        )}
+        {voiceEnabled && (voiceNotice || voice.state === 'error' || voice.state === 'unconfigured') && (
+          // Said in the row rather than only in a tooltip: a take that was refused looks
+          // exactly like one that was never recorded, and the owner needs to know which. The
+          // full reason rides on `title`.
+          <span className="chat-cmp-voice-note" title={voiceNotice ? undefined : voice.error || undefined}>
+            {voiceNotice ? t(voiceNotice)
+              : voice.state === 'unconfigured' ? t('voice.note.unconfigured')
+                : t('voice.note.error')}
+          </span>
+        )}
         {/* Push-to-talk. Hold it, speak, let go — see `useVoiceCapture` for why the take is
-            gated on duration and RMS before a single byte is uploaded. Only in assistant
-            mode and only on the desktop (AC15). */}
+            gated on duration and RMS before a single byte is uploaded. A tap (too short) nudges
+            the button and, where the device can, buzzes once: the word beside it is one word. */}
         {voiceEnabled && (
           <button
             type="button"
-            className={`chat-cmp-send chat-cmp-mic${voice.state === 'recording' ? ' is-recording' : ''}`}
+            className={`chat-cmp-send chat-cmp-mic${voice.state === 'recording' ? ' is-recording' : ''}${micNudge ? ' is-nudged' : ''}`}
             // `onPointerDown`/`onPointerUp`, not `onClick`: press-and-hold has no click.
             // `onPointerLeave` and `onPointerCancel` close the take when the finger slides off
             // the button or the OS takes the pointer away, so the recorder cannot be left open
@@ -2141,7 +2187,7 @@ export function Composer({
             title={
               voice.state === 'recording' ? `Recording — ${voice.elapsed}s. Let go to send.`
                 : voice.state === 'transcribing' ? 'Transcribing…'
-                      : voice.state === 'too-short' ? 'That was a tap — hold the button while you speak.'
+                      : voice.state === 'too-short' ? 'Hold the button while you speak.'
                         : voice.state === 'silent' ? 'Nothing was heard in that take.'
                           : voice.state === 'unconfigured' ? (voice.error || 'Dictation is not installed — install it in Settings → Voice.')
                             : voice.state === 'error' ? (voice.error || 'That take did not go through.')
@@ -2155,50 +2201,22 @@ export function Composer({
             {voice.state === 'transcribing' ? <span aria-hidden>…</span> : <MicIcon />}
           </button>
         )}
-        {/* Read aloud, beside the mic it pairs with. A switch, not an action: `aria-pressed`
-            carries the state and the icon draws it (speaker vs speaker struck through). */}
-        {voiceEnabled && mode === 'assistant' && !phoneVoice && (
+        {/* SPOKEN REPLIES, beside the mic it pairs with: the one switch for speech (owner,
+            2026-10-21), shared by the notch and the Super Agent through `lib/voice/readAloud.ts`.
+            Off — the default — nothing is read aloud, not even the answer to a spoken message,
+            and a dictated message goes as text. A switch, not an action: `aria-pressed` carries
+            the state and the icon draws it. Not on the phone: it plays nothing. */}
+        {voiceEnabled && (mode === 'assistant' || mode === 'super') && !phoneVoice && (
           <button
             type="button"
             className="chat-cmp-iconbtn chat-cmp-readaloud"
-            onClick={() => setReadAloud(!readAloud)}
-            title={readAloud ? 'Read replies aloud' : 'Replies are not read aloud'}
-            aria-label="Read replies aloud"
+            onClick={() => toggleReadAloud(!readAloud)}
+            title={readAloud ? t('voice.readAloud.on') : t('voice.readAloud.off')}
+            aria-label={t('voice.readAloud.aria')}
             aria-pressed={readAloud}
           >
             {readAloud ? <SpeakerIcon /> : <HushIcon />}
           </button>
-        )}
-        {/* THE RESTING INSTRUCTION. Without it the mode is a microphone button and a secret:
-            the binding is configurable, so nothing on screen tells the owner whether to HOLD
-            it or PRESS it — and the two are opposites. It says the current binding in the
-            current mode, and gets out of the way the moment anything else has something to
-            report. */}
-        {voiceEnabled && !voiceNotice && voice.state !== 'error'
-          && voice.state !== 'unconfigured' && (
-          <span className="chat-cmp-voice-note is-idle" data-rest={voice.state === 'idle' ? '' : undefined}>
-            {voice.state === 'recording'
-              ? (!phoneVoice && effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
-                ? `Listening — ${hotkeyLabel(pushToTalk)} again to send`
-                : `Listening — let go to send`)
-              : voice.state === 'transcribing' ? (voice.attempt > 0 ? `Transcribing… trying again (${voice.attempt} of 2)` : 'Transcribing…')
-                : voice.state === 'too-short' ? 'That was a tap — keep it down while you speak'
-                  : voice.state === 'silent' ? 'Nothing was heard — try again'
-                    : phoneVoice ? 'Hold the mic to speak'
-                    : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
-                      ? `Press ${hotkeyLabel(pushToTalk)} to speak, again to send`
-                      : `Hold ${hotkeyLabel(pushToTalk)} or the mic to speak`}
-          </span>
-        )}
-        {voiceEnabled && (voiceNotice || voice.state === 'error' || voice.state === 'unconfigured') && (
-          // Said in the row rather than only in a tooltip: a take that was refused looks
-          // exactly like one that was never recorded, and the owner needs to know which.
-          <span className="chat-cmp-voice-note">
-            {voiceNotice
-              || (voice.state === 'too-short' ? 'Hold it while you speak.'
-                : voice.state === 'silent' ? 'Nothing heard.'
-                  : voice.error)}
-          </span>
         )}
         {busy && (
           <button type="button" className="chat-cmp-send is-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => { session.bargeInSpeech?.(); session.interrupt(); }}>

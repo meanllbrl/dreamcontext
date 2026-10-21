@@ -78,6 +78,15 @@ export const MODEL_FACTS: readonly ModelFact[] = Object.freeze([
 
 export const MODEL_ALIASES: readonly ModelFamilyKey[] = MODEL_FACTS.map((m) => m.alias);
 
+/**
+ * The model and effort a Super Agent session opens on when the owner has not picked one (owner,
+ * 2026-10-21: its decisions matter). Its children and the notch Assistant keep their own
+ * defaults. The server's `agent-ui.json` defaults read this; the dashboard mirrors it in
+ * `dashboard/src/lib/agentSettings.ts` (pinned by `tests/unit/agent-settings.test.ts`).
+ */
+export const SUPER_AGENT_DEFAULT: Readonly<{ model: ModelFamilyKey; effort: ModelEffort }> =
+  Object.freeze({ model: 'opus', effort: 'high' });
+
 export function factForFamily(family: string): ModelFact | undefined {
   return MODEL_FACTS.find((m) => m.family === family);
 }

@@ -1069,10 +1069,11 @@ export function createChatSession(
     }
   }
 
-  /** The Super Agent speaks only the answer to a spoken question (K1), and never needs the
-   *  read-aloud switch: asking aloud is the request. */
+  /** The Super Agent speaks only the answer to a spoken question (K1), and only while the
+   *  speech switch is on (owner, 2026-10-21: "sesli konuşma sadece açılınca gelmeli"). Off, the
+   *  text is consumed unspoken: no `/tts`, whatever the server armed. */
   function speakSuperTail(itemId: string, full: string, already: number): void {
-    if (voiceTurn) speech?.push(full.slice(already), itemId);
+    if (voiceTurn && readAloudEnabled()) speech?.push(full.slice(already), itemId);
     spokenChars.set(itemId, full.length);
   }
 
@@ -2200,9 +2201,13 @@ export function createChatSession(
     if (!clean || ws.readyState !== WebSocket.OPEN) return false;
     // Spoken now, or spoken before an account switch restarted this pane (`spokenCarry`).
     const carried = spokenCarry.get(claudeId);
-    const spoken = (spokenNext !== null && spokenNext === clean) || !!carried?.delete(clean);
+    const saidAloud = (spokenNext !== null && spokenNext === clean) || !!carried?.delete(clean);
     if (carried && carried.size === 0) spokenCarry.delete(claudeId);
     spokenNext = null;
+    // A message is SENT spoken only while the speech switch is on, and never from the phone,
+    // which plays nothing. Sent as typed text, the server adds no `<owner-voice>` block and
+    // arms no voice turn, so the reply keeps its usual length and nobody reads it aloud.
+    const spoken = saidAloud && readAloudEnabled() && !isMacPhoneSurface();
     const frame: ClientControl = spoken ? { type: 'user', text: clean, voice: true } : { type: 'user', text: clean };
     try { ws.send(JSON.stringify(frame)); } catch { return false; }
     turnTrace.mark(vault, 'sent');

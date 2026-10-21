@@ -45,6 +45,7 @@ import { resolveAuthors } from '../../lib/people-resolve.js';
 import { today } from '../../lib/id.js';
 import { randomUUID } from 'node:crypto';
 import { isDesktop } from '../desktop.js';
+import { SUPER_AGENT_DEFAULT } from '../../lib/model-facts.js';
 import {
   listGitHubRepos,
   cloneGitHubRepo,
@@ -951,10 +952,14 @@ interface AgentUiSettings {
   superAgent: boolean;
   /** Park idle chats under machine load (default true). */
   parkIdleChats: boolean;
-  /** The Super Agent session's own model and effort (plan r4 D3, D12): `sonnet` / `medium` by
-   *  default, never the chat default. Mirrors dashboard/src/lib/agentSettings. */
+  /** The Super Agent session's own model and effort (plan r4 D3, D12): `SUPER_AGENT_DEFAULT`
+   *  (Opus · high) by default, never the chat default. Mirrors dashboard/src/lib/agentSettings. */
   superModel: string;
   superEffort: string;
+  /** Spoken replies (the composer's speaker switch, `dashboard/src/lib/voice/readAloud.ts`):
+   *  OFF by default, only an explicit `true` turns it on. Kept here because the app's origin
+   *  changes every launch and a localStorage-only switch reset itself on every restart. */
+  readAloud: boolean;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -972,8 +977,9 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   lightMode: 'auto',
   superAgent: false,
   parkIdleChats: true,
-  superModel: 'sonnet',
-  superEffort: 'medium',
+  superModel: SUPER_AGENT_DEFAULT.model,
+  superEffort: SUPER_AGENT_DEFAULT.effort,
+  readAloud: false,
 };
 
 function agentSettingsPath(): string {
@@ -1031,9 +1037,12 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     // (src/server/chat-park.ts reads the same rule straight from the file).
     parkIdleChats: raw.parkIdleChats !== false,
     // The super session's own pair: the spawn gates again, but an unusable value falls back to
-    // the Super Agent's default (Sonnet · medium), never to "inherit".
+    // the Super Agent's default (`SUPER_AGENT_DEFAULT`, Opus · high), never to "inherit". A saved
+    // value is the owner's and is kept as it is.
     superModel: sanitizeModel(typeof raw.superModel === 'string' ? raw.superModel : null) || AGENT_UI_DEFAULTS.superModel,
     superEffort: sanitizeEffort(typeof raw.superEffort === 'string' ? raw.superEffort : null) || AGENT_UI_DEFAULTS.superEffort,
+    // Default-FALSE: speech only when the owner turned it on.
+    readAloud: raw.readAloud === true,
   };
 }
 
