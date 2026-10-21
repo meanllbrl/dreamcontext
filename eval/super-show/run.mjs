@@ -100,6 +100,17 @@ async function once(pw, prompt, n) {
   const browser = await pw.chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+    // Cost and model, read from the chats' own stream: every `result` frame carries its cost.
+    const meter = { cost: 0, models: new Set() };
+    page.on('websocket', (ws) => ws.on('framereceived', (f) => {
+      const t = typeof f.payload === 'string' ? f.payload : '';
+      if (!t.includes('"total_cost_usd"') && !t.includes('"model"')) return;
+      try {
+        const o = JSON.parse(t);
+        if (o.type === 'result' && typeof o.total_cost_usd === 'number') meter.cost += o.total_cost_usd;
+        if (o.type === 'system' && o.subtype === 'init' && typeof o.model === 'string') meter.models.add(o.model);
+      } catch { /* not a frame we read */ }
+    }));
     await page.goto(`http://127.0.0.1:${port}/?vault=acme-app`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(3000);
     const nav = page.locator('aside a, aside button, nav a, nav button').filter({ hasText: /^\s*Chat\s*\d*\s*$/ }).first();
@@ -139,7 +150,7 @@ async function once(pw, prompt, n) {
       { kind: prompt.kind, gold, notGold, titles: gold.map((s) => run.titles[s]), ...(preOpen.length ? { preOpen } : {}) },
       { containers: rec.containers, groups: rec.groups ?? [], answer },
     );
-    return { ...v, answer: answer.slice(0, 400) };
+    return { ...v, answer: answer.slice(0, 400), cost: meter.cost, models: [...meter.models] };
   } finally {
     await browser.close();
     server.kill();
@@ -152,20 +163,26 @@ if (!CLAUDE_BIN) { console.error('no `claude` on the login PATH'); process.exit(
 const pw = await import('@playwright/test');
 const lines = [];
 let allOk = true;
+let cost = 0;
+const models = new Set();
 for (const prompt of GOLD.prompts.filter((p) => !ONLY.length || ONLY.includes(p.id))) {
   let passed = 0;
+  let promptCost = 0;
   for (let n = 1; n <= RUNS; n += 1) {
     let v;
-    try { v = await once(pw, prompt, n); } catch (err) { v = { pass: false, failed: [`crashed: ${err?.message ?? err}`], answer: '' }; }
+    try { v = await once(pw, prompt, n); } catch (err) { v = { pass: false, failed: [`crashed: ${err?.message ?? err}`], answer: '', cost: 0, models: [] }; }
     if (v.pass) passed += 1;
-    console.log(`${prompt.id} #${n}: ${v.pass ? 'PASS' : `FAIL ${v.failed.join('; ')}`}`);
+    cost += v.cost ?? 0;
+    promptCost += v.cost ?? 0;
+    for (const m of v.models ?? []) models.add(m);
+    console.log(`${prompt.id} #${n}: ${v.pass ? 'PASS' : `FAIL ${v.failed.join('; ')}`} ($${(v.cost ?? 0).toFixed(3)}) answer: ${JSON.stringify(v.answer).slice(0, 200)}`);
   }
   const need = Math.min(GOLD.threshold, RUNS);
   if (passed < need) allOk = false;
-  lines.push(`| ${prompt.id} | \`${prompt.text}\` | ${passed}/${RUNS} | ${passed >= need ? 'PASS' : 'FAIL'} |`);
+  lines.push(`| ${prompt.id} | \`${prompt.text}\` | ${passed}/${RUNS} | ${passed >= need ? 'PASS' : 'FAIL'} | $${promptCost.toFixed(2)} |`);
 }
-const model = process.env.EVAL_MODEL || 'the chat default';
-const head = `\n## ${new Date().toISOString().slice(0, 10)} — model: ${model}, runs per prompt: ${RUNS}\n\n| prompt | text | passed | verdict |\n|---|---|---|---|\n`;
+const model = process.env.EVAL_MODEL || [...models].join(', ') || 'the chat default';
+const head = `\n## ${new Date().toISOString().slice(0, 10)} — model: ${model}, runs per prompt: ${RUNS}, threshold ${GOLD.threshold}/${GOLD.runs}, total cost $${cost.toFixed(2)}\n\n| prompt | text | passed | verdict | cost |\n|---|---|---|---|---|\n`;
 appendFileSync(join(HERE, 'RESULTS.md'), head + lines.join('\n') + '\n');
 console.log(`\n${allOk ? 'PASS' : 'FAIL'} (RESULTS.md updated)`);
 process.exit(allOk ? 0 : 1);
