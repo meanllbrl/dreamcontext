@@ -9,7 +9,7 @@ export const MACHINES = {
   // The owner's measurement of 2026-10-20: swap 18.5/21.5 GB, disk 6.7 GB, 1.9 GB free, 25 claude sessions.
   overloaded: {
     totalMemGb: 16, availMemGb: 1.9, diskFreeGb: 6.7, swapUsedGb: 18.5, swapTotalGb: 21.5, claudeSessions: 25, heavySteps: 2, load1: 9.8,
-    notes: ['25 Claude sessions are open on this machine (about 10 fit its RAM)', 'swap is 86 % full (line 75 %)', '6.7 GB disk free (line 8 GB)', '1.9 GB memory free (line 2 GB)'],
+    notes: ['25 Claude processes are running on this machine (about 10 fit its RAM)', 'swap is 86 % full (line 75 %); removing worktrees or files frees disk, not memory', '6.7 GB disk free (line 8 GB)', '1.9 GB memory free (line 2 GB); removing worktrees or files frees disk, not memory'],
   },
 };
 

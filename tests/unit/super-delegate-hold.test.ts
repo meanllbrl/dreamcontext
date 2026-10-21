@@ -25,7 +25,7 @@ import { MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_PROMPT, MAX_QUEUE, emptySuperStat
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
 import {
-  machineNotes, machineRoom, resetCapacityForTests, setCapacityFactsForTests, type CapacityFacts,
+  machineNotes, machineRoom, resetCapacityForTests, setCapacityFactsForTests, setPowerFactsForTests, type CapacityFacts,
 } from '../../src/lib/super/capacity.js';
 import { DEV_SERVER_LINE, handleSuperVerb } from '../../src/server/routes/super.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
@@ -114,10 +114,10 @@ describe('machineRoom on today\'s measurements', () => {
   it('the notes name every line crossed, and nothing about closing sessions', () => {
     const notes = machineNotes(machineRoom(OWNER_READING, { platform: 'darwin' }));
     expect(notes).toEqual([
-      '25 Claude sessions are open on this machine (about 10 fit its RAM)',
-      'swap is 86 % full (line 75 %)',
+      '25 Claude processes are running on this machine (about 10 fit its RAM)',
+      'swap is 86 % full (line 75 %); removing worktrees or files frees disk, not memory',
       '6.7 GB disk free (line 8 GB)',
-      '1.9 GB memory free (line 2 GB)',
+      '1.9 GB memory free (line 2 GB); removing worktrees or files frees disk, not memory',
     ]);
     expect(notes.join(' ')).not.toMatch(/clos/);
   });
@@ -194,6 +194,32 @@ describe('the machine never holds a delegate', () => {
     expect((st.machine as { notes: string[] }).notes).toEqual(machineNotes(machineRoom(OWNER_READING, { lightMode: false })));
     setCapacityFactsForTests(ROOMY);
     expect((result(await verb('state')).machine as { notes: string[] }).notes).toEqual([]);
+  });
+});
+
+describe('the field case (Tilki 2026-10-21): swap 78 % and light mode on', () => {
+  // 16 GB, swap 3.1 of 4 GB (78 %), 8 children starting, Auto light mode switched on by the battery.
+  const TILKI: CapacityFacts = { availMemGb: 6, diskFreeGb: 44, load1: 5.3, totalMemGb: 16, swapUsedGb: 3.1, swapTotalGb: 4, claudeSessions: 2, heavySteps: 0 };
+  afterEach(() => setPowerFactsForTests(null));
+
+  it('delegate starts the child (no machine hold), and state explains light mode without asking for anything', async () => {
+    write();
+    setCapacityFactsForTests(TILKI);
+    setPowerFactsForTests({ onBattery: true, batteryPercent: 18, lowPowerMode: false });
+    mkdirSync(join(process.env.HOME!, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(process.env.HOME!, '.dreamcontext', 'agent-ui.json'), JSON.stringify({ lightMode: 'auto' }));
+    const r = await verb('delegate', { prompt: 'Roll out the coaching rules.', brief: 'coaching', mode: 'basic', model: 'sonnet', effort: 'medium' });
+    expect(r.status).toBe(200);
+    expect(r.json.error).toBeUndefined();
+    expect(commands()).toHaveLength(1);
+    const machine = result(await verb('state')).machine as { notes: string[]; claudeSessions: number; claudeSessionsMeans: string };
+    expect(machine.claudeSessions).toBe(2);
+    expect(machine.claudeSessionsMeans).toMatch(/processes named claude.*not the number of children/);
+    const light = machine.notes.find((n) => n.startsWith('light mode is on'))!;
+    expect(light).toMatch(/Auto turned it on: the Mac runs on battery at 18 %/);
+    expect(light).toMatch(/turns itself off when the Mac is plugged in or charged/);
+    expect(light).toMatch(/nothing needs switching off/);
+    expect(machine.notes.find((n) => n.startsWith('swap is 78 %'))).toMatch(/frees disk, not memory/);
   });
 });
 

@@ -32,8 +32,11 @@ export interface CapacityFacts {
    *  the size right now. */
   swapUsedGb?: number | null;
   swapTotalGb?: number | null;
-  /** Every running process whose command BASENAME is `claude`: app chats, terminal tabs and
-   *  sessions of other projects alike (never the Claude.app helpers). Null when `ps` failed. */
+  /** Running processes whose command BASENAME is `claude`, counted from `ps` (see
+   *  {@link CLAUDE_SESSIONS_MEANS}): app chats, terminal tabs and sessions of other projects, and
+   *  the Super itself, never the Claude.app helpers. NOT a count of this vault's children: a
+   *  child that is `starting`, parked or ended has no process and is not in it. Null when `ps`
+   *  failed. */
   claudeSessions?: number | null;
   /** Machine heavy slots (`builder heavy` / `builder test`, every repo) held right now. */
   heavySteps?: number | null;
@@ -126,6 +129,28 @@ export function countClaudeSessions(psComm: string): number {
     if (comm.slice(comm.lastIndexOf('/') + 1) === 'claude') n += 1;
   }
   return n;
+}
+
+/** What {@link CapacityFacts.claudeSessions} counts, in the words `super state` shows beside it. */
+export const CLAUDE_SESSIONS_MEANS =
+  'running processes named claude on this machine, from ps: every project, terminal tab, app chat and the Super itself; a child that is starting, parked or ended has none, so this is not the number of children';
+
+/**
+ * The count read now, past the 60 s memo of {@link readCapacityFacts}: right after an app restart
+ * the memo still holds the zero read before the first chats spawned (field 2026-10-21: 0 shown
+ * with 2 `claude` processes alive 30 s). `ps` is one cheap call. Null when it failed or is not wired.
+ */
+export async function readClaudeSessionsNow(injected?: Pick<CapacityDeps, 'psComm'>): Promise<number | null> {
+  const psComm = (injected ?? defaultDeps()).psComm;
+  try { return psComm ? countClaudeSessions(await psComm()) : null; } catch { return null; }
+}
+
+/** The facts for `super state`: the memoized ones with the process count read fresh. */
+export async function readCapacityFactsForState(injected?: CapacityDeps): Promise<CapacityFacts> {
+  const facts = await readCapacityFacts(injected);
+  if (factsOverride && !injected) return facts;
+  const fresh = await readClaudeSessionsNow(injected);
+  return fresh === null ? facts : { ...facts, claudeSessions: fresh };
 }
 
 /** The nearest existing directory at or above `path` (statfs needs one that exists). */
@@ -273,30 +298,89 @@ export function machineRoom(facts: CapacityFacts, opts: { lightMode?: boolean; p
 }
 
 /**
- * Is light mode on, as the server can tell (Settings -> Performance, `agent-ui.json`)? `on` is
- * on; `auto` is on for a machine of 8 GB or less (the window also counts battery, which the
- * server cannot see: fail open); `off`, or an unreadable file, is off.
+ * Light mode, as the server can tell it. The rule MIRRORS the app's `computeLightMode`
+ * (dashboard/src/lib/lightMode.ts; a drift test compares them): the setting pins it On or Off;
+ * Auto turns it on for a Mac of 8.5 GB or less, in macOS Low Power Mode, or on battery at 20 %
+ * or below. Without power facts Auto knows only the memory rule (fail open: off).
  */
+export const LIGHT_LOW_MEMORY_GB = 8.5;
+export const LIGHT_LOW_BATTERY_PERCENT = 20;
+export type LightReason = 'setting' | 'ram' | 'battery' | 'low-power';
+export type LightSetting = 'auto' | 'on' | 'off';
+export interface PowerFacts { onBattery?: boolean | null; batteryPercent?: number | null; lowPowerMode?: boolean | null }
+export interface LightMode { on: boolean; reason: LightReason | null; setting: LightSetting; totalMemGb?: number; batteryPercent?: number | null }
+
+export function readLightSetting(home: string = homedir()): LightSetting {
+  try {
+    const mode = (JSON.parse(readFileSync(join(home, '.dreamcontext', 'agent-ui.json'), 'utf-8')) as Record<string, unknown>).lightMode;
+    return mode === 'on' || mode === 'off' ? mode : 'auto';
+  } catch { return 'auto'; }
+}
+
+/** The rule, pure. */
+export function lightModeState(setting: LightSetting, facts: Pick<CapacityFacts, 'totalMemGb'>, power?: PowerFacts | null): LightMode {
+  const base = { setting, ...(typeof facts.totalMemGb === 'number' ? { totalMemGb: facts.totalMemGb } : {}) };
+  if (setting === 'on') return { ...base, on: true, reason: 'setting' };
+  if (setting === 'off') return { ...base, on: false, reason: null };
+  if (typeof facts.totalMemGb === 'number' && facts.totalMemGb > 0 && facts.totalMemGb <= LIGHT_LOW_MEMORY_GB) return { ...base, on: true, reason: 'ram' };
+  if (power?.lowPowerMode === true) return { ...base, on: true, reason: 'low-power' };
+  if (power?.onBattery === true && typeof power.batteryPercent === 'number' && power.batteryPercent <= LIGHT_LOW_BATTERY_PERCENT) {
+    return { ...base, on: true, reason: 'battery', batteryPercent: power.batteryPercent };
+  }
+  return { ...base, on: false, reason: null };
+}
+
+/** Tests only: what the power read answers while the facts are overridden (default: unknown). */
+let powerOverride: PowerFacts | null = null;
+export function setPowerFactsForTests(power: PowerFacts | null): void { powerOverride = power; }
+
+/**
+ * Is light mode on, and why? The power facts (`pmset`) are read only when Auto could still turn
+ * it on by them; under a test override no `pmset` runs.
+ */
+export async function lightModeNow(
+  facts: Pick<CapacityFacts, 'totalMemGb'>,
+  readPower: () => Promise<PowerFacts | null>,
+  home: string = homedir(),
+): Promise<LightMode> {
+  const setting = readLightSetting(home);
+  const bare = lightModeState(setting, facts);
+  if (setting !== 'auto' || bare.on) return bare;
+  let power: PowerFacts | null = null;
+  try { power = factsOverride ? powerOverride : await readPower(); } catch { power = null; }
+  return lightModeState(setting, facts, power);
+}
+
+/** Is light mode on, from the setting and the memory rule alone (no power facts)? */
 export function lightModeOn(facts: Pick<CapacityFacts, 'totalMemGb'>, home: string = homedir()): boolean {
-  let mode: unknown = 'auto';
-  try { mode = (JSON.parse(readFileSync(join(home, '.dreamcontext', 'agent-ui.json'), 'utf-8')) as Record<string, unknown>).lightMode ?? 'auto'; } catch { mode = 'auto'; }
-  if (mode === 'on') return true;
-  if (mode === 'off') return false;
-  return typeof facts.totalMemGb === 'number' && facts.totalMemGb > 0 && facts.totalMemGb <= 8;
+  return lightModeState(readLightSetting(home), facts).on;
+}
+
+/** What light mode is, why it is on and what ends it: a fact for the Super, never a request. */
+export function lightModeNote(light: LightMode): string {
+  const why =
+    light.reason === 'setting' ? 'Settings → Performance is set to On, so it stays on until that setting changes'
+    : light.reason === 'ram' ? `Auto turned it on: this Mac has ${light.totalMemGb} GB RAM (Auto's line is ${LIGHT_LOW_MEMORY_GB} GB), so it stays on while the setting is Auto`
+    : light.reason === 'battery' ? `Auto turned it on: the Mac runs on battery at ${light.batteryPercent} % (line ${LIGHT_LOW_BATTERY_PERCENT} %); it turns itself off when the Mac is plugged in or charged above that`
+    : light.reason === 'low-power' ? 'Auto turned it on: macOS Low Power Mode is on; it turns itself off when Low Power Mode is turned off'
+    : 'set by the app';
+  return `light mode is on (${why}). It only slows the app's animations and polling: it holds no job and nothing needs switching off`;
 }
 
 /**
  * The machine's crossed lines as short English facts for `super state` (`machine.notes`):
- * information for the Super Agent, never a hold and never a message the owner is owed.
+ * information for the Super Agent, never a hold and never a message the owner is owed. Memory
+ * lines say what does NOT help (disk cleanup frees disk, never RAM or swap).
  */
-export function machineNotes(room: MachineRoom): string[] {
+const DISK_NOT_MEMORY = 'removing worktrees or files frees disk, not memory';
+export function machineNotes(room: MachineRoom, light?: LightMode): string[] {
   const notes: string[] = [];
   for (const r of room.reasons) {
-    if (r.limit === 'sessions') notes.push(`${r.value} Claude sessions are open on this machine (about ${r.threshold} fit its RAM)`);
-    else if (r.limit === 'swap') notes.push(`swap is ${r.value} % full (line ${r.threshold} %)`);
+    if (r.limit === 'sessions') notes.push(`${r.value} Claude processes are running on this machine (about ${r.threshold} fit its RAM)`);
+    else if (r.limit === 'swap') notes.push(`swap is ${r.value} % full (line ${r.threshold} %); ${DISK_NOT_MEMORY}`);
     else if (r.limit === 'disk') notes.push(`${r.value} GB disk free (line ${r.threshold} GB)`);
-    else if (r.limit === 'availMem') notes.push(`${r.value} GB memory free (line ${r.threshold} GB)`);
-    else if (r.limit === 'light') notes.push('light mode is on');
+    else if (r.limit === 'availMem') notes.push(`${r.value} GB memory free (line ${r.threshold} GB); ${DISK_NOT_MEMORY}`);
+    else if (r.limit === 'light') notes.push(light ? lightModeNote(light) : lightModeNote({ on: true, reason: null, setting: 'auto' }));
   }
   return notes;
 }
