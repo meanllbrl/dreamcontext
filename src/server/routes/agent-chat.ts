@@ -56,6 +56,7 @@ import {
   SWITCH_THRESHOLD_PERCENT, chooseAccount, provenPastThreshold, shouldProbe, shouldSwitchAway, type AccountReading, type ChooseResult,
 } from '../../lib/claude-account-switch.js';
 import { readLimitSignal, type LimitSignal } from '../../lib/claude-limit-signal.js';
+import { clearSignedOut, isAuthFailureFrame, recordSignedOut } from '../../lib/claude-signed-out.js';
 import { clearAccountRejection, readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
 import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFrame, recordUsageMeter } from '../../lib/claude-usage-meter.js';
 import { chatSpawnAccount } from '../../lib/automations/account.js';
@@ -1365,6 +1366,11 @@ const SWITCH_STALL_MS = Number(process.env.DREAMCONTEXT_SWITCH_STALL_MS) > 0
  * typed "devam et", one of them for 46 minutes. Replaying the owner's original text instead
  * would be worse: forty minutes into a run it restarts the whole request.
  */
+/** What a pane moved off a SIGNED-OUT account is told after the restart (see onAuthFailed). */
+export const AUTH_CONTINUE_TEXT =
+  'The previous turn failed because this chat\'s Claude account was signed out, and the chat has moved to a signed-in account. '
+  + 'Continue exactly where you stopped; do not redo finished work.';
+
 export const LIMIT_CONTINUE_TEXT =
   'The previous turn was cut off by a Claude usage limit, and this chat has moved to another account. '
   + 'Continue exactly where you stopped; do not redo finished work.';
@@ -1966,6 +1972,8 @@ export function startChatSession(
    *  point cuts off WORK, not a request, so the switch resubmits `LIMIT_CONTINUE_TEXT` rather
    *  than replaying the request from the top. */
   let turnProgressed = false;
+  /** This turn was refused for sign-in: its `result` must not clear the record. */
+  let authFailedTurn = false;
   let interruptWatchdog: ReturnType<typeof setTimeout> | null = null;
   let interruptKillTimer: ReturnType<typeof setTimeout> | null = null;
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2755,7 +2763,13 @@ export function startChatSession(
       // what the account said a moment ago rather than a cache up to an hour old.
       if (obj.type === 'rate_limit_event') noteTurnUsage(obj);
       if (limit) onLimitRejected(limit);
+      else if (!obj.parent_tool_use_id && isAuthFailureFrame(obj)) onAuthFailed();
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
+      // A turn that went through says the account is signed in again (claude-signed-out.ts).
+      if (obj.type === 'result' && obj.parent_tool_use_id === undefined) {
+        if (!authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
+        authFailedTurn = false;
+      }
       // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
       // turn's end the text has been answered, so a LATER refusal (a background task's turn,
       // which no user frame of ours opened) must not resubmit it.
@@ -3220,6 +3234,26 @@ export function startChatSession(
     switchGate = switchGate.then(() => (switchPending
       ? false
       : decideAndAnnounce(text ?? '', 'limit_hit', { id: activeAccountId, problem: 'unknown' }, undefined, !!text)
+        .catch(() => false)));
+  };
+
+  /**
+   * The CLI says this account is SIGNED OUT (field 2026-10-21: sessions stalled on "/login" on
+   * a lapsed account while a signed-in one sat idle). Unlike a usage limit this is no forecast
+   * and nothing here can fix it, so the pane moves to a signed-in account whatever auto-switch
+   * says, the same way a refused turn does; the record keeps new chats off it too.
+   */
+  const onAuthFailed = (): void => {
+    authFailedTurn = true;
+    if (activeAccountId) recordSignedOut(activeAccountId);
+    if (switchPending || switchAbandoned) return;
+    if (listClaudeAccounts().length < 2) return;   // nowhere to go: the banner says sign in
+    const text = isAssistant
+      ? lastSentText
+      : lastSentText && !turnProgressed ? lastSentText : AUTH_CONTINUE_TEXT;
+    switchGate = switchGate.then(() => (switchPending
+      ? false
+      : decideAndAnnounce(text ?? '', 'needs_relogin', { id: activeAccountId, problem: 'needs-relogin' }, undefined, !!text)
         .catch(() => false)));
   };
 

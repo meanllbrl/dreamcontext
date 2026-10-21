@@ -39,6 +39,9 @@ function addAccounts(): void {
     id: 'second', accountUuid: 'uuid-second', email: 'second@example.test', organizationUuid: 'org',
     organizationName: 'Example Org', tier: 'max', configDir: sandboxDirFor('second', home), preferred: false,
   }, home);
+  // A signed-in sandbox holds its identity (a sandbox without one reads as signed out).
+  mkdirSync(sandboxDirFor('second', home), { recursive: true });
+  writeFileSync(join(sandboxDirFor('second', home), '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'second@example.test' } }));
 }
 
 function limits(percent: number): ProbeOutcome {
