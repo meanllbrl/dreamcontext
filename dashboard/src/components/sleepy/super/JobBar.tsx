@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNod
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import { raiseAskAttention } from '../../../lib/attention';
+import { isDesktop } from '../../../lib/desktop';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import type { SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission, PendingQuestion } from '../chatSession';
@@ -36,7 +37,8 @@ import './JobBar.css';
  * the item when the child leaves `asking`.
  *
  * The ONE alarm (D16): the first time an item the owner must answer is the head, the strip raises
- * `raiseAskAttention` once (`headAlarmOnce`: a remount does not ring it again). Children raise nothing themselves while handed over.
+ * `raiseAskAttention` once (`headAlarmOnce`: a remount does not ring it again); a question's
+ * banner is the server's (lib/super/owner-question.ts), so it reaches him off this stage too. Children raise nothing themselves while handed over.
  *
  * ONE answer per head item: the first click on Allow, Deny or an option latches that item, so a
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
@@ -127,9 +129,10 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   const superId = superSession?.claudeId ?? null;
   useEffect(() => {
     if (!head || !headAlarmOnce(vault, head)) return;
-    // The banner names the Super Agent's session: a click opens its stage (AgentSurface's
-    // `linkOpensSuperStage`), where this strip is.
+    // The banner opens the super stage (`linkOpensSuperStage`). On desktop the server posts it
+    // for all but a permission (lib/super/owner-question.ts): here no second one.
     raiseAskAttention({
+      banner: head.kind === 'permission' || !isDesktop(),
       source: vault,
       detail: head.kind === 'permission' ? t('super.queue.permissionAlarm')
         : head.kind === 'approval' ? t('super.queue.approval').replace('{name}', head.member ?? '')

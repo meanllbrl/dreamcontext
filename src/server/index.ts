@@ -21,7 +21,8 @@ import {
   handleAssistantRecall, handleAssistantIndex, handleAssistantRead,
   handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
-import { setSuperFinishBanner, wireNotchInbox } from '../lib/assistant/notch-inbox.js';
+import { lookingAt, lookingAtSession, setSuperFinishBanner, wireNotchInbox } from '../lib/assistant/notch-inbox.js';
+import { setOwnerQuestionSinks } from '../lib/super/owner-question.js';
 import { notifyViaBundle } from '../lib/automations/notifier.js';
 import { startSuperInbox } from '../lib/super/inbox.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
@@ -455,6 +456,11 @@ export function buildRouter(): Router {
   wireNotchInbox();
   // The Super Agent's reply while handed over is also a banner a click routes to its stage.
   setSuperFinishBanner((title, body, link) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link }); });
+  // A question the Super Agent puts to the owner reaches him whatever page the window shows.
+  setOwnerQuestionSinks({
+    presence: () => ({ vault: lookingAt(), session: lookingAtSession() }),
+    banner: (title, body, link) => isDesktop() && notifyViaBundle(title, body, undefined, { link }),
+  });
   router.get('/api/assistant/inbox', handleAssistantInbox);
   router.post('/api/assistant/inbox/dismiss', handleAssistantInboxDismiss);
   router.post('/api/assistant/inbox/seen', handleAssistantInboxSeen);

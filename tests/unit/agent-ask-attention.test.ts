@@ -91,6 +91,13 @@ describe('raiseAskAttention — one alarm per interruption', () => {
     expect(sent[0].body).toBe('Which auth method should we use?');
   });
 
+  it('banner: false (the server posts it, a Super Agent question) rings the chime and posts no banner', async () => {
+    raiseAskAttention({ source: 'dreamcontext', detail: 'Ship it?', banner: false });
+    await settle();
+    expect(playAskChime).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveLength(0);
+  });
+
   it('collapses a burst of asks into a single banner', async () => {
     raiseAskAttention({ detail: 'first' });
     raiseAskAttention({ detail: 'second' }); // same breath — one interruption

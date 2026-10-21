@@ -3069,7 +3069,7 @@
     },
     {
       "path": "super ask",
-      "desc": "Ask the owner YOUR own question (one at a time); its answer is his next message to you",
+      "desc": "Ask the owner YOUR own question (one at a time); it reaches him like an escalation and never holds your turn (AskUserQuestion does: never use it). Its answer is his next message to you; the reply says whether it `reached` him",
       "args": [
         "<text>"
       ],
@@ -3224,7 +3224,7 @@
     },
     {
       "path": "super queue ask",
-      "desc": "Escalate a question to the owner with your words (never a permission)",
+      "desc": "Escalate a child's question to the owner in your words (never a permission): a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him",
       "args": [
         "<item>",
         "<text>"

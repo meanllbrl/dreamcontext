@@ -232,6 +232,8 @@ describe('quiet children (D16, AC6 client half)', () => {
     expect(strip).toMatch(/const superId = superSession\?\.claudeId \?\? null;/);
     expect(strip).toMatch(/sessionId: superId,/);
     expect((strip.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
+    // A question's banner is the server's on desktop (owner-question.ts): never a second one.
+    expect(strip).toMatch(/banner: head\.kind === 'permission' \|\| !isDesktop\(\),/);
   });
 
   it('a link to the super agent opens its stage before any resume (AC4)', () => {
@@ -272,6 +274,8 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     // Allow, Deny, a child's option and the super agent's own `ask` option (plan r4 D7).
     expect((strip.match(/disabled=\{locked\}/g) ?? []).length).toBe(4);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => send\(label\)\)\}/);
+    // A `super ask` answer goes to the Super Agent itself, framed (AC11): never to a child.
+    expect(strip).toMatch(/const s = superSession;\s*if \(!s\) return;\s*const text = askAnswerText\(label\);\s*if \(s\.busy\) \{ if \(!s\.steer\(text\)\) s\.send\(text\); \} else s\.send\(text\);/);
   });
 
   it('the pill is one row that never reflows: a cut text opens below it, a button never shrinks (end review r8)', () => {

@@ -20,6 +20,7 @@ import { onChatChange } from '../../lib/assistant/chat-registry.js';
 import { loadOrCreateVapid, sendPush, type VapidKeys } from '../../lib/handsfree/mac/push.js';
 import { PushStore, setVerifyPushOrigin, subscriptionRefusal } from '../../lib/handsfree/mac/push-store.js';
 import { PushNotifier, type PushNotifierDeps } from '../../lib/handsfree/mac/push-notifier.js';
+import { setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
 import { MacModeError, MacSession, type MacSessionDeps } from '../../lib/handsfree/mac/session.js';
 import { isValidHostname } from '../../lib/handsfree/mac/tunnel.js';
 import type { MacErrorCode } from '../../lib/handsfree/mac/contract.js';
@@ -343,6 +344,14 @@ export function armPushNotifier(): PushNotifier {
   });
   const n = notifier;
   onChatChange((c) => { void n.onChange(c).catch((err) => { console.warn('[handsfree-push] notifier failed:', (err as Error)?.message ?? err); }); });
+  // A question the Super Agent put to the owner has no registry edge: it pushes from here.
+  setOwnerQuestionSinks({
+    push: (q) => {
+      const r = n.pushOwnerQuestion(q);
+      void r.done.catch((err) => { console.warn('[handsfree-push] owner question failed:', (err as Error)?.message ?? err); });
+      return r.targeted;
+    },
+  });
   // A signed-out device loses its subscription with it (logout, revoke, revoke-all, a password).
   onDeviceSessionsChanged(() => { try { macPushStore().prune((h) => macHandsfreeAuth().store.isValidDeviceHash(h)); } catch (err) { console.warn('[handsfree-push] prune failed:', (err as Error)?.message ?? err); } });
   return n;

@@ -528,7 +528,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 2;
+export const SUPER_BRIEF_REV = 3;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -545,7 +545,7 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   many did not.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
 - The owner has to decide something visual (a mockup, a layout): open the options as cards
-  (png, svg, html, a board), \`super present <card…>\`, then ask with AskUserQuestion; after his
+  (png, svg, html, a board), \`super present <card…>\`, then ask with \`super ask\`; after his
   answer, \`super present --off\`.
 - Your answer would describe something he can look at: open it and write one line.
 - The server opens a child's dev-server site and its live browser as cards by itself; you see
