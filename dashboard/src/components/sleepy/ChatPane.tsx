@@ -67,6 +67,8 @@ import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
 import { groupSuperEventTurns, superEventOf, type SuperEventGroup } from './super/superHandover';
+import { placeQuestionCards, type AskRef } from './super/superQuestions';
+import { SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
 import { useSuperEventContext } from './super/superJobsStore';
 import './super/SuperSurface.css';
@@ -1792,10 +1794,18 @@ export function ChatPane({
   // Event turns fold INSIDE each piece too (plan r4 D8): a group never straddles the window
   // edge, the history/live boundary or a notice; the anchor stays and renders the line.
   const superGroups = new Map<string, SuperEventGroup>();
+  // The Super Agent's questions to the owner, as cards under the turn that asked them
+  // (superQuestions.ts, owner 2026-10-21 "soruyu hep chatta sorsun"): placed on what each
+  // piece KEEPS, so a call folded into an event line is not counted as drawn (the tail draws it).
+  const questionCards = new Map<string, Array<AskRef & { live: boolean }>>();
   const foldSuper = <T extends ChatItem>(piece: T[]): T[] => {
-    if (!superCtx) return piece;
-    const { kept, groups } = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded: openEvents });
-    for (const [k, g] of groups) superGroups.set(k, g);
+    let kept = piece;
+    if (superCtx) {
+      const folded = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded: openEvents });
+      for (const [k, g] of folded.groups) superGroups.set(k, g);
+      kept = folded.kept;
+    }
+    if (session.mode === 'super') for (const [k, cards] of placeQuestionCards(kept)) questionCards.set(k, cards);
     return kept;
   };
   const historySlice = conv.history.slice(historyFrom);
@@ -1876,6 +1886,25 @@ export function ChatPane({
   liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom)), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
   const noticeProbes = (i: number): StretchProbe[] => (noticesAt.get(i) ?? [])
     .map((n) => ({ key: `notice:${n.key}`, step: false, invisible: false, actor: 'lead', running: false }));
+  // One item asked twice across pieces: only its latest call is live (pieces are placed in
+  // reading order, and so is the map).
+  const latestAsk = new Map<string, string>();
+  for (const cards of questionCards.values()) for (const c of cards) latestAsk.set(c.item, c.toolItemId);
+  const cardsOf = (seg: RunSegment<ChatItem>): Array<AskRef & { live: boolean }> => {
+    if (!questionCards.size) return [];
+    const ids = seg.kind === 'run' ? seg.items.map((it) => it.id) : [seg.item.id];
+    return ids.flatMap((id) => questionCards.get(id) ?? [])
+      .map((c) => ({ ...c, live: c.live && latestAsk.get(c.item) === c.toolItemId }));
+  };
+  const questionProbes = (seg: RunSegment<ChatItem>): StretchProbe[] => cardsOf(seg)
+    .map((c) => ({ key: `question:${c.toolItemId}`, step: false, invisible: false, actor: 'lead', running: false }));
+  const transcriptOf = () => [...conv.history, ...conv.items];
+  /** The items that got a LIVE card above; every other open question goes to the tail. */
+  const anchoredQuestions = new Set<string>();
+  const questionNodes = (seg: RunSegment<ChatItem>): React.ReactNode[] => cardsOf(seg).map((c) => {
+    if (c.live) anchoredQuestions.add(c.item);
+    return <SuperQuestionCard key={`question-${c.toolItemId}`} ask={c} session={session} transcript={transcriptOf} />;
+  });
   // The accruing tail is the last segment that SHOWS something, not the last segment. An
   // empty thinking block is re-emitted after the run it sat inside (see `segmentToolRuns`),
   // and by array position alone that invisible single would demote the live run from tail to
@@ -1893,15 +1922,15 @@ export function ChatPane({
   // it never wraps rows, so every single stays a direct child of the transcript. The history
   // divider is something the reader sees, so a stretch never runs across it.
   const stretches = stepStretches([
-    ...historySegments.flatMap((seg) => probesOf(seg, false)),
+    ...historySegments.flatMap((seg) => [...probesOf(seg, false), ...questionProbes(seg)]),
     { key: 'history-divider', step: false, invisible: !showsHistory, actor: 'lead', running: false },
-    ...liveSegments.flatMap((seg, i) => [...noticeProbes(i), ...probesOf(seg, accruingAt(i))]),
+    ...liveSegments.flatMap((seg, i) => [...noticeProbes(i), ...probesOf(seg, accruingAt(i)), ...questionProbes(seg)]),
     ...noticeProbes(liveSegments.length),
   ]);
-  const historyNodes = historySegments.map((seg) => renderSegment(seg, false, stretches));
+  const historyNodes = historySegments.flatMap((seg) => [renderSegment(seg, false, stretches), ...questionNodes(seg)]);
   const noticeNodes = (i: number) => (noticesAt.get(i) ?? []).map((n) => n.node);
   const liveNodes = [
-    ...liveSegments.flatMap((seg, i) => [...noticeNodes(i), renderSegment(seg, accruingAt(i), stretches)]),
+    ...liveSegments.flatMap((seg, i) => [...noticeNodes(i), renderSegment(seg, accruingAt(i), stretches), ...questionNodes(seg)]),
     ...noticeNodes(liveSegments.length),
   ];
   // Only a party still AT WORK trails the transcript: one whose first call is older than the
@@ -2143,6 +2172,7 @@ export function ChatPane({
             {conv.pending
               .filter((p): p is PendingPlan => p.kind === 'plan')
               .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}
+            {session.mode === 'super' && <SuperQuestionTail session={session} anchored={anchoredQuestions} transcript={transcriptOf} />}
             {askRouting?.phase === 'preparing' && <PreparingQuestionCard item={askRouting.item} />}
             {askRouting?.phase === 'degraded' && (
               <DegradedQuestionCard item={askRouting.item} onContinueInTerminal={onContinueInTerminal} />

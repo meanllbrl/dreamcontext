@@ -220,7 +220,9 @@ describe('the bar\'s ask options are drawn whole or not at all (D7, r2-S)', () =
     const bar = read(`${SUPER}/JobBar.tsx`);
     expect(bar).toMatch(/setCut\(btns\.current\.some\(\(b\) => !!b && b\.scrollWidth > b\.clientWidth \+ 1\)\)/);
     expect(bar).toMatch(/\{showOptions && !cut && superSession && options\.map/);
-    expect(bar).toMatch(/return `Answer to your question: \$\{label\}`;/);
+    // One framing for the bar and the chat card (superQuestions.ts), re-exported by the bar.
+    expect(read(`${SUPER}/superQuestions.ts`)).toMatch(/return `Answer to your question: \$\{label\}`;/);
+    expect(bar).toMatch(/export \{ askAnswerText \} from '\.\/superQuestions';/);
     const rule = read(`${SUPER}/JobBar.css`).match(/\.super-job-option \{([^}]*)\}/)?.[1] ?? '';
     expect(rule).not.toMatch(/max-width|text-overflow|ellipsis/);
   });

@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from 'react';
+import type { SuperQueueItem } from '../../../lib/superTypes';
+import type { ChatSession } from '../chatSession';
 
 /**
  * The one channel between the centre chat's event lines and the job bar (plan r4 D8): a name in
@@ -54,4 +56,43 @@ function subscribeCtx(fn: () => void): () => void {
 export function useSuperEventContext(sessionId: string | null): SuperEventContext | null {
   const read = () => (sessionId ? contexts.get(sessionId) ?? null : null);
   return useSyncExternalStore(subscribeCtx, read, read);
+}
+
+// ─── The questions the super chat draws as cards (superQuestions.ts) ────────
+
+/** What a question card in the super chat reads: the record's open owner questions and the
+ *  sessions an answer rides on. Published by AgentSurface, which holds the record whether or not
+ *  the stage is up; null = no live record (taken back): the cards are static. */
+export interface SuperQuestionView {
+  open: readonly SuperQueueItem[];
+  superSession: ChatSession | undefined;
+  sessionFor: (claudeId: string) => ChatSession | undefined;
+}
+const questionViews = new Map<string, SuperQuestionView>();
+const questionKeys = new Map<string, string>();
+const questionListeners = new Set<() => void>();
+
+/** Only a real change notifies (the key: the open items and the super session), so the cards
+ *  re-render on a question's arrival or close, never on every record push. */
+export function publishSuperQuestions(sessionId: string, view: SuperQuestionView | null, key = ''): void {
+  if (!view) {
+    if (!questionViews.delete(sessionId)) return;
+    questionKeys.delete(sessionId);
+  } else {
+    if (questionKeys.get(sessionId) === key && questionViews.has(sessionId)) return;
+    questionViews.set(sessionId, view);
+    questionKeys.set(sessionId, key);
+  }
+  for (const fn of [...questionListeners]) fn();
+}
+
+function subscribeQuestions(fn: () => void): () => void {
+  questionListeners.add(fn);
+  return () => { questionListeners.delete(fn); };
+}
+
+/** The question view of `sessionId` (null for any chat that is not a live super). */
+export function useSuperQuestions(sessionId: string | null): SuperQuestionView | null {
+  const read = () => (sessionId ? questionViews.get(sessionId) ?? null : null);
+  return useSyncExternalStore(subscribeQuestions, read, read);
 }

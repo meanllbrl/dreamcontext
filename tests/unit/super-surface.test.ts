@@ -264,19 +264,29 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
   const strip = read(`${superDir}/JobBar.tsx`);
 
   it('Allow, Deny and the option buttons go through one latch and are disabled once answered', () => {
-    expect(strip).toMatch(/latch\.current = latchSeen\(latch\.current, answerKey, pendingPresent\);/);
+    // The latch is the one the super chat's question card shares (superQuestions.ts): noted
+    // first from the ONE pending input, then read, per item + request key.
+    expect(strip).toMatch(/if \(head && answerKey\) noteOwnerPending\(answerKey, ownerPendingPresent\(head, child, openOwnerQuestions\(state\.queue\)\)\);\s*const locked = answerKey !== null && ownerAnswerLocked\(answerKey\);/);
     // The answer rides the child's socket, or for the super agent's own ask its own (verify finding).
-    expect(strip).toMatch(/const carrier = head\?\.kind === 'ask' \? superSession : child;\n\s*const next = latchClick\(latch\.current, answerKey, carrier\?\.status === 'open'\);/);
+    expect(strip).toMatch(/const carrier = head\.kind === 'ask' \? superSession : child;\n\s*if \(!claimOwnerAnswer\(answerKey, head\.id, state\.session \?\? '', carrier\?\.status === 'open'\)\) return;\n\s*if \(send\(\) === false\) releaseOwnerAnswer\(answerKey\);/);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'allow'/);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'deny'/);
-    expect(strip).toMatch(/if \(picks\.ok\) answerOnce\(\(\) => child\.answerQuestion\(/);
-    // No answer path bypasses the latch.
-    expect((strip.match(/child\.answer(Question)?\(/g) ?? []).length).toBe(3);
+    // No answer path bypasses the latch: the permission's two, and every pick through sendOwnerAnswer.
+    expect((strip.match(/child\.answer(Question)?\(/g) ?? []).length).toBe(2);
+    expect((strip.match(/sendOwnerAnswer\(/g) ?? []).length).toBe(2);
+    expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => \{\s*const sent = sendOwnerAnswer\(item, label, \{ superSession: undefined, child \}\);/);
     // Allow, Deny, a child's option and the super agent's own `ask` option (plan r4 D7).
     expect((strip.match(/disabled=\{locked\}/g) ?? []).length).toBe(4);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => send\(label\)\)\}/);
     // A `super ask` answer goes to the Super Agent itself, framed (AC11): never to a child.
-    expect(strip).toMatch(/const s = superSession;\s*if \(!s\) return;\s*const text = askAnswerText\(label\);\s*if \(s\.busy\) \{ if \(!s\.steer\(text\)\) s\.send\(text\); \} else s\.send\(text\);/);
+    expect(strip).toMatch(/const sent = sendOwnerAnswer\(item, label, \{ superSession, child: undefined \}\);/);
+    // The chat card answers through the same latch and the same sender, never around them.
+    const card = read(`${superDir}/SuperQuestionCard.tsx`);
+    expect(card).toMatch(/noteOwnerPending\(key, ownerPendingPresent\(item, child, open\)\);\s*const locked = ownerAnswerLocked\(key\);/);
+    expect(card).toMatch(/const canSend = carrier\?\.status === 'open';/);
+    expect(card).toMatch(/if \(!claimOwnerAnswer\(key, item\.id, session\.claudeId, canSend\)\) return;\s*if \(sendOwnerAnswer\(item, label, \{ superSession, child \}\)\) recordOwnerAnswer\(item\.id, label\);\s*else releaseOwnerAnswer\(key\);/);
+    expect(card).not.toMatch(/\.answerQuestion\(|\.answer\(|\.send\(|\.steer\(/);
+    expect((card.match(/disabled=\{locked \|\| !canSend\}/g) ?? []).length).toBe(1);
   });
 
   it('the pill is one row that never reflows: a cut text opens below it, a button never shrinks (end review r8)', () => {
@@ -298,7 +308,9 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect(strip).toMatch(/\}, \[fitKey, showOptions\]\);/);
     expect(strip).toMatch(/useLayoutEffect\(\(\) => \{\n\s*const el = headRef\.current;/);
     expect(strip).toMatch(/ro\.observe\(band\);\n\s*ro\.observe\(el\);/);
-    expect(strip).toMatch(/\{showOptions && child && question && q && q\.options\.slice\(0, 4\)\.map/);
+    // The child's single-choice options, at most four (ownerOptionsOf, shared with the chat card).
+    expect(strip).toMatch(/const options = ownerOptionsOf\(item, child\);/);
+    expect(strip).toMatch(/\{showOptions && child && options\.map\(\(label\) => \(/);
     expect(strip).toMatch(/<button type="button" className="super-queue-btn super-queue-btn--reply" onClick=\{onReplyToSuper\}>/);
     expect(css).toMatch(/\.super-queue-head:hover \.super-queue-full,\n\.super-queue-head:focus-within \.super-queue-full \{ display: block; \}/);
     expect(rule('.super-queue-full')).toMatch(/position: absolute;[^}]*top: 100%;/);
@@ -307,7 +319,7 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect((strip.match(/return \(\) => \{ live = false; ro\.disconnect\(\); \};/g) ?? []).length).toBe(2);
     expect((strip.match(/void document\.fonts\?\.ready\.then\(\(\) => \{ if \(live\) measure\(\); \}\);/g) ?? []).length).toBe(2);
     expect(strip).toMatch(/\{cut && <span className="super-queue-full" aria-hidden="true">/);
-    expect(strip).toMatch(/className="super-queue-btn super-queue-btn--option"\n\s*title=\{o\.label\}/);
+    expect(strip).toMatch(/className="super-queue-btn super-queue-btn--option"\n\s*title=\{label\}/);
   });
 
   it('the queue dot is decoration; its meaning rides in the button\'s accessible name', () => {

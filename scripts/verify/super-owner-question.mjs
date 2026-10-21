@@ -17,6 +17,10 @@
  *      escalated with `super queue ask`; the reply says reached:false with a note that forbids
  *      "I asked you"; that turn's end is NOT swallowed (a notch inbox row for the super session);
  *      the job bar's option answers the CHILD.
+ * Run 3 (owner 2026-10-21 "soruyu hep chatta sorsun"): both questions are ALSO a card in the super
+ * chat under the turn that asked (the stand-in asks through a real Bash tool call), answered from
+ * the card (to the super / to the child), never locking the super's turn; a question asked with no
+ * readable call is drawn at the chat's end; a phone has no super chat at all.
  * Banner and phone pushes need the desktop notifier and Mac mode: tests/unit/super-owner-question.
  *
  * Collect, don't fail fast: every check prints ✓/✗. Exit 0 iff all pass.
@@ -64,6 +68,15 @@ const ask = (request) => new Promise((resolve) => {
   out({ type: 'control_request', request_id: 'req-' + process.pid + '-' + seq, request: { subtype: 'can_use_tool', ...request, tool_use_id: id, requires_user_interaction: true } });
   awaiting = (r) => { out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: 'answered' }] }] } }); resolve(r); };
 });
+// A CLI call the way claude makes it: a Bash tool_use the transcript shows, then its result.
+const shq = (a) => /^[A-Za-z0-9_.\/:=-]+$/.test(a) ? a : "'" + a.replace(/'/g, "'\\''") + "'";
+const bashCall = (...args) => {
+  const id = 'toolu_' + (++seq) + '_' + process.pid;
+  out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: ['dreamcontext', ...args].map(shq).join(' '), description: 'Ask the owner' } }] } });
+  const r = cli(...args);
+  out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: r.out.trim() }], is_error: r.status !== 0 }] } });
+  return r;
+};
 async function superTurn(text) {
   if (text.startsWith('[super handover]')) { report({ kind: 'handover', children: Object.keys(cli('super', 'state').json?.children ?? {}) }); return 'arranged'; }
   if (text.startsWith('[super event')) {
@@ -72,14 +85,17 @@ async function superTurn(text) {
     const question = items.find((i) => i.kind === 'question' && i.state !== 'done' && i.state !== 'escalated');
     // The harness says when the owner has gone: it removes the presence first.
     for (let i = 0; i < 50 && !existsSync(${JSON.stringify(AWAY)}); i += 1) await sleep(200);
-    const esc = question ? cli('super', 'queue', 'ask', question.id, 'The login button: blue or green?') : null;
+    const esc = question ? bashCall('super', 'queue', 'ask', question.id, 'The login button: blue or green?') : null;
     report({ kind: 'escalated', esc });
     return 'Which colour for the login button: blue or green?';
   }
-  if (text.includes('GO-ASKOWNER')) { const r = cli('super', 'ask', 'Ship the login fix now?', '--options', 'Ship it|Wait'); report({ kind: 'asked', r }); return 'Ship the login fix now?'; }
+  if (text.includes('GO-ASKOWNER')) { const r = bashCall('super', 'ask', 'Ship the login fix now?', '--options', 'Ship it|Wait'); report({ kind: 'asked', r }); return 'Ship the login fix now?'; }
+  // Asked with no tool row the chat can read (the tail must still draw it).
+  if (text.includes('GO-ASKQUIET')) { const r = cli('super', 'ask', 'Rename the app to Acme Go?', '--options', 'Yes|No'); report({ kind: 'askedQuiet', r }); return 'One more question for you.'; }
   const go = text.match(/GO-CHILDASK (\\S+)/);
   if (go) { report({ kind: 'sent', r: cli('super', 'send', go[1], 'ASK-Q') }); return 'asked the child'; }
   if (text.startsWith('Answer to your question:')) { report({ kind: 'answer', text }); return 'noted'; }
+  report({ kind: 'owner', text });
   return 'ok';
 }
 async function childTurn(text) {
@@ -98,6 +114,7 @@ async function turn(blocks) {
   try { said = role === 'super' ? await superTurn(blocks[0] ?? '') : await childTurn(blocks.join('')); } catch (e) { said = 'error ' + e; }
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: said }] } });
   out({ type: 'result', subtype: 'success', is_error: false, result: said, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
+  report({ kind: 'turn-end', said });
 }
 let buf = '';
 process.stdin.on('data', (c) => {
@@ -213,14 +230,48 @@ async function main() {
     const glance = await (await fetch(`${base}/api/assistant/glance`)).json();
     ok('the notch glance lists it (SuperAsk row with its options)', (glance.chats ?? []).some((c) => c.super && c.ask?.tool === 'SuperAsk' && /Ship the login fix/.test(c.ask.text) && (c.ask.options ?? []).join('|') === 'Ship it|Wait'), JSON.stringify(glance.chats));
     ok('the job bar draws it at its head with its options', await until(page, async () => /Ship the login fix/.test(await page.getByTestId('super-queue-head').innerText()) && (await page.getByTestId('super-ask-option').count()) === 2, 15000));
-    await page.screenshot({ path: join(OUT, '01-super-ask-head.png') });
-    await page.getByTestId('super-ask-option').filter({ hasText: 'Ship it' }).first().click();
-    ok('its option sends the answer into the SUPER chat', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'answer' && r.text.startsWith('Answer to your question: Ship it')), 20000), JSON.stringify(frames().slice(-4)));
-    ok('…and the question closes', await until(page, async () => (await page.getByTestId('super-queue-head').count()) === 0, 15000));
+
+    console.log('\n── the question is IN the super chat, under the turn that asked it');
+    const centre = page.locator('[data-super-slot="centre"]');
+    const askCard = centre.locator('[data-testid="super-question-card"][data-item]').filter({ hasText: 'Ship the login fix now?' });
+    ok('a question card in the super chat, open, with both options', await until(page, async () => (await askCard.count()) === 1
+      && (await askCard.getAttribute('data-state')) === 'open'
+      && (await askCard.getByTestId('super-question-option').allInnerTexts()).map((x) => x.trim().replace(/\s*\d$/, '')).join('|') === 'Ship it|Wait', 15000));
+    ok('…drawn after the asking turn (its Bash row and its prose come before it)', await askCard.evaluate((card) => {
+      const all = [...card.closest('[data-super-slot="centre"]').querySelectorAll('*')];
+      const prose = all.filter((el) => el.children.length === 0 && /Ship the login fix now\?/.test(el.textContent ?? '') && !card.contains(el));
+      return prose.length > 0 && prose.every((el) => el.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }));
+    ok('the turn is NOT locked: the super\'s turn ended, the composer takes text, no AskUserQuestion card', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'turn-end' && r.said === 'Ship the login fix now?')
+      && await centre.locator('.chat-cmp-input').first().isEditable()
+      && (await centre.locator('.chat-surveycard:not(.super-question-card)').count()) === 0, 15000));
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: join(OUT, '01-ask-card-1440.png') });
+    await askCard.getByTestId('super-question-option').filter({ hasText: 'Ship it' }).click();
+    ok('the card\'s option sends "Answer to your question: Ship it" into the SUPER chat', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'answer' && r.text.startsWith('Answer to your question: Ship it')), 20000), JSON.stringify(frames().slice(-4)));
+    ok('…once: one answer frame only', reports().filter((r) => r.role === 'super' && r.kind === 'answer').length === 1, JSON.stringify(reports().filter((r) => r.kind === 'answer')));
+    ok('…the card shows the answer and closes', await until(page, async () => (await askCard.getAttribute('data-state')) === 'answered' && /You answered: Ship it/.test(await askCard.innerText()) && (await askCard.getByTestId('super-question-option').count()) === 0, 15000));
+    ok('…and the job bar head drops', await until(page, async () => (await page.getByTestId('super-queue-head').count()) === 0, 15000));
+    await page.screenshot({ path: join(OUT, '02-ask-answered-1440.png') });
+
+    console.log('\n── a question with no readable call still reaches the chat (the tail), answered in words');
+    await centre.locator('.chat-cmp-input').first().click();
+    await centre.locator('.chat-cmp-input').first().fill('GO-ASKQUIET');
+    await page.keyboard.press('Enter');
+    ok('super ask (no tool row) ran', await until(page, async () => reports().some((r) => r.kind === 'askedQuiet' && r.r?.status === 0), 30000), JSON.stringify(reports().slice(-3)));
+    const quiet = centre.locator('[data-testid="super-question-card"]').filter({ hasText: 'Rename the app to Acme Go?' });
+    ok('…its card is drawn at the chat\'s end, open, with its options', await until(page, async () => (await quiet.count()) === 1 && (await quiet.getAttribute('data-state')) === 'open' && (await quiet.getByTestId('super-question-option').count()) === 2, 15000));
+    await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'turn-end' && r.said === 'One more question for you.'), 15000);
+    await centre.locator('.chat-cmp-input').first().click();
+    await centre.locator('.chat-cmp-input').first().fill('Not now, keep the name');
+    await page.keyboard.press('Enter');
+    ok('…written words reach the super and close it: the tail card goes, the bar head drops', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'owner' && r.text === 'Not now, keep the name')
+      && (await quiet.count()) === 0 && (await page.getByTestId('super-queue-head').count()) === 0, 20000));
 
     console.log('\n── a child\'s question escalated while the owner is away (no presence, no notifier)');
-    await page.locator('[data-super-slot="centre"] .chat-cmp-input').first().click();
-    await page.locator('[data-super-slot="centre"] .chat-cmp-input').first().fill(`GO-CHILDASK ${child}`);
+    await centre.locator('.chat-cmp-input').first().click();
+    await centre.locator('.chat-cmp-input').first().fill(`GO-CHILDASK ${child}`);
     await page.keyboard.press('Enter');
     ok('the child asked (AskUserQuestion)', await until(page, async () => frames().some((f) => f.role === 'child' && f.blocks[0] === 'ASK-Q'), 30000));
     // He leaves: the window's report withdrawn (what a blur sends), then the event turn escalates.
@@ -237,13 +288,31 @@ async function main() {
       return (inbox.events ?? []).some((e) => e.kind === 'finished' && e.vault === 'acme-app' && /blue or green/.test(e.lastText ?? ''));
     }, 15000), JSON.stringify((await (await fetch(`${base}/api/assistant/inbox`)).json()).events));
     ok('the job bar draws the escalated question', await until(page, async () => /blue or green/.test(await page.getByTestId('super-queue-head').innerText()), 15000));
-    await page.screenshot({ path: join(OUT, '02-escalated-head.png') });
-    const blue = page.getByTestId('super-queue-head').getByRole('button', { name: /^Blue/ });
-    if (await blue.count()) await blue.first().click();
-    ok('its option answers the CHILD', await until(page, async () => reports().some((r) => r.role === 'child' && r.kind === 'answered' && JSON.stringify(r.response).includes('Blue')), 20000), JSON.stringify(reports().filter((r) => r.kind === 'answered')));
-    await page.setViewportSize({ width: 390, height: 844 });
+    const escCard = centre.locator('[data-testid="super-question-card"][data-kind="question"]');
+    ok('the escalated question is a card in the super chat with the CHILD\'s options', await until(page, async () => (await escCard.count()) === 1
+      && /blue or green/.test(await escCard.innerText())
+      && (await escCard.getByTestId('super-question-option').allInnerTexts()).map((x) => x.trim().replace(/\s*\d$/, '')).join('|') === 'Blue|Green', 15000));
+    await page.screenshot({ path: join(OUT, '03-escalated-card-1440.png') });
+    await page.setViewportSize({ width: 900, height: 900 });
     await page.waitForTimeout(800);
-    await page.screenshot({ path: join(OUT, '03-phone-width.png') });
+    ok('at 900 wide (a narrow desktop window) the card is still in the chat with its options', (await escCard.count()) === 1 && (await escCard.getByTestId('super-question-option').count()) === 2);
+    await page.screenshot({ path: join(OUT, '04-escalated-card-900.png') });
+    await escCard.getByTestId('super-question-option').filter({ hasText: 'Blue' }).click();
+    ok('the card\'s option answers the CHILD', await until(page, async () => reports().some((r) => r.role === 'child' && r.kind === 'answered' && JSON.stringify(r.response).includes('Blue')), 20000), JSON.stringify(reports().filter((r) => r.kind === 'answered')));
+    ok('…never the super (no second answer frame)', reports().filter((r) => r.role === 'super' && r.kind === 'answer').length === 1);
+    ok('…the card shows the answer, the bar head drops', await until(page, async () => (await escCard.getAttribute('data-state')) === 'answered' && /You answered: Blue/.test(await escCard.innerText()) && (await page.getByTestId('super-queue-head').count()) === 0, 15000));
+    await page.screenshot({ path: join(OUT, '05-escalated-answered-900.png') });
+
+    console.log('\n── a phone (390, touch) has no super chat by design: no card, no errors');
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme: 'dark' });
+    const phone = await phoneCtx.newPage();
+    phone.on('console', (m) => { if (m.type() === 'error') errors.push(`[phone] ${m.text()}`); });
+    phone.on('pageerror', (e) => errors.push(`[phone] ${String(e)}`));
+    await phone.goto(`${base}/?vault=acme-app`, { waitUntil: 'domcontentloaded' });
+    await phone.waitForTimeout(3500);
+    ok('no Super stage and no question card on the phone', (await phone.locator('[data-testid="super-surface"]').count()) === 0 && (await phone.locator('[data-testid="super-question-card"]').count()) === 0);
+    await phone.screenshot({ path: join(OUT, '06-phone-390.png') });
+    await phoneCtx.close();
     const real = errors.filter((e) => !/favicon|ERR_CONNECTION|WebSocket|Failed to load resource/i.test(e));
     ok('no console errors', real.length === 0, real.join('\n'));
   } finally {
