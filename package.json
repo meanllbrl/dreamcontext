@@ -59,6 +59,7 @@
     "verify:chat-prose": "node scripts/verify/chat-prose.mjs",
     "gen:cli-manifest": "UPDATE_CLI_MANIFEST=1 vitest run tests/unit/cli-manifest.test.ts",
     "gen:lab-mirrors": "node scripts/gen-lab-mirrors.mjs",
+    "eval:super-orchestration": "vite-node eval/super-orchestration/run.ts --",
     "gen:handsfree-icons": "vite-node scripts/gen-handsfree-icons.ts",
     "verify:handsfree-brand": "node scripts/verify/handsfree-brand.mjs",
     "verify:chat-html": "node scripts/verify/chat-html.mjs",

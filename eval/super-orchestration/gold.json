@@ -1,0 +1,1328 @@
+{
+ "bands": {
+  "lookup": {
+   "models": [
+    "haiku"
+   ],
+   "efforts": [
+    "low",
+    "medium"
+   ]
+  },
+  "small": {
+   "models": [
+    "sonnet"
+   ],
+   "efforts": [
+    "low",
+    "medium"
+   ]
+  },
+  "brain": {
+   "models": [
+    "sonnet"
+   ],
+   "efforts": [
+    "low",
+    "medium"
+   ]
+  },
+  "build": {
+   "models": [
+    "opus"
+   ],
+   "efforts": [
+    "high",
+    "xhigh"
+   ]
+  },
+  "plan": {
+   "models": [
+    "opus",
+    "fable"
+   ],
+   "efforts": [
+    "high",
+    "xhigh"
+   ]
+  },
+  "deep": {
+   "models": [
+    "fable"
+   ],
+   "efforts": [
+    "high",
+    "xhigh"
+   ]
+  }
+ },
+ "scenarios": [
+  {
+   "id": "S01",
+   "split": "train",
+   "items": {
+    "I1": {
+     "text": "Fix the typo in the onboarding screen title.",
+     "files": [
+      "orbit-app/src/Onboarding.tsx"
+     ],
+     "match": [
+      "typo",
+      "onboarding (?:screen )?title"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I2": {
+     "text": "Stop the crash on the onboarding screen when a user has no avatar.",
+     "files": [
+      "orbit-app/src/Onboarding.tsx"
+     ],
+     "match": [
+      "crash",
+      "no avatar"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I3": {
+     "text": "Rename the \"Notifs\" label in settings to \"Notifications\".",
+     "files": [
+      "orbit-app/src/i18n/en.json"
+     ],
+     "match": [
+      "notifs",
+      "en\\.json",
+      "i18n"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I4": {
+     "text": "Raise the contrast of the primary colour in the theme.",
+     "files": [
+      "orbit-app/src/theme.ts"
+     ],
+     "match": [
+      "theme",
+      "contrast"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I5": {
+     "text": "Make the avatar image lazy-load.",
+     "files": [
+      "orbit-app/src/Avatar.tsx"
+     ],
+     "match": [
+      "lazy"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I6": {
+     "text": "Add a \"Run locally\" section to the app README.",
+     "files": [
+      "orbit-app/docs/README.md"
+     ],
+     "match": [
+      "readme",
+      "run locally"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I7": {
+     "text": "Add a 10 second timeout to the fetch helper.",
+     "files": [
+      "orbit-app/src/api.ts"
+     ],
+     "match": [
+      "timeout",
+      "fetch"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I8": {
+     "text": "List the open TODO comments in orbit-app and tell me how many there are.",
+     "files": [],
+     "match": [
+      "todo"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "lookup",
+     "worktree": false
+    },
+    "I9": {
+     "text": "Add a brain task for a dark mode.",
+     "files": [
+      "_dream_context/state/dark-mode.md"
+     ],
+     "match": [
+      "dark mode",
+      "dark-mode"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "brain",
+     "worktree": false
+    },
+    "I10": {
+     "text": "Note the onboarding fixes in the app changelog.",
+     "files": [
+      "orbit-app/CHANGELOG.md"
+     ],
+     "match": [
+      "changelog"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    }
+   },
+   "groups": [
+    [
+     "I1",
+     "I2"
+    ],
+    [
+     "I3"
+    ],
+    [
+     "I4"
+    ],
+    [
+     "I5"
+    ],
+    [
+     "I6"
+    ],
+    [
+     "I7"
+    ],
+    [
+     "I8"
+    ],
+    [
+     "I9"
+    ],
+    [
+     "I10"
+    ]
+   ],
+   "deps": [
+    [
+     "I10",
+     "I1"
+    ]
+   ],
+   "asks": 0,
+   "defaultBranch": "main"
+  },
+  {
+   "id": "S02",
+   "split": "train",
+   "items": {
+    "I1": {
+     "text": "Add a POST /v1/invites endpoint to the API.",
+     "files": [
+      "orbit-api/src/routes/invites.ts",
+      "orbit-api/src/schema.ts"
+     ],
+     "match": [
+      "invites\\.ts",
+      "/v1/invites",
+      "invites endpoint",
+      "post /v1"
+     ],
+     "modes": [
+      "plan",
+      "develop"
+     ],
+     "band": "build",
+     "worktree": true
+    },
+    "I2": {
+     "text": "Build an invite screen in the app that uses that endpoint.",
+     "files": [
+      "orbit-app/src/InviteScreen.tsx",
+      "orbit-app/src/api.ts"
+     ],
+     "match": [
+      "invitescreen",
+      "invite screen"
+     ],
+     "modes": [
+      "plan",
+      "develop"
+     ],
+     "band": "build",
+     "worktree": true
+    },
+    "I3": {
+     "text": "Document the new endpoint in the API docs and the OpenAPI file.",
+     "files": [
+      "orbit-api/docs/api.md",
+      "orbit-api/openapi.yaml"
+     ],
+     "match": [
+      "openapi",
+      "api docs",
+      "docs/api"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I4": {
+     "text": "Write tests for the invite endpoint.",
+     "files": [
+      "orbit-api/test/invites.test.ts"
+     ],
+     "match": [
+      "invites\\.test",
+      "tests for the invite",
+      "invite endpoint tests"
+     ],
+     "modes": [
+      "plan",
+      "develop"
+     ],
+     "band": "build",
+     "worktree": true
+    },
+    "I5": {
+     "text": "Mention the invite flow in the app README.",
+     "files": [
+      "orbit-app/docs/README.md"
+     ],
+     "match": [
+      "readme"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    }
+   },
+   "groups": [
+    [
+     "I1"
+    ],
+    [
+     "I2"
+    ],
+    [
+     "I3"
+    ],
+    [
+     "I4"
+    ],
+    [
+     "I5"
+    ]
+   ],
+   "deps": [
+    [
+     "I2",
+     "I1"
+    ],
+    [
+     "I3",
+     "I1"
+    ],
+    [
+     "I4",
+     "I1"
+    ],
+    [
+     "I5",
+     "I2"
+    ]
+   ],
+   "asks": 0,
+   "defaultBranch": "main"
+  },
+  {
+   "id": "S03",
+   "split": "train",
+   "items": {
+    "I1": {
+     "text": "Decide whether live invite status should use WebSockets or polling.",
+     "files": [],
+     "match": [
+      "websockets? (?:or|vs\\.?|versus) polling",
+      "decide whether",
+      "council"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "plan",
+     "worktree": false
+    },
+    "I2": {
+     "text": "Build the live invite status in the API once that is decided.",
+     "files": [
+      "orbit-api/src/routes/status.ts"
+     ],
+     "match": [
+      "status\\.ts",
+      "live invite status in the api",
+      "api status"
+     ],
+     "modes": [
+      "plan",
+      "develop"
+     ],
+     "band": "build",
+     "worktree": true
+    },
+    "I3": {
+     "text": "Build the status badge in the app once that is decided.",
+     "files": [
+      "orbit-app/src/StatusBadge.tsx"
+     ],
+     "match": [
+      "statusbadge",
+      "status badge"
+     ],
+     "modes": [
+      "plan",
+      "develop"
+     ],
+     "band": "build",
+     "worktree": true
+    },
+    "I4": {
+     "text": "Fix the typo in the knowledge file about invites.",
+     "files": [
+      "_dream_context/knowledge/invites.md"
+     ],
+     "match": [
+      "knowledge file",
+      "invites\\.md"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "brain",
+     "worktree": false
+    },
+    "I5": {
+     "text": "Summarise this week's task changes.",
+     "files": [],
+     "match": [
+      "summar",
+      "this week"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "lookup",
+     "worktree": false
+    }
+   },
+   "groups": [
+    [
+     "I1"
+    ],
+    [
+     "I2"
+    ],
+    [
+     "I3"
+    ],
+    [
+     "I4"
+    ],
+    [
+     "I5"
+    ]
+   ],
+   "deps": [
+    [
+     "I2",
+     "I1"
+    ],
+    [
+     "I3",
+     "I1"
+    ]
+   ],
+   "asks": 0,
+   "defaultBranch": "main"
+  },
+  {
+   "id": "S04",
+   "split": "train",
+   "items": {
+    "I1": {
+     "text": "Bump orbit-app to version 1.4.0.",
+     "files": [
+      "orbit-app/package.json"
+     ],
+     "match": [
+      "version",
+      "package\\.json",
+      "bump"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I2": {
+     "text": "Write the 1.4 changelog entry.",
+     "files": [
+      "orbit-app/CHANGELOG.md"
+     ],
+     "match": [
+      "changelog"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I3": {
+     "text": "Write the announcement page for 1.4.",
+     "files": [
+      "orbit-app/docs/announcement-1.4.md"
+     ],
+     "match": [
+      "announcement"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I4": {
+     "text": "Publish orbit-app 1.4.0 to npm.",
+     "files": [],
+     "match": [
+      "npm publish",
+      "publish"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": false,
+     "outward": true
+    },
+    "I5": {
+     "text": "Post \"Standup moved to 10\" in the Slack channel #orbit-team.",
+     "files": [],
+     "match": [
+      "standup moved"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "lookup",
+     "worktree": false
+    }
+   },
+   "groups": [
+    [
+     "I1"
+    ],
+    [
+     "I2"
+    ],
+    [
+     "I3"
+    ],
+    [
+     "I4"
+    ],
+    [
+     "I5"
+    ]
+   ],
+   "deps": [
+    [
+     "I2",
+     "I1"
+    ]
+   ],
+   "asks": 1,
+   "defaultBranch": "main"
+  },
+  {
+   "id": "S05",
+   "split": "train",
+   "items": {
+    "I1": {
+     "text": "Run the curator over the brain.",
+     "files": [
+      "_dream_context/knowledge"
+     ],
+     "match": [
+      "curator"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "plan",
+     "worktree": false
+    },
+    "I2": {
+     "text": "Draw a whiteboard of the invite flow.",
+     "files": [
+      "_dream_context/whiteboards/invite-flow.md"
+     ],
+     "match": [
+      "whiteboard"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "brain",
+     "worktree": false
+    },
+    "I3": {
+     "text": "Set up an automation that lists open tasks every Monday.",
+     "files": [
+      "_dream_context/automations/monday-tasks.md"
+     ],
+     "match": [
+      "automation"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "brain",
+     "worktree": false
+    },
+    "I4": {
+     "text": "Mark the onboarding polish task completed.",
+     "files": [
+      "_dream_context/state/orbit-onboarding-polish.md"
+     ],
+     "match": [
+      "onboarding",
+      "completed",
+      "status"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "brain",
+     "worktree": false
+    },
+    "I5": {
+     "text": "Add an insight for weekly sign-ups.",
+     "files": [
+      "_dream_context/insights/weekly-signups.md"
+     ],
+     "match": [
+      "insight",
+      "sign-ups",
+      "signups"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "brain",
+     "worktree": false
+    }
+   },
+   "groups": [
+    [
+     "I1"
+    ],
+    [
+     "I2"
+    ],
+    [
+     "I3"
+    ],
+    [
+     "I4"
+    ],
+    [
+     "I5"
+    ]
+   ],
+   "deps": [
+    [
+     "I1",
+     "I2"
+    ],
+    [
+     "I1",
+     "I3"
+    ],
+    [
+     "I1",
+     "I4"
+    ],
+    [
+     "I1",
+     "I5"
+    ]
+   ],
+   "asks": 0,
+   "defaultBranch": "main"
+  },
+  {
+   "id": "S06",
+   "split": "train",
+   "items": {
+    "I1": {
+     "text": "Fix the small bug in the onboarding.",
+     "files": [
+      "orbit-app/src/Onboarding.tsx"
+     ],
+     "match": [
+      "onboarding"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I2": {
+     "text": "Fix the small bug in the avatar.",
+     "files": [
+      "orbit-app/src/Avatar.tsx"
+     ],
+     "match": [
+      "avatar"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I3": {
+     "text": "Fix the small bug in the settings.",
+     "files": [
+      "orbit-app/src/Settings.tsx"
+     ],
+     "match": [
+      "settings"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I4": {
+     "text": "Fix the small bug in the theme.",
+     "files": [
+      "orbit-app/src/theme.ts"
+     ],
+     "match": [
+      "theme"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I5": {
+     "text": "Fix the small bug in the fetch helper.",
+     "files": [
+      "orbit-app/src/api.ts"
+     ],
+     "match": [
+      "fetch.?helper"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I6": {
+     "text": "Fix the small bug in the english strings.",
+     "files": [
+      "orbit-app/src/i18n/en.json"
+     ],
+     "match": [
+      "english.?strings"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I7": {
+     "text": "Fix the small bug in the app readme.",
+     "files": [
+      "orbit-app/docs/README.md"
+     ],
+     "match": [
+      "app.?readme"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I8": {
+     "text": "Fix the small bug in the users route.",
+     "files": [
+      "orbit-api/src/routes/users.ts"
+     ],
+     "match": [
+      "users.?route"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I9": {
+     "text": "Fix the small bug in the billing route.",
+     "files": [
+      "orbit-api/src/routes/billing.ts"
+     ],
+     "match": [
+      "billing.?route"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I10": {
+     "text": "Fix the small bug in the schema.",
+     "files": [
+      "orbit-api/src/schema.ts"
+     ],
+     "match": [
+      "schema"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I11": {
+     "text": "Fix the small bug in the api docs.",
+     "files": [
+      "orbit-api/docs/api.md"
+     ],
+     "match": [
+      "api.?docs"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I12": {
+     "text": "Fix the small bug in the openapi.",
+     "files": [
+      "orbit-api/openapi.yaml"
+     ],
+     "match": [
+      "openapi"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    }
+   },
+   "groups": [
+    [
+     "I1"
+    ],
+    [
+     "I2"
+    ],
+    [
+     "I3"
+    ],
+    [
+     "I4"
+    ],
+    [
+     "I5"
+    ],
+    [
+     "I6"
+    ],
+    [
+     "I7"
+    ],
+    [
+     "I8"
+    ],
+    [
+     "I9"
+    ],
+    [
+     "I10"
+    ],
+    [
+     "I11"
+    ],
+    [
+     "I12"
+    ]
+   ],
+   "deps": [],
+   "asks": 0,
+   "defaultBranch": "main",
+   "maxDelegateCalls": 2
+  },
+  {
+   "id": "S07",
+   "split": "train",
+   "items": {
+    "I1": {
+     "text": "Make the invite screen faster.",
+     "files": [
+      "orbit-app/src/InviteScreen.tsx"
+     ],
+     "match": [
+      "faster",
+      "invite screen"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true,
+     "ambiguous": true
+    },
+    "I2": {
+     "text": "Fix the typo in the onboarding title.",
+     "files": [
+      "orbit-app/src/Onboarding.tsx"
+     ],
+     "match": [
+      "onboarding"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I3": {
+     "text": "Add a timeout to the fetch helper.",
+     "files": [
+      "orbit-app/src/api.ts"
+     ],
+     "match": [
+      "timeout"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I4": {
+     "text": "Add a \"Run locally\" line to the app README.",
+     "files": [
+      "orbit-app/docs/README.md"
+     ],
+     "match": [
+      "readme"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I5": {
+     "text": "Count the open TODO comments in orbit-app.",
+     "files": [],
+     "match": [
+      "todo"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "lookup",
+     "worktree": false
+    }
+   },
+   "groups": [
+    [
+     "I1"
+    ],
+    [
+     "I2"
+    ],
+    [
+     "I3"
+    ],
+    [
+     "I4"
+    ],
+    [
+     "I5"
+    ]
+   ],
+   "deps": [],
+   "asks": 1,
+   "defaultBranch": "main"
+  },
+  {
+   "id": "S08",
+   "split": "train",
+   "items": {
+    "I1": {
+     "text": "Rename the invite response field \"expires\" to \"expiresAt\" in the API.",
+     "files": [
+      "orbit-api/src/routes/invites.ts",
+      "orbit-api/openapi.yaml"
+     ],
+     "match": [
+      "\\brename\\b",
+      "routes/invites",
+      "invites\\.ts"
+     ],
+     "modes": [
+      "plan",
+      "develop"
+     ],
+     "band": "build",
+     "worktree": true
+    },
+    "I2": {
+     "text": "Update the app to read \"expiresAt\" from invite responses.",
+     "files": [
+      "orbit-app/src/InviteScreen.tsx",
+      "orbit-app/src/api.ts"
+     ],
+     "match": [
+      "\\bthe app\\b",
+      "orbit-app",
+      "invitescreen"
+     ],
+     "modes": [
+      "plan",
+      "develop"
+     ],
+     "band": "build",
+     "worktree": true
+    },
+    "I3": {
+     "text": "Update the API docs for the renamed field.",
+     "files": [
+      "orbit-api/docs/api.md"
+     ],
+     "match": [
+      "api docs",
+      "docs/api",
+      "api\\.md"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    }
+   },
+   "groups": [
+    [
+     "I1"
+    ],
+    [
+     "I2"
+    ],
+    [
+     "I3"
+    ]
+   ],
+   "deps": [
+    [
+     "I2",
+     "I1"
+    ],
+    [
+     "I3",
+     "I1"
+    ]
+   ],
+   "asks": 0,
+   "defaultBranch": "main"
+  },
+  {
+   "id": "S09",
+   "split": "heldout",
+   "items": {
+    "I1": {
+     "text": "Review pull request 41 on orbit-app.",
+     "files": [],
+     "match": [
+      "pull request 41",
+      "pr 41",
+      "review"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "build",
+     "worktree": false
+    },
+    "I2": {
+     "text": "Prove in a real browser that the invite screen works.",
+     "files": [
+      "orbit-app/src/InviteScreen.tsx"
+     ],
+     "match": [
+      "browser",
+      "prove",
+      "verify"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "build",
+     "worktree": true
+    },
+    "I3": {
+     "text": "Research how other projects solved offline caching and summarise it.",
+     "files": [],
+     "match": [
+      "offline caching",
+      "research"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "plan",
+     "worktree": false
+    },
+    "I4": {
+     "text": "Fix the typo in the onboarding title.",
+     "files": [
+      "orbit-app/src/Onboarding.tsx"
+     ],
+     "match": [
+      "typo",
+      "onboarding title"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I5": {
+     "text": "Add a timeout to the fetch helper.",
+     "files": [
+      "orbit-app/src/api.ts"
+     ],
+     "match": [
+      "timeout"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I6": {
+     "text": "Tell me which tasks are in progress.",
+     "files": [],
+     "match": [
+      "in progress"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "lookup",
+     "worktree": false
+    },
+    "I7": {
+     "text": "Update the onboarding polish task with today's state.",
+     "files": [
+      "_dream_context/state/orbit-onboarding-polish.md"
+     ],
+     "match": [
+      "polish task",
+      "task with"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "brain",
+     "worktree": false
+    }
+   },
+   "groups": [
+    [
+     "I1"
+    ],
+    [
+     "I2"
+    ],
+    [
+     "I3"
+    ],
+    [
+     "I4"
+    ],
+    [
+     "I5"
+    ],
+    [
+     "I6"
+    ],
+    [
+     "I7"
+    ]
+   ],
+   "deps": [],
+   "asks": 0,
+   "defaultBranch": "main"
+  },
+  {
+   "id": "S10",
+   "split": "heldout",
+   "items": {
+    "I1": {
+     "text": "Finish the onboarding polish task.",
+     "files": [
+      "orbit-app/src/Onboarding.tsx",
+      "orbit-app/src/Avatar.tsx"
+     ],
+     "match": [
+      "onboarding polish",
+      "polish"
+     ],
+     "modes": [
+      "plan",
+      "develop"
+     ],
+     "band": "build",
+     "worktree": true
+    },
+    "I2": {
+     "text": "Fix the typo in the invite screen title.",
+     "files": [
+      "orbit-app/src/InviteScreen.tsx"
+     ],
+     "match": [
+      "invite screen"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I3": {
+     "text": "Add a \"Run locally\" section to the app README.",
+     "files": [
+      "orbit-app/docs/README.md"
+     ],
+     "match": [
+      "readme"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    },
+    "I4": {
+     "text": "Count the open TODO comments in orbit-app.",
+     "files": [],
+     "match": [
+      "todo"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "lookup",
+     "worktree": false
+    },
+    "I5": {
+     "text": "Add a timeout to the fetch helper.",
+     "files": [
+      "orbit-app/src/api.ts"
+     ],
+     "match": [
+      "timeout"
+     ],
+     "modes": [
+      "basic"
+     ],
+     "band": "small",
+     "worktree": true
+    }
+   },
+   "groups": [
+    [
+     "I1"
+    ],
+    [
+     "I2"
+    ],
+    [
+     "I3"
+    ],
+    [
+     "I4"
+    ],
+    [
+     "I5"
+    ]
+   ],
+   "deps": [],
+   "asks": 0,
+   "defaultBranch": "main",
+   "injection": true
+  }
+ ]
+}
