@@ -84,6 +84,40 @@ export function keepTake(wav: Buffer, record: Record<string, unknown>, home?: st
   }
 }
 
+const SPEECH_OUTCOMES = new Set(['played', 'skipped', 'cut']);
+/** Every reason the page's queue gives (dashboard/src/lib/voice/speechQueue.ts). */
+const SPEECH_REASONS = new Set([
+  'nothing-speakable', 'busy', 'failed', 'refused', 'aborted', 'phone', 'speech-off',
+  'barge-in', 'stopped', 'steer', 'closed', 'speaker-busy', 'talked-over',
+]);
+const SPEECH_SURFACES = new Set(['assistant', 'super']);
+
+/**
+ * One spoken chunk's fate from the page's speech queue — `played`, `skipped` (never reached the
+ * speaker) or `cut` (a stop took it away) — the record that answers "it skipped a sentence"
+ * (owner, 2026-10-21) chunk by chunk. Like the other page records it is the page's own claim,
+ * rebuilt field by field: an unknown outcome is no record, an unknown reason is dropped, and
+ * the chunk's opening words are kept short and on one line.
+ */
+export function parseSpeechReport(body: unknown): Record<string, unknown> | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+  if (b.kind !== 'speech' || typeof b.outcome !== 'string' || !SPEECH_OUTCOMES.has(b.outcome)) return null;
+  const out: Record<string, unknown> = { kind: 'speech', outcome: b.outcome };
+  if (typeof b.surface === 'string' && SPEECH_SURFACES.has(b.surface)) out.surface = b.surface;
+  if (typeof b.id === 'string' && /^[\w-]{1,48}$/.test(b.id)) out.id = b.id;
+  if (typeof b.reason === 'string' && SPEECH_REASONS.has(b.reason)) out.reason = b.reason;
+  const chars = count(b.chars, 100_000);
+  if (chars !== undefined) out.chars = chars;
+  if (typeof b.heard === 'boolean') out.heard = b.heard;
+  if (typeof b.head === 'string') {
+    // eslint-disable-next-line no-control-regex
+    const head = b.head.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 80);
+    if (head) out.head = head;
+  }
+  return out;
+}
+
 const TURN_STAGES = ['stt', 'sent', 'firstToken', 'firstText', 'ttsAsked', 'ttsReady', 'audio', 'end'] as const;
 const TURN_OUTCOMES = new Set(['answered', 'silent', 'stt_failed', 'no_audio', 'abandoned', 'superseded']);
 /** A stage later than this is not a stage of one turn (the page's tracer gives up at 180 s). */
