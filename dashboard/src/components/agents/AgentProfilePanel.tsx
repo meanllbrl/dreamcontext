@@ -264,7 +264,15 @@ export function AgentProfilePanel({
   const reviewFromHeader = () => {
     openReview();
     const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    approvalRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    // NOT `scrollIntoView`: it scrolls every scrollable ancestor, and the app shell's own
+    // overflow-hidden main counts. Hosted in the AI Team panel, that shoved the whole page up
+    // and left the list and the composer hanging mid-screen. Only the panel's scroller moves.
+    const target = approvalRef.current;
+    const scroller = target ? scrollParentOf(target) : null;
+    if (target && scroller) {
+      const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      scroller.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
+    }
   };
 
   return (
@@ -519,6 +527,15 @@ export function AgentProfilePanel({
       </section>
     </aside>
   );
+}
+
+/** The nearest element that scrolls `el` on its own (overflow auto or scroll), itself excluded. */
+export function scrollParentOf(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const { overflowY } = getComputedStyle(p);
+    if ((overflowY === 'auto' || overflowY === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
 }
 
 /** Free text as paragraphs and bulleted lists (`textBlocks`). */

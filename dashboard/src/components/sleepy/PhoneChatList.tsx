@@ -5,18 +5,18 @@ import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useChrome } from '../layout/WindowChrome';
 import { pollMs } from '../../lib/windowActivity';
-import type { LiveChatWire, LiveChatsWire } from '../handsfree/macContract';
+import type { LiveChatWire, LiveChatsWire, SuperChatWire } from '../handsfree/macContract';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { HandsfreeBackdrop, HandsfreeMark } from '../brand/HandsfreeMark';
 import { PushOptIn } from '../handsfree/phone/PushOptIn';
 import type { PastSession } from './ChatHistoryPicker';
 import type { ChatSession } from './chatSession';
-import { pastTap } from './drawerRows';
+import { liveStateKey, pastTap } from './drawerRows';
 import { markClosed, recentlyClosed } from './phoneClosed';
 import { chatLastLine, heldIds, type StackTab } from './phoneStack';
 import {
   ageLabel, chatLastTs, chatSearchText, closedRows, highlight, listTap, listView, openMatches, openRows, queryTokens,
-  type ClosedRow, type ListFilter, type OpenRow,
+  superRowFor, superTap, type ClosedRow, type ListFilter, type OpenRow,
 } from './phoneList';
 
 /**
@@ -30,6 +30,10 @@ import {
  * Closed chats are searched on the Mac (`/agent/chat-sessions?q=`: titles and your messages,
  * never Claude's answers — the index the desktop picker already keeps); open ones here, over
  * their title, last line and, for this phone's own tabs, the loaded conversation.
+ *
+ * A project whose Super Agent is handed over (`live.supers`) shows ONE row and nothing else: the
+ * Super Agent runs that project's chats, so the phone talks to it alone — no search, no chips, no
+ * closed chats, no new chat. Without a hand-over the list is exactly as before.
  */
 
 const PAST_LIMIT = 50;
@@ -45,7 +49,7 @@ function Marked({ text, tokens }: { text: string; tokens: readonly string[] }) {
 }
 
 export function PhoneChatList({
-  tabs, vault, active, sessionFor, onSelect, onCloseSession, onAdopt, onResume, onNewChat, onExitToDashboard,
+  tabs, vault, active, sessionFor, onSelect, onCloseSession, onAdopt, onResume, onNewChat, onExitToDashboard, onOpenSuper,
 }: {
   tabs: StackTab[];
   vault: string;
@@ -59,6 +63,8 @@ export function PhoneChatList({
   onResume: (past: PastSession) => void;
   onNewChat: () => void;
   onExitToDashboard: () => void;
+  /** Open the handed-over Super Agent's chat (the phone mirrors it; it never takes it). */
+  onOpenSuper: (row: SuperChatWire) => void;
 }) {
   const api = useApi();
   const chrome = useChrome();
@@ -122,6 +128,8 @@ export function PhoneChatList({
 
   const tokens = queryTokens(dq);
   const chats = live?.chats ?? [];
+  // This project is handed over: the Super Agent's one row is the whole list.
+  const superRow = superRowFor(live, vault);
   const lineOf = (row: OpenRow): string => {
     if (row.kind === 'mac') return row.lastLine;
     const s = sessionFor(row.id);
@@ -208,6 +216,74 @@ export function PhoneChatList({
       {label} <b>{view.counts[f]}</b>
     </button>
   );
+
+  if (superRow) {
+    const tapSuper = superTap(superRow, tabs);
+    const state = superRow.live ? t(liveStateKey(superRow.state)) : t('handsfree.super.offline');
+    return (
+      <div className="mlist-screen" data-testid="phone-list" data-super="true" ref={rootRef}>
+        <HandsfreeBackdrop />
+        <div className="mlist-head">
+          <HandsfreeMark height={22} className="mlist-mark" />
+          <h1 className="mlist-h" tabIndex={-1}>{t('handsfree.list.title')}</h1>
+          <PhoneChip />
+        </div>
+        {projects.length > 1 && (
+          <div className="mlist-projects" data-testid="list-projects">
+            {projects.map((p) => (
+              <button
+                key={p.name}
+                type="button"
+                className="mlist-chip mlist-project"
+                data-on={p.name === vault ? 'true' : undefined}
+                aria-pressed={p.name === vault}
+                onClick={() => { if (p.name !== vault) void chrome.addTab(p.name); }}
+              >{p.name}</button>
+            ))}
+          </div>
+        )}
+        <div className="mlist-body">
+          <ul className="mlist-rows">
+            <li className="mlist-item">
+              <button
+                className="mlist-row"
+                data-testid="super-row"
+                data-kind="super"
+                data-id={superRow.conversationId}
+                data-waiting={superRow.state === 'asking' ? 'true' : undefined}
+                disabled={!tapSuper}
+                onClick={() => {
+                  if (!tapSuper) return;
+                  if ('select' in tapSuper) onSelect(tapSuper.select.paneId, tapSuper.select.id);
+                  else onOpenSuper(tapSuper.open);
+                }}
+              >
+                <span className="agent-tab-dot" data-kind={superRow.live ? (superRow.state === 'asking' ? 'asking' : superRow.state === 'working' ? 'working' : 'idle') : 'idle'} aria-hidden />
+                <span className="mlist-text">
+                  <span className="mlist-title"><span className="mlist-title-text">{t('handsfree.super.title')}</span></span>
+                  <span className="mlist-sub">
+                    <span className="mlist-state" data-testid="super-state">{state}</span>
+                    {superRow.lastLine ? ` · ${superRow.lastLine}` : ''}
+                  </span>
+                </span>
+                <span className="mlist-age">{age(superRow.updatedAt)}</span>
+              </button>
+            </li>
+          </ul>
+          <p className="mchat-empty" data-testid="super-hint">{t('handsfree.super.hint')}</p>
+        </div>
+        <PushOptIn />
+        <div className="mlist-foot">
+          <button type="button" className="mlist-foot-btn" onClick={onExitToDashboard} data-testid="list-dashboard">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
+              <path d="M3 5.5h14M3 10h14M3 14.5h14" />
+            </svg>
+            {t('handsfree.list.dashboard')}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mlist-screen" data-testid="phone-list" ref={rootRef}>

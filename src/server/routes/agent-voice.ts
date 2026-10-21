@@ -31,6 +31,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
+import { isPhoneSocket } from '../phone-origin.js';
 import {
   voiceApiKey, voiceStatus, writeVoiceConfig, readVoiceConfig,
   DEFAULT_VOICE, clampSpeechRate, clampMusicDuck,
@@ -42,6 +43,7 @@ import {
 } from '../../lib/voice/openrouter.js';
 import {
   sttGate, ttsGate, focusGate, MAX_STT_BYTES, MAX_TTS_CHARS,
+  phoneSttGate, PHONE_MAX_STT_BYTES, PHONE_MAX_STT_SECONDS, wavSeconds,
 } from '../../lib/voice/limits.js';
 import { speakable } from '../../lib/voice/speakable.js';
 import { wavFromPcm16, normalizeSpeech, pcmSeconds, PCM16_SAMPLE_RATE } from '../../lib/voice/wav.js';
@@ -140,7 +142,7 @@ const TTS_TIMEOUT_MS = 30_000;
  *
  * Resolves null when the cap was hit (413 already sent) or the stream errored.
  */
-function readCappedAudio(req: IncomingMessage, res: ServerResponse): Promise<Buffer | null> {
+function readCappedAudio(req: IncomingMessage, res: ServerResponse, max = MAX_STT_BYTES): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -148,8 +150,8 @@ function readCappedAudio(req: IncomingMessage, res: ServerResponse): Promise<Buf
     const finish = (v: Buffer | null) => { if (!done) { done = true; resolve(v); } };
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_STT_BYTES) {
-        sendError(res, 413, 'too_large', 'The recording exceeds the 25 MB limit.');
+      if (size > max) {
+        sendError(res, 413, 'too_large', `The recording exceeds the ${Math.round(max / (1024 * 1024))} MB limit.`);
         req.destroy();
         finish(null);
         return;
@@ -189,16 +191,25 @@ export async function handleVoiceStt(
     return;
   }
 
-  // The gate is taken BEFORE the body is read, so a burst is refused without us first
+  // The hands-free phone (Mac mode's tunnel) is the one remote caller this route takes: its own
+  // tighter caps, on top of the shared ones (lib/voice/limits.ts). Decided per socket, never by
+  // loopback: the tunnel dials from 127.0.0.1.
+  const phone = isPhoneSocket(req);
+  const busy = (verdict: 'busy' | 'rate'): void => sendJson(res, 429, {
+    error: 'stt_busy',
+    message: verdict === 'busy'
+      ? 'Another recording is still being transcribed.'
+      : 'Too many recordings in the last minute.',
+  });
+
+  // The gates are taken BEFORE the body is read, so a burst is refused without us first
   // buffering 25 MB per attacker request.
+  const phoneVerdict = phone ? phoneSttGate.acquire() : 'ok';
+  if (phoneVerdict !== 'ok') { busy(phoneVerdict); return; }
   const verdict = sttGate.acquire();
   if (verdict !== 'ok') {
-    sendJson(res, 429, {
-      error: 'stt_busy',
-      message: verdict === 'busy'
-        ? 'Another recording is still being transcribed.'
-        : 'Too many recordings in the last minute.',
-    });
+    if (phone) phoneSttGate.release();
+    busy(verdict);
     return;
   }
 
@@ -209,7 +220,7 @@ export async function handleVoiceStt(
     // warm whisper.cpp answers in ~0.88s for nothing, against ~1.0-1.5s and ~$0.0015 a take
     // for an omni chat model that is also less accurate on Turkish carrying English jargon.
     const cfgEarly = readVoiceConfig();
-    const audioEarly = await readCappedAudio(req, res);
+    const audioEarly = await readCappedAudio(req, res, phone ? PHONE_MAX_STT_BYTES : MAX_STT_BYTES);
     if (!audioEarly) return;                  // 413 already sent, or a read error
     if (audioEarly.length === 0) {
       sendJson(res, 400, { error: 'stt_failed', message: 'The recording was empty.' });
@@ -222,6 +233,13 @@ export async function handleVoiceStt(
         message: 'This take was not recorded in a supported format.',
       });
       return;
+    }
+    if (phone) {
+      const seconds = wavSeconds(audioEarly);
+      if (seconds === null || seconds > PHONE_MAX_STT_SECONDS) {
+        sendError(res, 413, 'too_large', `A voice message from the phone is at most ${PHONE_MAX_STT_SECONDS / 60} minutes.`);
+        return;
+      }
     }
 
     // DICTATION IS LOCAL, AND ONLY LOCAL (owner, 2026-09-27: "dikte sadece yerel olsun",
@@ -255,6 +273,7 @@ export async function handleVoiceStt(
     });
   } finally {
     sttGate.release();
+    if (phone) phoneSttGate.release();
   }
 }
 

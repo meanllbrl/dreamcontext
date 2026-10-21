@@ -84,6 +84,11 @@ export interface SuperChild {
   settling?: boolean;
   task?: string;
   stuckReason?: StuckReason;
+  mode?: string;
+  model?: string;
+  effort?: string;
+  /** `super end` closed it: no process, tab or card; `super resume` clears it. */
+  endedAt?: number;
 }
 
 export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone'] as const;
@@ -91,7 +96,7 @@ export type ChildRow = typeof CHILD_ROWS[number];
 export const STUCK_REASONS = ['error', 'stale'] as const;
 export type StuckReason = typeof STUCK_REASONS[number];
 
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -109,6 +114,8 @@ export interface SuperQueueItem {
   batch?: string;
   /** An `ask`'s answers, validated by the server: drawn whole or not at all. */
   options?: string[];
+  /** An `ended` item's last brief of the child. */
+  brief?: string;
 }
 
 /** A job kept for later (the list's "Havuz"). The prompt never reaches the window. */
@@ -152,7 +159,7 @@ export interface SuperStateView extends SuperState {
   vault: string;
 }
 
-export const SUPER_WINDOW_VERBS = ['delegate', 'answer'] as const;
+export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
 export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]'] as const;

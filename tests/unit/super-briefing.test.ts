@@ -67,12 +67,14 @@ describe('superBriefing', () => {
   });
 
   // The owner's field rules of 2026-10-21 (his language, no jargon, an estimate, rows kept from
-  // the first turn, no reply to a repeat) are an explicit allowance on top of the 15 %.
+  // the first turn, no reply to a repeat) are an explicit allowance on top of the 15 %, and so is
+  // the child lifecycle that came with main (super end/resume/update/adopt, the Done line).
   const OWNER_RULES_2026_10_21 = 400;
-  it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the owner\'s 2026-10-21 rules, with or without a guide', () => {
+  const CHILD_LIFECYCLE_2026_10_21 = 500;
+  it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules and lifecycle, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21);
     }
   });
 });
@@ -150,5 +152,48 @@ describe('the orchestration guide slot', () => {
     for (const b of [superBriefing(null), superBriefing('docs/orchestration.md')]) {
       expect(b.match(/^# Mode:/gm)).toHaveLength(1);
     }
+  });
+});
+
+describe('the child lifecycle and the installed guide path', () => {
+  const brief = superBriefing();
+
+  it('names the child lifecycle: end, resume, update, adopt (the owner\'s chats only on his word)', () => {
+    expect(brief).toContain('dreamcontext super end <child>');
+    expect(brief).toContain('super resume <child>');
+    expect(brief).toContain('super update <child> --model|--effort|--mode');
+    expect(brief).toContain('super adopt <chat>');
+    expect(brief).toContain('The owner\'s own chats take `--force`, only when he asks.');
+  });
+
+  describe('the orchestration slot', () => {
+    const PATH = '.claude/skills/dreamcontext/references/super-orchestration.md';
+    const bullet = `- Before you split work, read the orchestration guide: ${PATH}.`;
+    const lead = (b: string): string[] => b.split('## Lead, do not do\n')[1].split('\n');
+
+    it('while no guide is set, names no guide path and emits no bullet', () => {
+      expect(superBriefing(null)).not.toContain('orchestration guide');
+      expect(superBriefing(null)).not.toContain('super-orchestration');
+      expect(superBriefing(null)).toBe(brief); // the shipped default is the empty slot
+      expect(SUPER_ORCHESTRATION_GUIDE === null || SUPER_ORCHESTRATION_GUIDE === PATH).toBe(true);
+    });
+
+    it('while a guide is set, the first "Lead, do not do" bullet is exactly the pointer', () => {
+      const set = superBriefing(PATH);
+      expect(lead(set)[0]).toBe(bullet);
+      expect(set.split(bullet).length).toBe(2);
+      expect(set.match(/^# Mode:/gm)).toHaveLength(1);
+      expect(superBriefing(null).match(/^# Mode:/gm)).toHaveLength(1);
+    });
+
+    it('treats an empty or blank guide as unset and refuses a line break', () => {
+      expect(superBriefing('  ')).toBe(superBriefing(null));
+      expect(superBriefing('')).toBe(superBriefing(null));
+      expect(() => superBriefing('a\nb')).toThrow();
+    });
+
+    it('adds only the one pointer line when set (the job-list task\'s length rule replaces the cap)', () => {
+      expect(superBriefing(PATH).length - superBriefing(null).length).toBe(bullet.length + 1);
+    });
   });
 });

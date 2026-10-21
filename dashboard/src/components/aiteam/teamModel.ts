@@ -125,7 +125,7 @@ export function buildRoster(
 
     const needs = mine.some((m) => m.question !== null || m.status === 'needs-you')
       || routines.some((r) => r.pendingQuestion !== null);
-    const approval = !agent.approvedForChat || routines.some((r) => !r.approved);
+    const approval = pendingApprovals(agent, routines).length > 0;
     const paused = routines.length > 0 && routines.every((r) => !r.enabled);
     const status: TeamStatus = since !== null ? 'working'
       : needs ? 'needs'
@@ -158,6 +158,55 @@ export function buildRoster(
     if (b.lastAt) return 1;
     return a.title.localeCompare(b.title);
   });
+}
+
+/**
+ * ONE THING WAITING FOR THE OWNER'S APPROVAL ON THIS MAC.
+ *
+ * Every automation needs a machine-local approval of exactly what it is (its hash): that rule
+ * stays. What changes is where it is SAID: the conversation names each of these at its top,
+ * in one sentence, instead of leaving them at the bottom of the profile.
+ *
+ *  - `agent`: the agent's own call target. `blocksTalk` when the owner's message would be
+ *    refused: `say` runs a routine that shares the agent's slug when there is one, otherwise
+ *    the call target, and both refuse when what they run is not approved here.
+ *  - `routine`: one of its routines will not fire until approved (new here, or changed).
+ */
+export type PendingApproval = {
+  kind: 'agent' | 'routine';
+  slug: string;
+  title: string;
+  /** Approving this is what lets the owner's next message through. */
+  blocksTalk: boolean;
+  reason: string | null;
+};
+
+/** What waits for approval, in the order it matters: what blocks talking first, then the
+ *  routines, then the call target's own runs (boards and tasks). Empty when all is approved. */
+export function pendingApprovals(
+  agent: Pick<TeamAgent, 'slug' | 'title' | 'approvedForChat' | 'approvedToRun' | 'approvalReason'>,
+  routines: readonly Pick<TeamAutomation, 'slug' | 'title' | 'approved' | 'approvalReason'>[],
+): PendingApproval[] {
+  // `say` runs the routine that shares the agent's slug when there is one, else the call target.
+  const talkRoutine = routines.some((r) => r.slug === agent.slug);
+  const out: PendingApproval[] = [];
+  if (!agent.approvedForChat || !agent.approvedToRun) {
+    out.push({
+      kind: 'agent', slug: agent.slug, title: agent.title, reason: agent.approvalReason,
+      blocksTalk: !agent.approvedForChat || !talkRoutine,
+    });
+  }
+  for (const r of routines) {
+    if (!r.approved) {
+      out.push({ kind: 'routine', slug: r.slug, title: r.title, reason: r.approvalReason, blocksTalk: r.slug === agent.slug });
+    }
+  }
+  return out.sort((x, y) => Number(y.blocksTalk) - Number(x.blocksTalk));
+}
+
+/** Would a message to this agent be refused here right now? */
+export function talkBlocked(pending: readonly PendingApproval[]): boolean {
+  return pending.some((p) => p.blocksTalk);
 }
 
 /** What one run's thread read adds to its message: the entries and the run's document. */
@@ -254,7 +303,8 @@ export function buildConversation(
         at: m.at,
         summary: m.summary,
         files: m.files.map((f) => f.path),
-        report,
+        // A failed run's "report" is its own error again: said once, in the post.
+        report: m.textFrom === 'error' ? null : report,
         question: thread ? null : m.question,
         failed: m.textFrom === 'error',
       });
@@ -313,6 +363,23 @@ export function buildConversation(
     if (m.status === 'running') out.push({ kind: 'live', key: `${m.key}:live`, message: m });
   }
   return out;
+}
+
+/**
+ * Where a notification for `slug` lands: the newest row of that routine's (or the agent's own)
+ * newest message, preferring what was said over the bookkeeping around it. Null when the
+ * conversation holds nothing of it (the reader stays at the end).
+ */
+export function focusTargetKey(items: readonly ConversationItem[], slug: string): string | null {
+  const prefix = `${slug}::`;
+  let fallback: string | null = null;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (!it.key.startsWith(prefix)) continue;
+    if (it.kind === 'agent' || it.kind === 'live') return it.key;
+    fallback ??= it.key;
+  }
+  return fallback;
 }
 
 /** The question the composer answers: the newest open one in this conversation. */

@@ -84,25 +84,48 @@ export async function enableSuper(contextRoot: string, body: Record<string, unkn
     s.away = { since: null, events: 0 };
     s.queue = s.queue.filter((q) => !(q.kind === 'handover' && q.state === 'pending'));
     s.queue.push({ id: newQueueId(), sessionId: session, kind: 'handover', state: 'pending', createdAt: now });
-    // A child that is ALREADY asking gets the item the status-change path would have made (M3):
-    // a permission is at the owner's queue head at once, a question goes pending under D7.
-    // The same child + request is never queued twice (that path checks the same way).
-    // First, what the child is no longer asking goes: while the mode was off the registry path
-    // ignored it, so an item answered in its own tab would still lead the strip (w5 Minor 5).
-    for (const sid of adopt) {
-      const pq = getChat(sid)?.status === 'asking' ? getChat(sid)?.pendingQuestion : null;
-      resolveAnswered(s, sid, pq?.requestId ?? null);
-      if (!pq) continue;
-      if (s.queue.some((q) => q.sessionId === sid && q.requestId === pq.requestId && q.state !== 'done')) continue;
-      s.queue.push({
-        id: newQueueId(), sessionId: sid, kind: pq.isPermission ? 'permission' : 'question',
-        requestId: pq.requestId, state: 'pending', createdAt: now,
-      });
-    }
+    for (const sid of adopt) queueWhatItAsks(s, sid, now);
   });
   await reconcileRows(contextRoot);
   void pumpSuper(contextRoot);
   return { session: state.session as string, state };
+}
+
+/**
+ * A child that is ALREADY asking gets the item the status-change path would have made (M3): a
+ * permission is at the owner's queue head at once, a question goes pending under D7. The same
+ * child + request is never queued twice (that path checks the same way). First, what the child
+ * is no longer asking goes: while it was no child the registry path ignored it, so an item
+ * answered in its own tab would still lead the strip (w5 Minor 5).
+ */
+function queueWhatItAsks(s: SuperState, sid: string, now: number): void {
+  const pq = getChat(sid)?.status === 'asking' ? getChat(sid)?.pendingQuestion : null;
+  resolveAnswered(s, sid, pq?.requestId ?? null);
+  if (!pq) return;
+  if (s.queue.some((q) => q.sessionId === sid && q.requestId === pq.requestId && q.state !== 'done')) return;
+  s.queue.push({
+    id: newQueueId(), sessionId: sid, kind: pq.isPermission ? 'permission' : 'question',
+    requestId: pq.requestId, state: 'pending', createdAt: now,
+  });
+}
+
+/**
+ * `super adopt` (on the owner's word): ONE open chat of the vault becomes a child mid-hand-over,
+ * the way the hand-over adopts each of his chats: recorded `adopted`, its card, the `handover`
+ * note its next owner message carries, and the queue item for what it already asks. A recorded
+ * child that was ended and runs again (the owner reopened it) is a child again, and his.
+ * Returns its card id (null: no room).
+ * The caller has checked {@link adoptableChats} and that it is not the super session.
+ */
+export function adoptChat(s: SuperState, sid: string, brief: string, now: number = Date.now()): string | null {
+  const have = Object.prototype.hasOwnProperty.call(s.children, sid) ? s.children[sid] : undefined;
+  // An ended child running again was reopened by the owner: his, like any chat adopted here.
+  if (have) { delete have.endedAt; have.adopted = true; }
+  else s.children[sid] = { sessionId: sid, brief: brief || titleFor(sid, {}), adopted: true, startedAt: now };
+  const card = ensureChatContainer(s, sid, s.children[sid].brief.slice(0, 120));
+  s.notes[sid] = 'handover';
+  queueWhatItAsks(s, sid, now);
+  return card;
 }
 
 export async function disableSuper(contextRoot: string): Promise<SuperState> {

@@ -205,8 +205,8 @@ export function pillHeadline(input: {
   if (running.length === 1) return `${running[0].vault} is on it`;
   if (running.length > 1) return `${running.length} projects on it`;
   const automations = input.running ?? [];
-  if (automations.length === 1) return `${automations[0].title || automations[0].slug} is running`;
-  if (automations.length > 1) return `${automations.length} automations running`;
+  if (automations.length === 1) return `${automations[0].title || automations[0].slug} is working`;
+  if (automations.length > 1) return `${automations.length} teammates working`;
   // A bare count is the right ear's job (the green bubble); the left ear says who or what.
   return input.name;
 }

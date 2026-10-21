@@ -334,6 +334,9 @@ export interface AutomationDetail {
    *  already runs elsewhere runs it duplicated, and that must be consented to
    *  knowingly, never discovered later. */
   foreignRuns?: AutomationForeignRuns | null;
+  /** Every hashed field as the CLI's approve prints it (`field: value` lines): what Approve
+   *  grants. Absent on an older backend. */
+  review?: string;
   cache: AutomationCache | null;
 }
 

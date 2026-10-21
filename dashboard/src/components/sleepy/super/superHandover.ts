@@ -95,7 +95,19 @@ export function hasOwnKey(record: Readonly<Record<string, unknown>> | null | und
 /** The pin ids of the children the owner is NOT pinged about: only while handed over. */
 export function markedChildren(state: Pick<SuperState, 'enabled' | 'children'> | null | undefined): ReadonlySet<string> {
   if (!state?.enabled) return new Set();
-  return new Set(Object.keys(state.children));
+  return liveChildIds(state.children);
+}
+
+/** The record's children minus the ended ones (`super end`): an ended child is history. */
+export function liveChildIds(children: SuperState['children']): Set<string> {
+  return new Set(Object.entries(children).filter(([, c]) => c?.endedAt === undefined).map(([k]) => k));
+}
+
+/** Pin ids of the children `super end` closed: a tab of theirs restored dormant (a relaunch)
+ *  is closed when the record names them, so an ended child never comes back as a tab. */
+export function endedChildIds(state: Pick<SuperState, 'children'> | null | undefined): Set<string> {
+  if (!state) return new Set();
+  return new Set(Object.entries(state.children).filter(([, c]) => c?.endedAt !== undefined).map(([k]) => k));
 }
 
 /** How long past the server's own delegate deadline a just-opened child stays marked before
@@ -125,11 +137,11 @@ export function childMarks(
   now: number,
 ): { marked: Set<string>; delegated: Map<string, number>; nextExpiry: number | null } {
   if (!state?.enabled) return { marked: new Set(), delegated: new Map(), nextExpiry: null };
-  const marked = new Set(Object.keys(state.children));
+  const marked = liveChildIds(state.children);
   const pending = new Map<string, number>();
   let nextExpiry: number | null = null;
   for (const [id, until] of delegated) {
-    if (hasOwnKey(state.children, id) || until <= now) continue;
+    if (marked.has(id) || until <= now) continue;
     pending.set(id, until);
     marked.add(id);
     nextExpiry = nextExpiry === null ? until : Math.min(nextExpiry, until);
@@ -562,6 +574,10 @@ export function homedSessions(opts: {
 
 export type SuperCaller = 'super' | 'child' | 'other';
 
+/** The window verbs the Super Agent's own verbs travel as (`super send`, `super update`), each
+ *  into one tab that must be a marked child. */
+export const SUPER_CHILD_VERBS = ['send', 'model', 'effort', 'mode'] as const;
+
 /**
  * Refuse a window verb the server already refuses, in the browser too: the Super Agent drives
  * the screen with `dreamcontext super`, never `dreamcontext window`; a child may not open or
@@ -574,21 +590,23 @@ export function superWindowRefusal(
   send?: { target: SuperSendTarget | null; superSession: string | null; children: ReadonlySet<string> },
 ): string | null {
   if (caller === 'super') {
-    // `super send <child>` arrives as `window send` down the Super Agent's own socket; it is the
-    // ONE window verb it may run, and only into one of its marked children.
-    if (verb !== 'send') return 'the Super Agent drives the screen with `dreamcontext super`';
+    // `super send <child>` arrives as `window send`, and `super update <child>` as `window
+    // model|effort|mode`, down the Super Agent's own socket: the only window verbs it may run,
+    // and only into one of its marked children.
+    if (!(SUPER_CHILD_VERBS as readonly string[]).includes(verb)) return 'the Super Agent drives the screen with `dreamcontext super`';
     return superSendRefusal(send?.target ?? null, send?.superSession ?? null, send?.children ?? new Set());
   }
   if (caller === 'child' && handedOver && (verb === 'new' || verb === 'split')) return 'a Super Agent child cannot open chats';
   return null;
 }
 
-/** The tab a `send` names, as the window knows it: its internal sid, the pin id its roster entry
- *  holds, and the conversation id its LIVE session runs (null when nothing is running). */
+/** The tab a `send` (or an `update` verb) names, as the window knows it: its internal sid, the
+ *  pin id its roster entry holds, and the conversation id its LIVE session runs (null when
+ *  nothing is running). */
 export interface SuperSendTarget { sid: string; pin: string; conversation: string | null }
 
 /**
- * Re-check a Super Agent `send` (the server already did): the target must resolve to a tab
+ * Re-check a Super Agent `send` or `update` verb (the server already did): the target must resolve to a tab
  * whose sid, pin id and live conversation id all agree, that is a MARKED child (so the mode is
  * on), and that is never the Super Agent itself. Returns the refusal, or null.
  */

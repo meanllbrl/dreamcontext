@@ -156,13 +156,13 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
         <>
           {item.chats.length === 0 && item.handoffs.length === 0 && !item.inbox && !item.running?.length && <p className="dc-peek__line dc-peek__idle">{assistant ? 'All quiet. Hold the hotkey to talk.' : 'All quiet.'}</p>}
           {!!item.running?.length && (
-            <div className="dc-peek__running" aria-label="Automations running">
+            <div className="dc-peek__running" aria-label="AI Team, working now">
               {item.running.slice(0, 5).map((r) => (
                 <button key={`${r.vault}::${r.slug}`} type="button" className="dc-peek__run" title={`${r.title} · ${r.vault}`} onClick={() => openAutomation(r.vault, r.slug)}>
                   <AgentAvatar vault={r.vault} slug={r.slug} title={r.title} hasPhoto={r.hasPhoto} size={22} working />
                 </button>
               ))}
-              <span className="dc-peek__brief">{item.running.length === 1 ? `${item.running[0].title} is running` : `${item.running.length} automations running`}</span>
+              <span className="dc-peek__brief">{item.running.length === 1 ? `${item.running[0].title} is working` : `${item.running.length} teammates working`}</span>
             </div>
           )}
           {!!item.inbox && <p className="dc-peek__line">{item.inbox === 1 ? '1 notification' : `${item.inbox} notifications`} waiting</p>}

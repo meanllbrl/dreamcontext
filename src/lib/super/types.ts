@@ -90,7 +90,8 @@ export interface SuperChild {
   sessionId: string;
   /** The one-line reminder its container shows (`super brief`); the tab title until then. */
   brief: string;
-  /** Adopted at hand-over (true) or started by `super delegate` (false). */
+  /** The owner's own chat, adopted at hand-over or by `super adopt` on his word (true), or
+   *  started by `super delegate` (false). */
   adopted: boolean;
   /** Its own worktree, when `super delegate --worktree` made one: under `~/.claude-worktrees/`. */
   worktree?: string;
@@ -108,7 +109,22 @@ export interface SuperChild {
   task?: string;
   /** Why the row is `stuck`: an error turn, or a working turn silent past the stale bar. */
   stuckReason?: StuckReason;
+  /** What it runs with (`super delegate`, then `super update --mode/--model/--effort`), so
+   *  `super resume` reopens it the same way. Absent = basic, the default model and effort. */
+  mode?: string;
+  model?: string;
+  effort?: string;
+  /** `super end` closed it (epoch ms): no process, no tab, no card; the transcript stays and
+   *  `super resume` reopens it (which clears this). Absent = a child that may be running. */
+  endedAt?: number;
+  /** `super delegate --succeeds` handed its card, brief and task to this child (one job, one
+   *  owner); it is ended, and `super state` warns while it still runs. */
+  succeededBy?: string;
 }
+
+/** Ended children the record keeps (newest first); older ones drop out of it, except one that
+ *  still owns a worktree (it leaves when `super worktree remove` clears it). */
+export const MAX_ENDED_CHILDREN = 30;
 
 /** A child's row in the job list. `asking` = the super agent is handling its question. */
 export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone'] as const;
@@ -120,9 +136,10 @@ export type StuckReason = typeof STUCK_REASONS[number];
  * What reaches the queue. `idle` left with plan r4 (a child's turn end updates its row and spends
  * no super turn); an older record's idle items drop on first read. `done` = settled idle for
  * DONE_SETTLE_MS, `stuck` = an error turn or a stale one, `ask` = the super agent's own question
- * to the owner (`super ask`).
+ * to the owner (`super ask`). `ended` = `super end` closed the child: born `done`, a record of
+ * its last brief, never delivered as a turn.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -147,6 +164,9 @@ export interface SuperQueueItem {
   options?: string[];
   /** Process exits that ended a turn carrying it (server-only, plan r4 D10). */
   exits?: number;
+  /** An `ended` item's record of the child's last brief (who and when are `sessionId` and
+   *  `createdAt`). Born `done`: a record, never delivered as a turn. */
+  brief?: string;
 }
 
 /**
@@ -380,11 +400,13 @@ export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
   'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
   'pool-add', 'pool-remove', 'pool-list', 'ask',
+  'end', 'resume', 'update', 'adopt',
+  'clean',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 
 /** The verbs the WINDOW runs (sent down the super chat's own socket as `super_command`). */
-export const SUPER_WINDOW_VERBS = ['delegate', 'answer'] as const;
+export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
 // ─── Frames (`_meta` subtypes on the super chat's socket) ──────────────────────

@@ -54,6 +54,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/search/BrainSearch.css::.bsearch-score-track > i': 'score bar',
   'components/layout/Sidebar.css::.sidebar-sleepy-eye': 'mascot eye',
   'components/sleepy/SleepyMascot.css::.smascot-hand': 'mascot art',
+  'components/handsfree/handsfree.css::.hf-chrome-dot': 'state dot',
   'components/sleepy/MobileChat.css::.mchat-dot[data-kind="ready"]': 'state dot',
   "components/sleepy/chat/teamBoard.css::.chat-team-board-phase[data-tone='running'] .chat-team-board-dot": 'state dot',
   'components/sleepy/super/SuperSurface.css::.super-tile-bar-fill': 'progress bar',

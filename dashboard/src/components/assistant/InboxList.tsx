@@ -181,7 +181,7 @@ export function InboxList({ notices, posts, running, muted, onNoticeGone, onPost
         </section>
       )}
       {running.length > 0 && (
-        <section className="dc-inbox" aria-label="Automations running">
+        <section className="dc-inbox" aria-label="AI Team, working now">
           <h3 className="dc-notch__section">Running</h3>
           <ul>{running.map((r) => <RunningRow key={`${r.vault}::${r.slug}`} r={r} now={now} />)}</ul>
         </section>
@@ -189,7 +189,7 @@ export function InboxList({ notices, posts, running, muted, onNoticeGone, onPost
       {muted.length > 0 && (
         <section className="dc-inbox dc-inbox--muted">
           <button type="button" className="dc-inbox__muted-toggle" aria-expanded={showMuted} onClick={() => setShowMuted((v) => !v)}>
-            Ignored automations ({muted.length}) {showMuted ? '▴' : '▾'}
+            Ignored ({muted.length}) {showMuted ? '▴' : '▾'}
           </button>
           {showMuted && (
             <ul>

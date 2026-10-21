@@ -56,6 +56,8 @@ import {
   SWITCH_THRESHOLD_PERCENT, chooseAccount, provenPastThreshold, shouldProbe, shouldSwitchAway, type AccountReading, type ChooseResult,
 } from '../../lib/claude-account-switch.js';
 import { readLimitSignal, type LimitSignal } from '../../lib/claude-limit-signal.js';
+import { clearSignedOut, isAuthFailureFrame, recordSignedOut } from '../../lib/claude-signed-out.js';
+import { dropFromOutbox } from '../../lib/super/outbox.js';
 import { clearAccountRejection, readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
 import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFrame, recordUsageMeter } from '../../lib/claude-usage-meter.js';
 import { chatSpawnAccount } from '../../lib/automations/account.js';
@@ -74,8 +76,9 @@ import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { clearSuperNote, peekSuperNote, superIndex, superRootOfChild } from '../../lib/super/store.js';
 import { SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
+import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, superOwnerSpoke, superSocketAttached, superTurnEnded,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, superOwnerSpoke, superSocketAttached, superTurnEnded,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -87,7 +90,7 @@ import {
   CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, liveChatsSnapshot, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
   signalGroup, unregisterLiveChat, wsPingMs, type LiveChatEntry,
 } from './agent-chat-live.js';
-import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOutcome } from '../chat-park.js';
+import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOptions, type ParkOutcome } from '../chat-park.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
@@ -705,6 +708,12 @@ export function phoneDeviceShowing(sessionId: string): string | null {
 /** Every live chat session in this process — desktop-spawned ones included, because a phone
  *  may adopt any of them. */
 const deviceSessions = new Set<{ device: () => DeviceTag | null; revoke: () => void; releasePhone: () => boolean }>();
+/** The phone mirrors of every live Super Agent (lib/super/phone-mirror.ts): closed by the same
+ *  revocation and return as the sessions above. */
+const superMirrorSets = new Set<MirrorSet<DeviceTag>>();
+/** Owner frames that came from a phone mirror (written at once like every owner frame, or
+ *  re-fed to a successor; the mark rides on the frame itself). */
+const mirrorFrames = new WeakSet<Buffer>();
 let deviceRevocationArmed = false;
 
 export function tagDeviceSocket(ws: object, tag: DeviceTag): void {
@@ -729,6 +738,7 @@ export function revokeStaleDeviceSessions(): number {
     const d = s.device();
     if (d && !deviceStillValid(d)) { s.revoke(); n++; }
   }
+  for (const m of superMirrorSets) n += m.revokeStale();
   return n;
 }
 
@@ -741,6 +751,7 @@ export function revokeStaleDeviceSessions(): number {
 export function releasePhoneSessions(): number {
   let n = 0;
   for (const s of [...deviceSessions]) if (s.releasePhone()) n++;
+  for (const m of superMirrorSets) n += m.closeAll(MIRROR_CLOSE_REVOKED, 'mac mode ended');
   return n;
 }
 
@@ -780,7 +791,16 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
   const draining = snapshot
     .filter((e) => e.draining && visible(byPath.get(e.projectRoot.replace(/\/+$/, '')) ?? null))
     .map((e) => e.conversationId);
-  sendJson(res, 200, { chats, draining });
+  // A phone talks to a handed-over project's Super Agent only: one row, none of its chats.
+  if (!phone) { sendJson(res, 200, { chats, draining }); return; }
+  const handedOver = new Map<string, string>();
+  for (const [path, name] of byPath) {
+    if (!visible(name)) continue;
+    const idx = superIndex(join(path, '_dream_context'));
+    if (idx.enabled && idx.session) handedOver.set(name, idx.session);
+  }
+  const view = phoneLiveChats(chats, handedOver);
+  sendJson(res, 200, view.supers.length ? { chats: view.chats, draining, supers: view.supers } : { chats, draining });
 }
 
 /** AC18: what the drawer says about a live chat. A question waiting wins; then a turn running
@@ -979,7 +999,43 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // hand-over recorded (`POST /api/super/enable` mints it). A different id is a second super
     // agent and is refused; a same-id respawn (account switch, Resume, reattach) passes. The
     // phone never runs the hand-over (D4), and no session recorded yet means no super chat.
-    const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: join(projectRoot, '_dream_context'), resumeId, sessionId });
+    // A phone and a handed-over Super Agent (lib/super/phone-mirror.ts): the phone joins the
+    // live super chat as a MIRROR beside the window that holds it, never adopting, superseding or
+    // respawning it; any other phone open naming that session, and `mode=super`, is refused.
+    const superCtx = join(projectRoot, '_dream_context');
+    const superIdx = superIndex(superCtx);
+    const liveSuper = superIdx.session ? findLiveChat(superIdx.session) : null;
+    const phoneSuper = phone
+      ? phoneSuperOpen({ mode, resumeId, sessionId, index: superIdx, liveSuper: !!liveSuper?.mirror && liveSuper.projectRoot === projectRoot })
+      : 'pass';
+    if (phoneSuper === 'refuse') { rejectUpgrade(socket, 403); return; }
+    if (phoneSuper === 'mirror') {
+      const mirrorHash = authFor(req) ? deviceIdHash(req) : null;
+      const mirrorTag: DeviceTag | null = mirrorHash ? { store: 'mac', idHash: mirrorHash } : null;
+      if (!mirrorTag || !liveSuper?.mirror) { rejectUpgrade(socket, 403); return; }
+      // Full of OTHER devices: refused before the handshake, so the client backs off instead of
+      // opening and being closed in a loop.
+      if (!liveSuper.mirrorRoom?.(mirrorTag)) { rejectUpgrade(socket, 503); return; }
+      void (async () => {
+        let WebSocketServer: typeof import('ws').WebSocketServer;
+        try { ({ WebSocketServer } = await import('ws')); }
+        catch { rejectUpgrade(socket, 501); return; }
+        new WebSocketServer({ noServer: true }).handleUpgrade(req, socket, head, (ws) => {
+          // FIRST: a protocol error on a socket nobody listens to would be an unhandled 'error'
+          // and exit the server (a refused mirror below has no other listener).
+          ws.on('error', () => { /* the close that follows is what counts */ });
+          tagDeviceSocket(ws, mirrorTag);
+          // The child may have ended meanwhile: the client reconnects and is decided again.
+          if (!liveSuper.mirror?.(ws, mirrorTag)) {
+            try { ws.close(MIRROR_CLOSE_ENDED, 'super ended'); } catch { /* gone */ }
+            const t = setTimeout(() => { try { ws.terminate(); } catch { /* gone */ } }, 1000);
+            t.unref?.();
+          }
+        });
+      })();
+      return;
+    }
+    const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: superCtx, resumeId, sessionId });
     if (superRefused) { rejectUpgrade(socket, superRefused); return; }
     // Which Claude ACCOUNT this session runs on. '' = none requested, which resolves to the
     // preferred account (and, with no preferred account, to account #0 — the real HOME, i.e.
@@ -1311,6 +1367,11 @@ const SWITCH_STALL_MS = Number(process.env.DREAMCONTEXT_SWITCH_STALL_MS) > 0
  * typed "devam et", one of them for 46 minutes. Replaying the owner's original text instead
  * would be worse: forty minutes into a run it restarts the whole request.
  */
+/** What a pane moved off a SIGNED-OUT account is told after the restart (see onAuthFailed). */
+export const AUTH_CONTINUE_TEXT =
+  'The previous turn failed because this chat\'s Claude account was signed out, and the chat has moved to a signed-in account. '
+  + 'Continue exactly where you stopped; do not redo finished work.';
+
 export const LIMIT_CONTINUE_TEXT =
   'The previous turn was cut off by a Claude usage limit, and this chat has moved to another account. '
   + 'Continue exactly where you stopped; do not redo finished work.';
@@ -1756,6 +1817,27 @@ export function startChatSession(
   // The token carries WHO it is (vault, pin id, mode) for the Super Agent's checks (plan-r7 D4);
   // the registry entry below is keyed by the same id.
   const chatRegistryId = pinId || randomUUID();
+  /** The phone's mirrors of this Super Agent (lib/super/phone-mirror.ts); null for any other
+   *  chat. The owner's text from one joins the desktop's own path (`onWsMessage`). */
+  const mirrors = isSuper
+    ? new MirrorSet<DeviceTag>({
+      valid: deviceStillValid,
+      onOwnerFrame: (raw) => {
+        // Never into a stdin that is ending (a drain or respawn closes the mirrors, this is the
+        // race before it).
+        if (!alive || stdinEnding()) return;
+        // The frame carries where it came from (a Buffer the set knows), so the mark survives
+        // the switch gate and a successor's replay: see `fromMirror` in the user branch.
+        const frame = Buffer.from(raw, 'utf-8');
+        mirrorFrames.add(frame);
+        onWsMessage(frame);
+      },
+      holder: () => (alive && !detached && ws.readyState === ws.OPEN ? ws : null),
+      key: (d) => d.idHash,
+    })
+    : null;
+
+  if (mirrors) superMirrorSets.add(mirrors);
   const windowControl = !isAssistant && !card
     ? mintWindowToken({
       send: (frame) => {
@@ -1801,6 +1883,8 @@ export function startChatSession(
     ...(delegated ? { origin: 'assistant' as const } : {}),
     seed,
   });
+  // An ended Super Agent child running again without `super resume`: the owner reopened it.
+  if (registry) void noteChatStarted(chatRegistryId);
   let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
   // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
   let detachInbox = () => { /* not the Assistant */ };
@@ -1888,6 +1972,8 @@ export function startChatSession(
    *  point cuts off WORK, not a request, so the switch resubmits `LIMIT_CONTINUE_TEXT` rather
    *  than replaying the request from the top. */
   let turnProgressed = false;
+  /** This turn was refused for sign-in: its `result` must not clear the record. */
+  let authFailedTurn = false;
   let interruptWatchdog: ReturnType<typeof setTimeout> | null = null;
   let interruptKillTimer: ReturnType<typeof setTimeout> | null = null;
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1954,7 +2040,7 @@ export function startChatSession(
   function dropPhoneSocket(reason: string): void {
     const sock = ws;
     if (socketDevice.get(sock)?.store !== 'mac') return;
-    sock.off('message', onWsMessage);
+    sock.off('message', onSocketFrame);
     try { sock.close(DEVICE_REVOKED_CLOSE, reason); } catch { /* gone */ }
     onSocketGone();
     const t = setTimeout(() => { try { if (typeof sock.terminate === 'function') sock.terminate(); } catch { /* gone */ } }, 1000);
@@ -1979,8 +2065,21 @@ export function startChatSession(
     supersede: () => supersedeLive(),
     cut: () => cutChild(),
     pid: child.pid,
+    ...(mirrors ? {
+      mirror: (sock: import('ws').WebSocket, device: DeviceTag) => addMirror(sock, device),
+      mirrorRoom: (device: DeviceTag) => mirrors.room(device),
+      closeMirrors: () => { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super taken back'); },
+    } : {}),
   } : null;
   if (live) registerLiveChat(live);
+  /** A phone joins this Super Agent beside its holder. It reads the turn state like a reattach
+   *  (and replays what it missed from chat-history); the window's prompts are not its own. */
+  function addMirror(sock: import('ws').WebSocket, device: DeviceTag): boolean {
+    if (!mirrors || !alive || handedOff || lingerTimer || lingerKillTimer) return false;
+    if (!mirrors.add(sock, device)) return false;
+    try { sock.send(JSON.stringify({ type: '_meta', subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 })); } catch { /* gone */ }
+    return true;
+  }
   /** No socket right now; the reap timers below decide how long that may last. */
   let detached = false;
   let detachedAt = 0;
@@ -2009,7 +2108,7 @@ export function startChatSession(
   let focusedAt = 0;
   let parkAsk: { id: string; settle: (o: ParkOutcome) => void; promise: Promise<ParkOutcome> } | null = null;
   const PARK_REFUSALS: readonly ParkOutcome[] = ['busy', 'asking', 'background', 'focused'];
-  const parkThis = (reason: string): Promise<ParkOutcome> => {
+  const parkThis = (reason: string, opts: ParkOptions = {}): Promise<ParkOutcome> => {
     if (!alive || lingerTimer || lingerKillTimer) return Promise.resolve('already');
     if (parkAsk) return parkAsk.promise;
     // No socket (the window closed, the phone slept): nobody to ask, the process just ends.
@@ -2020,7 +2119,7 @@ export function startChatSession(
     const timer = setTimeout(() => { if (parkAsk?.id === id) { parkAsk = null; settle('no_answer'); } }, PARK_ANSWER_MS);
     timer.unref?.();
     parkAsk = { id, promise, settle: (o) => { clearTimeout(timer); parkAsk = null; settle(o); } };
-    try { ws.send(JSON.stringify({ type: '_meta', subtype: 'park', id, reason, focusGraceMs: parkFocusGraceMs() })); }
+    try { ws.send(JSON.stringify({ type: '_meta', subtype: 'park', id, reason, focusGraceMs: parkFocusGraceMs(), ...(opts.end ? { end: true } : {}), ...(opts.force ? { force: true } : {}) })); }
     catch { parkAsk.settle('no_answer'); }
     return promise;
   };
@@ -2171,6 +2270,9 @@ export function startChatSession(
   };
 
   const sendMeta = (frame: Record<string, unknown>): void => {
+    // The inbox's event chip is conversation the phone reads too. Nothing else sent here is the
+    // mirror's, and the window's verbs and state (its token's channel) never leave its socket.
+    if (mirrors && frame.subtype === SUPER_FRAME_EVENT) mirrors.frame(JSON.stringify({ type: '_meta', ...frame }));
     if (ws.readyState === ws.OPEN) {
       try { ws.send(JSON.stringify({ type: '_meta', ...frame })); } catch { /* closing */ }
     }
@@ -2274,6 +2376,7 @@ export function startChatSession(
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     stopPing();
     if (live) unregisterLiveChat(live);
+    if (mirrors) { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super ended'); superMirrorSets.delete(mirrors); }
     unregisterPark();
     parkAsk?.settle('already');
     untrack();
@@ -2308,6 +2411,8 @@ export function startChatSession(
    *  terminal/chat double-attach already has). */
   function drain(): void {
     if (!alive || lingerTimer || lingerKillTimer) return;
+    // The phone's mirrors leave with the stdin: their reconnect lands on the successor.
+    mirrors?.closeAll(MIRROR_CLOSE_ENDED, 'super ended');
     clearDetachTimers();
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     stopPing();
@@ -2385,7 +2490,7 @@ export function startChatSession(
   }
 
   function bindSocket(): void {
-    ws.on('message', onWsMessage);
+    ws.on('message', onSocketFrame);
     ws.on('close', onSocketGone);
     ws.on('error', onSocketGone);
     startPing();
@@ -2396,7 +2501,7 @@ export function startChatSession(
   function adoptSocket(next: import('ws').WebSocket, how: 'halfopen' | 'takeover' = 'halfopen'): boolean {
     if (!alive || lingerTimer || lingerKillTimer || handedOff || deviceRevoked) return false;
     const prev = ws;
-    prev.off('message', onWsMessage);
+    prev.off('message', onSocketFrame);
     prev.off('close', onSocketGone);
     prev.off('error', onSocketGone);
     // A late error on the abandoned socket must not throw for want of a listener.
@@ -2509,6 +2614,7 @@ export function startChatSession(
       if (ws.readyState === ws.OPEN) {
         try { ws.send(line); } catch { /* closing */ }
       }
+      mirrors?.line(line);
 
       // Light local parse (type/subtype only — full typed parsing is the CLIENT's job,
       // chatProtocol.ts) so the server knows when an interrupt has actually resolved.
@@ -2655,7 +2761,13 @@ export function startChatSession(
       // what the account said a moment ago rather than a cache up to an hour old.
       if (obj.type === 'rate_limit_event') noteTurnUsage(obj);
       if (limit) onLimitRejected(limit);
+      else if (!obj.parent_tool_use_id && isAuthFailureFrame(obj)) onAuthFailed();
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
+      // A turn that went through says the account is signed in again (claude-signed-out.ts).
+      if (obj.type === 'result' && !obj.parent_tool_use_id) {
+        if (!authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
+        authFailedTurn = false;
+      }
       // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
       // turn's end the text has been answered, so a LATER refusal (a background task's turn,
       // which no user frame of ours opened) must not resubmit it.
@@ -3125,6 +3237,26 @@ export function startChatSession(
         .catch(() => false)));
   };
 
+  /**
+   * The CLI says this account is SIGNED OUT (field 2026-10-21: sessions stalled on "/login" on
+   * a lapsed account while a signed-in one sat idle). Unlike a usage limit this is no forecast
+   * and nothing here can fix it, so the pane moves to a signed-in account whatever auto-switch
+   * says, the same way a refused turn does; the record keeps new chats off it too.
+   */
+  const onAuthFailed = (): void => {
+    authFailedTurn = true;
+    if (activeAccountId) recordSignedOut(activeAccountId);
+    if (switchPending || switchAbandoned) return;
+    if (listClaudeAccounts().length < 2) return;   // nowhere to go: the banner says sign in
+    const text = isAssistant
+      ? lastSentText
+      : lastSentText && !turnProgressed ? lastSentText : AUTH_CONTINUE_TEXT;
+    switchGate = switchGate.then(() => (switchPending
+      ? false
+      : decideAndAnnounce(text ?? '', 'needs_relogin', { id: activeAccountId, problem: 'needs-relogin' }, undefined, !!text)
+        .catch(() => false)));
+  };
+
   /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
   const maybeSwitchAccount = async (text: string, opts: { resubmit?: boolean } = {}): Promise<boolean> => {
     const resubmit = opts.resubmit ?? true;
@@ -3367,8 +3499,9 @@ export function startChatSession(
     // The socket already went (draining): the next summon spawns under the new autonomy anyway.
     if (lingerTimer || lingerKillTimer || ws.readyState !== ws.OPEN) return;
     handedOff = true;
+    mirrors?.closeAll(MIRROR_CLOSE_ENDED, 'super restarting');
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
-    ws.off('message', onWsMessage);
+    ws.off('message', onSocketFrame);
     ws.off('close', onSocketGone);
     ws.off('error', onSocketGone);
     ws.on('message', holdFrame);
@@ -3404,6 +3537,17 @@ export function startChatSession(
   }
 
   // ── ws → claude stdin (client control frames) ──────────────────────────────────────
+  /** A frame from the HOLDER's socket. The owner's words typed there are shown on the Super
+   *  Agent's phone mirrors before the chat takes them; re-entries (`onWsMessage` on a held
+   *  frame) never echo twice. */
+  function onSocketFrame(raw: Buffer | string): void {
+    if (mirrors?.size && alive) {
+      const text = mirrorOwnerText(raw);
+      if (text !== null) mirrors.echo(text, ws);
+    }
+    onWsMessage(raw);
+  }
+
   function onWsMessage(raw: Buffer | string): void {
     if (!alive) return;
     // Defence in depth (AC3): a frame from a device that is no longer signed in acts on nothing.
@@ -3440,7 +3584,11 @@ export function startChatSession(
       // now behind a human turn, so the taint clears (autonomy.ts).
       if (isAssistant) clearTaint();
       // Appended to the chain, never fired concurrently — see `switchGate`.
-      switchGate = switchGate.then(() => maybeSwitchAccount(text)
+      // A phone's words with no window attached WHEN THE GATE REACHES THEM: nobody could perform
+      // an account switch's restart, so a held text would die with the idle reap. They go out on
+      // this account instead (decided when the gate reaches them, not when they arrived).
+      const fromMirror = typeof raw !== 'string' && mirrorFrames.has(raw);
+      switchGate = switchGate.then(() => (fromMirror && detached ? Promise.resolve(false) : maybeSwitchAccount(text))
         // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
         // never swallowed" would hold for every decision the chooser can make and fail for
         // the one case nobody planned: an unexpected error on the way to making it.
@@ -3611,6 +3759,16 @@ export function startChatSession(
 
     // The window looked at / typed in this tab (at most once per 30 s): it is the owner's.
     if (msg.type === 'focus') { focusedAt = Date.now(); return; }
+    // The owner took queued rows back (deleted, edited, held): a super child's outbox copy goes
+    // too, so a relaunch cannot bring them back (lib/super/outbox.ts).
+    if (msg.type === 'queue_dropped') {
+      const texts = Array.isArray((msg as { texts?: unknown }).texts)
+        ? ((msg as { texts: unknown[] }).texts).filter((t): t is string => typeof t === 'string').slice(0, 50)
+        : [];
+      const root = pinId ? superRootOfChild(pinId) : null;
+      if (root && texts.length) void dropFromOutbox(root, pinId, texts).catch((err) => console.warn(`[super outbox] drop failed: ${(err as Error).message}`));
+      return;
+    }
     if (msg.type === 'park_result') { onParkResult(msg as unknown as { id?: unknown; ok?: unknown; error?: unknown }); return; }
 
     if (windowControl && msg.type === 'window_command_result') {
@@ -3631,6 +3789,9 @@ export function startChatSession(
     }
 
     if (msg.type === 'interrupt') {
+      // Stop holds the window's queue: what the outbox kept for this child is held with it.
+      const stopRoot = pinId ? superRootOfChild(pinId) : null;
+      if (stopRoot) void dropFromOutbox(stopRoot, pinId).catch((err) => console.warn(`[super outbox] drop failed: ${(err as Error).message}`));
       // Empirically verified against claude 2.1.218 (scratch-dir experiment): a
       // control_request{subtype:'interrupt'} on stdin aborts the in-flight turn — the CLI
       // echoes a control_response, emits a synthetic rejected tool_result + "[Request
