@@ -78,6 +78,8 @@ export const BOARD_AGENT_READ_VERBS = [
   'whiteboard show',
   // Read-only: a free spot for --size; the write itself re-checks under the board lock.
   'whiteboard place',
+  // The drawing kit's reference: how a skill-less agent learns `draw --spec`.
+  'whiteboard kit',
   'whiteboard nav list',
   'automations list',
   'automations show',

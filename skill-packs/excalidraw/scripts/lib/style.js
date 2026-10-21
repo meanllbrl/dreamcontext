@@ -287,7 +287,7 @@ function bullets(o) {
 // hard-wrapped to the card width and the font auto-shrinks (to `minFont`) until it also fits the
 // height, so text can never spill outside the box. Warns if even the floor font won't fit.
 function card(o) {
-  const { x, y, w = 260, h = 92, text = '', color = 'blue', fontSize = 20, stroke = INK, strokeWidth = 2, textColor = INK, roundness = true, minFont = 9, padX = 10, padY = 8 } = o;
+  const { x = 0, y = 0, w = 260, h = 92, text = '', color = 'blue', fontSize = 20, stroke = INK, strokeWidth = 2, textColor = INK, roundness = true, minFont = 9, padX = 10, padY = 8 } = o;
   const group = o.group || newGroup('card');
   const p = pal(color);
   const fit = fitText({ text, w, h, fontSize, minFont, padX, padY });
@@ -340,7 +340,7 @@ function annotate(o) {
 
 // vertical stack of cards (benefit/risk columns)
 function column(o) {
-  const { x, y, w = 280, h = 70, gap = 16, fontSize = 18, color = 'green', items = [] } = o;
+  const { x = 0, y = 0, w = 280, h = 70, gap = 16, fontSize = 18, color = 'green', items = [] } = o;
   const out = [];
   items.forEach((it, i) => {
     const t = typeof it === 'string' ? it : it.text;
@@ -352,7 +352,10 @@ function column(o) {
 
 // hub-and-spoke: central node + satellites with arrows (the "Personalization Layer" + APIs pattern)
 function hub(o) {
-  const { cx, cy, label, color = 'purple', rx = 64, ry = 44, radius = 170, spokes = [], spokeColor = 'blue', spokeRx = 30, spokeRy = 30, startAngle = -Math.PI / 2 } = o;
+  const { label, color = 'purple', rx = 64, ry = 44, radius = 170, spokes = [], spokeColor = 'blue', spokeRx = 30, spokeRy = 30, startAngle = -Math.PI / 2 } = o;
+  // Without a centre (a hub inside a spec's stack/row) it sits with its whole wheel at 0,0.
+  const cx = o.cx != null ? o.cx : radius + spokeRx;
+  const cy = o.cy != null ? o.cy : radius + spokeRy;
   const out = [];
   const p = pal(color);
   out.push({ type: 'ellipse', x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2, strokeColor: p.stroke, backgroundColor: p.fill, fillStyle: 'solid', strokeWidth: 2 });
@@ -369,6 +372,83 @@ function hub(o) {
     out.push({ type: 'text', x: sx - spokeRx, y: sy - 8, text: t, fontSize: 14, color: INK, width: spokeRx * 2, align: 'center', fontFamily: FONT.sans });
   });
   return out;
+}
+
+// --- flow: wired steps ----------------------------------------------------
+// A process as uniform cards in a line, each joined to the next by an arrow, so a JSON spec draws
+// "A → B → C" without one coordinate (connector() alone needs both points). `steps` are strings or
+// { text, color?, note?, label? }: `note` is a short caption under the step (beside it when the flow
+// runs down), `label` names the arrow INTO that step. `direction`: 'right' (default) | 'down'.
+function flow(o) {
+  const {
+    x = 0, y = 0, steps = [], direction = 'right', w = 200, h = 72, gap = null,
+    fontSize = 18, color = 'blue', noteSize = 14, noteColor = WIRE.strong, labelSize = 14,
+  } = o;
+  const down = direction === 'down';
+  const items = steps.map((s) => (typeof s === 'string' ? { text: s } : (s || {})));
+  const labelled = items.some((s, i) => i > 0 && s.label);
+  // A labelled arrow needs a run at least as long as its widest label (connector() centres a label
+  // `measureText + fontSize` wide over the arrow), or the label is painted over both cards.
+  const widest = Math.max(0, ...items.slice(1).map((s) => (s.label ? measureText(String(s.label), labelSize) + labelSize : 0)));
+  const g = gap != null ? gap : down ? (labelled ? 64 : 44) : (labelled ? Math.max(120, Math.ceil(widest) + 24) : 64);
+  const out = [];
+  items.forEach((s, i) => {
+    const cx = down ? x : x + i * (w + g);
+    const cy = down ? y + i * (h + g) : y;
+    out.push(...card({ x: cx, y: cy, w, h, text: s.text || '', color: s.color || color, fontSize }));
+    if (s.note) {
+      const b = textBlock({
+        x: down ? cx + w + 16 : cx, y: down ? cy + 4 : cy + h + 10, text: s.note,
+        width: down ? NOTE_W : w, fontSize: noteSize, color: noteColor, font: 'sans', lh: LH_ROLE.compact,
+      });
+      out.push(...b.els);
+    }
+    if (i > 0) {
+      // Down: the label goes right of the arrow, so it never reaches left of the flow's own box.
+      const from = down ? [cx + w / 2, cy - g + 4] : [cx - g + 4, cy + h / 2];
+      const to = down ? [cx + w / 2, cy - 4] : [cx - 4, cy + h / 2];
+      out.push(...connector({ from, to, label: s.label, fontSize: labelSize, labelSide: 'right' }));
+    }
+  });
+  const b = bbox(out);
+  return box(out, b.x, b.y, b.w, b.h);
+}
+
+// --- panel: a group box ---------------------------------------------------
+// "These belong together": a pale tinted box with a small title in its colour, holding child blocks
+// laid out inside it (stacked down, or in a row with `direction: 'right'`). The box is sized to its
+// children, so it can never cut one off. In a spec `items` are child specs (cards, a flow, bullets,
+// a chart …), like stack/row.
+const PALE = {
+  green: PALETTE.paleGreen.fill, blue: PALETTE.paleBlue.fill, purple: PALETTE.palePurple.fill,
+  red: '#fff5f5', yellow: '#fff9db', mint: '#e6fcf5', gray: '#f8f9fa',
+};
+function panel(o) {
+  const {
+    x = 0, y = 0, title = '', color = 'gray', items = [], direction = 'down', gap = 16, pad = 20,
+    titleSize = 18, minW = 0,
+  } = o;
+  const p = pal(color);
+  const g = o.group || newGroup('panel');
+  const out = [];
+  let top = y + pad;
+  let titleW = 0;
+  if (title) {
+    const tb = textBlock({ x: x + pad, y: top, text: title, width: READ_W, fontSize: titleSize, color: p.stroke, font: 'sans', lh: LH_ROLE.tight, markup: false, group: g });
+    out.push(...tb.els);
+    titleW = tb.w;
+    top += tb.h + 12;
+  }
+  const inner = (direction === 'right' ? row : stack)({ x: x + pad, y: top, gap, items });
+  out.push(...inner);
+  const innerW = inner.length ? measW(inner) : 0;
+  const innerH = inner.length ? measH(inner) : 0;
+  const w = Math.max(minW, Math.max(titleW, innerW) + pad * 2);
+  const h = (top - y) + innerH + pad;
+  // The box goes first, so everything inside paints over it.
+  // `container` tells the build audit this box holds what lies inside it (nesting, not overlap).
+  out.unshift({ type: 'rectangle', x, y, width: w, height: h, strokeColor: p.stroke, backgroundColor: PALE[color] || p.fill, fillStyle: 'solid', strokeWidth: 1.5, roundness: true, group: g, container: true });
+  return box(out, x, y, w, h);
 }
 
 // --- funnel -------------------------------------------------------------
@@ -550,7 +630,7 @@ module.exports = {
   measureText, fitText, wrapToWidth, prose, sectionTitle, bullets, takeaway, annotate,
   box, bbox, translate, stack, row,
   // structure
-  card, node, connector, column, hub, funnel,
+  card, node, connector, column, hub, funnel, flow, panel,
   // wireframe / prototype kit
   windowFrame, button, input, textRows, imagePlaceholder, avatar, navbar, chip, divider,
   // edge helpers
