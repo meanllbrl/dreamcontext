@@ -3130,7 +3130,7 @@
     },
     {
       "path": "super merge",
-      "desc": "Merge children's super/* branches into super/<topic> in its own worktree (never the default branch, never pushed)",
+      "desc": "Merge the branch each child's worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)",
       "args": [
         "<children...>"
       ],

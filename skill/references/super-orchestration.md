@@ -30,7 +30,8 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
 8. **Reply** in 2-4 sentences: how many started, how many wait, what needs the owner.
 9. **As children finish:** use the result, then `dreamcontext super end <child>` in the same turn (a
    refused `end` counts as done for that turn). Start dependents with `delegate --from <pool row>`.
-   Merge finished code branches with `super merge <children> --into <topic>`; a conflicting merge
+   Merge finished code branches with `super merge <children> --into <topic>` (each child's branch is
+   the one its worktree is on now; `nothingToMerge` = it brought no commit); a conflicting merge
    becomes a new worktree child off the topic branch. Before a merge the topic branch is rebased
    onto the current main, and ONE integrator child does it: its prompt names every commit to
    include, and it checks the result with git diff --stat (a concurrent branch once left a whole

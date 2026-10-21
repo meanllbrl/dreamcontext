@@ -158,6 +158,62 @@ describe('merge', () => {
     expect(readFileSync(join(r.worktree, 'README.md'), 'utf-8')).toBe('line from a\n');
   });
 
+  it('merges the branch the child\'s worktree is on NOW, and says it moved', async () => {
+    const a = await create('a');
+    commitIn(a.path, 'one.txt', 'first\n');
+    const first = await mergeChildren({ projectRoot: project, repo: 'product', topic: 'moved', home, children: [{ sessionId: 'ca', branch: a.branch, worktree: a.path }] });
+    expect(first.results).toEqual([{ sessionId: 'ca', branch: 'super/a', merged: true }]);
+    // The child went on in a new branch and committed there.
+    g(a.path, 'switch', '-q', '-c', 'feat/second');
+    const tip = commitIn(a.path, 'two.txt', 'second\n');
+    const r = await mergeChildren({ projectRoot: project, repo: 'product', topic: 'moved', home, children: [{ sessionId: 'ca', branch: a.branch, worktree: a.path }] });
+    expect(r.results).toEqual([{ sessionId: 'ca', branch: 'feat/second', movedFrom: 'super/a', merged: true }]);
+    execFileSync('git', ['merge-base', '--is-ancestor', tip, 'super/moved'], { cwd: repo });
+    expect(readFileSync(join(r.worktree, 'two.txt'), 'utf-8')).toBe('second\n');
+  });
+
+  it('nothing new to merge is nothingToMerge, and no merge commit is made', async () => {
+    const a = await create('a');
+    commitIn(a.path, 'one.txt', 'first\n');
+    const child = [{ sessionId: 'ca', branch: a.branch, worktree: a.path }];
+    await mergeChildren({ projectRoot: project, repo: 'product', topic: 'same', home, children: child });
+    const before = g(repo, 'rev-parse', 'super/same');
+    const r = await mergeChildren({ projectRoot: project, repo: 'product', topic: 'same', home, children: child });
+    expect(r.results).toEqual([{ sessionId: 'ca', branch: 'super/a', merged: false, nothingToMerge: true }]);
+    expect(g(repo, 'rev-parse', 'super/same')).toBe(before);
+    // A fresh child with no commit of its own brings nothing either.
+    const b = await create('b');
+    const fresh = await mergeChildren({ projectRoot: project, repo: 'product', topic: 'empty', home, children: [{ sessionId: 'cb', branch: b.branch, worktree: b.path }] });
+    expect(fresh.results[0]).toMatchObject({ merged: false, nothingToMerge: true });
+  });
+
+  it('the branch a child moved to passes the same rules: detached, a default branch, the topic itself', async () => {
+    const a = await create('a');
+    commitIn(a.path, 'one.txt', 'first\n');
+    const child = [{ sessionId: 'ca', branch: a.branch, worktree: a.path }];
+    g(a.path, 'switch', '-q', '--detach');
+    expect(await refusedCode(mergeChildren({ projectRoot: project, repo: 'product', topic: 't', home, children: child }))).toBe('detached');
+    g(a.path, 'switch', '-q', '-c', 'master');
+    expect(await refusedCode(mergeChildren({ projectRoot: project, repo: 'product', topic: 't', home, children: child }))).toBe('default_branch');
+    g(a.path, 'switch', '-q', '-c', 'super/t');
+    expect(await refusedCode(mergeChildren({ projectRoot: project, repo: 'product', topic: 't', home, children: child }))).toBe('invalid_topic');
+    // A name git would read as an option never reaches git merge.
+    g(a.path, 'update-ref', 'refs/heads/--strategy=evil', 'HEAD');
+    g(a.path, 'symbolic-ref', 'HEAD', 'refs/heads/--strategy=evil');
+    expect(await refusedCode(mergeChildren({ projectRoot: project, repo: 'product', topic: 't', home, children: child }))).toBe('no_branch');
+  });
+
+  it('a tag named like the moved branch never wins: the branch itself is merged', async () => {
+    const a = await create('a');
+    g(a.path, 'switch', '-q', '-c', 'v1');
+    const tip = commitIn(a.path, 'one.txt', 'branch\n');
+    g(repo, 'tag', 'v1', 'main');
+    const r = await mergeChildren({ projectRoot: project, repo: 'product', topic: 'tagged', home, children: [{ sessionId: 'ca', branch: a.branch, worktree: a.path }] });
+    expect(r.results[0]).toMatchObject({ branch: 'v1', merged: true });
+    execFileSync('git', ['merge-base', '--is-ancestor', tip, 'super/tagged'], { cwd: repo });
+    expect(g(repo, 'log', '-1', '--format=%s', 'super/tagged')).toBe("Merge branch 'v1'");
+  });
+
   it('refuses a dirty child, a missing branch, and a non-super branch', async () => {
     const a = await create('a');
     writeFileSync(join(a.path, 'wip.txt'), 'not committed');

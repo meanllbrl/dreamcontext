@@ -207,7 +207,7 @@ export function registerSuperCommand(program: Command): void {
     .action((item: string) => run('queue-done', { item }));
 
   s.command('merge <children...>')
-    .description('Merge children\'s super/* branches into super/<topic> in its own worktree (never the default branch, never pushed)')
+    .description('Merge the branch each child\'s worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)')
     .requiredOption('--into <topic>', 'The integration branch name (a-z, 0-9, -)')
     .action((children: string[], o: { into: string }) => run('merge', { children, into: o.into }));
 
