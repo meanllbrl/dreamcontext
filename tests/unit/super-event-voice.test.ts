@@ -25,11 +25,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { _resetChatRegistry, getChat, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
+import { STALE_MS, _resetChatRegistry, getChat, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { DONE_SETTLE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import {
-  AWAITED_LINE, BATCH_LAST_LINE, OWNER_VOICE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, markSuperEventTurn,
+  AWAITED_LINE, BACKGROUND_QUIET_MS, BATCH_LAST_LINE, OWNER_VOICE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, markSuperEventTurn,
   startSuperInbox, superBatchText, superEventText, superTurnEnded, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { resetCapacityForTests } from '../../src/lib/super/capacity.js';
@@ -156,6 +156,36 @@ describe('background work keeps a child working (field: 6 done events in 18 minu
   });
 });
 
+describe('background work that never ends (a dev server, a persistent Monitor)', { timeout: 60_000 }, () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'], now: Date.now() });
+    dir = mkdtempSync(join(tmpdir(), 'super-event-voice-'));
+    _resetChatRegistry();
+    resetSuperIndex();
+    _resetSuperInbox();
+    resetWindowControl();
+  });
+  afterEach(async () => {
+    await drain().catch(() => undefined);
+    vi.useRealTimers();
+    _resetSuperInbox();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('holds the row only until BACKGROUND_QUIET_MS of silence; then the job is done (and an awaited one tells him)', async () => {
+    const { hs, delivered } = await boot({ dev: { awaited: true } });
+    roster(hs[0], 1);
+    hs[0].observe({ type: 'result' });
+    await advance(BACKGROUND_QUIET_MS - 60_000, 30_000);
+    expect(await items('done', 'dev')).toHaveLength(0);
+    expect((await readSuperState(root)).children.dev.row).toBe('working');
+    await advance(60_000 + STALE_SWEEP_MS + 5_000, 30_000);
+    expect(await items('done', 'dev')).toHaveLength(1);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].text).toMatch(/child=dev event=done awaited=owner/);
+  });
+});
+
 describe('a job the owner waits on', { timeout: 60_000 }, () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'], now: Date.now() });
@@ -202,6 +232,24 @@ describe('a job the owner waits on', { timeout: 60_000 }, () => {
     expect(delivered[1].text).toMatch(/child=waited event=done status=/);
     expect(delivered[1].text).not.toContain(AWAITED_LINE);
     expect((await readSuperState(root)).ownerBatches).not.toContain(delivered[1].event.batch);
+  });
+
+  it('a stale stuck is not his result: the mark stays for the real done', async () => {
+    const { hs, delivered } = await boot({ slow: { awaited: true } });
+    await advance(STALE_MS + STALE_SWEEP_MS + 5_000, 30_000);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].text).toMatch(/child=slow event=stuck reason=stale awaited=owner/);
+    superTurnEnded(SUPER);
+    await drain();
+    expect((await readSuperState(root)).children.slow.awaited).toBe(true);
+    // It recovers and finishes: that result goes to him.
+    hs[0].observe({ type: 'assistant', message: { content: [{ type: 'text', text: 'back' }] } });
+    await advance(STALE_SWEEP_MS + 1_000);
+    expect((await readSuperState(root)).children.slow.row).toBe('working');
+    hs[0].observe({ type: 'result' });
+    await advance(STALE_SWEEP_MS + DONE_SETTLE_MS + 5_000);
+    const last = delivered.at(-1);
+    expect(last?.text).toMatch(/child=slow event=done awaited=owner/);
   });
 
   it('a batch with no awaited job keeps the owner out of it', async () => {
