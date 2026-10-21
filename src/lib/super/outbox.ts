@@ -7,7 +7,7 @@ import { liveTranscriptPath } from '../transcript-locate.js';
 import { sendWindowCommand, tokenOfSession } from '../window-control.js';
 import { superIndex, superRootOfChild, superRootOfSession } from './store.js';
 import { readTail } from './transcript-tail.js';
-import { MAX_READ_BYTES } from './types.js';
+import { MAX_READ_BYTES, type SuperState } from './types.js';
 
 /**
  * The super send OUTBOX (field 2026-10-21: messages the window had queued for a busy child were
@@ -86,6 +86,41 @@ export async function addToOutbox(contextRoot: string, child: string, text: stri
   return item;
 }
 
+/** What a child that was asking when the app went down is sent once it is back and idle. */
+export const REASK_TEXT = '[dreamcontext] The app was restarted while you were waiting for an answer to your question, so that question was interrupted and nobody answered it. Ask the same question again now, the same way, and wait for the answer.';
+
+/** Kept by an earlier run on purpose: this run's pump sends it (never this run's window's). */
+const RELAUNCH_BOOT = 'relaunch';
+
+/**
+ * A relaunch: every child (not ended) with a question still open in the super record was asking
+ * when the app went down. `--resume` turns that question into an interrupted tool call, and
+ * the queue item then closes, so it would be lost without a word (field 2026-10-21: the video
+ * child's approval question). Each such child gets ONE {@link REASK_TEXT} in the outbox, sent at
+ * its first idle once it is back; a second relaunch before that adds none.
+ */
+export async function keepQuestionsAcrossRelaunch(
+  contextRoot: string,
+  state: Pick<SuperState, 'children' | 'queue'>,
+  now = Date.now(),
+): Promise<number> {
+  const asking = new Set(state.queue
+    .filter((q) => q.kind === 'question' && q.state !== 'done' && state.children[q.sessionId]?.endedAt === undefined && !!state.children[q.sessionId])
+    .map((q) => q.sessionId));
+  if (!asking.size) return 0;
+  let added = 0;
+  await updateOutbox(contextRoot, (items) => {
+    const next = [...items];
+    for (const child of asking) {
+      if (next.some((i) => i.child === child && i.text === REASK_TEXT)) continue;
+      next.push({ id: `o-${now.toString(36)}-${randomBytes(3).toString('hex')}`, child, text: REASK_TEXT, at: now, boot: RELAUNCH_BOOT });
+      added += 1;
+    }
+    return next;
+  });
+  return added;
+}
+
 /**
  * The owner took a queued message back in the window (deleted or edited its row, or held the
  * queue with Stop or pause): it must not come back after a relaunch either (end review round 2).
@@ -112,9 +147,10 @@ export async function dropFromOutbox(contextRoot: string, child: string, texts?:
   return dropped;
 }
 
-/** Did `text` reach the child's transcript after `at`? Reads only the bounded tail. */
-export async function arrivedInTranscript(path: string | null, text: string, at: number): Promise<boolean> {
-  if (!path) return false;
+/** The texts of the child's own user turns written at or after `at` (bounded tail). */
+async function userTextsSince(path: string | null, at: number): Promise<string[]> {
+  const out: string[] = [];
+  if (!path) return out;
   try {
     const tail = await readTail(path, MAX_READ_BYTES);
     const lines = tail.text.split('\n');
@@ -123,18 +159,35 @@ export async function arrivedInTranscript(path: string | null, text: string, at:
       if (!line.includes('"user"')) continue;
       let obj: Record<string, unknown>;
       try { obj = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
-      if (obj.type !== 'user' || obj.isSidechain === true) continue;
+      if (obj.type !== 'user' || obj.isSidechain === true || obj.isMeta === true) continue;
+      // Claude Code's own lines (a background task the quit stopped, reported on resume): no one wrote them.
+      if (obj.promptSource === 'system' || (obj.origin as { kind?: unknown } | undefined)?.kind === 'task-notification') continue;
       const ts = typeof obj.timestamp === 'string' ? Date.parse(obj.timestamp) : NaN;
       if (Number.isFinite(ts) && ts < at) continue;
       const content = (obj.message as { content?: unknown } | undefined)?.content;
       const texts = typeof content === 'string' ? [content]
         : Array.isArray(content) ? (content as Array<Record<string, unknown>>).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text as string) : [];
-      // The message itself (a note may ride in its own block), never a longer line that only
-      // contains it: a short "devam" must not read as arrived inside the owner's own message.
-      if (texts.some((t) => t.trim() === text.trim())) return true;
+      out.push(...texts.filter((t) => t.trim()));
     }
   } catch { /* unreadable: not seen */ }
-  return false;
+  return out;
+}
+
+/** Did `text` reach the child's transcript after `at`? Reads only the bounded tail. */
+export async function arrivedInTranscript(path: string | null, text: string, at: number): Promise<boolean> {
+  // The message itself (a note may ride in its own block), never a longer line that only
+  // contains it: a short "devam" must not read as arrived inside the owner's own message.
+  return (await userTextsSince(path, at)).some((t) => t.trim() === text.trim());
+}
+
+/** Is a waiting message moot? Its own text arrived; or, for a {@link REASK_TEXT}, ANY turn
+ *  reached the child since it was kept: the owner or the super answered it meanwhile (review). */
+async function mootInTranscript(path: string | null, item: OutboxItem): Promise<boolean> {
+  const texts = await userTextsSince(path, item.at);
+  // A slash command's echo (`/model` on resume) is no answer either.
+  return item.text === REASK_TEXT
+    ? texts.some((t) => !/^\s*<(command-name|local-command-[a-z]+|task-notification)>/.test(t))
+    : texts.some((t) => t.trim() === item.text.trim());
 }
 
 /** What the pump needs; injectable for tests. */
@@ -191,7 +244,7 @@ export async function pumpOutbox(contextRoot: string, child?: string, deps: Outb
     for (const item of items) {
       // Its child was ended or replaced: the message is for work that has moved on.
       if (!deps.isChild(contextRoot, item.child)) { done.add(item.id); out.dropped.push(item.id); continue; }
-      if (await arrivedInTranscript(deps.transcript(contextRoot, item.child), item.text, item.at)) {
+      if (await mootInTranscript(deps.transcript(contextRoot, item.child), item)) {
         done.add(item.id); out.dropped.push(item.id);
         continue;
       }

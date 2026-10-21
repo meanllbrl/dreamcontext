@@ -24,6 +24,7 @@ import {
 import { setSuperFinishBanner, wireNotchInbox } from '../lib/assistant/notch-inbox.js';
 import { notifyViaBundle } from '../lib/automations/notifier.js';
 import { startSuperInbox } from '../lib/super/inbox.js';
+import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
 import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
@@ -1399,7 +1400,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // The Super Agent's in-memory index and inbox come up BEFORE the server listens, so before
     // any chat can register (plan-r7 D16): a handed-over child's first question is already
     // kept out of the notch, and children the window restores get their re-adoption grace.
-    void startSuperInbox(listVaults().map((v) => join(v.path, '_dream_context')))
+    // A parked child is not coming back on its own: it gets no re-adoption grace.
+    void startSuperInbox(listVaults().map((v) => join(v.path, '_dream_context')), { parked: (sid) => parkedSince(sid) !== null })
       .catch((err) => console.warn(`[super] boot failed: ${(err as Error).message}`))
       // Queued super sends a relaunch must not lose (lib/super/outbox.ts).
       .then(() => { armSuperOutbox(); armSuperSuccession(); })

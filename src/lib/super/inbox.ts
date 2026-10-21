@@ -5,6 +5,8 @@ import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
 import { teamLiveRows } from './team.js';
+import { superRestoreHold } from './restore.js';
+import { keepQuestionsAcrossRelaunch } from './outbox.js';
 import {
   STARTING_GRACE_MS, activityOf, chatTopic, getChat, onChatChange, type ChatChange, type ChatEntry,
 } from '../assistant/chat-registry.js';
@@ -952,7 +954,8 @@ async function onMoved(root: string, sid: string, status: 'working' | 'starting'
 async function addGone(root: string, sid: string): Promise<void> {
   let added = false;
   await writeSuper(root, (s) => {
-    if (!s.enabled || !s.children[sid]) return;
+    // Already reported gone (and not started since): nothing new to say (field 2026-10-21).
+    if (!s.enabled || !s.children[sid] || s.children[sid].row === 'gone') return;
     resolveAnswered(s, sid, null);
     setRow(s.children[sid], 'gone');
     if (s.queue.some((q) => q.sessionId === sid && q.kind === 'gone' && q.state === 'pending')) return;
@@ -1051,9 +1054,18 @@ export function noteResuming(sessionId: string, on: boolean): void {
  * Returns the write (tests await it); the route does not wait.
  */
 export function noteChatStarted(sessionId: string): Promise<void> {
+  // A new process of a child whose row says gone: it is not gone any more, so the next relaunch
+  // resumes it again (restore.ts) and its next exit is news again (addGone).
+  const live = superRootOfChild(sessionId);
+  if (live) return track(startedAgain(live, sessionId));
   if (resuming.has(sessionId)) return Promise.resolve();
   const root = superRootOfEnded(sessionId);
   return root ? track(reopenedByOwner(root, sessionId)) : Promise.resolve();
+}
+
+async function startedAgain(root: string, sid: string): Promise<void> {
+  if ((await readSuperState(root, superSanitizeOpts())).children[sid]?.row !== 'gone') return;
+  await writeSuper(root, (s) => { if (s.children[sid]?.row === 'gone') delete s.children[sid].row; });
 }
 
 async function reopenedByOwner(root: string, sid: string): Promise<void> {
@@ -1118,7 +1130,7 @@ export function wireSuperInbox(): void {
  * registered yet the re-adoption grace (they re-register under their pin id as the window
  * restores its tabs), and reconcile the rows (which arms the sweep for any that work).
  */
-export async function startSuperInbox(contextRoots: readonly string[]): Promise<void> {
+export async function startSuperInbox(contextRoots: readonly string[], opts: { parked?: (sessionId: string) => boolean } = {}): Promise<void> {
   await primeSuperIndex(contextRoots, superSanitizeOpts());
   wireSuperInbox();
   await Promise.all(contextRoots.map(async (root) => {
@@ -1126,8 +1138,29 @@ export async function startSuperInbox(contextRoots: readonly string[]): Promise<
     try { s = await readSuperState(root, superSanitizeOpts()); } catch { return; }
     noteHead(root, s);
     if (!s.enabled) return;
+    // A question the relaunch interrupted is asked again (outbox.ts), before anything closes it.
+    try { await keepQuestionsAcrossRelaunch(root, s); } catch (err) {
+      console.warn(`[super] ${root}: the open questions were not kept for the relaunch: ${(err as Error).message}`);
+    }
+    // Only a child the relaunch brings back gets the grace: one it holds (ended, closed, parked,
+    // already gone) is not coming back, and its absence is no news (field 2026-10-21).
+    const frozen: string[] = [];
     for (const sid of Object.keys(s.children)) {
-      if (!isLive(getChat(sid))) armGone(keyOf(root), sid, READOPT_GRACE_MS, regraceTimers);
+      if (isLive(getChat(sid))) continue;
+      const hold = superRestoreHold(s, sid, opts.parked?.(sid) ?? false);
+      if (!hold) { armGone(keyOf(root), sid, READOPT_GRACE_MS, regraceTimers); continue; }
+      // Held, yet its row still says it works or asks: no process will ever move it. It is
+      // not running: gone, quietly (review).
+      if (hold !== 'ended' && (s.children[sid].row === 'working' || s.children[sid].row === 'asking')) frozen.push(sid);
+    }
+    if (frozen.length) {
+      try {
+        s = await writeSuper(keyOf(root), (d) => {
+          for (const sid of frozen) { if (d.children[sid]) { resolveAnswered(d, sid, null); setRow(d.children[sid], 'gone'); } }
+        });
+      } catch (err) {
+        console.warn(`[super] ${root}: the rows of held children were not set gone: ${(err as Error).message}`);
+      }
     }
     syncSweep(keyOf(root), s);
     await reconcileRows(root);
