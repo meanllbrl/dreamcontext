@@ -623,7 +623,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // question or permission card) or 'sent' (a new turn).
     const how = (r.result as { delivered?: unknown } | undefined)?.delivered;
     // Queued in the window's memory: also kept on disk, so a relaunch cannot lose it (outbox.ts).
-    if (how === 'queued') await addToOutbox(c.who.contextRoot, child, text).catch(() => undefined);
+    if (how === 'queued') await addToOutbox(c.who.contextRoot, child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
     ok(res, { child, delivered: typeof how === 'string' ? how : true });
   },
 
