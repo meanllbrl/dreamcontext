@@ -14,6 +14,10 @@
  *       (409 adopted) without --force.
  *   E2  the ended child is gone from the persisted roster and does not come back on a reload.
  *   E3  `super resume <child>` → a new process `--resume`s the same conversation; its card is back.
+ *   L1-L3 lean children (orchestration plan r5 D14): a child delegated with `--mcp whatsapp`
+ *       spawns with `--strict-mcp-config` and only that server, one without `--mcp` with none;
+ *       the super and the owner's own chat are not strict; the resumed (E3) and the restarted (U1)
+ *       child keep the same set.
  *   E4  the owner's x on a child card asks: "Move to Others" keeps the process and stacks the
  *       card; "End session" ends it (process exits, card gone); a BUSY child offers "End when
  *       done", shows the pending chip, and closes when its turn ends.
@@ -73,7 +77,10 @@ let brief = '';
 try { brief = readFileSync(at('--append-system-prompt-file'), 'utf-8'); } catch {}
 const role = /(^|\\n)# Mode: Super Agent\\s*\\n/.test(brief) ? 'super' : 'child';
 const report = (o) => appendFileSync(${JSON.stringify(REPORTS)}, JSON.stringify({ role, convo, pid: process.pid, t: Date.now(), ...o }) + '\\n');
-report({ kind: 'spawn', resume: at('--resume'), model: at('--model'), modeHead: (brief.match(/^# Mode: ([^\\n]+)/m) || [])[1] || '' });
+// Lean children (orchestration plan r5 D14): strict MCP, and the servers its --mcp-config files grant.
+const mcpFiles = []; { const i = argv.indexOf('--mcp-config'); if (i >= 0) for (const f of argv.slice(i + 1)) { if (f.startsWith('--')) break; mcpFiles.push(f); } }
+const mcp = []; for (const f of mcpFiles) { try { mcp.push(...Object.keys(JSON.parse(readFileSync(f, 'utf-8')).mcpServers ?? {})); } catch {} }
+report({ kind: 'spawn', resume: at('--resume'), model: at('--model'), modeHead: (brief.match(/^# Mode: ([^\\n]+)/m) || [])[1] || '', strict: argv.includes('--strict-mcp-config'), mcp });
 process.on('exit', () => report({ kind: 'exit' }));
 const cli = (...args) => {
   const r = spawnSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(CLI)}, ...args], { env: process.env, encoding: 'utf-8', timeout: 60000 });
@@ -92,7 +99,7 @@ async function superTurn(text) {
   if (text.startsWith('[super handover]')) {
     const steps = [cli('super', 'state')];
     const adopted = Object.keys(steps[0].json?.children ?? {});
-    for (const n of ['one', 'two', 'three']) steps.push(cli('super', 'delegate', '--prompt', 'CHILD ' + n, '--brief', 'Child ' + n));
+    for (const n of ['one', 'two', 'three']) steps.push(cli('super', 'delegate', '--prompt', 'CHILD ' + n, '--brief', 'Child ' + n, ...(n === 'one' ? ['--mcp', 'whatsapp'] : [])));
     steps.push(cli('super', 'open', 'task', 'fix-the-login-form'));
     steps.push(cli('super', 'open', 'image', 'docs/shot.png'));
     report({ kind: 'handover', adopted, steps });
@@ -179,6 +186,8 @@ const dc = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: PROJ,
 function setupScratch() {
   rmSync(SCRATCH, { recursive: true, force: true });
   for (const d of [join(HOME, '.dreamcontext'), join(HOME, '.local', 'bin'), join(PROJ, '_dream_context', 'state'), OUT]) mkdirSync(d, { recursive: true });
+  // The owner's MCP servers (user scope): a lean child gets only the ones its job names.
+  writeFileSync(join(HOME, '.claude.json'), `${JSON.stringify({ mcpServers: { whatsapp: { command: 'true' }, fathom: { command: 'true' } } }, null, 2)}\n`);
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
     enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom',
     chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off',
@@ -304,6 +313,13 @@ async function run(engineName, base) {
   ok(tag('their cards and the task card are on the stage'), await until(page, async () => (await card(page, c3).count()) === 1
     && (await page.locator('[data-testid="super-container"][data-kind="task"]').count()) === 1, 20000));
   await until(page, async () => kids.every((k) => reports().some((r) => r.kind === 'spawn' && r.convo === k)), 20000);
+  const firstSpawn = (id) => reports().find((r) => r.kind === 'spawn' && r.convo === id);
+  ok(tag('L1 a delegated child with --mcp whatsapp runs lean with exactly that server'), firstSpawn(c1)?.strict === true
+    && JSON.stringify(firstSpawn(c1)?.mcp) === '["whatsapp"]', JSON.stringify(firstSpawn(c1)));
+  ok(tag('L1 a delegated child without --mcp runs lean with no user server'), firstSpawn(c2)?.strict === true && firstSpawn(c2)?.mcp.length === 0, JSON.stringify(firstSpawn(c2)));
+  const superSpawn = reports().find((r) => r.kind === 'spawn' && r.role === 'super');
+  ok(tag('L1 the Super Agent and the owner\'s own chat spawn as before (not strict)'), superSpawn?.strict === false
+    && (!own || firstSpawn(own)?.strict === false), JSON.stringify([superSpawn, own && firstSpawn(own)]));
 
   console.log(`── ${engineName}: super end`);
   await sayToSuper(page, `GO-END ${c1}`);
@@ -335,6 +351,8 @@ async function run(engineName, base) {
   ok(tag('super resume answered ok'), await until(page, async () => reports().some((r) => r.kind === 'owner-resume' && r.steps[0]?.status === 0), 30000),
     JSON.stringify(reports().find((r) => r.kind === 'owner-resume')?.steps));
   ok(tag('E3 a new process --resumes the same conversation'), await until(page, async () => reports().some((r) => r.kind === 'spawn' && r.resume === c1), 15000));
+  const resumed = reports().filter((r) => r.kind === 'spawn' && r.resume === c1).pop();
+  ok(tag('L2 the resumed child keeps its lean set (strict, whatsapp only)'), resumed?.strict === true && JSON.stringify(resumed?.mcp) === '["whatsapp"]', JSON.stringify(resumed));
   ok(tag('E3 its card is back'), await until(page, async () => (await card(page, c1).count()) === 1, 10000));
 
   console.log(`── ${engineName}: super update`);
@@ -349,6 +367,8 @@ async function run(engineName, base) {
   ok(tag('U1 it restarted on the same conversation in Plan mode with the new model'), await until(page, async () => reports().some((r) => r.kind === 'spawn'
     && r.convo === c1 && !before.includes(r.pid) && r.resume === c1 && r.modeHead === 'Plan' && r.model === 'haiku'), 20000),
   JSON.stringify(reports().filter((r) => r.kind === 'spawn' && r.convo === c1)));
+  const restarted = reports().filter((r) => r.kind === 'spawn' && r.convo === c1 && !before.includes(r.pid)).pop();
+  ok(tag('L3 the restarted child is still lean with its set'), restarted?.strict === true && JSON.stringify(restarted?.mcp) === '["whatsapp"]', JSON.stringify(restarted));
   ok(tag('U1 …the old process exited, its card stayed'), exited(c1) === false && before.every((p) => reports().some((r) => r.kind === 'exit' && r.pid === p))
     && (await card(page, c1).count()) === 1);
   ok(tag('U1 the record has mode, model and effort'), await until(page, async () => {
