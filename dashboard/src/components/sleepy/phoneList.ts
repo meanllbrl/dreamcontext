@@ -1,4 +1,4 @@
-import type { LiveChatWire } from '../handsfree/macContract';
+import type { LiveChatWire, LiveChatsWire, SuperChatWire } from '../handsfree/macContract';
 import type { PastSession } from './ChatHistoryPicker';
 import type { ConversationModel } from './chatSession';
 import { activeStateKey, drawerRows, liveStateKey } from './drawerRows';
@@ -154,4 +154,24 @@ export function ageLabel(ms: number, now = Date.now()): string {
   if (hours < 24) return `${hours}h`;
   const days = Math.round(hours / 24);
   return days < 30 ? `${days}d` : `${Math.round(days / 30)}mo`;
+}
+
+/**
+ * The handed-over Super Agent's row for THIS project, or null (the list is then exactly as
+ * before). With it the row is the whole list: the Super Agent runs the project's chats.
+ */
+export function superRowFor(live: Pick<LiveChatsWire, 'supers'> | undefined, vault: string): SuperChatWire | null {
+  return live?.supers?.find((x) => x.vault === vault) ?? null;
+}
+
+/**
+ * A tap on the Super Agent's row: a tab of this phone already holding its conversation is
+ * selected; else it is opened (as a mirror, never adopted) while the Mac runs it; a row the Mac
+ * runs no super chat for does nothing.
+ */
+export function superTap(row: SuperChatWire, tabs: readonly StackTab[]):
+  | { select: { paneId: string; id: string } } | { open: SuperChatWire } | null {
+  const held = tabs.find((x) => x.claudeId === row.conversationId || x.altClaudeId === row.conversationId);
+  if (held) return { select: { paneId: held.paneId, id: held.id } };
+  return row.live ? { open: row } : null;
 }

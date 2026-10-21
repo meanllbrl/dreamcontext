@@ -179,7 +179,7 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
     const rows = Object.entries(ROUTE_POLICY).filter(([k]) => k.includes('/api/super/'));
     expect(rows.map(([k]) => k).sort()).toEqual([
       'GET /api/super/state', 'POST /api/super/activity', 'POST /api/super/disable', 'POST /api/super/enable',
-      'POST /api/super/layout', 'POST /api/super/recap', 'POST /api/super/v/:verb',
+      'POST /api/super/end', 'POST /api/super/layout', 'POST /api/super/recap', 'POST /api/super/v/:verb',
     ]);
     for (const [k, row] of rows) expect(row.allow, k).toBe(false);
     setPhoneSurfaceForTests('mac');

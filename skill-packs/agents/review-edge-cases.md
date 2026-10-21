@@ -27,7 +27,7 @@ tools:
   - Glob
   - Grep
   - Bash
-maxTurns: 12
+maxTurns: 24
 skills:
   - engineering
   - dreamcontext-agent-core
@@ -119,6 +119,11 @@ let the main agent dedupe. Don't suppress.
 5. **For each finding**: name the input/state that triggers it concretely.
    "Empty `users` array" not "edge case with empty input."
 6. **Emit your report** per `REVIEWER_SHARED.md` §4.
+
+
+**Turn budget (24):** with 2 turns left, stop reading and emit the report with
+verdict `PARTIAL` and a `Not reviewed:` list (`REVIEWER_SHARED.md` §10). Running
+out with no report leaves the caller waiting on nothing.
 
 ## Output
 

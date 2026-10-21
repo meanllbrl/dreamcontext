@@ -26,7 +26,7 @@ tools:
   - Glob
   - Grep
   - Bash
-maxTurns: 12
+maxTurns: 24
 skills:
   - engineering
   - dreamcontext-agent-core
@@ -119,6 +119,11 @@ Hunt for these. If you find none with plausible exploitation, return PASS.
    codebase's context. If unsure, put it in **Open questions**, not Findings.
 6. **Cite the engineering skill** when a finding backs to a rule you loaded.
 7. **Emit your report** in the format from `REVIEWER_SHARED.md` §4.
+
+
+**Turn budget (24):** with 2 turns left, stop reading and emit the report with
+verdict `PARTIAL` and a `Not reviewed:` list (`REVIEWER_SHARED.md` §10). Running
+out with no report leaves the caller waiting on nothing.
 
 ## Output
 

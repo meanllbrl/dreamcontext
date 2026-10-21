@@ -266,6 +266,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/super/layout': deny(SUPER),
   'POST /api/super/activity': deny(SUPER),
   'POST /api/super/recap': deny(SUPER),
+  'POST /api/super/end': deny(SUPER),
 
   // The chat's mascot
   'GET /api/sleepy/video': agnostic('read: the mascot clip (mp4 from a fixed set); side-effect free', 'media'),
@@ -321,7 +322,11 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/notifications': deny(DESKTOP),
   'POST /api/notify': deny(DESKTOP),
   'POST /api/agent/secret': deny(SECRET),
-  'POST /api/agent/voice/stt': deny(VOICE),
+  // The ONE voice route the phone reaches (task the-hands-free-phone-sends-a-voice-message…): its
+  // take, recorded on the phone, transcribed by this Mac's local whisper. Capped per phone socket
+  // in the handler (4 MB, 2 minutes by the WAV header, 1 in flight, 12 a minute); the vocabulary
+  // that primes whisper is the request project's. Read-aloud, warm, focus and setup stay here.
+  'POST /api/agent/voice/stt': allow(`${CHAT}: a voice message from the phone, transcribed by this Mac's local whisper (phone caps: 4 MB, 2 min, 1 in flight, 12/min)`),
   'POST /api/agent/voice/tts': deny(VOICE),
   'POST /api/agent/voice/warm': deny(VOICE),
   'POST /api/agent/voice/log': deny(VOICE),

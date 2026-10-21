@@ -106,16 +106,32 @@ export interface SuperChild {
   sessionId: string;
   /** The one-line reminder its container shows (`super brief`); the tab title until then. */
   brief: string;
-  /** Adopted at hand-over (true) or started by `super delegate` (false). */
+  /** The owner's own chat, adopted at hand-over or by `super adopt` on his word (true), or
+   *  started by `super delegate` (false). */
   adopted: boolean;
   /** Its own worktree, when `super delegate --worktree` made one: under `~/.claude-worktrees/`. */
   worktree?: string;
   /** `super/<slug>`, beside `worktree`. */
   branch?: string;
   startedAt: number;
+  /** What it runs with (`super delegate`, then `super update --mode/--model/--effort`), so
+   *  `super resume` reopens it the same way. Absent = basic, the default model and effort. */
+  mode?: string;
+  model?: string;
+  effort?: string;
+  /** `super end` closed it (epoch ms): no process, no tab, no card; the transcript stays and
+   *  `super resume` reopens it (which clears this). Absent = a child that may be running. */
+  endedAt?: number;
+  /** `super delegate --succeeds` handed its card, brief and task to this child (one job, one
+   *  owner); it is ended, and `super state` warns while it still runs. */
+  succeededBy?: string;
 }
 
-export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover'] as const;
+/** Ended children the record keeps (newest first); older ones drop out of it, except one that
+ *  still owns a worktree (it leaves when `super worktree remove` clears it). */
+export const MAX_ENDED_CHILDREN = 30;
+
+export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover', 'ended'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -134,6 +150,9 @@ export interface SuperQueueItem {
   createdAt: number;
   /** Delivered turns that ended with this question unsettled (server-only bookkeeping). */
   attempts?: number;
+  /** An `ended` item's record of the child's last brief (who and when are `sessionId` and
+   *  `createdAt`). Born `done`: a record, never delivered as a turn. */
+  brief?: string;
 }
 
 /** The note a child's next OWNER message carries (D17). */
@@ -295,11 +314,13 @@ export const MAX_QUEUE = 200;
 export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
   'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
+  'end', 'resume', 'update', 'adopt',
+  'clean',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 
 /** The verbs the WINDOW runs (sent down the super chat's own socket as `super_command`). */
-export const SUPER_WINDOW_VERBS = ['delegate', 'answer'] as const;
+export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
 // ─── Frames (`_meta` subtypes on the super chat's socket) ──────────────────────
@@ -336,10 +357,21 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * briefing change reaches a running session as SUPER_BRIEF_TEXT on its next owner message
  * (and again after a compaction drops that message). The fixed `<super-brief rev=N>` marker is
  * how the transcript tells whether this revision already arrived. Whoever changes the sections
- * bumps the number.
+ * bumps the number. Rev 1 is the first marked revision: it also carries what the unmarked
+ * briefing gained before it (the child lifecycle lines), so it is the full delta for any session.
  */
 export const SUPER_BRIEF_REV = 1;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
+
+/**
+ * The child lifecycle bullets of "Lead, do not do" (\`super end|resume|update|adopt\`). They
+ * arrived with the unmarked briefing before rev 1, so a session born earlier lacks them and rev 1
+ * carries them too (SUPER_BRIEF_TEXT).
+ */
+export const SUPER_LIFECYCLE_LINES = `- Done with a child: \`dreamcontext super end <child>\` (process and tab go, transcript stays;
+  \`super resume <child>\` reopens it); \`--idle\` lists idle ones; \`--force\` only if the owner asked.
+- \`super update <child> --model|--effort|--mode\` changes a running child; \`super adopt <chat>\`
+  makes an open chat yours. The owner's own chats take \`--force\`, only when he asks.`;
 
 /** S4-S8: show, don't tell. */
 export const SUPER_SHOW_SECTION = `## Show, don't tell
@@ -368,6 +400,9 @@ aloud: one or two short sentences, any detail on a card. How you talk otherwise 
 
 /** The briefing update a resumed super session receives (second block, starts with \`<\`). */
 export const SUPER_BRIEF_TEXT = `${SUPER_BRIEF_MARKER} Your Super Agent briefing has new sections since this conversation began. They apply from now on, beside everything else you were told.
+
+## Ending and changing children
+${SUPER_LIFECYCLE_LINES}
 
 ${SUPER_SHOW_SECTION}
 

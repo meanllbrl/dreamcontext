@@ -3046,6 +3046,16 @@
       "group": true
     },
     {
+      "path": "super adopt",
+      "desc": "Make an open chat of this project one of your children (its card comes, it hears of the hand-over). Every chat you did not start is the owner's: only on his word, with --force",
+      "args": [
+        "<chat>"
+      ],
+      "valueFlags": [
+        "--brief"
+      ]
+    },
+    {
       "path": "super answer",
       "desc": "Answer a child's QUESTION (never a permission) with its option label(s) or --text",
       "args": [
@@ -3066,8 +3076,13 @@
       ]
     },
     {
+      "path": "super clean",
+      "desc": "Give disk back: remove ended children's worktrees that are merged and clean (branches kept) and this repo's own test temp folders older than a day. Chrome and system files are never touched",
+      "args": []
+    },
+    {
       "path": "super close",
-      "desc": "Close a card (a child chat keeps running)",
+      "desc": "Close a card (a child chat keeps running; `super end` ends it)",
       "args": [
         "<card>"
       ]
@@ -3084,7 +3099,15 @@
         "--effort",
         "--worktree",
         "--slug",
-        "--base"
+        "--base",
+        "--succeeds"
+      ]
+    },
+    {
+      "path": "super end",
+      "desc": "End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks",
+      "args": [
+        "[children...]"
       ]
     },
     {
@@ -3169,12 +3192,24 @@
     },
     {
       "path": "super read",
-      "desc": "The end of a child's transcript (bounded), fenced as the child's text",
+      "desc": "A child's last reply, whole (tool calls skipped), fenced as the child's text",
       "args": [
         "<child>"
       ],
       "valueFlags": [
         "--bytes"
+      ]
+    },
+    {
+      "path": "super resume",
+      "desc": "Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others",
+      "args": [
+        "<child>"
+      ],
+      "valueFlags": [
+        "--mode",
+        "--model",
+        "--effort"
       ]
     },
     {
@@ -3202,7 +3237,7 @@
     },
     {
       "path": "super state",
-      "desc": "Children (status, brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
+      "desc": "Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
       "args": []
     },
     {
@@ -3210,6 +3245,18 @@
       "desc": "Dissolve a group (its cards take its place on the stage or in Others), or take cards out of their group (they float)",
       "args": [
         "<targets...>"
+      ]
+    },
+    {
+      "path": "super update",
+      "desc": "Change a RUNNING child's mode, model or effort (the window's own switches; a mode change restarts it on the same conversation once its turn ends); recorded for `super resume`",
+      "args": [
+        "<child>"
+      ],
+      "valueFlags": [
+        "--mode",
+        "--model",
+        "--effort"
       ]
     },
     {

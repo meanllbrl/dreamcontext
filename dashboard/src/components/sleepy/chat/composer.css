@@ -1818,3 +1818,13 @@
   .chat-cmp-modeltrigger-model { max-width: 62px; }
   .chat-cmp-right { gap: 3px; }
 }
+
+/* Hold-to-talk on a TOUCH screen (the hands-free phone): the press is a hold, never a scroll,
+   a zoom, a text selection or the long-press callout — any of those raises \`pointercancel\`, and
+   that ends the take mid-sentence. Inert for a mouse. */
+.chat-cmp-mic {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}

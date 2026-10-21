@@ -20,6 +20,20 @@
 .hf-chrome-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 .hf-chrome-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
 .hf-chrome-btn[data-phase='mac'] { color: var(--color-accent); }
+/* The mark paints in the gem's own colours in both themes; Mac mode on adds the accent dot, ringed
+   in the bar's paper so it stays a separate dot over the gem's edge. */
+.hf-chrome-icon { position: relative; display: inline-flex; align-items: center; }
+.hf-chrome-dot {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 1.5px var(--color-bg);
+}
+.hf-chrome-btn:hover .hf-chrome-dot { box-shadow: 0 0 0 1.5px var(--color-bg-tertiary); }
 @media (max-width: 900px) { .hf-chrome-label { display: none; } }
 
 /* ---------------------------------------------------------------- buttons */

@@ -93,7 +93,9 @@ describe('the conversation (A3, A4, A8)', () => {
 
   it('answers the open question instead while one waits, and says so above the field', () => {
     expect(src).toMatch(/const id = q\.question\.id;\s*answer\.mutate\(\{ id, kind: 'flow-hitl', answer: text \}/);
-    expect(src).toMatch(/onSuccess: \(\) => setAnswered\(/);
+    // Answered: dropped from the composer at once, and the sent bubble waits for the re-read.
+    expect(src).toMatch(/onSuccess: \(\) => \{ setAnswered\(/);
+    expect(src).toMatch(/setSending\(\{ text, since: Date\.now\(\) \}\)/);
     expect(src).toMatch(/className="aiteam-replying"/);
     expect(src).toMatch(/t\('aiteam\.answering'\)/);
   });

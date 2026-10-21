@@ -5,7 +5,9 @@
  * data, never drive the dashboard through raw HTTP or WebSocket. Short: it rides every turn.
  */
 import { describe, it, expect } from 'vitest';
-import { SUPER_MODE_HEADING, modeBriefing, superBriefing } from '../../src/server/chat-modes.js';
+import {
+  SUPER_MODE_HEADING, SUPER_ORCHESTRATION_GUIDE, modeBriefing, superBriefing,
+} from '../../src/server/chat-modes.js';
 import { modeFromSystemPrompt } from '../../src/server/chat-mode-drift.js';
 
 describe('superBriefing', () => {
@@ -50,8 +52,50 @@ describe('superBriefing', () => {
     expect(modeFromSystemPrompt(`# Surface: dreamcontext Chat\n\n${brief}`)).toBe('super');
   });
 
+  it('names the child lifecycle: end, resume, update, adopt (the owner\'s chats only on his word)', () => {
+    expect(brief).toContain('dreamcontext super end <child>');
+    expect(brief).toContain('super resume <child>');
+    expect(brief).toContain('super update <child> --model|--effort|--mode');
+    expect(brief).toContain('super adopt <chat>');
+    expect(brief).toContain('The owner\'s own chats take `--force`, only when he asks.');
+  });
+
   it('stays short', () => {
-    // Jarvis plan r9 added "Show, don't tell" and "Voice" (and the revision marker).
-    expect(brief.length).toBeLessThan(4400);
+    // 2600 -> 2800 (2026-10-21): the child lifecycle line (`super update`, `super adopt`);
+    // jarvis plan r9 added "Show, don't tell" and "Voice" (and the revision marker).
+    expect(brief.length).toBeLessThan(4600);
+  });
+
+  describe('the orchestration slot', () => {
+    const PATH = '.claude/skills/dreamcontext/references/super-orchestration.md';
+    const bullet = `- Before you split work, read the orchestration guide: ${PATH}.`;
+    const lead = (b: string): string[] => b.split('## Lead, do not do\n')[1].split('\n');
+
+    it('while no guide is set, names no guide path and emits no bullet', () => {
+      expect(superBriefing(null)).not.toContain('orchestration guide');
+      expect(superBriefing(null)).not.toContain('super-orchestration');
+      expect(superBriefing(null)).toBe(brief); // the shipped default is the empty slot
+      expect(SUPER_ORCHESTRATION_GUIDE === null || SUPER_ORCHESTRATION_GUIDE === PATH).toBe(true);
+    });
+
+    it('while a guide is set, the first "Lead, do not do" bullet is exactly the pointer', () => {
+      const set = superBriefing(PATH);
+      expect(lead(set)[0]).toBe(bullet);
+      expect(set.split(bullet).length).toBe(2);
+      expect(set.match(/^# Mode:/gm)).toHaveLength(1);
+      expect(superBriefing(null).match(/^# Mode:/gm)).toHaveLength(1);
+    });
+
+    it('treats an empty or blank guide as unset and refuses a line break', () => {
+      expect(superBriefing('  ')).toBe(superBriefing(null));
+      expect(superBriefing('')).toBe(superBriefing(null));
+      expect(() => superBriefing('a\nb')).toThrow();
+    });
+
+    it('adds only the one pointer line when set (the job-list task\'s length rule replaces the cap)', () => {
+      expect(superBriefing(null).length).toBeLessThan(4600);
+      expect(superBriefing(PATH).length).toBeLessThan(4800);
+      expect(superBriefing(PATH).length - superBriefing(null).length).toBe(bullet.length + 1);
+    });
   });
 });

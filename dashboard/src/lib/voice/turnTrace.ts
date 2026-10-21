@@ -27,6 +27,8 @@
  * spoken answer and a latency budget. One trace at a time, as there is one owner and one mic.
  */
 
+import { phoneAllows } from '../phoneSurface';
+
 /** The Assistant's hidden vault. Mirrors `ASSISTANT_VAULT` in components/assistant/Notch.tsx
  *  (a lib module does not import a component); `tests/unit/voice-turn-trace.test.ts` holds
  *  the two equal. */
@@ -160,6 +162,9 @@ export function createTurnTracer(
 }
 
 function post(r: TurnRecord): void {
+  // The hands-free phone records takes too, but the voice log is the laptop's (laptop-only on
+  // the phone listener): never sent from there.
+  if (!phoneAllows('POST', '/api/agent/voice/log')) return;
   void fetch('/api/agent/voice/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

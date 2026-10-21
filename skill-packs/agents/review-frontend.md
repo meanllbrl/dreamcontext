@@ -27,7 +27,7 @@ tools:
   - Glob
   - Grep
   - Bash
-maxTurns: 12
+maxTurns: 24
 skills:
   - engineering
   - design
@@ -116,6 +116,11 @@ The main agent dispatches you with:
    over 500 (component) or 800 (utility/hook). Suggest a concrete split.
 6. **Cite design / engineering skill** sections when a rule backs the call.
 7. **Emit your report** per `REVIEWER_SHARED.md` §4.
+
+
+**Turn budget (24):** with 2 turns left, stop reading and emit the report with
+verdict `PARTIAL` and a `Not reviewed:` list (`REVIEWER_SHARED.md` §10). Running
+out with no report leaves the caller waiting on nothing.
 
 ## Output
 

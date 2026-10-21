@@ -9,7 +9,7 @@ import {
 } from '../assistant/chat-registry.js';
 import { pushFrame, tokenOfSession } from '../window-control.js';
 import {
-  isSuperChild, primeSuperIndex, readSuperState, superIndex, superRootOfChild, superRootOfSession,
+  isSuperChild, primeSuperIndex, readSuperState, superIndex, superRootOfChild, superRootOfEnded, superRootOfSession,
   updateSuperState, type SanitizeOpts,
 } from './store.js';
 import {
@@ -685,6 +685,42 @@ function armGone(root: string, sid: string, ms: number, map: Map<string, ReturnT
   map.set(sid, t);
 }
 
+/** Children `super resume` is reopening right now: their new process is the super's doing. */
+const resuming = new Map<string, number>();
+
+/** `super resume` brackets its window command with this, so the child's new process is not
+ *  taken for the owner reopening it. Counted: two resumes in flight both hold it. */
+export function noteResuming(sessionId: string, on: boolean): void {
+  const n = (resuming.get(sessionId) ?? 0) + (on ? 1 : -1);
+  if (n > 0) resuming.set(sessionId, n); else resuming.delete(sessionId);
+}
+
+/**
+ * A chat process was just registered (agent-chat.ts). A NEW process of an ended child that
+ * `super resume` did not start is the owner reopening it himself (Past chats): it is his,
+ * recorded adopted (so ending, changing or reopening it again takes his word) and no longer
+ * ended (so a later park or relaunch never closes his tab). While handed over it is a child
+ * again, as every open chat of the project is: its card and the hand-over note come back.
+ * Returns the write (tests await it); the route does not wait.
+ */
+export function noteChatStarted(sessionId: string): Promise<void> {
+  if (resuming.has(sessionId)) return Promise.resolve();
+  const root = superRootOfEnded(sessionId);
+  return root ? track(reopenedByOwner(root, sessionId)) : Promise.resolve();
+}
+
+async function reopenedByOwner(root: string, sid: string): Promise<void> {
+  await writeSuper(root, (s) => {
+    const x = s.children[sid];
+    if (!x || x.endedAt === undefined) return;
+    delete x.endedAt;
+    x.adopted = true;
+    if (!s.enabled) return;
+    ensureChatContainer(s, sid, x.brief.slice(0, 120));
+    s.notes[sid] = 'handover';
+  });
+}
+
 function onChange({ entry }: ChatChange): void {
   const sid = entry.sessionId;
   const superRoot = superRootOfSession(sid);
@@ -760,6 +796,7 @@ export function _resetSuperInbox(): void {
   for (const r of retry.values()) clearTimeout(r.t);
   retry.clear();
   inboxes.clear();
+  resuming.clear();
   carried.clear();
   turnsEnded.clear();
   heldOwnerTexts.clear();

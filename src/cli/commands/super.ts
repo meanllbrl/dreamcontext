@@ -4,7 +4,7 @@ import { windowEnv } from './window.js';
 
 /**
  * `dreamcontext super …` — the project's Super Agent drives the hand-over screen: its child
- * chats (delegate, brief, read, answer, send), the cards floating around it (open, half, present,
+ * chats (delegate, brief, read, answer, send, end, resume, update, adopt), the cards floating around it (open, half, present,
  * stack, float, close, group, ungroup), the one question queue, and its children's worktrees.
  *
  * A THIN HTTP CLIENT, the `window` command's shape: every verb is one call to
@@ -68,7 +68,7 @@ export function registerSuperCommand(program: Command): void {
     .description('The project\'s Super Agent: delegate to child chats, arrange their cards, answer the queue (only from the Super Agent chat)');
 
   s.command('state')
-    .description('Children (status, brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
+    .description('Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
     .action(() => run('state', {}));
 
   s.command('delegate')
@@ -81,8 +81,9 @@ export function registerSuperCommand(program: Command): void {
     .option('--worktree <repo>', 'Give it its own worktree of this linked repo, on branch super/<slug>')
     .option('--slug <slug>', 'The worktree and branch name (a-z, 0-9, -)')
     .option('--base <ref>', 'The commit the worktree starts from (default: the repo\'s HEAD)')
-    .action((o: { prompt: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string }) =>
-      run('delegate', { prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base }));
+    .option('--succeeds <child>', 'It takes this child\'s work over (a context handoff): the card, brief and task pass to it, and the old child is ended (told to stop first if busy)')
+    .action((o: { prompt: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string; succeeds?: string }) =>
+      run('delegate', { prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base, succeeds: o.succeeds }));
 
   s.command('open <kind> <refs...>')
     .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once`)
@@ -123,7 +124,7 @@ export function registerSuperCommand(program: Command): void {
     .action((container: string) => run('float', { container }));
 
   s.command('close <card>')
-    .description('Close a card (a child chat keeps running)')
+    .description('Close a card (a child chat keeps running; `super end` ends it)')
     .action((container: string) => run('close', { container }));
 
   s.command('group <cards...>')
@@ -140,8 +141,8 @@ export function registerSuperCommand(program: Command): void {
     .action((child: string, line: string) => run('brief', { child, line }));
 
   s.command('read <child>')
-    .description('The end of a child\'s transcript (bounded), fenced as the child\'s text')
-    .option('--bytes <n>', 'How much of the end to read (max 262144)')
+    .description('A child\'s last reply, whole (tool calls skipped), fenced as the child\'s text')
+    .option('--bytes <n>', 'Instead: the raw end of its transcript, this many bytes (max 262144)')
     .action((child: string, o: { bytes?: string }) => run('read', { child, bytes: o.bytes ? Number(o.bytes) : undefined }));
 
   s.command('answer <child> <requestId> [choice...]')
@@ -149,6 +150,43 @@ export function registerSuperCommand(program: Command): void {
     .option('--text <text>', 'A free-text answer instead of an option')
     .action((child: string, requestId: string, choice: string[], o: { text?: string }) =>
       run('answer', { child, requestId, choices: choice, text: o.text }));
+
+  s.command('end [children...]')
+    .description('End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks')
+    .option('--idle', 'List the idle children you started; add --yes to end them all')
+    .option('--yes', 'With --idle: end every listed child')
+    .option('--force', 'ONLY when the owner asked: end it even while it works, asks or runs background tasks, or when it is his own chat')
+    .action((children: string[], o: { idle?: boolean; yes?: boolean; force?: boolean }) => {
+      if (!o.idle && children.length === 0) return usage('name the children to end, or pass --idle');
+      return run('end', o.idle ? { idle: true, yes: o.yes === true } : { children, force: o.force === true });
+    });
+
+  s.command('resume <child>')
+    .description('Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others')
+    .option('--mode <mode>', 'basic | plan | develop')
+    .option('--model <id>', 'Model id or alias')
+    .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .option('--force', 'ONLY when the owner asked: reopen his own (adopted) chat')
+    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean }) =>
+      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true }));
+
+  s.command('update <child>')
+    .description('Change a RUNNING child\'s mode, model or effort (the window\'s own switches; a mode change restarts it on the same conversation once its turn ends); recorded for `super resume`')
+    .option('--mode <mode>', 'basic | plan | develop')
+    .option('--model <id>', 'Model id or alias (from its next turn)')
+    .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .option('--force', 'ONLY when the owner asked: change his own (adopted) chat')
+    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean }) => {
+      if (!o.mode && !o.model && !o.effort) return usage('name what changes: --mode, --model or --effort');
+      return run('update', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true });
+    });
+
+  s.command('adopt <chat>')
+    .description('Make an open chat of this project one of your children (its card comes, it hears of the hand-over). Every chat you did not start is the owner\'s: only on his word, with --force')
+    .option('--brief <line>', 'The one-line reminder its card shows (default: its title)')
+    .option('--force', 'ONLY when the owner asked: adopt his own chat')
+    .action((chat: string, o: { brief?: string; force?: boolean }) =>
+      run('adopt', { chat, brief: o.brief, force: o.force === true }));
 
   s.command('send <child> <text>')
     .description('Send a message into a child chat (steered into its running turn; queued only while it asks)')
@@ -169,6 +207,11 @@ export function registerSuperCommand(program: Command): void {
     .description('Merge children\'s super/* branches into super/<topic> in its own worktree (never the default branch, never pushed)')
     .requiredOption('--into <topic>', 'The integration branch name (a-z, 0-9, -)')
     .action((children: string[], o: { into: string }) => run('merge', { children, into: o.into }));
+
+  s.command('clean')
+    .description('Give disk back: remove ended children\'s worktrees that are merged and clean (branches kept) and this repo\'s own test temp folders older than a day. Chrome and system files are never touched')
+    .option('--dry-run', 'Only list what would go, with sizes')
+    .action((o: { dryRun?: boolean }) => run('clean', { dryRun: o.dryRun === true }));
 
   const w = s.command('worktree').description('Your children\'s worktrees');
   w.command('list')

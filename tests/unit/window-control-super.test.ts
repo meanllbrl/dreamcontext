@@ -2,7 +2,8 @@
  * `/api/window` hardening around the Super Agent (plan-r7 D4b, AC11):
  *  - `mode` on the super tab is refused for EVERY token, the super's own included;
  *  - no other chat may target the super tab (by pin id or conversation id, `tab` or `into`);
- *  - the super's token reaches only its children and itself, and calls no `new`/`split`;
+ *  - the super's token reaches only its children and itself, and calls no `new`/`split` (nor
+ *    `mode`/`model`/`effort` into a child: `super update` is that path);
  *  - a child reaches no sibling and calls no `new`/`split`;
  *  - a child's `window state` omits the super tab.
  */
@@ -123,6 +124,20 @@ describe('the super\'s own token', () => {
     expect((await win(sup, 'send', { tab: 'stranger', text: 'x' })).status).toBe(403);
     expect((await win(sup, 'new', { prompt: 'x' })).status).toBe(403);
     expect((await win(sup, 'split', { tab: 'c1' })).status).toBe(403);
+    // A child's mode, model and effort change only through `super update` (adopted rule, record).
+    expect((await win(sup, 'model', { tab: 'c1', model: 'haiku' })).status).toBe(403);
+    expect((await win(sup, 'effort', { tab: 'conv-c2', level: 'low' })).status).toBe(403);
+    expect((await win(sup, 'mode', { tab: 'c2', mode: 'plan' })).status).toBe(403);
+  });
+
+  it('after take-back its window verbs into a former child are not super-gated', async () => {
+    resetSuperIndex();
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({
+      ...emptySuperState(), session: SUPER, enabled: false,
+      children: { c1: { sessionId: 'c1', brief: '', adopted: true, startedAt: 1 } },
+    }));
+    await readSuperState(root);
+    expect(superWindowRefusal(tokenFor(SUPER, 'super'), 'model', { tab: 'c1', model: 'haiku' })).toBeNull();
   });
 });
 

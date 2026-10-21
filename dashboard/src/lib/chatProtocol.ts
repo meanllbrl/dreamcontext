@@ -364,8 +364,10 @@ export type ChatEvent =
   | { kind: 'super-command'; id: string; verb: string; args: Record<string, unknown> }
   /** The server asks the window to PARK this chat under machine load (or `super end`): the
    *  window re-checks, answers `park_result`, and on yes closes the process and turns the tab
-   *  dormant (src/server/chat-park.ts). Never a window verb, so no agent can name another tab. */
-  | { kind: 'park-request'; id: string; reason: string; focusGraceMs?: number }
+   *  dormant (src/server/chat-park.ts). Never a window verb, so no agent can name another tab.
+   *  `end` (`super end`): close the tab instead of keeping it dormant. `force`: the owner asked,
+   *  a running turn or background work does not refuse it. */
+  | { kind: 'park-request'; id: string; reason: string; focusGraceMs?: number; end?: boolean; force?: boolean }
   /** The vault's Super Agent state, pushed by the server on every change (never polled). The
    *  payload is read with `readSuperStateView` (lib/superTypes.ts) where it is used. */
   | { kind: 'super-state'; state: Record<string, unknown> }
@@ -373,6 +375,9 @@ export type ChatEvent =
   | { kind: 'super-event'; eventKind: string; child: string }
   /** A Super Agent verb landed (AC16): the stage shows it, `ids` are the cards it touched. */
   | { kind: 'super-cue'; verb: string; ids: string[] }
+  /** The owner's words typed on ANOTHER surface of the same Super Agent chat (the phone's mirror,
+   *  or the window when the phone watches): drawn as the owner's own bubble. */
+  | { kind: 'owner-echo'; text: string }
   /** The server's fresh-session branch guard reporting what it did to the working tree.
    *  `warn` for a refusal, `info` for a move it made. See `fromMeta`. */
   | { kind: 'branch-start'; tone: 'info' | 'warn'; message: string }
@@ -468,6 +473,9 @@ export type ClientControl =
   /** The owner looked at or typed in this tab (at most once per 30 s): the load sweep leaves
    *  it alone for 2 min. */
   | { type: 'focus' }
+  /** Queued rows the owner took back (deleted, edited away, held): the server drops a super
+   *  child's disk copy of them (src/lib/super/outbox.ts). */
+  | { type: 'queue_dropped'; texts: string[] }
   /** The window's answer to one `park-request`. */
   | { type: 'park_result'; id: string; ok: boolean; error?: string };
 
@@ -1179,7 +1187,10 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     const id = str(obj.id);
     if (!id) return ignored('_meta:park');
     const grace = typeof obj.focusGraceMs === 'number' && Number.isFinite(obj.focusGraceMs) ? obj.focusGraceMs : undefined;
-    return { kind: 'park-request', id, reason: str(obj.reason) ?? 'machine', ...(grace !== undefined ? { focusGraceMs: grace } : {}) };
+    return {
+      kind: 'park-request', id, reason: str(obj.reason) ?? 'machine', ...(grace !== undefined ? { focusGraceMs: grace } : {}),
+      ...(obj.end === true ? { end: true } : {}), ...(obj.force === true ? { force: true } : {}),
+    };
   }
   if (subtype === 'super_command') {
     const id = str(obj.id);
@@ -1195,6 +1206,10 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     if (!verb) return ignored('_meta:super_cue');
     const ids = Array.isArray(obj.ids) ? obj.ids.filter((x): x is string => typeof x === 'string').slice(0, 48) : [];
     return { kind: 'super-cue', verb, ids };
+  }
+  if (subtype === 'owner_echo') {
+    const text = str(obj.text);
+    return text && text.trim() ? { kind: 'owner-echo', text: text.trim() } : ignored('_meta:owner_echo');
   }
   if (subtype === 'super_event') {
     const eventKind = str(obj.kind);

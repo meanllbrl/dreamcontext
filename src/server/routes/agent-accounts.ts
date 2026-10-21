@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
+import { clearSignedOut } from '../../lib/claude-signed-out.js';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isAgentRequest, isDesktop } from '../desktop.js';
 import { isLoopback } from './agent-spawn-shared.js';
@@ -352,6 +353,8 @@ export async function handleAgentAccountsRelogin(req: IncomingMessage, res: Serv
     return;
   }
 
+  // Signed in again: new chats may open on it (claude-signed-out.ts).
+  clearSignedOut(account.id);
   const updated = updateClaudeAccountIdentity(account.id, {
     organizationUuid: status.orgId ?? '',
     tier: status.subscription ?? '',

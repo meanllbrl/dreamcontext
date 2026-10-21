@@ -171,6 +171,17 @@ const READY_TIMEOUT_MS = 60_000;
 /** One take's budget. Past this the cloud is faster than waiting. */
 const INFERENCE_TIMEOUT_MS = 15_000;
 
+/**
+ * One take's budget, scaled with its length. {@link INFERENCE_TIMEOUT_MS} was set for a laptop
+ * push-to-talk take of a few seconds; the hands-free phone sends up to two minutes, and a fixed
+ * 15 s would time out a long message, after which the composer's retries queue behind the run
+ * the server did not stop. 0.4 s per second of audio (16 kHz mono 16-bit = 32 000 bytes/s; a
+ * higher-rate take only buys more time) on top of the fixed budget.
+ */
+export function inferenceTimeoutMs(wavBytes: number): number {
+  return Math.max(INFERENCE_TIMEOUT_MS, INFERENCE_TIMEOUT_MS + Math.round((wavBytes / 32_000) * 400));
+}
+
 /** Decoder search width. See the call site for why the server's own default is not used. */
 export const BEAM_SIZE = 5;
 export const BEST_OF = 5;
@@ -333,7 +344,7 @@ export async function transcribeLocal(
     const res = await fetch(`http://127.0.0.1:${server.port}/inference`, {
       method: 'POST',
       body: form,
-      signal: AbortSignal.timeout(INFERENCE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(inferenceTimeoutMs(wav.length)),
     });
     if (!res.ok) return null;
     const body = (await res.json()) as { text?: unknown; language?: unknown };

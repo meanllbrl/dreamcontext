@@ -193,7 +193,7 @@ export type ParkVerdict =
   | { ok: false; error: 'busy' | 'asking' | 'background' | 'focused' | 'refused' };
 /** `focusGraceMs`: how recently looked-at or typed-in counts as the owner's, as the server
  *  applies it (2 min; a verify run shortens it), capped at 2 min here. */
-export type ParkHandler = (req: { reason: string; focusGraceMs: number }) => ParkVerdict;
+export type ParkHandler = (req: { reason: string; focusGraceMs: number; end?: boolean; force?: boolean }) => ParkVerdict;
 export const PARK_FOCUS_GRACE_MS = 2 * 60_000;
 /** The grace a park frame asks for, never longer than {@link PARK_FOCUS_GRACE_MS}. */
 export function parkGraceOf(asked: unknown): number {
@@ -2120,6 +2120,14 @@ export function createChatSession(
       emitSuper({ kind: 'event', eventKind: ev.eventKind, child: ev.child });
       return;
     }
+    // The owner typed on the Super Agent's other surface: their bubble here too, in order.
+    if (ev.kind === 'owner-echo') {
+      applyAndNotify(() => {
+        const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now() };
+        conv = { ...conv, items: [...conv.items, item] };
+      });
+      return;
+    }
     // Nor is a browser frame: it feeds the small live window in the browser step and nothing else,
     // so six frames a second never re-render the transcript (chat/browserLiveStore.ts).
     if (ev.kind === 'browser-frame') { pushBrowserFrame(session.id, ev.frame); return; }
@@ -2288,15 +2296,26 @@ export function createChatSession(
     });
   }
 
+  /** Tell the server which queued texts the owner took back (see ClientControl `queue_dropped`). */
+  function noteQueueDropped(texts: string[]): void {
+    if (texts.length) sendControl({ type: 'queue_dropped', texts: texts.slice(0, 50) });
+  }
+
   function pauseQueue(): void {
-    if (conv.queued.length > 0) applyAndNotify(() => { conv = { ...conv, queuePaused: true }; });
+    if (conv.queued.length > 0) {
+      noteQueueDropped(conv.queued.map((q) => q.text));
+      applyAndNotify(() => { conv = { ...conv, queuePaused: true }; });
+    }
   }
 
   function editQueued(qid: string, text: string): void {
+    const was = conv.queued.find((q) => q.id === qid)?.text;
+    if (was !== undefined && was !== text) noteQueueDropped([was]);
     applyAndNotify(() => { setQueued(queue.editQueued(conv.queued, qid, text)); });
   }
 
   function removeQueued(qid?: string): void {
+    noteQueueDropped(conv.queued.filter((q) => qid === undefined || q.id === qid).map((q) => q.text));
     applyAndNotify(() => { setQueued(queue.removeQueued(conv.queued, qid)); });
   }
 
@@ -2468,11 +2487,16 @@ export function createChatSession(
       || conv.queued.length > 0
       || conv.subAgents.some((r) => r.status === 'running');
   }
-  function runPark(req: { id: string; reason: string; focusGraceMs?: number }): void {
+  function runPark(req: { id: string; reason: string; focusGraceMs?: number; end?: boolean; force?: boolean }): void {
     let verdict: ParkVerdict;
-    if (hasLiveWork()) verdict = { ok: false, error: session.asking ? 'asking' : session.busy ? 'busy' : 'background' };
+    // `force` (`super end --force`, only on the owner's word): live work does not refuse it.
+    if (!req.force && hasLiveWork()) verdict = { ok: false, error: session.asking ? 'asking' : session.busy ? 'busy' : 'background' };
     else {
-      try { verdict = parkHandler ? parkHandler({ reason: req.reason, focusGraceMs: parkGraceOf(req.focusGraceMs) }) : { ok: false, error: 'refused' }; }
+      try {
+        verdict = parkHandler
+          ? parkHandler({ reason: req.reason, focusGraceMs: parkGraceOf(req.focusGraceMs), ...(req.end ? { end: true } : {}), ...(req.force ? { force: true } : {}) })
+          : { ok: false, error: 'refused' };
+      }
       catch { verdict = { ok: false, error: 'refused' }; }
     }
     sendControl(verdict.ok

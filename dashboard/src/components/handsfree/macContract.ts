@@ -62,7 +62,15 @@ export interface MacPhonePayload { mode: 'mac'; battery: MacBattery; sleepAllowe
 
 export interface LiveChatWire { conversationId: string; vault: string | null; title: string | null; busy: boolean; state: 'working' | 'asking' | 'idle'; lastLine: string | null; updatedAt: number | null }
 
-export interface LiveChatsWire { chats: LiveChatWire[]; draining: string[] }
+export interface LiveChatsWire {
+  chats: LiveChatWire[];
+  draining: string[];
+  /** A project whose Super Agent is handed over: ONE row here, none of its chats under `chats`. */
+  supers?: SuperChatWire[];
+}
+
+/** The Super Agent row of a handed-over project; `live` false = the Mac runs no super chat now. */
+export interface SuperChatWire extends LiveChatWire { vault: string; live: boolean }
 
 export const MAC_ROUTES = {
   status: 'GET /api/handsfree/mac/status',

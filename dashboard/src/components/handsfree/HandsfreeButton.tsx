@@ -1,13 +1,15 @@
 import { useCallback, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { isDesktop } from '../../lib/desktop';
+import { HandsfreeMark } from '../brand/HandsfreeMark';
 import { HandsfreeSheet } from './HandsfreeSheet';
 import { useMacStatus } from './macStore';
 import './handsfree.css';
 
 /**
  * The window chrome's hands-free button (desktop app only, for the project on screen): opens the
- * Mac mode sheet. While Mac mode is on it says so, with a dot on the icon.
+ * Mac mode sheet. Its icon is the hands-free mark (the gem with two sound waves), never the retired
+ * cloud mode's cloud. While Mac mode is on it says so, with a dot on the mark.
  */
 export function HandsfreeButton({ vault }: { vault: string }) {
   const { t } = useI18n();
@@ -30,10 +32,10 @@ export function HandsfreeButton({ vault }: { vault: string }) {
         title={label}
         onClick={() => setOpen(true)}
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M4.5 12.5h7a3 3 0 0 0 .4-5.97A4 4 0 0 0 4.2 7.6 2.5 2.5 0 0 0 4.5 12.5z" />
-          {macOn && <circle cx="12.5" cy="3.5" r="1.6" fill="currentColor" stroke="none" />}
-        </svg>
+        <span className="hf-chrome-icon" aria-hidden>
+          <HandsfreeMark height={16} />
+          {macOn && <span className="hf-chrome-dot" data-testid="hf-button-dot" />}
+        </span>
         <span className="hf-chrome-label">{label}</span>
       </button>
       {open && <HandsfreeSheet vault={vault} onClose={close} />}
