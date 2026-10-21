@@ -95,6 +95,7 @@ import {
   actionGeneration, adoptionBody, cardReference, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
   homedSessions, isSuperSession, markedChildren, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
+  linkOpensSuperStage, presenceChatId,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperLayout, postSuperRecap } from './super/superApi';
@@ -630,6 +631,9 @@ export function AgentSurface() {
   const [superState, setSuperState] = useState<SuperStateView | null>(null);
   const superStateRef = useRef(superState);
   superStateRef.current = superState;
+  /** The project's super record has been read (or there is none to read here): until then a
+   *  chat's question alarm waits, since it may be a child's (super/childAlarm.ts). */
+  const superKnownRef = useRef(false);
   /** The owner's layout edits not yet echoed by the server (F3): re-applied over every push. */
   const pendingPatchesRef = useRef<LayoutPatch[]>([]);
   const withPendingEdits = (st: SuperStateView): SuperStateView => {
@@ -1428,8 +1432,11 @@ export function AgentSurface() {
         const deps = windowDepsRef.current(cs.id);
         return deps ? runWindowVerb(deps, verb, args) : { ok: false, error: 'no_window' };
       });
-      // A child of the handed-over Super Agent is quiet from its first frame (D16).
-      cs.setSuperChild(markedChildren(superStateRef.current).has(cs.claudeId));
+      // A child of the handed-over Super Agent is quiet from its first frame (D16); before the
+      // record is read nobody knows, so its alarm waits for it.
+      cs.setSuperChild(superKnownRef.current || superStateRef.current
+        ? markedChildren(superStateRef.current).has(cs.claudeId)
+        : null);
       if (mode === 'super') {
         // The Super Agent's own chat: the window-side verbs, the pushed state, and the
         // owner-activity lease (a keystroke in its composer, never the text).
@@ -2555,6 +2562,15 @@ export function AgentSurface() {
     if (!detail?.claudeId) return;
     // A notification tap opens THAT chat, past the phone's list (AC9 + AC21).
     setPhoneView('chat');
+    // The handed-over Super Agent on the Mac (its reply's banner, its queue's alarm, a notch
+    // row): open its stage. It is never a tab there, so a resume would fork it. The phone has
+    // no stage and keeps opening the chat.
+    if (!isMobile && !isMacPhoneSurface() && linkOpensSuperStage(detail.claudeId, superStateRef.current)) {
+      setSuperView('super');
+      setExpanded(true);
+      detail.accepted = true;
+      return;
+    }
     setLinkedSession({ claudeId: detail.claudeId, since: Date.now() });
     detail.accepted = true;
   });
@@ -2562,12 +2578,19 @@ export function AgentSurface() {
     if (!linkedSession) return undefined;
     const { claudeId, since } = linkedSession;
     const existing = sessionList.find((m) => m.claudeId === claudeId);
-    const ready = caps !== null && settingsReady && hydratedRef.current;
+    // The super record too: a link to the handed-over Super Agent opens its stage, and only the
+    // record says which session that is (a resume would fork it as a plain tab).
+    const ready = caps !== null && settingsReady && hydratedRef.current && superKnownRef.current;
     if (!(existing && !existing.dormant) && !ready && Date.now() - since < LINKED_SESSION_WAIT_MS) {
       const timer = window.setTimeout(bumpLinkWait, LINKED_SESSION_POLL_MS);
       return () => window.clearTimeout(timer);
     }
     setLinkedSession(null);
+    if (!isMobile && !isMacPhoneSurface() && linkOpensSuperStage(claudeId, superStateRef.current)) {
+      setSuperView('super');
+      setExpanded(true);
+      return undefined;
+    }
     if (!existing && !canSpawn) {
       console.warn('[app-link] cannot open chat', claudeId, 'here: the agent surface is unavailable');
       return undefined;
@@ -2858,8 +2881,15 @@ export function AgentSurface() {
   // The chat the owner is focused on, for the window's presence report (lib/focusedChat.ts):
   // the focused pane's visible tab, only while the surface is open on a desktop. Its id is the
   // conversation the chat was spawned on (`claudeId`), which the server's chat registry keys by.
+  // Handed over, the Super Agent's stage is what he sees (`presenceChatId`).
   const focusedLive = liveSession(focusedSessionId);
-  const focusedChatId = expanded && !isMobile && focusedLive?.kind === 'chat' ? focusedLive.claudeId : '';
+  const focusedChatId = presenceChatId({
+    expanded,
+    isMobile,
+    handedOver: superView === 'super' && !!superState?.enabled && !isMobile,
+    superSession: superState?.session ?? null,
+    focusedChat: focusedLive?.kind === 'chat' ? focusedLive.claudeId : null,
+  }) ?? '';
   useEffect(() => {
     if (vault) setFocusedChat(vault, focusedChatId || null);
   }, [vault, focusedChatId]);
@@ -3175,17 +3205,29 @@ export function AgentSurface() {
   }, []);
 
   // ── First paint after a reload: the record, once. Afterwards only pushes. ──────────
+  const capsLoaded = caps !== null;
   useEffect(() => {
-    if (!caps?.desktop || isMacPhoneSurface()) return undefined;
+    // Known: no record to wait for (no desktop, a phone), or the GET answered (a failed one
+    // too: an unread record must not hold a question for ever). Held alarms are released.
+    const settle = () => {
+      superKnownRef.current = true;
+      const marked = markedChildren(superStateRef.current);
+      sessions.current.forEach((s) => { if (s.kind === 'chat') (s as ChatSession).setSuperChild(marked.has(s.claudeId)); });
+    };
+    if (!capsLoaded) return undefined;
+    if (!caps?.desktop || isMacPhoneSurface()) { settle(); return undefined; }
     let cancelled = false;
     void fetchSuperState(scopedApi).then((st) => {
-      if (cancelled || !st) return;
+      if (cancelled) return;
       // A push that landed first is newer; never overwrite it with the GET.
+      if (st) superStateRef.current = superStateRef.current ?? withPendingEdits(st);
+      settle();
+      if (!st) return;
       setSuperState((prev) => prev ?? withPendingEdits(st));
       if (st.enabled) setSuperView('super');
     });
     return () => { cancelled = true; };
-  }, [caps?.desktop, scopedApi]);
+  }, [capsLoaded, caps?.desktop, scopedApi]);
 
   // ── The Super Agent's own chat: opened (or re-bound) whenever the mode is on ────────
   // Kind chat, mode `super`, pin = the recorded session. Resumed (`--resume`) unless the
@@ -3227,8 +3269,11 @@ export function AgentSurface() {
     const marks = childMarks(superState, superDelegated, now);
     if (marks.delegated.size !== superDelegated.size) { setSuperDelegated(marks.delegated); return undefined; }
     const set = marks.marked;
+    // Before the record is read nobody knows who is a child: the alarm keeps waiting (`settle`
+    // in the first-paint GET releases it), never an early "not a child" from an empty record.
+    const known = superKnownRef.current || !!superState;
     sessions.current.forEach((s) => {
-      if (s.kind === 'chat') (s as ChatSession).setSuperChild(set.has(s.claudeId));
+      if (s.kind === 'chat') (s as ChatSession).setSuperChild(known ? set.has(s.claudeId) : null);
     });
     if (marks.nextExpiry === null) return undefined;
     const timer = setTimeout(() => setSuperDelegated((prev) => {

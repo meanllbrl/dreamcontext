@@ -219,14 +219,53 @@ export function ownerQueueCount(state: Pick<SuperState, 'queue'> | null | undefi
   return (state?.queue ?? []).filter(needsOwner).length;
 }
 
+/** Items whose alarm this window already raised, per project: the strip remounts (the stage is
+ *  redrawn, the mode re-entered) and a ref would forget, ringing the same head again. Bounded:
+ *  the oldest ids go first (an id never comes back once answered). */
+const raisedHeads = new Map<string, string[]>();
+const RAISED_HEADS_CAP = 200;
+
 /**
- * The ONE alarm per head (D16): raise when the head CHANGES to an item the owner must answer.
- * The same head re-pushed (every store write pushes the whole state) raises nothing, and a
- * head that is gone resets the key so the next one raises again.
+ * The ONE alarm per item (AC6, owner 2026-10-21 "yalnız bir kez"): true the first time `head`
+ * is an item the owner must answer in `vault`, false for every later sighting of it, wherever
+ * the strip is drawn from.
  */
-export function headAlarm(prevKey: string | null, head: SuperQueueItem | null): { raise: boolean; key: string | null } {
-  const key = head && needsOwner(head) ? head.id : null;
-  return { raise: key !== null && key !== prevKey, key };
+export function headAlarmOnce(vault: string, head: SuperQueueItem | null): boolean {
+  if (!head || !needsOwner(head)) return false;
+  const seen = raisedHeads.get(vault) ?? [];
+  if (seen.includes(head.id)) return false;
+  seen.push(head.id);
+  if (seen.length > RAISED_HEADS_CAP) seen.splice(0, seen.length - RAISED_HEADS_CAP);
+  raisedHeads.set(vault, seen);
+  return true;
+}
+
+/** Test-only. */
+export function _resetRaisedHeads(): void {
+  raisedHeads.clear();
+}
+
+/**
+ * The chat the window reports the owner as looking at (lib/focusedChat.ts). Handed over, the
+ * Super Agent's stage is what he sees: its session, never the pane hidden under the stage, so a
+ * reply he is reading pings nothing and one he is not reading is news (owner, 2026-10-21).
+ */
+export function presenceChatId(a: {
+  expanded: boolean;
+  isMobile: boolean;
+  handedOver: boolean;
+  superSession: string | null;
+  focusedChat: string | null;
+}): string | null {
+  if (!a.expanded || a.isMobile) return null;
+  if (a.handedOver) return a.superSession;
+  return a.focusedChat;
+}
+
+/** Does a session link (a banner, a notch row) name the handed-over Super Agent? Then it opens
+ *  the stage: the super chat is never a tab, so resuming it as one would fork it. */
+export function linkOpensSuperStage(claudeId: string, state: Pick<SuperState, 'enabled' | 'session'> | null | undefined): boolean {
+  return !!state?.enabled && !!state.session && state.session === claudeId;
 }
 
 /** The width a head's option buttons needed, learned the one time they overflowed the pill. */

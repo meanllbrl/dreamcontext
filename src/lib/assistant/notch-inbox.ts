@@ -6,7 +6,8 @@ import { readAccountRejections } from '../claude-limit-rejections.js';
 import { getChat, onChatChange, type ChatChange, type ChatEntry } from './chat-registry.js';
 import { isDelegatedSession } from './delegations.js';
 import { isSuperChild } from '../super/store.js';
-import { isSuperEventTurn } from '../super/inbox.js';
+import { isHandedOverSuperSession, takeSuperEscalation } from '../super/inbox.js';
+import { buildAppLink } from '../app-link.js';
 
 /**
  * The notch's INBOX: the things that happened while the owner was looking somewhere else.
@@ -160,21 +161,34 @@ function onChange({ entry, from }: ChatChange): void {
   if (entry.status === 'working' || entry.status === 'starting' || entry.status === 'asking') {
     // Someone is in it again (the owner typed, or it resumed): an older finish is old news.
     clearFinishTimer(id);
-    if (entry.status !== 'asking') dropFinishedSession(id);
+    // The Super Agent's reply stays news when the server opens its next turn at once (the
+    // queue pump does): only the owner looking at it makes it old (`setPresence`), and its
+    // next reply replaces it (one row per session).
+    if (entry.status !== 'asking' && !isHandedOverSuperSession(id)) dropFinishedSession(id);
     return;
   }
-  if (entry.status === 'gone') { clearFinishTimer(id); return; }
+  // A turn that escalated and then died must not swallow the next reply's ping.
+  if (entry.status === 'gone') { clearFinishTimer(id); takeSuperEscalation(id); return; }
   // idle: a turn ended. Only a turn that was running is a finish (not a restored tab settling).
   if (entry.status !== 'idle' || from !== 'working') return;
   if (entry.origin === 'assistant' || isDelegatedSession(id)) return;
-  // Handed over (plan-r7 D16): a child's turn ends reach the Super Agent, and a turn the
-  // Super Agent's inbox opened is its own bookkeeping, not news for the owner.
-  if (superQuiet(id)) return;
+  // Handed over (plan-r7 D16): a child's turn ends reach the Super Agent, never the owner.
+  if (isSuperChild(id)) return;
   clearFinishTimer(id);
+  if (isHandedOverSuperSession(id)) {
+    // Owner, 2026-10-21: the Super Agent's own reply is the ONE thing that reaches him, every
+    // turn of it (the server-opened event turns too: the briefing makes them a sentence for
+    // him), as a banner as well as a row. At once, not debounced: the queue pump may start its
+    // next turn within the debounce and the reply would never be news. A turn that escalated a
+    // question is not a second ping: the queue head raised the one alarm for it.
+    if (takeSuperEscalation(id) || lookingAtSession() === id) return;
+    postSuperFinish(recordFinished(entry));
+    return;
+  }
   const t = setTimeout(() => {
     finishTimers.delete(id);
     const now = getChat(id);
-    if (!now || now.status !== 'idle' || isDelegatedSession(id) || superQuiet(id)) return;
+    if (!now || now.status !== 'idle' || isDelegatedSession(id) || isSuperChild(id)) return;
     if (lookingAtSession() === id) return;
     recordFinished(now);
   }, FINISH_DEBOUNCE_MS);
@@ -182,9 +196,28 @@ function onChange({ entry, from }: ChatChange): void {
   finishTimers.set(id, t);
 }
 
-/** A super child while handed over, or a super chat turn its inbox opened (D16). */
-function superQuiet(sessionId: string): boolean {
-  return isSuperChild(sessionId) || isSuperEventTurn(sessionId);
+// ─── The Super Agent's banner ───────────────────────────────────────────────────────
+
+/** Posts a routable macOS banner (and its Notifications-window row). Set by the server at
+ *  boot (desktop only: `notifyViaBundle`); null = no banners, only the notch row. */
+export type FinishBannerPoster = (title: string, body: string, link: string | null) => void;
+let finishBanner: FinishBannerPoster | null = null;
+
+export function setSuperFinishBanner(fn: FinishBannerPoster | null): void {
+  finishBanner = fn;
+}
+
+/** A banner body macOS shows whole. */
+const BANNER_BODY_CHARS = 180;
+
+function postSuperFinish(ev: FinishedEvent): void {
+  if (!finishBanner) return;
+  let link: string | null = null;
+  // The click lands on the Super Agent's stage (AgentSurface opens it, never a second tab).
+  try { link = buildAppLink({ kind: 'session', vault: ev.vault, claudeId: ev.sessionId }); } catch { link = null; }
+  const flat = ev.lastText.replace(/\s+/g, ' ').trim();
+  const body = flat.length > BANNER_BODY_CHARS ? `${flat.slice(0, BANNER_BODY_CHARS - 1).trimEnd()}…` : flat;
+  try { finishBanner(`Super Agent · ${ev.vault}`, body || 'Replied.', link); } catch { /* the notch row still stands */ }
 }
 
 /** Exported for tests: a finished turn, recorded as if its debounce had already stood. */
@@ -350,4 +383,5 @@ export function _resetNotchInbox(): void {
   seenRejections.clear();
   unsubscribe?.();
   unsubscribe = null;
+  finishBanner = null;
 }

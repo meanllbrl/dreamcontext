@@ -380,6 +380,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         head={head}
         waiting={ownerQueueCount(state)}
         vault={props.vault}
+        superSession={state.session}
         rect={plan.queue}
         sessionFor={props.sessionFor}
         titleFor={props.titleFor}

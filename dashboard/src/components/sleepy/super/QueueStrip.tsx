@@ -4,7 +4,7 @@ import { raiseAskAttention } from '../../../lib/attention';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission, PendingQuestion } from '../chatSession';
 import {
-  OPEN_LATCH, headAlarm, latchClick, latchSeen, optionsFit, permissionSummary, superAnswerPicks, type AnswerLatch, type OptionsFit,
+  OPEN_LATCH, headAlarmOnce, latchClick, latchSeen, optionsFit, permissionSummary, superAnswerPicks, type AnswerLatch, type OptionsFit,
 } from './superHandover';
 import type { Rect } from './superLayout';
 
@@ -23,20 +23,22 @@ import type { Rect } from './superLayout';
  * — no new privileged route, and the Super Agent's words never caption it. The server resolves
  * the item when the child leaves `asking`.
  *
- * The ONE alarm (D16): when the head CHANGES to an item the owner must answer, the strip raises
- * `raiseAskAttention` once. Children raise nothing themselves while handed over.
+ * The ONE alarm (D16): the first time an item the owner must answer is the head, the strip raises
+ * `raiseAskAttention` once (`headAlarmOnce`: a remount does not ring it again). Children raise nothing themselves while handed over.
  *
  * ONE answer per head item: the first click on Allow, Deny or an option latches that item, so a
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
  * request re-sent by the server (the answer never landed), reopens it.
  */
-export function QueueStrip({ head, waiting, vault, rect, sessionFor, titleFor, onReplyToSuper }: {
+export function QueueStrip({ head, waiting, vault, superSession, rect, sessionFor, titleFor, onReplyToSuper }: {
   head: SuperQueueItem | null;
   /** The top band above the centre (planStage's `queue`). */
   rect: Rect;
   /** How many items wait on the owner in all (the head included). */
   waiting: number;
   vault: string;
+  /** The Super Agent's session id: the alarm's banner links to it. */
+  superSession: string | null;
   sessionFor: (claudeId: string) => ChatSession | undefined;
   titleFor: (claudeId: string) => string;
   onReplyToSuper: () => void;
@@ -101,18 +103,16 @@ export function QueueStrip({ head, waiting, vault, rect, sessionFor, titleFor, o
     return () => { live = false; ro.disconnect(); };
   }, [fitKey, showOptions]);
 
-  const alarmKey = useRef<string | null>(null);
   useEffect(() => {
-    const next = headAlarm(alarmKey.current, head);
-    alarmKey.current = next.key;
-    if (!next.raise || !head) return;
-    // No `sessionId`: the banner brings the PROJECT forward (a link to the Super Agent's own
-    // conversation would open it as a tab, which it never is).
+    if (!head || !headAlarmOnce(vault, head)) return;
+    // The banner names the Super Agent's session: a click opens its stage (AgentSurface's
+    // `linkOpensSuperStage`), where this strip is.
     raiseAskAttention({
       source: vault,
       detail: head.kind === 'permission' ? t('super.queue.permissionAlarm') : (head.ownerText ?? t('super.queue.escalatedAlarm')),
+      sessionId: superSession,
     });
-  }, [head, vault, t]);
+  }, [head, vault, superSession, t]);
 
   return (
     <div

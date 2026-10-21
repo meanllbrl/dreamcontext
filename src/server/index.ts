@@ -21,7 +21,8 @@ import {
   handleAssistantRecall, handleAssistantIndex, handleAssistantRead,
   handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
-import { wireNotchInbox } from '../lib/assistant/notch-inbox.js';
+import { setSuperFinishBanner, wireNotchInbox } from '../lib/assistant/notch-inbox.js';
+import { notifyViaBundle } from '../lib/automations/notifier.js';
 import { startSuperInbox } from '../lib/super/inbox.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
@@ -451,6 +452,8 @@ export function buildRouter(): Router {
   router.post('/api/assistant/delegations/dismiss', handleAssistantDelegationDismiss);
   // The notch inbox: finished chats, automation posts and runs, account notices (notch-inbox.ts).
   wireNotchInbox();
+  // The Super Agent's reply while handed over is also a banner a click routes to its stage.
+  setSuperFinishBanner((title, body, link) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link }); });
   router.get('/api/assistant/inbox', handleAssistantInbox);
   router.post('/api/assistant/inbox/dismiss', handleAssistantInboxDismiss);
   router.post('/api/assistant/inbox/seen', handleAssistantInboxSeen);

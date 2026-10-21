@@ -14,6 +14,7 @@ import {
 import {
   containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, noteResuming, pumpSuper, superQueueHead,
   superSanitizeOpts, superVaultName, superView, writeSuper,
+  noteSuperEscalation,
 } from '../../lib/super/inbox.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
@@ -659,6 +660,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const q = s.queue.find((x) => x.id === id);
       if (q && q.kind === 'question' && q.state !== 'done') { q.state = 'escalated'; q.ownerText = text; }
     });
+    noteSuperEscalation(c.who.sessionId);
     const head = superQueueHead(state);
     ok(res, { item: id, escalated: true, waiting: head?.id !== id });
   },
