@@ -104,7 +104,8 @@ export type ChildRow = typeof CHILD_ROWS[number];
 export const STUCK_REASONS = ['error', 'stale'] as const;
 export type StuckReason = typeof STUCK_REASONS[number];
 
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended'] as const;
+/** `approval`: an AI Team member the Super Agent chose is not approved here (server-written). */
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -124,8 +125,29 @@ export interface SuperQueueItem {
   options?: string[];
   /** An `ended` item's last brief of the child. */
   brief?: string;
+  /** An `approval` item's AI Team member (agent slug). */
+  member?: string;
 }
 
+/** A job the Super Agent gave an AI Team member (`super team ask`); status is read from its thread. */
+export interface SuperTeamJob {
+  id: string;
+  member: string;
+  runId: string;
+  entryId?: string;
+  jobKind: 'run' | 'reply';
+  jobId?: string;
+  queued: boolean;
+  brief: string;
+  startedAt: number;
+  outcome?: 'done' | 'failed';
+  deliveredAt?: number;
+  endedAt?: number;
+}
+
+export const TEAM_JOB_STATUSES = ['queued', 'running', 'done', 'failed'] as const;
+export type TeamJobStatus = typeof TEAM_JOB_STATUSES[number];
+export const MAX_TEAM_JOBS = 30;
 /** A job kept for later (the list's "Havuz"). The prompt never reaches the window. */
 export interface SuperPoolItem {
   id: string;
@@ -162,6 +184,8 @@ export interface SuperState {
   pool: SuperPoolItem[];
   /** Batch ids of event turns that render in full (the super agent asked the owner). */
   ownerBatches: string[];
+  /** Jobs given to AI Team members, newest first. */
+  team: SuperTeamJob[];
 }
 
 export interface SuperStateView extends SuperState {
@@ -312,6 +336,10 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
   const queue = v.queue.filter((q): q is SuperQueueItem =>
     isRecord(q) && typeof q.id === 'string' && typeof q.sessionId === 'string' && oneOf(QUEUE_KINDS, q.kind)
     && oneOf(QUEUE_STATES, q.state) && typeof q.createdAt === 'number');
+  const team = (Array.isArray(v.team) ? v.team : []).filter((j): j is SuperTeamJob =>
+    isRecord(j) && typeof j.id === 'string' && typeof j.member === 'string' && typeof j.runId === 'string'
+    && typeof j.brief === 'string' && typeof j.startedAt === 'number' && typeof j.queued === 'boolean'
+    && (j.jobKind === 'run' || j.jobKind === 'reply'));
   const children: Record<string, SuperChild> = {};
   for (const [k, c] of Object.entries(v.children)) {
     if (isRecord(c) && c.sessionId === k && typeof c.brief === 'string' && typeof c.adopted === 'boolean' && typeof c.startedAt === 'number') {
@@ -342,5 +370,6 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
       : [],
     pool,
     ownerBatches,
+    team,
   };
 }

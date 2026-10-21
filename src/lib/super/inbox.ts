@@ -131,13 +131,13 @@ export function noteOwnerBatch(s: SuperState, batch: string | undefined): void {
 /**
  * What the owner's bar leads with, and the ONE super row the notch glance may carry: the oldest
  * open permission (permissions jump the line), else the oldest escalation: a child's question
- * the super agent escalated, or its own `ask`. A second one waits behind the first, so the
- * owner never has two at once.
+ * the super agent escalated, its own `ask`, or an AI Team approval (`super team ask` on a member
+ * not approved here). A second one waits behind the first, so the owner never has two at once.
  */
 export function superQueueHead(state: Pick<SuperState, 'queue'>): SuperQueueItem | null {
   const byAge = [...state.queue].sort((a, b) => a.createdAt - b.createdAt);
   return byAge.find((q) => q.kind === 'permission' && q.state !== 'done')
-    ?? byAge.find((q) => (q.kind === 'question' || q.kind === 'ask') && q.state === 'escalated')
+    ?? byAge.find((q) => (q.kind === 'question' || q.kind === 'ask' || q.kind === 'approval') && q.state === 'escalated')
     ?? null;
 }
 

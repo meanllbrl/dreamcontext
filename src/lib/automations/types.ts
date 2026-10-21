@@ -539,7 +539,7 @@ export type ThreadSystemEvent = 'started' | 'ok' | 'failed' | 'timeout' | 'asked
 /** Where an entry came from. Provenance, for the same reason `ReviewChannel`
  *  exists: "the agent said this" and "the runner said this on the agent's
  *  behalf" are different claims and a reader is entitled to tell them apart. */
-export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant';
+export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super';
 
 /** One row of a posted summary — a FIGURE that moved, never prose. Deliberately
  *  not a free-form block: a summary the agent can write at any length is a

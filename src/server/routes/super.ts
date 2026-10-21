@@ -7,14 +7,19 @@ import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop
 import {
   WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, type WindowIdentity,
 } from '../../lib/window-control.js';
-import { SuperStoreRefused, isReservedId, readSuperState, superRootOfChild } from '../../lib/super/store.js';
+import { SuperStoreRefused, isReservedId, okMember, readSuperState, superRootOfChild } from '../../lib/super/store.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, cleanAskOptions, cleanGroupName,
   defaultShape, dissolveGroups, floatCount, leaveGroups,
-  type ContainerKind, type ContainerShape, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperVerb,
+  type ContainerKind, type ContainerShape, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
 } from '../../lib/super/types.js';
+import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
+import { sayToAgent } from './automations.js';
+import { currentAutomationJob, currentReplyJob, whenReplySettles } from '../automation-job.js';
+import { getAutomation } from '../../lib/automations/store.js';
+import { checkApproval } from '../../lib/automations/registry.js';
 import {
   containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
@@ -451,14 +456,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // like every other child-derived string (D10).
     const containers = c.state.containers.map((k) => (k.title ? { ...k, title: wrapUntrusted(vault, k.title) } : k));
     const fenceQ = (q: SuperState['queue'][number]) => fenceQueueItem(vault, q);
-    const head = superQueueHead(c.state);
-    const warnings = ownershipWarnings(c.state, (sid) => {
+    const settled = await settleApprovals(root, c.state);
+    const head = superQueueHead(settled);
+    const team = settled.team.map((j) => teamJobRow(root, vault, j));
+    const warnings = ownershipWarnings(settled, (sid) => {
       const st = (children[sid] as { status?: unknown } | undefined)?.status;
       return st !== 'ended' && st !== 'gone' && st !== 'parked';
     });
     ok(res, {
-      ...superStateView(root, c.state), children, containers, queue: c.state.queue.map(fenceQ), status,
-      head: head ? fenceQ(head) : null, machine, pool: poolRows(vault, c.state.pool), ...(warnings.length ? { warnings } : {}),
+      ...superStateView(root, settled), children, containers, queue: settled.queue.map(fenceQ), status,
+      head: head ? fenceQ(head) : null, machine, pool: poolRows(vault, settled.pool), team, ...(warnings.length ? { warnings } : {}),
     });
   },
 
@@ -823,8 +830,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // An item escalated by the server carries the CHILD's question as its owner text: fenced.
     const vault = vaultNameOf(c.who.contextRoot);
     const fence = (q: SuperState['queue'][number]) => fenceQueueItem(vault, q);
-    const head = superQueueHead(c.state);
-    ok(res, { queue: c.state.queue.map(fence), head: head ? fence(head) : null });
+    const state = await settleApprovals(c.who.contextRoot, c.state);
+    const head = superQueueHead(state);
+    ok(res, { queue: state.queue.map(fence), head: head ? fence(head) : null });
   },
 
   'queue-ask': async (c, b, res) => {
@@ -1216,7 +1224,128 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     void pumpSuper(root);
     ok(res, { child: sid, adopted: true, container });
   },
+
+  'team-ask': async (c, b, res) => {
+    // A job for one of THIS project's AI Team members, through the AI Team's own say path
+    // (`sayToAgent`): the member's thread, model, approval and queue rule it. Nothing here starts
+    // a run any other way.
+    if (!requireHandedOver(c, res)) return;
+    const root = c.who.contextRoot;
+    const vault = vaultNameOf(root);
+    const member = str(b.member);
+    if (!member || !okMember(member)) {
+      refuse(res, 404, 'unknown_member', 'name a member of this project\'s AI Team by its slug (`dreamcontext agents list`)');
+      return;
+    }
+    const text = typeof b.text === 'string' ? b.text : '';
+    if (!text.trim()) { refuse(res, 400, 'invalid_args', 'write the job for the member'); return; }
+    const r = sayToAgent(root, { slug: member, text, via: 'super' });
+    if (!r.ok) {
+      if (r.code === 'not_found' || r.code === 'say_disabled') {
+        // Gone or turned off: an approval question about it no longer waits on the owner.
+        await closeApprovalsFor(root, member);
+      }
+      if (r.code === 'not_found') {
+        refuse(res, 404, 'unknown_member', `no AI Team member "${member}" in this project (\`dreamcontext agents list\`)`);
+        return;
+      }
+      if (r.code === 'say_unapproved') {
+        // The owner approves a member in AI Team; the super never can. His strip gets the question.
+        const ownerText = `${member} is not approved on this Mac, so the Super Agent cannot give it a job. Approve it in AI Team, then tell the Super Agent.`;
+        let item: string | null = null;
+        await writeSuper(root, (s) => { item = askOwnerToApprove(s, member, ownerText); });
+        refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, r.message)} You cannot approve it: the owner does, in AI Team. His queue strip asks him now; give the job again once he says so.`, { item });
+        return;
+      }
+      // Its title can ride the refusal (a shared brain's text): fenced.
+      refuse(res, r.status, r.code, wrapUntrusted(vault, r.message));
+      return;
+    }
+    const out = r.body as { runId?: unknown; entryId?: unknown; queued?: unknown; job?: { id?: unknown; kind?: unknown } };
+    const runId = typeof out.runId === 'string' ? out.runId : new Date().toISOString();
+    const job: SuperTeamJob = {
+      id: newTeamJobId(),
+      member,
+      runId,
+      ...(typeof out.entryId === 'string' ? { entryId: out.entryId } : {}),
+      jobKind: out.job?.kind === 'reply' ? 'reply' : 'run',
+      ...(typeof out.job?.id === 'string' ? { jobId: out.job.id } : {}),
+      queued: out.queued === true,
+      brief: oneLine(str(b.brief) ?? firstLine(text, MAX_BRIEF)).slice(0, MAX_BRIEF),
+      startedAt: Date.now(),
+    };
+    await writeSuper(root, (s) => recordTeamJob(s, job));
+    if (job.jobKind === 'reply' && job.jobId) recordReplyEnding(root, job.id, job.jobId);
+    ok(res, { job: job.id, member, runId, queued: job.queued, status: job.queued ? 'queued' : 'running' });
+  },
 };
+
+/** A team job as the agent reads it: its live status and last line (the member's text, fenced). */
+function teamJobRow(root: string, vault: string, j: SuperTeamJob): Record<string, unknown> {
+  const live = teamJobLive(root, j, liveSayJob(root, j));
+  return {
+    ...j,
+    brief: j.brief ? wrapUntrusted(vault, j.brief) : '',
+    status: live.status,
+    lastLine: live.lastLine ? wrapUntrusted(vault, live.lastLine) : '',
+  };
+}
+
+/** A reply job's delivery window in ms (`deliveredAt`/`endedAt` of a team job). */
+function replyTimes(r: { deliveredAt?: string; finishedAt: string | null }): { deliveredAt?: number; endedAt?: number } {
+  const from = r.deliveredAt ? Date.parse(r.deliveredAt) : NaN;
+  const to = r.finishedAt ? Date.parse(r.finishedAt) : NaN;
+  return { ...(Number.isFinite(from) ? { deliveredAt: from } : {}), ...(Number.isFinite(to) ? { endedAt: to } : {}) };
+}
+
+/** When a reply job settles, its ending goes into the team job: the say path forgets it an hour
+ *  later (or with a restart), and the member's thread cannot tell it from the busy turn's. */
+function recordReplyEnding(root: string, teamJobId: string, replyJobId: string): void {
+  void whenReplySettles(replyJobId)?.then((r) => writeSuper(root, (s) => settleTeamJob(s, teamJobId, {
+    outcome: r.status === 'ok' ? 'done' : 'failed', ...replyTimes(r),
+  }))).catch(() => { /* the record is best-effort; a settled job without it reads failed */ });
+}
+
+/** Close the open approval questions about one member (it is gone or turned off). */
+async function closeApprovalsFor(root: string, member: string): Promise<void> {
+  try { await writeSuper(root, (s) => { closeSettledApprovals(s, (m) => m !== member); }); } catch { /* best-effort */ }
+}
+
+/**
+ * Re-check every open approval question against the member itself: approved since (the owner did
+ * it in AI Team and never said so), turned off, or deleted. Closed ones leave the strip, so they no
+ * longer hold later escalations behind them. Writes only when something closed.
+ */
+async function settleApprovals(root: string, state: SuperState): Promise<SuperState> {
+  const open = state.queue.filter((q) => q.kind === 'approval' && q.state !== 'done' && q.member);
+  if (!open.length) return state;
+  const waiting = new Map<string, boolean>();
+  for (const q of open) {
+    const member = q.member as string;
+    if (waiting.has(member)) continue;
+    let still = true;
+    try {
+      const m = getAutomation(root, member);
+      still = !!m && m.enabled && !checkApproval(dirname(root), m, undefined, 'run').approved;
+    } catch { still = true; }
+    waiting.set(member, still);
+  }
+  if ([...waiting.values()].every(Boolean)) return state;
+  try {
+    return await writeSuper(root, (s) => { closeSettledApprovals(s, (m) => waiting.get(m) ?? true); });
+  } catch { return state; }
+}
+
+/** The say path's own job for a team job, while it is in memory. */
+function liveSayJob(root: string, j: SuperTeamJob): LiveSayJob | null {
+  if (!j.jobId) return null;
+  if (j.jobKind === 'reply') {
+    const r = currentReplyJob(j.jobId);
+    return r ? { kind: 'reply', status: r.status, phase: r.phase, ...replyTimes(r) } : null;
+  }
+  const run = currentAutomationJob(root, j.member);
+  return run && run.id === j.jobId ? { kind: 'run', status: run.status } : null;
+}
 
 /** A child's registry status right now; `gone` when nothing runs it. */
 function childStatus(sid: string, now = Date.now()): string {
@@ -1456,7 +1585,8 @@ export function requireSuperOwner(req: IncomingMessage, res: ServerResponse): bo
 export async function handleSuperStateGet(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
   if (!requireSuperOwner(req, res)) return;
   try {
-    sendJson(res, 200, superStateView(contextRoot, await readSuperState(contextRoot, superSanitizeOpts())));
+    const state = await readSuperState(contextRoot, superSanitizeOpts());
+    sendJson(res, 200, superStateView(contextRoot, await settleApprovals(contextRoot, state)));
   } catch (err) { storeRefusal(res, err); }
 }
 

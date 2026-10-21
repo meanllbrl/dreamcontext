@@ -3151,7 +3151,7 @@
     },
     {
       "path": "super merge",
-      "desc": "Merge children's super/* branches into super/<topic> in its own worktree (never the default branch, never pushed)",
+      "desc": "Merge the branch each child's worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)",
       "args": [
         "<children...>"
       ],
@@ -3289,6 +3289,23 @@
       "path": "super state",
       "desc": "Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
       "args": []
+    },
+    {
+      "path": "super team",
+      "desc": "The project's AI Team: give a member a job in its own thread",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super team ask",
+      "desc": "Give an AI Team member a job: it lands in the member's own thread and runs on its own model, approval and queue. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)",
+      "args": [
+        "<member>",
+        "<job>"
+      ],
+      "valueFlags": [
+        "--brief"
+      ]
     },
     {
       "path": "super ungroup",

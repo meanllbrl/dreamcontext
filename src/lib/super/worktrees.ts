@@ -14,8 +14,10 @@ import { SUPER_BRANCH_RE, SUPER_SLUG_RE } from './types.js';
  *  - `super delegate --worktree <repo>`: a worktree of a LINKED repo (never the brain's own
  *    checkout, `worktree-gate.ts`), under `~/.claude-worktrees/`, on a new `super/<slug>` branch.
  *  - `super merge <child…> --into <topic>`: the children's branches merged `--no-ff`, one by one,
- *    into `super/<topic>` in that branch's OWN worktree. A conflict is aborted and reported with
- *    its files; the integration branch stays as it was before that child.
+ *    into `super/<topic>` in that branch's OWN worktree. A child's branch is the one its worktree
+ *    is on NOW (it may have moved past the recorded `super/<slug>`); a branch already inside the
+ *    topic is `nothingToMerge`, never a merge. A conflict is aborted and reported with its files;
+ *    the integration branch stays as it was before that child.
  *  - `super worktree remove`: refuses a dirty or unmerged worktree.
  *
  * EVERY git command here: argv (`execFile`, never a shell string), hooks, fsmonitor and commit
@@ -214,9 +216,20 @@ export async function discardFreshWorktree(w: CreatedWorktree): Promise<void> {
 // ─── Merge ──────────────────────────────────────────────────────────────────────
 
 export interface MergeChild { sessionId: string; branch?: string; worktree?: string }
+/** `branch` is what was merged; `movedFrom` the recorded branch when the child's worktree had moved
+ *  to another one. */
 export type MergeOutcome =
-  | { sessionId: string; branch: string; merged: true }
-  | { sessionId: string; branch: string; merged: false; conflict: string[]; error?: string };
+  | { sessionId: string; branch: string; movedFrom?: string; merged: true }
+  | { sessionId: string; branch: string; movedFrom?: string; merged: false; nothingToMerge: true }
+  | { sessionId: string; branch: string; movedFrom?: string; merged: false; conflict: string[]; error?: string };
+
+/** The branch a worktree is on now; null when its HEAD is detached. */
+async function currentBranch(worktree: string): Promise<string | null> {
+  // The full ref, not `--short`: that one answers `heads/<b>` when a tag has the same name.
+  const r = await git(worktree, ['symbolic-ref', '--quiet', 'HEAD']);
+  const ref = r.stdout.trim();
+  return r.code === 0 && ref.startsWith('refs/heads/') && ref.length > 11 ? ref.slice(11) : null;
+}
 
 export async function mergeChildren(o: {
   projectRoot: string; repo: unknown; children: readonly MergeChild[]; topic: unknown; home?: string;
@@ -229,16 +242,27 @@ export async function mergeChildren(o: {
   const defaults = await defaultBranchSet(repo.path);
   if (defaults.has(target)) throw new WorktreeRefused('default_branch', `${target} is a default branch of ${repo.name}; super verbs never merge into it`);
 
-  // Every member checked before anything changes.
+  // Every member checked before anything changes. A child with a worktree is merged from the
+  // branch that worktree is on now: it may have gone on in a new branch after the recorded one
+  // (field report 2026-10-21: the old branch merged, the new commit never came). The branch it is
+  // on passes the same rules as the recorded one, except the super/* name.
+  const plan: Array<{ sessionId: string; branch: string; movedFrom?: string }> = [];
   for (const c of o.children) {
     if (!c.branch || !SUPER_BRANCH_RE.test(c.branch)) throw new WorktreeRefused('no_branch', `child ${c.sessionId} has no super/* branch`);
-    if (defaults.has(c.branch)) throw new WorktreeRefused('default_branch', `${c.branch} is a default branch; refusing`);
-    if (c.branch === target) throw new WorktreeRefused('invalid_topic', `the topic ${o.topic} is child ${c.sessionId}'s own branch`);
-    if (!(await branchExists(repo.path, c.branch))) throw new WorktreeRefused('missing_branch', `${c.branch} does not exist in ${repo.name}`);
+    let branch = c.branch;
     if (c.worktree) {
       await assertListedWorktree(repo.path, c.worktree, home);
-      if (await isDirty(c.worktree)) throw new WorktreeRefused('dirty', `child ${c.sessionId}'s worktree has uncommitted changes; it must commit first`, { child: c.sessionId });
+      const now = await currentBranch(c.worktree);
+      if (!now) throw new WorktreeRefused('detached', `child ${c.sessionId}'s worktree is not on a branch (detached HEAD); it must switch to a branch first`, { child: c.sessionId });
+      // The child names it: never an option, never a ref trick (the same rule as a typed base).
+      if (!validBase(now)) throw new WorktreeRefused('no_branch', `child ${c.sessionId}'s branch name is not one super merge accepts (letters, digits, . _ / -, no leading -)`, { child: c.sessionId });
+      branch = now;
     }
+    if (defaults.has(branch)) throw new WorktreeRefused('default_branch', `${branch} is a default branch; refusing`);
+    if (branch === target) throw new WorktreeRefused('invalid_topic', `the topic ${o.topic} is child ${c.sessionId}'s own branch`);
+    if (!(await branchExists(repo.path, branch))) throw new WorktreeRefused('missing_branch', `${branch} does not exist in ${repo.name}`);
+    if (c.worktree && await isDirty(c.worktree)) throw new WorktreeRefused('dirty', `child ${c.sessionId}'s worktree has uncommitted changes; it must commit first`, { child: c.sessionId });
+    plan.push({ sessionId: c.sessionId, branch, ...(branch !== c.branch ? { movedFrom: c.branch } : {}) });
   }
 
   const root = superWorktreeRoot(home);
@@ -267,14 +291,21 @@ export async function mergeChildren(o: {
   if (await isDirty(worktree)) throw new WorktreeRefused('dirty', `the integration worktree ${worktree} has uncommitted changes`);
 
   const results: MergeOutcome[] = [];
-  for (const c of o.children) {
-    const branch = c.branch as string;
-    const r = await git(worktree, ['merge', '--no-ff', '--no-edit', branch]);
-    if (r.code === 0) { results.push({ sessionId: c.sessionId, branch, merged: true }); continue; }
+  for (const c of plan) {
+    const { branch } = c;
+    // Already inside the topic: git would answer "Already up to date." with exit 0, which used to
+    // read as merged: true for a branch that brought nothing.
+    if ((await git(worktree, ['merge-base', '--is-ancestor', `refs/heads/${branch}`, 'HEAD'])).code === 0) {
+      results.push({ ...c, merged: false, nothingToMerge: true });
+      continue;
+    }
+    // The full ref: what the checks and the ancestor test saw, never a same-named tag or an option.
+    const r = await git(worktree, ['merge', '--no-ff', '-m', `Merge branch '${branch}'`, `refs/heads/${branch}`]);
+    if (r.code === 0) { results.push({ ...c, merged: true }); continue; }
     const files = (await git(worktree, ['diff', '--name-only', '--diff-filter=U'])).stdout.split('\n').map((s) => s.trim()).filter(Boolean);
     await git(worktree, ['merge', '--abort']);
     results.push({
-      sessionId: c.sessionId, branch, merged: false, conflict: files.slice(0, 200),
+      ...c, merged: false, conflict: files.slice(0, 200),
       // Not a conflict (no unmerged files): say what git said instead of an empty list.
       ...(files.length ? {} : { error: r.stderr.trim().slice(0, 400) || `exit ${r.code}` }),
     });

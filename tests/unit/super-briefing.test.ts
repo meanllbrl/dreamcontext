@@ -73,10 +73,13 @@ describe('superBriefing', () => {
   const CHILD_LIFECYCLE_2026_10_21 = 500;
   // Jarvis plan r9: "Show, don't tell", "Voice" and the revision marker.
   const JARVIS_SHOW_VOICE_2026_10_21 = 1700;
-  it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle and jarvis sections, with or without a guide', () => {
+  // The AI Team line (`super team ask`, 2026-10-21): the owner's ask that the Super Agent gives the
+  // team's members work too.
+  const AI_TEAM_2026_10_21 = 250;
+  it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21);
     }
   });
 });

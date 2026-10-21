@@ -4,12 +4,13 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
-  MAX_PRESENT, MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TITLE,
-  POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, VIEW_MODES, askLine, cleanAskOptions, defaultShape,
+  MAX_PRESENT, MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
+  POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, defaultShape,
   SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
-  type SuperChild, type SuperContainer, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperView,
+  type SuperChild, type SuperContainer, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
+import { isSafeAutomationSlug } from '../agents/slot.js';
 
 /**
  * The Super Agent's state file — `state/.super-agent.json`, one per vault (plan-r7 D2).
@@ -228,6 +229,9 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const requestId = !isAsk && typeof q.requestId === 'string' && /^[A-Za-z0-9_.:-]{1,120}$/.test(q.requestId) ? q.requestId : undefined;
     // A permission is rendered only from the child's own tool name and input (D7): the super
     // agent's words never caption one, so none survive on a permission item.
+    // An approval item exists only for its member; one naming none (or a hostile one) is dropped.
+    const member = q.kind === 'approval' && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
+    if (q.kind === 'approval' && !member) continue;
     const rawText = q.kind === 'permission' ? undefined : cap(q.ownerText, MAX_OWNER_TEXT);
     const ownerText = rawText && isAsk ? askLine(rawText) : rawText;
     // An ask's options are re-validated whole: one refused option drops them all (the bar then
@@ -238,6 +242,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     ids.add(q.id);
     out.push({
       id: q.id, sessionId: q.sessionId, kind: q.kind, state: q.state, createdAt,
+      ...(member ? { member } : {}),
       ...(requestId ? { requestId } : {}),
       ...(ownerText ? { ownerText } : {}),
       ...(q.kind === 'ended' && typeof q.brief === 'string' ? { brief: stripControls(cap(q.brief, MAX_BRIEF) ?? '') } : {}),
@@ -255,6 +260,42 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     out.splice(done >= 0 ? done : 0, 1);
   }
   return out;
+}
+
+/** An AI Team member's agent slug, as the automation store accepts it (a path segment there). */
+export function okMember(slug: string): boolean {
+  return slug.length <= 100 && isSafeAutomationSlug(slug);
+}
+
+/** A thread run id is its fire time, an ISO string; an entry id is time-prefixed and sortable. */
+const RUN_ID_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{1,20}Z$/;
+const ENTRY_ID_RE = /^[A-Za-z0-9._:-]{1,80}$/;
+
+function sanitizeTeam(raw: unknown): SuperTeamJob[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SuperTeamJob[] = [];
+  const ids = new Set<string>();
+  for (const j of raw) {
+    if (!isRecord(j) || typeof j.id !== 'string' || !TEAM_JOB_ID_RE.test(j.id) || ids.has(j.id)) continue;
+    if (typeof j.member !== 'string' || !okMember(j.member)) continue;
+    if (typeof j.runId !== 'string' || !RUN_ID_RE.test(j.runId)) continue;
+    const startedAt = finite(j.startedAt);
+    if (startedAt === undefined) continue;
+    ids.add(j.id);
+    out.push({
+      id: j.id, member: j.member, runId: j.runId,
+      ...(typeof j.entryId === 'string' && ENTRY_ID_RE.test(j.entryId) ? { entryId: j.entryId } : {}),
+      jobKind: j.jobKind === 'reply' ? 'reply' : 'run',
+      ...(typeof j.jobId === 'string' && ENTRY_ID_RE.test(j.jobId) ? { jobId: j.jobId } : {}),
+      queued: j.queued === true,
+      brief: stripControls(cap(j.brief, MAX_BRIEF) ?? ''),
+      startedAt,
+      ...(j.outcome === 'done' || j.outcome === 'failed' ? { outcome: j.outcome } : {}),
+      ...(finite(j.deliveredAt) !== undefined ? { deliveredAt: finite(j.deliveredAt) } : {}),
+      ...(finite(j.endedAt) !== undefined ? { endedAt: finite(j.endedAt) } : {}),
+    });
+  }
+  return out.sort((a, b) => b.startedAt - a.startedAt).slice(0, MAX_TEAM_JOBS);
 }
 
 /**
@@ -344,6 +385,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     dismissed: sanitizeDismissed(raw.dismissed, opts.now ?? Date.now()),
     pool: sanitizePool(raw.pool, opts),
     ownerBatches: sanitizeOwnerBatches(raw.ownerBatches),
+    team: sanitizeTeam(raw.team),
   };
 }
 

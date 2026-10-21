@@ -153,9 +153,12 @@ export type StuckReason = typeof STUCK_REASONS[number];
  * no super turn); an older record's idle items drop on first read. `done` = settled idle for
  * DONE_SETTLE_MS, `stuck` = an error turn or a stale one, `ask` = the super agent's own question
  * to the owner (`super ask`). `ended` = `super end` closed the child: born `done`, a record of
- * its last brief, never delivered as a turn.
+ * its last brief, never delivered as a turn. `approval`: an AI Team member the super gave a job to
+ * is not approved on this machine. The server writes it (never the super agent's words, like a
+ * permission) and the owner settles it in AI Team; it closes once the member is approved, turned
+ * off or gone, or by `super queue done`.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -183,7 +186,50 @@ export interface SuperQueueItem {
   /** An `ended` item's record of the child's last brief (who and when are `sessionId` and
    *  `createdAt`). Born `done`: a record, never delivered as a turn. */
   brief?: string;
+  /** An `approval` item's AI Team member (its agent slug). Its `sessionId` is the super's own. */
+  member?: string;
 }
+
+/**
+ * A job the super gave one of the project's AI Team members (`super team ask`): it went into the
+ * member's OWN thread through the AI Team's say path, so the member's model, approval and queue
+ * rule it. The record names where it landed; its status and last line are read from that thread
+ * (`lib/super/team.ts`), never stored.
+ */
+export interface SuperTeamJob {
+  /** `team-…`, also its card's id. */
+  id: string;
+  /** The member's agent slug (the say target). */
+  member: string;
+  /** The thread run it landed in: a fresh run, or the member's live run when it was busy. */
+  runId: string;
+  /** Its own entry in that run (the ask), when the say path named it. */
+  entryId?: string;
+  /** The say path's job: a fresh `run`, or a `reply` resuming the member's session (a busy
+   *  member's queue, or a scheduled member's last conversation). Its id answers while the job is
+   *  in memory; the thread answers after that. */
+  jobKind: 'run' | 'reply';
+  jobId?: string;
+  /** The member was busy: the job waits in its own queue behind the run in flight. */
+  queued: boolean;
+  brief: string;
+  startedAt: number;
+  /** A reply job's own ending, recorded when the say path's job settles: the member's thread
+   *  cannot tell a queued reply's ending from the busy turn's it waited behind. */
+  outcome?: 'done' | 'failed';
+  /** When that reply got the member's lock and when it settled (ms): its last line is the
+   *  member's posts between the two. */
+  deliveredAt?: number;
+  endedAt?: number;
+}
+
+/** What a team job's card and `super state` say, read from the member's thread. */
+export const TEAM_JOB_STATUSES = ['queued', 'running', 'done', 'failed'] as const;
+export type TeamJobStatus = typeof TEAM_JOB_STATUSES[number];
+
+/** Team jobs the record keeps (newest first). */
+export const MAX_TEAM_JOBS = 30;
+export const TEAM_JOB_ID_RE = /^team-[a-z0-9-]{1,35}$/;
 
 /**
  * A job the super agent keeps for later (`super pool add`, or a `delegate` refused at the cap):
@@ -240,10 +286,12 @@ export interface SuperState {
   /** Batch ids of event turns in which the super agent asked the owner something (`queue ask`,
    *  `super ask`): those turns render in full. A ring of MAX_OWNER_BATCHES, never mutated after. */
   ownerBatches: string[];
+  /** Jobs given to AI Team members (`super team ask`), newest first. Absent in an older record = none. */
+  team: SuperTeamJob[];
 }
 
 export function emptySuperState(): SuperState {
-  return { v: SUPER_STATE_VERSION, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children: {}, queue: [], notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [] };
+  return { v: SUPER_STATE_VERSION, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children: {}, queue: [], notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [], team: [] };
 }
 
 // ─── Groups (MIRRORED in the window, behaviour pinned by super-types-mirror.test.ts) ──
@@ -427,7 +475,7 @@ export const SUPER_VERBS = [
   'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
-  'clean',
+  'clean', 'team-ask',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 
