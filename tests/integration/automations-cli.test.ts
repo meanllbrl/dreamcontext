@@ -1,4 +1,23 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+
+/**
+ * A DECOY home for this test process, set before any import reads it (the injectable-home
+ * pattern, test-isolation-injectable-home). The suite never reads the developer's real
+ * ~/.dreamcontext: a subprocess that escaped `run()` (inheriting this process's env) or an
+ * in-process import that resolves `homedir()` lands HERE, and the afterAll guard below proves
+ * nothing did. Reading the real home raced the machine's own launchd ticker, which rewrites
+ * automations-tick.json every 300 s (a red with every test green, 2026-10-21).
+ */
+const decoy = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { mkdtempSync, realpathSync } = require('node:fs') as typeof import('node:fs');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { tmpdir } = require('node:os') as typeof import('node:os');
+  const home = realpathSync(mkdtempSync(`${tmpdir()}/dc-automations-cli-decoy-home-`));
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  return { home };
+});
 import {
   mkdirSync, rmSync, realpathSync, existsSync, readFileSync, writeFileSync, appendFileSync, symlinkSync,
 } from 'node:fs';
@@ -167,12 +186,13 @@ function editHashedPrompt(projectDir: string, slug: string): void {
 }
 
 describe('automations CLI (integration)', () => {
-  // ── MANDATORY real-home non-interference proof ──────────────────────────
-  // Snapshot the real machine's automations registry/heartbeat files BEFORE
-  // any test in this file runs, and assert they are BYTE-FOR-BYTE untouched
-  // after every test has run. This is the actual thing the task requires
-  // proven — not merely assumed — because this suite spawns real CLI
-  // subprocesses that would use the real $HOME by default.
+  // ── MANDATORY home non-interference proof ───────────────────────────────
+  // This process's home is the DECOY (top of file), so anything that would have
+  // used the real $HOME by default (a subprocess spawned outside `run()`, an
+  // in-process import resolving `homedir()`) writes here instead. Snapshot the
+  // decoy's automations registry/heartbeat BEFORE any test runs and assert they
+  // are BYTE-FOR-BYTE untouched (in practice: still absent) after every test.
+  // Nothing else on the machine writes the decoy, so this cannot race.
   const realAutomationsJson = join(homedir(), '.dreamcontext', 'automations.json');
   const realHeartbeatJson = join(homedir(), '.dreamcontext', 'automations-tick.json');
   /** null ⇒ absent before this suite ran. Content, not just existence: the
@@ -201,8 +221,10 @@ describe('automations CLI (integration)', () => {
     // The comment already reasoned exactly this way about the heartbeat file
     // without applying it to the registry. Byte comparison is strictly stronger
     // than the existence check it replaces AND it is independent of ambient state.
+    expect(homedir()).toBe(decoy.home);
     expect(snapshot(realAutomationsJson)).toBe(realAutomationsJsonBefore);
     expect(snapshot(realHeartbeatJson)).toBe(realHeartbeatJsonBefore);
+    rmSync(decoy.home, { recursive: true, force: true });
   });
 
   let home: string;
