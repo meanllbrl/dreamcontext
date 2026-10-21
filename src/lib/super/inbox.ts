@@ -9,6 +9,7 @@ import {
   STARTING_GRACE_MS, activityOf, chatTopic, getChat, onChatChange, type ChatChange, type ChatEntry,
 } from '../assistant/chat-registry.js';
 import { pushFrame, tokenOfSession } from '../window-control.js';
+import { announceOwnerHead, seedOwnerHead, serverBannered } from './owner-question.js';
 import {
   isSuperChild, primeSuperIndex, readSuperState, superIndex, superRootOfChild, superRootOfEnded, superRootOfSession,
   updateSuperState, type SanitizeOpts,
@@ -81,7 +82,8 @@ export function superVaultName(contextRoot: string): string {
 
 export function superView(contextRoot: string, state: SuperState): SuperStateView {
   const teamLive = teamLiveRows(contextRoot, state);
-  return { ...state, vault: superVaultName(contextRoot), ...(teamLive ? { teamLive } : {}) };
+  const bannered = serverBannered(state.queue);
+  return { ...state, vault: superVaultName(contextRoot), ...(teamLive ? { teamLive } : {}), ...(bannered.length ? { bannered } : {}) };
 }
 
 export function newQueueId(): string {
@@ -190,6 +192,8 @@ export function pushSuperState(contextRoot: string, state: SuperState): boolean 
  *  stale sweep armed or stopped by the rows it now holds. */
 export function afterSuperWrite(contextRoot: string, state: SuperState): void {
   noteHead(contextRoot, state);
+  // A question that reached the head is announced to the owner, once (owner-question.ts).
+  announceOwnerHead(() => superVaultName(contextRoot), state, superQueueHead(state));
   pushSuperState(contextRoot, state);
   syncSweep(keyOf(contextRoot), state);
 }
@@ -453,7 +457,7 @@ export const OWNER_VOICE = 'in his language and plain words, one subject, the re
 /** The last line of every `[super events]` turn. */
 export const BATCH_LAST_LINE = [
   'These events already updated the job list the owner reads; he sees this turn as ONE line.',
-  'A question: answer it with `dreamcontext super answer <child> <question id> "<option>"` only when the brief and the project settle it; otherwise escalate ONE clear question with `dreamcontext super queue ask <item> "<question>"`.',
+  'A question: answer it with `dreamcontext super answer <child> <question id> "<option>"` only when the brief and the project settle it; otherwise escalate ONE clear question with `dreamcontext super queue ask <item> "<question>"` (never AskUserQuestion: it locks your turn until he answers) and write him that question in this turn too: an escalating turn shows in full. Its reply says whether it `reached` him.',
   'Done, stuck or closed: set the row with `dreamcontext super brief <child> "<doing / next>"`; when a slot frees, start the next job with `dreamcontext super delegate --from <pool id>`. Write the owner nothing about them.',
   `If the owner writes to you during this turn, answer him normally (${OWNER_VOICE}); the no-message rule covers only your notes about the events. Then end your turn.`,
 ].join('\n');
@@ -1125,6 +1129,7 @@ export async function startSuperInbox(contextRoots: readonly string[]): Promise<
     let s: SuperState;
     try { s = await readSuperState(root, superSanitizeOpts()); } catch { return; }
     noteHead(root, s);
+    seedOwnerHead(s.enabled ? superQueueHead(s) : null);
     if (!s.enabled) return;
     for (const sid of Object.keys(s.children)) {
       if (!isLive(getChat(sid))) armGone(keyOf(root), sid, READOPT_GRACE_MS, regraceTimers);

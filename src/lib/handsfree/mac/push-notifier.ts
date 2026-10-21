@@ -102,22 +102,37 @@ export class PushNotifier {
     if (!exposed.length) return 0;
     const p = pushFor(change);
     if (!p || !p.payload.vault || !exposed.includes(p.payload.vault)) return 0;
-    if (this.sent.has(p.key)) return 0;
-    this.remember(p.key);
-    const payload: PushPayload = { ...p.payload, url: pushUrl(p.payload.vault, p.payload.conversationId) };
+    return this.deliver(p.key, change.entry.sessionId, p.payload).done;
+  }
+
+  /**
+   * A question the Super Agent put to the owner (`super queue ask`, `super ask`: no registry
+   * edge of its own, `lib/super/owner-question.ts`). A `question` push into the super chat, once
+   * per key. `targeted` = the devices it goes to, known before any send.
+   */
+  pushOwnerQuestion(q: { vault: string; sessionId: string; key: string; title: string; body: string }): { targeted: number; done: Promise<number> } {
+    if (!q.vault || !this.d.exposed().includes(q.vault)) return { targeted: 0, done: Promise.resolve(0) };
+    return this.deliver(q.key, q.sessionId, { kind: 'question', vault: q.vault, conversationId: q.sessionId, title: clip(q.title, 80), body: clip(q.body) });
+  }
+
+  private deliver(key: string, sessionId: string, base: Omit<PushPayload, 'url'>): { targeted: number; done: Promise<number> } {
+    if (this.sent.has(key)) return { targeted: 0, done: Promise.resolve(0) };
+    this.remember(key);
+    const payload: PushPayload = { ...base, url: pushUrl(base.vault, base.conversationId) };
     const store = this.d.store();
-    const showing = this.d.showingDevice(change.entry.sessionId);
+    const showing = this.d.showingDevice(sessionId);
+    const targets = store.entries().filter(([device]) => {
+      if (!this.d.deviceValid(device)) { store.remove(device); return false; }
+      return showing !== device && this.allow(device);
+    });
     let pushed = 0;
-    await Promise.all(store.entries().map(async ([device, sub]) => {
-      if (!this.d.deviceValid(device)) { store.remove(device); return; }
-      if (showing === device) return;
-      if (!this.allow(device)) return;
+    const done = Promise.all(targets.map(async ([device, sub]) => {
       const out = await this.d.send(sub, payload);
       if (!out.ok) logPushMiss(payload.kind, out, sub.endpoint, device);
       if (out.gone) store.remove(device);
       else if (out.ok) pushed++;
-    }));
-    return pushed;
+    })).then(() => pushed);
+    return { targeted: targets.length, done };
   }
 
   private remember(key: string): void {

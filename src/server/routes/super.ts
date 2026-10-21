@@ -24,6 +24,7 @@ import {
   containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
 } from '../../lib/super/inbox.js';
+import { ownerQuestionReach } from '../../lib/super/owner-question.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
@@ -886,9 +887,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (batch) { q.batch = batch; noteOwnerBatch(s, batch); }
       }
     });
-    noteSuperEscalation(c.who.sessionId);
+    // What reached the owner, told as it is (owner-question.ts). Only a question he has seen
+    // makes the turn's end no second ping; one nobody saw keeps the reply's own notch row.
+    const reach = ownerQuestionReach(state, id as string);
+    if (reach.reached) noteSuperEscalation(c.who.sessionId);
     const head = superQueueHead(state);
-    ok(res, { item: id, escalated: true, waiting: head?.id !== id });
+    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach });
   },
 
   'queue-done': async (c, b, res) => {
@@ -956,10 +960,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       noteOwnerBatch(s, batch ?? undefined);
     });
     if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner; wait for his answer'); return; }
-    // Its turn's end is no second ping: the job bar raises the one alarm for the question.
-    noteSuperEscalation(session);
+    // Its turn's end is no second ping once the question reached him (owner-question.ts).
+    const reach = ownerQuestionReach(state, id);
+    if (reach.reached) noteSuperEscalation(session);
     const head = superQueueHead(state);
-    ok(res, { item: id, asked: true, waiting: head?.id !== id });
+    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...reach });
   },
 
   merge: async (c, b, res) => {

@@ -36,7 +36,8 @@ import './JobBar.css';
  * the item when the child leaves `asking`.
  *
  * The ONE alarm (D16): the first time an item the owner must answer is the head, the strip raises
- * `raiseAskAttention` once (`headAlarmOnce`: a remount does not ring it again). Children raise nothing themselves while handed over.
+ * `raiseAskAttention` once (`headAlarmOnce`: a remount does not ring it again); a question's
+ * banner is the server's (lib/super/owner-question.ts), so it reaches him off this stage too. Children raise nothing themselves while handed over.
  *
  * ONE answer per head item: the first click on Allow, Deny or an option latches that item, so a
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
@@ -125,18 +126,20 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   }, [fitKey, showOptions]);
 
   const superId = superSession?.claudeId ?? null;
+  const serverBanner = !!head && (state.bannered ?? []).includes(head.id);
   useEffect(() => {
     if (!head || !headAlarmOnce(vault, head)) return;
-    // The banner names the Super Agent's session: a click opens its stage (AgentSurface's
-    // `linkOpensSuperStage`), where this strip is.
+    // The banner opens the super stage (`linkOpensSuperStage`). One the server posted (it
+    // names it: lib/super/owner-question.ts) is not posted twice.
     raiseAskAttention({
+      banner: !serverBanner,
       source: vault,
       detail: head.kind === 'permission' ? t('super.queue.permissionAlarm')
         : head.kind === 'approval' ? t('super.queue.approval').replace('{name}', head.member ?? '')
           : (head.ownerText ?? t('super.queue.escalatedAlarm')),
       sessionId: superId,
     });
-  }, [head, vault, superId, t]);
+  }, [head, vault, superId, t, serverBanner]);
 
   // The list: closed by default; a count, or a name in an event line (superJobsStore), opens it.
   const [open, setOpen] = useState<{ section: JobSection | null; row: string | null } | null>(null);

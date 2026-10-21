@@ -217,7 +217,7 @@ export function registerSuperCommand(program: Command): void {
     .description('Every queue item: what it is, whose, its state')
     .action(() => run('queue-list', {}));
   q.command('ask <item> <text>')
-    .description('Escalate a question to the owner with your words (never a permission)')
+    .description('Escalate a child\'s question to the owner in your words (never a permission): a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him')
     .action((item: string, text: string) => run('queue-ask', { item, text }));
   q.command('done <item>')
     .description('Mark an item handled (never a permission)')
@@ -237,7 +237,7 @@ export function registerSuperCommand(program: Command): void {
     .action(() => run('pool-list', {}));
 
   s.command('ask <text>')
-    .description('Ask the owner YOUR own question (one at a time); its answer is his next message to you')
+    .description('Ask the owner YOUR own question (one at a time); it reaches him like an escalation and never holds your turn (AskUserQuestion does: never use it). Its answer is his next message to you; the reply says whether it `reached` him')
     .option('--options <a|b>', 'Up to 4 short answers (each at most 24 characters), separated by |')
     .action((text: string, o: { options?: string }) =>
       run('ask', { text, ...(o.options ? { options: o.options.split('|').map((x) => x.trim()) } : {}) }));

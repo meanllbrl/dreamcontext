@@ -25,6 +25,7 @@ import {
 import { listVaults } from '../../lib/vaults.js';
 import { isSuperChild } from '../../lib/super/store.js';
 import { isSuperManaged, superAttentionRows } from '../../lib/super/inbox.js';
+import { noteNotchPoll } from '../../lib/super/owner-question.js';
 import { dismissDelegation, listDelegations, recordDelegation } from '../../lib/assistant/delegations.js';
 import { notifyAssistantAutonomy } from './agent-chat.js';
 import { captureScreens } from '../../lib/assistant/screen.js';
@@ -751,6 +752,8 @@ export async function handleAssistantGlance(req: IncomingMessage, res: ServerRes
       ? { id: d.pending.id, kind: d.pending.kind, tool: d.pending.tool, text: wrapUntrusted(d.vault, clip(d.pending.text)) }
       : null,
   }));
+  // A notch is reading the rows: a Super Agent question at the head will show in it.
+  noteNotchPoll();
   sendJson(res, 200, { chats: [...superGlanceRows(clip), ...chats].slice(0, GLANCE_MAX), delegations });
 }
 
