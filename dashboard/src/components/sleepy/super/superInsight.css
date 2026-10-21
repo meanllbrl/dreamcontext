@@ -39,6 +39,7 @@
   background: color-mix(in srgb, var(--color-accent) 70%, transparent);
 }
 .super-tile-lane-bar:last-child { background: var(--color-accent); }
+.super-tile[data-note] .super-tile-foot--name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
 .super-tile-line[data-fresh='failed'] { color: var(--color-error-ink, var(--color-error)); }
 
 /* The large card: the Lab card in the frame's own surface ------------------------------- */
@@ -60,7 +61,22 @@
 .super-card-view--insight .wb-widget-head { min-height: 0; padding-top: var(--space-1); padding-bottom: 0; }
 /* Whatever does not fit scrolls (a 30-step bar list, a table), never crushes. */
 .super-card-view--insight .wb-widget-body { overflow: auto; }
-/* The plain insight card (a series funnel, a table) is drawn inside this card: its own frame,
-   title and unit say what the card head already does. The as-of line stays. */
+/* The plain insight card (a series funnel, a table) is drawn inside this card: its own frame and
+   title say what the card head already does. The unit and the as-of line stay. */
 .super-card-view--insight .chat-insightcard { border: 0; border-radius: 0; background: transparent; padding: 0; }
-.super-card-view--insight .chat-insightcard-head { display: none; }
+.super-card-view--insight .chat-insightcard-title { display: none; }
+/* A failed re-sync from the date chip: said, not swallowed. */
+.super-insight-notice {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+

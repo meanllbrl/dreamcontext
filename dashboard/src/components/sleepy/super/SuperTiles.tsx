@@ -1,7 +1,7 @@
 import { useI18n } from '../../../context/I18nContext';
 import { useTasks } from '../../../hooks/useTasks';
 import { useKnowledgeList } from '../../../hooks/useKnowledge';
-import { useLabInsight } from '../../../hooks/useLab';
+import { useLabInsight, useLabInsights } from '../../../hooks/useLab';
 import type { SuperContainer as Container, SuperGroup } from '../../../lib/superTypes';
 import { DocumentReader } from '../../appLink/DocumentReader';
 import { DeltaMark } from '../../lab/chartBody';
@@ -107,18 +107,20 @@ function NoteTile({ container: c, title }: { container: Container; title: string
 
 function InsightTile({ container: c, title }: { container: Container; title: string }) {
   const { t, locale } = useI18n();
-  const { data } = useLabInsight(c.ref);
-  const view = insightTile(data);
+  const { data, isError } = useLabInsight(c.ref);
+  // The server's own stale verdict (the list the Lab board reads: one shared cache).
+  const { data: list } = useLabInsights();
+  const view = insightTile(data, list?.find((x) => x.slug === c.ref)?.stale);
   // The container's own title wins; the slug the agent opened it by is never a name.
   const name = c.title || data?.insight.title || title;
-  const fresh = view?.fresh ?? 'never';
-  const note = !view ? null : fresh === 'failed' ? t('super.tile.insight.failed') : fresh === 'never' ? t('super.tile.insight.never') : view.shape === 'empty' ? t('super.tile.insight.empty') : null;
+  const fresh = isError ? 'failed' : view?.fresh ?? 'never';
+  const note = isError ? t('super.tile.insight.missing') : !view ? null : fresh === 'failed' ? t('super.tile.insight.failed') : fresh === 'never' ? t('super.tile.insight.never') : fresh === 'stale' ? t('super.tile.insight.stale') : view.shape === 'empty' ? t('super.tile.insight.empty') : null;
   return (
-    <div className="super-tile" data-tile="insight" data-view="ready" data-shape={view?.shape ?? 'empty'} title={name}>
+    <div className="super-tile" data-tile="insight" data-view="ready" data-shape={view?.shape ?? 'empty'} data-note={note && view && view.value !== null ? '' : undefined} title={name}>
       <div className="super-tile-top">
         <span className="super-tile-glyph" aria-hidden>{KIND_GLYPH.insight}</span>
         <span className="super-tile-kind">{t('super.tile.kind.insight')}</span>
-        {view && <span className="super-tile-fresh" data-fresh={fresh} title={t(`super.tile.insight.${fresh}`)} aria-label={t(`super.tile.insight.${fresh}`)} />}
+        {(view || isError) && <span className="super-tile-fresh" data-fresh={fresh} role="img" title={t(`super.tile.insight.${fresh}`)} aria-label={t(`super.tile.insight.${fresh}`)} />}
       </div>
       <div className="super-tile-figure">
         <span className="super-tile-value" data-testid="super-tile-value">

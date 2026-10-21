@@ -52,8 +52,11 @@ export function criteriaProgress(md: string | null | undefined): CriteriaProgres
  *    before and the trend (the last 24 points);
  *  - one figure and no series is the figure alone; nothing at all is `empty`.
  *
- * `fresh` is the dot's word: a failed sync, never synced, older than twice its refresh window, or
- * up to date.
+ * `fresh` is the dot's word: a failed sync, never synced, stale, or up to date. "Stale" is the
+ * server's own verdict (`stale` on the insight's summary, which counts from the newer of the last
+ * fetch and the last "upstream unchanged" check, as the Lab board does), never re-derived here.
+ * An unmeasured funnel step is not a zero: it is left out, as the Lab card leaves it out, and a
+ * funnel never falls back to a trend (its series is the steps, so a "change" would be a drop).
  */
 export type InsightFresh = 'fresh' | 'stale' | 'failed' | 'never';
 
@@ -78,14 +81,14 @@ export const MAX_LANE = 24;
 const MAX_TREND = 24;
 
 interface InsightDetailLike {
-  insight: { render: string; unit?: string | null; refresh?: { ttl_minutes?: number | null } };
+  insight: { render: string; unit?: string | null };
   cache: {
     latest?: number | null;
     fetchedAt?: string | null;
     error?: string | null;
     unit?: string | null;
     series?: readonly { points: readonly { t: string; v: number }[] }[];
-    funnel?: { set?: { primary?: string; funnels?: readonly { id: string; steps: readonly { users: number }[] }[] } };
+    funnel?: { set?: { funnels?: readonly { id: string; steps: readonly { users: number; measured?: boolean }[] }[] } };
   } | null;
 }
 
@@ -104,26 +107,26 @@ function laneOf(users: readonly number[]): number[] {
   return out;
 }
 
-export function insightTile(detail: InsightDetailLike | null | undefined, now: number = Date.now()): InsightTileView | null {
+export function insightTile(detail: InsightDetailLike | null | undefined, stale: boolean | null | undefined = false): InsightTileView | null {
   if (!detail) return null;
   const cache = detail.cache;
   const unit = cache?.unit ?? detail.insight.unit ?? null;
-  const fetched = cache?.fetchedAt ? Date.parse(cache.fetchedAt) : NaN;
-  const ttl = detail.insight.refresh?.ttl_minutes;
   const fresh: InsightFresh = cache?.error ? 'failed'
-    : !Number.isFinite(fetched) ? 'never'
-      : typeof ttl === 'number' && ttl > 0 && now - fetched > 2 * ttl * 60_000 ? 'stale' : 'fresh';
+    : !Number.isFinite(cache?.fetchedAt ? Date.parse(cache.fetchedAt) : NaN) ? 'never'
+      : stale ? 'stale' : 'fresh';
   const base: Omit<InsightTileView, 'shape' | 'value'> = { fresh, unit, delta: null, points: [], top: null, last: null, lane: [] };
   const series = cache?.series?.[0]?.points ?? [];
 
   if (detail.insight.render === 'funnel') {
-    const set = cache?.funnel?.set;
-    const funnel = set ? (set.primary ? set.funnels?.find((f) => f.id === set.primary) : undefined) ?? set.funnels?.[0] : undefined;
-    const users = funnel && funnel.steps.length > 0 ? funnel.steps.map((s) => s.users) : series.map((p) => p.v);
+    // The first funnel of the set (what the engine's own headline reads); `set.primary` names a metric.
+    const funnel = cache?.funnel?.set?.funnels?.[0];
+    const measured = funnel ? funnel.steps.filter((s) => s.measured !== false) : [];
+    const users = measured.length > 0 ? measured.map((s) => s.users) : funnel ? [] : series.map((p) => p.v);
     const lane = laneOf(users);
     if (lane.length > 0) {
       return { ...base, shape: 'funnel', value: users.length > 1 ? (users[users.length - 1] / users[0]) * 100 : 100, top: users[0], last: users[users.length - 1], lane };
     }
+    return { ...base, shape: 'empty', value: null };
   }
   if (series.length >= 2) {
     const latest = cache?.latest ?? series[series.length - 1].v;
