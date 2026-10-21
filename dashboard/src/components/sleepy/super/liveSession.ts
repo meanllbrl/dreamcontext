@@ -22,7 +22,8 @@ function run(): void {
   frame = 0;
   const fns = [...due];
   due.clear();
-  for (const fn of fns) { try { fn(); } catch { /* one card must not stop the others */ } }
+  // One card that fails must not stop the others, and must not fail silently either.
+  for (const fn of fns) { try { fn(); } catch (e) { console.error('[super] a card could not follow its chat', e); } }
 }
 
 /** Run `fn` in the next shared frame (once, however often it is asked for before then). */

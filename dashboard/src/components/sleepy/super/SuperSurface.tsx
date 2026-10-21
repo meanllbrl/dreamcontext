@@ -427,7 +427,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               group={g}
               plan={topped.includes(g.id) ? { ...cp, z: cp.z + 2 * MAX_CONTAINERS + topped.indexOf(g.id) } : cp}
               members={members}
-              sessions={g.cards.map((id) => { const c = byId.get(id); return c?.kind === 'chat' ? props.sessionFor(c.ref) : undefined; })}
+              sessions={members.map((m) => { const c = byId.get(m.id); return c?.kind === 'chat' ? props.sessionFor(c.ref) : undefined; })}
               pending={pending.has(g.id)}
               dropTarget={target === g.id}
               onPress={onPressCard}

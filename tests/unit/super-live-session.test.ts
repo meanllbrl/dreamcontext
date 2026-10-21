@@ -92,3 +92,30 @@ describe('what a card draws', () => {
     expect(frameKeyOf(fakeSession({ liveWork: true }))).not.toBe(frameKeyOf(a));
   });
 });
+
+describe('a group follows its member chats itself', () => {
+  it('draws each member chat as its session stands NOW, not as the stage last computed it', async () => {
+    const { createElement } = await import('../../dashboard/node_modules/react/index.js');
+    const { renderToStaticMarkup } = await import('../../dashboard/node_modules/react-dom/server.node.js');
+    const { I18nProvider } = await import('../../dashboard/src/context/I18nContext.js');
+    const { SuperGroupCard } = await import('../../dashboard/src/components/sleepy/super/SuperGroupCard.js');
+    // The stage last drew both chats working; one has since finished (ready), the task is no chat.
+    const members = [
+      { id: 'chat-a', kind: 'chat' as const, title: 'Lane A', status: 'working' as const },
+      { id: 'chat-b', kind: 'chat' as const, title: 'Lane B', status: 'working' as const },
+      { id: 'task-c', kind: 'task' as const, title: 'Release notes' },
+    ];
+    const sessions = [fakeSession({ busy: false }), fakeSession({ busy: false }), undefined];
+    const noop = () => {};
+    const html = renderToStaticMarkup(createElement(I18nProvider, null, createElement(SuperGroupCard, {
+      group: { id: 'grp-a', name: 'Lanes', cards: members.map((m) => m.id), place: 'float' },
+      plan: { id: 'grp-a', where: 'float', shape: 'square', rect: { x: 0, y: 0, width: 160, height: 160 }, z: 0 },
+      members, sessions, pending: false, dropTarget: false,
+      onPress: noop, onOpen: noop, onToOthers: noop, onAskAbout: noop, onUngroup: noop,
+    } as never)));
+    // Nothing works any more: no working glow, no working ring, the task keeps its glyph.
+    expect(html).not.toContain('data-status="working"');
+    expect(html).not.toMatch(/super-ring[^>]*data-kind="working"/);
+    expect(html).toMatch(/super-ring[^>]*data-kind="ready"/);
+  });
+});

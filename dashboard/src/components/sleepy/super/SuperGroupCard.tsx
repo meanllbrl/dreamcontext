@@ -17,7 +17,7 @@ export function SuperGroupCard({ group, plan, members, sessions, pending, dropTa
   group: SuperGroup;
   plan: CardPlan;
   members: readonly GroupMember[];
-  /** The member chats' live sessions (for the re-render; `members` already carries their state). */
+  /** Each member's live chat session, in `members` order (undefined for a card that is no chat). */
   sessions: readonly (ChatSession | undefined)[];
   pending: boolean;
   /** A card held over the group: releasing adds it. */
@@ -31,7 +31,10 @@ export function SuperGroupCard({ group, plan, members, sessions, pending, dropTa
   const { t } = useI18n();
   // Re-rendered when a member chat's state changes, not on its every token (liveSession.ts).
   useLiveSessions(sessions, () => sessions.map((s) => (s ? chatStatus(s).kind : '')).join('|'));
-  const status = groupStatus(members);
+  // Each member chat's state read NOW from its session, not as the stage last drew it: this card
+  // re-renders on its own when a member's state changes.
+  const live = members.map((m, i) => { const s = sessions[i]; return s ? { ...m, status: chatStatus(s).kind } : m; });
+  const status = groupStatus(live);
   const glow = status === 'asking' ? 'asking' : status === 'working' ? 'working' : 'idle';
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
@@ -62,7 +65,7 @@ export function SuperGroupCard({ group, plan, members, sessions, pending, dropTa
       <TileSheets />
       <div className="super-card-clip">
         <div className="super-card-body" data-inert="true">
-          <GroupTile group={group} members={members} />
+          <GroupTile group={group} members={live} />
         </div>
       </div>
       <span className="super-drop-ring" aria-hidden />
