@@ -87,19 +87,27 @@ export async function addToOutbox(contextRoot: string, child: string, text: stri
 }
 
 /**
- * The owner took a queued message back in the window (deleted or edited its row, or pressed
- * Stop, which holds the queue): it must not come back after a relaunch either (end review
- * round 2). `texts` absent = every waiting message for the child.
+ * The owner took a queued message back in the window (deleted or edited its row, or held the
+ * queue with Stop or pause): it must not come back after a relaunch either (end review round 2).
+ *
+ * Only THIS run's items (the ones the window is showing) can be taken back: an earlier run's
+ * item has no row on screen, so nothing the owner did now was about it (round 3). With `texts`,
+ * one item per text given (two equal rows, one deleted, leave one); without, every one of this
+ * run's items for the child. Read and written under the vault's one lock.
  */
-export async function dropFromOutbox(contextRoot: string, child: string, texts?: readonly string[]): Promise<number> {
-  const want = texts ? new Set(texts.map((t) => t.trim())) : null;
+export async function dropFromOutbox(contextRoot: string, child: string, texts?: readonly string[], boot: string = OUTBOX_BOOT): Promise<number> {
+  const want = new Map<string, number>();
+  for (const t of texts ?? []) want.set(t.trim(), (want.get(t.trim()) ?? 0) + 1);
   let dropped = 0;
-  const has = (await readOutbox(contextRoot)).some((i) => i.child === child);
-  if (!has) return 0;
   await updateOutbox(contextRoot, (all) => all.filter((i) => {
-    const gone = i.child === child && (!want || want.has(i.text.trim()));
-    if (gone) dropped += 1;
-    return !gone;
+    if (i.child !== child || i.boot !== boot) return true;
+    if (texts) {
+      const n = want.get(i.text.trim()) ?? 0;
+      if (!n) return true;
+      want.set(i.text.trim(), n - 1);
+    }
+    dropped += 1;
+    return false;
   }));
   return dropped;
 }

@@ -3795,7 +3795,7 @@ export function startChatSession(
         ? ((msg as { texts: unknown[] }).texts).filter((t): t is string => typeof t === 'string').slice(0, 50)
         : [];
       const root = pinId ? superRootOfChild(pinId) : null;
-      if (root && texts.length) void dropFromOutbox(root, pinId, texts).catch(() => undefined);
+      if (root && texts.length) void dropFromOutbox(root, pinId, texts).catch((err) => console.warn(`[super outbox] drop failed: ${(err as Error).message}`));
       return;
     }
     if (msg.type === 'park_result') { onParkResult(msg as unknown as { id?: unknown; ok?: unknown; error?: unknown }); return; }
@@ -3820,7 +3820,7 @@ export function startChatSession(
     if (msg.type === 'interrupt') {
       // Stop holds the window's queue: what the outbox kept for this child is held with it.
       const stopRoot = pinId ? superRootOfChild(pinId) : null;
-      if (stopRoot) void dropFromOutbox(stopRoot, pinId).catch(() => undefined);
+      if (stopRoot) void dropFromOutbox(stopRoot, pinId).catch((err) => console.warn(`[super outbox] drop failed: ${(err as Error).message}`));
       // Empirically verified against claude 2.1.218 (scratch-dir experiment): a
       // control_request{subtype:'interrupt'} on stdin aborts the in-flight turn — the CLI
       // echoes a control_response, emits a synthetic rejected tool_result + "[Request

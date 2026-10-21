@@ -159,6 +159,20 @@ describe('the super send outbox', () => {
     expect(sent).toEqual([['c2', 'other child']]);
   });
 
+  it('two equal rows, one deleted: one stays', async () => {
+    await addToOutbox(root, 'c1', 'yes');
+    await addToOutbox(root, 'c1', 'yes');
+    expect(await dropFromOutbox(root, 'c1', ['yes'])).toBe(1);
+    expect(await readOutbox(root)).toHaveLength(1);
+  });
+
+  it('Stop after a relaunch never drops what an earlier run left (the owner never saw it)', async () => {
+    await addToOutbox(root, 'c1', 'from before the relaunch');
+    expect(await dropFromOutbox(root, 'c1', undefined, 'later-run')).toBe(0);
+    expect(await dropFromOutbox(root, 'c1', ['from before the relaunch'], 'later-run')).toBe(0);
+    expect(await readOutbox(root)).toHaveLength(1);
+  });
+
   it('the window reports taken-back rows and the server drops them (checked against the source)', () => {
     const fs = require('node:fs') as typeof import('node:fs');
     const session = fs.readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/chatSession.ts'), 'utf-8');
