@@ -34,7 +34,7 @@ import { MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_PROMPT, MAX_QUEUE, emptySuperStat
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
 import { resetCapacityForTests } from '../../src/lib/super/capacity.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { DEV_SERVER_LINE, handleSuperVerb } from '../../src/server/routes/super.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
 let dir: string;
@@ -179,7 +179,8 @@ describe('delegate --from', () => {
     const r = await verb('delegate', { from: id });
     expect(r.status).toBe(200);
     expect(result(r)).toMatchObject({ sessionId: CHILD_SID, from: id });
-    expect(commands()[0].args).toMatchObject({ prompt: 'Pooled job.' });
+    // Exactly as kept, behind the delivery preamble every delegated child gets (jarvis K10).
+    expect(commands()[0].args).toMatchObject({ prompt: `${DEV_SERVER_LINE}\n\nPooled job.` });
     const s = await readSuperState(root);
     expect(s.pool).toEqual([]);
     expect(s.children[CHILD_SID]).toMatchObject({ row: 'working' });

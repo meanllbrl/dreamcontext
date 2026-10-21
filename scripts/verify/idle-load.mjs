@@ -105,6 +105,11 @@ function setup() {
   const chat = (st?.containers ?? []).find((c) => c.kind === 'chat');
   cli('super', 'open', 'web', 'https://example.com/a');
   cli('super', 'open', 'web', 'https://example.org/b');
+  // Two children's live browsers (jarvis AC7): room is made the way the briefing says, by
+  // stacking two chat cards into Others, never by closing one.
+  const chats = (st?.containers ?? []).filter((c) => c.kind === 'chat');
+  for (const c of chats.slice(-2)) cli('super', 'stack', c.id);
+  for (const c of chats.slice(0, 2)) cli('super', 'open', 'browser', c.ref);
   if (chat) cli('super', 'half', chat.id);
 }
 let buf = '';
@@ -904,16 +909,16 @@ async function sectionSuper(server, browser) {
   let st = null;
   for (let i = 0; i < 120; i += 1) {
     st = (await owner('/api/super/state')).body;
-    if ((st?.containers ?? []).filter((c) => c.kind === 'web').length >= 2 && st?.view?.mode === 'half') break;
+    if ((st?.containers ?? []).filter((c) => c.kind === 'web').length >= 2 && (st?.containers ?? []).filter((c) => c.kind === 'browser').length >= 2 && st?.view?.mode === 'half') break;
     await page.waitForTimeout(500);
   }
   const children = Object.keys(st?.children ?? {});
   await page.waitForTimeout(20_000);
   const containers = (st?.containers ?? []).length;
   const drawn = await page.locator('[data-testid="super-container"]').count();
-  numbers.super = { children: children.length, containers, drawn, view: st?.view?.mode ?? null, webs: (st?.containers ?? []).filter((c) => c.kind === 'web').length };
+  numbers.super = { children: children.length, containers, drawn, view: st?.view?.mode ?? null, webs: (st?.containers ?? []).filter((c) => c.kind === 'web').length, browsers: (st?.containers ?? []).filter((c) => c.kind === 'browser').length };
   console.log(`      super: handed over, ${children.length} children, ${containers} cards (${drawn} drawn, view ${numbers.super.view}, ${numbers.super.webs} web)`);
-  check('AC12 super: the stage is at the 12-card cap with 2 web cards and a half page', containers === 12 && numbers.super.webs === 2 && numbers.super.view === 'half', JSON.stringify(numbers.super));
+  check('AC12 super: the stage holds 14 cards (12 floating, 2 in Others) with 2 web, 2 live browser cards and a half page', containers === 14 && numbers.super.webs === 2 && numbers.super.browsers === 2 && numbers.super.view === 'half', JSON.stringify(numbers.super));
   await page.screenshot({ path: join(OUT, 'super-handed-over.png') });
 
   const t0 = Date.now();
@@ -928,6 +933,8 @@ async function sectionSuper(server, browser) {
       chatsShown: surface ? [...surface.querySelectorAll('.chat-scroll')].filter(vis).length : -1,
       chatsInDom: document.querySelectorAll('.chat-scroll').length,
       iframes: surface ? [...surface.querySelectorAll('iframe')].filter((f) => f.isConnected).length : -1,
+      liveBrowsers: surface ? surface.querySelectorAll('[data-kind="browser"] [data-live]').length : -1,
+      browserCards: surface ? surface.querySelectorAll('[data-kind="browser"]').length : -1,
       webgl: window.__dcGl.filter(({ canvas, ctx: c }) => canvas.isConnected && !c.isContextLost()).length,
       backdrop: [...document.querySelectorAll('[data-testid="super-surface"] *')].filter((el) => { const v = getComputedStyle(el).backdropFilter; return v && v !== 'none'; }).length,
     };
@@ -941,6 +948,7 @@ async function sectionSuper(server, browser) {
   check('AC12 super: 0 super requests while idle (state is pushed)', superReqs.length === 0, JSON.stringify(byPath(superReqs)));
   check('AC12 super: <= 1 mounted child chat besides the centre', mounted.chatsShown <= 2, JSON.stringify(mounted));
   check('AC12 super: <= 2 live iframes', mounted.iframes <= 2, `${mounted.iframes}`);
+  check('AC7 super: <= 2 live browser cards re-render (the rest frozen)', mounted.liveBrowsers <= 2, JSON.stringify({ live: mounted.liveBrowsers, cards: mounted.browserCards }));
   check('AC12 super: WebGL contexts <= 2', mounted.webgl <= 2, `${mounted.webgl}`);
   check('AC12 super: no backdrop-filter in the surface', mounted.backdrop === 0, `${mounted.backdrop}`);
 

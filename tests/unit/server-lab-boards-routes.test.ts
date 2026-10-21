@@ -270,7 +270,7 @@ describe('origin guard', () => {
     for (const [method, url] of [['PUT', '/api/lab/boards/growth'], ['DELETE', '/api/lab/boards/growth'], ['POST', '/api/lab/boards'], ['PUT', '/api/lab/blocks/x']]) {
       expect(buildRouter().match(method, url)).not.toBeNull();
       expect(isCrossSiteWrite(makeReq(method, url, undefined, { origin: 'https://evil.example' }))).toBe(true);
-      expect(isCrossSiteWrite(makeReq(method, url, undefined, { origin: 'http://localhost:4173' }))).toBe(false);
+      expect(isCrossSiteWrite(makeReq(method, url, undefined, { origin: 'http://localhost:4173', host: 'localhost:4173' }))).toBe(false);
     }
     expect(isCrossSiteWrite(makeReq('GET', '/api/lab/boards/growth', undefined, { origin: 'https://evil.example' }))).toBe(false);
   });

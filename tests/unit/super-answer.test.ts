@@ -20,7 +20,8 @@ vi.hoisted(() => {
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { insightPath } from '../../src/lib/lab/store.js';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
@@ -148,6 +149,9 @@ describe('card verbs (AC4, plan-r8 F2)', () => {
 
   it('opens every kind as a floating card with its default shape (chat and web tall, the rest square)', async () => {
     makeVault();
+    // An insight card names an insight the vault has (jarvis r9).
+    mkdirSync(dirname(insightPath(root, 'daily-signups')), { recursive: true });
+    writeFileSync(insightPath(root, 'daily-signups'), '---\nname: Daily signups\n---\n');
     const cases: Array<[string, string]> = [
       ['chat', 'c1'], ['insight', 'daily-signups'], ['task', 'fix-login'], ['knowledge', 'architecture/overview'],
       ['whiteboard', 'roadmap'], ['board', 'growth'], ['web', 'https://example.com/page'], ['image', 'assets/shot.png'],
@@ -229,13 +233,31 @@ describe('card verbs (AC4, plan-r8 F2)', () => {
     for (const v of ['resize', 'move', 'focus']) expect((await verb(v, { container: 'x' })).status, v).toBe(404);
   });
 
-  it('the 13th container is refused', async () => {
+  it('the 13th FLOATING item is refused with what is left; Others does not count, a group is one item (jarvis r9)', async () => {
     makeVault();
     for (let i = 0; i < 12; i += 1) expect((await verb('open', { kind: 'task', ref: `t-${i}` })).status).toBe(200);
     const r = await verb('open', { kind: 'task', ref: 't-12' });
     expect(r.status).toBe(409);
-    expect(r.json.error).toBe('too_many_containers');
+    expect(r.json).toMatchObject({ error: 'too_many_containers', freeFloat: 0, freeTotal: 36 });
     expect((await readSuperState(root)).containers).toHaveLength(12);
+    // Stacking one into Others makes room; the stacked card stays in the record.
+    const first = (await readSuperState(root)).containers[0].id;
+    expect((await verb('stack', { container: first })).status).toBe(200);
+    expect((await verb('open', { kind: 'task', ref: 't-12' })).status).toBe(200);
+    expect((await readSuperState(root)).containers).toHaveLength(13);
+    // Two floating cards grouped are one item: one more fits.
+    const ids = (await readSuperState(root)).containers.filter((c) => c.place === 'float').map((c) => c.id);
+    expect((await verb('group', { containers: [ids[0], ids[1]] })).status).toBe(200);
+    expect((await verb('open', { kind: 'task', ref: 't-13' })).status).toBe(200);
+    expect((await verb('open', { kind: 'task', ref: 't-14' })).status).toBe(409);
+  });
+
+  it('the 49th record is refused even with the stage empty', async () => {
+    const containers = Array.from({ length: 48 }, (_, i) => ({ id: `task-o${i}`, kind: 'task' as const, ref: `o-${i}`, shape: 'square' as const, place: 'others' as const }));
+    makeVault({ containers });
+    const r = await verb('open', { kind: 'task', ref: 'new' });
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ freeFloat: 12, freeTotal: 0 });
   });
 });
 
@@ -293,7 +315,7 @@ describe('the owner\'s layout is a locked patch (plan-r8 F3, C3)', () => {
     await handleSuperLayout(req({ cards: 'all' }), bad, {}, root);
     expect(bad.status).toBe(400);
     const tooMany = res();
-    await handleSuperLayout(req({ closed: Array.from({ length: 13 }, (_, i) => `k-${i}`) }), tooMany, {}, root);
+    await handleSuperLayout(req({ closed: Array.from({ length: 49 }, (_, i) => `k-${i}`) }), tooMany, {}, root);
     expect(tooMany.status).toBe(400);
   });
 });
@@ -347,5 +369,81 @@ describe('caller-given ids and owner layouts (security minors)', () => {
     expect((Object.prototype as Record<string, unknown>).brief).toBeUndefined();
     expect((await verb('open', { kind: 'chat', ref: '__proto__' })).status).toBe(400);
     expect((await verb('merge', { children: ['constructor'], into: 'x' })).status).toBe(404);
+  });
+});
+
+describe('jarvis r9: many refs at once, one group, the cue, the owner\'s "no"', () => {
+  it('opens several refs of one kind in ONE group, all or nothing; a ref already open is reused', async () => {
+    makeVault();
+    const one = await verb('open', { kind: 'task', ref: 'a' });
+    expect(one.status).toBe(200);
+    const r = await verb('open', { kind: 'task', refs: ['a', 'b', 'c', 'd'], group: 'Tasks' });
+    expect(r.status).toBe(200);
+    const s = await readSuperState(root);
+    expect(s.containers.map((c) => c.ref)).toEqual(['a', 'b', 'c', 'd']);
+    expect(s.groups).toHaveLength(1);
+    expect(s.groups[0]).toMatchObject({ name: 'Tasks', place: 'float' });
+    expect(s.groups[0].cards).toHaveLength(4);
+    expect((r.json.result as { group: { id: string } }).group.id).toBe(s.groups[0].id);
+  });
+
+  it('a card in another group moves to the new one; the old group left with one card dissolves', async () => {
+    makeVault();
+    await verb('open', { kind: 'task', refs: ['a', 'b'], group: 'Old' });
+    await verb('open', { kind: 'task', refs: ['b', 'c'], group: 'New' });
+    const s = await readSuperState(root);
+    expect(s.groups.map((g) => g.name)).toEqual(['New']);
+    expect(s.containers.find((c) => c.ref === 'a')?.place).toBe('float');
+  });
+
+  it('opening into a named group that rests in Others brings the group back to the stage', async () => {
+    makeVault();
+    await verb('open', { kind: 'task', refs: ['a', 'b'], group: 'Tasks' });
+    const g = (await readSuperState(root)).groups[0];
+    expect((await verb('stack', { container: g.id })).status).toBe(200);
+    expect((await readSuperState(root)).groups[0].place).toBe('others');
+    expect((await verb('open', { kind: 'task', refs: ['a', 'b', 'c'], group: 'Tasks' })).status).toBe(200);
+    const s = await readSuperState(root);
+    expect(s.groups).toHaveLength(1);
+    expect(s.groups[0]).toMatchObject({ name: 'Tasks', place: 'float' });
+    expect(s.groups[0].cards).toHaveLength(3);
+  });
+
+  it('a full stage refuses a group that would be a 13th floating item, opening nothing', async () => {
+    const containers = Array.from({ length: 12 }, (_, i) => ({ id: `task-x${i}`, kind: 'task' as const, ref: `x${i}`, shape: 'square' as const, place: 'float' as const }));
+    makeVault({ containers });
+    const r = await verb('open', { kind: 'task', refs: ['n1', 'n2', 'n3', 'n4'], group: 'Tasks' });
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ error: 'too_many_containers', freeFloat: 0 });
+    expect((await readSuperState(root)).containers).toHaveLength(12);
+  });
+
+  it('a successful verb pushes its cue to the window with the cards it touched', async () => {
+    makeVault();
+    frames.length = 0;
+    await verb('open', { kind: 'task', ref: 'a' });
+    const cue = frames.find((f) => f.subtype === 'super_cue');
+    expect(cue).toMatchObject({ verb: 'open' });
+    expect((cue?.ids as string[]).length).toBe(1);
+    frames.length = 0;
+    await verb('open', { kind: 'nope', ref: 'a' });
+    expect(frames.some((f) => f.subtype === 'super_cue')).toBe(false);
+  });
+
+  it('a browser card names a child; an insight must exist', async () => {
+    makeVault();
+    expect((await verb('open', { kind: 'browser', ref: 'c1' })).status).toBe(200);
+    expect((await verb('open', { kind: 'browser', ref: 'stranger' })).status).toBe(400);
+    expect((await verb('open', { kind: 'insight', ref: 'no-such-insight' })).status).toBe(404);
+  });
+
+  it('the owner closing an automatic card records it as dismissed (G5)', async () => {
+    makeVault({ containers: [{ id: 'web-auto', kind: 'web', ref: 'http://localhost:5173/', shape: 'tall', place: 'float', by: 'auto', of: 'c1' }] });
+    const r = res();
+    await handleSuperLayout(req({ closed: ['web-auto'] }), r, {}, root);
+    expect(r.status).toBe(200);
+    const s = await readSuperState(root);
+    expect(s.containers).toEqual([]);
+    expect(s.dismissed).toEqual([expect.objectContaining({ kind: 'web', ref: 'http://localhost:5173/' })]);
   });
 });

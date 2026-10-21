@@ -49,9 +49,10 @@ describe('AC15 — the mic exists in exactly one mode, on exactly one platform',
   it('gates on BOTH the mode and the desktop shell, in one expression', () => {
     // One flag, both conditions, so the two can never drift apart into a mic that renders on
     // the web because someone edited only the mode half.
-    // …or the hands-free phone with the Mac's dictation installed (its takes are transcribed on
-    // the Mac: task the-hands-free-phone-sends-a-voice-message…), still in the same one flag.
-    expect(composer).toMatch(/const voiceEnabled = \(mode === 'assistant' && isDesktop\(\)\) \|\| phoneVoice;/);
+    // K7 (jarvis plan r9): every desktop chat once local dictation is installed, the Assistant
+    // always; or the hands-free phone with the Mac's dictation installed (its takes are transcribed
+    // on the Mac: task the-hands-free-phone-sends-a-voice-message…), still in the same one flag.
+    expect(composer).toMatch(/const voiceEnabled = \(isDesktop\(\) && \(mode === 'assistant' \|\| dictationReady\)\) \|\| phoneVoice;/);
   });
 
   it('renders NOTHING mic-related unless that flag is true', () => {
@@ -118,7 +119,7 @@ describe('AC3f — a take in flight cannot be raced', () => {
   it('submits through a TICK, never inline — `commit` reads a ref only a render refreshes', () => {
     // Submitting in the same tick as `setDraft` would send the PREVIOUS draft: a message the
     // owner never spoke. The effect runs after the render that refreshed `liveRef`.
-    expect(composer).toMatch(/if \(voiceSubmitTick > 0\) submitRef\.current\('auto'\);/);
+    expect(composer).toMatch(/if \(voiceSubmitTick > 0\) \{[^}]*submitRef\.current\('auto'\);/);
   });
 });
 

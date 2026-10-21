@@ -29,6 +29,8 @@ describe('super types — server record <-> window mirror', () => {
     expect([...client.SUPER_EVENT_PREFIXES]).toEqual([...server.SUPER_EVENT_PREFIXES]);
     expect([...client.SUPER_EVENT_KINDS]).toEqual([...server.SUPER_EVENT_KINDS]);
     expect(client.MAX_CONTAINERS).toBe(server.MAX_CONTAINERS);
+    expect(client.MAX_FLOAT).toBe(server.MAX_FLOAT);
+    expect(client.MAX_DISMISSED).toBe(server.MAX_DISMISSED);
     expect(client.MAX_LIVE_CHILDREN).toBe(server.MAX_LIVE_CHILDREN);
     expect(client.SUPER_STATE_VERSION).toBe(server.SUPER_STATE_VERSION);
     expect(String(client.GROUP_ID_RE)).toBe(String(server.GROUP_ID_RE));
@@ -63,8 +65,9 @@ describe('super types — server record <-> window mirror', () => {
     expect(run(client)).toEqual(run(server));
   });
 
-  it('the limits are the owner\'s numbers: 12 containers, 8 live children', () => {
-    expect(server.MAX_CONTAINERS).toBe(12);
+  it('the limits are the owner\'s numbers: 12 floating items on the stage, 48 cards in the record, 8 live children', () => {
+    expect(server.MAX_FLOAT).toBe(12);
+    expect(server.MAX_CONTAINERS).toBe(48);
     expect(server.MAX_LIVE_CHILDREN).toBe(8);
   });
 
@@ -77,6 +80,7 @@ describe('super types — server record <-> window mirror', () => {
       containers: [
         { id: 'c1', kind: 'chat', ref: 'child-1', shape: 'tall', place: 'float', pos: { x: 0.25, y: 0.5 }, title: 'Login fix' },
         { id: 'c2', kind: 'task', ref: 'login', shape: 'square', place: 'others' },
+        { id: 'c3', kind: 'browser', ref: 'child-1', shape: 'square', place: 'float', by: 'auto' },
       ],
       view: { mode: 'half', card: 'c1' },
       children: { 'child-1': { sessionId: 'child-1', brief: 'Fix the login form', adopted: true, startedAt: 1 } },
@@ -84,6 +88,7 @@ describe('super types — server record <-> window mirror', () => {
       groups: [{ id: 'grp-1', name: 'Pair', cards: ['c1', 'c2'], place: 'float', pos: { x: 0.5, y: 0 } }],
       notes: { 'child-1': 'handover' },
       away: { since: 5, events: 2 },
+      dismissed: [{ kind: 'web', ref: 'http://localhost:5173/', until: 99 }],
     };
     expect(client.readSuperStateView(JSON.parse(JSON.stringify(view)))).toEqual(view);
   });

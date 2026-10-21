@@ -35,6 +35,8 @@
     "verify:people": "node scripts/verify/people-first.mjs",
     "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
     "verify:assistant": "node scripts/verify/assistant.mjs",
+    "verify:super-jarvis": "node scripts/verify/super-jarvis.mjs",
+    "eval:super-show": "vite-node eval/super-show/run.mjs",
     "verify:chat-agent-title": "node scripts/verify/chat-agent-title.mjs",
     "verify:chat-compact": "node scripts/verify/chat-compact.mjs",
     "verify:chat-questions": "node scripts/verify/chat-questions.mjs",

@@ -127,14 +127,14 @@ describe('hostile fields are dropped (D2)', () => {
     expect(s.notes).toEqual({ 'c-1': 'handover' });
   });
 
-  it('cards: unknown kinds dropped, ids unique, shape and place defaulted per kind, at most 12 (plan-r8 F1)', () => {
+  it('cards: unknown kinds dropped, ids unique, shape and place defaulted per kind, at most MAX_CONTAINERS (plan-r8 F1)', () => {
     const containers = [
       { id: 'a', kind: 'chat', ref: 'c-1', shape: 'square', place: 'others' },
       { id: 'a', kind: 'chat', ref: 'c-2', shape: 'tall', place: 'float' },
       { id: 'b', kind: 'video', ref: 'x', shape: 'tall', place: 'float' },
       { id: 'c', kind: 'web', ref: 'https://example.com', shape: 'round', place: 'nowhere' },
       { id: 'd', kind: 'task', ref: 'my-task' },
-      ...Array.from({ length: 20 }, (_, i) => ({ id: `n-${i}`, kind: 'insight', ref: `i-${i}`, shape: 'square', place: 'float' })),
+      ...Array.from({ length: MAX_CONTAINERS + 8 }, (_, i) => ({ id: `n-${i}`, kind: 'insight', ref: `i-${i}`, shape: 'square', place: 'float' })),
     ];
     const s = sanitizeSuperState(raw({ containers }));
     expect(s.containers).toHaveLength(MAX_CONTAINERS);
@@ -143,6 +143,30 @@ describe('hostile fields are dropped (D2)', () => {
       { id: 'c', kind: 'web', ref: 'https://example.com', shape: 'tall', place: 'float' },
       { id: 'd', kind: 'task', ref: 'my-task', shape: 'square', place: 'float' },
     ]);
+  });
+
+  it('jarvis r9: a browser card names a recorded child; `by` survives only as \'auto\'; dismissals expire and are capped', () => {
+    const s = sanitizeSuperState(raw({
+      children: { 'kid-1': child('kid-1') },
+      containers: [
+        { id: 'browser-a', kind: 'browser', ref: 'kid-1', shape: 'square', place: 'float', by: 'auto' },
+        { id: 'browser-b', kind: 'browser', ref: 'stranger', shape: 'square', place: 'float' },
+        { id: 'browser-c', kind: 'browser', ref: 'sess-super', shape: 'square', place: 'float' },
+        { id: 'web-a', kind: 'web', ref: 'http://localhost:5173/', shape: 'tall', place: 'float', by: 'agent' },
+      ],
+      dismissed: [
+        { kind: 'web', ref: 'http://localhost:5173/', until: 2_000 },
+        { kind: 'web', ref: 'http://localhost:3000/', until: 500 },
+        { kind: 'nope', ref: 'x', until: 2_000 },
+        ...Array.from({ length: 60 }, (_, i) => ({ kind: 'browser', ref: `k-${i}`, until: 3_000 + i })),
+      ],
+    }), { now: 1_000 });
+    expect(s.containers.map((c) => c.id)).toEqual(['browser-a', 'web-a']);
+    expect(s.containers[0].by).toBe('auto');
+    expect(s.containers[1].by).toBeUndefined();
+    expect(s.dismissed).toHaveLength(50);
+    expect(s.dismissed.some((d) => d.ref === 'http://localhost:3000/')).toBe(false);
+    expect(s.dismissed.at(-1)).toEqual({ kind: 'browser', ref: 'k-59', until: 3_059 });
   });
 
   it('a record written for the r7 ring (sizes, regions, a focus flag) reads back as floating cards', () => {

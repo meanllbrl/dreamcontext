@@ -36,11 +36,12 @@ describe('the phone composer\'s mic', () => {
   });
 
   it('turns the existing push-to-talk on with ONE added term on the gate line (AC1, AC5)', () => {
-    expect(composer).toMatch(/const phoneVoice = usePhoneDictation\(\);\s*const voiceEnabled = \(mode === 'assistant' && isDesktop\(\)\) \|\| phoneVoice;/);
+    // The desktop half is the K7 mic gate (jarvis plan r9); the phone stays ONE added term.
+    expect(composer).toMatch(/const phoneVoice = usePhoneDictation\(\);\s*const voiceEnabled = \(isDesktop\(\) && \(mode === 'assistant' \|\| dictationReady\)\) \|\| phoneVoice;/);
   });
 
   it('keeps the laptop\'s voice off the phone: no read-aloud switch, no warm/prefs, no hotkey wording (AC4)', () => {
-    expect(composer).toMatch(/\{voiceEnabled && !phoneVoice && \(\s*<button\s+type="button"\s+className="chat-cmp-iconbtn chat-cmp-readaloud"/);
+    expect(composer).toMatch(/\{voiceEnabled && mode === 'assistant' && !phoneVoice && \(\s*<button\s+type="button"\s+className="chat-cmp-iconbtn chat-cmp-readaloud"/);
     expect(composer).toMatch(/if \(!voiceEnabled \|\| phoneVoice\) return;\s*void fetch\('\/api\/agent\/voice\/warm'/);
     expect(composer).toMatch(/: phoneVoice \? 'Hold the mic to speak'/);
     const trace = code('dashboard/src/lib/voice/turnTrace.ts');

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { agentFileUrl } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
+import { portOfHost, readLoopbackGrants, setLoopbackGrant, useLoopbackGrants } from '../../../lib/loopbackGrants';
 import { openExternalUrl } from '../../../lib/desktop';
 import { externalHref } from '../../../lib/externalLinks';
 import { DocumentReader, readerLinkAction } from '../../appLink/DocumentReader';
@@ -53,7 +54,83 @@ type PageCheck = Extract<WebUrlCheck, { kind: 'url' }>;
 type FileCheck = Extract<WebUrlCheck, { kind: 'file' }>;
 type FrameProps = Pick<WidgetProps, 'active' | 'size'> & { title: string };
 
-function WebPage({ page, title, active, size }: FrameProps & { page: PageCheck }) {
+/** A card that appeared on its own (a Super Agent dev-server card) must not take a stray click:
+ *  its allow buttons wake this long after it is drawn (T6). */
+export const LOOPBACK_BUTTON_DELAY_MS = 600;
+
+/** The ONE frame a web card ever draws: no popups, no top navigation, no permissions (T8). */
+function PageFrame({ title, href }: { title: string; href: string }) {
+  return (
+    <iframe
+      className="wb-web-frame"
+      title={title}
+      src={href}
+      sandbox={WEB_WIDGET_SANDBOX}
+      allow=""
+      referrerPolicy="no-referrer"
+    />
+  );
+}
+
+function WebPage(props: FrameProps & { page: PageCheck }) {
+  return props.page.local ? <LoopbackPage {...props} /> : <RemotePage {...props} />;
+}
+
+/**
+ * A page on this computer (a dev server). Trust is the SERVER's, per vault and per port
+ * (`lib/loopbackGrants.ts`): "Open once" loads it now and remembers nothing; "Always allow
+ * localhost:PORT" records the port. The app's own ports are refused whatever is recorded.
+ */
+function LoopbackPage({ page, title, active, size }: FrameProps & { page: PageCheck }) {
+  const tx = useWbText();
+  const api = useApi();
+  const { vault } = useVault();
+  const grants = useLoopbackGrants(api, vault);
+  const port = portOfHost(page.host);
+  const [once, setOnce] = useState(false);
+  const [denied, setDenied] = useState(false);
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setArmed(true), LOOPBACK_BUTTON_DELAY_MS);
+    return () => clearTimeout(t);
+  }, []);
+  const owned = !!grants?.ownedPorts.includes(port);
+  const granted = !!grants?.grants.includes(port) && !owned;
+  // Fail closed: a refused or failed grant, or a port the server owns right now, never loads.
+  const always = () => {
+    if (!vault) { setDenied(true); return; }
+    void setLoopbackGrant(api, vault, port, 'grant').catch(() => setDenied(true));
+  };
+  const openOnce = () => {
+    if (!vault) { setDenied(true); return; }
+    void readLoopbackGrants(api, vault, { fresh: true }).then((v) => {
+      if (v.failed || v.ownedPorts.includes(port)) setDenied(true); else setOnce(true);
+    });
+  };
+  return (
+    <WidgetFrame kind="web" title={title} active={active} size={size}>
+      {owned || denied ? (
+        <WidgetNotice tone="error">{owned
+          ? tx('web.loopback.owned', 'This is the app\'s own port; it is never shown in a card.')
+          : tx('web.loopback.denied', 'This page could not be allowed here.')}</WidgetNotice>
+      ) : (granted || once) ? (
+        <PageFrame title={title} href={page.href} />
+      ) : (
+        <div className="wb-web-prompt" data-testid="web-loopback-prompt">
+          <span className="wb-web-host">{tx('web.loopback.ask', 'A page on this computer: {host}').replace('{host}', page.host)}</span>
+          <div className="wb-web-buttons">
+            <WidgetButton disabled={!armed || !grants || !!grants.failed} onClick={openOnce}>{tx('web.loopback.once', 'Open once')}</WidgetButton>
+            <WidgetButton disabled={!armed || !grants || !!grants.failed} onClick={always}>
+              {tx('web.loopback.always', 'Always allow {host}').replace('{host}', page.host)}
+            </WidgetButton>
+          </div>
+        </div>
+      )}
+    </WidgetFrame>
+  );
+}
+
+function RemotePage({ page, title, active, size }: FrameProps & { page: PageCheck }) {
   const tx = useWbText();
   const [loaded, setLoaded] = useState(() => isTrustedHost(page.host));
 
@@ -66,14 +143,7 @@ function WebPage({ page, title, active, size }: FrameProps & { page: PageCheck }
   return (
     <WidgetFrame kind="web" title={title} active={active} size={size} actions={openInBrowser}>
       {loaded ? (
-        <iframe
-          className="wb-web-frame"
-          title={title}
-          src={page.href}
-          sandbox={WEB_WIDGET_SANDBOX}
-          allow=""
-          referrerPolicy="no-referrer"
-        />
+        <PageFrame title={title} href={page.href} />
       ) : (
         <div className="wb-web-prompt">
           <span className="wb-web-host">{page.unicodeHost}</span>

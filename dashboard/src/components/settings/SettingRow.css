@@ -413,3 +413,7 @@
   height: var(--space-2);
   accent-color: var(--color-accent);
 }
+
+/* Settings → Chat → Super Agent: the allowed local ports (jarvis plan r9, T6). */
+.settings-loopback-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.settings-loopback-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }

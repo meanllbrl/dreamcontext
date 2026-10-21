@@ -50,6 +50,7 @@ import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import { SleepyMascot } from '../SleepyMascot';
 import type { ComposerHost } from './composerHost';
 import './composer.css';
+import { useDictationReady } from '../../../lib/voice/useDictationReady';
 
 /**
  * The redesigned Agent Chat (beta) composer (task T6, plan rev.3) — replaced the inline
@@ -1244,11 +1245,14 @@ export function Composer({
   // The mic is drawn ONLY in this mode and ONLY in the desktop app (AC15). The web dashboard
   // has no microphone path at all — there is no Info.plist to carry a usage string and no
   // WKWebView to grant against — so a button there would be a control that cannot work.
-  // The hands-free phone draws the same mic in any chat mode while the Mac has local dictation
-  // (usePhoneDictation): its take goes to the Mac's whisper. Read-aloud and the hotkey stay the
-  // laptop's (the tunnel refuses their routes), so the few lines below that differ ask `phoneVoice`.
+  // K7 (jarvis plan r9): every desktop chat gets the mic once local dictation is installed; the
+  // Assistant always has it (its notch carries the install hint). The hands-free phone draws the
+  // same mic in any chat mode while the Mac has local dictation (usePhoneDictation): its take goes
+  // to the Mac's whisper. Read-aloud and the hotkey stay the laptop's (the tunnel refuses their
+  // routes), so the few lines below that differ ask `phoneVoice`. Read aloud stays the Assistant's.
+  const dictationReady = useDictationReady(isDesktop() && mode !== 'assistant');
   const phoneVoice = usePhoneDictation();
-  const voiceEnabled = (mode === 'assistant' && isDesktop()) || phoneVoice;
+  const voiceEnabled = (isDesktop() && (mode === 'assistant' || dictationReady)) || phoneVoice;
   /** The draft as it stood when the take began, so a transcript can tell "the owner typed
    *  while I was transcribing" from "nothing changed". */
   const draftAtTakeRef = useRef('');
@@ -1417,7 +1421,10 @@ export function Composer({
   voiceStateRef.current = voice.state;
 
   useEffect(() => {
-    if (voiceSubmitTick > 0) submitRef.current('auto');
+    if (voiceSubmitTick > 0) {
+      session.armSpoken?.(liveRef.current.draft.trim());
+      submitRef.current('auto');
+    }
   }, [voiceSubmitTick]);
 
   /** Press. Synchronous on purpose: {@link ComposerHost.bargeInSpeech} both silences whatever
@@ -2150,7 +2157,7 @@ export function Composer({
         )}
         {/* Read aloud, beside the mic it pairs with. A switch, not an action: `aria-pressed`
             carries the state and the icon draws it (speaker vs speaker struck through). */}
-        {voiceEnabled && !phoneVoice && (
+        {voiceEnabled && mode === 'assistant' && !phoneVoice && (
           <button
             type="button"
             className="chat-cmp-iconbtn chat-cmp-readaloud"

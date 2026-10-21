@@ -456,6 +456,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'gold-v2-home-',
   'gold-v2-outside-',
   'gold-v2-src-',
+  'grants-',
+  'grants-other-',
   'hf-auth-',
   'hf-land-',
   'hf-lock-cut-',
@@ -479,6 +481,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'notch-super-',
   'notch-super-home-',
   'outbox-vault-',
+  'owned-cdp-',
   'owner-',
   'phone-gate-',
   'phone-origin-',
@@ -548,5 +551,6 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'vault-logo-',
   'wb-reconcile-',
   'window-super-',
-  'window-super-home-'
+  'window-super-home-',
+  'ws-origin-'
 ];

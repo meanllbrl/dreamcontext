@@ -53,6 +53,9 @@ function sendWhiteboardError(res: ServerResponse, err: unknown): void {
  * dashboard is refused (D7). A same-origin browser write names it outright, scheme included:
  * that is the only way to see `https:` when a TLS proxy (`tailscale serve`) fronts this
  * plain-http server. Otherwise, the scheme this socket actually speaks plus the dialed Host.
+ * Note (jarvis plan r9): behind `tailscale serve` the chat, terminal, Super Agent owner and
+ * loopback-grant doors are now CLOSED on purpose (`isSameOriginStrict` wants a loopback Host from
+ * a loopback peer); this route is not one of them and still answers there.
  */
 export function requestSelfOrigin(req: IncomingMessage): string | undefined {
   const origin = req.headers.origin;

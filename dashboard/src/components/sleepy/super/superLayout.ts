@@ -379,7 +379,7 @@ function planWith(
   opts: PlanOptions,
   bottomBand: boolean,
 ): StagePlan {
-  // Items: at most the record's 12 cards, plus a grouped card the view presents beside its group.
+  // Items: at most the record's MAX_CONTAINERS cards, plus a grouped card the view presents beside its group.
   const list = containers.slice(0, MAX_CONTAINERS + MAX_PRESENT);
   const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand);
   const narrow = f.width < NARROW_STAGE_PX;

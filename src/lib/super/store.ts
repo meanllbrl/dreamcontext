@@ -3,11 +3,11 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
-  CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_ENDED_CHILDREN,
+  CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_PRESENT, MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, defaultShape,
   SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
-  type SuperChild, type SuperContainer, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView,
+  type SuperChild, type SuperContainer, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
@@ -53,6 +53,8 @@ export interface SanitizeOpts {
    *  repos. When given, a child's worktree outside it is dropped (D2). Absent = not checked
    *  here; the caller checks before running git in it. */
   listedWorktrees?: ReadonlySet<string>;
+  /** The clock a dismissal expires against. Tests inject one. */
+  now?: number;
 }
 
 /** Ids the session-id pattern allows but no record may key by: they name Object.prototype's
@@ -102,7 +104,7 @@ const unit = (v: unknown): number | undefined => {
  * regions, a focus flag) reads back as floating cards. A drop position needs two finite
  * numbers, clamped into [0, 1]; anything else is no position (placed automatically).
  */
-function sanitizeContainers(raw: unknown): SuperContainer[] {
+function sanitizeContainers(raw: unknown, children: Readonly<Record<string, SuperChild>>): SuperContainer[] {
   if (!Array.isArray(raw)) return [];
   const out: SuperContainer[] = [];
   const ids = new Set<string>();
@@ -112,6 +114,8 @@ function sanitizeContainers(raw: unknown): SuperContainer[] {
     if (typeof c.id !== 'string' || !CONTAINER_ID_RE.test(c.id) || ids.has(c.id)) continue;
     if (!oneOf(CONTAINER_KINDS, c.kind)) continue;
     if (typeof c.ref !== 'string' || !c.ref || c.ref.length > MAX_REF || /[\u0000-\u001f\u007f]/.test(c.ref)) continue;
+    // A live browser card shows a recorded child's frames: any other ref names nothing.
+    if (c.kind === 'browser' && !(okSessionId(c.ref) && Object.prototype.hasOwnProperty.call(children, c.ref))) continue;
     const title = cap(c.title, MAX_TITLE);
     const pos = isRecord(c.pos) ? { x: unit(c.pos.x), y: unit(c.pos.y) } : null;
     ids.add(c.id);
@@ -121,9 +125,25 @@ function sanitizeContainers(raw: unknown): SuperContainer[] {
       place: oneOf(CONTAINER_PLACES, c.place) ? c.place : 'float',
       ...(pos && pos.x !== undefined && pos.y !== undefined ? { pos: { x: pos.x, y: pos.y } } : {}),
       ...(title ? { title: stripControls(title) } : {}),
+      ...(c.by === 'auto' ? { by: 'auto' as const } : {}),
+      ...(c.by === 'auto' && typeof c.of === 'string' && Object.prototype.hasOwnProperty.call(children, c.of) ? { of: c.of } : {}),
     });
   }
   return out;
+}
+
+/** The owner's "no" to automatic cards (G5): at most MAX_DISMISSED, an expired one dropped. */
+function sanitizeDismissed(raw: unknown, now: number): SuperDismissed[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SuperDismissed[] = [];
+  for (const d of raw) {
+    if (!isRecord(d) || !oneOf(CONTAINER_KINDS, d.kind)) continue;
+    if (typeof d.ref !== 'string' || !d.ref || d.ref.length > MAX_REF || /[\u0000-\u001f\u007f]/.test(d.ref)) continue;
+    const until = finite(d.until);
+    if (until === undefined || until <= now) continue;
+    out.push({ kind: d.kind, ref: d.ref, until });
+  }
+  return out.slice(-MAX_DISMISSED);
 }
 
 /**
@@ -341,7 +361,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
   const children = sanitizeChildren(raw.children, session, opts);
   // Groups settle against the cards (a closed card leaves its group, a group of one dissolves
   // into its card), so they come back with the cards they may have changed.
-  const { containers, groups } = normalizeGroups(sanitizeContainers(raw.containers), raw.groups);
+  const { containers, groups } = normalizeGroups(sanitizeContainers(raw.containers, children), raw.groups);
   const notes: Record<string, SuperNote> = {};
   if (isRecord(raw.notes)) {
     for (const [k, n] of Object.entries(raw.notes)) {
@@ -362,6 +382,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     queue: sanitizeQueue(raw.queue, session),
     notes,
     away: { since: since ?? null, events: events !== undefined && events > 0 ? Math.floor(events) : 0 },
+    dismissed: sanitizeDismissed(raw.dismissed, opts.now ?? Date.now()),
     pool: sanitizePool(raw.pool, opts),
     ownerBatches: sanitizeOwnerBatches(raw.ownerBatches),
     team: sanitizeTeam(raw.team),
