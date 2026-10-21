@@ -34,7 +34,7 @@ describe('superBriefing', () => {
     expect(brief).toContain('Permission requests never reach you: the owner answers them.');
     for (const prefix of ['[super events]', '[super handover]', '[super recap]']) expect(brief).toContain(prefix);
     expect(brief).toContain('only a question, done, gone or stuck reaches\nyou, batched, and nothing while a question is open with the owner');
-    expect(brief).toContain('He sees an event turn as one line: write no text there unless he wrote to you, or an event\n  says `awaited=owner` (a job he waits on): then give him its result.');
+    expect(brief).toContain('He sees an event turn as one line: write no text there but a reply if he wrote to you, the\n  question you escalate, and, when an event says `awaited=owner` (a job he waits on), its result.');
   });
 
   it('names the job list verbs: the row line, the pool, --from, --task, the own question (plan r4)', () => {
