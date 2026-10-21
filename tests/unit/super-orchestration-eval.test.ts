@@ -203,6 +203,13 @@ describe('the scorer', () => {
     expect(moved(score(s, units), r)).toEqual(['asks']);
   });
 
+  it('asks: S06 starting every job (the machine never holds, 2026-10-21) keeps the asks points', () => {
+    const { s, units } = perfect('S06');
+    const started = units.map((u) => ({ ...u, verb: 'delegate' as const }));
+    expect(started.length).toBeGreaterThan(s.maxDelegateCalls!);
+    expect(score(s, started).dims.asks).toBe(score(s, units).dims.asks);
+  });
+
   it('brief: a brief without "<job> · <mode> <model>/<effort>" moves only brief', () => {
     const { s, units } = perfect('S01');
     const r = score(s, units.map((u) => (u.items.includes('I7') ? { ...u, brief: 'timeout fetch' } : u)));

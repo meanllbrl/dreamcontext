@@ -130,6 +130,7 @@ function superVerb(argv: readonly string[]): { verb: string; sub: string; opts: 
 export interface Parsed {
   units: Unit[];
   asks: number;
+  /** Held `delegate` tries (a started one is not a retry). */
   delegateCalls: number;
   merges: Array<{ children: string[]; into: string; turn: number }>;
   pushes: string[][];
@@ -147,8 +148,9 @@ export function parseCalls(calls: readonly CallRecord[]): Parsed {
     const v = superVerb(c.argv);
     if (!v) continue;
     if (v.verb === 'delegate') {
-      out.delegateCalls++;
-      if (c.held) continue;
+      // Only a HELD try counts toward S06's loop limit: since 2026-10-21 the machine never
+      // holds, so a delegate that started is the briefing followed, never a loop.
+      if (c.held) { out.delegateCalls++; continue; }
       if (v.opts.from) { out.fromRows.push(v.opts.from); continue; }
       out.units.push(unitFrom(out.units.length, 'delegate', c.turn, c.turn === 1 ? 1 : 3, v.opts));
     } else if (v.verb === 'pool' && v.sub === 'add') {
