@@ -9,7 +9,7 @@
  * The real dashboard server (scratch HOME, DREAMCONTEXT_DESKTOP=1), the real dashboard in
  * Chromium, the real chat sockets and the real CLI run from INSIDE the spawned chats with only
  * the env the server gave them. `claude` is a scripted stand-in (no tokens). It proves:
- *   1. hand over one chat; the owner LOOKS at the project (a presence report, what the desktop
+ *   1. hand over one chat; the owner is ON the Super stage (a presence report, what the desktop
  *      window sends): the Super Agent's own `super ask` answers reached:true via screen; the
  *      glance (the notch) lists it; its option on the job bar sends "Answer to your question: …"
  *      into the SUPER chat;
@@ -169,7 +169,7 @@ async function main() {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const srv = await startServer(port);
-  const presence = (vault) => fetch(`${base}/api/assistant/presence`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ label: 'main', vault, sessionId: null }) });
+  const presence = (vault, sessionId = null) => fetch(`${base}/api/assistant/presence`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ label: 'main', vault, sessionId }) });
   const browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, colorScheme: 'dark', recordVideo: { dir: join(OUT, 'video'), size: { width: 1600, height: 1000 } } });
   const page = await context.newPage();
@@ -198,8 +198,10 @@ async function main() {
     await until(page, async () => (await page.locator('[data-super-slot="centre"] .chat-cmp-input').count()) > 0, 20000);
     await page.waitForTimeout(1500);
 
-    console.log('\n── the super agent\'s own question, the owner on the project');
-    await presence('acme-app');
+    console.log('\n── the super agent\'s own question, the owner on the Super stage');
+    // On the Super stage: what the desktop window reports (its presence names the super session).
+    const superSession = (await (await fetch(`${base}/api/super/state`, { headers: { 'x-dreamcontext-vault': 'acme-app' } })).json()).session;
+    await presence('acme-app', superSession);
     await page.locator('[data-super-slot="centre"] .chat-cmp-input').first().click();
     await page.locator('[data-super-slot="centre"] .chat-cmp-input').first().fill('GO-ASKOWNER');
     await page.keyboard.press('Enter');

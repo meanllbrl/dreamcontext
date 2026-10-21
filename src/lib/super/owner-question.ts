@@ -101,15 +101,15 @@ function bodyOf(item: SuperQueueItem): string {
   return clip(item.ownerText ?? '') || 'A question is waiting for your answer.';
 }
 
-function noteFor(item: SuperQueueItem, shown: boolean, ahead: number, via: OwnerChannel[]): string {
+function noteFor(item: SuperQueueItem, shown: boolean, ahead: number, via: OwnerChannel[], reached: boolean): string {
   if (!shown) {
     return `Not shown yet: it waits behind ${ahead} item(s) he must answer first, and it is announced when it comes up. He has not seen it: do not tell him you asked.`;
   }
   const answer = item.kind === 'question'
     ? 'His pick goes to the child directly, or he writes to you.'
     : 'His answer is his next message to you.';
-  if (!via.length) {
-    return `NOT seen: he is away from the app and no banner or phone push could reach him. It waits at the head of his bar; do not tell him you asked. Write him the question in this turn too: your reply reaches him when he is back. ${answer}`;
+  if (!reached) {
+    return `NOT seen: he is not on your stage and no banner or phone push could reach him${via.includes('notch') ? ' (only the notch lists it)' : ''}. It waits at the head of his bar; do not tell him you asked. Write him the question in this turn too: your reply reaches him when he is back. ${answer}`;
   }
   return `Reached him (${via.join(', ')}): it waits at the head of his bar with its buttons. Write him the question in this turn too, then end your turn; never wait for it. ${answer}`;
 }
@@ -123,15 +123,19 @@ function aheadOf(state: Pick<SuperState, 'queue'>, item: SuperQueueItem): number
 
 /**
  * A write left `head` at the head of a handed-over vault's queue: announce it, once. Called from
- * every record write (`afterSuperWrite`).
+ * every record write (`afterSuperWrite`); `vaultOf` is read only past the cheap guards.
  */
-export function announceOwnerHead(vault: string, state: Pick<SuperState, 'enabled' | 'session' | 'queue'>, head: SuperQueueItem | null): void {
+export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState, 'enabled' | 'session' | 'queue'>, head: SuperQueueItem | null): void {
   if (!state.enabled || !state.session || !announces(head) || announced.has(head.id)) return;
   const session = state.session;
+  const vault = vaultOf();
   const via: OwnerChannel[] = [];
-  let here = false;
-  try { here = sinks.presence().vault === vault; } catch { here = false; }
-  if (here) via.push('screen');
+  let looking: { vault: string | null; session: string | null } = { vault: null, session: null };
+  try { looking = sinks.presence(); } catch { /* nobody known to be looking */ }
+  // In this project's window: no banner over it (the attention rule). On screen only when that
+  // window shows the Super Agent itself (its stage); another page of the project is not.
+  const here = looking.vault === vault;
+  if (here && looking.session === session) via.push('screen');
   if (Date.now() - notchPolledAt <= NOTCH_LIVE_MS) via.push('notch');
   const title = `Super Agent asks · ${vault}`;
   const body = bodyOf(head);
@@ -141,7 +145,15 @@ export function announceOwnerHead(vault: string, state: Pick<SuperState, 'enable
     try { if (sinks.banner(title, body, link)) via.push('banner'); } catch { /* the other channels still stand */ }
   }
   try { if (sinks.push({ vault, sessionId: session, key: `super-ask:${head.id}`, title, body }) > 0) via.push('phone'); } catch { /* idem */ }
-  remember(head.id, { shown: true, ahead: 0, via, reached: via.length > 0, note: noteFor(head, true, 0, via) });
+  // A notch that polls is listed but proves nothing alone: it polls while he is away too.
+  const reached = via.some((v) => v !== 'notch');
+  remember(head.id, { shown: true, ahead: 0, via, reached, note: noteFor(head, true, 0, via, reached) });
+}
+
+/** The queue items whose banner the server posted: the window's job bar posts none of its own
+ *  for those, and posts its own for every other (a Mac without the notifier bundle). */
+export function serverBannered(queue: readonly SuperQueueItem[]): string[] {
+  return queue.filter((q) => announced.get(q.id)?.via.includes('banner')).map((q) => q.id);
 }
 
 /** At boot: the head already open is not news. */
@@ -158,7 +170,7 @@ export function ownerQuestionReach(state: Pick<SuperState, 'queue'>, itemId: str
   if (known) return known;
   if (!item) return { shown: false, ahead: 0, via: [], reached: false, note: 'That item is no longer on the queue.' };
   const ahead = aheadOf(state, item);
-  return { shown: ahead === 0, ahead, via: [], reached: false, note: noteFor(item, ahead === 0, ahead, []) };
+  return { shown: ahead === 0, ahead, via: [], reached: false, note: noteFor(item, ahead === 0, ahead, [], false) };
 }
 
 /** Test-only. */

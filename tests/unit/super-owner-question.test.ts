@@ -26,9 +26,10 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
-import { SUPER_STATE_REL, resetSuperIndex } from '../../src/lib/super/store.js';
+import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
+import { readSuperStateView } from '../../dashboard/src/lib/superTypes.js';
 import { SUPER_BRIEF_REV, SUPER_SHOW_SECTION, emptySuperState } from '../../src/lib/super/types.js';
-import { BATCH_LAST_LINE, _resetSuperInbox, takeSuperEscalation } from '../../src/lib/super/inbox.js';
+import { BATCH_LAST_LINE, _resetSuperInbox, superView, takeSuperEscalation } from '../../src/lib/super/inbox.js';
 import {
   _resetOwnerQuestions, announceOwnerHead, noteNotchPoll, ownerQuestionReach, seedOwnerHead, setOwnerQuestionSinks,
 } from '../../src/lib/super/owner-question.js';
@@ -44,6 +45,7 @@ let token = '';
 let banners: Array<{ title: string; body: string; link: string | null }>;
 let pushes: Array<{ vault: string; sessionId: string; key: string; body: string }>;
 let lookingAt: string | null;
+let lookingSession: string | null;
 let phones: number;
 
 beforeEach(() => {
@@ -58,9 +60,10 @@ beforeEach(() => {
   banners = [];
   pushes = [];
   lookingAt = null;
+  lookingSession = null;
   phones = 0;
   setOwnerQuestionSinks({
-    presence: () => ({ vault: lookingAt, session: null }),
+    presence: () => ({ vault: lookingAt, session: lookingSession }),
     banner: (title, body, link) => { banners.push({ title, body, link }); return true; },
     push: (q) => { if (phones) pushes.push(q); return phones; },
   });
@@ -114,12 +117,35 @@ describe('super queue ask reaches the owner off the Super stage', () => {
     expect(takeSuperEscalation(SUPER)).toBe(false);
   });
 
-  it('looking at the project: no banner (he is on it), the screen carries it; a polled notch is counted', async () => {
+  it('on the Super stage: no banner (he is on it), the screen carries it; a polled notch is listed', async () => {
     lookingAt = 'acme';
+    lookingSession = SUPER;
     noteNotchPoll();
     const r = await verb('queue-ask', { item: 'q-ask1', text: 'Postgres or sqlite?' });
     expect(banners).toEqual([]);
     expect(result(r)).toMatchObject({ reached: true, via: ['screen', 'notch'] });
+  });
+
+  it('in the project on another page: no banner over his window, and a notch alone is NOT reached', async () => {
+    lookingAt = 'acme';
+    noteNotchPoll();
+    const r = await verb('queue-ask', { item: 'q-ask1', text: 'Postgres or sqlite?' });
+    expect(banners).toEqual([]);
+    expect(result(r)).toMatchObject({ reached: false, via: ['notch'] });
+    expect(String(result(r).note)).toMatch(/only the notch lists it/);
+    expect(takeSuperEscalation(SUPER)).toBe(false);
+  });
+
+  it('the state view names the items the server bannered, and the window reads it back', async () => {
+    await verb('queue-ask', { item: 'q-ask1', text: 'Postgres or sqlite?' });
+    const view = superView(root, await readSuperState(root));
+    expect(view.bannered).toEqual(['q-ask1']);
+    expect(readSuperStateView(JSON.parse(JSON.stringify(view)))?.bannered).toEqual(['q-ask1']);
+    // No banner posted (a Mac without the notifier bundle): nothing named, the window posts its own.
+    _resetOwnerQuestions();
+    setOwnerQuestionSinks({ banner: () => false });
+    await verb('queue-ask', { item: 'q-ask2', text: 'Which region?' });
+    expect(superView(root, await readSuperState(root)).bannered).toBeUndefined();
   });
 
   it('hands-free on: a question push into the super chat', async () => {
@@ -163,20 +189,20 @@ describe('the announcement edge', () => {
   it('a head already open at boot is seeded silently', () => {
     const head = q('q-old', 1);
     seedOwnerHead(head);
-    announceOwnerHead('acme', { ...base, queue: [head] }, head);
+    announceOwnerHead(() => 'acme', { ...base, queue: [head] }, head);
     expect(banners).toEqual([]);
   });
 
   it('a permission is never announced here (the window rings it from the child\'s own request)', () => {
     const perm = { id: 'q-p', sessionId: 'c1', kind: 'permission' as const, requestId: 'p', state: 'pending' as const, createdAt: 1 };
-    announceOwnerHead('acme', { ...base, queue: [perm] }, perm);
+    announceOwnerHead(() => 'acme', { ...base, queue: [perm] }, perm);
     expect(banners).toEqual([]);
     expect(ownerQuestionReach({ queue: [perm, q('q-x', 2)] }, 'q-x')).toMatchObject({ shown: false, ahead: 1 });
   });
 
   it('nothing while not handed over', () => {
     const head = q('q-off', 1);
-    announceOwnerHead('acme', { ...base, enabled: false, queue: [head] }, head);
+    announceOwnerHead(() => 'acme', { ...base, enabled: false, queue: [head] }, head);
     expect(banners).toEqual([]);
   });
 });

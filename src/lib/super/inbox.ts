@@ -9,7 +9,7 @@ import {
   STARTING_GRACE_MS, activityOf, chatTopic, getChat, onChatChange, type ChatChange, type ChatEntry,
 } from '../assistant/chat-registry.js';
 import { pushFrame, tokenOfSession } from '../window-control.js';
-import { announceOwnerHead, seedOwnerHead } from './owner-question.js';
+import { announceOwnerHead, seedOwnerHead, serverBannered } from './owner-question.js';
 import {
   isSuperChild, primeSuperIndex, readSuperState, superIndex, superRootOfChild, superRootOfEnded, superRootOfSession,
   updateSuperState, type SanitizeOpts,
@@ -82,7 +82,8 @@ export function superVaultName(contextRoot: string): string {
 
 export function superView(contextRoot: string, state: SuperState): SuperStateView {
   const teamLive = teamLiveRows(contextRoot, state);
-  return { ...state, vault: superVaultName(contextRoot), ...(teamLive ? { teamLive } : {}) };
+  const bannered = serverBannered(state.queue);
+  return { ...state, vault: superVaultName(contextRoot), ...(teamLive ? { teamLive } : {}), ...(bannered.length ? { bannered } : {}) };
 }
 
 export function newQueueId(): string {
@@ -192,7 +193,7 @@ export function pushSuperState(contextRoot: string, state: SuperState): boolean 
 export function afterSuperWrite(contextRoot: string, state: SuperState): void {
   noteHead(contextRoot, state);
   // A question that reached the head is announced to the owner, once (owner-question.ts).
-  announceOwnerHead(superVaultName(contextRoot), state, superQueueHead(state));
+  announceOwnerHead(() => superVaultName(contextRoot), state, superQueueHead(state));
   pushSuperState(contextRoot, state);
   syncSweep(keyOf(contextRoot), state);
 }

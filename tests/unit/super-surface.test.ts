@@ -232,8 +232,9 @@ describe('quiet children (D16, AC6 client half)', () => {
     expect(strip).toMatch(/const superId = superSession\?\.claudeId \?\? null;/);
     expect(strip).toMatch(/sessionId: superId,/);
     expect((strip.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
-    // A question's banner is the server's on desktop (owner-question.ts): never a second one.
-    expect(strip).toMatch(/banner: head\.kind === 'permission' \|\| !isDesktop\(\),/);
+    // A banner the server posted (owner-question.ts names it in the view) is never posted twice.
+    expect(strip).toMatch(/const serverBanner = !!head && \(state\.bannered \?\? \[\]\)\.includes\(head\.id\);/);
+    expect(strip).toMatch(/banner: !serverBanner,/);
   });
 
   it('a link to the super agent opens its stage before any resume (AC4)', () => {

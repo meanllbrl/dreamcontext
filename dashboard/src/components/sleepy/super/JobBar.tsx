@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNod
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import { raiseAskAttention } from '../../../lib/attention';
-import { isDesktop } from '../../../lib/desktop';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import type { SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission, PendingQuestion } from '../chatSession';
@@ -127,19 +126,20 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   }, [fitKey, showOptions]);
 
   const superId = superSession?.claudeId ?? null;
+  const serverBanner = !!head && (state.bannered ?? []).includes(head.id);
   useEffect(() => {
     if (!head || !headAlarmOnce(vault, head)) return;
-    // The banner opens the super stage (`linkOpensSuperStage`). On desktop the server posts it
-    // for all but a permission (lib/super/owner-question.ts): here no second one.
+    // The banner opens the super stage (`linkOpensSuperStage`). One the server posted (it
+    // names it: lib/super/owner-question.ts) is not posted twice.
     raiseAskAttention({
-      banner: head.kind === 'permission' || !isDesktop(),
+      banner: !serverBanner,
       source: vault,
       detail: head.kind === 'permission' ? t('super.queue.permissionAlarm')
         : head.kind === 'approval' ? t('super.queue.approval').replace('{name}', head.member ?? '')
           : (head.ownerText ?? t('super.queue.escalatedAlarm')),
       sessionId: superId,
     });
-  }, [head, vault, superId, t]);
+  }, [head, vault, superId, t, serverBanner]);
 
   // The list: closed by default; a count, or a name in an event line (superJobsStore), opens it.
   const [open, setOpen] = useState<{ section: JobSection | null; row: string | null } | null>(null);

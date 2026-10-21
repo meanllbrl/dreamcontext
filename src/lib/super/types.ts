@@ -582,4 +582,7 @@ export interface SuperStateView extends SuperState {
   /** Each AI Team job on the stage (a `team` card): its status and last line, read now from the
    *  member's thread. Absent when no team card is open. */
   teamLive?: Record<string, { status: TeamJobStatus; lastLine: string }>;
+  /** Queue items whose banner the server posted (lib/super/owner-question.ts): the job bar posts
+   *  no second one. Absent: none. */
+  bannered?: string[];
 }
