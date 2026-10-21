@@ -19,6 +19,7 @@ import * as queue from './chat/chatQueue';
 import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
 import { superEventText } from './super/superHandover';
+import { createChildAlarmGate } from './super/childAlarm';
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -603,10 +604,11 @@ export interface ChatSession {
   /**
    * A child of a handed-over Super Agent (D16): its question raises NO alarm — no chime, no
    * banner, no Dock bounce, no attention badge — because the Super Agent's queue decides what
-   * reaches the owner, and raises the one alarm itself. Set from every `super_state`.
+   * reaches the owner, and raises the one alarm itself. Set from every `super_state`; `null`
+   * while the project's record is not read yet, which holds an ask's alarm (super/childAlarm.ts).
    */
   superChild: boolean;
-  setSuperChild: (on: boolean) => void;
+  setSuperChild: (on: boolean | null) => void;
   /** Called with the composer's text on every keystroke (`syncDraft`). The Super Agent's chat
    *  uses it for the owner-activity lease; the text itself never leaves the window. */
   setDraftListener: (fn: ((text: string) => void) | null) => void;
@@ -1123,6 +1125,15 @@ export function createChatSession(
   /** When the owner last typed in this composer (the Super stage holds new cards meanwhile, G1). */
   let lastTypedAt = 0;
   let disposed = false;
+  // A handed-over Super Agent's child raises nothing; one whose record is not read yet waits.
+  const childAlarm = createChildAlarmGate<Parameters<typeof raiseAskAttention>[0]>({
+    raise: (alarm, deferred) => {
+      if (deferred) applyAndNotify(() => { session.attention = true; });
+      else session.attention = true;
+      raiseAskAttention(alarm);
+    },
+    stillAsking: () => !disposed && conv.pending.some((p) => p.kind === 'question' || p.kind === 'plan'),
+  });
 
   // ── Phone: is this chat on screen (the server's push suppression, D2) ──────────────────
   let onScreen = false;
@@ -1186,7 +1197,10 @@ export function createChatSession(
     hasLiveWork,
     setSuperHandler,
     onSuper,
-    setSuperChild: (on: boolean) => { session.superChild = on; },
+    setSuperChild: (on: boolean | null) => {
+      childAlarm.set(on);
+      session.superChild = childAlarm.child;
+    },
     setDraftListener: (fn) => { draftListener = fn; },
     interrupt,
     bargeInSpeech,
@@ -1262,14 +1276,13 @@ export function createChatSession(
     session.asking = conv.pending.length > 0;
     // A handed-over Super Agent's child is quiet (D16): its queue decides what reaches the
     // owner and raises the ONE alarm itself, so nothing here chimes, banners, bounces or badges.
-    if (!hadAskBefore && !session.superChild) {
-      session.attention = true;
+    if (!hadAskBefore) {
       // Chat is the one surface that can put the actual words in the banner: the ask
       // arrives as structured JSON, so what the notification shows is what the card shows.
       // `source` is this session's own VAULT: it is what the chip strip keys a background
       // project's alarm off, so a title here would silence the wrong project's chip.
       // `sessionId` makes the banner a link to THIS chat tab.
-      raiseAskAttention({ source: vault, detail: askSummary(entry), sessionId: session.claudeId });
+      childAlarm.ask({ source: vault, detail: askSummary(entry), sessionId: session.claudeId });
     }
   }
 
@@ -2832,6 +2845,7 @@ export function createChatSession(
   }
 
   function dispose(): void {
+    childAlarm.dispose();
     if (disposed) return;
     disposed = true;
     // A queued trailing flush would otherwise fire into subscribers whose component is on

@@ -6,7 +6,7 @@ import { requestOpenAgents } from '../../../lib/openAgents';
 import type { SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission, PendingQuestion } from '../chatSession';
 import {
-  OPEN_LATCH, headAlarm, latchClick, latchSeen, optionsFit, permissionSummary, superAnswerPicks, superJobs, type AnswerLatch, type JobLook, type JobSection, type OptionsFit,
+  OPEN_LATCH, headAlarmOnce, latchClick, latchSeen, optionsFit, permissionSummary, superAnswerPicks, superJobs, type AnswerLatch, type JobLook, type JobSection, type OptionsFit,
 } from './superHandover';
 import type { Rect } from './superLayout';
 import { JobList, JOB_SECTIONS } from './JobList';
@@ -35,8 +35,8 @@ import './JobBar.css';
  * — no new privileged route, and the Super Agent's words never caption it. The server resolves
  * the item when the child leaves `asking`.
  *
- * The ONE alarm (D16): when the head CHANGES to an item the owner must answer, the strip raises
- * `raiseAskAttention` once. Children raise nothing themselves while handed over.
+ * The ONE alarm (D16): the first time an item the owner must answer is the head, the strip raises
+ * `raiseAskAttention` once (`headAlarmOnce`: a remount does not ring it again). Children raise nothing themselves while handed over.
  *
  * ONE answer per head item: the first click on Allow, Deny or an option latches that item, so a
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
@@ -124,20 +124,19 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
     return () => { live = false; ro.disconnect(); };
   }, [fitKey, showOptions]);
 
-  const alarmKey = useRef<string | null>(null);
+  const superId = superSession?.claudeId ?? null;
   useEffect(() => {
-    const next = headAlarm(alarmKey.current, head);
-    alarmKey.current = next.key;
-    if (!next.raise || !head) return;
-    // No `sessionId`: the banner brings the PROJECT forward (a link to the Super Agent's own
-    // conversation would open it as a tab, which it never is).
+    if (!head || !headAlarmOnce(vault, head)) return;
+    // The banner names the Super Agent's session: a click opens its stage (AgentSurface's
+    // `linkOpensSuperStage`), where this strip is.
     raiseAskAttention({
       source: vault,
       detail: head.kind === 'permission' ? t('super.queue.permissionAlarm')
         : head.kind === 'approval' ? t('super.queue.approval').replace('{name}', head.member ?? '')
           : (head.ownerText ?? t('super.queue.escalatedAlarm')),
+      sessionId: superId,
     });
-  }, [head, vault, t]);
+  }, [head, vault, superId, t]);
 
   // The list: closed by default; a count, or a name in an event line (superJobsStore), opens it.
   const [open, setOpen] = useState<{ section: JobSection | null; row: string | null } | null>(null);

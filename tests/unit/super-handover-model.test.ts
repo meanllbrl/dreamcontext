@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DELEGATE_MARK_GRACE_MS, OPEN_LATCH, RECAP_AWAY_MS, actionGeneration, adoptionBody, childMarks, delegateArgs,
-  delegateExpired, delegateMarkUntil, elapsedLabel, shownChild, hasOwnKey, headAlarm, homedSessions,
+  delegateExpired, delegateMarkUntil, elapsedLabel, shownChild, hasOwnKey, headAlarmOnce, _resetRaisedHeads, linkOpensSuperStage, presenceChatId, homedSessions,
   isSuperSession, knownEventKind, lastLineOf, latchClick, latchSeen, markedChildren, optionsFit, ownerQueueCount, permissionSummary,
   placeDelegatedChild, queueHead, shouldRecap, superAnswerPicks, superEventOf, superEventText,
   superSendRefusal, superWindowRefusal, terminalTabs, windowTabsFor, type HandoverTab,
@@ -207,17 +207,35 @@ describe('the queue strip\'s head (D7)', () => {
     expect(ownerQueueCount({ queue: [...q, item('f', { kind: 'permission' }), item('g', { state: 'escalated' })] })).toBe(2);
   });
 
-  it('ONE alarm per head: a new owner head raises, the same head re-pushed does not, an empty head resets', () => {
+  it('ONE alarm per item, ever: re-pushed, remounted, or back at the head after another, it rings once (AC6)', () => {
+    _resetRaisedHeads();
     const p = item('p1', { kind: 'permission' });
-    let a = headAlarm(null, p);
-    expect(a).toEqual({ raise: true, key: 'p1' });
-    a = headAlarm(a.key, p);
-    expect(a.raise).toBe(false);
-    a = headAlarm(a.key, item('q9', { state: 'escalated' }));
-    expect(a).toEqual({ raise: true, key: 'q9' });
-    a = headAlarm(a.key, null);
-    expect(a).toEqual({ raise: false, key: null });
-    expect(headAlarm(null, item('q', { state: 'pending' })).raise).toBe(false);
+    expect(headAlarmOnce('acme', p)).toBe(true);
+    // The same head re-pushed, or the strip remounted (a ref would have forgotten): silent.
+    expect(headAlarmOnce('acme', p)).toBe(false);
+    const q = item('q9', { state: 'escalated' });
+    expect(headAlarmOnce('acme', q)).toBe(true);
+    expect(headAlarmOnce('acme', null)).toBe(false);
+    expect(headAlarmOnce('acme', q)).toBe(false);
+    // Another project is its own bucket; a plain question never rings.
+    expect(headAlarmOnce('other', p)).toBe(true);
+    expect(headAlarmOnce('acme', item('q', { state: 'pending' }))).toBe(false);
+  });
+
+  it('the presence report names the super agent while handed over, the focused pane otherwise (AC3)', () => {
+    const base = { expanded: true, isMobile: false, handedOver: true, superSession: 'sup', focusedChat: 'hidden-pane' };
+    expect(presenceChatId(base)).toBe('sup');
+    expect(presenceChatId({ ...base, handedOver: false })).toBe('hidden-pane');
+    expect(presenceChatId({ ...base, expanded: false })).toBe(null);
+    expect(presenceChatId({ ...base, isMobile: true })).toBe(null);
+    expect(presenceChatId({ ...base, handedOver: false, focusedChat: null })).toBe(null);
+  });
+
+  it('a link to the handed-over super agent opens its stage, any other link resumes as before (AC4)', () => {
+    expect(linkOpensSuperStage('sup', { enabled: true, session: 'sup' })).toBe(true);
+    expect(linkOpensSuperStage('child', { enabled: true, session: 'sup' })).toBe(false);
+    expect(linkOpensSuperStage('sup', { enabled: false, session: 'sup' })).toBe(false);
+    expect(linkOpensSuperStage('sup', null)).toBe(false);
   });
 
   it('options at full width or not at all: hide on overflow, back only once the row is as wide as they needed (end review r8)', () => {

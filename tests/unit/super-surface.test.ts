@@ -211,19 +211,34 @@ describe('quiet children (D16, AC6 client half)', () => {
   it('a marked child\'s question raises no chime, banner, bounce or badge', () => {
     const chat = read(`${SLEEPY}/chatSession.ts`);
     const push = chat.slice(chat.indexOf('function pushAsk('), chat.indexOf('function applyZoom('));
-    expect(push).toMatch(/if \(!hadAskBefore && !session\.superChild\) \{[\s\S]*raiseAskAttention/);
+    expect(push).toMatch(/if \(!hadAskBefore\) \{[\s\S]*childAlarm\.ask\(/);
+    expect(push).not.toMatch(/raiseAskAttention\(/);
+    // The gate: a child raises nothing, an unknown one waits (super-child-alarm.test.ts).
+    expect(chat).toMatch(/setSuperChild: \(on: boolean \| null\) => \{\s*childAlarm\.set\(on\);/);
   });
 
   it('children are marked from the record, and on spawn (no window between spawn and the first frame)', () => {
-    expect(surface).toMatch(/cs\.setSuperChild\(markedChildren\(superStateRef\.current\)\.has\(cs\.claudeId\)\)/);
-    expect(surface).toMatch(/\(s as ChatSession\)\.setSuperChild\(set\.has\(s\.claudeId\)\)/);
+    expect(surface).toMatch(/cs\.setSuperChild\(superKnownRef\.current \|\| superStateRef\.current\s*\? markedChildren\(superStateRef\.current\)\.has\(cs\.claudeId\)\s*: null\)/);
+    // The first GET (or no record to read) makes it known and releases what waited.
+    expect(surface).toMatch(/superKnownRef\.current = true;[\s\S]{0,200}setSuperChild\(marked\.has\(s\.claudeId\)\)/);
+    // Until the record is read the effect keeps the alarm waiting, never an early "not a child".
+    expect(surface).toMatch(/const known = superKnownRef\.current \|\| !!superState;[\s\S]{0,200}\(s as ChatSession\)\.setSuperChild\(known \? set\.has\(s\.claudeId\) : null\)/);
   });
 
-  it('the queue strip raises ONE alarm per new owner head, through headAlarm', () => {
+  it('the job bar raises ONE alarm per owner item, through headAlarmOnce, linked to the super agent', () => {
     const strip = read(`${superDir}/JobBar.tsx`);
-    expect(strip).toMatch(/const next = headAlarm\(alarmKey\.current, head\);/);
-    expect(strip).toMatch(/if \(!next\.raise \|\| !head\) return;\s*[\s\S]{0,400}raiseAskAttention\(/);
+    expect(strip).toMatch(/if \(!head \|\| !headAlarmOnce\(vault, head\)\) return;\s*[\s\S]{0,400}raiseAskAttention\(/);
+    expect(strip).toMatch(/const superId = superSession\?\.claudeId \?\? null;/);
+    expect(strip).toMatch(/sessionId: superId,/);
     expect((strip.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
+  });
+
+  it('a link to the super agent opens its stage before any resume (AC4)', () => {
+    const open = surface.slice(surface.indexOf('useInstanceEvent<OpenSessionDetail>(OPEN_SESSION_EVENT'), surface.indexOf('setLinkedSession({ claudeId: detail.claudeId'));
+    // A link that lands before the record waits for it, then re-checks before any resume.
+    expect(surface).toMatch(/const ready = caps !== null && settingsReady && hydratedRef\.current && superKnownRef\.current;/);
+    expect(surface).toMatch(/setLinkedSession\(null\);\s*if \(!isMobile && !isMacPhoneSurface\(\) && linkOpensSuperStage\(claudeId, superStateRef\.current\)\) \{/);
+    expect(open).toMatch(/if \(!isMobile && !isMacPhoneSurface\(\) && linkOpensSuperStage\(detail\.claudeId, superStateRef\.current\)\) \{\s*setSuperView\('super'\);\s*setExpanded\(true\);\s*detail\.accepted = true;\s*return;/);
   });
 
   it('the project chip ignores marked children and counts only the queue head', () => {

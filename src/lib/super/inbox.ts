@@ -366,6 +366,17 @@ export function isSuperEventTurn(sessionId: string): boolean {
   return eventTurns.has(sessionId);
 }
 
+/** The Super Agent escalated a question to the owner in the turn now running (`super queue
+ *  ask`). That turn's end is no separate ping: the queue head already raised the ONE alarm. */
+const escalatedTurns = new Set<string>();
+export function noteSuperEscalation(sessionId: string): void {
+  escalatedTurns.add(sessionId);
+}
+/** Read once, at the turn's end. */
+export function takeSuperEscalation(sessionId: string): boolean {
+  return escalatedTurns.delete(sessionId);
+}
+
 /** Is `sessionId` a vault's super session while that vault is handed over? */
 export function isHandedOverSuperSession(sessionId: string): boolean {
   const root = superRootOfSession(sessionId);
@@ -1143,6 +1154,7 @@ export function _resetSuperInbox(): void {
   turnsEnded.clear();
   openBatch.clear();
   eventTurns.clear();
+  escalatedTurns.clear();
   leases.clear();
   heads.clear();
   pumping.clear();

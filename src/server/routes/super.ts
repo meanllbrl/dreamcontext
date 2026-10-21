@@ -22,7 +22,7 @@ import { getAutomation } from '../../lib/automations/store.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
   containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
-  superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper,
+  superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
 } from '../../lib/super/inbox.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
@@ -855,6 +855,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (batch) { q.batch = batch; noteOwnerBatch(s, batch); }
       }
     });
+    noteSuperEscalation(c.who.sessionId);
     const head = superQueueHead(state);
     ok(res, { item: id, escalated: true, waiting: head?.id !== id });
   },
@@ -923,6 +924,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       noteOwnerBatch(s, batch ?? undefined);
     });
     if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner; wait for his answer'); return; }
+    // Its turn's end is no second ping: the job bar raises the one alarm for the question.
+    noteSuperEscalation(session);
     const head = superQueueHead(state);
     ok(res, { item: id, asked: true, waiting: head?.id !== id });
   },

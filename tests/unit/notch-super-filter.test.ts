@@ -1,7 +1,9 @@
 /**
  * The owner is not pinged about Super Agent children (plan-r7 D16, AC6 server half):
- *  - a handed-over child's finished turn is no notch inbox row, nor is a turn the super inbox
- *    opened; an ordinary chat's still is;
+ *  - a handed-over child's finished turn is no notch inbox row; an ordinary chat's still is;
+ *  - the Super Agent's own reply is news (owner, 2026-10-21): every turn of it, the ones its
+ *    inbox opened too, is a row AND a routable banner unless he is looking at it; with the
+ *    mode off nothing gets a banner;
  *  - the glance leaves children out and carries at most ONE super row per project (its queue
  *    head when that is a permission or an escalation); the rollup counts only that head;
  *  - the Assistant's send/answer/close refuse the super session and its children while handed
@@ -23,16 +25,16 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
-import { FINISH_DEBOUNCE_MS, _resetNotchInbox, listNotchEvents, wireNotchInbox } from '../../src/lib/assistant/notch-inbox.js';
+import { FINISH_DEBOUNCE_MS, _resetNotchInbox, listNotchEvents, setPresence, setSuperFinishBanner, wireNotchInbox } from '../../src/lib/assistant/notch-inbox.js';
 import { SUPER_STATE_REL, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
-import { _resetSuperInbox, markSuperEventTurn, startSuperInbox } from '../../src/lib/super/inbox.js';
+import { _resetSuperInbox, markSuperEventTurn, noteSuperEscalation, startSuperInbox } from '../../src/lib/super/inbox.js';
 import { handleAssistantGlance, handleAssistantRollup, handleAssistantUi } from '../../src/server/routes/assistant.js';
 import { assistantToken, _resetAssistantState } from '../../src/lib/assistant/session-state.js';
 
 let dir: string;
 let root: string;
-const SUPER = 'sup-1';
+const SUPER = 'super-0001';
 const savedDesktop = process.env.DREAMCONTEXT_DESKTOP;
 
 async function makeVault(state: Partial<SuperState> = {}): Promise<void> {
@@ -46,7 +48,9 @@ async function makeVault(state: Partial<SuperState> = {}): Promise<void> {
   await startSuperInbox([root]);
 }
 
-const reg = (sid: string, mode = 'basic'): ChatHandle => registerChat({ sessionId: sid, conversationId: null, vault: 'acme', mode });
+const handles = new Map<string, ChatHandle>();
+const reg = (sid: string, mode = 'basic'): ChatHandle => { const h = registerChat({ sessionId: sid, conversationId: null, vault: 'acme', mode }); handles.set(sid, h); return h; };
+const getHandle = (sid: string): ChatHandle => handles.get(sid)!;
 const finishTurn = (h: ChatHandle) => { h.userSent('go'); h.observe({ type: 'result' }); };
 
 beforeEach(() => {
@@ -90,19 +94,111 @@ describe('the notch inbox', () => {
     expect(ids).toEqual(['ordinary']);
   });
 
-  it('a turn the super inbox opened is no row; the owner\'s own turn with the super agent is', async () => {
+  it('the super agent\'s reply is a row and a banner to its stage, the turn its inbox opened too', async () => {
     await makeVault();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     wireNotchInbox();
+    const banners: Array<[string, string, string | null]> = [];
+    setSuperFinishBanner((t, b, l) => { banners.push([t, b, l]); });
     const sup = reg(SUPER, 'super');
     markSuperEventTurn(SUPER, true);
-    finishTurn(sup);
+    sup.userSent('[super event] c1 finished');
+    sup.observe({ type: 'assistant', message: { content: [{ type: 'text', text: 'Login fix is done, tests pass.' }] } });
+    sup.observe({ type: 'result' });
     vi.advanceTimersByTime(FINISH_DEBOUNCE_MS + 10);
-    expect(listNotchEvents().filter((e) => e.kind === 'finished')).toHaveLength(0);
+    expect(listNotchEvents().filter((e) => e.kind === 'finished').map((e) => (e as { sessionId: string }).sessionId)).toEqual([SUPER]);
+    expect(banners).toHaveLength(1);
+    expect(banners[0][0]).toBe('Super Agent · acme');
+    expect(banners[0][1]).toBe('Login fix is done, tests pass.');
+    expect(banners[0][2]).toBe(`dreamcontext://project/acme/session/${SUPER}`);
+    // The owner's own turn with it is news the same way.
     markSuperEventTurn(SUPER, false);
     finishTurn(sup);
     vi.advanceTimersByTime(FINISH_DEBOUNCE_MS + 10);
+    expect(banners).toHaveLength(2);
+  });
+
+  it('nothing at all while the owner is looking at the super agent', async () => {
+    await makeVault();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    wireNotchInbox();
+    const banners: string[] = [];
+    setSuperFinishBanner((t) => { banners.push(t); });
+    setPresence('vault-acme', 'acme', SUPER);
+    finishTurn(reg(SUPER, 'super'));
+    vi.advanceTimersByTime(FINISH_DEBOUNCE_MS + 10);
+    expect(listNotchEvents().filter((e) => e.kind === 'finished')).toHaveLength(0);
+    expect(banners).toEqual([]);
+    // Focused on the project but on another chat: he is not looking at it.
+    setPresence('vault-acme', 'acme', 'ordinary');
+    finishTurn(getHandle(SUPER));
+    vi.advanceTimersByTime(FINISH_DEBOUNCE_MS + 10);
+    expect(banners).toHaveLength(1);
+  });
+
+  it('the reply stays news when the server opens the next turn at once (no debounce to lose it)', async () => {
+    await makeVault();
+    wireNotchInbox();
+    const banners: string[] = [];
+    setSuperFinishBanner((t, b) => { banners.push(b); });
+    const sup = reg(SUPER, 'super');
+    sup.userSent('which branch is the fix on?');
+    sup.observe({ type: 'assistant', message: { content: [{ type: 'text', text: 'On super/login-fix.' }] } });
+    sup.observe({ type: 'result' });
+    // The queue pump starts an event turn right away.
+    markSuperEventTurn(SUPER, true);
+    sup.userSent('[super event] c1 idle');
+    expect(banners).toEqual(['On super/login-fix.']);
     expect(listNotchEvents().filter((e) => e.kind === 'finished')).toHaveLength(1);
+  });
+
+  it('a turn that escalated a question is no second ping: the queue head raised the one alarm', async () => {
+    await makeVault();
+    wireNotchInbox();
+    const banners: string[] = [];
+    setSuperFinishBanner((t) => { banners.push(t); });
+    const sup = reg(SUPER, 'super');
+    sup.userSent('[super event] c1 asks');
+    noteSuperEscalation(SUPER);
+    sup.observe({ type: 'result' });
+    expect(banners).toEqual([]);
+    expect(listNotchEvents().filter((e) => e.kind === 'finished')).toHaveLength(0);
+    // Read once: the next reply is news again.
+    finishTurn(sup);
+    expect(banners).toHaveLength(1);
+  });
+
+  it('children never: no row and no banner, idle or after a question', async () => {
+    await makeVault({ children: {
+      c1: { sessionId: 'c1', brief: '', adopted: true, startedAt: 1 },
+      d1: { sessionId: 'd1', brief: 'build it', adopted: false, startedAt: 1 },
+    } });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    wireNotchInbox();
+    const banners: string[] = [];
+    setSuperFinishBanner((t) => { banners.push(t); });
+    finishTurn(reg('c1'));
+    const d1 = reg('d1');
+    d1.userSent('go');
+    d1.observe({ type: 'control_request', request_id: 'q-9', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which?' }] } } });
+    d1.observe({ type: 'result' });
+    vi.advanceTimersByTime(FINISH_DEBOUNCE_MS + 10);
+    expect(listNotchEvents().filter((e) => e.kind === 'finished')).toHaveLength(0);
+    expect(banners).toEqual([]);
+  });
+
+  it('mode off: the super session and an ordinary chat are rows as today, and no banner', async () => {
+    await makeVault({ enabled: false });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    wireNotchInbox();
+    const banners: string[] = [];
+    setSuperFinishBanner((t) => { banners.push(t); });
+    finishTurn(reg(SUPER, 'super'));
+    finishTurn(reg('c1'));
+    finishTurn(reg('ordinary'));
+    vi.advanceTimersByTime(FINISH_DEBOUNCE_MS + 10);
+    expect(listNotchEvents().filter((e) => e.kind === 'finished')).toHaveLength(3);
+    expect(banners).toEqual([]);
   });
 });
 
