@@ -87,6 +87,19 @@ export const MODEL_ALIASES: readonly ModelFamilyKey[] = MODEL_FACTS.map((m) => m
 export const SUPER_AGENT_DEFAULT: Readonly<{ model: ModelFamilyKey; effort: ModelEffort }> =
   Object.freeze({ model: 'opus', effort: 'high' });
 
+/**
+ * The effort a Super Agent child opens on when the delegate names none (owner, 2026-10-22: xhigh
+ * is for the few jobs that earn it). Without this the child inherits the owner's own global
+ * setting, often xhigh. By mode: a Plan or Develop child reasons at `high`, a basic one at
+ * `medium`. `xhigh` and `max` are only ever an explicit `--effort`.
+ */
+export const CHILD_DEFAULT_EFFORT: Readonly<Record<'basic' | 'plan' | 'develop', ModelEffort>> =
+  Object.freeze({ basic: 'medium', plan: 'high', develop: 'high' });
+
+export function childDefaultEffort(mode: string): ModelEffort {
+  return CHILD_DEFAULT_EFFORT[mode as keyof typeof CHILD_DEFAULT_EFFORT] ?? 'medium';
+}
+
 export function factForFamily(family: string): ModelFact | undefined {
   return MODEL_FACTS.find((m) => m.family === family);
 }

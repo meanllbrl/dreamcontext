@@ -26,6 +26,7 @@ import {
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
 import { isSuperEventTurn } from '../../lib/super/inbox.js';
+import { childDefaultEffort } from '../../lib/model-facts.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
@@ -336,7 +337,10 @@ function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<s
 /** Start `job` as a child (the cap, the worktree, the window), or keep it in the pool when the
  *  cap holds it. `fromRow` is the pool row it came from: removed in the same write that records
  *  the child, kept on any refusal, marked `maybeStarted` when the window did not confirm. */
-async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, job: Job, fromRow: SuperPoolItem | undefined, succeeds?: string): Promise<void> {
+async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string): Promise<void> {
+  // No effort named: a default by mode, never the owner's global one (often xhigh). It is
+  // recorded on the pool row and the child, so `super state` and `resume` show the real value.
+  const job: Job = jobIn.effort ? jobIn : { ...jobIn, effort: childDefaultEffort(jobIn.mode) };
   // D11: the cap is the ONLY hold on a NEW delegation (calls in flight count too). The
   // machine's facts never hold (owner, 2026-10-21): `super state` shows them as information.
   // No await between the cap check and the in-flight count, or parallel delegates all pass.

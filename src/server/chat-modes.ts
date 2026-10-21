@@ -454,7 +454,8 @@ Name any irreversible or outward action (push, merge, delete, a message sent) in
 
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
-  (\`--mode plan|develop\`, \`--task <slug>\`). Keep your own turns short; end your turn after delegating.
+  (\`--mode plan|develop\`, \`--task <slug>\`; \`--effort xhigh\` only for a contract,
+  hot path, data migration or security job; the default is high, medium in basic). Keep your own turns short; end your turn after delegating.
 - Code work in a linked repo gets its own worktree: \`--worktree <repo> --slug <a-z0-9->\`.
   Combine finished branches with \`dreamcontext super merge <child…> --into <topic>\`. Never
   \`git push\` and never merge into the default branch yourself (the owner does).

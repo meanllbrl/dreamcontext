@@ -13,8 +13,9 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    feature area stays one unit unless there is a clean seam. One unit = one session's work.
 4. **Dependencies.** B depends on A when B consumes A's output (an API, a task, a decision). Wave 1 =
    every unit with no unmet dependency; start them ALL now, in one message of `delegate` calls.
-5. **Per unit** pick mode, model, effort, worktree (§3, §4). Every `delegate` carries `--model` and
-   `--effort`: the server has no fallback, an omitted one runs on the default.
+5. **Per unit** pick mode, model, effort, worktree (§3, §4). Name `--model` and `--effort` on every
+   `delegate`; an omitted effort is set by the server (basic `medium`, plan and develop `high`), never
+   inherited from the owner's own setting. `xhigh` and `max` only when you name them (§3).
 6. **Capacity.** At most 15 live children: the 16th `delegate` answers `held` (reason `cap`) and
    KEEPS the job in the pool (its id in the answer; `--from` starts it when a slot frees). The cap
    is the only limit. `dreamcontext super state` shows `machine` (memory, swap, disk, Claude
@@ -71,10 +72,14 @@ Work type → setting:
 - a small clear fix (1-3 files), docs, brain writes (tasks, knowledge), an insight or a whiteboard →
   `sonnet` / `medium`
 - Develop of a planned task, multi-file refactor, a bug with a repro, tests → `opus` / `high`
-  (`xhigh` on a contract, hot path or migration)
+  (`xhigh` only on a contract, hot path or data migration)
 - Plan of non-trivial work, research synthesis → `opus` / `high`
 - architecture, security, money, data migrations, long-horizon ambiguity, or a unit that already failed
-  once on Opus → `fable` / `high` (`xhigh` when correctness beats cost)
+  once on Opus → `fable` / `high` (`xhigh` only when correctness beats cost)
+
+`xhigh` is for the few jobs that earn it: a contract, a hot path, a data migration, security. Everything
+else runs `high` or `medium`; `max` is the owner's word. No `--effort` = `medium` in basic, `high` in plan
+and develop (the server's default, not the owner's global setting).
 
 Rules: raise effort before switching to a bigger model. After a failure go up ONE tier; never retry the
 same setting. Fable costs 2.5x Opus per token and is slower: only for its row. Reviewers and
