@@ -5,7 +5,7 @@ import { isCrossSiteRequest, isLoopback, requireLocalDesktop } from './agent-spa
 import {
   WINDOW_TOKEN_HEADER, channelFor, identityOf, sendSuperCommand, sendWindowCommand, type WindowIdentity,
 } from '../../lib/window-control.js';
-import { SuperStoreRefused, isReservedId, readSuperState } from '../../lib/super/store.js';
+import { SuperStoreRefused, isReservedId, readSuperState, superRootOfChild } from '../../lib/super/store.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_OWNER_TEXT, MAX_PRESENT, MAX_READ_BYTES,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, applyGroupOp, defaultShape, dissolveGroups, leaveGroups,
@@ -24,7 +24,7 @@ import {
 } from '../../lib/super/worktrees.js';
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
-import { activityOf, getChat } from '../../lib/assistant/chat-registry.js';
+import { activityOf, getChat, onChatChange } from '../../lib/assistant/chat-registry.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
@@ -240,7 +240,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // The largest leftovers on disk (last measurement; the next one runs in the background).
     if (machine && typeof machine === 'object') {
       const left = cachedLeftovers(() => defaultPlaces([dirname(root)]));
-      machine = { ...machine, leftovers: left.top, leftoversMeasuredAt: left.measuredAt };
+      // Folder names under a worktree are a child's to choose: fenced like every child string (D10).
+      const leftovers = left.top.map((r) => ({ ...r, path: wrapUntrusted(vault, r.path) }));
+      machine = { ...machine, leftovers, leftoversMeasuredAt: left.measuredAt };
     }
     // Container titles can be child text (an adopted chat's tab title or last reply): fenced
     // like every other child-derived string (D10).
@@ -271,6 +273,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const succeeds = str(b.succeeds);
     if (succeeds !== undefined && (!SESSION_ID_RE.test(succeeds) || !c.state.children[succeeds] || succeeds === c.state.session)) {
       refuse(res, 404, 'unknown_child', '--succeeds names none of your children (`dreamcontext super state` lists them)');
+      return;
+    }
+    // The owner's own chat is never taken over: its card would move while it keeps running.
+    if (succeeds !== undefined && c.state.children[succeeds].adopted) {
+      refuse(res, 409, 'adopted', 'that is the owner\'s own chat; it hands its work on only when he says so');
       return;
     }
     const title = (brief || (succeeds ? c.state.children[succeeds].brief : '') || firstLine(prompt, 60)).slice(0, MAX_TITLE);
@@ -694,8 +701,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // Only an ENDED child's worktree that git reports merged and clean, and our own old test
     // temp folders. Live children, unmerged or dirty work, Chrome and system files: never.
     const worktrees: Array<{ child: string; worktree: string; branch: string; repoPath: string }> = [];
+    // A tree any child not ended still holds (a successor) is in use, whoever started it.
+    const inUse = new Set(Object.values(c.state.children).filter((x) => x.endedAt === undefined && x.worktree).map((x) => x.worktree as string));
     for (const [sid, ch] of Object.entries(c.state.children)) {
-      if (ch.endedAt === undefined || !ch.worktree || !ch.branch || isLiveChat(sid)) continue;
+      if (ch.endedAt === undefined || !ch.worktree || !ch.branch || isLiveChat(sid) || inUse.has(ch.worktree)) continue;
       const repo = await repoOfWorktree(dirname(root), ch.worktree).catch(() => null);
       if (!repo) continue;
       const st = await worktreeStatus(repo.path, ch.worktree, ch.branch).catch(() => null);
@@ -919,6 +928,36 @@ async function retirePredecessor(c: SuperCaller, sid: string): Promise<{ child: 
   const sent = await sendWindowCommand(c.token, 'send', { tab: sid, text: SUCCESSOR_STOP_TEXT }).catch(() => null);
   const how = sent?.ok ? (sent.result as { delivered?: unknown } | undefined)?.delivered : undefined;
   return { child: sid, ended: false, reason: r.reason, told: typeof how === 'string' ? how : !!sent?.ok };
+}
+
+/**
+ * A succeeded child that was busy at the handoff is ended at its next idle (end review: it was
+ * only warned about). Armed once at boot, beside the outbox.
+ */
+let successionArmed: (() => void) | null = null;
+export function armSuperSuccession(): void {
+  if (successionArmed) return;
+  successionArmed = onChatChange(({ entry, from }) => {
+    if (entry.status !== 'idle' || from === 'idle') return;
+    const root = superRootOfChild(entry.sessionId);
+    if (root) void endSucceededChild(root, entry.sessionId).catch(() => undefined);
+  });
+}
+
+export async function endSucceededChild(contextRoot: string, sid: string): Promise<boolean> {
+  const s = await readSuperState(contextRoot, superSanitizeOpts());
+  const ch = s.children[sid];
+  if (!ch?.succeededBy || ch.endedAt !== undefined || ch.adopted) return false;
+  const outcome = await parkChat(sid, 'super-end', { end: true }).catch((): ParkOutcome => 'refused');
+  if (outcome !== 'parked' && outcome !== 'drained' && outcome !== 'already') return false;
+  await recordEnded(contextRoot, sid);
+  return true;
+}
+
+/** Tests only. */
+export function _resetSuperSuccession(): void {
+  successionArmed?.();
+  successionArmed = null;
 }
 
 /** Record a child ended (the agent's `super end` and the owner's card close share it): its card

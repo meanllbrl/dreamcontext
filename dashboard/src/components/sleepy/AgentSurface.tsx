@@ -1182,6 +1182,7 @@ export function AgentSurface() {
                 id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, dormant: true,
                 ...(kind === 'chat' ? { mode: knownChatMode(m.mode) ?? DEFAULT_CHAT_MODE } : {}),
                 ...(m.agent ? { agent: m.agent } : {}),
+                // The roster keeps no model, effort or account: Resume uses the defaults for those.
                 ...(m.superHold === 'parked' ? { parked: { at: Date.now(), transport: kind === 'chat' ? 'chat' as const : 'agent' as const } } : {}),
                 ...(m.titleByAgent ? { titleByAgent: true } : {}),
               };
@@ -1562,12 +1563,15 @@ export function AgentSurface() {
     // A PARKED tab comes back as what it was (a chat stays a chat, in its mode, on its model,
     // effort and account), never as whatever the Agent screen preference says today.
     // Keyed on the TRANSPORT it ran as, so a parked automation tab (display kind) comes back too.
+    // A super child the relaunch held dormant (superRestore.ts) carries its saved mode and
+    // agent with no `parked`: it too comes back as the chat it was, under its own bypass.
     const parked = meta.parked;
-    if (parked?.transport === 'chat') bindChatAgent(meta.claudeId, meta.agent ?? '');
+    const asChat = parked ? parked.transport === 'chat' : meta.kind === 'chat' && !!meta.mode;
+    if (asChat) bindChatAgent(meta.claudeId, meta.agent ?? '');
     const s = meta.kind === 'shell'
       ? spawn(meta.bypass, undefined, false, 'shell')
-      : parked?.transport === 'chat'
-        ? spawn(meta.bypass, meta.claudeId, true, 'chat', '', parked.model ?? '', true, '', false, parked.effort ?? '', true, meta.mode ?? DEFAULT_CHAT_MODE, parked.account ?? '')
+      : asChat
+        ? spawn(meta.bypass, meta.claudeId, true, 'chat', '', parked?.model ?? '', true, '', false, parked?.effort ?? '', true, meta.mode ?? DEFAULT_CHAT_MODE, parked?.account ?? '')
         : spawn(meta.bypass, meta.claudeId, true, parked ? parked.transport : claudeKind);
     // 'automation' is a DISPLAY kind decoupled from transport (see hydration above and
     // `openAutomationRunChat` below) — preserve it rather than letting the spawned session's

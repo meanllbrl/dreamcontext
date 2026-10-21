@@ -24,7 +24,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox, containerIdFor } from '../../src/lib/super/inbox.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../src/lib/super/succession.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { endSucceededChild, handleSuperVerb } from '../../src/server/routes/super.js';
 import { deliverSuperResult, deliverWindowResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { _resetChatParkForTests, registerParkable, type ParkOutcome } from '../../src/server/chat-park.js';
 
@@ -52,6 +52,14 @@ describe('succeedChild (pure)', () => {
     expect(s.children.nw.brief).toBe('old work');
     expect((s.children.nw as { task?: string }).task).toBe('ship-it');
     expect(s.children.old.succeededBy).toBe('nw');
+  });
+
+  it('the worktree and branch pass on, so clean never takes a tree the successor works in', () => {
+    const s = state();
+    s.children.old.worktree = '/w/app-super-x';
+    s.children.old.branch = 'super/x';
+    succeedChild(s, 'old', 'nw');
+    expect(s.children.nw).toMatchObject({ worktree: '/w/app-super-x', branch: 'super/x' });
   });
 
   it('a brief given to the successor wins and titles the card', () => {
@@ -181,6 +189,34 @@ describe('super delegate --succeeds', () => {
     const st = await verb('state', {});
     const result = st.json.result as { warnings?: Array<{ kind: string; child?: string }> };
     expect(result.warnings).toEqual([expect.objectContaining({ kind: 'succeeded-still-live', child: 'c1' })]);
+  });
+
+  it('a predecessor busy at the handoff is ended at its next idle', async () => {
+    makeVault();
+    let busy = true;
+    registerChat({ sessionId: 'c1', conversationId: null, vault: 'acme', mode: 'basic' });
+    registerParkable({
+      id: 'c1', kind: 'chat', projectRoot: dir, exempt: () => null, busy: () => busy, asking: () => false,
+      backgroundTasks: () => 0, idleSince: () => 0, focusedAt: () => 0, park: async () => 'parked',
+    });
+    await verb('delegate', { prompt: 'continue', succeeds: 'c1' });
+    expect((await readSuperState(root)).children.c1.endedAt).toBeUndefined();
+    busy = false;
+    expect(await endSucceededChild(root, 'c1')).toBe(true);
+    expect(typeof (await readSuperState(root)).children.c1.endedAt).toBe('number');
+    // Not succeeded: never ended this way.
+    expect(await endSucceededChild(root, 'c2')).toBe(false);
+  });
+
+  it('refuses to take over the owner\'s own chat, before any child starts', async () => {
+    makeVault();
+    const raw = JSON.parse(require('node:fs').readFileSync(join(root, SUPER_STATE_REL), 'utf-8'));
+    raw.children.c2.adopted = true;
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(raw));
+    resetSuperIndex();
+    const r = await verb('delegate', { prompt: 'x', succeeds: 'c2' });
+    expect(r.status).toBe(409);
+    expect(frames).toHaveLength(0);
   });
 
   it('refuses a --succeeds that names none of its children, before any child starts', async () => {

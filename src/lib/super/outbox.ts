@@ -15,13 +15,23 @@ import { MAX_READ_BYTES } from './types.js';
  *
  * A `super send` the window answers `queued` is also written here, on this machine
  * (`~/.dreamcontext/super-outbox/<vault hash>.json`, never synced). It leaves the outbox when the
- * child's transcript shows it arrived; until then, at the child's first idle (or the super chat's
- * own, once its window is back) it is sent again through the super chat's window, which gives an
- * idle chat a plain new turn. Nothing is sent twice: a message the transcript already holds,
- * written after it was queued, is dropped instead.
+ * child's transcript shows it arrived. While the server run that queued it lives, the window owns
+ * it; after a relaunch, at the child's first idle (or the super chat's own, once its window is
+ * back) it is sent again through the super chat's window, which gives an idle chat a plain new
+ * turn. Nothing is sent twice: a message the transcript already holds, written after it was
+ * queued, is dropped instead.
  */
 
-export interface OutboxItem { id: string; child: string; text: string; at: number }
+/**
+ * `boot`: the server run that saw the window queue it. While that run lives, the WINDOW owns the
+ * message (its queue drains it, the owner's Stop and delete apply to it): the outbox only watches
+ * for it to arrive. Only an item from an EARLIER run (the app was quit, the window's memory is
+ * gone) is sent from here (end review: two deliverers raced on the same idle edge).
+ */
+export interface OutboxItem { id: string; child: string; text: string; at: number; boot?: string }
+
+/** This server run. */
+export const OUTBOX_BOOT = randomBytes(6).toString('hex');
 
 /** At most this many waiting messages per vault (the oldest drop first). */
 export const MAX_OUTBOX = 50;
@@ -71,10 +81,8 @@ async function updateOutbox(contextRoot: string, fn: (items: OutboxItem[]) => Ou
 
 /** Keep a message the window queued for `child` until it is seen to arrive. */
 export async function addToOutbox(contextRoot: string, child: string, text: string, now = Date.now()): Promise<OutboxItem> {
-  const item: OutboxItem = { id: `o-${now.toString(36)}-${randomBytes(3).toString('hex')}`, child, text, at: now };
+  const item: OutboxItem = { id: `o-${now.toString(36)}-${randomBytes(3).toString('hex')}`, child, text, at: now, boot: OUTBOX_BOOT };
   await updateOutbox(contextRoot, (items) => [...items, item]);
-  waiting.add(resolve(contextRoot));
-  armRetry();
   return item;
 }
 
@@ -95,7 +103,9 @@ export async function arrivedInTranscript(path: string | null, text: string, at:
       const content = (obj.message as { content?: unknown } | undefined)?.content;
       const texts = typeof content === 'string' ? [content]
         : Array.isArray(content) ? (content as Array<Record<string, unknown>>).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text as string) : [];
-      if (texts.some((t) => t.includes(text))) return true;
+      // The message itself (a note may ride in its own block), never a longer line that only
+      // contains it: a short "devam" must not read as arrived inside the owner's own message.
+      if (texts.some((t) => t.trim() === text.trim())) return true;
     }
   } catch { /* unreadable: not seen */ }
   return false;
@@ -103,13 +113,19 @@ export async function arrivedInTranscript(path: string | null, text: string, at:
 
 /** What the pump needs; injectable for tests. */
 export interface OutboxDeps {
+  /** This server run (tests name one). */
+  boot?: string;
   isIdle: (sid: string) => boolean;
+  /** Still a live (not ended, not succeeded) child of this vault's super agent. */
+  isChild: (contextRoot: string, sid: string) => boolean;
   superToken: (contextRoot: string) => string | null;
   transcript: (contextRoot: string, sid: string) => string | null;
   send: (token: string, child: string, text: string) => Promise<string | null>;
 }
 
 const defaultDeps: OutboxDeps = {
+  // The index holds only children not ended (store.ts); a succeeded child is ended too.
+  isChild: (root, sid) => superIndex(root).children.has(sid),
   // A resumed chat sits in `starting` until its first turn: past the grace that reads idle.
   isIdle: (sid) => { const e = getChat(sid); return !!e && activityOf(e) === 'idle'; },
   superToken: (root) => {
@@ -127,9 +143,10 @@ const defaultDeps: OutboxDeps = {
 const pumping = new Set<string>();
 
 /**
- * Deliver what waits for the idle children of `contextRoot` (or only `child`). A message the
- * transcript already shows is dropped; one the window takes as a new turn (`sent`) or into a turn
- * (`steered`) leaves; one it queues again stays until it is seen to arrive.
+ * Deliver what an EARLIER run left for the idle children of `contextRoot` (or only `child`). A
+ * message the transcript already shows, or whose child was ended or replaced, is dropped; one
+ * the window takes as a new turn (`sent`) or into a turn (`steered`) leaves; one it queues again
+ * becomes this run's window's, watched until it is seen to arrive.
  */
 export async function pumpOutbox(contextRoot: string, child?: string, deps: OutboxDeps = defaultDeps): Promise<{ delivered: string[]; dropped: string[] }> {
   const key = resolve(contextRoot);
@@ -140,22 +157,31 @@ export async function pumpOutbox(contextRoot: string, child?: string, deps: Outb
     const items = (await readOutbox(contextRoot)).filter((i) => !child || i.child === child);
     if (!items.length) return out;
     const done = new Set<string>();
+    const adopted = new Set<string>();
+    const boot = deps.boot ?? OUTBOX_BOOT;
     const token = deps.superToken(contextRoot);
     // One message per child per pump: a new turn makes it busy, the next idle sends the next.
     const sentTo = new Set<string>();
     for (const item of items) {
+      // Its child was ended or replaced: the message is for work that has moved on.
+      if (!deps.isChild(contextRoot, item.child)) { done.add(item.id); out.dropped.push(item.id); continue; }
       if (await arrivedInTranscript(deps.transcript(contextRoot, item.child), item.text, item.at)) {
         done.add(item.id); out.dropped.push(item.id);
         continue;
       }
+      // This run's window still holds it in its queue: never a second deliverer.
+      if (item.boot === boot) continue;
       if (!token || sentTo.has(item.child) || !deps.isIdle(item.child)) continue;
       const how = await deps.send(token, item.child, item.text).catch(() => null);
       if (how === 'sent' || how === 'steered') { done.add(item.id); out.delivered.push(item.id); sentTo.add(item.child); }
-      else if (how === 'queued') sentTo.add(item.child);
+      // Queued again: this run's window owns it now.
+      else if (how === 'queued') { adopted.add(item.id); sentTo.add(item.child); }
     }
-    if (done.size) {
-      const left = await updateOutbox(contextRoot, (all) => all.filter((i) => !done.has(i.id)));
-      if (!left.length) waiting.delete(key);
+    if (done.size || adopted.size) {
+      const left = await updateOutbox(contextRoot, (all) => all
+        .filter((i) => !done.has(i.id))
+        .map((i) => (adopted.has(i.id) ? { ...i, boot } : i)));
+      if (!left.some((i) => i.boot !== boot)) waiting.delete(key);
     }
     return out;
   } finally {
@@ -185,7 +211,7 @@ async function recoverWaiting(): Promise<void> {
   try { files = (await fsp.readdir(outboxDir())).filter((f) => f.endsWith('.json')); } catch { return; }
   for (const f of files) {
     const { root, items } = await readOutboxFile(join(outboxDir(), f));
-    if (root && items.length) waiting.add(root);
+    if (root && items.some((i) => i.boot !== OUTBOX_BOOT)) waiting.add(root);
   }
   armRetry();
 }

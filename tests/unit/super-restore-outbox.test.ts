@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { superRestoreHold } from '../../src/lib/super/restore.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { superRestorePlan } from '../../dashboard/src/components/sleepy/superRestore';
-import { _resetSuperOutbox, addToOutbox, arrivedInTranscript, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
+import { OUTBOX_BOOT, _resetSuperOutbox, addToOutbox, arrivedInTranscript, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
 import { _resetChatParkForTests, parkChat, parkedSince, registerParkable } from '../../src/server/chat-park.js';
 
 const child = (sid: string, extra: Record<string, unknown> = {}) => ({ sessionId: sid, brief: sid, adopted: false, startedAt: 1, ...extra });
@@ -102,7 +102,10 @@ describe('the super send outbox', () => {
   const deps = (o: Partial<OutboxDeps> & { idle?: Set<string> } = {}) => {
     const sent: Array<[string, string]> = [];
     const d: OutboxDeps = {
+      // The run after a relaunch: what the earlier run queued is the outbox's to send.
+      boot: 'later-run',
       isIdle: (sid) => o.idle?.has(sid) ?? true,
+      isChild: () => true,
       superToken: () => 'tok',
       transcript: () => transcript,
       send: async (_t, child, text) => { sent.push([child, text]); return 'sent'; },
@@ -123,6 +126,29 @@ describe('the super send outbox', () => {
     expect(await readOutbox(root)).toEqual([]);
     await pumpOutbox(root, undefined, idle.d);
     expect(idle.sent).toHaveLength(1);
+  });
+
+  it('while the run that queued it lives, the window owns it: never sent from here (no double delivery)', async () => {
+    const item = await addToOutbox(root, 'c1', 'merge it');
+    expect(item.boot).toBe(OUTBOX_BOOT);
+    const { d, sent } = deps({ boot: OUTBOX_BOOT });
+    await pumpOutbox(root, undefined, d);
+    expect(sent).toEqual([]);
+    expect(await readOutbox(root)).toHaveLength(1);
+  });
+
+  it('queued again after a relaunch: this run\'s window owns it, it is not sent a second time', async () => {
+    await addToOutbox(root, 'c1', 'merge it');
+    const { d, sent } = deps({ send: async (_t, child, text) => { sent.push([child, text]); return 'queued'; } });
+    await pumpOutbox(root, undefined, d);
+    await pumpOutbox(root, undefined, d);
+    expect(sent).toHaveLength(1);
+    expect((await readOutbox(root))[0].boot).toBe('later-run');
+  });
+
+  it('a short message does not read as arrived inside a longer owner line', async () => {
+    writeFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: new Date(2000).toISOString(), message: { content: 'devam etme, bekle' } })}\n`);
+    expect(await arrivedInTranscript(transcript, 'devam', 1000)).toBe(false);
   });
 
   it('a message the transcript already shows (the window delivered it) is dropped, not resent', async () => {
@@ -146,10 +172,28 @@ describe('the super send outbox', () => {
     expect((await readOutbox(root)).map((i) => i.text)).toEqual(['second']);
   });
 
+  it('a message for a child that was ended or replaced is dropped, never delivered', async () => {
+    const item = await addToOutbox(root, 'gone-child', 'carry on');
+    const { d, sent } = deps({ isChild: (_r, sid) => sid !== 'gone-child' });
+    expect((await pumpOutbox(root, undefined, d)).dropped).toEqual([item.id]);
+    expect(sent).toEqual([]);
+    expect(await readOutbox(root)).toEqual([]);
+  });
+
   it('arrivedInTranscript ignores what was written before the message was queued', async () => {
     writeFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: new Date(10).toISOString(), message: { content: 'hello' } })}\n`);
     expect(await arrivedInTranscript(transcript, 'hello', 1000)).toBe(false);
     expect(await arrivedInTranscript(transcript, 'hello', 5)).toBe(true);
     expect(await arrivedInTranscript(null, 'hello', 5)).toBe(false);
+  });
+});
+
+describe('Resume on a dormant super child (AgentSurface.tsx, checked against the source)', () => {
+  // AgentSurface is a React module root vitest cannot load; the rule is held by the source.
+  const src = require('node:fs').readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/AgentSurface.tsx'), 'utf-8') as string;
+  it('a dormant chat with a saved mode comes back as that chat, its agent bound, under its own bypass', () => {
+    expect(src).toContain("const asChat = parked ? parked.transport === 'chat' : meta.kind === 'chat' && !!meta.mode;");
+    expect(src).toMatch(/if \(asChat\) bindChatAgent\(meta\.claudeId, meta\.agent \?\? ''\);/);
+    expect(src).toMatch(/: asChat\s*\n\s*\? spawn\(meta\.bypass, meta\.claudeId, true, 'chat', '', parked\?\.model \?\? '', true, '', false, parked\?\.effort \?\? '', true, meta\.mode \?\? DEFAULT_CHAT_MODE/);
   });
 });

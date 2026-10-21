@@ -96,6 +96,8 @@ function replyBlocks(line: string): { id: string | null; text: string; at: strin
   let obj: Record<string, unknown>;
   try { obj = JSON.parse(line) as Record<string, unknown>; } catch { return null; }
   if (obj.type !== 'assistant' || obj.isSidechain === true) return null;
+  // A usage-limit or API-error banner is the CLI's, not the child's reply (end review).
+  if (obj.isApiErrorMessage === true || (obj.message as { model?: unknown } | undefined)?.model === '<synthetic>') return { id: null, text: '', at: null };
   const msg = obj.message as { id?: unknown; content?: unknown } | undefined;
   const id = typeof msg?.id === 'string' ? msg.id : null;
   const at = typeof obj.timestamp === 'string' ? obj.timestamp : null;

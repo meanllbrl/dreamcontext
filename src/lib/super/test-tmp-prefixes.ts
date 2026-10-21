@@ -340,6 +340,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-setup-machine-',
   'dc-sharing-',
   'dc-shrinkwrap-',
+  'dc-signed-out-home-',
   'dc-sleep-automations-home-',
   'dc-sleep-reg-',
   'dc-sleep360-',

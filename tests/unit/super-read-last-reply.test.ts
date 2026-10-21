@@ -56,6 +56,15 @@ describe('readLastReply', () => {
     expect((await readLastReply(f)).text).toBe('only one');
   });
 
+  it('a usage-limit or API-error banner is not the reply: the one before it is', async () => {
+    const f = join(dir, 'limit.jsonl');
+    writeFileSync(f, [
+      line({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Real answer.' }] } }),
+      line({ type: 'assistant', isApiErrorMessage: true, message: { id: 'm2', model: '<synthetic>', content: [{ type: 'text', text: 'You\'ve hit your session limit' }] } }),
+    ].join(''));
+    expect((await readLastReply(f)).text).toBe('Real answer.');
+  });
+
   it('answers empty when no reply exists yet', async () => {
     const f = join(dir, 'none.jsonl');
     writeFileSync(f, line({ type: 'user', message: { content: 'hello' } }));

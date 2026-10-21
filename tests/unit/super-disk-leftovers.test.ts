@@ -152,7 +152,11 @@ describe('super clean', () => {
     const kid = (sid: string, w: { path: string; branch: string }, ended: boolean) => ({ sessionId: sid, brief: sid, adopted: false, startedAt: 1, worktree: w.path, branch: w.branch, ...(ended ? { endedAt: 2 } : {}) });
     writeFileSync(join(root, store.SUPER_STATE_REL), JSON.stringify({
       v: 1, session: 'sup-1', enabled: true, containers: [], queue: [], notes: {}, away: { since: null, events: 0 },
-      children: { a: kid('a', merged, true), b: kid('b', unmerged, true), c: kid('c', live, false) },
+      children: {
+        a: kid('a', merged, true), b: kid('b', unmerged, true), c: kid('c', live, false),
+        // Ended and merged, but its successor works in the same tree: in use, kept.
+        d: kid('d', live, true),
+      },
     }));
     const token = wc.mintWindowToken({ send: () => true, vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super' }).token;
     const call = async (body: unknown) => {
@@ -182,5 +186,13 @@ describe('super clean', () => {
     const s = await store.readSuperState(root);
     expect(s.children.a.worktree).toBeUndefined();
     expect(s.children.b.worktree).toBe(unmerged.path);
+  });
+});
+
+describe('super state fences leftover paths (D10)', () => {
+  it('a folder name a child chose reaches the super agent fenced', () => {
+    const src = readFileSync(resolve(__dirname, '../../src/server/routes/super.ts'), 'utf-8');
+    expect(src).toContain('const leftovers = left.top.map((r) => ({ ...r, path: wrapUntrusted(vault, r.path) }));');
+    expect(src).not.toContain('leftovers: left.top,');
   });
 });

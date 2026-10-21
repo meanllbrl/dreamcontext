@@ -6,8 +6,9 @@ import type { SuperChild, SuperState } from './types.js';
  * two sessions edited one task, and the super forgot the old child's card).
  *
  * `super delegate --succeeds <old>` makes the new child the old one's SUCCESSOR: the old card
- * becomes the new child's (same place, group and view slot), the brief and the task link pass
- * on, and the old child is marked `succeededBy` and ended. While it still runs, `super state`
+ * becomes the new child's (same place, group and view slot), the brief, the task link and the
+ * worktree pass on, and the old child is marked `succeededBy` and ended (a busy one at its next
+ * idle). While it still runs, `super state`
  * says so, and it says so too when two live children hold one task.
  */
 
@@ -30,6 +31,9 @@ export function succeedChild(s: SuperState, from: string, to: string, opts: { br
   if (!opts.brief && old.brief) next.brief = old.brief;
   const task = taskOf(old);
   if (task && !taskOf(next)) (next as SuperChild & { task?: string }).task = task;
+  // The work's worktree and branch are the successor's now: `super clean` must never take a
+  // tree it works in, and `super merge` finds the branch under it.
+  if (old.worktree && old.branch && !next.worktree) { next.worktree = old.worktree; next.branch = old.branch; }
   old.succeededBy = to;
 
   const card = s.containers.find((k) => k.kind === 'chat' && k.ref === from);

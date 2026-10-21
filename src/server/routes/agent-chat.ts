@@ -2766,7 +2766,7 @@ export function startChatSession(
       else if (!obj.parent_tool_use_id && isAuthFailureFrame(obj)) onAuthFailed();
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
       // A turn that went through says the account is signed in again (claude-signed-out.ts).
-      if (obj.type === 'result' && obj.parent_tool_use_id === undefined) {
+      if (obj.type === 'result' && !obj.parent_tool_use_id) {
         if (!authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
         authFailedTurn = false;
       }
