@@ -172,8 +172,9 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     }
     out[key] = child;
   }
-  // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record.
-  const ended = Object.values(out).filter((c) => c.endedAt !== undefined).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+  // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that
+  // still owns a worktree always stays (`super merge` and `worktree remove` reach it by child).
+  const ended = Object.values(out).filter((c) => c.endedAt !== undefined && !c.worktree).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
   for (const c of ended.slice(MAX_ENDED_CHILDREN)) delete out[c.sessionId];
   return out;
 }
@@ -352,6 +353,8 @@ interface IndexEntry {
   session: string | null;
   enabled: boolean;
   children: Set<string>;
+  /** Children `super end` closed: a NEW process of one is the owner reopening it. */
+  ended: Set<string>;
   notes: Map<string, SuperNote>;
 }
 
@@ -376,6 +379,7 @@ function indexState(key: string, state: SuperState): void {
     enabled: state.enabled,
     // An ended child is history, not a child: no events, the notch shows it if reopened.
     children: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined)),
+    ended: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt !== undefined)),
     notes,
   });
 }
@@ -431,6 +435,12 @@ export function isSuperChild(sessionId: string): boolean {
 /** The context root that has `sessionId` as a recorded child (handed over or not), or null. */
 export function superRootOfChild(sessionId: string): string | null {
   for (const [root, e] of index) if (e.children.has(sessionId)) return root;
+  return null;
+}
+
+/** The vault whose record names `sessionId` an ENDED child, or null. */
+export function superRootOfEnded(sessionId: string): string | null {
+  for (const [root, e] of index) if (e.ended.has(sessionId)) return root;
   return null;
 }
 

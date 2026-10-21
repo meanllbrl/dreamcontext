@@ -78,7 +78,7 @@ import { clearSuperNote, peekSuperNote, superIndex, superRootOfChild } from '../
 import { SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
 import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, stashHeldOwnerTexts, superSocketAttached, superTurnEnded, takeHeldOwnerTexts,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, stashHeldOwnerTexts, superSocketAttached, superTurnEnded, takeHeldOwnerTexts,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -1883,6 +1883,8 @@ export function startChatSession(
     ...(delegated ? { origin: 'assistant' as const } : {}),
     seed,
   });
+  // An ended Super Agent child running again without `super resume`: the owner reopened it.
+  if (registry) void noteChatStarted(chatRegistryId);
   let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
   // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
   let detachInbox = () => { /* not the Assistant */ };

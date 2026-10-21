@@ -58,6 +58,8 @@ export interface SuperCardActions {
   /** A CHILD CHAT card's close: end its session (`whenDone`: once its turn ends), the same end
    *  `super end` does. Other cards close at once (`onClose`). */
   onEndSession: (id: string, whenDone: boolean) => void;
+  /** "Move to Others" from that choice: the child keeps running (a pending end is dropped). */
+  onKeepRunning: (id: string) => void;
   onMinimize: (id: string) => void;
   onLoadWeb: (id: string) => void;
   onOpenPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
@@ -85,6 +87,8 @@ export interface SuperContainerProps extends SuperCardActions {
   dropTarget?: boolean;
   /** The owner chose "end when done" for this child: it closes when its turn ends. */
   endPending?: boolean;
+  /** The server did not record this child's end: it still runs, and the card says so. */
+  endFailed?: boolean;
 }
 
 /**
@@ -169,13 +173,16 @@ export function SuperContainer(props: SuperContainerProps) {
             {childBusy ? t('super.close.endWhenDone') : t('super.close.end')}
           </button>
           <button type="button" className="super-close-choice-btn" data-testid="super-close-others"
-            onClick={() => { setCloseAsk(false); props.onToOthers(c.id); }}>
+            onClick={() => { setCloseAsk(false); props.onKeepRunning(c.id); props.onToOthers(c.id); }}>
             {t('super.close.toOthers')}
           </button>
         </div>
       )}
       {props.endPending && !closeAsk && (
         <span className="super-close-pending" data-testid="super-close-pending">{t('super.close.pending')}</span>
+      )}
+      {props.endFailed && !props.endPending && !closeAsk && (
+        <span className="super-close-pending super-close-pending--failed" role="alert" data-testid="super-close-failed">{t('super.close.failed')}</span>
       )}
     </div>
   );

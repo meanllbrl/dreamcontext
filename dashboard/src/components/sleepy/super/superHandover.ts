@@ -341,6 +341,10 @@ export function homedSessions(opts: {
 
 export type SuperCaller = 'super' | 'child' | 'other';
 
+/** The window verbs the Super Agent's own verbs travel as (`super send`, `super update`), each
+ *  into one tab that must be a marked child. */
+export const SUPER_CHILD_VERBS = ['send', 'model', 'effort', 'mode'] as const;
+
 /**
  * Refuse a window verb the server already refuses, in the browser too: the Super Agent drives
  * the screen with `dreamcontext super`, never `dreamcontext window`; a child may not open or
@@ -353,21 +357,23 @@ export function superWindowRefusal(
   send?: { target: SuperSendTarget | null; superSession: string | null; children: ReadonlySet<string> },
 ): string | null {
   if (caller === 'super') {
-    // `super send <child>` arrives as `window send` down the Super Agent's own socket; it is the
-    // ONE window verb it may run, and only into one of its marked children.
-    if (verb !== 'send') return 'the Super Agent drives the screen with `dreamcontext super`';
+    // `super send <child>` arrives as `window send`, and `super update <child>` as `window
+    // model|effort|mode`, down the Super Agent's own socket: the only window verbs it may run,
+    // and only into one of its marked children.
+    if (!(SUPER_CHILD_VERBS as readonly string[]).includes(verb)) return 'the Super Agent drives the screen with `dreamcontext super`';
     return superSendRefusal(send?.target ?? null, send?.superSession ?? null, send?.children ?? new Set());
   }
   if (caller === 'child' && handedOver && (verb === 'new' || verb === 'split')) return 'a Super Agent child cannot open chats';
   return null;
 }
 
-/** The tab a `send` names, as the window knows it: its internal sid, the pin id its roster entry
- *  holds, and the conversation id its LIVE session runs (null when nothing is running). */
+/** The tab a `send` (or an `update` verb) names, as the window knows it: its internal sid, the
+ *  pin id its roster entry holds, and the conversation id its LIVE session runs (null when
+ *  nothing is running). */
 export interface SuperSendTarget { sid: string; pin: string; conversation: string | null }
 
 /**
- * Re-check a Super Agent `send` (the server already did): the target must resolve to a tab
+ * Re-check a Super Agent `send` or `update` verb (the server already did): the target must resolve to a tab
  * whose sid, pin id and live conversation id all agree, that is a MARKED child (so the mode is
  * on), and that is never the Super Agent itself. Returns the refusal, or null.
  */

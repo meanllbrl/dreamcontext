@@ -18,7 +18,22 @@
  *       card; "End session" ends it (process exits, card gone); a BUSY child offers "End when
  *       done", shows the pending chip, and closes when its turn ends.
  *   E5  a non-chat card (a task) closes at once, with no question.
- *   Screenshots of the choice at 1280 and 1920 px; no console errors.
+ *   U1  `super update <child> --model --effort --mode` → the child's process gets the live
+ *       `set_model` request and the `/effort` frame, then restarts `--resume`ing the same
+ *       conversation in the new mode with the new model; its card stays; the record has all three.
+ *   U2  the owner's own (adopted) chat is refused without --force; the super's raw `window model`
+ *       into a child is refused (`super update` is the one path).
+ *   A1  the owner reopens a past conversation from Past chats (⌘⇧O) mid-hand-over: it runs as a
+ *       hidden tab, no child. `super adopt <it>` is refused without --force (his own chat); with
+ *       --force its card comes and the record names it an adopted child.
+ *   R1  (end review round 1) "Move to Others" after "End when done" drops the pending end: the
+ *       busy child finishes its turn and keeps running. A failed record (the end route answers
+ *       500) leaves the chat running and the card says so. The owner ends his own adopted chat
+ *       from its card. An image card closes at once. No `gone` turn reaches the super for an
+ *       ended child. An ended child he reopens from Past chats is his adopted child again: its
+ *       card comes back.
+ *   Screenshots of the choice at 1280 and 1920 px, of the update, the failed end, the adopted card
+ *   and the reopened child; no console errors.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -36,6 +51,12 @@ const PROJ = join(SCRATCH, 'acme-app');
 const CLI = join(REPO, 'dist', 'index.js');
 const OUT = join(REPO, 'tmp', 'verify-super-end');
 const REPORTS = join(SCRATCH, 'reports.ndjson');
+/** A conversation the project had before (on disk only), for Past chats → `super adopt`. */
+const PAST_ID = '7a1c0de5-0000-4000-8000-00000000a11d';
+const PAST_TITLE = 'Pricing page copy review';
+/** Claude's own folder for this project's transcripts (Past chats reads it). */
+const SLUG_DIR = () => join(HOME, '.claude', 'projects', PROJ.replace(/[^A-Za-z0-9]/g, '-'));
+const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const RECORD = join(PROJ, '_dream_context', 'state', '.super-agent.json');
 const ENGINES = (process.env.ENGINES || 'chromium,webkit').split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -52,7 +73,7 @@ let brief = '';
 try { brief = readFileSync(at('--append-system-prompt-file'), 'utf-8'); } catch {}
 const role = /(^|\\n)# Mode: Super Agent\\s*\\n/.test(brief) ? 'super' : 'child';
 const report = (o) => appendFileSync(${JSON.stringify(REPORTS)}, JSON.stringify({ role, convo, pid: process.pid, t: Date.now(), ...o }) + '\\n');
-report({ kind: 'spawn', resume: at('--resume') });
+report({ kind: 'spawn', resume: at('--resume'), model: at('--model'), modeHead: (brief.match(/^# Mode: ([^\\n]+)/m) || [])[1] || '' });
 process.on('exit', () => report({ kind: 'exit' }));
 const cli = (...args) => {
   const r = spawnSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(CLI)}, ...args], { env: process.env, encoding: 'utf-8', timeout: 60000 });
@@ -61,7 +82,7 @@ const cli = (...args) => {
 };
 function persist(text) {
   if (!/^[0-9a-f-]{36}$/.test(convo)) return;
-  const dir = join(process.env.HOME, '.claude', 'projects', 'verify-super-end');
+  const dir = ${JSON.stringify(join(HOME, '.claude', 'projects', PROJ.replace(/[^A-Za-z0-9]/g, '-')))};
   mkdirSync(dir, { recursive: true });
   appendFileSync(join(dir, convo + '.jsonl'), JSON.stringify({ type: 'user', sessionId: convo, message: { role: 'user', content: text } }) + '\\n');
 }
@@ -73,14 +94,24 @@ async function superTurn(text) {
     const adopted = Object.keys(steps[0].json?.children ?? {});
     for (const n of ['one', 'two', 'three']) steps.push(cli('super', 'delegate', '--prompt', 'CHILD ' + n, '--brief', 'Child ' + n));
     steps.push(cli('super', 'open', 'task', 'fix-the-login-form'));
+    steps.push(cli('super', 'open', 'image', 'docs/shot.png'));
     report({ kind: 'handover', adopted, steps });
     return 'arranged';
   }
-  if (text.startsWith('[super')) return 'noted';
-  const m = text.match(/GO-(END|RESUME|BUSY|OWNEND)\\s*(\\S*)/);
+  if (text.startsWith('[super')) { report({ kind: 'event', text: text.slice(0, 300) }); return 'noted'; }
+  const m = text.match(/GO-(END|RESUME|BUSY|OWNEND|UPDATE|ADOPT)\\s*(\\S*)\\s*(\\S*)/);
   if (m) {
-    const [, verb, a] = m;
+    const [, verb, a, b] = m;
     const steps = [];
+    if (verb === 'UPDATE') {
+      steps.push(cli('super', 'update', a, '--model', 'haiku', '--effort', 'low', '--mode', 'plan'));
+      if (b) steps.push(cli('super', 'update', b, '--model', 'haiku'));
+      steps.push(cli('window', 'model', 'haiku', '--tab', a));
+    }
+    if (verb === 'ADOPT') {
+      steps.push(cli('super', 'adopt', a));
+      steps.push(cli('super', 'adopt', a, '--force', '--brief', 'Pricing copy'));
+    }
     if (verb === 'END') steps.push(cli('super', 'end', a));
     if (verb === 'OWNEND') steps.push(cli('super', 'end', a));
     if (verb === 'RESUME') steps.push(cli('super', 'resume', a));
@@ -119,11 +150,16 @@ process.stdin.on('data', (c) => {
     const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
     if (!line) continue;
     let o; try { o = JSON.parse(line); } catch { continue; }
-    if (o.type === 'control_request') { out({ type: 'control_response', response: { subtype: 'success', request_id: o.request_id, response: {} } }); continue; }
+    if (o.type === 'control_request') {
+      if (o.request && o.request.subtype === 'set_model') report({ kind: 'set_model', model: o.request.model });
+      out({ type: 'control_response', response: { subtype: 'success', request_id: o.request_id, response: {} } });
+      continue;
+    }
     if (o.type !== 'user') continue;
     const content = (o.message && o.message.content) || [];
     const blocks = typeof content === 'string' ? [content] : content.filter((b) => b.type === 'text').map((b) => b.text);
     if (!blocks.length) continue;
+    if (/^\\/effort /.test(blocks[0])) report({ kind: 'effort', text: blocks[0] });
     chain = chain.then(() => turn(blocks));
   }
 });
@@ -149,6 +185,16 @@ function setupScratch() {
     superAgent: true,
   }, null, 2)}\n`);
   spawnSync('git', ['-C', PROJ, 'init', '-q'], { encoding: 'utf-8' });
+  mkdirSync(join(PROJ, 'docs'), { recursive: true });
+  writeFileSync(join(PROJ, 'docs', 'shot.png'), Buffer.from(PNG_1PX, 'base64'));
+  // A conversation the project had before this run, on disk only (Past chats lists it).
+  const past = SLUG_DIR();
+  mkdirSync(past, { recursive: true });
+  const ts = new Date(Date.now() - 3600_000).toISOString();
+  writeFileSync(join(past, `${PAST_ID}.jsonl`), [
+    { type: 'user', cwd: PROJ, sessionId: PAST_ID, timestamp: ts, uuid: 'u-1', message: { role: 'user', content: PAST_TITLE } },
+    { type: 'assistant', cwd: PROJ, sessionId: PAST_ID, timestamp: ts, uuid: 'a-1', message: { role: 'assistant', content: [{ type: 'text', text: 'Reviewed.' }] } },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
   const bin = join(HOME, '.local', 'bin', 'claude');
   writeFileSync(bin, STANDIN);
   chmodSync(bin, 0o755);
@@ -229,7 +275,14 @@ async function run(engineName, base) {
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const page = await context.newPage();
   const errors = [];
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  // The R1 failed-end step answers the end route 500 on purpose: the browser's own log of that
+  // one response is expected while the fake route stands, and nothing else is.
+  let faking500 = false;
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    if (faking500 && /status of 500/.test(m.text())) return;
+    errors.push(m.text());
+  });
   page.on('pageerror', (e) => errors.push(String(e)));
   const tag = (s) => `[${engineName}] ${s}`;
 
@@ -284,6 +337,30 @@ async function run(engineName, base) {
   ok(tag('E3 a new process --resumes the same conversation'), await until(page, async () => reports().some((r) => r.kind === 'spawn' && r.resume === c1), 15000));
   ok(tag('E3 its card is back'), await until(page, async () => (await card(page, c1).count()) === 1, 10000));
 
+  console.log(`── ${engineName}: super update`);
+  await until(page, async () => (await card(page, c1).getAttribute('data-status')) === 'idle', 15000);
+  const before = reports().filter((r) => r.kind === 'spawn' && r.convo === c1).map((r) => r.pid);
+  await sayToSuper(page, `GO-UPDATE ${c1} ${own ?? ''}`);
+  ok(tag('U1 super update answered ok'), await until(page, async () => reports().some((r) => r.kind === 'owner-update'), 45000)
+    && reports().find((r) => r.kind === 'owner-update').steps[0].status === 0, JSON.stringify(reports().find((r) => r.kind === 'owner-update')?.steps?.map((x) => x.out.slice(0, 300))));
+  const live1 = before[before.length - 1];
+  ok(tag('U1 the running child got the live set_model haiku'), reports().some((r) => r.kind === 'set_model' && r.pid === live1 && r.model === 'haiku'));
+  ok(tag('U1 …and the /effort low frame'), reports().some((r) => r.kind === 'effort' && r.pid === live1 && r.text === '/effort low'));
+  ok(tag('U1 it restarted on the same conversation in Plan mode with the new model'), await until(page, async () => reports().some((r) => r.kind === 'spawn'
+    && r.convo === c1 && !before.includes(r.pid) && r.resume === c1 && r.modeHead === 'Plan' && r.model === 'haiku'), 20000),
+  JSON.stringify(reports().filter((r) => r.kind === 'spawn' && r.convo === c1)));
+  ok(tag('U1 …the old process exited, its card stayed'), exited(c1) === false && before.every((p) => reports().some((r) => r.kind === 'exit' && r.pid === p))
+    && (await card(page, c1).count()) === 1);
+  ok(tag('U1 the record has mode, model and effort'), await until(page, async () => {
+    const ch = record().children?.[c1];
+    return ch?.mode === 'plan' && ch?.model === 'haiku' && ch?.effort === 'low';
+  }, 5000), JSON.stringify(record().children?.[c1]));
+  await page.screenshot({ path: join(OUT, `${engineName}-update.png`) });
+  const upd = reports().find((r) => r.kind === 'owner-update');
+  if (own) ok(tag('U2 the owner\'s own chat is refused without --force'), upd.steps[1].status !== 0 && /adopted/.test(upd.steps[1].out), upd.steps[1].out);
+  const raw = upd.steps[upd.steps.length - 1];
+  ok(tag('U2 the super\'s raw `window model` into a child is refused'), raw.status !== 0 && /super update/.test(raw.out), raw.out);
+
   console.log(`── ${engineName}: the owner's close`);
   await until(page, async () => (await card(page, c2).count()) === 1, 10000);
   await clickClose(page, c2);
@@ -296,10 +373,23 @@ async function run(engineName, base) {
   }
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.waitForTimeout(800);
-  if (!(await page.getByTestId('super-close-choice').count())) await clickClose(page, c2);
+  // The x toggles the choice shut (Escape would also fold the chat surface).
+  if (await page.getByTestId('super-close-choice').count()) await clickClose(page, c2);
+  await until(page, async () => (await page.getByTestId('super-close-choice').count()) === 0, 3000);
+  // R1: "End when done", then "Move to Others" before the turn ends: the owner's last word wins.
+  const busyBefore = reports().filter((r) => r.kind === 'busy-done').length;
+  await sayToSuper(page, `GO-BUSY ${c2}`);
+  await until(page, async () => (await card(page, c2).getAttribute('data-status')) === 'working', 15000);
+  await clickClose(page, c2);
+  await page.getByTestId('super-close-end').click();
+  ok(tag('R1 "End when done" shows the pending chip'), await until(page, async () => (await card(page, c2).getByTestId('super-close-pending').count()) === 1, 5000));
+  await clickClose(page, c2);
   await page.getByTestId('super-close-others').click();
   ok(tag('E4 "Move to Others" stacks the card'), await until(page, async () => record().containers.some((k) => k.ref === c2 && k.place === 'others'), 8000));
-  ok(tag('…and the child keeps running'), alive(c2) && !exited(c2));
+  ok(tag('R1 …and drops the pending end'), (await page.getByTestId('super-close-pending').count()) === 0);
+  ok(tag('R1 the busy child finishes its turn'), await until(page, async () => reports().filter((r) => r.kind === 'busy-done').length > busyBefore, 20000));
+  await page.waitForTimeout(3000);
+  ok(tag('…and the child keeps running, not ended'), alive(c2) && !exited(c2) && record().children?.[c2]?.endedAt === undefined);
 
   await sayToSuper(page, `GO-BUSY ${c3}`);
   await until(page, async () => (await card(page, c3).getAttribute('data-status')) === 'working', 15000);
@@ -322,6 +412,76 @@ async function run(engineName, base) {
   await task.locator('[data-testid="super-card-close"]').click();
   ok(tag('E5 a task card closes at once, no question'), await until(page, async () => (await task.count()) === 0, 5000)
     && (await page.getByTestId('super-close-choice').count()) === 0);
+  const image = page.locator('[data-testid="super-container"][data-kind="image"]');
+  ok(tag('R1 the image card is on the stage'), await until(page, async () => (await image.count()) === 1, 5000));
+  await image.hover();
+  await image.locator('[data-testid="super-card-close"]').click();
+  ok(tag('R1 an image card closes at once, no question'), await until(page, async () => (await image.count()) === 0, 5000)
+    && (await page.getByTestId('super-close-choice').count()) === 0);
+
+  if (own) {
+    console.log(`── ${engineName}: the owner ends his own chat from its card`);
+    await until(page, async () => (await card(page, own).count()) === 1, 10000);
+    // A record that does not land: the chat keeps running and the card says so.
+    faking500 = true;
+    await page.route('**/api/super/end', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' }));
+    await clickClose(page, own);
+    await page.getByTestId('super-close-end').click();
+    ok(tag('R1 a failed end shows on the card'), await until(page, async () => (await card(page, own).getByTestId('super-close-failed').count()) === 1, 8000));
+    ok(tag('R1 …and the chat keeps running, not ended'), alive(own) && record().children?.[own]?.endedAt === undefined);
+    await page.screenshot({ path: join(OUT, `${engineName}-end-failed.png`) });
+    await page.unroute('**/api/super/end');
+    faking500 = false;
+    await clickClose(page, own);
+    await page.getByTestId('super-close-end').click();
+    ok(tag('R1 the owner ends his own adopted chat: process exits, card gone, recorded'), await until(page, async () => exited(own)
+      && (await card(page, own).count()) === 0 && typeof record().children?.[own]?.endedAt === 'number', 15000));
+  }
+
+  console.log(`── ${engineName}: Past chats → super adopt`);
+  await superComposer(page).click();
+  await page.keyboard.press('Meta+Shift+O');
+  const row = page.locator('.chp-modal .chp-row-title', { hasText: PAST_TITLE });
+  ok(tag('A1 Past chats lists the earlier conversation mid-hand-over'), await until(page, async () => (await row.count()) === 1, 10000));
+  await row.click();
+  ok(tag('A1 it runs again (a --resume of it), as no child'), await until(page, async () => reports().some((r) => r.kind === 'spawn' && r.resume === PAST_ID), 20000)
+    && !record().children?.[PAST_ID] && (await card(page, PAST_ID).count()) === 0);
+  await page.waitForTimeout(1500);
+  await sayToSuper(page, `GO-ADOPT ${PAST_ID}`);
+  ok(tag('A1 super adopt answered'), await until(page, async () => reports().some((r) => r.kind === 'owner-adopt'), 30000));
+  const ad = reports().find((r) => r.kind === 'owner-adopt');
+  ok(tag('A1 without --force it is refused: the owner\'s own chat'), ad?.steps[0]?.status !== 0 && /owners_chat/.test(ad?.steps[0]?.out ?? ''), ad?.steps[0]?.out);
+  ok(tag('A1 with --force it is adopted'), ad?.steps[1]?.status === 0, ad?.steps[1]?.out);
+  ok(tag('A1 its card comes'), await until(page, async () => (await card(page, PAST_ID).count()) === 1, 10000));
+  ok(tag('A1 the record names it an adopted child with the hand-over note'), record().children?.[PAST_ID]?.adopted === true
+    && record().children?.[PAST_ID]?.brief === 'Pricing copy' && record().notes?.[PAST_ID] === 'handover', JSON.stringify(record().children?.[PAST_ID]));
+  for (const w of [1280, 1920]) {
+    await page.setViewportSize({ width: w, height: w === 1280 ? 800 : 1080 });
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: join(OUT, `${engineName}-adopted-${w}.png`) });
+  }
+  ok(tag('A1 it still runs'), alive(PAST_ID));
+
+  const endedNow = Object.entries(record().children ?? {}).filter(([, ch]) => typeof ch.endedAt === 'number');
+  const goneTurns = reports().filter((r) => r.kind === 'event' && /status=gone/.test(r.text)
+    && endedNow.some(([sid, ch]) => r.text.includes(sid) && r.t >= ch.endedAt));
+  ok(tag('R1 no gone turn reached the super for an ended child'), endedNow.length >= 2 && goneTurns.length === 0,
+    JSON.stringify({ ended: endedNow.map(([k]) => k), goneTurns }));
+
+  console.log(`── ${engineName}: the owner reopens an ended child from Past chats`);
+  ok(tag('R1 c3 is ended before the reopen'), typeof record().children?.[c3]?.endedAt === 'number');
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await superComposer(page).click();
+  await page.keyboard.press('Meta+Shift+O');
+  const row3 = page.locator('.chp-modal .chp-row-title', { hasText: 'CHILD three' });
+  ok(tag('R1 Past chats lists the ended child'), await until(page, async () => (await row3.count()) >= 1, 10000));
+  await row3.first().click();
+  ok(tag('R1 it runs again'), await until(page, async () => reports().some((r) => r.kind === 'spawn' && r.resume === c3 && r.t > (record().children?.[c3]?.startedAt ?? 0)), 20000));
+  ok(tag('R1 it is his adopted child again: not ended, its card back'), await until(page, async () => {
+    const ch = record().children?.[c3];
+    return ch?.endedAt === undefined && ch?.adopted === true && (await card(page, c3).count()) === 1;
+  }, 15000), JSON.stringify(record().children?.[c3]));
+  await page.screenshot({ path: join(OUT, `${engineName}-reopened.png`) });
 
   ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));
   await browser.close();

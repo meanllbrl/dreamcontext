@@ -3046,6 +3046,16 @@
       "group": true
     },
     {
+      "path": "super adopt",
+      "desc": "Make an open chat of this project one of your children (its card comes, it hears of the hand-over). Every chat you did not start is the owner's: only on his word, with --force",
+      "args": [
+        "<chat>"
+      ],
+      "valueFlags": [
+        "--brief"
+      ]
+    },
+    {
       "path": "super answer",
       "desc": "Answer a child's QUESTION (never a permission) with its option label(s) or --text",
       "args": [
@@ -3234,6 +3244,18 @@
       "desc": "Dissolve a group (its cards take its place on the stage or in Others), or take cards out of their group (they float)",
       "args": [
         "<targets...>"
+      ]
+    },
+    {
+      "path": "super update",
+      "desc": "Change a RUNNING child's mode, model or effort (the window's own switches; a mode change restarts it on the same conversation once its turn ends); recorded for `super resume`",
+      "args": [
+        "<child>"
+      ],
+      "valueFlags": [
+        "--mode",
+        "--model",
+        "--effort"
       ]
     },
     {

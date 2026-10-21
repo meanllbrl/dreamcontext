@@ -318,6 +318,10 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
+.super-close-pending--failed {
+  color: var(--color-error-ink);
+  border-color: var(--color-error);
+}
 .super-icon-btn {
   display: inline-flex;
   align-items: center;

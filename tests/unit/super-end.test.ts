@@ -9,6 +9,10 @@
  *  - `--idle` lists, `--idle --yes` ends the listed ones.
  *  - resume reopens the same conversation through the window with the recorded mode, model and
  *    effort, clears `endedAt` and brings the card back; `send` to an ended child is refused.
+ *  - update changes a running child through the window's own model, effort and mode verbs into
+ *    its tab (model and effort first), records it, and refuses an ended, stopped or adopted one.
+ *  - adopt makes an open chat of the vault a child on the owner's word (`--force`), never the
+ *    super, another mode's chat, another vault's or a closed one.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -27,10 +31,11 @@ import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superIndex } from '../../src/lib/super/store.js';
-import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
-import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
+import { MAX_ENDED_CHILDREN, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
+import { _resetSuperInbox, noteChatStarted } from '../../src/lib/super/inbox.js';
 import { handleSuperEnd, handleSuperVerb } from '../../src/server/routes/super.js';
-import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
+import { handleWindowCommand } from '../../src/server/routes/window-control.js';
+import { deliverSuperResult, deliverWindowResult, mintWindowToken, resetWindowControl, type WindowResult } from '../../src/lib/window-control.js';
 import { _resetChatParkForTests, registerParkable, type ParkOptions, type ParkOutcome } from '../../src/server/chat-park.js';
 
 let dir: string;
@@ -38,6 +43,8 @@ let root: string;
 const SUPER = 'sup-1';
 const frames: Array<Record<string, unknown>> = [];
 let token = '';
+/** How the mock window answers a `window_command` (the verbs `super update` travels as). */
+let windowAnswer: (frame: Record<string, unknown>) => WindowResult = () => ({ ok: true, result: {} });
 const savedDesktop = process.env.DREAMCONTEXT_DESKTOP;
 
 const card = (sid: string) => ({ id: `chat-${sid}`, kind: 'chat' as const, ref: sid, shape: 'tall' as const, place: 'float' as const });
@@ -58,7 +65,9 @@ function makeVault(state: Partial<SuperState> = {}): void {
   token = mintWindowToken({
     send: (frame) => {
       frames.push(frame);
-      if (typeof frame.id === 'string') setImmediate(() => deliverSuperResult(token, frame.id, { ok: true, result: { sessionId: 'c1' } }));
+      if (typeof frame.id !== 'string') return true;
+      if (frame.subtype === 'window_command') setImmediate(() => deliverWindowResult(token, frame.id, windowAnswer(frame)));
+      else setImmediate(() => deliverSuperResult(token, frame.id, { ok: true, result: { sessionId: 'c1' } }));
       return true;
     },
     vault: 'acme', contextRoot: root, sessionId: SUPER, mode: 'super',
@@ -68,6 +77,7 @@ function makeVault(state: Partial<SuperState> = {}): void {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'super-end-'));
   frames.length = 0;
+  windowAnswer = () => ({ ok: true, result: {} });
   _resetChatRegistry();
   resetSuperIndex();
   _resetSuperInbox();
@@ -272,5 +282,268 @@ describe('the owner ends a child from its card (POST /api/super/end)', () => {
     expect((await ownerEnd(SUPER)).status).toBe(404);
     delete process.env.DREAMCONTEXT_DESKTOP;
     expect((await ownerEnd('c1')).status).toBe(403);
+  });
+});
+
+describe('super update', () => {
+  it('changes a running child through the window\'s model, effort and mode verbs into its tab, then records it', async () => {
+    makeVault();
+    live('c1');
+    const r = await verb('update', { child: 'c1', mode: 'plan', model: 'sonnet', effort: 'high' });
+    expect(r.status).toBe(200);
+    const sent = frames.filter((f) => f.subtype === 'window_command');
+    // Model and effort before the mode (a mode change respawns the tab).
+    expect(sent.map((f) => [f.verb, f.args])).toEqual([
+      ['model', { tab: 'c1', model: 'sonnet' }],
+      ['effort', { tab: 'c1', level: 'high' }],
+      ['mode', { tab: 'c1', mode: 'plan' }],
+    ]);
+    const ch = (await readSuperState(root)).children.c1;
+    expect(ch).toMatchObject({ mode: 'plan', model: 'sonnet', effort: 'high' });
+    // Back to basic is recorded as no mode (the default).
+    await verb('update', { child: 'c1', mode: 'basic' });
+    expect((await readSuperState(root)).children.c1.mode).toBeUndefined();
+  });
+
+  it('a window refusal stops the rest and records only what applied', async () => {
+    makeVault();
+    live('c1');
+    windowAnswer = (f) => (f.verb === 'mode' ? { ok: false, error: 'that chat is not running' } : { ok: true, result: {} });
+    const r = await verb('update', { child: 'c1', mode: 'plan', model: 'sonnet' });
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ error: 'window_refused', applied: { model: {} } });
+    const ch = (await readSuperState(root)).children.c1;
+    expect(ch.model).toBe('sonnet');
+    expect(ch.mode).toBe('develop');
+  });
+
+  it('refuses an ended, stopped or adopted child, bad values and nothing named, sending no frame', async () => {
+    makeVault();
+    live('own');
+    expect((await verb('update', { child: 'own', model: 'haiku' })).json.error).toBe('adopted');
+    expect((await verb('update', { child: 'c2', model: 'haiku' })).json.error).toBe('not_running');
+    await verb('end', { children: ['c2'] });
+    const ended = await verb('update', { child: 'c2', model: 'haiku' });
+    expect(ended.status).toBe(409);
+    expect(ended.json.error).toBe('ended');
+    expect(String(ended.json.message)).toMatch(/super resume/);
+    live('c1');
+    expect((await verb('update', { child: 'c1', mode: 'super' })).status).toBe(400);
+    expect((await verb('update', { child: 'c1', mode: 'assistant' })).status).toBe(400);
+    expect((await verb('update', { child: 'c1', effort: 'turbo' })).status).toBe(400);
+    expect((await verb('update', { child: 'c1', model: 'not a model!' })).status).toBe(400);
+    expect((await verb('update', { child: 'c1' })).status).toBe(400);
+    expect((await verb('update', { child: 'nope', model: 'haiku' })).status).toBe(404);
+    expect((await verb('update', { child: SUPER, model: 'haiku' })).status).toBe(404);
+    expect(frames.filter((f) => f.subtype === 'window_command')).toEqual([]);
+    // The owner's word: his own chat changes with --force.
+    expect((await verb('update', { child: 'own', model: 'haiku', force: true })).status).toBe(200);
+  });
+
+  it('is refused while the owner has the screen back', async () => {
+    makeVault({ enabled: false });
+    live('c1');
+    expect((await verb('update', { child: 'c1', model: 'haiku' })).json.error).toBe('not_handed_over');
+  });
+
+  it('the super\'s raw `window mode|model|effort` into a child is refused: `super update` is the one path', async () => {
+    makeVault();
+    await readSuperState(root);
+    live('c1');
+    for (const [v, body] of [['model', { tab: 'c1', model: 'haiku' }], ['effort', { tab: 'c1', level: 'low' }], ['mode', { tab: 'c1', mode: 'plan' }]] as const) {
+      const r = res();
+      await handleWindowCommand(req(body, { 'x-dreamcontext-window-token': token }), r, { verb: v });
+      expect(r.status, v).toBe(403);
+      expect(String((r.json as { error?: { message?: string } }).error?.message ?? JSON.stringify(r.json)), v).toMatch(/super update/);
+    }
+    expect(frames).toEqual([]);
+  });
+});
+
+describe('super adopt', () => {
+  it('needs the owner\'s word; with --force the chat becomes an adopted child with its card and the hand-over note', async () => {
+    makeVault();
+    registerChat({ sessionId: 'free', conversationId: null, vault: 'acme', mode: 'basic', seed: { title: 'pricing page' } });
+    const no = await verb('adopt', { chat: 'free' });
+    expect(no.status).toBe(409);
+    expect(no.json.error).toBe('owners_chat');
+    expect((await readSuperState(root)).children.free).toBeUndefined();
+    const r = await verb('adopt', { chat: 'free', force: true, brief: 'the pricing page' });
+    expect(r.status).toBe(200);
+    expect(r.json.result).toMatchObject({ child: 'free', adopted: true });
+    const s = await readSuperState(root);
+    expect(s.children.free).toMatchObject({ sessionId: 'free', adopted: true, brief: 'the pricing page' });
+    expect(s.containers.find((k) => k.kind === 'chat' && k.ref === 'free')?.id).toBe((r.json.result as { container: string }).container);
+    expect(s.notes.free).toBe('handover');
+    // A recorded child is only reported.
+    expect((await verb('adopt', { chat: 'free', force: true })).json.result).toMatchObject({ already: true });
+  });
+
+  it('a chat already asking brings its question into the queue, as at hand-over', async () => {
+    makeVault();
+    const h = registerChat({ sessionId: 'asker', conversationId: null, vault: 'acme', mode: 'basic' });
+    h.observe({ type: 'control_request', request_id: 'rq-1', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which?' }] } } });
+    await verb('adopt', { chat: 'asker', force: true });
+    expect((await readSuperState(root)).queue.find((q) => q.sessionId === 'asker')).toMatchObject({ kind: 'question', requestId: 'rq-1', state: 'pending' });
+  });
+
+  it('never the super itself, another mode\'s chat, another vault\'s, a closed or an unknown one', async () => {
+    makeVault();
+    registerChat({ sessionId: 'helper', conversationId: null, vault: 'acme', mode: 'assistant' });
+    registerChat({ sessionId: 'theirs', conversationId: null, vault: 'other', mode: 'basic' });
+    const gone = registerChat({ sessionId: 'closed', conversationId: null, vault: 'acme', mode: 'basic' });
+    gone.exited();
+    for (const chat of [SUPER, 'helper', 'theirs', 'closed', 'nope', '__proto__']) {
+      const r = await verb('adopt', { chat, force: true });
+      expect(r.status, chat).toBe(404);
+    }
+    expect(Object.keys((await readSuperState(root)).children).sort()).toEqual(['c1', 'c2', 'own']);
+  });
+
+  it('an ended child running again was reopened by the owner: his (--force), a child again; stopped, it points to resume', async () => {
+    makeVault();
+    await verb('end', { children: ['c2'] });
+    const stopped = await verb('adopt', { chat: 'c2', force: true });
+    expect(stopped.status).toBe(409);
+    expect(stopped.json.error).toBe('ended');
+    registerChat({ sessionId: 'c2', conversationId: null, vault: 'acme', mode: 'basic' });
+    expect((await verb('adopt', { chat: 'c2' })).json.error).toBe('owners_chat');
+    const back = await verb('adopt', { chat: 'c2', force: true });
+    expect(back.status).toBe(200);
+    const s = await readSuperState(root);
+    expect(s.children.c2.endedAt).toBeUndefined();
+    expect(s.children.c2.adopted).toBe(true);
+    expect(s.containers.some((k) => k.ref === 'c2')).toBe(true);
+  });
+
+  it('is refused while the owner has the screen back', async () => {
+    makeVault({ enabled: false });
+    registerChat({ sessionId: 'free', conversationId: null, vault: 'acme', mode: 'basic' });
+    expect((await verb('adopt', { chat: 'free', force: true })).json.error).toBe('not_handed_over');
+  });
+});
+
+describe('end review round 1 fixes', () => {
+  it('M1 resume of the owner\'s own chat needs his word (--force), sending no frame without it', async () => {
+    makeVault();
+    const proj = join(process.env.HOME as string, '.claude', 'projects', 'acme');
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(proj, 'own.jsonl'), '{}\n');
+    await verb('end', { children: ['own'], force: true });
+    frames.length = 0;
+    const r = await verb('resume', { child: 'own' });
+    expect(r.status).toBe(409);
+    expect(r.json.error).toBe('adopted');
+    expect(frames).toEqual([]);
+    expect((await verb('resume', { child: 'own', force: true })).status).toBe(200);
+  });
+
+  it('M2 the brief an ended item carries reaches the agent fenced, in state and queue list', async () => {
+    makeVault();
+    await verb('end', { children: ['c2'] });
+    const st = await verb('state', {});
+    const fromState = (st.json.result as { queue: Array<{ kind: string; brief?: string }> }).queue.find((q) => q.kind === 'ended');
+    const ql = await verb('queue-list', {});
+    const fromList = (ql.json.result as { queue: Array<{ kind: string; brief?: string }> }).queue.find((q) => q.kind === 'ended');
+    for (const q of [fromState, fromList]) {
+      expect(q?.brief).toContain('docs');
+      expect(q?.brief).not.toBe('docs');
+      expect(q?.brief).toMatch(/untrusted|<[a-z-]+/i);
+    }
+    // The record itself keeps the plain brief (the owner's window renders it as text).
+    expect((await readSuperState(root)).queue.find((q) => q.kind === 'ended')?.brief).toBe('docs');
+  });
+
+  it('M5 the ended cap never drops a child that still owns a worktree', async () => {
+    const wt = join(process.env.HOME as string, '.claude-worktrees', 'acme-old');
+    const children: SuperState['children'] = {
+      old: { sessionId: 'old', brief: 'old work', adopted: false, startedAt: 1, endedAt: 1, worktree: wt, branch: 'super/old' },
+    };
+    for (let i = 0; i < MAX_ENDED_CHILDREN + 2; i++) {
+      children[`e${i}`] = { sessionId: `e${i}`, brief: `e${i}`, adopted: false, startedAt: 2, endedAt: 100 + i };
+    }
+    makeVault({ children });
+    const s = await readSuperState(root);
+    expect(s.children.old?.worktree).toBe(wt);
+    const plain = Object.values(s.children).filter((c) => c.endedAt !== undefined && !c.worktree);
+    expect(plain).toHaveLength(MAX_ENDED_CHILDREN);
+    // The oldest plain ones went.
+    expect(s.children.e0).toBeUndefined();
+    expect(s.children.e1).toBeUndefined();
+  });
+
+  it('M6 resume records what the window started (a parked tab comes back as parked) and says what it ignored', async () => {
+    makeVault();
+    const proj = join(process.env.HOME as string, '.claude', 'projects', 'acme');
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(proj, 'c2.jsonl'), '{}\n');
+    resetWindowControl();
+    token = mintWindowToken({
+      send: (frame) => {
+        frames.push(frame);
+        setImmediate(() => deliverSuperResult(token, frame.id, { ok: true, result: { sessionId: 'c2', mode: 'basic', model: 'opus', effort: '' } }));
+        return true;
+      },
+      vault: 'acme', contextRoot: root, sessionId: SUPER, mode: 'super',
+    }).token;
+    const r = await verb('resume', { child: 'c2', mode: 'develop', effort: 'high' });
+    expect(r.status).toBe(200);
+    expect(r.json.result).toMatchObject({ mode: 'basic', model: 'opus' });
+    expect(String((r.json.result as { note?: string }).note)).toMatch(/mode, effort/);
+    const ch = (await readSuperState(root)).children.c2;
+    expect(ch.mode).toBeUndefined();
+    expect(ch.model).toBe('opus');
+    expect(ch.effort).toBeUndefined();
+  });
+
+  it('M7 an ended child the owner reopens himself is his again: no longer ended, adopted, its card and note back', async () => {
+    makeVault();
+    await verb('end', { children: ['c2'] });
+    expect(superIndex(root).children.has('c2')).toBe(false);
+    registerChat({ sessionId: 'c2', conversationId: null, vault: 'acme', mode: 'basic' });
+    await noteChatStarted('c2');
+    const s = await readSuperState(root);
+    expect(s.children.c2.endedAt).toBeUndefined();
+    expect(s.children.c2.adopted).toBe(true);
+    expect(s.containers.some((k) => k.kind === 'chat' && k.ref === 'c2')).toBe(true);
+    expect(s.notes.c2).toBe('handover');
+    // …so the super needs his word to end or change it.
+    expect((await verb('end', { children: ['c2'] })).json.error).toBe('adopted');
+    expect((await verb('update', { child: 'c2', model: 'haiku' })).json.error).toBe('adopted');
+  });
+
+  it('M7 a resume in flight is the super\'s doing: its new process is not taken for the owner\'s', async () => {
+    makeVault();
+    const proj = join(process.env.HOME as string, '.claude', 'projects', 'acme');
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(proj, 'c2.jsonl'), '{}\n');
+    await verb('end', { children: ['c2'] });
+    resetWindowControl();
+    token = mintWindowToken({
+      send: (frame) => {
+        frames.push(frame);
+        // The window spawns the child (it registers) before it answers.
+        registerChat({ sessionId: 'c2', conversationId: null, vault: 'acme', mode: 'basic' });
+        void noteChatStarted('c2');
+        setImmediate(() => deliverSuperResult(token, frame.id, { ok: true, result: { sessionId: 'c2', mode: 'basic', model: '', effort: '' } }));
+        return true;
+      },
+      vault: 'acme', contextRoot: root, sessionId: SUPER, mode: 'super',
+    }).token;
+    expect((await verb('resume', { child: 'c2' })).status).toBe(200);
+    expect((await readSuperState(root)).children.c2).toMatchObject({ adopted: false });
+    expect((await readSuperState(root)).children.c2.endedAt).toBeUndefined();
+  });
+
+  it('M7 an ended child running again (the record has not caught up) is the owner\'s: end, resume and update take his word', async () => {
+    makeVault();
+    await verb('end', { children: ['c2'] });
+    live('c2');
+    expect((await verb('end', { children: ['c2'] })).json.error).toBe('adopted');
+    expect((await verb('resume', { child: 'c2' })).json.error).toBe('adopted');
+    expect((await verb('update', { child: 'c2', model: 'haiku' })).json.error).toBe('ended');
+    const back = await verb('resume', { child: 'c2', force: true });
+    expect(back.json.result).toMatchObject({ running: true });
+    expect((await readSuperState(root)).children.c2).toMatchObject({ adopted: true });
   });
 });

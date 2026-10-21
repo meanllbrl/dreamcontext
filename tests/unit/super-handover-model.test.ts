@@ -292,8 +292,10 @@ describe('placement while handed over (D5, D9)', () => {
 describe('window verbs while handed over (D4b, the browser re-check)', () => {
   it('the Super Agent drives with `super` verbs only; a child cannot open or split; anyone else is untouched', () => {
     expect(superWindowRefusal('super', 'state', true)).toMatch(/super/);
-    expect(superWindowRefusal('super', 'mode', false)).toMatch(/super/);
-    for (const verb of ['new', 'split', 'join', 'focus', 'mode', 'model', 'effort', 'close', 'state']) {
+    expect(superWindowRefusal('super', 'join', false)).toMatch(/super/);
+    // A child verb (`super send`/`super update`) with no child resolved is refused all the same.
+    expect(superWindowRefusal('super', 'mode', false)).not.toBe(null);
+    for (const verb of ['new', 'split', 'join', 'focus', 'close', 'state']) {
       expect(superWindowRefusal('super', verb, true, { target: { sid: 'chat-2', pin: 'c1', conversation: 'c1' }, superSession: SUPER, children: new Set(['c1']) }), verb).not.toBe(null);
     }
     expect(superWindowRefusal('child', 'new', true)).toMatch(/cannot open/);
@@ -317,6 +319,21 @@ describe('window verbs while handed over (D4b, the browser re-check)', () => {
     // Not handed over: no child is marked, so nothing can be sent to.
     expect(send({ sid: 'chat-2', pin: 'c1', conversation: 'c1' }, new Set())).toMatch(/only a child/);
     expect(superSendRefusal({ sid: '', pin: 'c1', conversation: 'c1' }, SUPER, children)).toMatch(/no such child/);
+  });
+
+  it('`super update` travels as `window model|effort|mode`: allowed only into a marked child, like `send`', () => {
+    const children = new Set(['c1']);
+    for (const verb of ['model', 'effort', 'mode']) {
+      const run = (target: Parameters<typeof superSendRefusal>[0], kids: ReadonlySet<string> = children) =>
+        superWindowRefusal('super', verb, true, { target, superSession: SUPER, children: kids });
+      expect(run({ sid: 'chat-2', pin: 'c1', conversation: 'c1' }), verb).toBe(null);
+      expect(run({ sid: 'chat-3', pin: 'free', conversation: 'free' }), verb).toMatch(/only a child/);
+      expect(run({ sid: 'chat-9', pin: SUPER, conversation: SUPER }, new Set([SUPER])), verb).toMatch(/itself/);
+      expect(run({ sid: 'chat-2', pin: 'c1', conversation: null }), verb).toMatch(/not running/);
+      expect(run(null), verb).toMatch(/no such child/);
+      // Without the verb's target resolved (no `send` arg at all) it is refused.
+      expect(superWindowRefusal('super', verb, true), verb).not.toBe(null);
+    }
   });
 
   it('the Super Agent\'s own tab list holds only its marked children', () => {

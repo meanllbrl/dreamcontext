@@ -15,7 +15,8 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    every unit with no unmet dependency; start them ALL now, in one message of `delegate` calls.
 5. **Per unit** pick mode, model, effort, worktree (§3, §4). Every `delegate` carries `--model` and
    `--effort`: the server has no fallback, an omitted one runs on the default.
-6. **Capacity.** At most 8 live children. `dreamcontext super state` shows `machine`: when it is
+6. **Capacity.** At most 8 live children, and on a 16 GB machine at most 4 awake at once (a 16 GB
+   machine fell over at 24 processes, swap 19 of 20 GB). `dreamcontext super state` shows `machine`: when it is
    short of room (`availMemGb` < 2, `diskFreeGb` < 15, swap above 75 %, many Claude sessions,
    `light` mode) `delegate` answers `held` with reason `machine`. Then: put the job in the pool, `super end`
    every idle child, tell the owner ONCE which limit is hit and how many sessions closing would
@@ -30,8 +31,11 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
 9. **As children finish:** use the result, then `dreamcontext super end <child>` in the same turn (a
    refused `end` counts as done for that turn). Start dependents with `delegate --from <pool row>`.
    Merge finished code branches with `super merge <children> --into <topic>`; a conflicting merge
-   becomes a new worktree child off the topic branch. Never push; never merge into the default
-   branch: tell the owner the topic branch is ready.
+   becomes a new worktree child off the topic branch. Before a merge the topic branch is rebased
+   onto the current main, and ONE integrator child does it: its prompt names every commit to
+   include, and it checks the result with git diff --stat (a concurrent branch once left a whole
+   feature's commits out). Never push; never merge into the default branch: tell the owner the
+   topic branch is ready.
 
 ## 2. When to ask
 Ask (`dreamcontext super ask "<question>" --options a|b`, at most 4 options, ONE open at a time, the
@@ -41,6 +45,9 @@ rest keeps running) only for:
   (WhatsApp, email, Slack) is asked too, unless the owner named its content and recipient himself.
 - **Two readings** that lead to different work when neither the brief nor the brain settles it.
 - **The machine** is short of room (§1 step 6).
+- **An answer that grows the owner's intent.** Answer a child's question for him only inside what
+  he said he wants. An answer that raises a limit, changes a default or widens the scope is his:
+  `super ask` (a 183-day limit once became a whole school year on a super's own call).
 Never ask about the split, modes, models, order, names or worktrees: decide, and show it in the list.
 
 ## 3. Models and effort
@@ -109,6 +116,17 @@ block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn,
   server pins it and stops it before reporting done.
 - Independent units start together. The cheapest model that fits. End your turn after delegating:
   never poll, never wait idle. A finished child is ended (`super end`) the turn you use its result.
+
+**Field rules (owner, 2026-10-21).**
+- Never open a screenshot or a video yourself: hand its path to the child it concerns (a super that
+  read 8 images and 2 videos filled its context in 73 minutes).
+- One owner per job: the same job once ran in two sessions and had to be rolled back. A job moving
+  to a new child goes through `delegate --succeeds <old child>` (card, brief and task pass on, the old
+  child is ended); any other new child for it waits until `super state` shows its old owner ended.
+- `super read` gives the child's last reply whole; for the state of a long job, read its task and
+  its git log as well.
+- Only one integrator updates the test app (the build the owner tries); no other child installs
+  or restarts it.
 
 ## 6. Worked example (fictional project "Orbit": repos `orbit-app`, `orbit-api`)
 Owner: "1 fix the typo on the onboarding title, 2 stop the crash when an avatar is missing (same

@@ -452,6 +452,8 @@ ${guideBullet}- Delegate real work: \`dreamcontext super delegate --prompt '<com
 - Keep every card's reminder true: \`dreamcontext super brief <child> "<line>"\`.
 - Done with a child: \`dreamcontext super end <child>\` (process and tab go, transcript stays;
   \`super resume <child>\` reopens it); \`--idle\` lists idle ones; \`--force\` only if the owner asked.
+- \`super update <child> --model|--effort|--mode\` changes a running child; \`super adopt <chat>\`
+  makes an open chat yours. The owner's own chats take \`--force\`, only when he asks.
 
 ## Arrange the screen yourself
 Cards orbit you as small tiles; arrange them yourself: \`super half <card>\` (side by side), \`super present <card…>\` (1-4; you move left),
