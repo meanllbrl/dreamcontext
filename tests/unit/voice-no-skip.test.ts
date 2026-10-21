@@ -605,7 +605,7 @@ async function block(ws: FakeWebSocket, index: number, text: string, seed: numbe
   ws.frame(echo(text));
 }
 
-async function openSession(mode: 'assistant' | 'super') {
+async function openSession(mode: 'assistant' | 'super', readAloud = true) {
   FakeWebSocket.all = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);
   vi.stubGlobal('location', { protocol: 'http:', host: '127.0.0.1:1', assign: () => {} });
@@ -613,8 +613,8 @@ async function openSession(mode: 'assistant' | 'super') {
     createElement: () => ({ className: '', remove() {}, style: {}, appendChild() {} }),
     addEventListener() {}, removeEventListener() {}, visibilityState: 'visible', querySelector: () => null,
   });
-  // The composer's read-aloud switch is ON.
-  vi.stubGlobal('localStorage', { getItem: (k: string) => (k === 'dreamcontext-read-aloud' ? '1' : null), setItem() {}, removeItem() {} });
+  // The composer's speech switch (`lib/voice/readAloud.ts`): ON unless the test says off.
+  vi.stubGlobal('localStorage', { getItem: (k: string) => (k === 'dreamcontext-read-aloud' ? (readAloud ? '1' : '0') : null), setItem() {}, removeItem() {} });
   const { createChatSession } = await import('../../dashboard/src/components/sleepy/chatSession.js');
   const s = createChatSession('__assistant__', false, () => {}, '6f1c2e9a-a001-4a5b-8c9d-0123456789ab', false, '', '', '', '', false, mode);
   const ws = FakeWebSocket.all[0];
@@ -654,5 +654,66 @@ describe('the surfaces that speak, end to end', () => {
     expect(speechLines().filter((l) => l.outcome === 'played').map((l) => l.head)).toEqual(want);
     expect(speechLines().every((l) => l.surface === 'super')).toBe(true);
     s.dispose();
+  });
+});
+
+// ── 7. Speech only while the switch is on (owner, 2026-10-21) ──────────────────────────────
+//
+// "Sesli konuşma açılıp kapatılmalı, şu an her türlü konuşuyor." The switch is the one in
+// `lib/voice/readAloud.ts`. Off: not one `/tts` request, not even for the answer to a message
+// the owner SPOKE, and that message goes as text (no `voice: true`, so the server adds no
+// `<owner-voice>` block and arms no voice turn). On: what the surfaces did before.
+
+const ttsAsked = () => pageRequests.filter(([u]) => u === '/api/agent/voice/tts').length;
+const userFrames = (ws: FakeWebSocket) => ws.sent.map((d) => JSON.parse(d) as Record<string, unknown>).filter((f) => f.type === 'user');
+
+describe('speech only while the switch is on', () => {
+  const reply = 'Kartı açtım. Sitede üç hata var. Birini düzelttim. İkisi sende. Bakar mısın?';
+
+  it('SUPER, switch OFF: a voice turn the server armed is not read — zero /tts requests', async () => {
+    const { s, ws } = await openSession('super', false);
+    ws.frame({ type: '_meta', subtype: 'voice_turn' });
+    await block(ws, 0, reply, 4);
+    ws.frame({ type: '_meta', subtype: 'voice_turn_end' });
+    ws.frame({ type: 'result', is_error: false, result: reply });
+    await sleep(400);
+    expect(ttsAsked()).toBe(0);
+    expect(speechLines().filter((l) => l.outcome === 'played')).toEqual([]);
+    s.dispose();
+  });
+
+  it('SUPER, switch ON: the same voice turn IS read (the control for the test above)', async () => {
+    const { s, ws } = await openSession('super', true);
+    ws.frame({ type: '_meta', subtype: 'voice_turn' });
+    await block(ws, 0, reply, 4);
+    ws.frame({ type: '_meta', subtype: 'voice_turn_end' });
+    ws.frame({ type: 'result', is_error: false, result: reply });
+    await until(() => speechLines().filter((l) => l.outcome === 'played').length >= mustHear(reply).length, 'the super reply');
+    expect(ttsAsked()).toBeGreaterThan(0);
+    s.dispose();
+  });
+
+  it('NOTCH, switch OFF: an answer is not read — zero /tts requests', async () => {
+    const { s, ws } = await openSession('assistant', false);
+    await block(ws, 0, `<!-- notch:present -->\n${reply}`, 5);
+    ws.frame({ type: 'result', is_error: false, result: reply });
+    await sleep(400);
+    expect(ttsAsked()).toBe(0);
+    s.dispose();
+  });
+
+  it('a SPOKEN message goes as text while the switch is off, and spoken while it is on', async () => {
+    const off = await openSession('super', false);
+    off.s.armSpoken('Görevlerimi göster');
+    off.s.send('Görevlerimi göster');
+    expect(userFrames(off.ws).at(-1)).toEqual({ type: 'user', text: 'Görevlerimi göster' });
+    off.s.dispose();
+    vi.resetModules();
+
+    const on = await openSession('super', true);
+    on.s.armSpoken('Görevlerimi göster');
+    on.s.send('Görevlerimi göster');
+    expect(userFrames(on.ws).at(-1)).toEqual({ type: 'user', text: 'Görevlerimi göster', voice: true });
+    on.s.dispose();
   });
 });

@@ -41,9 +41,10 @@ describe('the phone composer\'s mic', () => {
   });
 
   it('keeps the laptop\'s voice off the phone: no read-aloud switch, no warm/prefs, no hotkey wording (AC4)', () => {
-    expect(composer).toMatch(/\{voiceEnabled && mode === 'assistant' && !phoneVoice && \(\s*<button\s+type="button"\s+className="chat-cmp-iconbtn chat-cmp-readaloud"/);
+    expect(composer).toMatch(/\{voiceEnabled && \(mode === 'assistant' \|\| mode === 'super'\) && !phoneVoice && \(\s*<button\s+type="button"\s+className="chat-cmp-iconbtn chat-cmp-readaloud"/);
     expect(composer).toMatch(/if \(!voiceEnabled \|\| phoneVoice\) return;\s*void fetch\('\/api\/agent\/voice\/warm'/);
-    expect(composer).toMatch(/: phoneVoice \? 'Hold the mic to speak'/);
+    // At rest the phone's mic carries no caption at all (owner, 2026-10-21: short hints).
+    expect(composer).toMatch(/!\(phoneVoice && voice\.state === 'idle'\)/);
     const trace = code('dashboard/src/lib/voice/turnTrace.ts');
     expect(trace).toMatch(/if \(!phoneAllows\('POST', '\/api\/agent\/voice\/log'\)\) return;\s*void fetch\('\/api\/agent\/voice\/log'/);
   });

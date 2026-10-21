@@ -193,9 +193,9 @@ try {
   const mic = vis('.chat-cmp-mic').first();
   report.check('the composer draws the hold-to-talk mic', await until(async () => (await mic.count()) === 1, 10000));
   report.check('…and no read-aloud switch (speech stays the laptop\'s)', (await vis('.chat-cmp-readaloud').count()) === 0);
-  // At rest the hint is dropped on a narrow pane by the existing CSS (`data-rest`); its words are read.
+  // At rest the phone draws no caption at all: the mic is the instruction (owner, 2026-10-21).
   const note = (await phone.evaluate(() => [...document.querySelectorAll('.chat-cmp-voice-note')].map((e) => e.textContent).join('|'))).trim();
-  report.check(`the resting hint speaks of the mic, not a hotkey ("${note}")`, note === 'Hold the mic to speak');
+  report.check(`no resting caption beside the phone's mic ("${note}")`, note === '');
   const box = await mic.boundingBox();
   report.check(`the mic is a touch target (${Math.round(box?.width ?? 0)}x${Math.round(box?.height ?? 0)})`, !!box && box.width >= 32 && box.height >= 32);
   const overflow = await phone.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);

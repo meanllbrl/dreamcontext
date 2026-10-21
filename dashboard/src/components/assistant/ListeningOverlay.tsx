@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { onVoiceActivity, onVoiceLevel, type VoiceActivity } from '../../lib/voice/voiceActivity';
 import { playMicEarcon } from '../../lib/chime';
 import { STT_RETRIES } from '../../lib/voice/useVoiceCapture';
+import { useI18n } from '../../context/I18nContext';
 
 /**
  * The notch LISTENING: impossible to miss (owner, 2026-10-04: "when I talk make it way more
@@ -11,7 +12,8 @@ import { STT_RETRIES } from '../../lib/voice/useVoiceCapture';
  * the avatar inside rings that swell with the owner's voice, the word "Listening", the take's
  * clock and how to send it. An earcon marks the mic opening and closing. Then "Got it", while
  * the take is transcribed, "trying again" while a failed one is retried (`STT_RETRIES`), and
- * a plain sentence when it did not work.
+ * a short line when it did not work. Every line is two to four words (owner, 2026-10-21); the
+ * full reason of a failure rides on the card's `title`.
  *
  * Fed by the composer through `lib/voice/voiceActivity.ts` — the composer still owns the take;
  * this only draws it. The level never goes through React state: a ref'd element's custom
@@ -32,6 +34,7 @@ export function ListeningOverlay({ vault, avatar, name, mode }: {
   name: string;
   mode: 'hold' | 'toggle';
 }) {
+  const { t } = useI18n();
   const [act, setAct] = useState<VoiceActivity | null>(null);
   const [notice, setNotice] = useState(false);
   const orbRef = useRef<HTMLDivElement>(null);
@@ -76,21 +79,25 @@ export function ListeningOverlay({ vault, avatar, name, mode }: {
   let title: string;
   let sub: string;
   if (act.phase === 'recording') {
-    title = 'Listening…';
-    sub = mode === 'toggle' ? 'Press the hotkey again to send' : 'Let go of the hotkey to send';
+    title = t('voice.note.listening');
+    sub = mode === 'toggle' ? t('voice.overlay.pressAgain') : t('voice.overlay.release');
   } else if (act.phase === 'transcribing') {
-    title = act.attempt > 0 ? 'Trying again…' : 'Got it';
-    sub = act.attempt > 0 ? `Transcription retry ${act.attempt} of ${STT_RETRIES}` : 'Writing down what you said…';
+    title = act.attempt > 0 ? t('voice.overlay.retrying') : t('voice.overlay.gotIt');
+    sub = act.attempt > 0 ? t('voice.note.retry').replace('{n}', String(act.attempt)).replace('{max}', String(STT_RETRIES)) : t('voice.overlay.writing');
   } else if (act.phase === 'error') {
-    title = 'Couldn\'t catch that';
-    sub = act.error || 'Transcription failed. Try again.';
+    title = t('voice.overlay.failed');
+    sub = t('voice.note.error');
+  } else if (act.phase === 'too-short') {
+    // A tap: one word, and the orb nudges (notch.css) — not a second line telling the owner off.
+    title = t('voice.note.tap');
+    sub = '';
   } else {
-    title = 'Didn\'t hear anything';
-    sub = act.phase === 'too-short' ? 'Hold the hotkey while you speak.' : 'Try again, a little closer to the mic.';
+    title = t('voice.note.silent');
+    sub = t('voice.overlay.closer');
   }
 
   return (
-    <div className="dc-listen" data-phase={act.phase} role="status" aria-live="assertive">
+    <div className="dc-listen" data-phase={act.phase} role="status" aria-live="assertive" title={act.phase === 'error' ? act.error || undefined : undefined}>
       <div className="dc-listen__orb" ref={orbRef}>
         <span className="dc-listen__ring dc-listen__ring--3" aria-hidden />
         <span className="dc-listen__ring dc-listen__ring--2" aria-hidden />
@@ -100,7 +107,7 @@ export function ListeningOverlay({ vault, avatar, name, mode }: {
           : <span className="dc-listen__avatar dc-listen__avatar--initial" aria-hidden>{name.slice(0, 1)}</span>}
       </div>
       <p className="dc-listen__title">{title}</p>
-      <p className="dc-listen__sub">{sub}</p>
+      {sub && <p className="dc-listen__sub">{sub}</p>}
       {listening && <p className="dc-listen__clock" aria-hidden>{mmss(act.elapsed)}</p>}
     </div>
   );

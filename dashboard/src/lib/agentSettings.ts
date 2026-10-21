@@ -104,10 +104,17 @@ export interface AgentSettings {
    *  Resume brings the conversation back. ON by default: only an explicit `false` turns it off. */
   parkIdleChats: boolean;
   /** The Super Agent session's own model and effort (Settings → Chat → Super Agent, and its
-   *  composer's "Set as default"): `sonnet` / `medium` by default, like the notch Assistant's
-   *  own pair, never the chat default. An unusable value reads as the default. */
+   *  composer's "Set as default"): `opus` / `high` by default (MIRRORED from `SUPER_AGENT_DEFAULT`
+   *  in src/lib/model-facts.ts, pinned by tests/unit/agent-settings.test.ts), never the chat
+   *  default; the notch Assistant keeps its own pair. A saved value is kept; only an unusable one
+   *  reads as the default. */
   superModel: string;
   superEffort: string;
+  /** Spoken replies: the composer's speaker switch, persisted here so it survives a relaunch
+   *  (each launch is a new origin, so its localStorage copy alone forgot it). OFF by default,
+   *  only an explicit `true` turns it on. Read and written through `lib/voice/readAloud.ts`
+   *  and `lib/voice/readAloudPersist.ts`, never directly. */
+  readAloud: boolean;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -125,8 +132,9 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   lightMode: 'auto',
   superAgent: false,
   parkIdleChats: true,
-  superModel: 'sonnet',
-  superEffort: 'medium',
+  superModel: 'opus',
+  superEffort: 'high',
+  readAloud: false,
 };
 
 /** MIRRORED from `sanitizeModel` in `src/server/routes/agent-spawn-shared.ts`. The dashboard
@@ -141,7 +149,7 @@ const CHAT_DEFAULT_MODEL_RE = /^[A-Za-z0-9._-]{1,64}$/;
  *  `claude --effort` documents. Same pinning as above. */
 const CHAT_DEFAULT_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 /** The Super Agent's model and effort rows in Settings (plan r4 D12): the aliases and levels it may take. */
-export const SUPER_MODEL_CHOICES = ['sonnet', 'opus', 'haiku'] as const;
+export const SUPER_MODEL_CHOICES = ['opus', 'sonnet', 'haiku'] as const;
 export const SUPER_EFFORT_CHOICES: readonly string[] = CHAT_DEFAULT_EFFORT_LEVELS;
 
 /** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
@@ -182,6 +190,8 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     parkIdleChats: r.parkIdleChats !== false,
     superModel: typeof r.superModel === 'string' && CHAT_DEFAULT_MODEL_RE.test(r.superModel) ? r.superModel : DEFAULT_AGENT_SETTINGS.superModel,
     superEffort: typeof r.superEffort === 'string' && CHAT_DEFAULT_EFFORT_LEVELS.includes(r.superEffort) ? r.superEffort : DEFAULT_AGENT_SETTINGS.superEffort,
+    // Default-FALSE: speech only when the owner turned it on.
+    readAloud: r.readAloud === true,
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };

@@ -552,10 +552,13 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   them in \`super state\`. Do not reopen or describe them. A child says its dev server runs but
   did not pin it: \`super open web <url>\`.`;
 
-/** The spoken reply rule (K1). */
+/** The spoken reply rule (K1). The block rides only while the owner's speech switch is on
+ *  (the composer's speaker button), so with it off a dictated message is answered like a typed
+ *  one: the rule must not ask for a short reply to every message the owner happened to say. */
 export const SUPER_VOICE_SECTION = `## Voice
-A message carrying an \`<owner-voice>\` block was spoken by the owner, and your reply is read
-aloud: one or two short sentences, any detail on a card. How you talk otherwise still holds.`;
+Only a message carrying an \`<owner-voice>\` block is read aloud: answer it in one or two short
+sentences, any detail on a card. Every other message, typed or dictated, is only read on screen:
+give it your usual reply, as long as it needs.`;
 
 /** Rides on a spoken owner message to the super agent (a second block, never stored). */
 export const OWNER_VOICE_TEXT = '<owner-voice> The owner spoke this message; your reply is read aloud. Answer in one or two short spoken sentences; put any detail on a card. </owner-voice>';

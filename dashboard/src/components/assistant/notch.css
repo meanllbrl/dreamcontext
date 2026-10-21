@@ -398,12 +398,27 @@ html:has(.dc-notch) #root {
 }
 .dc-listen__title {
   margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--color-text);
   font-size: var(--font-size-xl, 1.25rem);
   font-weight: var(--font-weight-semibold);
 }
-.dc-listen__sub { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-sm); text-align: center; padding: 0 var(--space-6); }
+.dc-listen__sub { margin: 0; max-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); font-size: var(--font-size-sm); text-align: center; padding: 0 var(--space-6); }
 .dc-listen__clock { margin: 0; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; font-size: var(--font-size-sm); }
+/* A tap instead of a hold: one short sideways nudge of the orb beside the one word. */
+.dc-listen[data-phase='too-short'] .dc-listen__orb { animation: dc-listen-nudge 360ms ease-in-out; }
+@keyframes dc-listen-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  45% { transform: translateX(4px); }
+  70% { transform: translateX(-2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-listen[data-phase='too-short'] .dc-listen__orb { animation: none; }
+}
 /* Transcribing: the rings settle and turn slowly — the take is going somewhere. */
 .dc-listen[data-phase='transcribing'] .dc-listen__ring--1 {
   border-color: var(--color-accent) transparent var(--color-accent) transparent;

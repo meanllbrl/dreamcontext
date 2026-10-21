@@ -530,7 +530,11 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCa
     chunksRef.current = [];
     teardown();
 
-    const verdict = wav ? judgeTake(durationMs, peak, noise) : 'silent';
+    // No frame at all and released inside the tap window: a TAP (the press is what the owner
+    // did, so it is timed from the press), not a silent room. It earns the tap's one word and
+    // nudge, as on the native path (`frames === 0 ? 'too-short'`).
+    const verdict = wav ? judgeTake(durationMs, peak, noise)
+      : Date.now() - pressedAtRef.current < MIN_TAKE_MS ? 'too-short' : 'silent';
     if (verdict !== 'ok' || !wav) {
       // NOTHING is uploaded. Not one invented sentence reaches the agent (AC5).
       inFlightRef.current = false;
@@ -844,7 +848,9 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCa
       phaseRef.current = 'idle';
       teardown();
       inFlightRef.current = false;
-      setState('idle');
+      // A release inside the tap window is a tap, and says so (one word and a nudge); a long
+      // press the device never opened for (a permission sheet) just goes back to rest.
+      setState(Date.now() - pressedAtRef.current < MIN_TAKE_MS ? 'too-short' : 'idle');
       return;
     }
     if (nativeIdRef.current !== null) finishNativeTake();
