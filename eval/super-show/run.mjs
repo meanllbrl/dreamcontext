@@ -4,8 +4,8 @@
  * (jarvis plan r9, AC11b)? Optional and PAID (real `claude` turns), never in CI.
  *
  * Each run: a fresh synthetic vault (gold.json; tasks and whiteboards made through this
- * worktree's CLI), a scratch HOME (so the owner's ~/.dreamcontext is never touched) with the
- * owner's real Claude config (`CLAUDE_CONFIG_DIR`) and real `claude` on PATH beside a
+ * worktree's CLI), a scratch HOME (so the owner's ~/.dreamcontext is never touched) linking the
+ * owner's real ~/.claude (sign-in) and real `claude` on PATH beside a
  * `dreamcontext` shim running THIS worktree's dist/index.js, the dashboard on a free port, the
  * hand-over done in the window, the prompt typed into the super composer. When the super chat
  * settles, the stage is read from `state/.super-agent.json` and the answer from the centre's last
@@ -15,7 +15,7 @@
  *   PROMPTS=tasks-tr RUNS=1 npm run eval:super-show     # a smoke run
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -51,8 +51,16 @@ function makeRun(id) {
   writeFileSync(join(home, '.dreamcontext', 'agent-ui.json'), JSON.stringify({ enabled: true, chatView: true, screenMigrated: true, chatPermissionMode: 'auto', superAgent: true, renderer: 'dom' }));
   writeFileSync(join(bin, 'dreamcontext'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI)} "$@"\n`);
   chmodSync(join(bin, 'dreamcontext'), 0o755);
+  // Claude's sign-in: the keychain item is found only WITHOUT CLAUDE_CONFIG_DIR, so the scratch
+  // HOME points at the owner's real ~/.claude (a link) and a COPY of ~/.claude.json (never written
+  // back). The owner's ~/.dreamcontext is never touched: it is the scratch one.
+  try { symlinkSync(join(REAL_HOME, '.claude'), join(home, '.claude')); } catch { /* exists */ }
+  try { copyFileSync(join(REAL_HOME, '.claude.json'), join(home, '.claude.json')); } catch { /* none */ }
+  // The keychain claude signs in from is found through HOME/Library/Keychains: link only that.
+  try { mkdirSync(join(home, 'Library'), { recursive: true }); symlinkSync(join(REAL_HOME, 'Library', 'Keychains'), join(home, 'Library', 'Keychains')); } catch { /* exists */ }
+  const { CLAUDE_CONFIG_DIR: _cfg, ...base } = process.env;
   const env = {
-    ...process.env, HOME: home, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR || join(REAL_HOME, '.claude'), DREAMCONTEXT_DESKTOP: '1',
+    ...base, HOME: home, DREAMCONTEXT_DESKTOP: '1',
     PATH: [bin, dirname(CLAUDE_BIN), dirname(process.execPath), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(':'),
   };
   const dc = (...a) => spawnSync(process.execPath, [CLI, ...a], { cwd: proj, env, encoding: 'utf-8' });
@@ -113,9 +121,21 @@ async function once(pw, prompt, n) {
     }));
     await page.goto(`http://127.0.0.1:${port}/?vault=acme-app`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(3000);
-    const nav = page.locator('aside a, aside button, nav a, nav button').filter({ hasText: /^\s*Chat\s*\d*\s*$/ }).first();
-    if (await nav.count()) await nav.click().catch(() => {});
-    await until(page, async () => (await page.locator('.chat-cmp-input:visible').count()) > 0, 20000);
+    // The way verify:super-jarvis opens the Chat surface (the same app, the same steps).
+    for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(150); }
+    if (!(await page.locator('.agent-surface.expanded').count())) {
+      const nav = page.locator('aside a, aside button, nav a, nav button').filter({ hasText: /^\s*Chat\s*\d*\s*$/ }).first();
+      if (await nav.count()) { await nav.click().catch(() => {}); await page.waitForTimeout(1500); }
+    }
+    if (!(await page.locator('.agent-surface.expanded').count())) {
+      for (const sel of ['.agent-fab', '.agent-overlay-head', '.agent-surface']) {
+        const el = page.locator(sel).first();
+        if (await el.count()) { await el.click({ force: true }).catch(() => {}); await page.waitForTimeout(1200); }
+        if (await page.locator('.agent-surface.expanded').count()) break;
+      }
+    }
+    if (!(await page.locator('.chat-cmp-input:visible').count())) await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
+    await until(page, async () => (await page.locator('.chat-cmp-input:visible').count()) > 0, 60000);
     const first = page.locator('.chat-cmp-input:visible').first();
     await first.fill('Say "ready" and nothing else.');
     await page.keyboard.press('Enter');
@@ -141,7 +161,18 @@ async function once(pw, prompt, n) {
     await page.waitForTimeout(4000);
     await until(page, async () => (await page.locator('.super-centre[data-status="idle"]').count()) > 0, 300000);
     await page.waitForTimeout(2000);
-    const answer = await page.locator('.super-centre .chat-assistant-text, .super-centre [data-item-kind="text"]').last().innerText().catch(() => '');
+    // The reply to THIS prompt: the assistant text right after the prompt's bubble in the centre
+    // (an event turn's reply, e.g. the hand-over's, can land before or after it).
+    const answer = await page.evaluate((prompt) => {
+      const root = document.querySelector('.super-centre') ?? document;
+      const nodes = [...root.querySelectorAll('.chat-msg-user-row, .chat-msg-assistant-body')];
+      const at = nodes.findIndex((n) => n.classList.contains('chat-msg-user-row') && (n.textContent ?? '').includes(prompt));
+      if (at < 0) return '';
+      const after = nodes.slice(at + 1);
+      const reply = after.find((n) => n.classList.contains('chat-msg-assistant-body'));
+      return (reply?.innerText ?? '').trim();
+    }, prompt.text).catch(() => '');
+    if (!answer) throw new Error('no reply to the prompt was found in the centre');
     await page.screenshot({ path: join(OUT, `${prompt.id}-${n}.png`) });
     const rec = recordOf(run) ?? { containers: [], groups: [] };
     const gold = prompt.gold === 'insights' ? GOLD.insights.map(([s]) => s) : GOLD.tasks.open.map(([name]) => slug(name));
@@ -151,6 +182,9 @@ async function once(pw, prompt, n) {
       { containers: rec.containers, groups: rec.groups ?? [], answer },
     );
     return { ...v, answer: answer.slice(0, 400), cost: meter.cost, models: [...meter.models] };
+  } catch (err) {
+    await browser.contexts()[0]?.pages()[0]?.screenshot({ path: join(OUT, `${prompt.id}-${n}-crash.png`) }).catch(() => {});
+    throw err;
   } finally {
     await browser.close();
     server.kill();
