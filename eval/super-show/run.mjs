@@ -175,7 +175,15 @@ async function once(pw, prompt, n) {
     await until(page, async () => (await page.locator('[data-testid="super-event-chip"]').count()) > 0, 180000);
     // Wait for the hand-over turn's OWN reply (not only its chip): a prompt sent before it lands
     // is read as that turn's answer (2026-10-21 re-run: two harness misses).
-    if (!(await settled(page, '[data-testid="super-event-chip"]', '', 300000))) throw new Error('the hand-over turn never replied');
+    // An event turn may now end without a word to the owner (the job-list talk rules): after two
+    // minutes without a reply, a centre idle across ten looks a second apart is the turn's end.
+    if (!(await settled(page, '[data-testid="super-event-chip"]', '', 120000))) {
+      let calm = 0;
+      for (const end = Date.now() + 180000; calm < 10 && Date.now() < end; await page.waitForTimeout(1000)) {
+        calm = (await page.locator('.super-centre[data-status="idle"]').count()) > 0 ? calm + 1 : 0;
+      }
+      if (calm < 10) throw new Error('the hand-over turn never settled');
+    }
     await page.waitForTimeout(2000);
     let preOpen = [];
     if (prompt.capacity) {

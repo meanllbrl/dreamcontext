@@ -84,6 +84,30 @@ describe('parseTranscriptHistory', () => {
     expect(parseTranscriptHistory(raw)).toEqual([{ kind: 'user', uuid: U1, text: 'hello' }]);
   });
 
+  it('replays a STEERED owner message: the CLI stores a mid-turn user frame as a queued_command attachment (measured on claude 2.1.304)', () => {
+    // The shape a real steered stream-json session wrote (plan r4 E7): the event turn's user
+    // entry, a tool round, then the owner's folded message as an attachment, then one reply.
+    const raw = jsonl([
+      { type: 'user', uuid: U1, message: { role: 'user', content: [{ type: 'text', text: '[super events] batch=b-1 items=1\n- item=q-1 child=c1 event=done status=idle' }] } },
+      { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_09', name: 'Bash', input: { command: 'dreamcontext super brief c1 "x"' } }] } },
+      { type: 'user', uuid: 'u2', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_09', content: 'ok' }] } },
+      { type: 'attachment', uuid: U2, attachment: { type: 'queued_command', prompt: [{ type: 'text', text: 'Also check the login page' }], source_uuid: 's', delivery_id: 'd' } },
+      { type: 'queue-operation', operation: 'remove', content: 'Also check the login page' },
+      { type: 'attachment', uuid: 'x1', attachment: { type: 'queued_command', prompt: '<cross-session-message from="x">hi</cross-session-message>' } },
+      { type: 'attachment', uuid: 'x2', attachment: { type: 'queued_command', prompt: [{ type: 'text', text: '[delegated-session event] session=s vault=v status=idle' }] } },
+      { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'On it.' }] } },
+    ]);
+    const items = parseTranscriptHistory(raw);
+    expect(items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text)).toEqual([
+      '[super events] batch=b-1 items=1\n- item=q-1 child=c1 event=done status=idle',
+      'Also check the login page',
+      '[delegated-session event] session=s vault=v status=idle',
+    ]);
+    // Order kept: the steered message sits after the tool round and before the reply.
+    expect(items.map((i) => i.kind)).toEqual(['user', 'tool', 'user', 'user', 'text']);
+    expect(items[2]).toEqual({ kind: 'user', uuid: U2, text: 'Also check the login page' });
+  });
+
   it('truncates oversized tool results instead of shipping hundreds of KB into the seed payload', () => {
     const raw = jsonl([
       { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_03', name: 'Read', input: {} }] } },

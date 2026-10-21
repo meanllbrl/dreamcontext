@@ -15,6 +15,7 @@ import '../../whiteboard/widgets/widgets.css';
 import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
 import { AgentCard, ChatTile } from './AgentCard';
+import { toneOfStatus } from './superHandover';
 import { KindTile, ResolvedTitle, TaskPageHead } from './SuperTiles';
 import { LAYOUT } from './handoverMotion';
 import type { CardPlan } from './superLayout';
@@ -142,6 +143,7 @@ export function SuperContainer(props: SuperContainerProps) {
       data-shape={plan.shape}
       data-owner={plan.owner ? 'true' : undefined}
       data-status={status ? glowOf(status) : undefined}
+      data-super-tone={status ? toneOfStatus(status.kind) : undefined}
       data-drop-target={props.dropTarget ? 'card' : undefined}
       data-cue={props.cue?.kind}
       inert={props.cue?.kind === 'close' ? true : undefined}

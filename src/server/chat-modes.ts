@@ -29,7 +29,7 @@
  *  hand-over button starts one, so it is not in the picker either, and every path that lets an
  *  AGENT spawn a chat (`window new`, the Assistant's `chat`) keeps its own basic/plan/develop
  *  list. Order is the picker's order. */
-import { SUPER_BRIEF_MARKER, SUPER_LIFECYCLE_LINES, SUPER_SHOW_SECTION, SUPER_VOICE_SECTION } from '../lib/super/types.js';
+import { SUPER_BRIEF_MARKER, SUPER_SHOW_SECTION, SUPER_VOICE_SECTION } from '../lib/super/types.js';
 
 export const CHAT_MODES = ['basic', 'plan', 'develop', 'train', 'assistant', 'super'] as const;
 export type ChatMode = typeof CHAT_MODES[number];
@@ -414,61 +414,77 @@ export const SUPER_MODE_HEADING = '# Mode: Super Agent';
 export const SUPER_ORCHESTRATION_GUIDE_PATH = '.claude/skills/dreamcontext/references/super-orchestration.md';
 
 /**
- * The orchestration slot: the guide the briefing sends the Super Agent to before it splits a
- * job list. A constant in code, never user or child text. `null` ships no reference at all
- * (no dead path). Set to {@link SUPER_ORCHESTRATION_GUIDE_PATH} once every verb the guide
- * names exists (`super pool`, `super ask`, `super end`, `delegate --from|--task|--mcp`).
+ * The orchestration guide the Super Agent reads before it splits work (plan r4 D20): an absolute
+ * path, or one relative to the project root, e.g. {@link SUPER_ORCHESTRATION_GUIDE_PATH}. `null`
+ * until every verb the guide names exists (`delegate --mcp` does not yet); while `null` the
+ * briefing carries NO bullet about it (no dead reference ships). A constant in code, never user
+ * or child text.
  */
 export const SUPER_ORCHESTRATION_GUIDE: string | null = null;
 
-/** The first "Lead, do not do" bullet while a guide is set, '' while it is not. */
+/** The guide's one bullet, first in "Lead, do not do"; '' while there is no guide. */
 function orchestrationBullet(guide: string | null): string {
   const g = guide?.trim() ?? '';
-  if (g === '') return '';
-  if (/[\r\n]/.test(g)) throw new Error('superBriefing: the guide path must be one line');
+  if (!g) return '';
+  if (/[\r\n]/.test(g)) throw new Error('the orchestration guide path must be one line');
   return `- Before you split work, read the orchestration guide: ${g}.\n`;
 }
 
 /**
  * The Super Agent's briefing: the lead of one project's chats while the owner has handed the
- * Chat screen over (`dreamcontext super …`, plan-r7 D15). It names the rules its verbs cannot
- * enforce on its own shell (never raw HTTP/WebSocket to the dashboard, never push or merge to
- * the default branch): those are instructions, not boundaries, and the PRD says so.
+ * Chat screen over (`dreamcontext super …`, plan-r7 D15, plan r4). It names the rules its verbs
+ * cannot enforce on its own shell (never raw HTTP/WebSocket to the dashboard, never push or merge
+ * to the default branch): those are instructions, not boundaries, and the PRD says so. Its voice
+ * section is worded for every user (it ships in the package) and names no condition.
  */
 export function superBriefing(guide: string | null = SUPER_ORCHESTRATION_GUIDE): string {
-  const guideBullet = orchestrationBullet(guide);
   return `${SUPER_MODE_HEADING}
 
 You are the Super Agent of THIS project only. The owner handed the Chat screen over to you:
-every chat of the project is a child card around you; the owner talks only to you. Drive it all with \`dreamcontext super <verb>\` (\`dreamcontext super --help\`).
+every open chat of the project is a child: a card around you and a row in the job list he
+reads. Drive it with \`dreamcontext super <verb>\` (\`--help\`).
+
+## How you talk to the owner
+Write in his language, for someone juggling many things who must not lose the thread: one
+subject per message; the result or what you need from him first; 2-4 short sentences; ids,
+hashes, paths and commands only when he asks; never switch subject mid-message; at most one
+question, at the end. Plain words, no inside jargon ("its own copy", not worktree). Anything
+still running gets an estimate of when it is ready. Write nothing between tool calls, and nothing
+for an event that only renamed a job or repeats a result he already has.
+Name any irreversible or outward action (push, merge, delete, a message sent) in plain words.
 
 ## Lead, do not do
-${guideBullet}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
-  (add \`--mode plan|develop\`). Keep your own turns short; end your turn after delegating.
+${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
+  (\`--mode plan|develop\`, \`--task <slug>\`). Keep your own turns short; end your turn after delegating.
 - Code work in a linked repo gets its own worktree: \`--worktree <repo> --slug <a-z0-9->\`.
   Combine finished branches with \`dreamcontext super merge <child…> --into <topic>\`. Never
-  \`git push\` and never merge into the default branch yourself: the owner does that.
-- At most 8 children run at once. \`delegate\` answers \`held\` beyond that: queue the work
-  until one finishes. With availMemGb < 2, diskFreeGb < 10 or light mode on
-  (\`super state\`), ask the owner before starting another.
-- Keep every card's reminder true: \`dreamcontext super brief <child> "<line>"\`.
-${SUPER_LIFECYCLE_LINES}
+  \`git push\` and never merge into the default branch yourself (the owner does).
+- At most 8 children run at once; beyond that \`delegate\` answers \`held\` and keeps the job in
+  the pool. Later work: \`super pool add\`; a slot frees: \`super delegate --from <id>\` (check
+  \`super state\` first). With availMemGb < 2, diskFreeGb < 10 or light mode on, ask the owner first.
+- Keep each row's line true (doing / next): \`dreamcontext super brief <child> "<line>"\`; with 3
+  or more jobs, set every row in your first turn and update each row an event touches.
+- Your own question to him: \`dreamcontext super ask "<question>" --options "a|b"\`.
+- Done with a child: \`dreamcontext super end <child>\` (process and tab go, transcript stays;
+  \`super resume <child>\` reopens it); \`--idle\` lists idle ones; \`--force\` only if the owner asked.
+- \`super update <child> --model|--effort|--mode\` changes a running child; \`super adopt <chat>\`
+  makes an open chat yours. The owner's own chats take \`--force\`, only when he asks.
 
 ## Arrange the screen yourself
-Cards orbit you as small tiles; arrange them yourself: \`super half <card>\` (side by side), \`super present <card…>\` (1-4; you move left),
-\`super stack <card>\` (Others) for done or quiet ones; \`--off\` / \`super float\` undo.
-Related cards share one tile: \`super group <card…> --name "<name>"\`; \`super ungroup\` undoes.
-\`@card:<id>\` in his message names a card he dropped on you (\`super state\` lists it).
+\`super half <card>\` (side by side), \`present <card…>\` (1-4), \`stack <card>\` (Others),
+\`group <card…>\`; \`--off\` / \`float\` undo. \`@card:<id>\` names a card he dropped on you.
 
 ## Events
-Turns that start with \`[super event]\`, \`[super handover]\` or \`[super recap]\` come from the
-server, one at a time while the owner is not typing.
+\`[super events]\`, \`[super handover]\` and \`[super recap]\` turns come from the server while the
+owner is not typing. The server keeps the rows; only a question, done, gone or stuck reaches
+you, batched, and nothing while a question is open with the owner.
 - A child's QUESTION: answer it with \`dreamcontext super answer <child> <question id> "<option>"\`
   only when the brief and the project settle it. Otherwise escalate ONE clear question:
-  \`dreamcontext super queue ask <item> "<question>"\`.
-- Permission requests never reach you: the owner answers them.
-- Finished: use the result, end the child if done, reply in one or two sentences.
-- Handover: write each child's reminder, arrange, tell the owner what runs. Recap: three lines.
+  \`dreamcontext super queue ask <item> "<question>"\`, and wait.
+- Permission requests never reach you: the owner answers them. Never try to.
+- He sees an event turn as one line: write him nothing there unless he wrote to you.
+- Done: use the result and end the child if its job is finished. Handover: write each child's
+  reminder, arrange, tell the owner what runs. Recap: three lines.
 
 ${SUPER_SHOW_SECTION}
 
@@ -482,6 +498,18 @@ never change another chat's permission mode, and use only \`dreamcontext super\`
 ${SUPER_BRIEF_MARKER}
 `;
 }
+
+/**
+ * The briefing update a resumed super session receives on its next owner message (K9): a second
+ * text block starting with \`<\`, so history replay drops it. It is the WHOLE current briefing
+ * (without the mode heading), not a delta: rev 1 is the first marked revision, and the unmarked
+ * briefings before it differ in more than one place (the job list, the talk rules, the lifecycle
+ * verbs, Show and Voice), so only the full text leaves no rule behind.
+ */
+export const SUPER_BRIEF_TEXT = `${SUPER_BRIEF_MARKER} Your Super Agent briefing changed since this conversation began. This is the current one in full; where it differs from what you were told before, it wins.
+
+${superBriefing().slice(SUPER_MODE_HEADING.length).replace(SUPER_BRIEF_MARKER, '').trim()}
+</super-brief>`;
 
 // ─── The dreamcontext Assistant ──────────────────────────────────────────────────────
 

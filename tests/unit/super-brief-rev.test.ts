@@ -5,8 +5,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { superBriefState } from '../../src/server/chat-mode-drift.js';
-import { superBriefing } from '../../src/server/chat-modes.js';
-import { OWNER_VOICE_TEXT, SUPER_BRIEF_MARKER, SUPER_BRIEF_REV, SUPER_BRIEF_TEXT } from '../../src/lib/super/types.js';
+import { SUPER_BRIEF_TEXT, superBriefing } from '../../src/server/chat-modes.js';
+import { OWNER_VOICE_TEXT, SUPER_BRIEF_MARKER, SUPER_BRIEF_REV } from '../../src/lib/super/types.js';
 
 const j = (...rows: unknown[]) => rows.map((r) => JSON.stringify(r)).join('\n');
 const snapshot = (text: string) => ({ type: 'attachment', attachment: { type: 'prompt_snapshot', systemPrompt: [text] } });
@@ -28,6 +28,12 @@ describe('the briefing carries the jarvis sections and its revision', () => {
       expect(t).toContain('never name or count what went to Others, never say that nothing was\n  closed');
     }
     expect(SUPER_BRIEF_TEXT.startsWith('<')).toBe(true);
+    // The update is the whole current briefing (rev 1 follows unmarked ones that differ in many
+    // places), without the mode heading and with the marker once.
+    for (const h of ['## How you talk to the owner', '## Lead, do not do', '## Events', '## Trust']) expect(SUPER_BRIEF_TEXT).toContain(h);
+    expect(SUPER_BRIEF_TEXT).toContain('super adopt <chat>');
+    expect(SUPER_BRIEF_TEXT).not.toContain('# Mode:');
+    expect(SUPER_BRIEF_TEXT.split(SUPER_BRIEF_MARKER).length).toBe(2);
     expect(OWNER_VOICE_TEXT.startsWith('<')).toBe(true);
   });
 });

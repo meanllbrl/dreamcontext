@@ -6,8 +6,8 @@
  *    block starting with `<`; its first block and `userSent` stay the owner's text; a slash
  *    command, `/effort` and an AskUserQuestion answer neither carry nor consume it; the
  *    take-back note likewise;
- *  - an owner message sent during an inbox-opened turn is written after that turn's `result`,
- *    as its own turn; an event is never written over a running turn;
+ *  - an owner message sent during an inbox-opened turn is written at once and folds into it
+ *    (plan r4 D4: nothing is held); an event is never written over a running turn;
  *  - the super chat spawns with the vault's permission mode like any chat, plus its own verbs
  *    pre-approved in an `auto` vault only;
  *  - exactly one super session per vault at the upgrade: a different id 409, the phone 403.
@@ -183,87 +183,84 @@ describe('the hand-over note rides on a child\'s next owner message (D17)', () =
   });
 });
 
-describe('the super chat\'s event turns (D8)', () => {
-  it('an owner message held during an event turn survives the process dying: the next process writes it once (M2)', async () => {
-    await record({ enabled: true });
-    const first = start({ sessionId: SUPER, mode: 'super' });
-    await expect(_superInboxFor(SUPER)!.deliver('[super event] item=q-9 child=c1 status=idle', 'idle', 'c1')).resolves.toBe(true);
-    owner(first.ws, 'do not lose me');
-    await new Promise((r) => setTimeout(r, 20));
-    expect(userFrames(first.child)).toEqual([['[super event] item=q-9 child=c1 status=idle']]);
-    // The process dies mid-turn (no `result` ever comes).
-    first.child.emit('close', 1);
-    const second = start({ sessionId: SUPER, mode: 'super' });
-    await vi.waitFor(() => expect(userFrames(second.child)).toEqual([['do not lose me']]));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(userFrames(second.child)).toEqual([['do not lose me']]);
-    expect(userFrames(first.child)).toEqual([['[super event] item=q-9 child=c1 status=idle']]);
-  });
+describe('the super chat\'s event turns (plan r4 D4, D8, D10)', () => {
+  const ev = (batch: string, child = 'c1') => ({ kind: 'batch' as const, child, batch, items: [{ item: `q-${batch}`, child, kind: 'done' as const }] });
 
-  it('two held messages run as two turns, in order', async () => {
+  it('owner messages during an event turn are written AT ONCE and fold into it: 3 messages -> 3 writes before its result, no extra turn', async () => {
     await record({ enabled: true });
     const { ws, child: proc } = start({ sessionId: SUPER, mode: 'super' });
-    await _superInboxFor(SUPER)!.deliver('[super event] e', 'idle', 'c1');
-    owner(ws, 'first');
-    owner(ws, 'second');
+    await expect(_superInboxFor(SUPER)!.deliver('[super events] batch=b-1 items=1', ev('b-1'))).resolves.toBe(true);
+    owner(ws, 'one');
+    owner(ws, 'two');
+    owner(ws, 'three');
+    await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(4));
+    expect(userFrames(proc)).toEqual([['[super events] batch=b-1 items=1'], ['one'], ['two'], ['three']]);
     result(proc);
-    await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(2));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(userFrames(proc)[1]).toEqual(['first']);
-    expect(userFrames(proc)).toHaveLength(2);
-    result(proc);
-    await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(3));
-    expect(userFrames(proc)[2]).toEqual(['second']);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(userFrames(proc)).toHaveLength(4);
   });
 
-  it('after a delivered item, the end of the super\'s own turn delivers the next with no other event', async () => {
-    // Regression (lead's verify): the registry's `idle` fires on the `result` frame BEFORE the
-    // bridge closes its turn, so only the bridge's own turn end can let the next item go.
+  it('the super_event frame carries the batch and its items, before the turn is written', async () => {
+    await record({ enabled: true });
+    const { ws } = start({ sessionId: SUPER, mode: 'super' });
+    await _superInboxFor(SUPER)!.deliver('[super events] batch=b-2 items=1', ev('b-2'));
+    const frame = metas(ws).find((m) => m.subtype === 'super_event');
+    expect(frame).toMatchObject({ kind: 'batch', child: 'c1', batch: 'b-2', items: [{ item: 'q-b-2', child: 'c1', kind: 'done' }] });
+  });
+
+  it('nothing is held: a message steered into a turn whose process dies is not replayed to the next process (stated limit)', async () => {
+    await record({ enabled: true });
+    const first = start({ sessionId: SUPER, mode: 'super' });
+    await _superInboxFor(SUPER)!.deliver('[super events] batch=b-3 items=1', ev('b-3'));
+    owner(first.ws, 'steered');
+    await vi.waitFor(() => expect(userFrames(first.child)).toHaveLength(2));
+    first.child.emit('close', 1);
+    const second = start({ sessionId: SUPER, mode: 'super' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(userFrames(second.child)).toEqual([]);
+  });
+
+  it('pending items go as solo first (recap), then ONE batch of the rest at the end of the super\'s own turn', async () => {
     await record({
       enabled: true,
       children: {
-        c1: { sessionId: 'c1', brief: '', adopted: true, startedAt: 1 },
-        c2: { sessionId: 'c2', brief: '', adopted: true, startedAt: 1 },
+        c1: { sessionId: 'c1', brief: '', adopted: true, startedAt: 1, row: 'done' },
+        c2: { sessionId: 'c2', brief: '', adopted: true, startedAt: 1, row: 'done' },
       },
       queue: [
-        { id: 'q-a', sessionId: 'c1', kind: 'idle', state: 'pending', createdAt: 1 },
-        { id: 'q-b', sessionId: 'c2', kind: 'idle', state: 'pending', createdAt: 2 },
+        { id: 'q-a', sessionId: 'c1', kind: 'done', state: 'pending', createdAt: 1 },
+        { id: 'q-b', sessionId: 'c2', kind: 'done', state: 'pending', createdAt: 2 },
+        { id: 'q-r', sessionId: SUPER, kind: 'recap', state: 'pending', createdAt: 3 },
       ],
     });
     const { child: proc } = start({ sessionId: SUPER, mode: 'super' });
-    // The super chat settles (its registry entry leaves `starting`): the first item goes.
+    // The super chat settles (its registry entry leaves `starting`): the solo recap goes first.
     result(proc);
     await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(1));
-    expect(userFrames(proc)[0][0]).toMatch(/^\[super event\] item=q-a child=c1 status=idle/);
-    await vi.waitFor(async () => expect((await readSuperState(root)).queue.find((q) => q.id === 'q-a')?.state).toBe('done'));
-    // The super agent finishes the event turn; nothing else happens. The second item goes.
+    expect(userFrames(proc)[0][0]).toMatch(/^\[super recap\] item=q-r/);
+    // The super agent finishes that turn; nothing else happens. Both done items go in ONE turn.
     result(proc);
     await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(2));
-    expect(userFrames(proc)[1][0]).toMatch(/^\[super event\] item=q-b child=c2 status=idle/);
-  });
-
-  it('an owner message during an event turn is written after its result, as its own turn', async () => {
-    await record({ enabled: true });
-    const { ws, child: proc } = start({ sessionId: SUPER, mode: 'super' });
-    const inbox = _superInboxFor(SUPER);
-    expect(inbox).not.toBeNull();
-    await expect(inbox!.deliver('[super event] item=q-1 child=c1 status=idle', 'idle', 'c1')).resolves.toBe(true);
-    expect(metas(ws).some((m) => m.subtype === 'super_event' && m.kind === 'idle' && m.child === 'c1')).toBe(true);
-    owner(ws, 'what is going on?');
-    await new Promise((r) => setTimeout(r, 20));
-    expect(userFrames(proc)).toEqual([['[super event] item=q-1 child=c1 status=idle']]);
+    const batch = userFrames(proc)[1][0];
+    expect(batch).toMatch(/^\[super events\] batch=\S+ items=2/);
+    expect(batch).toContain('q-a');
+    expect(batch).toContain('q-b');
     result(proc);
-    await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(2));
-    expect(userFrames(proc)[1]).toEqual(['what is going on?']);
+    await vi.waitFor(async () => {
+      const q = (await readSuperState(root)).queue;
+      expect(['q-a', 'q-b'].map((id) => q.find((x) => x.id === id)?.state)).toEqual(['done', 'done']);
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(userFrames(proc)).toHaveLength(2);
   });
 
-  it('an event is never written over a running turn, nor while owner frames wait', async () => {
+  it('an event is never written over a running turn', async () => {
     await record({ enabled: true });
     const { ws, child: proc } = start({ sessionId: SUPER, mode: 'super' });
     owner(ws, 'owner first');
     await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(1));
     expect(_superInboxFor(SUPER)!.idle()).toBe(false);
-    await expect(_superInboxFor(SUPER)!.deliver('[super event] x', 'question', 'c1')).resolves.toBe(false);
+    await expect(_superInboxFor(SUPER)!.deliver('[super events] x', ev('b-4'))).resolves.toBe(false);
     expect(userFrames(proc)).toHaveLength(1);
   });
 
@@ -271,25 +268,23 @@ describe('the super chat\'s event turns (D8)', () => {
     await record({ enabled: true });
     const { child: proc } = start({ sessionId: SUPER, mode: 'super' });
     let gaveUp = false;
-    const late = _superInboxFor(SUPER)!.deliver('[super event] item=q-late child=c1 status=idle', 'idle', 'c1', () => gaveUp);
+    const late = _superInboxFor(SUPER)!.deliver('[super events] batch=b-late items=1', ev('b-late'), () => gaveUp);
     // The inbox's 30 s bound fires while `maybeSwitchAccount` is still on the chain.
     gaveUp = true;
     await expect(late).resolves.toBe(false);
     await new Promise((r) => setTimeout(r, 20));
     expect(userFrames(proc)).toEqual([]);
     expect(_superInboxFor(SUPER)!.idle()).toBe(true);
-    // The item is still pending in the inbox: the next delivery writes it, once.
-    await expect(_superInboxFor(SUPER)!.deliver('[super event] item=q-late child=c1 status=idle', 'idle', 'c1', () => false)).resolves.toBe(true);
-    expect(userFrames(proc)).toEqual([['[super event] item=q-late child=c1 status=idle']]);
+    // The items are still pending in the inbox: the next delivery writes the turn, once.
+    await expect(_superInboxFor(SUPER)!.deliver('[super events] batch=b-late items=1', ev('b-late'), () => false)).resolves.toBe(true);
+    expect(userFrames(proc)).toEqual([['[super events] batch=b-late items=1']]);
   });
 
   it('the owner speaking clears the event-turn mark (the notch may announce his own turn)', async () => {
     await record({ enabled: true });
     const { ws, child: proc } = start({ sessionId: SUPER, mode: 'super' });
-    await _superInboxFor(SUPER)!.deliver('[super event] y', 'idle', 'c1');
-    // The pump marks the turn; the bridge clears it on the owner's next message.
+    await _superInboxFor(SUPER)!.deliver('[super events] y', ev('b-5'));
     markSuperEventTurn(SUPER, true);
-    result(proc);
     owner(ws, 'thanks');
     await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(2));
     expect(isSuperEventTurn(SUPER)).toBe(false);

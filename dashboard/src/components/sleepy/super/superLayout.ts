@@ -25,8 +25,10 @@ export const STAGE = {
   /** Outer margin, and the one gap between the centre, every card and every column (O1). */
   MARGIN: 24,
   GAP: 24,
-  /** The two thin bands above and below the centre: queue pill on top, dock + Others below.
-   *  Always reserved, so the centre is centred in both axes and nothing jumps. */
+  /** The two thin bands above and below the centre: the job bar on top, dock + Others below.
+   *  The top one is always reserved; the bottom one only while it holds something (terminals in
+   *  the dock, a card in Others) or the stage is narrow: otherwise the centre and its columns run
+   *  down to the margin (owner 2026-10-21: the centre takes the height, its width unchanged). */
   BAND: 40,
   /** The queue pill's widest: no card is ever in the top band, so it may outgrow the centre and
    *  keep one row (a who, the text, two or three buttons) inside the band. */
@@ -139,6 +141,8 @@ export function stageItems(containers: readonly SuperContainer[], groups: readon
 export interface PlanOptions {
   /** A running drag: that card stays at its drag-start rect, and the others route around it (D1). */
   dragging?: { id: string; rect: Rect } | null;
+  /** Terminal pills in the dock: the bottom band is reserved for them. */
+  terminals?: number;
 }
 
 const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -298,9 +302,12 @@ function pushOut(rect: Rect, centre: Rect, free: Rect): Rect {
 
 interface Frame { width: number; height: number; content: Rect; free: Rect; othersRect: Rect; othersZone: Rect; bandTop: number; bandBottom: number }
 
-function frameOf(width: number, height: number): Frame {
+/** The stage's frame. `bottomBand`: the bottom band is reserved (the content stops above it);
+ *  without it the content runs down to the bottom margin. */
+function frameOf(width: number, height: number, bottomBand = true): Frame {
   const { MARGIN, BAND } = STAGE;
-  const content: Rect = { x: MARGIN, y: MARGIN + BAND, width: Math.max(0, width - 2 * MARGIN), height: Math.max(0, height - 2 * (MARGIN + BAND)) };
+  const below = bottomBand ? MARGIN + BAND : MARGIN;
+  const content: Rect = { x: MARGIN, y: MARGIN + BAND, width: Math.max(0, width - 2 * MARGIN), height: Math.max(0, height - (MARGIN + BAND) - below) };
   const bandTop = MARGIN / 2;
   const bandBottom = height - MARGIN / 2 - BAND;
   return {
@@ -353,9 +360,28 @@ export function planStage(
   stage: { width: number; height: number },
   opts: PlanOptions = {},
 ): StagePlan {
+  // The bottom band only while it holds something (owner 2026-10-21): plan with the content down
+  // to the margin first; a dock with terminals, a narrow stage, or a plan that draws a card in
+  // Others reserves the band and plans again (the same inputs always give the same screen).
+  // An empty stage keeps the band: its first-run hint is drawn there (review Major).
+  const narrow = Math.max(0, stage.width) < NARROW_STAGE_PX;
+  if (!narrow && !(opts.terminals ?? 0) && containers.length > 0) {
+    const tall = planWith(containers, view, stage, opts, false);
+    if (tall.others.length === 0) return tall;
+  }
+  return planWith(containers, view, stage, opts, true);
+}
+
+function planWith(
+  containers: readonly StageItem[],
+  view: SuperView,
+  stage: { width: number; height: number },
+  opts: PlanOptions,
+  bottomBand: boolean,
+): StagePlan {
   // Items: at most the record's MAX_CONTAINERS cards, plus a grouped card the view presents beside its group.
   const list = containers.slice(0, MAX_CONTAINERS + MAX_PRESENT);
-  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height));
+  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand);
   const narrow = f.width < NARROW_STAGE_PX;
   const ids = new Set(list.map((c) => c.id));
   // An item's place in the RECORD (a group stands at its first card's), not in this list: a
@@ -608,4 +634,15 @@ function sameView(a: SuperView, b: SuperView): boolean {
   if (a.mode === 'half') return a.card === b.card;
   if (a.mode === 'present') return (a.cards ?? []).join('\n') === (b.cards ?? []).join('\n');
   return true;
+}
+
+/** Where the job list opens (plan r4 §3): under the top band, at the centre's width, at most 60 %
+ *  of its height, over the centre's top. An overlay: the plan's geometry does not change. */
+export function jobListRect(plan: Pick<StagePlan, 'centre' | 'queue'>): Rect {
+  return {
+    x: plan.centre.x,
+    y: plan.queue.y + plan.queue.height,
+    width: plan.centre.width,
+    height: Math.max(0, Math.round(plan.centre.height * 0.6)),
+  };
 }

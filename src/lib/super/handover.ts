@@ -3,7 +3,7 @@ import { chatTopic, getChat } from '../assistant/chat-registry.js';
 import { isReservedId, peekSuperNote } from './store.js';
 import { MAX_BRIEF, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
-  clearOwnerLease, ensureChatContainer, newQueueId, pumpSuper, resolveAnswered, superVaultName, writeSuper,
+  clearOwnerLease, ensureChatContainer, newQueueId, pumpSuper, reconcileRows, resolveAnswered, stopSweep, superVaultName, writeSuper,
 } from './inbox.js';
 
 /**
@@ -19,8 +19,12 @@ import {
  * TAKE BACK (`POST /api/super/disable`): handed over no more; every child gets the `takeback`
  * note, EXCEPT a child whose `handover` note was never delivered — read from MEMORY, the only
  * place the per-message path consumes notes — whose note is simply cleared (it never heard the
- * mode began). The queue is kept for the next hand-over; the super session is parked by the
- * window.
+ * mode began). The queue is kept for the next hand-over, except the super agent's own open
+ * `ask` (nobody will answer it); the stale sweep stops; the super session is parked by the window.
+ *
+ * Rows (plan r4 D15, D16): a hand-over closes the open items of children it does not keep (an
+ * escalation about a chat that left never blocks the single-question rule) and reconciles the
+ * kept children's rows from the registry.
  */
 
 const MAX_ADOPT = 50;
@@ -71,6 +75,8 @@ export async function enableSuper(contextRoot: string, body: Record<string, unkn
       if (!Object.prototype.hasOwnProperty.call(kept, sid)) kept[sid] = { sessionId: sid, brief: titleFor(sid, titles), adopted: true, startedAt: now };
     }
     s.children = kept;
+    // Items about a child that is not kept are old news.
+    for (const q of s.queue) if (q.sessionId !== session && !Object.prototype.hasOwnProperty.call(kept, q.sessionId)) q.state = 'done';
     s.containers = s.containers.filter((c) => c.kind !== 'chat' || !!kept[c.ref]);
     for (const sid of Object.keys(kept)) ensureChatContainer(s, sid, kept[sid].brief.slice(0, 120));
     for (const sid of adopt) s.notes[sid] = 'handover';
@@ -80,6 +86,7 @@ export async function enableSuper(contextRoot: string, body: Record<string, unkn
     s.queue.push({ id: newQueueId(), sessionId: session, kind: 'handover', state: 'pending', createdAt: now });
     for (const sid of adopt) queueWhatItAsks(s, sid, now);
   });
+  await reconcileRows(contextRoot);
   void pumpSuper(contextRoot);
   return { session: state.session as string, state };
 }
@@ -123,8 +130,10 @@ export function adoptChat(s: SuperState, sid: string, brief: string, now: number
 
 export async function disableSuper(contextRoot: string): Promise<SuperState> {
   clearOwnerLease(contextRoot);
+  stopSweep(contextRoot);
   return writeSuper(contextRoot, (s) => {
     s.enabled = false;
+    for (const q of s.queue) if (q.kind === 'ask') q.state = 'done';
     for (const sid of Object.keys(s.children)) {
       // In memory, never from disk: a note being delivered right now is already gone from
       // memory, and its persist deletes only the value it delivered (store.ts clearSuperNote).

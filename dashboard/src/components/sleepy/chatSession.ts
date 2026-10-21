@@ -2112,7 +2112,7 @@ export function createChatSession(
     if (ev.kind === 'super-event') {
       applyAndNotify(() => {
         const item: ChatUserItem = {
-          kind: 'user', id: `super-${id}-${++superEventSeq}`, text: superEventText(ev.eventKind, ev.child),
+          kind: 'user', id: `super-${id}-${++superEventSeq}`, text: superEventText(ev.eventKind, ev.child, ev.batch),
           ts: Date.now(), superEvent: ev.eventKind,
         };
         conv = { ...conv, items: [...conv.items, item] };

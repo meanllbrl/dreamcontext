@@ -1696,7 +1696,10 @@ export function Composer({
   const saveModelDefault = () => {
     if (onSetModelDefault) { onSetModelDefault(); setSavedDefault(true); return; }
     const at = { model, effort: effortValue };
-    const write = patchAgentSettings({ chatDefaultModel: at.model, chatDefaultEffort: at.effort });
+    // The Super Agent keeps its own default (plan r4 D12): "Set as default" there writes it, not the chat's.
+    const write = mode === 'super'
+      ? patchAgentSettings({ superModel: at.model, superEffort: at.effort })
+      : patchAgentSettings({ chatDefaultModel: at.model, chatDefaultEffort: at.effort });
     void savedDefaultReceipt(write, at, () => pickRef.current).then((show) => { if (show) setSavedDefault(true); });
   };
 

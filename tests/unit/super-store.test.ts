@@ -60,7 +60,7 @@ describe('read and write', () => {
 
   it('serializes concurrent updates per vault (none is lost)', async () => {
     await Promise.all(Array.from({ length: 20 }, (_, i) => updateSuperState(root, (s) => {
-      s.queue.push({ id: `q-${i}`, sessionId: 'c-1', kind: 'idle', state: 'pending', createdAt: i });
+      s.queue.push({ id: `q-${i}`, sessionId: 'c-1', kind: 'done', state: 'pending', createdAt: i });
     })));
     expect((await readSuperState(root)).queue.map((q) => q.id).sort()).toEqual(Array.from({ length: 20 }, (_, i) => `q-${i}`).sort());
   });

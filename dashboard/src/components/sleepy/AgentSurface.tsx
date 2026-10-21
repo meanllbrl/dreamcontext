@@ -12,6 +12,7 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
+import { publishSuperEventContext } from './super/superJobsStore';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -1524,6 +1525,8 @@ export function AgentSurface() {
     // composer deliberately does NOT revoke them on unmount, because a respawn unmounts a pane
     // whose chips are still wanted.
     if (kind === 'chat' && claudeId) dropScratch(claudeId);
+    // The super chat's event-line context lives as long as its conversation (superJobsStore).
+    if (kind === 'chat' && claudeId) publishSuperEventContext(claudeId, null);
     // A conversation closed here is closed: it no longer rides along as an unjudged stored tab.
     if (claudeId) unrestoredRef.current = unrestoredRef.current.filter((m) => m.sessionId !== claudeId);
 
@@ -3201,7 +3204,10 @@ export function AgentSurface() {
     if (!canSpawn) return null;
     const fresh = superFreshRef.current === session;
     superFreshRef.current = null;
-    const s = spawn(false, session, !fresh, 'chat', '', '', true, '', false, '', false, 'super') as ChatSession;
+    // Its own default model and effort (plan r4 D3, D12: Sonnet at medium, Settings -> Chat ->
+    // Super Agent), like the notch Assistant's, never the chat default.
+    const { superModel, superEffort } = agentSettingsRef.current;
+    const s = spawn(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super') as ChatSession;
     // Registered in the roster (so it is portaled and homed) but NEVER in a pane.
     const meta: SessionMeta = { id: s.id, title: 'Claude', kind: 'chat', bypass: s.bypass, claudeId: session, mode: 'super' };
     sessionListRef.current = [...sessionListRef.current, meta];
@@ -4196,6 +4202,9 @@ export function AgentSurface() {
       // An open group (or Others) on the Super Agent's stage owns Esc: it closes the panel and
       // gives focus back to its tile (GroupPanel). Same presence test, same registration order.
       if (document.querySelector('.super-group-panel')) return;
+      // The job list open under the bar owns Esc the same way: it closes the list (JobList), never
+      // the stage, and its listener is added when it opens, after this one (plan r4 AC7).
+      if (document.querySelector('.super-job-list')) return;
       // A card held on that stage owns Esc too: the drag's own listener cancels it, but it is
       // added at the press, after this one, so its stopPropagation cannot reach us.
       if (document.querySelector('.super-surface[data-dragging]')) return;

@@ -1,0 +1,9 @@
+/* ── The centre chat reads a little larger (plan r4 D14, owner 2026-10-20) ─────────────
+   The super agent writes less now, so its own transcript is set at 17 px and its composer at
+   15 px, both still times the window's zoom. Only the centre slot: a child shown side by side,
+   every card and Others keep the chat's 15 px. The composer reads `--font-size-md` for its
+   size AND its min-height (Composer.css, composerHeight.ts), so it is the token that moves. */
+[data-super-slot='centre'] .chat-pane {
+  --chat-text: calc(17px * var(--zoom, 1));
+  --font-size-md: calc(15px * var(--zoom, 1));
+}

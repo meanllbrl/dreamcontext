@@ -75,10 +75,11 @@ const SEED_TASKS = Number(process.env.SEED_TASKS ?? 300);
 // ─── the stand-in `claude` ──────────────────────────────────────────────────────────────
 const STANDIN = `#!${process.execPath}
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const argv = process.argv.slice(2);
+const SLOW_EVENTS = ${JSON.stringify(join(SCRATCH, 'slow-events'))};
 const at = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : ''; };
 const convo = at('--resume') || at('--session-id') || '';
 let brief = '';
@@ -97,11 +98,20 @@ const verbRoute = (verb, body) => fetch(process.env.DREAMCONTEXT_WINDOW_URL + '/
 }).then(async (r) => ({ args: 'super ' + verb, status: r.status, json: await r.json().catch(() => null), out: '' }), (e) => ({ args: 'super ' + verb, status: 0, json: null, out: String(e) }));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const report = (o) => appendFileSync(${JSON.stringify(REPORTS)}, JSON.stringify({ role, convo, pid: process.pid, t: Date.now(), ...o }) + '\\n');
+report({ kind: 'argv', argv });
 function persist(text) {
   if (!/^[0-9a-f-]{36}$/.test(convo)) return;
   const dir = join(process.env.HOME, '.claude', 'projects', 'verify-super');
   mkdirSync(dir, { recursive: true });
   appendFileSync(join(dir, convo + '.jsonl'), JSON.stringify({ type: 'user', sessionId: convo, message: { role: 'user', content: text } }) + '\\n');
+}
+// A frame folded into the running turn is stored the way claude 2.1.304 stores it (measured):
+// a queued_command attachment, so the history replay is the real one.
+function persistQueued(text) {
+  if (!/^[0-9a-f-]{36}$/.test(convo)) return;
+  const dir = join(process.env.HOME, '.claude', 'projects', 'verify-super');
+  mkdirSync(dir, { recursive: true });
+  appendFileSync(join(dir, convo + '.jsonl'), JSON.stringify({ type: 'attachment', sessionId: convo, attachment: { type: 'queued_command', prompt: [{ type: 'text', text }] } }) + '\\n');
 }
 let inited = false;
 let awaiting = null;
@@ -128,7 +138,9 @@ async function superTurn(text) {
     report({ kind: 'handover', text: text.slice(0, 2000), children, steps });
     return 'arranged ' + children.length;
   }
-  if (text.startsWith('[super event]')) {
+  if (text.startsWith('[super event')) {
+    // One slow event turn on cue, so the owner can write into it (plan r4 D4: steer, never held).
+    if (existsSync(SLOW_EVENTS)) { rmSync(SLOW_EVENTS, { force: true }); report({ kind: 'slow-event-start', text: text.slice(0, 2000) }); await sleep(7000); }
     const q = cli('super', 'queue', 'list');
     const items = Array.isArray(q.json) ? q.json : (q.json?.items ?? q.json?.queue ?? []);
     const question = items.find((i) => i.kind === 'question' && i.state !== 'done' && i.state !== 'escalated' && text.includes(i.sessionId));
@@ -137,7 +149,7 @@ async function superTurn(text) {
     return 'handled';
   }
   if (text.startsWith('[super recap]')) { report({ kind: 'recap', text: text.slice(0, 1000) }); return 'recap'; }
-  const m = text.match(/GO-(ASK|PERM|SIBLING|MERGE|REFUSE|HALF|PRESENTOFF|PRESENT|TWO|BUSY|SLOW|LATEROPEN|CLOSE|GROUP)\\s*(\\S*)\\s*(\\S*)/);
+  const m = text.match(/GO-(ASKOWNER|ASK|PERM|SIBLING|MERGE|REFUSE|HALF|PRESENTOFF|PRESENT|TWO|BUSYALL|BUSY|SLOW|LATEROPEN|CLOSE|GROUP|TURNS3)\\s*(\\S*)\\s*(\\S*)/);
   if (m) {
     const [, verb, a, b] = m;
     const steps = [];
@@ -156,6 +168,11 @@ async function superTurn(text) {
       steps.push(await first, await second);
     }
     if (verb === 'BUSY') steps.push(cli('super', 'send', a, 'BUSY'));
+    // The live children, each ending three quick turns (rows, not turns: plan r4 AC1).
+    const live = () => Object.entries(cli('super', 'state').json?.children ?? {}).filter(([, c]) => c && c.status !== 'gone' && c.status !== 'ended').map(([id]) => id);
+    if (verb === 'TURNS3') { const ids = live().slice(0, 5); for (let r = 0; r < 3; r += 1) { for (const id of ids) steps.push(cli('super', 'send', id, 'QUICK')); await sleep(900); } report({ kind: 'turns3', ids }); }
+    if (verb === 'BUSYALL') { const ids = live().slice(0, 6); for (const id of ids) steps.push(cli('super', 'send', id, 'LONGBUSY')); report({ kind: 'busyall', ids }); }
+    if (verb === 'ASKOWNER') steps.push(cli('super', 'ask', 'Ship the login fix now?', '--options', 'Ship it|Wait'));
     if (verb === 'SLOW') await sleep(3000);
     if (verb === 'LATEROPEN') { await sleep(1500); steps.push(cli('super', 'open', 'web', 'https://example.org/later', '--title', 'Later')); }
     if (verb === 'CLOSE') steps.push(cli('super', 'close', a));
@@ -180,6 +197,16 @@ async function childTurn(text) {
     const r = await ask({ tool_name: 'AskUserQuestion', display_name: 'AskUserQuestion', input: { questions: [{ question: 'Which colour for the login button?', header: 'Colour', multiSelect: false, options: [{ label: 'Blue', description: 'brand' }, { label: 'Green', description: 'go' }] }] } });
     report({ kind: 'answered', response: r });
     return 'got answer';
+  }
+  if (text.includes('QUICK')) return 'quick';
+  if (text.includes('LONGBUSY')) {
+    // Twenty-five seconds of work with a tool in flight: the working ring's measurement window.
+    const id = 'toolu_long_' + process.pid;
+    out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'npm test', description: 'Run the tests' } }] } });
+    await new Promise((r) => setTimeout(r, 25000));
+    out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: 'passed' }] }] } });
+    report({ kind: 'longbusy-done' });
+    return 'tested';
   }
   if (text.includes('BUSY')) {
     // Six seconds of work: a Bash call in flight (the card's doing-line) and a background shell
@@ -222,14 +249,22 @@ async function childTurn(text) {
   }
   return 'ok';
 }
+// The CLI folds a user frame that arrives while a turn runs INTO that turn (one result for all,
+// agent-chat.ts's steer note) and opens every turn with a system:init: the stand-in does both.
+let running = false;
+let folded = [];
 async function turn(blocks) {
   const text = blocks.join('');
   persist(blocks[0] ?? '');
-  if (!inited) { inited = true; out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] }); }
+  inited = true;
+  out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] });
   let said = 'ok';
   try { said = role === 'super' ? await superTurn(blocks[0] ?? '') : await childTurn(text); } catch (e) { said = 'error ' + e; }
+  const extra = folded.splice(0);
+  if (extra.length) said += ' (+' + extra.length + ' folded: ' + extra.map((b) => (b[0] ?? '').slice(0, 40)).join(' | ') + ')';
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: (role === 'super' ? 'SUPER ' : 'CHILD ') + said }] } });
   out({ type: 'result', subtype: 'success', is_error: false, result: said, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
+  report({ kind: 'result', first: (blocks[0] ?? '').slice(0, 80), folded: extra.length });
 }
 let buf = '';
 let chain = Promise.resolve();
@@ -246,8 +281,15 @@ process.stdin.on('data', (c) => {
     const content = (o.message && o.message.content) || [];
     const blocks = typeof content === 'string' ? [content] : content.filter((b) => b.type === 'text').map((b) => b.text);
     if (!blocks.length) continue;
+    if (running) {
+      folded.push(blocks);
+      persistQueued(blocks[0] ?? '');
+      appendFileSync(${JSON.stringify(FRAMES)}, JSON.stringify({ role, convo, pid: process.pid, t: Date.now(), blocks, folded: true }) + '\\n');
+      continue;
+    }
     appendFileSync(${JSON.stringify(FRAMES)}, JSON.stringify({ role, convo, pid: process.pid, t: Date.now(), blocks }) + '\\n');
-    chain = chain.then(() => turn(blocks));
+    running = true;
+    chain = chain.then(() => turn(blocks)).finally(() => { running = false; });
   }
 });
 process.stdin.on('end', () => chain.then(() => process.exit(0)));
@@ -826,8 +868,8 @@ async function flow(browser, base) {
   } else {
     ok('an asking child in Others is marked asking on the stack', await until(page, async () => (await page.locator('[data-testid="super-others-stack"][data-asking]').count()) === 1, 5000));
   }
-  const isQuestionEvent = (f) => f.role === 'super' && f.blocks[0]?.startsWith('[super event]') && /which colour/i.test(f.blocks[0]);
-  ok('the question reached the super agent as one [super event] turn', await until(page, async () => frames().filter(isQuestionEvent).length === 1, 60000));
+  const isQuestionEvent = (f) => f.role === 'super' && !f.folded && /^\[super events?\]/.test(f.blocks[0] ?? '') && /which colour/i.test(f.blocks[0]);
+  ok('the question reached the super agent as one [super events] turn', await until(page, async () => frames().filter(isQuestionEvent).length === 1, 60000));
   const ev = frames().find(isQuestionEvent);
   ok('…no sooner than the 15 s lease after the owner typed', ev && ev.t - typedAt >= 15000, ev ? `${ev.t - typedAt} ms` : 'none');
   ok('…with the child\'s text fenced', /untrusted-project-output/.test(ev?.blocks[0] ?? ''), ev?.blocks[0]?.slice(0, 400));
@@ -1333,7 +1375,7 @@ async function motion(engineName, browserType, base) {
           ok(`chromium ${w}x${h}: the queue pill at rest stays in its band, clear of the centre`, !!pill && pill.y + pill.height <= gw.c.y + 0.5, JSON.stringify({ pill, centreTop: gw.c.y }));
         }
         if (scheme === 'light' && w === 1280) {
-          // The pill as QueueStrip draws it, laid out by the real stylesheet at the narrowest band
+          // The pill as JobBar draws it, laid out by the real stylesheet at the narrowest band
           // and the widest, with the real Reply / "n more" labels in English and Turkish: with its
           // options when they ALL fit at full width (no cut label: an answer cannot be undone),
           // else Reply only (optionsFit). Either way one row inside the band, every button inside
@@ -1342,9 +1384,9 @@ async function motion(engineName, browserType, base) {
             const surface = document.querySelector('[data-testid="super-surface"]');
             const el = (tag, cls, text) => { const e = document.createElement(tag); e.className = cls; if (text) e.textContent = text; return e; };
             const fixtures = [
-              { name: 'en-typical', who: 'Chat 1', text: 'The login button: which colour?', options: ['Blue', 'Green'], reply: 'Reply to Claude', more: '1 more waiting' },
-              { name: 'en-worst', who: 'Fix the login button colour on every page', text: 'Which colour should the login button use across the whole app, given the brand palette?', options: ['Blue (Recommended)', 'Green', 'Keep the current one', 'Match the brand palette'], reply: 'Reply to Claude', more: '2 more waiting' },
-              { name: 'tr-worst', who: 'Giriş düğmesinin rengini düzelt', text: 'Giriş düğmesi tüm uygulamada hangi renkte olmalı, marka paletine göre?', options: ['Mavi (Önerilen)', 'Yeşil', 'Mevcut olanı koru', 'Marka paletine uy'], reply: 'Claude’a yanıt ver', more: '2 tane daha bekliyor' },
+              { name: 'en-typical', who: 'Chat 1', text: 'The login button: which colour?', options: ['Blue', 'Green'], reply: 'Reply to Claude', more: '1 more waiting', list: 'Job list' },
+              { name: 'en-worst', who: 'Fix the login button colour on every page', text: 'Which colour should the login button use across the whole app, given the brand palette?', options: ['Blue (Recommended)', 'Green', 'Keep the current one', 'Match the brand palette'], reply: 'Reply to Claude', more: '2 more waiting', list: 'Job list' },
+              { name: 'tr-worst', who: 'Giriş düğmesinin rengini düzelt', text: 'Giriş düğmesi tüm uygulamada hangi renkte olmalı, marka paletine göre?', options: ['Mavi (Önerilen)', 'Yeşil', 'Mevcut olanı koru', 'Marka paletine uy'], reply: 'Claude’a yanıt ver', more: '2 tane daha bekliyor', list: 'İş listesi' },
             ];
             const lay = (fx, bw, withOptions) => {
               const strip = el('div', 'super-queue-strip');
@@ -1355,7 +1397,15 @@ async function motion(engineName, browserType, base) {
               if (withOptions) for (const o of fx.options) actions.append(el('button', 'super-queue-btn super-queue-btn--option', o));
               actions.append(el('button', 'super-queue-btn super-queue-btn--reply', fx.reply));
               head.append(el('span', 'super-queue-who', fx.who), el('span', 'super-queue-text', fx.text), actions, el('span', 'super-queue-more', fx.more));
-              strip.append(head);
+              // The job bar beside it: with a head, its counts fold into one "Job list" button (JobBar).
+              strip.classList.add('super-job-bar');
+              const counts = el('div', 'super-job-counts');
+              // The folded "Job list" button as drawn: its glyph and a count.
+              const all = el('button', 'super-job-count');
+              all.dataset.section = 'all';
+              all.append(el('span', 'super-job-count-glyph', '☰'), el('span', 'super-job-count-n', '3'));
+              counts.append(all);
+              strip.append(head, counts);
               surface.append(strip);
               const hr = head.getBoundingClientRect();
               const right = Math.max(...[...head.querySelectorAll('button, .super-queue-more')].map((b) => b.getBoundingClientRect().right));
@@ -1467,6 +1517,244 @@ async function motion(engineName, browserType, base) {
   await browser.close();
 }
 
+// ─── the job board (plan r4: rows not turns, batches, steer, the bar, the event line) ─────────
+
+/** Plan r4 + the owner's 2026-10-21 card asks, observed. `full` (Chromium) also drives the flow
+ *  pieces (turn ends, a slow event turn steered into, the super's own ask, the ring's cost);
+ *  every engine checks the bar, the list, the centre font and takes the screenshots. */
+async function board(engineName, browserType, base, full) {
+  console.log(`\n── ${engineName}: the job board (plan r4)`);
+  const browser = await browserType.launch();
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, colorScheme: 'dark' });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(`${LAST_CHECK}: ${m.text()}`); });
+  page.on('pageerror', (e) => errors.push(`${LAST_CHECK}: ${e}`));
+  const apiReqs = [];
+  page.on('request', (r) => { const u = new URL(r.url()); if (u.pathname.startsWith('/api/')) apiReqs.push({ t: Date.now(), path: u.pathname }); });
+  try {
+    await openChat(page, base);
+    if (!(await until(page, () => surfaceShown(page), 8000))) {
+      await page.locator('[data-testid="super-handover-btn"]:visible').first().click().catch(() => {});
+      await until(page, () => surfaceShown(page), 20000);
+    }
+    ok(`${engineName}: handed over for the board checks`, await surfaceShown(page));
+    // The board reads the floating stage: nothing side by side from an earlier section.
+    if (record().view?.mode !== 'float') {
+      await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+      await until(page, async () => record().view?.mode === 'float', 8000);
+    }
+    await until(page, async () => (await superComposer(page).count()) > 0, 20000);
+    await page.waitForTimeout(1500);
+
+    if (full) {
+      // AC9 server: the super session's own argv.
+      const sup = reports().filter((r) => r.kind === 'argv' && r.role === 'super').pop();
+      const av = sup?.argv ?? [];
+      const at = (f) => { const i = av.indexOf(f); return i >= 0 ? av[i + 1] : null; };
+      ok('the super agent spawns with --model sonnet --effort medium by default', at('--model') === 'sonnet' && at('--effort') === 'medium', JSON.stringify(av));
+
+      // AC1: children ending turns spend no super turn; 30 s settled they are done, batched.
+      const superTurns = (from, to) => frames().filter((f) => f.role === 'super' && !f.folded && f.t >= from && f.t <= to && /^\[super events?\]/.test(f.blocks[0] ?? ''));
+      await sayToSuper(page, 'GO-TURNS3');
+      ok('the super sent three quick turns to each live child', await until(page, async () => reports().some((r) => r.kind === 'turns3'), 60000));
+      const t3 = reports().filter((r) => r.kind === 'turns3').pop();
+      const tEnd = t3?.t ?? Date.now();
+      await page.waitForTimeout(20000);
+      const early = superTurns(tEnd - 15000, tEnd + 20000).filter((f) => /event=done/.test(f.blocks[0]));
+      ok(`children ending 3 turns each (${t3?.ids?.length ?? 0} children) open 0 super turns inside the 30 s settle window`, early.length === 0, JSON.stringify(early.map((f) => f.blocks[0].slice(0, 120))));
+      // The rows say so meanwhile: working with the "bitiyor" chip, or still working.
+      await page.getByTestId('super-job-count-working').click().catch(() => {});
+      const settlingRows = await page.locator('[data-testid="super-job-row"][data-chip="settling"]').count().catch(() => 0);
+      ok('…the list shows them settling ("bitiyor") meanwhile', settlingRows >= 1, `${settlingRows}`);
+      await page.keyboard.press('Escape');
+      // A slow next event turn: the owner writes into it three times, fast.
+      writeFileSync(join(SCRATCH, 'slow-events'), '1');
+      ok('30 s settled, the done rows reach the super agent batched', await until(page, async () => superTurns(tEnd, Date.now()).some((f) => /event=done/.test(f.blocks[0])), 60000));
+      const doneTurns = superTurns(tEnd, Date.now() + 1).filter((f) => /event=done/.test(f.blocks[0]));
+      const doneItems = doneTurns.reduce((n, f) => n + (f.blocks[0].match(/event=done/g) ?? []).length, 0);
+      ok(`…in fewer turns than children (${doneTurns.length} turns for ${doneItems} done items)`, doneTurns.length >= 1 && doneTurns.length < Math.max(2, doneItems), JSON.stringify(doneTurns.map((f) => f.blocks[0].split('\n')[0])));
+      ok('the slow event turn started', await until(page, async () => reports().some((r) => r.kind === 'slow-event-start'), 30000));
+      const slowAt = reports().filter((r) => r.kind === 'slow-event-start').pop().t;
+      for (const m of ['STEER-ONE', 'STEER-TWO', 'STEER-THREE']) { await sayToSuper(page, m); await page.waitForTimeout(250); }
+      const steeredOf = () => frames().filter((f) => f.role === 'super' && f.t >= slowAt && /^STEER-/.test(f.blocks[0] ?? ''));
+      ok('AC4: 3 owner messages during an event turn are 3 stdin writes at once (folded into it, never held)', await until(page, async () => steeredOf().length === 3 && steeredOf().every((f) => f.folded), 6000), JSON.stringify(steeredOf().map((f) => ({ b: f.blocks[0], folded: !!f.folded }))));
+      ok('…all three before that turn\'s result, and no extra turn after it', await until(page, async () => reports().some((r) => r.kind === 'result' && r.role === 'super' && r.t >= slowAt && r.folded === 3), 20000)
+        && (await page.waitForTimeout(3000), frames().filter((f) => f.role === 'super' && !f.folded && f.t > slowAt && /^STEER-/.test(f.blocks[0] ?? '')).length === 0),
+        JSON.stringify(reports().filter((r) => r.kind === 'result' && r.role === 'super' && r.t >= slowAt)));
+
+      // AC8: the event line, compact; the steered owner bubbles render as his.
+      const lines = page.locator('[data-super-slot="centre"] [data-testid="super-event-line"]');
+      ok('AC8: event turns are one line each in the centre', await until(page, async () => (await lines.count()) >= 1, 15000), `${await lines.count()}`);
+      const steerBubbles = await page.locator('[data-super-slot="centre"]').getByText(/^STEER-(ONE|TWO|THREE)$/).count();
+      ok('…a steered owner message renders as his bubble', steerBubbles >= 3, `${steerBubbles}`);
+      const name = page.locator('[data-super-slot="centre"] .super-event-line-name').first();
+      if (await name.count()) {
+        await name.click();
+        ok('…a name in the line opens the list at its row', await until(page, async () => (await page.locator('[data-testid="super-job-list"] [data-focus="true"]').count()) === 1, 5000));
+        await page.keyboard.press('Escape');
+      } else ok('…a name in the line opens the list at its row', false, 'no name in any event line');
+      const toggle = page.locator('[data-super-slot="centre"] [data-testid="super-event-line-toggle"]').first();
+      if (await toggle.count()) {
+        await toggle.click();
+        ok('…a click expands the super agent\'s reply', await until(page, async () => (await page.locator('[data-super-slot="centre"] [data-testid="super-event-line"][data-expanded="true"]').count()) >= 1, 5000));
+        await toggle.click().catch(() => {});
+      }
+      const fullLines = await page.locator('[data-super-slot="centre"] [data-testid="super-event-line"][data-full="true"]').count();
+      ok('…the batch the super agent escalated in renders full', fullLines >= 1 || (record().ownerBatches ?? []).length === 0, JSON.stringify({ fullLines, ownerBatches: record().ownerBatches }));
+
+      // AC7 + D7: the super agent's own question, its options whole, the click framed.
+      await sayToSuper(page, 'GO-ASKOWNER');
+      const opt = page.getByTestId('super-ask-option').filter({ hasText: /^Ship it$/ });
+      ok('the super agent\'s own ask heads the bar with its options drawn whole', await until(page, async () => (await opt.count()) === 1, 40000), await page.getByTestId('super-queue-head').innerText().catch(() => 'no head'));
+      ok('…with a question at the head, the counts fold into one "Job list" button', (await page.getByTestId('super-job-count-all').count()) === 1 && (await page.getByTestId('super-job-count-working').count()) === 0);
+      const tAsk = Date.now();
+      await opt.click();
+      ok('…a click sends exactly the drawn label, framed, into the super chat', await until(page, async () => frames().some((f) => f.role === 'super' && f.t >= tAsk && f.blocks[0] === 'Answer to your question: Ship it'), 15000));
+      ok('…and closes the ask', await until(page, async () => !(record().queue ?? []).some((q) => q.kind === 'ask' && q.state !== 'done'), 15000), JSON.stringify((record().queue ?? []).filter((q) => q.kind === 'ask')));
+      await until(page, async () => (await page.getByTestId('super-job-count-working').count()) === 1, 15000);
+    }
+
+    // AC7: the bar and the list, over the centre, without moving it and without a request.
+    ok(`${engineName}: the bar shows its four counts`, (await page.locator('[data-testid^="super-job-count-"]').count()) === 4);
+    // The page settles first (the centre's history pages, the first state): the list is
+    // measured against a quiet page, not the page's own load.
+    await until(page, async () => { const n = apiReqs.length; await page.waitForTimeout(2500); return apiReqs.length === n; }, 30000);
+    const centreBefore = (await geo(page)).c;
+    const r0 = apiReqs.length;
+    await page.getByTestId('super-job-count-working').click();
+    ok(`${engineName}: a count opens the list with all four sections`, await until(page, async () => (await page.locator('[data-testid="super-job-list"] [data-testid^="super-job-section-"]').count()) === 4, 5000));
+    await page.waitForTimeout(1500);
+    const centreOpen = (await geo(page)).c;
+    ok(`${engineName}: the centre moves <= 1 px when it opens`, near1(centreBefore, centreOpen), JSON.stringify({ centreBefore, centreOpen }));
+    // The list reads the pushed record: no super route and nothing about a child while it is open
+    // (the app's own polls and focus refetches are not the list's).
+    const kids = Object.keys(record().children ?? {});
+    const during = apiReqs.slice(r0).filter((x) => (x.path.startsWith('/api/super/') && !x.path.startsWith('/api/super/activity')) || kids.some((k) => x.path.includes(k)));
+    ok(`${engineName}: 0 requests from the list while it is open`, during.length === 0, JSON.stringify(during.slice(0, 5)));
+    if (engineName === 'chromium') {
+      for (const [w, h] of [[1280, 800], [1920, 1080]]) for (const scheme of ['light', 'dark']) {
+        await page.setViewportSize({ width: w, height: h });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.waitForTimeout(600);
+        await page.screenshot({ path: join(OUT, `board-list-open-${w}-${scheme}.png`) });
+      }
+      await page.setViewportSize({ width: 1600, height: 1000 });
+      await page.emulateMedia({ colorScheme: 'dark' });
+    } else await page.screenshot({ path: join(OUT, `board-list-open-${engineName}.png`) });
+    await page.keyboard.press('Escape');
+    ok(`${engineName}: Esc closes the list`, await until(page, async () => (await page.getByTestId('super-job-list').count()) === 0, 3000));
+    await page.getByTestId('super-job-count-done').click();
+    await until(page, async () => (await page.getByTestId('super-job-list').count()) === 1, 3000);
+    const sb = (await geo(page)).s;
+    await page.mouse.click(sb.x + 20, sb.y + sb.h - 20);
+    ok(`${engineName}: an outside click closes it`, await until(page, async () => (await page.getByTestId('super-job-list').count()) === 0, 3000));
+
+    // D14: the centre reads 17 px, its composer 15 px; any other chat 15 px.
+    const fonts = await page.evaluate(() => {
+      const centre = document.querySelector('[data-super-slot="centre"] .chat-pane');
+      const input = document.querySelector('[data-super-slot="centre"] .chat-cmp-input');
+      const prose = centre?.querySelector('.chat-msg, .chat-md, .chat-text, p');
+      const others = [...document.querySelectorAll('.chat-pane')].filter((p) => !p.closest('[data-super-slot="centre"]'));
+      return {
+        centreVar: centre ? getComputedStyle(centre).getPropertyValue('--chat-text').trim() : null,
+        prose: prose ? getComputedStyle(prose).fontSize : null,
+        input: input ? getComputedStyle(input).fontSize : null,
+        othersVar: others.map((p) => getComputedStyle(p).getPropertyValue('--chat-text').trim()),
+      };
+    });
+    ok(`${engineName}: the centre transcript reads 17 px and its composer 15 px`, /^calc\(17px|^17px/.test(fonts.centreVar ?? '') && (fonts.prose === null || fonts.prose === '17px') && fonts.input === '15px', JSON.stringify(fonts));
+    ok(`${engineName}: every other chat keeps 15 px`, fonts.othersVar.every((v) => /15px/.test(v)), JSON.stringify(fonts.othersVar));
+
+    // The cards: tone, model chip, a title of up to three lines.
+    const tiles = await page.evaluate(() => [...document.querySelectorAll('.super-tile[data-tile="chat"]')].map((el) => {
+      const cs = getComputedStyle(el);
+      const title = el.querySelector('.super-tile-title');
+      const lh = title ? parseFloat(getComputedStyle(title).lineHeight) : 0;
+      return {
+        kind: el.dataset.kind, tone: el.dataset.superTone, toneColor: cs.getPropertyValue('--tone').trim(),
+        success: cs.getPropertyValue('--color-success').trim(), accent: cs.getPropertyValue('--color-accent').trim(),
+        model: el.querySelector('[data-testid="super-card-model"]')?.textContent ?? null,
+        titleLines: title && lh ? Math.round(title.getBoundingClientRect().height / lh) : 0,
+        state: el.querySelector('.super-tile-state, .super-tile-asks')?.textContent ?? '',
+        w: Math.round(el.closest('.super-card-frame')?.getBoundingClientRect().width ?? 0),
+      };
+    }));
+    ok(`${engineName}: every chat tile carries a tone and keeps its state word`, tiles.length > 0 && tiles.every((x) => x.tone && x.state.trim().length > 0), JSON.stringify(tiles));
+    ok(`${engineName}: an idle tile is purple (accent), a working one green (success)`, tiles.filter((x) => x.tone === 'idle').every((x) => x.toneColor === x.accent) && tiles.filter((x) => x.tone === 'working').every((x) => x.toneColor === x.success), JSON.stringify(tiles.map((x) => [x.tone, x.toneColor])));
+    // A chip only from what the session reported (its system:init): the flow's children ran turns
+    // in this page; a freshly opened page's children have not, and show no guess.
+    if (full) ok(`${engineName}: a tile shows its model chip from the session (Opus here)`, tiles.some((x) => /^Opus/.test(x.model ?? '')), JSON.stringify(tiles.map((x) => x.model)));
+    else ok(`${engineName}: no tile guesses a model it was not told`, tiles.every((x) => x.model === null || /^(Opus|Sonnet|Haiku|Fable)/.test(x.model)), JSON.stringify(tiles.map((x) => x.model)));
+    ok(`${engineName}: titles take up to three lines in the 160 px tile`, tiles.every((x) => x.titleLines <= 3) && tiles.filter((x) => x.w).every((x) => Math.abs(x.w - 160) <= 1), JSON.stringify(tiles.map((x) => [x.titleLines, x.w])));
+
+    if (full) {
+      // The working ring: at most 4 turn, held by the motion clock, rest when unfocused; its cost A/B.
+      await sayToSuper(page, 'GO-BUSYALL');
+      ok('children are busy for the ring checks', await until(page, async () => (await page.locator('.super-tile[data-kind="working"]').count()) >= 2, 40000), `${await page.locator('.super-tile[data-kind="working"]').count()}`);
+      await page.waitForTimeout(1500);
+      const ring = await page.evaluate(() => {
+        const spins = [...document.querySelectorAll('[data-testid="super-tile-spin"]')];
+        const anims = document.getAnimations().filter((a) => a.animationName === 'superTileSpin');
+        return { working: document.querySelectorAll('.super-tile[data-kind="working"]').length, on: spins.filter((s) => s.dataset.spin === 'on').length, closed: spins.filter((s) => s.dataset.spin === 'closed').length, anims: anims.length, running: anims.filter((a) => a.playState === 'running').length };
+      });
+      ok('the working ring turns on at most 4 tiles at once, the rest closed', ring.on >= 1 && ring.on <= 4 && ring.on + ring.closed === ring.working, JSON.stringify(ring));
+      ok('…its animations are held by the motion clock (none left on the display link)', ring.anims >= 1 && ring.running === 0, JSON.stringify(ring));
+      const cdp = await context.newCDPSession(page);
+      await cdp.send('Performance.enable');
+      const sample = async (ms) => {
+        const m0 = Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((x) => [x.name, x.value]));
+        const frames0 = await page.evaluate((ms) => new Promise((res) => { let n = 0; const t0 = performance.now(); const f = () => { n += 1; if (performance.now() - t0 < ms) requestAnimationFrame(f); else res(n); }; requestAnimationFrame(f); }), ms);
+        const m1 = Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((x) => [x.name, x.value]));
+        const per = (k) => Math.round(((m1[k] ?? 0) - (m0[k] ?? 0)) / (ms / 1000) * 10) / 10;
+        return { recalcPerS: per('RecalcStyleCount'), layoutPerS: per('LayoutCount'), rafPerS: Math.round(frames0 / (ms / 1000)) };
+      };
+      const withRing = await sample(5000);
+      await page.evaluate(() => document.documentElement.style.setProperty('--dc-motion-ambient-name', 'none'));
+      await page.waitForTimeout(300);
+      const restRing = await page.evaluate(() => document.getAnimations().filter((a) => a.animationName === 'superTileSpin').length);
+      const without = await sample(5000);
+      await page.evaluate(() => document.documentElement.style.removeProperty('--dc-motion-ambient-name'));
+      report.note(`ring cost A/B (chromium, ${ring.on} turning): with ${JSON.stringify(withRing)} | rested ${JSON.stringify(without)}`);
+      ok('…unfocused (the ambient name none) the ring rests: no ring animation at all', restRing === 0, `${restRing}`);
+      ok('…turning costs <= 20 style recalcs a second over resting (15 fps clock)', withRing.recalcPerS - without.recalcPerS <= 20, JSON.stringify({ withRing, without }));
+      await page.screenshot({ path: join(OUT, 'board-working-ring.png') });
+      // The compact and the full event lines, the larger centre font, in light and dark.
+      for (const [w, h] of [[1280, 800], [1800, 1130], [1920, 1080]]) for (const scheme of ['light', 'dark']) {
+        await page.setViewportSize({ width: w, height: h });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.waitForTimeout(600);
+        await page.screenshot({ path: join(OUT, `board-closed-${w}-${scheme}.png`) });
+        if (scheme === 'dark') {
+          // The centre takes the height while the bottom band is empty (owner 2026-10-21).
+          const g = await geo(page);
+          const banded = (record().containers ?? []).some((c) => c.place === 'others') || g.others > 0 || (await page.locator('[data-testid="super-terminals-row"] button').count()) > 0;
+          const below = g.s.y + g.s.h - (g.c.y + g.c.h);
+          report.note(`${w}x${h}: centre ${Math.round(g.c.w)}x${Math.round(g.c.h)}, ${Math.round(below)} px below it (${banded ? 'band reserved: Others or terminals' : 'band empty'})`);
+          ok(`chromium ${w}x${h}: the centre runs to the bottom margin unless the band holds something`, banded ? below >= 24 + 40 - 1 : Math.abs(below - 24) <= 1, JSON.stringify({ below, banded }));
+        }
+      }
+      await page.setViewportSize({ width: 1600, height: 1000 });
+      await page.emulateMedia({ colorScheme: 'dark' });
+      // A child row asks for side by side.
+      await page.getByTestId('super-job-count-working').click();
+      const link = page.locator('[data-testid="super-job-list"] .super-job-title--link').first();
+      if (await link.count()) {
+        await link.click();
+        ok('a child row in the list opens it side by side', await until(page, async () => record().view?.mode === 'half', 8000), JSON.stringify(record().view));
+      } else ok('a child row in the list opens it side by side', false, 'no child row link');
+      await page.keyboard.press('Escape').catch(() => {});
+      // Leave the stage as the next sections expect it: floating, nothing side by side.
+      await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+      await until(page, async () => record().view?.mode === 'float', 8000);
+    }
+    ok(`${engineName}: no console errors on the board`, errors.length === 0, errors.slice(0, 5).join('\n'));
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
 // ─── main ───────────────────────────────────────────────────────────────────────────────
 
 let server = null;
@@ -1484,6 +1772,7 @@ try {
       await r.context.close();
     } finally { await browser.close(); }
   }
+  for (const e of ENGINES) await board(e, pw[e], base, e === 'chromium' && !SKIP_FLOW);
   for (const e of ENGINES) await motion(e, pw[e], base);
   // Light mode: the same crossfade, no flights.
   const settingsPath = join(HOME, '.dreamcontext', 'agent-ui.json');

@@ -29,8 +29,8 @@ const GUIDE = readFileSync(join(ROOT, GUIDE_REL), 'utf-8');
 const FLAT = GUIDE.replace(/\s+/g, ' ');
 
 /** Verbs and flags named by the guide that other branches are still adding. */
-const PENDING_COMMANDS = ['super pool', 'super ask'];
-const PENDING_FLAGS = ['--from', '--task', '--mcp', '--options'];
+const PENDING_COMMANDS: string[] = [];
+const PENDING_FLAGS = ['--mcp'];
 
 const program = createProgram();
 
@@ -99,7 +99,7 @@ describe('super-orchestration guide: the model table is MODEL_FACTS', () => {
   });
 
   it('every "<alias> / <effort>" setting in the text uses a real alias and effort', () => {
-    const efforts = (/const EFFORTS = \[([^\]]*)\]/.exec(readFileSync(join(ROOT, 'src/server/routes/super.ts'), 'utf-8')) ?? [])[1]
+    const efforts = (/const JOB_EFFORTS = \[([^\]]*)\]/.exec(readFileSync(join(ROOT, 'src/lib/super/jobs.ts'), 'utf-8')) ?? [])[1]
       ?.match(/'([a-z]+)'/g)?.map((x) => x.replace(/'/g, '')) ?? [];
     expect(efforts).toContain('xhigh');
     const settings = [...FLAT.matchAll(/`(\w+)` ?\/ ?`(\w+)`/g)];

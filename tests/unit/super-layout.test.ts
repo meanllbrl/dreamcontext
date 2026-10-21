@@ -39,13 +39,16 @@ const inStage = (p: StagePlan, r: Rect) =>
 const floats = (p: StagePlan) => Object.values(p.cards).filter((c) => c.where === 'float');
 const sideOf = (p: StagePlan, r: Rect) => (r.x + r.width / 2 < p.width / 2 ? 'L' : 'R');
 
-function expectCentred(p: StagePlan) {
+/** Centred across; down the stage it starts under the job bar's band and runs to the bottom
+ *  margin, or stops above the bottom band when that band holds something (owner 2026-10-21). */
+function expectCentred(p: StagePlan, banded = p.narrow || p.others.length > 0 || p.order.length === 0) {
   const left = p.centre.x;
   const right = p.width - (p.centre.x + p.centre.width);
   const top = p.centre.y;
   const bottom = p.height - (p.centre.y + p.centre.height);
   expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
-  expect(Math.abs(top - bottom)).toBeLessThanOrEqual(1);
+  expect(top).toBeCloseTo(STAGE.MARGIN + STAGE.BAND, 6);
+  expect(bottom).toBeCloseTo(banded ? STAGE.MARGIN + STAGE.BAND : STAGE.MARGIN, 6);
 }
 
 describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
@@ -55,9 +58,10 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
       expect(p.narrow).toBe(false);
       expectCentred(p);
       const floating = floats(p);
-      // 1280 and 1440 hold three a side (the seventh in Others); 1600 and 1920 hold them all.
+      // 1280 holds three a side (the seventh in Others); from 1440 the taller centre's columns
+      // hold them all (owner 2026-10-21: the centre takes the height while the band is empty).
       expect(floating.length + p.others.length).toBe(7);
-      expect(floating).toHaveLength(s.width >= 1500 ? 7 : 6);
+      expect(floating).toHaveLength(s.width >= 1300 ? 7 : 6);
       const rects = floating.map((c) => c.rect);
       for (const c of floating) {
         expect(c.rect.width).toBe(T);
@@ -483,12 +487,42 @@ describe('half, present, narrow (O5, O8, §0 C2)', () => {
 });
 
 describe('bands and hit tests (F7, F12, FE1)', () => {
-  it('the queue pill sits above the centre, the dock and Others below, in the reserved bands', () => {
-    const p = planStage([card('a')], FLOAT, STAGES[1]);
+  it('the job bar sits above the centre; with terminals in the dock, the dock and Others sit below it, in the reserved band', () => {
+    const p = planStage([card('a')], FLOAT, STAGES[1], { terminals: 2 });
     expect(p.queue.y + p.queue.height).toBeLessThanOrEqual(p.centre.y);
     expect(p.othersRect.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
     expect(p.dock.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
     expect(p.dock.x + p.dock.width).toBeLessThanOrEqual(p.othersRect.x);
+    expectCentred(p, true);
+  });
+
+  it('the centre takes the height while the bottom band is empty, its width unchanged (owner 2026-10-21)', () => {
+    for (const s of STAGES) {
+      const tall = planStage([card('a'), card('b')], FLOAT, s);
+      const banded = planStage([card('a'), card('b')], FLOAT, s, { terminals: 1 });
+      expectCentred(tall, false);
+      expect(tall.centre.height - banded.centre.height).toBeCloseTo(STAGE.BAND, 6);
+      expect(tall.centre.width).toBeCloseTo(banded.centre.width, 6);
+      expect(tall.centre.x).toBeCloseTo(banded.centre.x, 6);
+      // The job bar never meets the centre; the tiles stay inside the centre's height.
+      expect(tall.queue.y + tall.queue.height).toBeLessThanOrEqual(tall.centre.y);
+      for (const c of floats(tall)) expect(c.rect.y + c.rect.height).toBeLessThanOrEqual(tall.centre.y + tall.centre.height + EPS);
+    }
+  });
+
+  it('an empty stage keeps the band: its first-run hint is drawn there, clear of the centre (review Major)', () => {
+    const p = planStage([], FLOAT, STAGES[1]);
+    expectCentred(p, true);
+    expect(p.dock.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
+  });
+
+  it('a card drawn in Others reserves the band again (the stack never sits under a tile or the centre)', () => {
+    const many = Array.from({ length: 12 }, (_, i) => card(`c${i}`));
+    const p = planStage(many, FLOAT, STAGES[0]);
+    expect(p.others.length).toBeGreaterThan(0);
+    expectCentred(p, true);
+    expect(p.othersRect.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
+    for (const c of floats(p)) expect(c.rect.y + c.rect.height).toBeLessThanOrEqual(p.othersRect.y - STAGE.GAP / 2 + EPS);
   });
 
   it('the queue band outgrows a narrow centre so a pill keeps one row, centred on it and inside the stage', () => {

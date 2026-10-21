@@ -90,7 +90,14 @@ export interface ChatEntry {
   /** How the last top-level turn ended, stamped BEFORE the move to `idle` is emitted: when, and
    *  whether the owner interrupted it. `resultSeq` is unique across the process (a respawned
    *  chat gets a fresh entry and must never repeat an earlier number). */
-  lastTurn?: { endedAt: string; interrupted: boolean; resultSeq: number };
+  lastTurn?: {
+    endedAt: string; interrupted: boolean; resultSeq: number;
+    /** The CLI's `result` said `is_error` (plan r4 D6: a child that may be stuck). */
+    isError?: boolean;
+    /** The API refused the turn on a usage limit and the bridge moved it to another account:
+     *  never a stuck child (plan r4 D6, r2-C1). */
+    limited?: boolean;
+  };
 }
 
 export interface ChatHandle {
@@ -100,6 +107,9 @@ export interface ChatHandle {
   answered(requestId?: string): void;
   /** The owner interrupted the running turn (the bridge wrote the interrupt request). */
   interrupted(): void;
+  /** The running (or just-ended) turn was refused on a usage limit and an account switch is
+   *  under way: its end is not an error worth reporting. */
+  markLimited(): void;
   exited(): void;
 }
 
@@ -252,6 +262,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
   entries.set(init.sessionId, e);
   let dead = false;
   let interruptAsked = false;
+  let limitAsked = false;
   const openTools = new Set<string>();
   const alive = () => { e.lastFrameAt = new Date().toISOString(); };
   const syncTools = () => { e.toolsInFlight = openTools.size; };
@@ -301,8 +312,13 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         e.pendingQuestion = null;
         openTools.clear();
         syncTools();
-        e.lastTurn = { endedAt: new Date().toISOString(), interrupted: interruptAsked, resultSeq: ++resultSeq };
+        e.lastTurn = {
+          endedAt: new Date().toISOString(), interrupted: interruptAsked, resultSeq: ++resultSeq,
+          ...(frame.is_error === true ? { isError: true } : {}),
+          ...(limitAsked ? { limited: true } : {}),
+        };
         interruptAsked = false;
+        limitAsked = false;
         setStatus(e, 'idle');
       }
     },
@@ -310,13 +326,19 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       if (dead) return;
       alive();
       // A new turn: an interrupt asked for while nothing ran belongs to no turn.
-      if (e.status !== 'working' && e.status !== 'asking') interruptAsked = false;
+      if (e.status !== 'working' && e.status !== 'asking') { interruptAsked = false; limitAsked = false; }
       if (!e.title && text.trim()) e.title = cap(text.trim().replace(/\s+/g, ' '), 80);
       setStatus(e, 'working');
     },
     interrupted() {
       if (dead) return;
       interruptAsked = true;
+    },
+    markLimited() {
+      if (dead) return;
+      // The refusal can arrive on the turn's own `result`, after it was stamped: mark that turn.
+      if (e.status === 'idle' && e.lastTurn) { e.lastTurn = { ...e.lastTurn, limited: true }; return; }
+      limitAsked = true;
     },
     answered(requestId) {
       if (dead) return;

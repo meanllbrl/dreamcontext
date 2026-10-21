@@ -124,7 +124,8 @@ function live(sid: string, o: { busy?: boolean; asking?: boolean; background?: n
 
 describe('super end', () => {
   it('ends an idle child through the park primitive with `end`, and records it ended', async () => {
-    makeVault({ queue: [{ id: 'q-1', sessionId: 'c1', kind: 'idle', state: 'pending', createdAt: 1 }] });
+    // A pending `done` row item (plan r4: a child's turn end is a row, `idle` items left).
+    makeVault({ queue: [{ id: 'q-1', sessionId: 'c1', kind: 'done', state: 'pending', createdAt: 1 }] });
     const c1 = live('c1');
     const r = await verb('end', { children: ['c1'] });
     expect(r.status).toBe(200);
@@ -132,6 +133,8 @@ describe('super end', () => {
     expect(c1.calls).toEqual([{ reason: 'super-end', opts: { end: true, force: false } }]);
     const s = await readSuperState(root);
     expect(typeof s.children.c1.endedAt).toBe('number');
+    // Its job-list row rests in done (Bitti), never stuck or gone.
+    expect(s.children.c1.row).toBe('done');
     expect(s.containers.map((k) => k.ref)).toEqual(['c2', 'own']);
     expect(s.queue.find((q) => q.id === 'q-1')?.state).toBe('done');
     expect(s.queue.find((q) => q.kind === 'ended')).toMatchObject({ sessionId: 'c1', state: 'done', brief: 'db work' });

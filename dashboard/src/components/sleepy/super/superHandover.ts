@@ -15,7 +15,7 @@
  * React-free and DOM-free: imports only the window's mirror of the server types.
  */
 import {
-  SUPER_EVENT_PREFIXES, type SuperEventKind, type SuperQueueItem, type SuperState,
+  SUPER_EVENT_PREFIXES, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperPoolItem, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 
 // ─── Who is the Super Agent ────────────────────────────────────────────────────
@@ -252,12 +252,20 @@ export function optionsFit(prev: OptionsFit | null, key: string, width: number, 
 export function superEventPrefix(kind: string): typeof SUPER_EVENT_PREFIXES[number] {
   if (kind === 'recap') return '[super recap]';
   if (kind === 'handover') return '[super handover]';
+  if (kind === 'batch') return '[super events]';
   return '[super event]';
 }
 
 /** The text of an event chip the window adds live (the protocol never echoes a user frame):
  *  the prefix, the kind, and the child it is about. */
-export function superEventText(kind: string, child: string): string {
+export function superEventText(kind: string, child: string, batch?: SuperBatchFrame): string {
+  // A batch stands for the server's text with the same header and item lines, so the live
+  // chip and a history replay are read by ONE parser (`superBatchOf`).
+  if (kind === 'batch' && batch) {
+    const id = /^[A-Za-z0-9_-]{1,64}$/.test(batch.batch) ? batch.batch : 'b';
+    const lines = batch.items.slice(0, 8).map((i) => `- item=${safeToken(i.item)} child=${safeToken(i.child)} event=${safeToken(i.kind)}`);
+    return [`[super events] batch=${id} items=${lines.length}`, ...lines].join('\n');
+  }
   const prefix = superEventPrefix(kind);
   const k = kind.replace(/[^a-z]/g, '').slice(0, 20);
   const c = child.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
@@ -276,8 +284,233 @@ export function superEventOf(text: string): { prefix: string; rest: string } | n
 
 /** The event kinds the window accepts on a `super_event` frame. */
 export function knownEventKind(kind: string): kind is SuperEventKind {
-  return kind === 'question' || kind === 'idle' || kind === 'gone' || kind === 'recap' || kind === 'handover';
+  return kind === 'question' || kind === 'idle' || kind === 'gone' || kind === 'recap' || kind === 'handover' || kind === 'batch';
 }
+
+/** A `super_event` batch frame's payload (plan r4 D10): the batch id and what it carries. */
+export interface SuperBatchFrame { batch: string; items: Array<{ item: string; child: string; kind: string }> }
+
+function safeToken(v: string): string {
+  return String(v).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
+}
+
+/** What an injected turn's text carries, for a live chip and a replay alike: its kind
+ *  (`batch`, `recap`, `handover`, or an old single event's kind), the batch id, and the
+ *  children it is about with what happened to each. Reads only server-written lines. */
+export function superBatchOf(text: string): { kind: string; batch: string | null; items: Array<{ child: string; kind: string }> } | null {
+  const ev = superEventOf(text);
+  if (!ev) return null;
+  if (ev.prefix === '[super recap]') return { kind: 'recap', batch: null, items: [] };
+  if (ev.prefix === '[super handover]') return { kind: 'handover', batch: null, items: [] };
+  if (ev.prefix === '[super event]') {
+    const [k, c] = ev.rest.split(/\s+/);
+    // A replay of the server's old text (`item=… child=… status=…`) or the live chip (`kind child`).
+    const child = /child=(\S+)/.exec(ev.rest)?.[1] ?? (k && !k.includes('=') ? (c ?? '') : '');
+    const kind = /status=(\S+)/.exec(ev.rest)?.[1] ?? (k && !k.includes('=') ? k : 'other');
+    return { kind: kind === 'asking' ? 'question' : kind, batch: null, items: child ? [{ child, kind }] : [] };
+  }
+  const batch = /^batch=([A-Za-z0-9_-]+)/.exec(ev.rest)?.[1] ?? null;
+  const items: Array<{ child: string; kind: string }> = [];
+  // Only the server's own lines: a fenced block (child text) is skipped whole, so a child that
+  // writes "- item=… event=done" never adds a name to the line (security review Minor 1).
+  let fenced = false;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('<untrusted-project-output')) { fenced = !line.includes('</untrusted-project-output>'); continue; }
+    if (fenced) { if (line.includes('</untrusted-project-output>')) fenced = false; continue; }
+    const m = /^- item=\S+ child=(\S+) event=(\S+)/.exec(line);
+    if (m) items.push({ child: m[1], kind: m[2] });
+  }
+  return { kind: 'batch', batch, items };
+}
+
+// ─── The event line (plan r4 D2, D8) ─────────────────────────────────────────────
+
+interface EventItemLike { kind: string; id: string; text?: string; superEvent?: string; name?: string; input?: unknown }
+
+/** One event turn as the centre draws it: the turn's anchor (the injected user item), what it
+ *  carried, how many commands the super agent ran in it other than `dreamcontext super`, and
+ *  whether it renders in full (its batch is one the super agent asked the owner in). */
+export interface SuperEventGroup {
+  anchor: string;
+  kind: string;
+  batch: string | null;
+  items: Array<{ child: string; kind: string }>;
+  commands: number;
+  full: boolean;
+  /** Ids of the items the compact line stands for (the anchor excluded). */
+  folded: string[];
+}
+
+function isSuperCommand(it: EventItemLike): boolean {
+  if (it.kind !== 'tool' || it.name !== 'Bash') return false;
+  const cmd = (it.input && typeof it.input === 'object' ? (it.input as { command?: unknown }).command : undefined);
+  return typeof cmd === 'string' && /^\s*dreamcontext\s+super\b/.test(cmd);
+}
+
+/**
+ * Fold each event turn of a slice into ONE line (pure). A turn runs from its injected item to
+ * the next user item (an owner message, steered or not, ends it and renders as his bubble) or
+ * the next injected one. A turn whose batch is in `ownerBatches`, or that the owner expanded,
+ * keeps every item. Built per windowed slice, so a group never straddles a window edge.
+ */
+export function groupSuperEventTurns<T extends EventItemLike>(
+  items: readonly T[],
+  opts: { ownerBatches: readonly string[]; expanded: ReadonlySet<string> },
+): { kept: T[]; groups: Map<string, SuperEventGroup> } {
+  const groups = new Map<string, SuperEventGroup>();
+  const kept: T[] = [];
+  let open: SuperEventGroup | null = null;
+  const owner = new Set(opts.ownerBatches);
+  for (const it of items) {
+    const ev = it.kind === 'user' && typeof it.text === 'string' ? superBatchOf(it.text) : null;
+    if (it.kind === 'user') open = null;
+    if (ev) {
+      const full = (ev.batch !== null && owner.has(ev.batch)) || opts.expanded.has(it.id);
+      open = { anchor: it.id, kind: ev.kind, batch: ev.batch, items: ev.items, commands: 0, full, folded: [] };
+      groups.set(it.id, open);
+      kept.push(it);
+      continue;
+    }
+    if (open) {
+      if (it.kind === 'tool' && !isSuperCommand(it)) open.commands += 1;
+      if (!open.full) { open.folded.push(it.id); continue; }
+    }
+    kept.push(it);
+  }
+  return { kept, groups };
+}
+
+/** The words of an event line (D13: which jobs, what happened), at most 3 names then "+N". */
+export function eventLine(group: Pick<SuperEventGroup, 'kind' | 'items'>, titleFor: (child: string) => string): { names: Array<{ child: string; title: string }>; more: number; kinds: string[] } {
+  const seen = new Set<string>();
+  const names: Array<{ child: string; title: string }> = [];
+  for (const i of group.items) {
+    if (seen.has(i.child)) continue;
+    seen.add(i.child);
+    names.push({ child: i.child, title: titleFor(i.child) || i.child.slice(0, 8) });
+  }
+  const kinds = [...new Set(group.items.map((i) => (i.kind === 'asking' ? 'question' : i.kind)))];
+  return { names: names.slice(0, 3), more: Math.max(0, names.length - 3), kinds: kinds.length ? kinds : [group.kind] };
+}
+
+// ─── Status tone and model chip (owner 2026-10-21) ───────────────────────────────
+
+/** The ONE status -> tone map every card, ring, frame, dot and job row reads (superTone.css
+ *  turns the tone into a colour token). Colour never travels alone: the state word stays. */
+export type StatusTone = 'working' | 'idle' | 'asking' | 'ended' | 'starting';
+export function toneOfStatus(kind: string): StatusTone {
+  if (kind === 'working') return 'working';
+  if (kind === 'asking') return 'asking';
+  if (kind === 'ended') return 'ended';
+  if (kind === 'starting') return 'starting';
+  return 'idle';
+}
+export function toneOfRow(row: ChildRow): StatusTone {
+  if (row === 'working') return 'working';
+  if (row === 'asking') return 'asking';
+  if (row === 'stuck' || row === 'gone') return 'ended';
+  return 'idle';
+}
+
+/** "Opus · medium": the model a child really runs (its session's spawn values, else what the
+ *  record stored), never a guess; null when neither is known. */
+export function modelChip(model: string | undefined | null, effort: string | undefined | null): string | null {
+  const m = (model ?? '').trim();
+  if (!m) return null;
+  const family = /opus/i.test(m) ? 'Opus' : /sonnet/i.test(m) ? 'Sonnet' : /haiku/i.test(m) ? 'Haiku' : /fable/i.test(m) ? 'Fable' : m.replace(/^claude-/, '').slice(0, 16);
+  const e = (effort ?? '').trim().toLowerCase();
+  return e ? `${family} · ${e}` : family;
+}
+
+// ─── The job list (plan r4 §2: one data source) ───────────────────────────────────
+
+export type JobSection = 'waiting' | 'working' | 'pool' | 'done';
+export type JobChip = 'permission' | 'question' | 'ask' | 'queued' | 'settling' | 'asking' | 'stuck' | 'held' | 'maybeStarted' | 'gone';
+export interface JobRow {
+  key: string;
+  section: JobSection;
+  /** The child this row is about (a child row, or a queue item's child). */
+  sid?: string;
+  item?: string;
+  pool?: string;
+  title: string;
+  line: string;
+  chip: JobChip | null;
+  tone: StatusTone | null;
+  since?: number;
+  task?: string;
+  branch?: string;
+  model?: string | null;
+}
+export interface JobLook {
+  /** The child's live status kind in this window, or null when it has no session here. */
+  live: (sid: string) => string | null;
+  titleFor: (sid: string) => string;
+  modelFor?: (sid: string) => string | null;
+  superTitle: string;
+}
+
+/** A child's row, from the record, or from live status when the record has none (a v1 record). */
+export function rowOf(child: Pick<SuperChild, 'row'>, live: string | null): ChildRow {
+  if (child.row) return child.row;
+  if (live === 'working' || live === 'starting') return 'working';
+  if (live === 'asking') return 'asking';
+  if (live === 'ended') return 'gone';
+  return 'done';
+}
+
+function isQuestionOpen(state: Pick<SuperState, 'queue'>): boolean {
+  return state.queue.some((q) => (q.kind === 'question' || q.kind === 'ask') && q.state === 'escalated');
+}
+
+/** The four sections of the job list, composed from the record (never copied). Pure. */
+export function superJobs(state: Pick<SuperState, 'queue' | 'children' | 'pool'>, look: JobLook): Record<JobSection, JobRow[]> {
+  const out: Record<JobSection, JobRow[]> = { waiting: [], working: [], pool: [], done: [] };
+  const head = queueHead(state);
+  const owner = state.queue.filter(needsOwner).sort((a, b) => (a.id === head?.id ? -1 : b.id === head?.id ? 1 : a.createdAt - b.createdAt));
+  const chipOf = (k: QueueKind): JobChip => (k === 'permission' ? 'permission' : k === 'ask' ? 'ask' : 'question');
+  for (const q of owner) {
+    const isAsk = q.kind === 'ask';
+    out.waiting.push({
+      key: `q:${q.id}`, section: 'waiting', item: q.id, ...(isAsk ? {} : { sid: q.sessionId }),
+      title: isAsk ? look.superTitle : look.titleFor(q.sessionId),
+      // A permission row shows only the child's own request (the bar draws it); never the super's words.
+      line: q.kind === 'permission' ? '' : (q.ownerText ?? ''),
+      chip: chipOf(q.kind), tone: 'asking', since: q.createdAt,
+    });
+  }
+  if (isQuestionOpen(state)) {
+    for (const q of state.queue.filter((x) => x.kind === 'question' && x.state === 'pending').sort((a, b) => a.createdAt - b.createdAt)) {
+      out.waiting.push({ key: `q:${q.id}`, section: 'waiting', item: q.id, sid: q.sessionId, title: look.titleFor(q.sessionId), line: '', chip: 'queued', tone: null, since: q.createdAt });
+    }
+  }
+  const done: JobRow[] = [];
+  for (const [sid, ch] of Object.entries(state.children)) {
+    const row = rowOf(ch, look.live(sid));
+    const base = {
+      key: `c:${sid}`, sid, title: look.titleFor(sid) || ch.brief || sid.slice(0, 8), line: ch.brief ?? '',
+      tone: toneOfRow(row), since: ch.rowAt ?? ch.startedAt,
+      ...(ch.task ? { task: ch.task } : {}), ...(ch.branch ? { branch: ch.branch } : {}),
+      model: look.modelFor ? look.modelFor(sid) : null,
+    };
+    if (row === 'done' || row === 'gone') { done.push({ ...base, section: 'done', chip: row === 'gone' ? 'gone' : null }); continue; }
+    const chip: JobChip | null = row === 'asking' ? 'asking' : row === 'stuck' ? 'stuck' : ch.settling ? 'settling' : null;
+    out.working.push({ ...base, section: 'working', chip });
+  }
+  out.working.sort((a, b) => (a.since ?? 0) - (b.since ?? 0));
+  out.done = done.sort((a, b) => (b.since ?? 0) - (a.since ?? 0));
+  for (const p of state.pool as SuperPoolItem[]) {
+    out.pool.push({
+      key: `p:${p.id}`, section: 'pool', pool: p.id, title: p.title, line: p.note ?? '',
+      chip: p.maybeStarted ? 'maybeStarted' : p.held ? 'held' : null, tone: null, since: p.createdAt,
+      ...(p.task ? { task: p.task } : {}),
+    });
+  }
+  return out;
+}
+
+/** The Bitti section shows the newest 10 and a "+N". */
+export const DONE_SHOWN = 10;
 
 // ─── Layout of the panes while handed over ─────────────────────────────────────
 
