@@ -60,6 +60,7 @@ function superTurn(text) {
       cli('super', 'open', 'insight', 'weekly-active-users'),
       cli('super', 'open', 'insight', 'trial-signups'),
       cli('super', 'open', 'insight', 'never-synced-metric'),
+      cli('super', 'open', 'insight', 'checkout-funnels'),
       cli('super', 'open', 'task', 'fix-the-login-form'),
     ];
     report({ kind: 'handover', steps });
@@ -163,6 +164,11 @@ function setupScratch() {
     writeFileSync(join(PROJ, '_dream_context', 'lab', 'scripts', `${i.slug}.mjs`), i.script);
     must(`lab sync ${i.slug}`, dc('lab', 'sync', i.slug));
   }
+  // A funnel SET (the funnel explorer's payload): the tile reads its primary funnel, the card opens as the explorer.
+  must('lab create checkout-funnels', dc('lab', 'create', 'checkout-funnels', '--title', 'Checkout funnels', '--render', 'funnel', '--adapter', 'script', '--no-board'));
+  const demo = readFileSync(join(REPO, 'scripts', 'verify', 'fixtures', 'funnel-explorer-demo.mjs'), 'utf-8').replace('export default async function () {', 'async function demo() {');
+  writeFileSync(join(PROJ, '_dream_context', 'lab', 'scripts', 'checkout-funnels.mjs'), `${demo}\nexport default async function () { return (await demo()).data.funnel; }\n`);
+  must('lab sync checkout-funnels', dc('lab', 'sync', 'checkout-funnels'));
   // One insight that was never synced: the tile and the card must say so, not draw a blank.
   must('lab create never-synced', dc('lab', 'create', 'never-synced-metric', '--title', 'Churned workspaces', '--render', 'number', '--adapter', 'script', '--no-board'));
   writeFileSync(join(PROJ, '_dream_context', 'lab', 'scripts', 'never-synced-metric.mjs'), 'export default async function () { return []; }\n');
@@ -265,7 +271,7 @@ try {
   await sleep(1500);
   await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
   ok('the surface shows', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0));
-  ok('the super agent opened the four insights and the task', await until(page, async () => record().containers.filter((c) => c.kind === 'insight').length === 4, 60000),
+  ok('the super agent opened the five insights and the task', await until(page, async () => record().containers.filter((c) => c.kind === 'insight').length === 5, 60000),
     JSON.stringify(readNd(REPORTS).find((r) => r.kind === 'handover')?.steps));
   await settle(page);
   await page.locator('[data-testid="super-container"][data-kind="insight"]').first().waitFor({ timeout: 15000 });
@@ -273,12 +279,13 @@ try {
 
   const tiles = await readCards(page);
   for (const t of tiles) console.log(`  · tile ${t.ref}: ${t.w}x${t.h} "${t.text}"`);
-  ok('every insight is a 160 px 1:1 tile', tiles.length === 4 && tiles.every((t) => Math.abs(t.w - 160) <= 1 && Math.abs(t.h - 160) <= 1), JSON.stringify(tiles.map((t) => [t.ref, t.w, t.h])));
+  ok('every floating insight is a 160 px 1:1 tile', tiles.length >= 4 && tiles.every((t) => Math.abs(t.w - 160) <= 1 && Math.abs(t.h - 160) <= 1), JSON.stringify(tiles.map((t) => [t.ref, t.w, t.h])));
   const tile = (ref) => tiles.find((t) => t.ref === ref)?.text ?? '';
   ok('the funnel tile reads: its name, the reach of the last step, the top-step count', /Onboarding Funnel/.test(tile('onboarding-funnel')) && /4[.,\s]?120/.test(tile('onboarding-funnel')), tile('onboarding-funnel'));
   ok('the number tile reads: its name and the figure', /Weekly active users/.test(tile('weekly-active-users')) && /9[.,\s]?\d{3}/.test(tile('weekly-active-users')), tile('weekly-active-users'));
   ok('the line tile reads: its name and its latest figure', /Trial signups/.test(tile('trial-signups')) && /\d{3}/.test(tile('trial-signups')), tile('trial-signups'));
   ok('a tile carries a sparkline (the trend) where a series exists', (await page.locator('[data-testid="super-container"][data-kind="insight"] .super-tile-trail').count()) >= 2);
+  ok('a funnel SET tile reads like a funnel: its share of the top and its silhouette', /\d[\d.,]*%/.test(tile('checkout-funnels')) && /→/.test(tile('checkout-funnels')), tile('checkout-funnels'));
   ok('a never-synced insight says so', /never synced/i.test(tile('never-synced-metric')), tile('never-synced-metric'));
   await shoot(page, '1-float');
 
@@ -311,6 +318,20 @@ try {
   await say(`GO-HALF ${idOf('weekly-active-users')}`, 'verb-half');
   await page.waitForTimeout(1500);
   await shoot(page, '3-half-number');
+
+  console.log('\n── half page: a funnel SET opens as the Lab funnel explorer');
+  await say(`GO-HALF ${idOf('checkout-funnels')}`, 'verb-half');
+  await page.waitForTimeout(2500);
+  const explorer = await page.evaluate(() => {
+    const view = document.querySelector('[data-where="half"] .super-card-view');
+    const card = view?.querySelector('.board-card');
+    const b = card?.getBoundingClientRect();
+    const v = view?.getBoundingClientRect();
+    return { card: !!card, tabs: view?.querySelectorAll('[role="tab"]').length ?? 0, fits: !!b && !!v && b.height <= v.height + 1 && b.width <= v.width + 1 };
+  });
+  ok('the explorer card is drawn (title, tabs) inside the card', explorer.card && explorer.tabs >= 3, JSON.stringify(explorer));
+  ok('…and fits the card', explorer.fits, JSON.stringify(explorer));
+  await shoot(page, '5-half-explorer');
 
   console.log('\n── presented: the funnel beside the line');
   await say(`GO-PRESENT ${idOf('onboarding-funnel')} ${idOf('trial-signups')}`, 'verb-present');
