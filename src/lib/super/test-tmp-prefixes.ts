@@ -525,6 +525,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-end-',
   'super-end-home-',
   'super-eval-shim-',
+  'super-event-voice-',
+  'super-event-voice-home-',
   'super-groups-',
   'super-groups-home-',
   'super-handover-',

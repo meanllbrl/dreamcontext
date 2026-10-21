@@ -24,6 +24,7 @@ import {
   containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
 } from '../../lib/super/inbox.js';
+import { isSuperEventTurn } from '../../lib/super/inbox.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
@@ -357,6 +358,8 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     return;
   }
   delegating.set(root, inFlight + 1);
+  // Started in the owner's own turn (not an event turn): he waits on its result (`awaited`).
+  const awaited = !!c.state.session && !isSuperEventTurn(c.state.session);
   let wt: CreatedWorktree | null = null;
   try {
     if (job.worktree) {
@@ -409,6 +412,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(job.mcp ? { mcp: job.mcp } : {}),
         ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
         ...(job.task ? { task: job.task } : {}),
+        ...(awaited ? { awaited: true as const } : {}),
       };
       delete s.notes[sid];
       container = (succeeds ? succeedChild(s, succeeds, sid, { brief: job.brief }) : null) ?? ensureChatContainer(s, sid, job.title);

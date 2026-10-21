@@ -84,6 +84,12 @@ export interface ChatEntry {
   lastFrameAt: string;
   /** Top-level tool calls asked for and not yet answered by a tool_result. */
   toolsInFlight: number;
+  /** Background work the CLI still runs for this chat (`system:background_tasks_changed`: a
+   *  `run_in_background` shell, a Monitor, a background agent), and when that roster last
+   *  changed. A turn can end while it runs: the turn is over, the job is not. Absent until the
+   *  first roster frame. */
+  backgroundTasks?: number;
+  backgroundAt?: string;
   /** Set when the Assistant started this chat (a delegation). Rides the entry's own lifetime:
    *  a respawn of the same conversation inherits it via {@link isDelegatedConversation}. */
   origin?: 'assistant';
@@ -274,6 +280,14 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       alive();
       if (frame.type === 'system' && frame.subtype === 'init' && typeof frame.session_id === 'string') {
         e.conversationId = frame.session_id;
+      }
+      if (frame.type === 'system' && frame.subtype === 'background_tasks_changed') {
+        const n = Array.isArray(frame.tasks) ? frame.tasks.length : 0;
+        if (n !== (e.backgroundTasks ?? 0) || e.backgroundAt === undefined) {
+          e.backgroundTasks = n;
+          e.backgroundAt = new Date().toISOString();
+        }
+        return;
       }
       const q = readPendingQuestion(frame);
       if (q) {

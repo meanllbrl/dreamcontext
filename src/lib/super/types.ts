@@ -127,6 +127,10 @@ export interface SuperChild {
   task?: string;
   /** Why the row is `stuck`: an error turn, or a working turn silent past the stale bar. */
   stuckReason?: StuckReason;
+  /** The owner waits on this job's result: the super agent started it in the owner's own turn,
+   *  not in an event turn. Its done/stuck/gone event asks the super to tell him; spent when that
+   *  turn ends. */
+  awaited?: true;
   /** What it runs with (`super delegate`, then `super update --mode/--model/--effort`), so
    *  `super resume` reopens it the same way. Absent = basic, the default model and effort. */
   mode?: string;
@@ -528,7 +532,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 2;
+export const SUPER_BRIEF_REV = 3;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

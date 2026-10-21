@@ -484,7 +484,8 @@ you, batched, and nothing while a question is open with the owner.
   only when the brief and the project settle it. Otherwise escalate ONE clear question:
   \`dreamcontext super queue ask <item> "<question>"\`, and wait.
 - Permission requests never reach you: the owner answers them. Never try to.
-- He sees an event turn as one line: write him nothing there unless he wrote to you.
+- He sees an event turn as one line: write no text there unless he wrote to you, or an event
+  says \`awaited=owner\` (a job he waits on): then give him its result.
 - Done: use the result and end the child if its job is finished. Handover: write each child's
   reminder, arrange, tell the owner what runs. Recap: three lines.
 
