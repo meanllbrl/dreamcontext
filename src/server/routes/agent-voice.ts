@@ -54,7 +54,7 @@ import { readVerbatim, verbatimRatio } from '../../lib/voice/verbatim.js';
 import { dictationState, startDictationInstall } from '../../lib/voice/dictationInstall.js';
 import { buildVoiceLexicon } from '../../lib/voice/lexicon.js';
 import { hold, release, hookExitRestore } from '../../lib/voice/audioFocus.js';
-import { logVoiceEvent, parseTakeMeta, parseTurnTrace, keepTake } from '../../lib/voice/voiceLog.js';
+import { logVoiceEvent, parseTakeMeta, parseTurnTrace, parseSpeechReport, keepTake } from '../../lib/voice/voiceLog.js';
 import { readAssistantConfig, DEFAULT_ASSISTANT_CONFIG } from '../../lib/assistant/home.js';
 
 /**
@@ -351,13 +351,28 @@ export async function handleVoiceTts(
 
   const verdict = ttsGate.acquire();
   if (verdict !== 'ok') {
+    // Logged, because a refusal used to be the one fate of a chunk voice.jsonl never showed:
+    // the queue turned it into a silent skip (2026-10-21). The client now waits a 429 out.
+    logVoiceEvent({ kind: 'tts', outcome: verdict === 'busy' ? 'refused-busy' : 'refused-rate' });
     sendJson(res, 429, { error: 'tts_busy', message: 'Too many speech requests.' });
     return;
   }
 
+  // ── THE CALLER WENT AWAY ──────────────────────────────────────────────────────────────
+  // A barge-in aborts the page's requests, and the generation behind each one used to run on
+  // regardless — holding its gate slot for seconds (a retry and the fallback could triple it).
+  // The next turn's first sentences then met a full gate. Now the upstream call is aborted
+  // and the slot handed back as soon as the response closes unfinished.
+  const gone = new AbortController();
+  const onClose = (): void => { if (!res.writableFinished) gone.abort(); };
+  res.on('close', onClose);
+
   try {
     const body = await parseJsonBody(req);
     const text = typeof body?.text === 'string' ? body.text.trim() : '';
+    // The page's name for this chunk, so its `speech` line and this `tts` line can be matched.
+    const id = typeof body?.id === 'string' && /^[\w-]{1,48}$/.test(body.id) ? body.id : undefined;
+    const idField = id ? { id } : {};
     if (!text) {
       sendJson(res, 400, { error: 'tts_failed', message: 'No text to speak.' });
       return;
@@ -365,6 +380,7 @@ export async function handleVoiceTts(
     if (text.length > MAX_TTS_CHARS) {
       // The client chunks to roughly a sentence, so this is only ever reached by a direct
       // POST — which is exactly the case AC12 is about.
+      logVoiceEvent({ kind: 'tts', outcome: 'refused-too-long', chars: text.length, ...idField });
       sendJson(res, 413, { error: 'tts_busy', message: 'That chunk is too long to speak.' });
       return;
     }
@@ -377,7 +393,7 @@ export async function handleVoiceTts(
     const spoken = speakable(text);
     // One line per chunk in voice.jsonl: which were spoken, rescued, or dropped, and why.
     const chunkLog = (outcome: string, extra: Record<string, unknown> = {}) =>
-      logVoiceEvent({ kind: 'tts', outcome, chars: text.length, spokenChars: spoken.length, ...extra });
+      logVoiceEvent({ kind: 'tts', outcome, chars: text.length, spokenChars: spoken.length, ...idField, ...extra });
     if (!spoken) {
       // Nothing speakable survived — a chunk that was only a link, or only a fence. This is
       // not a failure, so it is not `tts_failed`: the queue treats 204 as "skip this one and
@@ -389,6 +405,7 @@ export async function handleVoiceTts(
 
     const key = voiceApiKey();
     if (!key) {
+      chunkLog('unconfigured');
       sendJson(res, 400, {
         error: 'tts_unconfigured',
         message: 'No OpenRouter key is set. The mode still works as text.',
@@ -398,6 +415,7 @@ export async function handleVoiceTts(
 
     const model = await resolveModel('speech', { key });
     if (!model.ok) {
+      chunkLog(model.reason === 'unreachable' ? 'failed' : 'unconfigured');
       sendJson(res, model.reason === 'unreachable' ? 502 : 400, {
         error: model.reason === 'unreachable' ? 'tts_failed' : 'tts_unconfigured',
         message: model.detail,
@@ -432,7 +450,7 @@ export async function handleVoiceTts(
             const r = await fetch(`${OPENROUTER_BASE}/audio/speech`, {
               method: 'POST',
               headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...OPENROUTER_HEADERS },
-              signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+              signal: untilGoneOr(TTS_TIMEOUT_MS, gone.signal),
               // `pcm` is the ONLY format this model accepts, and it is the same 24 kHz mono
               // pcm16 the chat path returns — so the WAV wrapper below serves both.
               body: JSON.stringify({ model: candidate, input: spoken, voice, response_format: 'pcm' }),
@@ -443,6 +461,7 @@ export async function handleVoiceTts(
             }
             return Buffer.from(await r.arrayBuffer());
           } catch (err) {
+            if (gone.signal.aborted) return null;
             console.error('[voice:tts] fallback failed', err);
           }
         }
@@ -458,7 +477,7 @@ export async function handleVoiceTts(
           'Content-Type': 'application/json',
           ...OPENROUTER_HEADERS,
         },
-        signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+        signal: untilGoneOr(TTS_TIMEOUT_MS, gone.signal),
         body: JSON.stringify({
           model: model.id,
           stream: true,
@@ -491,7 +510,7 @@ export async function handleVoiceTts(
     let retried = false;
     try {
       speech = await generate();
-      if (!readVerbatim(spoken, speech.transcript)) {
+      if (!readVerbatim(spoken, speech.transcript) && !gone.signal.aborted) {
         retried = true;
         console.warn(
           `[voice:tts] the model answered the line instead of reading it `
@@ -500,12 +519,21 @@ export async function handleVoiceTts(
         speech = await generate();
       }
     } catch (err) {
+      if (gone.signal.aborted) {
+        // Nobody is waiting for this chunk any more: the slot goes back now, not in seconds.
+        chunkLog('abandoned', { retried });
+        return;
+      }
       console.error('[voice:tts] request failed', err);
       chunkLog('failed', { retried });
       sendJson(res, 502, { error: 'tts_failed', message: 'Speech failed for this chunk.' });
       return;
     }
 
+    if (gone.signal.aborted) {
+      chunkLog('abandoned', { retried });
+      return;
+    }
     if (!readVerbatim(spoken, speech.transcript)) {
       // Twice over. The chunk is DROPPED rather than played, and the distinction is the whole
       // point of this route: a missing sentence is a gap in speech the owner can still read on
@@ -516,6 +544,10 @@ export async function handleVoiceTts(
       // real TTS, which cannot make this mistake.
       console.warn('[voice:tts] the chat model would not read the line — using the TTS model');
       const rescued = await speakWithRealTts();
+      if (gone.signal.aborted) {
+        chunkLog('abandoned', { retried });
+        return;
+      }
       if (!rescued || rescued.length === 0) {
         chunkLog('dropped-not-read', { ratio: Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) });
         res.writeHead(204).end();
@@ -566,8 +598,23 @@ export async function handleVoiceTts(
       sendJson(res, 500, { error: 'tts_failed', message: 'Speech failed for this chunk.' });
     }
   } finally {
+    res.off('close', onClose);
     ttsGate.release();
   }
+}
+
+/**
+ * Aborts after `ms`, or as soon as `gone` does — whichever comes first. (`AbortSignal.any` is
+ * Node 20.3+, and the CLI still runs on 18.)
+ */
+function untilGoneOr(ms: number, gone: AbortSignal): AbortSignal {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new Error('timeout')), ms);
+  timer.unref?.();
+  const onGone = (): void => { clearTimeout(timer); ctl.abort(new Error('client gone')); };
+  if (gone.aborted) onGone();
+  else gone.addEventListener('abort', onGone, { once: true });
+  return ctl.signal;
 }
 
 // ─── POST /api/agent/voice/warm ──────────────────────────────────────────────────────────
@@ -604,6 +651,8 @@ const NOTCH_ACTIONS = new Set(['opened', 'kept-open', 'already-open', 'switched-
  *
  * `{kind:"turn"}` is the other record: one voice turn timed from the hotkey's release to the
  * first audible chunk (`parseTurnTrace`), the measurement the 2026-10-13 speed work starts from.
+ * `{kind:"speech"}` is one spoken chunk's fate (`parseSpeechReport`): the line per sentence
+ * that shows which one was played, skipped or cut, and why.
  */
 export async function handleVoiceLog(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!isDesktop()) {
@@ -611,6 +660,17 @@ export async function handleVoiceLog(req: IncomingMessage, res: ServerResponse):
     return;
   }
   const body = await parseJsonBody(req).catch(() => null) as Record<string, unknown> | null;
+  if (body?.kind === 'speech') {
+    // One spoken chunk's fate from the page's queue (played / skipped / cut, and why).
+    const chunk = parseSpeechReport(body);
+    if (!chunk) {
+      sendError(res, 400, 'bad_request', 'Unknown speech record.');
+      return;
+    }
+    logVoiceEvent(chunk);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   if (body?.kind === 'turn') {
     // A voice turn's timing (dashboard/src/lib/voice/turnTrace.ts), plus what the page cannot
     // know: the model and effort the Assistant is configured to run.

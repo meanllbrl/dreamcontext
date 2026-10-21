@@ -1,0 +1,7 @@
+{ "elements": [ { "type": "stack", "x": 0, "y": 0, "gap": 0, "items": [
+  { "type": "appBar", "w": 360, "title": "Notes", "actions": ["search", "plus"] },
+  { "type": "listRow", "w": 360, "leading": "file", "title": "Grocery list", "subtitle": "2 min ago", "trailing": "chevron-right" },
+  { "type": "listRow", "w": 360, "leading": "file", "title": "Trip to Lisbon", "subtitle": "yesterday", "trailing": "chevron-right" },
+  { "type": "listRow", "w": 360, "leading": "file", "title": "Book ideas", "subtitle": "last week", "trailing": "chevron-right" },
+  { "type": "tabBar", "w": 360, "items": [{ "icon": "home", "label": "Notes" }, { "icon": "settings", "label": "Settings" }], "active": 0 }
+] } ] }

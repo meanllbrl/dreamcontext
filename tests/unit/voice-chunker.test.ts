@@ -316,7 +316,9 @@ describe('the speech queue', () => {
     const q = makeQueue(fetcherThat(['two']));
     q.push('one here. two here. three here. ');
     await settle();
-    // One 429 costs a sentence. It does not stall the queue and it does not kill the reply.
+    // A chunk that really cannot be spoken costs that sentence, and only that one: it does not
+    // stall the queue or kill the reply. (A 429 is NOT such a chunk any more — the fetcher waits
+    // a busy route out; see voice-no-skip.test.ts.)
     expect(FakeAudio.played).toEqual(['one here.', 'three here.']);
   });
 

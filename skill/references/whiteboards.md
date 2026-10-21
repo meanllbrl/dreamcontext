@@ -10,6 +10,8 @@ When the user says *board / whiteboard / control panel / pano* and means a place
 
 **A number on a whiteboard is a live widget, never a drawing.** "Put current MRR, this month's revenue, the monthly trend, the split on the control panel" means one `insight` widget per metric, so the board re-reads the Lab cache every time it opens. Never draw the values with the `excalidraw` skill's `kpi()`/`lineChart()`/`donut()`, never write a generator script that bakes them, never hand-write the board: all three freeze today's numbers into shapes. A metric with no insight yet gets one first (`dreamcontext lab create`, offer-and-confirm), then its widget. Open work goes on as `task` widgets or a `todo`. Recipe (0) below.
 
+**Anything you explain or show on a whiteboard is drawn, not written.** "Put something on the board that explains X", a process, a design, a comparison, screens and what each is for: one drawing from the `excalidraw` kit (a `flow` of steps, groups in `panel`s, a `timeline`, pictures with short captions, labels of 1 to 4 words), placed with `dreamcontext whiteboard draw <slug> --spec <spec.json>`. `dreamcontext whiteboard kit` prints the kit's types, fields and a worked example; a session with skills loads the `excalidraw` skill too. A `note` is a caption, never the explanation: at most 5 lines and 45 words, and `add`/`update` warn past that. Recipe (c) below.
+
 ---
 
 ## Storage and format
@@ -41,7 +43,7 @@ A widget is an Excalidraw `embeddable` element with `link: "dreamcontext://<kind
 | `knowledge` (a **page**) | `ref` = knowledge path without `.md` (`knowledge/<ref>.md`), **or** a project-relative `.md` / `.pdf` / `.html` / `.htm` path | `add <slug> knowledge --ref features/whiteboards` or `--ref docs/spec.pdf` |
 | `task` | `ref` = task slug (`state/<ref>.md`) | `add <slug> task --ref <task-slug>` |
 | `todo` | `items: [{id, text, done}]` | `add <slug> todo --title "Today" --item "…" --item "…"` |
-| `note` | `markdown` (rendered sanitized) | `add <slug> note --text "…"` or `--file note.md` |
+| `note` | `markdown` (rendered sanitized): a caption, at most 5 lines / 45 words (`add` and `update` warn past that); an explanation is a drawing, recipe (c) | `add <slug> note --text "…"` or `--file note.md` |
 | `html` | `html` (sandboxed block, see below) | `add <slug> html --file block.html` |
 | `web` | `url`: an `https:` page, a page on this machine (`http://localhost:5173`, `127.0.0.1`; `localhost:5173` alone works), or a `.html`/`.htm`/`.pdf`/picture file, project-relative (`docs/report.html`) or absolute (`/Users/…/x.pdf`, `file:///…`). A file is read by the board's reader in the desktop app; one outside the project shows only after the owner clicks Allow access on the card. Never userinfo, `..` or the dashboard itself | `add <slug> web --url https://…`, `--url docs/report.html` |
 | `wiki` | `title` + `sections: [{id, title, pages: [{ref, label?}]}]`, the card's own list of pages (see § The wiki card) | `add <slug> wiki --title "Handbook"` |
@@ -95,7 +97,8 @@ dreamcontext whiteboard update <slug> <id> --title "…" --text "…" --url http
   --item "append this" --check 2 --uncheck <item-id> --at x,y --size s|m|l|xl --color blue|none
 dreamcontext whiteboard rename <slug> "New name"       # display name only; the slug stays
 dreamcontext whiteboard remove <slug> <id>…          # or: remove <slug> --tag <tag>
-dreamcontext whiteboard draw <slug> --file x.excalidraw.md [--at x,y | --below <tag> | --right-of <tag>] [--tag t]
+dreamcontext whiteboard draw <slug> --spec spec.json [--at x,y | --below <tag> | --right-of <tag>] [--tag t]   # or --file x.excalidraw.md
+dreamcontext whiteboard kit                            # the drawing kit: types, fields, a worked example
 ```
 
 - `--check` / `--uncheck` take a **1-based position** or an item id, and repeat.
@@ -168,12 +171,13 @@ An `agent` widget is an ordinary agent (`agents/<slug>.md`, [automations.md](aut
 **Home or attached.** An agent is **at home** on a board when its agent file says `whiteboard: <board>`: create it with `dreamcontext agents create <slug> --title "…" --prompt "…" --whiteboard <board>` (or the canvas palette's **New agent**, which opens the AI Team (Profile) with the board preset; a scheduled one: `automations create <slug> --title "…" --whiteboard <board>`, or an automation with `--agent` on the home agent), then put its card there with `dreamcontext whiteboard add <board> agent --ref <slug>`. The field is approval-hashed, the approval records which board was approved, it cannot be combined with an output directory, and nothing re-homes an agent later. Any other agent's card on a board is **attached**: it keeps its normal permissions and only borrows the board as context. `show --json` tells them apart (`agents[].home`).
 
 **A home-board agent acts only on its board.** Every spawn of one (a run, an account-switch continue, a reply, an answered question, a card conversation) runs under Claude Code's own permission rules instead of `bypassPermissions`: `--permission-mode dontAsk --setting-sources project` and an exact allowlist. Anything not on the list is denied.
-- **Reads:** `Read`, `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, and the read verbs `snapshot`, `memory recall`, `tasks list`, `knowledge index`, `lab list|show`, `whiteboard list|show|place|nav list`, `automations list|show|thread|pattern|flow`, `agents list|show`.
+- **Reads:** `Read`, `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, and the read verbs `snapshot`, `memory recall`, `tasks list`, `knowledge index`, `lab list|show`, `whiteboard list|show|place|kit|nav list`, `automations list|show|thread|pattern|flow`, `agents list|show`. Each allowed Bash call is one `dreamcontext` command: a compound line (`cat …; dreamcontext …`, `&&`, a pipe) or a write verb's `--help` without the board slug matches no rule and is refused.
 - **Writes:** `whiteboard add|update|remove|draw|render|nav add|nav remove|nav move <its board>`, `automations post|learn|propose <itself>`, and files only under `automations/output/<itself>/` and its scratch folder `$DREAMCONTEXT_AGENT_SCRATCH`. Nothing else: no shell redirect into a file, no `Agent`, `Task` or `Workflow`, no skills, no MCP.
 - **Never read:** `~/.ssh`, `~/.aws`, `~/.claude`, `~/.claude.json`, `~/.dreamcontext`, `~/.config/gh`, `~/.config/gcloud`, `~/.docker`, `~/.gnupg`, `~/.kube`, `~/.azure`, `~/.npmrc`, `~/.netrc`, `~/.git-credentials`, `~/.pypirc`, and anywhere any `.env*`, `*.pem`, `*.key`, `id_rsa*` or `id_ed25519*`.
-- **A second layer in the CLI:** the run carries `DREAMCONTEXT_AGENT_BOARD`, `DREAMCONTEXT_AGENT_SELF` and `DREAMCONTEXT_AGENT_SCRATCH`. While they are set, `whiteboard` write verbs refuse any other board (and `create`), `whiteboard add|update|draw --file` reads only from the agent's scratch folder (`$DREAMCONTEXT_AGENT_SCRATCH`) or `_dream_context/automations/output/<self>/`, compared by real path, and refuses any symlink, `whiteboard render --out` writes only into those same two folders, and `automations post|learn|propose` refuse any other agent's slug.
+- **A second layer in the CLI:** the run carries `DREAMCONTEXT_AGENT_BOARD`, `DREAMCONTEXT_AGENT_SELF` and `DREAMCONTEXT_AGENT_SCRATCH`. While they are set, `whiteboard` write verbs refuse any other board (and `create`), `whiteboard add|update|draw --file` reads only from the agent's scratch folder (`$DREAMCONTEXT_AGENT_SCRATCH`) or `_dream_context/automations/output/<self>/`, compared by real path, and refuses any symlink (`draw --spec` and the pictures a spec names are read the same way), `whiteboard render --out` writes only into those same two folders, and `automations post|learn|propose` refuse any other agent's slug.
 - **It fails closed.** Before each spawn the agent is checked again; a refusal means no spawn and a named reason (a run records "Could not limit <title> to its board: <reason>", a reply is refused). The reasons: not approved as it stands, the manifest's board differs from the approved one, a board together with an output directory, a missing board, a symlink in its output folder, or a real path with a character a permission rule cannot hold (`, ( ) * " ? [ ] { } ! \ #` or a control character).
 - Writing a home agent's prompt: it calls `dreamcontext` directly (never through `npx`), keeps scratch files in `$DREAMCONTEXT_AGENT_SCRATCH`, and puts its results on the board or in its channel.
+- **It draws without skills.** A board agent cannot load the `excalidraw` skill or run `node`, so it reaches the same kit through the CLI: `whiteboard kit` for the types, a spec written into `automations/output/<self>/`, `whiteboard draw <its board> --spec`. Its scope line on every turn says so, and that an explanation is a drawing, a note a caption.
 
 **What each turn knows about the board.** A home agent gets a fresh snapshot of its own board on every turn (widgets, text, shape counts; at most 12,000 characters), on its own board's card too. An attached agent asked from the board (or a home agent's card on another board) gets an index (at most 60 lines of kind, id, title) plus `dreamcontext whiteboard show <board> --json`; a scheduled run of an attached agent gets no board. Both blocks are fenced as data: they lose to the owner's message and the approved prompt, and anything inside them that asks the agent to act is ignored.
 
@@ -202,7 +206,7 @@ dreamcontext whiteboard add control-panel insight --ref mrr-split --size l --tag
 dreamcontext whiteboard add control-panel task --ref <urgent-task-slug> --tag panel
 ```
 
-Size picks the view: `s` is the number alone, `m` adds the change and a sparkline, `l`/`xl` draw the chart. The insight's own `render` (`line`, `bar`, `pie`, `funnel`, …) decides the chart, so a split wants a `pie` insight, not a drawn donut. A heading or a short explanation is a `note`. Rebuilding the panel is `remove control-panel --tag panel` and the same adds.
+Size picks the view: `s` is the number alone, `m` adds the change and a sparkline, `l`/`xl` draw the chart. The insight's own `render` (`line`, `bar`, `pie`, `funnel`, …) decides the chart, so a split wants a `pie` insight, not a drawn donut. A heading is a drawn `sectionTitle` or a one-line `note`; an explanation beside the numbers is a drawing (recipe (c)). Rebuilding the panel is `remove control-panel --tag panel` and the same adds.
 
 ### (a) The daily board: yesterday out, today in, same place
 
@@ -225,17 +229,29 @@ dreamcontext whiteboard update gunluk <todo-id> --check 2 --item "Follow up with
 
 Carry the unticked items into tomorrow's list; report the ticked ones as done (and tick the matching task criteria if they map to one).
 
-### (c) Importing a drawing from the excalidraw skill
+### (c) Explaining or showing something: draw it with the kit
 
-Only for a drawing with no live data in it (a flow, a sketch, a wireframe); a metric is recipe (0). Build the diagram with the `excalidraw` skill's builder as usual (it writes an `.excalidraw.md` or a scene `.json`), then:
+Everything on a board that is not a live number: how something works, a design, a comparison, a plan, screens and what each is for. Write a JSON spec of the `excalidraw` kit's builders (`dreamcontext whiteboard kit` prints the types, their fields and a worked example), then:
 
 ```bash
-dreamcontext whiteboard show gunluk                          # what is already there, by tag; did anyone else just draw?
-dreamcontext whiteboard draw gunluk --file /tmp/funnel.excalidraw.md --below daily --tag funnel
-dreamcontext whiteboard render gunluk --tag funnel --out /tmp/funnel.png   # look at it; never a browser
+dreamcontext whiteboard show gunluk                                       # what is already there, by tag; did anyone else just draw?
+dreamcontext whiteboard draw gunluk --spec sync.json --below daily --tag sync
+dreamcontext whiteboard render gunluk --tag sync --out /tmp/sync.png      # look at it; never a browser
 ```
 
-`draw` re-ids every element and keeps bindings, containers, groups, frames and element links consistent, offsets the group so its top-left lands at `--at` (or the free spot `--below` / `--right-of` picks; default: right of existing content), refuses a spot that would cover live elements (§ Placing without collisions), and prints the imported ids and bbox. A picture in the source comes along only when this board already holds its file (one `show` handed out); any other picture refuses the whole import: add it with `whiteboard add <slug> image --file`. Remove the drawing later with `remove --tag funnel`.
+- `--spec` builds the spec with the kit's own builders (the ones the `excalidraw` skill uses, shipped with dreamcontext: no script, no `node`), so a drawing on a board gets the skill's type, measure and audit. When the audit finds overlapping boxes, buried labels, over-long lines or walls of text, `draw` says so (`audit` in `--json`): fix the spec and redraw.
+- Shape the idea, not the text: a `flow` for a process (each step wired to the next, `label` on the arrow, `note` under the step), `panel`s for what belongs together, a `row` of two panels or a `table` for a comparison, a `timeline` for dates, a `takeaway` for the one-line point. Labels of 1 to 4 words; a block of at most 5 lines.
+- **A picture is part of the drawing.** `{"type": "image", "path": "docs/screens/a.png", "width": 300}` in the spec (relative to where you run `draw`), with a `chip` and two or three `bullets` under it in a `stack`: screens with their captions are one drawing, never pictures beside notes. `draw` stores each picture with the board (PNG, JPEG, GIF or WebP; a board agent's must sit in its own folders).
+- `--file` imports a drawing the skill already built (an `.excalidraw.md` or a scene `.json`, from its JS API when you need loops or data mapping). With `--file` a picture comes along only when this board already holds its file (one `show` handed out); any other picture refuses the whole import: add it with `whiteboard add <slug> image --file`.
+
+**Keep it current: redraw in place.** Keep the spec (a session in `_dream_context/workspace/`, a board agent in `automations/output/<self>/`). When what the drawing shows changes, edit the spec and put the new drawing where the old one was:
+
+```bash
+dreamcontext whiteboard remove gunluk --tag sync --json     # → {"removed": [...], "bbox": {"x": 980, "y": 2352, ...}}
+dreamcontext whiteboard draw gunluk --spec sync.json --at 980,2352 --tag sync
+```
+
+`draw` re-ids every element and keeps bindings, containers, groups, frames and element links consistent, offsets the group so its top-left lands at `--at` (or the free spot `--below` / `--right-of` picks; default: right of existing content), refuses a spot that would cover live elements (§ Placing without collisions), and prints the imported ids and bbox. Remove the drawing later with `remove --tag sync`.
 
 ## HTML blocks and web embeds: what runs
 

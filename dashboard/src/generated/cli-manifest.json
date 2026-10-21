@@ -4009,11 +4009,12 @@
     },
     {
       "path": "whiteboard draw",
-      "desc": "Import a drawing built by the excalidraw skill (.excalidraw.md or scene .json) onto a board; refused where it would cover live elements",
+      "desc": "Draw onto a board with the excalidraw kit: a JSON spec (--spec; `whiteboard kit` lists the types) or a file the excalidraw skill built (--file); refused where it would cover live elements",
       "args": [
         "<slug>"
       ],
       "valueFlags": [
+        "--spec",
         "--file",
         "--at",
         "--below",
@@ -4021,6 +4022,11 @@
         "--align-left",
         "--tag"
       ]
+    },
+    {
+      "path": "whiteboard kit",
+      "desc": "How to draw on a whiteboard: the excalidraw kit's spec types, with a worked example, for `draw --spec`",
+      "args": []
     },
     {
       "path": "whiteboard list",

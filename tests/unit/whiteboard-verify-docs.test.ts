@@ -48,3 +48,49 @@ describe('placement and render are documented', () => {
     expect(CLI_REFERENCE_MD).toContain('`{error: "overlap", box, overlaps, groups, hint}`');
   });
 });
+
+/**
+ * Owner, 2026-10-21: "whiteboard'a yazı yazma ve çizim yapma excalidraw skill'ine göre olsun".
+ * An explanation on a whiteboard is a drawing from the excalidraw kit, never a stack of notes;
+ * only a live metric is a widget. These pins keep both skills saying so, from both sides.
+ */
+describe('an explanation on a whiteboard is drawn with the excalidraw kit', () => {
+  const KIT_MD = read('skill-packs', 'excalidraw', 'reference', 'whiteboard-kit.md');
+
+  it('whiteboards.md makes drawing the default and points at the kit', () => {
+    expect(WHITEBOARDS_MD).toContain('**Anything you explain or show on a whiteboard is drawn, not written.**');
+    expect(WHITEBOARDS_MD).toContain('### (c) Explaining or showing something: draw it with the kit');
+    expect(WHITEBOARDS_MD).toContain('dreamcontext whiteboard draw <slug> --spec <spec.json>');
+    expect(WHITEBOARDS_MD).toContain('dreamcontext whiteboard kit');
+    expect(WHITEBOARDS_MD).toContain('**A picture is part of the drawing.**');
+    expect(WHITEBOARDS_MD).toContain('**Keep it current: redraw in place.**');
+    expect(WHITEBOARDS_MD).not.toContain('A heading or a short explanation is a `note`');
+    // The live-data rule is unchanged.
+    expect(WHITEBOARDS_MD).toContain('**A number on a whiteboard is a live widget, never a drawing.**');
+  });
+
+  it('the excalidraw skill no longer turns itself away from a whiteboard, only from its metrics', () => {
+    const description = EXCALIDRAW_SKILL.slice(0, EXCALIDRAW_SKILL.indexOf('\n---', 4));
+    expect(description).not.toContain('NOT for a dreamcontext whiteboard');
+    expect(description).toMatch(/description: >-\n {2}The visual-first drawing kit\. Draws and writes on a dreamcontext whiteboard/);
+    expect(description).toContain('`dreamcontext whiteboard draw <board> --spec`');
+    expect(description).toContain('only a live METRIC there is an insight widget');
+    expect(EXCALIDRAW_SKILL).toContain('> **Drawing on a dreamcontext whiteboard**');
+    expect(EXCALIDRAW_SKILL).not.toContain('STOP if the target is a dreamcontext whiteboard');
+    expect(EXCALIDRAW_SKILL).toContain('**A number on a whiteboard (MRR, revenue, signups, a trend, a split) is a live');
+  });
+
+  it('the kit reference is what `whiteboard kit` prints, and the CLI reference names both verbs', () => {
+    expect(KIT_MD).toContain('`dreamcontext whiteboard kit` prints this page.');
+    // A board agent learns the loop from this page: its render example must be one it may run.
+    expect(KIT_MD).toContain('--out $DREAMCONTEXT_AGENT_SCRATCH/look.png');
+    expect(KIT_MD).not.toMatch(/--out look\.png/);
+    expect(CLI_REFERENCE_MD).toContain('| `whiteboard kit` |');
+    expect(CLI_REFERENCE_MD).toContain('| `whiteboard draw <slug> --spec <spec.json>` |');
+  });
+
+  it('SKILL.md routes a whiteboard explanation to a drawing', () => {
+    expect(SKILL_MD).toContain('Explain = draw (`draw --spec`)');
+    expect(SKILL_MD).toContain('Explaining is a drawing (excalidraw kit), never notes');
+  });
+});

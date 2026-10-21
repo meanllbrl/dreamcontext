@@ -31,6 +31,12 @@ const CASES = {
   prose:      { type: 'prose', width: 400, text: 'Sınırlı ölçüde, okunur bir paragraf.' },
   bullets:    { type: 'bullets', width: 400, items: ['ilk madde', 'ikinci ==madde=='] },
   funnel:     { type: 'funnel', w: 300, stages: [{ label: 'Landing' }, { label: 'Sub' }] },
+  flow:       { type: 'flow', steps: ['Yaz', { text: 'Gönder', label: '2 sn', note: 'çevrimdışı: bekler' }, 'Sunucu'] },
+  'flow(down)': { type: 'flow', direction: 'down', steps: ['A', { text: 'B', label: 'tamam', note: 'yan not' }] },
+  panel:      { type: 'panel', title: 'Sunucu', color: 'purple', items: [{ type: 'card', text: 'Saat', w: 160, h: 60 }, { type: 'card', text: 'Kurallar', w: 160, h: 60 }] },
+  'panel(row)': { type: 'panel', title: 'Yan yana', direction: 'right', items: [{ type: 'node', text: 'A' }, { type: 'node', text: 'B' }] },
+  'card(koordinatsız)': { type: 'card', text: 'x/y verilmedi' },
+  'hub(merkezsiz)': { type: 'hub', label: 'Sync', spokes: ['Saat', 'Kurallar', 'Dağıtım'] },
   // device + product-UI kit
   'device(iphone)': { type: 'device', kind: 'iphone', x: 0, y: 0 },
   'device(ipad)':   { type: 'device', kind: 'ipad', x: 0, y: 0 },
@@ -65,6 +71,8 @@ const EDGE = {
   'takeaway (boş)':         { type: 'takeaway', width: 300, text: '' },
   'bullets (madde yok)':    { type: 'bullets', width: 300, items: [] },
   'callout (kapanmamış **)':{ type: 'callout', w: 400, text: 'yarım **vurgu ve ==işaret' },
+  'flow (adım yok)':        { type: 'flow', steps: [] },
+  'panel (boş)':            { type: 'panel', title: 'boş', items: [] },
 };
 
 const tmp = path.join(os.tmpdir(), 'excalidraw-atomic-check');

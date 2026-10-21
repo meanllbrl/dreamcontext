@@ -1,5 +1,5 @@
 import { ApiClient } from '../../api/client';
-import { SpeechQueue, type SpokenChunk } from '../../lib/voice/speechQueue';
+import { SpeechQueue, type SpokenChunk, type StopReason } from '../../lib/voice/speechQueue';
 import { turnTrace } from '../../lib/voice/turnTrace';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { splitNotchCue, stripNotchCue, presentationOf, type NotchCue } from '../../lib/notchCue';
@@ -1013,7 +1013,9 @@ export function createChatSession(
   // `claudeId` identifies this pane to the server's audio-focus ledger: one conversation is
   // one pane is one speaker claimant. Two assistant panes are two ids, and exactly one of
   // them is granted the speaker for any given turn (`lib/voice/audioFocus.ts`).
-  const speech = mode === 'assistant' || mode === 'super' ? new SpeechQueue(claudeId) : null;
+  const speech = mode === 'assistant' || mode === 'super'
+    ? new SpeechQueue(claudeId, undefined, undefined, { surface: mode })
+    : null;
   /** Super: the server said a spoken owner message is being answered (`voice_turn`), until
    *  `voice_turn_end`. Only text streamed in between is read; the client never arms it on its
    *  own (an event turn may be running when the owner speaks). */
@@ -2239,7 +2241,7 @@ export function createChatSession(
     if (!steerable()) return false;
     // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
     // answer they are talking over.
-    silenceSpeech();
+    silenceSpeech('steer');
     return writeUser(text, { steered: true });
   }
 
@@ -2255,8 +2257,8 @@ export function createChatSession(
    * generation, so the abandoned turn's in-flight fetch bails on its own when it lands; the
    * flag only needs to be back down for the NEXT turn, which may begin in the same breath.
    */
-  function silenceSpeech(): void {
-    speech?.stop();
+  function silenceSpeech(reason: StopReason = 'barge-in'): void {
+    speech?.stop(reason);
     speech?.resume();
   }
 
@@ -2446,7 +2448,7 @@ export function createChatSession(
   function interrupt(): void {
     // Before the socket check, on purpose: Stop must silence the audio even when the socket
     // has already gone away, or a dead session keeps talking.
-    silenceSpeech();
+    silenceSpeech('stopped');
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ type: 'interrupt' } as ClientControl)); } catch { /* best-effort */ }
     // Stop means stop — including whatever was lined up behind this turn. The queue is held,
