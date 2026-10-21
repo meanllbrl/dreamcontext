@@ -553,7 +553,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (!raw) {
         const reply = await readLastReply(path);
         if (reply.text) {
-          ok(res, { child, reply: true, status: childStatus(child), at: reply.at, size: reply.size, text: wrapUntrusted(vaultNameOf(root), reply.text) });
+          ok(res, {
+            child, reply: true, status: childStatus(child), at: reply.at, size: reply.size,
+            // The child stopped on a usage limit or an API error after this reply.
+            ...(reply.stoppedBy ? { stoppedAfter: 'usage limit or API error' } : {}),
+            text: wrapUntrusted(vaultNameOf(root), reply.text),
+          });
           return;
         }
       }

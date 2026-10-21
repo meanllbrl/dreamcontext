@@ -57,6 +57,7 @@ import {
 } from '../../lib/claude-account-switch.js';
 import { readLimitSignal, type LimitSignal } from '../../lib/claude-limit-signal.js';
 import { clearSignedOut, isAuthFailureFrame, recordSignedOut } from '../../lib/claude-signed-out.js';
+import { dropFromOutbox } from '../../lib/super/outbox.js';
 import { clearAccountRejection, readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
 import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFrame, recordUsageMeter } from '../../lib/claude-usage-meter.js';
 import { chatSpawnAccount } from '../../lib/automations/account.js';
@@ -3787,6 +3788,16 @@ export function startChatSession(
 
     // The window looked at / typed in this tab (at most once per 30 s): it is the owner's.
     if (msg.type === 'focus') { focusedAt = Date.now(); return; }
+    // The owner took queued rows back (deleted, edited, held): a super child's outbox copy goes
+    // too, so a relaunch cannot bring them back (lib/super/outbox.ts).
+    if (msg.type === 'queue_dropped') {
+      const texts = Array.isArray((msg as { texts?: unknown }).texts)
+        ? ((msg as { texts: unknown[] }).texts).filter((t): t is string => typeof t === 'string').slice(0, 50)
+        : [];
+      const root = pinId ? superRootOfChild(pinId) : null;
+      if (root && texts.length) void dropFromOutbox(root, pinId, texts).catch(() => undefined);
+      return;
+    }
     if (msg.type === 'park_result') { onParkResult(msg as unknown as { id?: unknown; ok?: unknown; error?: unknown }); return; }
 
     if (windowControl && msg.type === 'window_command_result') {
@@ -3807,6 +3818,9 @@ export function startChatSession(
     }
 
     if (msg.type === 'interrupt') {
+      // Stop holds the window's queue: what the outbox kept for this child is held with it.
+      const stopRoot = pinId ? superRootOfChild(pinId) : null;
+      if (stopRoot) void dropFromOutbox(stopRoot, pinId).catch(() => undefined);
       // Empirically verified against claude 2.1.218 (scratch-dir experiment): a
       // control_request{subtype:'interrupt'} on stdin aborts the in-flight turn — the CLI
       // echoes a control_response, emits a synthetic rejected tool_result + "[Request

@@ -466,6 +466,9 @@ export type ClientControl =
   /** The owner looked at or typed in this tab (at most once per 30 s): the load sweep leaves
    *  it alone for 2 min. */
   | { type: 'focus' }
+  /** Queued rows the owner took back (deleted, edited away, held): the server drops a super
+   *  child's disk copy of them (src/lib/super/outbox.ts). */
+  | { type: 'queue_dropped'; texts: string[] }
   /** The window's answer to one `park-request`. */
   | { type: 'park_result'; id: string; ok: boolean; error?: string };
 

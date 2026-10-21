@@ -62,7 +62,11 @@ describe('readLastReply', () => {
       line({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Real answer.' }] } }),
       line({ type: 'assistant', isApiErrorMessage: true, message: { id: 'm2', model: '<synthetic>', content: [{ type: 'text', text: 'You\'ve hit your session limit' }] } }),
     ].join(''));
-    expect((await readLastReply(f)).text).toBe('Real answer.');
+    const r = await readLastReply(f);
+    expect(r.text).toBe('Real answer.');
+    // ...and says the child stopped there, so the older reply is not read as its latest word.
+    expect(r.stoppedBy).toBe('banner');
+    expect((await readLastReply(big)).stoppedBy).toBeUndefined();
   });
 
   it('answers empty when no reply exists yet', async () => {

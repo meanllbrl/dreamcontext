@@ -89,15 +89,20 @@ export interface LastReply {
   size: number;
   /** How many bytes from the end were read to find it. */
   scanned: number;
+  /** A usage-limit or API-error banner came AFTER the reply: the child stopped there. */
+  stoppedBy?: 'banner';
 }
 
 /** The text blocks of one assistant line, when it is a main-thread assistant line. */
-function replyBlocks(line: string): { id: string | null; text: string; at: string | null } | null {
+function replyBlocks(line: string): { id: string | null; text: string; at: string | null; banner?: true } | null {
   let obj: Record<string, unknown>;
   try { obj = JSON.parse(line) as Record<string, unknown>; } catch { return null; }
   if (obj.type !== 'assistant' || obj.isSidechain === true) return null;
-  // A usage-limit or API-error banner is the CLI's, not the child's reply (end review).
-  if (obj.isApiErrorMessage === true || (obj.message as { model?: unknown } | undefined)?.model === '<synthetic>') return { id: null, text: '', at: null };
+  // A usage-limit or API-error banner is the CLI's, not the child's reply (end review): skipped,
+  // but reported as `stoppedBy` so the reply before it does not read as the child's latest word.
+  if (obj.isApiErrorMessage === true || (obj.message as { model?: unknown } | undefined)?.model === '<synthetic>') {
+    return { id: null, text: '', at: null, banner: true };
+  }
   const msg = obj.message as { id?: unknown; content?: unknown } | undefined;
   const id = typeof msg?.id === 'string' ? msg.id : null;
   const at = typeof obj.timestamp === 'string' ? obj.timestamp : null;
@@ -129,11 +134,13 @@ export async function readLastReply(path: string, maxScan: number = MAX_REPLY_SC
     let id: string | null = null;
     let at: string | null = null;
     let found = false;
+    let stopped = false;
     // Returns true when the reply is complete (an older line belongs to another message).
     const take = (line: string): boolean => {
       if (!line.trim()) return false;
       const r = replyBlocks(line);
       if (!found) {
+        if (r?.banner) stopped = true;
         if (!r || !r.text) return false;
         found = true; id = r.id; at = r.at; parts.unshift(r.text);
         return id === null;
@@ -158,14 +165,14 @@ export async function readLastReply(path: string, maxScan: number = MAX_REPLY_SC
       let end = carry.length;
       for (let i = carry.length - 1; i >= 0; i--) {
         if (carry[i] !== 0x0a) continue;
-        if (take(carry.subarray(i + 1, end).toString('utf-8'))) return { text: parts.join('\n\n'), at, size, scanned: size - pos };
+        if (take(carry.subarray(i + 1, end).toString('utf-8'))) return { text: parts.join('\n\n'), at, size, scanned: size - pos, ...(stopped ? { stoppedBy: 'banner' as const } : {}) };
         end = i;
       }
       carry = carry.subarray(0, end);
     }
     // The file's first line has no newline before it.
     if (pos === 0 && carry.length) take(carry.toString('utf-8'));
-    return { text: parts.join('\n\n'), at, size, scanned: size - pos };
+    return { text: parts.join('\n\n'), at, size, scanned: size - pos, ...(stopped ? { stoppedBy: 'banner' as const } : {}) };
   } finally {
     await fh.close();
   }

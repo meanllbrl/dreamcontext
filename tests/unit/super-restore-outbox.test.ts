@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { superRestoreHold } from '../../src/lib/super/restore.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { superRestorePlan } from '../../dashboard/src/components/sleepy/superRestore';
-import { OUTBOX_BOOT, _resetSuperOutbox, addToOutbox, arrivedInTranscript, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
+import { OUTBOX_BOOT, _resetSuperOutbox, addToOutbox, dropFromOutbox, arrivedInTranscript, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
 import { _resetChatParkForTests, parkChat, parkedSince, registerParkable } from '../../src/server/chat-park.js';
 
 const child = (sid: string, extra: Record<string, unknown> = {}) => ({ sessionId: sid, brief: sid, adopted: false, startedAt: 1, ...extra });
@@ -144,6 +144,32 @@ describe('the super send outbox', () => {
     await pumpOutbox(root, undefined, d);
     expect(sent).toHaveLength(1);
     expect((await readOutbox(root))[0].boot).toBe('later-run');
+  });
+
+  it('a row the owner took back (deleted, edited, Stop) never comes back after a relaunch', async () => {
+    await addToOutbox(root, 'c1', 'merge it');
+    await addToOutbox(root, 'c1', 'then push');
+    await addToOutbox(root, 'c2', 'other child');
+    expect(await dropFromOutbox(root, 'c1', ['merge it '])).toBe(1);
+    expect((await readOutbox(root)).map((i) => i.text)).toEqual(['then push', 'other child']);
+    // Stop holds the whole queue of that child.
+    expect(await dropFromOutbox(root, 'c1')).toBe(1);
+    const { d, sent } = deps();
+    await pumpOutbox(root, undefined, d);
+    expect(sent).toEqual([['c2', 'other child']]);
+  });
+
+  it('the window reports taken-back rows and the server drops them (checked against the source)', () => {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const session = fs.readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/chatSession.ts'), 'utf-8');
+    for (const fn of ['function pauseQueue', 'function editQueued', 'function removeQueued']) {
+      const body = session.slice(session.indexOf(fn), session.indexOf('\n  }\n', session.indexOf(fn)));
+      expect(body, fn).toContain('noteQueueDropped(');
+    }
+    const chat = fs.readFileSync(join(__dirname, '../../src/server/routes/agent-chat.ts'), 'utf-8');
+    expect(chat).toContain("if (msg.type === 'queue_dropped')");
+    expect(chat).toMatch(/if \(root && texts\.length\) void dropFromOutbox\(root, pinId, texts\)/);
+    expect(chat).toMatch(/if \(stopRoot\) void dropFromOutbox\(stopRoot, pinId\)/);
   });
 
   it('a short message does not read as arrived inside a longer owner line', async () => {

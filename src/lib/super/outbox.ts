@@ -86,6 +86,24 @@ export async function addToOutbox(contextRoot: string, child: string, text: stri
   return item;
 }
 
+/**
+ * The owner took a queued message back in the window (deleted or edited its row, or pressed
+ * Stop, which holds the queue): it must not come back after a relaunch either (end review
+ * round 2). `texts` absent = every waiting message for the child.
+ */
+export async function dropFromOutbox(contextRoot: string, child: string, texts?: readonly string[]): Promise<number> {
+  const want = texts ? new Set(texts.map((t) => t.trim())) : null;
+  let dropped = 0;
+  const has = (await readOutbox(contextRoot)).some((i) => i.child === child);
+  if (!has) return 0;
+  await updateOutbox(contextRoot, (all) => all.filter((i) => {
+    const gone = i.child === child && (!want || want.has(i.text.trim()));
+    if (gone) dropped += 1;
+    return !gone;
+  }));
+  return dropped;
+}
+
 /** Did `text` reach the child's transcript after `at`? Reads only the bounded tail. */
 export async function arrivedInTranscript(path: string | null, text: string, at: number): Promise<boolean> {
   if (!path) return false;
