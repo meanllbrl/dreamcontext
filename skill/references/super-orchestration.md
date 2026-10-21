@@ -87,8 +87,9 @@ Mode: `basic` | `plan` | `develop`. Develop needs a task; Plan creates one.
 - **Brain reorganisation** → a child running `/curator`, never beside another child that writes the brain, or sleep.
 - **Release** → the release checklist pattern + `/announcements`; the publish step is outward (§2).
 - **Every code unit over ~5 minutes has a task** (Plan creates it). Recall before splitting. A metric →
-  a Lab insight (never retyped). A board → `dreamcontext whiteboard`. A recurring job →
-  `dreamcontext automations` (disabled until the owner approves). Sleep → offered after all children finish.
+  a Lab insight (never retyped). A board → `dreamcontext whiteboard` (an explanation on it is
+  drawn, `whiteboard kit`; never a note stack). A recurring job → `dreamcontext automations`
+  (disabled until the owner approves). Sleep → offered after all children finish.
 - Some flows ship as optional packs (council, multi-review, goal-skill, jev-verify). A flow whose skill
   is not in the vault → the child does the nearest plain thing (a `reviewer` instead of multi-review, a
   Plan child instead of goal-skill) and you say once which pack would do it better. Never install one.

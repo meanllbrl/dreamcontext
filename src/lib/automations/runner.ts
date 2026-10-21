@@ -294,7 +294,16 @@ export function buildScopeLine(scope: BoardScope): string {
     `and as yourself (\`dreamcontext automations post|learn|propose ${scope.self} …\`); you may read anything. ` +
     'Call `dreamcontext` directly, never through `npx` or another program. Write files only into ' +
     `\`_dream_context/automations/output/${scope.self}/\` or your scratch folder $DREAMCONTEXT_AGENT_SCRATCH; anything else is refused. ` +
-    `To see what you placed, \`dreamcontext whiteboard render ${scope.board} --tag <tag> --out $DREAMCONTEXT_AGENT_SCRATCH/look.png\` and read the PNG; never a browser. `
+    `To see what you placed, \`dreamcontext whiteboard render ${scope.board} --tag <tag> --out $DREAMCONTEXT_AGENT_SCRATCH/look.png\` and read the PNG; never a browser. ` +
+    // A board agent has no skills and no `node`: the CLI is its only way to the drawing kit. Without
+    // this line it could not even learn the verbs (2026-10-21: three of three turns asked to "put
+    // something that explains X" on the board tried `cat …; whiteboard --help`, were refused, and
+    // put nothing there).
+    'To explain or show something on the board, DRAW it, never a stack of notes: run `dreamcontext whiteboard kit` for the drawing types, ' +
+    `write a JSON spec (a flow, groups in panels, a timeline, short labels) with Write into \`_dream_context/automations/output/${scope.self}/\` (kept, so you can redraw it later), ` +
+    `then \`dreamcontext whiteboard draw ${scope.board} --spec <that file> --tag <tag>\` and render it to look. ` +
+    'A note is a caption of a few lines; a number is a live widget (insight, lab-card, task, todo), never drawn. ' +
+    'Each Bash call is ONE `dreamcontext` command: no `;`, `&&`, pipes or `cat` (read files with Read), or it is refused. '
   );
 }
 
