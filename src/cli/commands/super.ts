@@ -5,7 +5,8 @@ import { windowEnv } from './window.js';
 /**
  * `dreamcontext super …` — the project's Super Agent drives the hand-over screen: its child
  * chats (delegate, brief, read, answer, send, end, resume, update, adopt), the cards floating around it (open, half, present,
- * stack, float, close, group, ungroup), the one question queue, and its children's worktrees.
+ * stack, float, close, group, ungroup), the one question queue, its children's worktrees, and
+ * jobs for the project's AI Team members (team ask).
  *
  * A THIN HTTP CLIENT, the `window` command's shape: every verb is one call to
  * `/api/super/v/<verb>` with the window token the server injects into every project chat.
@@ -187,6 +188,12 @@ export function registerSuperCommand(program: Command): void {
   s.command('send <child> <text>')
     .description('Send a message into a child chat (steered into its running turn; queued only while it asks)')
     .action((child: string, text: string) => run('send', { child, text }));
+
+  const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread');
+  team.command('ask <member> <job>')
+    .description('Give an AI Team member a job: it lands in the member\'s own thread and runs on its own model, approval and queue. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)')
+    .option('--brief <line>', 'The one-line reminder its card shows (default: the job\'s first line)')
+    .action((member: string, job: string, o: { brief?: string }) => run('team-ask', { member, text: job, brief: o.brief }));
 
   const q = s.command('queue').description('The one question queue');
   q.command('list')

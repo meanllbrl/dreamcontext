@@ -99,13 +99,14 @@ export function ensureChatContainer(s: SuperState, sessionId: string, title?: st
 
 /**
  * What the owner's queue strip leads with, and the ONE super row the notch glance may carry:
- * the oldest open permission (permissions jump the line), else the oldest escalated question.
- * A second escalation waits behind the first, so the owner never has two at once.
+ * the oldest open permission (permissions jump the line), else the oldest escalated question or
+ * AI Team approval (`super team ask` on a member not approved here). A second escalation waits
+ * behind the first, so the owner never has two at once.
  */
 export function superQueueHead(state: Pick<SuperState, 'queue'>): SuperQueueItem | null {
   const byAge = [...state.queue].sort((a, b) => a.createdAt - b.createdAt);
   return byAge.find((q) => q.kind === 'permission' && q.state !== 'done')
-    ?? byAge.find((q) => q.kind === 'question' && q.state === 'escalated')
+    ?? byAge.find((q) => (q.kind === 'question' || q.kind === 'approval') && q.state === 'escalated')
     ?? null;
 }
 

@@ -1009,7 +1009,7 @@ export interface ThreadEntry {
   files?: string[];
   /** Figures posted with `--kv`. Absent, never empty. */
   summary?: ThreadSummaryRow[];
-  via: 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant';
+  via: 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super';
 }
 
 /**

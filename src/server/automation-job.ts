@@ -322,6 +322,9 @@ export interface ReplyJobState {
    *  On `refused` this is `resumeWithMessage`'s reason, already written for a human. */
   reason: string | null;
   startedAt: string;
+  /** When it got the run lock and began delivering (ISO). A queued reply's own words in the
+   *  thread start here; everything before it is the turn it waited behind. */
+  deliveredAt?: string;
   finishedAt: string | null;
 }
 
@@ -335,6 +338,9 @@ export interface ReplyJobState {
  * `resumeWithMessage`, which refuses with its own sentence when a run holds it.
  */
 const replyJobs = new Map<string, ReplyJobState>();
+/** Each reply job's settlement, for a caller that records the outcome where it outlives this
+ *  process's registry (the Super Agent's team job). Pruned with the job. */
+const replySettled = new Map<string, Promise<ReplyJobState>>();
 
 /** Settled reply jobs older than this are pruned. */
 const REPLY_JOB_TTL_MS = 60 * 60 * 1000;
@@ -351,7 +357,7 @@ function pruneSettledReplyJobs(now: number = Date.now()): void {
   for (const [id, job] of replyJobs) {
     if (job.status === 'running') continue;
     const finished = job.finishedAt ? Date.parse(job.finishedAt) : NaN;
-    if (Number.isFinite(finished) && finished < cutoff) replyJobs.delete(id);
+    if (Number.isFinite(finished) && finished < cutoff) { replyJobs.delete(id); replySettled.delete(id); }
   }
 }
 
@@ -360,6 +366,12 @@ function pruneSettledReplyJobs(now: number = Date.now()): void {
 export function currentReplyJob(jobId: string): ReplyJobState | null {
   pruneSettledReplyJobs();
   return replyJobs.get(jobId) ?? null;
+}
+
+/** Resolves with the job once it settled (its terminal entry is written); null for a job this
+ *  process does not know. Never rejects. */
+export function whenReplySettles(jobId: string): Promise<ReplyJobState> | null {
+  return replySettled.get(jobId) ?? null;
 }
 
 /**
@@ -583,7 +595,7 @@ export function startAutomationReplyJob(
     finishedAt: null,
   };
   replyJobs.set(job.id, job);
-  void runReplyJob(contextRoot, job, opts);
+  replySettled.set(job.id, runReplyJob(contextRoot, job, opts).then(() => job, () => job));
   return job;
 }
 
@@ -645,7 +657,7 @@ async function runReplyJob(
       // minute, which is the longest the turn ahead of it can legitimately take.
       lockWaitMs: ((manifest?.timeoutMinutes ?? 30) + 1) * 60_000,
       ...(opts.lockPollMs ? { lockPollMs: opts.lockPollMs } : {}),
-      onLockAcquired: () => { job.phase = 'delivering'; },
+      onLockAcquired: () => { job.phase = 'delivering'; job.deliveredAt = new Date().toISOString(); },
       // The board the reply came from, so the resumed turn carries its context.
       ...(opts.board ? { board: opts.board } : {}),
       ...(opts.override ? { override: opts.override } : {}),

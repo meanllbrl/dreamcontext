@@ -2052,8 +2052,9 @@ export async function handleAutomationsThreadRead(
   }
 }
 
-/** Who is calling an agent by name. Both are a person typing right now. */
-export type SayVia = 'dashboard' | 'assistant';
+/** Who is calling an agent by name: a person typing right now, or the Super Agent handing a
+ *  member a job while the owner has handed the Chat screen over (`super team ask`). */
+export type SayVia = 'dashboard' | 'assistant' | 'super';
 
 export type SayResult =
   | { ok: true; status: 200; body: Record<string, unknown> }
@@ -2137,7 +2138,7 @@ export function sayToAgent(
         ok: true, status: 200,
         body: {
           job: { id: replyJob.id, status: replyJob.status, kind: 'reply' },
-          started: true, runId: liveRun, slug, mode: manifest.mode, queued: true,
+          started: true, runId: liveRun, entryId: entry.id, slug, mode: manifest.mode, queued: true,
         },
       };
     }
@@ -2168,11 +2169,11 @@ export function sayToAgent(
       });
       return {
         ok: true, status: 200,
-        body: { job: { id: replyJob.id, status: replyJob.status, kind: 'reply' }, started: true, runId, slug, mode: 'sched' },
+        body: { job: { id: replyJob.id, status: replyJob.status, kind: 'reply' }, started: true, runId, entryId: entry.id, slug, mode: 'sched' },
       };
     }
 
-    appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: shown, via, now: fireAt });
+    const ask = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: shown, via, now: fireAt });
     const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, ...boardOpt, ...overrideOpt });
     // Unreachable given the busy check above (nothing can interleave between
     // them), and handled anyway: the ask is already on disk at this point, so
@@ -2185,7 +2186,7 @@ export function sayToAgent(
         text: 'It did not run. This agent was already running.',
       });
     }
-    return { ok: true, status: 200, body: { job: { ...job, kind: 'run' }, started, runId, slug, mode: manifest.mode } };
+    return { ok: true, status: 200, body: { job: { ...job, kind: 'run' }, started, runId, entryId: ask.id, slug, mode: manifest.mode } };
   } catch (err) {
     if (err instanceof AutomationError) return sayRefusal(400, 'say_refused', err.message);
     throw err;

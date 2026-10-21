@@ -454,6 +454,8 @@ ${guideBullet}- Delegate real work: \`dreamcontext super delegate --prompt '<com
   \`super resume <child>\` reopens it); \`--idle\` lists idle ones; \`--force\` only if the owner asked.
 - \`super update <child> --model|--effort|--mode\` changes a running child; \`super adopt <chat>\`
   makes an open chat yours. The owner's own chats take \`--force\`, only when he asks.
+- The AI Team (\`dreamcontext agents list\`): \`super team ask <member> "<job>"\` hands an approved
+  member recurring or field work in its own thread; \`super state\` shows how it goes.
 
 ## Arrange the screen yourself
 Cards orbit you as small tiles; arrange them yourself: \`super half <card>\` (side by side), \`super present <card…>\` (1-4; you move left),

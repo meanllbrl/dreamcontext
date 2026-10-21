@@ -3234,6 +3234,23 @@
       "args": []
     },
     {
+      "path": "super team",
+      "desc": "The project's AI Team: give a member a job in its own thread",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super team ask",
+      "desc": "Give an AI Team member a job: it lands in the member's own thread and runs on its own model, approval and queue. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)",
+      "args": [
+        "<member>",
+        "<job>"
+      ],
+      "valueFlags": [
+        "--brief"
+      ]
+    },
+    {
       "path": "super ungroup",
       "desc": "Dissolve a group (its cards take its place on the stage or in Others), or take cards out of their group (they float)",
       "args": [

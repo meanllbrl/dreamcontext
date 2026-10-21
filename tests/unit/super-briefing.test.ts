@@ -62,7 +62,9 @@ describe('superBriefing', () => {
 
   it('stays short', () => {
     // 2600 -> 2800 (2026-10-21): the child lifecycle line (`super update`, `super adopt`).
-    expect(brief.length).toBeLessThan(2800);
+    // 2800 -> 3000 (2026-10-21): the AI Team line (`super team ask`), the owner's ask that the
+    // Super Agent gives the team's members work too.
+    expect(brief.length).toBeLessThan(3000);
   });
 
   describe('the orchestration slot', () => {
@@ -92,8 +94,9 @@ describe('superBriefing', () => {
     });
 
     it('adds only the one pointer line when set (the job-list task\'s length rule replaces the cap)', () => {
-      expect(superBriefing(null).length).toBeLessThan(2800);
-      expect(superBriefing(PATH).length).toBeLessThan(3000);
+      expect(superBriefing(null).length).toBeLessThan(3000);
+      // The base cap plus the pointer line: 3000 -> 3200 (2026-10-21) with the AI Team line.
+      expect(superBriefing(PATH).length).toBeLessThan(3200);
       expect(superBriefing(PATH).length - superBriefing(null).length).toBe(bullet.length + 1);
     });
   });

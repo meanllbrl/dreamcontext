@@ -84,7 +84,8 @@ export interface SuperChild {
   endedAt?: number;
 }
 
-export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover', 'ended'] as const;
+/** `approval`: an AI Team member the Super Agent chose is not approved here (server-written). */
+export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover', 'ended', 'approval'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -100,7 +101,29 @@ export interface SuperQueueItem {
   createdAt: number;
   /** An `ended` item's last brief of the child. */
   brief?: string;
+  /** An `approval` item's AI Team member (agent slug). */
+  member?: string;
 }
+
+/** A job the Super Agent gave an AI Team member (`super team ask`); status is read from its thread. */
+export interface SuperTeamJob {
+  id: string;
+  member: string;
+  runId: string;
+  entryId?: string;
+  jobKind: 'run' | 'reply';
+  jobId?: string;
+  queued: boolean;
+  brief: string;
+  startedAt: number;
+  outcome?: 'done' | 'failed';
+  deliveredAt?: number;
+  endedAt?: number;
+}
+
+export const TEAM_JOB_STATUSES = ['queued', 'running', 'done', 'failed'] as const;
+export type TeamJobStatus = typeof TEAM_JOB_STATUSES[number];
+export const MAX_TEAM_JOBS = 30;
 
 export const SUPER_NOTES = ['handover', 'takeback'] as const;
 export type SuperNote = typeof SUPER_NOTES[number];
@@ -116,6 +139,8 @@ export interface SuperState {
   queue: SuperQueueItem[];
   notes: Record<string, SuperNote>;
   away: { since: number | null; events: number };
+  /** Jobs given to AI Team members, newest first. */
+  team: SuperTeamJob[];
 }
 
 export interface SuperStateView extends SuperState {
@@ -266,6 +291,10 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
   const queue = v.queue.filter((q): q is SuperQueueItem =>
     isRecord(q) && typeof q.id === 'string' && typeof q.sessionId === 'string' && oneOf(QUEUE_KINDS, q.kind)
     && oneOf(QUEUE_STATES, q.state) && typeof q.createdAt === 'number');
+  const team = (Array.isArray(v.team) ? v.team : []).filter((j): j is SuperTeamJob =>
+    isRecord(j) && typeof j.id === 'string' && typeof j.member === 'string' && typeof j.runId === 'string'
+    && typeof j.brief === 'string' && typeof j.startedAt === 'number' && typeof j.queued === 'boolean'
+    && (j.jobKind === 'run' || j.jobKind === 'reply'));
   const children: Record<string, SuperChild> = {};
   for (const [k, c] of Object.entries(v.children)) {
     if (isRecord(c) && c.sessionId === k && typeof c.brief === 'string' && typeof c.adopted === 'boolean' && typeof c.startedAt === 'number') {
@@ -287,5 +316,6 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     queue,
     notes,
     away: { since: typeof since === 'number' ? since : null, events: typeof v.away.events === 'number' ? v.away.events : 0 },
+    team,
   };
 }

@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
+import { useAgent } from '../../../hooks/useAgents';
 import { raiseAskAttention } from '../../../lib/attention';
+import { requestOpenAgents } from '../../../lib/openAgents';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission, PendingQuestion } from '../chatSession';
 import {
@@ -15,8 +17,10 @@ import type { Rect } from './superLayout';
  * and never moves the centre. Empty: nothing is drawn.
  *
  * Only what the OWNER must answer reaches it: a child's permission request (head of the line,
- * at once — the Super Agent never sees it) or a question the Super Agent escalated with its
- * own words. Everything it answers itself never shows here.
+ * at once — the Super Agent never sees it), a question the Super Agent escalated with its
+ * own words, or an AI Team member it chose that is not approved here (the server's question: the
+ * owner approves it in AI Team, which the Super Agent never can). Everything it answers itself
+ * never shows here.
  *
  * A PERMISSION is drawn only from the CHILD's own pending request (tool name and input) and
  * Allow/Deny call that child's own `ChatSession.answer`, exactly what the child's tab card does
@@ -110,7 +114,9 @@ export function QueueStrip({ head, waiting, vault, rect, sessionFor, titleFor, o
     // conversation would open it as a tab, which it never is).
     raiseAskAttention({
       source: vault,
-      detail: head.kind === 'permission' ? t('super.queue.permissionAlarm') : (head.ownerText ?? t('super.queue.escalatedAlarm')),
+      detail: head.kind === 'permission' ? t('super.queue.permissionAlarm')
+        : head.kind === 'approval' ? t('super.queue.approval').replace('{name}', head.member ?? '')
+          : (head.ownerText ?? t('super.queue.escalatedAlarm')),
     });
   }, [head, vault, t]);
 
@@ -125,10 +131,12 @@ export function QueueStrip({ head, waiting, vault, rect, sessionFor, titleFor, o
     >
       {!head ? null : (
         <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
-          <span className="super-queue-who">{titleFor(head.sessionId)}</span>
+          <span className="super-queue-who">{head.kind === 'approval' ? t('super.queue.team') : titleFor(head.sessionId)}</span>
           {head.kind === 'permission'
             ? <PermissionHead item={head} child={child} locked={locked} answerOnce={answerOnce} />
-            : <EscalatedHead item={head} child={child} locked={locked} answerOnce={answerOnce} onReplyToSuper={onReplyToSuper} showOptions={showOptions} />}
+            : head.kind === 'approval'
+              ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
+              : <EscalatedHead item={head} child={child} locked={locked} answerOnce={answerOnce} onReplyToSuper={onReplyToSuper} showOptions={showOptions} />}
           {waiting > 1 && <span className="super-queue-more">{t('super.queue.more').replace('{n}', String(waiting - 1))}</span>}
         </div>
       )}
@@ -199,6 +207,35 @@ function PermissionHead({ item, child, locked, answerOnce }: {
           disabled={locked}
           onClick={() => answerOnce(() => child.answer(pending.requestId, { behavior: 'deny', message: 'Denied by user.' }))}
         >{t('super.queue.deny')}</button>
+      </span>
+    </>
+  );
+}
+
+/**
+ * An AI Team member the Super Agent chose is not approved on this machine. Approving is the
+ * owner's, in AI Team, where the text it grants is read first: this row only takes him there,
+ * and Reply tells the Super Agent to give the job again. Nothing here approves anything.
+ */
+function ApprovalHead({ item, onReplyToSuper }: { item: SuperQueueItem; onReplyToSuper: () => void }) {
+  const { t } = useI18n();
+  const member = item.member ?? '';
+  const name = useAgent(member || null).data?.agent.title || member;
+  const text = t('super.queue.approval').replace('{name}', name);
+  return (
+    <>
+      <QueueText full={text}>{text}</QueueText>
+      <span className="super-queue-actions">
+        <button
+          type="button"
+          className="super-queue-btn super-queue-btn--option"
+          data-testid="super-queue-open-team"
+          disabled={!member}
+          onClick={() => requestOpenAgents({ slug: member })}
+        >{t('super.queue.openTeam')}</button>
+        <button type="button" className="super-queue-btn super-queue-btn--reply" onClick={onReplyToSuper}>
+          {t('super.queue.reply')}
+        </button>
       </span>
     </>
   );

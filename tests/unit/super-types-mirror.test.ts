@@ -22,6 +22,8 @@ describe('super types — server record <-> window mirror', () => {
     for (const k of server.CONTAINER_KINDS) expect(client.defaultShape(k)).toBe(server.defaultShape(k));
     expect([...client.QUEUE_KINDS]).toEqual([...server.QUEUE_KINDS]);
     expect([...client.QUEUE_STATES]).toEqual([...server.QUEUE_STATES]);
+    expect([...client.TEAM_JOB_STATUSES]).toEqual([...server.TEAM_JOB_STATUSES]);
+    expect(client.MAX_TEAM_JOBS).toBe(server.MAX_TEAM_JOBS);
     expect([...client.SUPER_NOTES]).toEqual([...server.SUPER_NOTES]);
     expect([...client.SUPER_WINDOW_VERBS]).toEqual([...server.SUPER_WINDOW_VERBS]);
     expect([...client.SUPER_EVENT_PREFIXES]).toEqual([...server.SUPER_EVENT_PREFIXES]);

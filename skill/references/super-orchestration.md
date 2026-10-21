@@ -77,13 +77,29 @@ ratios burn quota.
 
 ## 4. Flow map
 Mode: `basic` | `plan` | `develop`. Develop needs a task; Plan creates one.
-- **Non-trivial build** → a `plan` child, then a `develop` child with the slug (`--task`).
-- **Small clear fix** → `basic` + worktree; its brief requires a clean `reviewer` sub-agent pass.
-- **A whole goal in one session** → a `basic` child running `/goal-skill`.
-- **Review a branch or PR** → a child running `/multi-review`.
+
+**Who takes the job.** The project's AI Team is never listed here: read it when you split, with
+`dreamcontext agents list` (members and roles) and `dreamcontext automations list` (what each runs).
+Only an approved, enabled member takes work.
+
+| Job | Who | Example |
+|---|---|---|
+| Recurring, or a member's own field | that member: `super team ask <member> "<job>"` | a `doctor` member (system, logs, cost): "check last night's API errors and today's spend" |
+| Non-trivial build | a `plan` child, then a `develop` child with the slug (`--task`) | "POST /v1/invites in orbit-api" |
+| Small clear fix | `basic` + worktree; its brief requires a clean `reviewer` sub-agent pass | "the onboarding title typo" |
+| A whole goal in one session | a `basic` child running `/goal-skill` | "invites end to end, with tests" |
+| Review a branch or PR | a child running `/multi-review` | "review super/invites before the merge" |
+| A decision with trade-offs | a child running `/council`; its verdict gates the build wave | "invite links: expiring or one-time?" |
+| A question across brains or projects | `/dreamcontext-deep-research` (a one-line recall you may do yourself) | "how did our other apps price seats?" |
+
+**A member's job** lands in the member's own thread and runs on its own model and approval: write
+one self-contained ask; `--brief` is its card's line. `say_unapproved`: the owner approves it in AI
+Team (a question lands in his strip; you cannot approve), then ask again. `say_disabled`: it is
+turned off; tell the owner once. `queued: true`: it was busy, the job waits in its own queue. No
+event comes when it ends: `super state` shows each team job's status and last line. One owner per
+job: never give a member what a child already does.
+
 - **Runtime proof of a server or UI** → a child running `/jev-verify` in that worktree.
-- **A decision with trade-offs** → a child running `/council`; its verdict gates the build wave.
-- **A question across brains or projects** → `/dreamcontext-deep-research` (a one-line recall you may do yourself).
 - **Brain reorganisation** → a child running `/curator`, never beside another child that writes the brain, or sleep.
 - **Release** → the release checklist pattern + `/announcements`; the publish step is outward (§2).
 - **Every code unit over ~5 minutes has a task** (Plan creates it). Recall before splitting. A metric →
