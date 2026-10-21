@@ -34,7 +34,7 @@ describe('superBriefing', () => {
     expect(brief).toContain('Permission requests never reach you: the owner answers them.');
     for (const prefix of ['[super events]', '[super handover]', '[super recap]']) expect(brief).toContain(prefix);
     expect(brief).toContain('only a question, done, gone or stuck reaches\nyou, batched, and nothing while a question is open with the owner');
-    expect(brief).toContain('He sees an event turn as one line: write him nothing there unless he wrote to you.');
+    expect(brief).toContain('He sees an event turn as one line: write no text there unless he wrote to you, you escalate\n  a question, or an event says `awaited=owner` (a job he waits on): then give him its result.');
   });
 
   it('names the job list verbs: the row line, the pool, --from, --task, the own question (plan r4)', () => {
@@ -84,10 +84,13 @@ describe('superBriefing', () => {
   // the turn), and `reached: false` read honestly (Tilki field, 2026-10-21). Also absorbs the 35
   // characters main 3da65546 already ran over this budget.
   const OWNER_QUESTION_2026_10_21 = 250;
+  // A job the owner waits on (Tilki field, 2026-10-21): the Events line names `awaited=owner`
+  // (+78 characters), and since the owner-question merge also "you escalate a question" (+24).
+  const AWAITED_EVENT_2026_10_21 = 80;
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21);
     }
   });
 });
@@ -114,7 +117,7 @@ describe('how the super agent talks to the owner', () => {
       'nothing\nfor an event that only renamed a job or repeats a result he already has',
       'with 3\n  or more jobs, set every row in your first turn and update each row an event touches',
     ]) expect(brief).toContain(rule);
-    for (const rule of ['in his language and plain words', 'inside jargon', 'an estimate of when anything still running is ready']) expect(OWNER_VOICE).toContain(rule);
+    for (const rule of ['in the language the owner writes to you in', 'in plain words', 'inside jargon', 'an estimate of when anything still running is ready']) expect(OWNER_VOICE).toContain(rule);
   });
 
   it('every event last line, the handover and the recap carry the same rules', () => {

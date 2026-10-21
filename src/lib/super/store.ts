@@ -206,6 +206,7 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (c.settling === true) child.settling = true;
     if (typeof c.task === 'string' && TASK_SLUG_RE.test(c.task)) child.task = c.task;
     if (child.row === 'stuck' && oneOf(STUCK_REASONS, c.stuckReason)) child.stuckReason = c.stuckReason;
+    if (c.awaited === true) child.awaited = true;
     out[key] = child;
   }
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that
