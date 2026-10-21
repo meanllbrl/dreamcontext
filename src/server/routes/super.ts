@@ -31,6 +31,7 @@ import { sanitizeModel } from '../../lib/claude-args.js';
 import { findParkable, parkChat, parkedSince, type ParkOutcome } from '../chat-park.js';
 import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
+import { addToOutbox } from '../../lib/super/outbox.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -601,6 +602,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // The window says how: 'steered' (into the running turn), 'queued' (behind an open
     // question or permission card) or 'sent' (a new turn).
     const how = (r.result as { delivered?: unknown } | undefined)?.delivered;
+    // Queued in the window's memory: also kept on disk, so a relaunch cannot lose it (outbox.ts).
+    if (how === 'queued') await addToOutbox(c.who.contextRoot, child, text).catch(() => undefined);
     ok(res, { child, delivered: typeof how === 'string' ? how : true });
   },
 

@@ -23,6 +23,7 @@ import {
 import { deriveSessionStatus, rollupProject, type ProjectRollup, type SessionRow } from './agentStatus';
 import { PaneFragment, type PaneActions } from './PaneFragment';
 import { usePaneFocusGlide } from './usePaneFocusGlide';
+import { superRestorePlan, type SuperHold } from './superRestore';
 import { AgentTabs, type PaneVM } from './AgentTabs';
 import { createTabDragStore, type TabDropTarget } from './tabDrag';
 import { MobileSessionDrawer } from './MobileSessionDrawer';
@@ -281,6 +282,8 @@ interface SavedMeta {
   active?: boolean;
   /** Mirrors `SessionMeta.titleByAgent` — the tab's agent named it and may rename it. */
   titleByAgent?: boolean;
+  /** GET-response-ONLY: a super child a relaunch must not resume, and why (superRestore.ts). */
+  superHold?: SuperHold;
 }
 
 /** The whole `GET /api/agent/sessions` body: the roster plus the two surface-level facts that
@@ -1076,8 +1079,9 @@ export function AgentSurface() {
         // row still named "Terminal N" (a stale shell saved before we stopped persisting
         // them; auto-title only ever renames AGENTS, so that default name is a reliable
         // shell marker). What's left is agents + chats.
+        // An ended super child is not a tab any more (superRestore.ts).
         const stored = Array.isArray(res.sessions)
-          ? res.sessions.filter((m) => m.kind !== 'shell' && !/^Terminal \d+$/.test((m.title ?? '').trim()))
+          ? res.sessions.filter((m) => m.kind !== 'shell' && !/^Terminal \d+$/.test((m.title ?? '').trim()) && superRestorePlan(m.superHold) !== 'drop')
           : [];
         // Mac mode's phone brings back only the chats the Mac is running now, adopted below with
         // no spawn; every other stored tab stays a closed chat (rosterRehydrate.ts `phoneRestorable`).
@@ -1171,6 +1175,17 @@ export function AgentSurface() {
             // UUID). A shell has nothing to resume, and auto-spawning shells on launch is
             // surprising — so shells (and legacy tabs without a conversation id) restore
             // DORMANT, spawning a fresh session only on an explicit Resume click.
+            // A card-closed, parked or gone super child comes back DORMANT on its own
+            // conversation: Resume reopens it, nothing runs until then (superRestore.ts).
+            if ((kind === 'agent' || kind === 'chat') && m.sessionId && superRestorePlan(m.superHold) === 'dormant') {
+              return {
+                id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, dormant: true,
+                ...(kind === 'chat' ? { mode: knownChatMode(m.mode) ?? DEFAULT_CHAT_MODE } : {}),
+                ...(m.agent ? { agent: m.agent } : {}),
+                ...(m.superHold === 'parked' ? { parked: { at: Date.now(), transport: kind === 'chat' ? 'chat' as const : 'agent' as const } } : {}),
+                ...(m.titleByAgent ? { titleByAgent: true } : {}),
+              };
+            }
             if ((kind === 'agent' || kind === 'chat') && m.sessionId) {
               // A saved CHAT tab reopens under the mode it was last in — a Develop session that
               // survives a relaunch is still a Develop session. `knownChatMode` drops anything

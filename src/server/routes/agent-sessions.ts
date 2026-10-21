@@ -13,6 +13,11 @@ import { recordSessionTitles } from '../../lib/session-titles.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { isSafeAutomationSlug } from '../../lib/automations/store.js';
 import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
+import { readSuperState } from '../../lib/super/store.js';
+import { superSanitizeOpts } from '../../lib/super/inbox.js';
+import { superRestoreHold, type SuperRestoreHold } from '../../lib/super/restore.js';
+import { emptySuperState } from '../../lib/super/types.js';
+import { parkedSince } from '../chat-park.js';
 
 /**
  * Per-vault persistence of the embedded-agent session ROSTER (titles + layout) so a
@@ -499,6 +504,9 @@ export interface SessionRosterEntry extends SavedMeta {
    * existence of automations the caller never told us about.
    */
   bound: boolean;
+  /** GET-only, never persisted: this tab is a super child a relaunch must not resume, and why
+   *  (lib/super/restore.ts). Absent = restore it as before. */
+  superHold?: SuperRestoreHold;
 }
 
 /**
@@ -528,7 +536,14 @@ export async function handleAgentSessionsGet(
     return;
   }
   const saved = readSurface(contextRoot, isPhoneSocket(_req));
-  sendJson(res, 200, surfaceBody(saved, (id) => isAutomationBoundSession(id, home) !== null));
+  let superState = emptySuperState();
+  try { superState = await readSuperState(contextRoot, superSanitizeOpts()); } catch { /* no super record: nothing held */ }
+  const body = surfaceBody(saved, (id) => isAutomationBoundSession(id, home) !== null);
+  for (const m of body.sessions as SessionRosterEntry[]) {
+    const hold = m.sessionId ? superRestoreHold(superState, m.sessionId, parkedSince(m.sessionId) !== null) : null;
+    if (hold) m.superHold = hold;
+  }
+  sendJson(res, 200, body);
 }
 
 /** The GET body (also the 409 body): the surface, each entry with its `bound` flag, and the

@@ -23,6 +23,7 @@ import {
 } from './routes/assistant.js';
 import { wireNotchInbox } from '../lib/assistant/notch-inbox.js';
 import { startSuperInbox } from '../lib/super/inbox.js';
+import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
 import { handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
 import { serveStatic } from './static.js';
@@ -1384,6 +1385,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // kept out of the notch, and children the window restores get their re-adoption grace.
     void startSuperInbox(listVaults().map((v) => join(v.path, '_dream_context')))
       .catch((err) => console.warn(`[super] boot failed: ${(err as Error).message}`))
+      // Queued super sends a relaunch must not lose (lib/super/outbox.ts).
+      .then(() => armSuperOutbox())
       .finally(() => server.listen(port, host, onListening));
   });
 }

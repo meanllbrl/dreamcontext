@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -305,7 +305,7 @@ function disarmSweep(): void {
 export function registerParkable(p: Parkable): () => void {
   if (!p.id) return () => { /* nothing registered */ };
   parkables.set(p.id, p);
-  parkedAt.delete(p.id);
+  if (parkedMap().delete(p.id)) saveParked();
   armSweep();
   return () => {
     if (parkables.get(p.id) === p) parkables.delete(p.id);
@@ -314,12 +314,40 @@ export function registerParkable(p: Parkable): () => void {
 }
 
 /** Tabs parked (dormant, not ended) since their process last registered: `super state` says
- *  `parked` for them instead of `gone`. In memory: a restart forgets it. */
-const parkedAt = new Map<string, number>();
+ *  `parked` for them instead of `gone`, and a relaunch does not resume a parked super child
+ *  (lib/super/restore.ts). Mirrored to `~/.dreamcontext/parked-tabs.json` so a restart keeps it. */
+let parkedAt: Map<string, number> | null = null;
+const MAX_PARKED_KEPT = 200;
+/** Null in tests (memory only, never the developer's home); see {@link _resetChatParkForTests}. */
+let parkedFileOverride: string | null | undefined;
+const parkedFile = (): string | null => (parkedFileOverride !== undefined ? parkedFileOverride : join(homedir(), '.dreamcontext', 'parked-tabs.json'));
+
+function parkedMap(): Map<string, number> {
+  if (parkedAt) return parkedAt;
+  parkedAt = new Map();
+  const file = parkedFile();
+  if (!file) return parkedAt;
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
+    for (const [id, at] of Object.entries(raw)) if (typeof at === 'number' && Number.isFinite(at)) parkedAt.set(id, at);
+  } catch { /* none yet */ }
+  return parkedAt;
+}
+
+function saveParked(): void {
+  const m = parkedMap();
+  const file = parkedFile();
+  if (!file) return;
+  const keep = [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_PARKED_KEPT);
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(Object.fromEntries(keep)), { mode: 0o600 });
+  } catch { /* best effort: memory still knows */ }
+}
 
 /** When this tab was parked, or null when it was not (or has run again since). */
 export function parkedSince(id: string): number | null {
-  return parkedAt.get(id) ?? null;
+  return parkedMap().get(id) ?? null;
 }
 
 export function findParkable(id: string): Parkable | null {
@@ -347,7 +375,7 @@ export async function parkChat(id: string, reason: string, opts: ParkOptions = {
 }
 
 function noteParked(id: string, outcome: ParkOutcome, opts: ParkOptions): ParkOutcome {
-  if ((outcome === 'parked' || outcome === 'drained') && !opts.end) parkedAt.set(id, Date.now());
+  if ((outcome === 'parked' || outcome === 'drained') && !opts.end) { parkedMap().set(id, Date.now()); saveParked(); }
   return outcome;
 }
 
@@ -411,10 +439,11 @@ export async function sweepOnce(deps: SweepDeps = sweepDeps ?? defaultSweepDeps(
   }
 }
 
-/** Tests only. */
-export function _resetChatParkForTests(deps: SweepDeps | null = null): void {
+/** Tests only. The parked-tabs mirror is memory only unless a test names a file. */
+export function _resetChatParkForTests(deps: SweepDeps | null = null, opts: { parkedFile?: string } = {}): void {
   parkables.clear();
-  parkedAt.clear();
+  parkedAt = null;
+  parkedFileOverride = opts.parkedFile ?? null;
   if (sweepTimer) { clearInterval(sweepTimer); sweepTimer = null; }
   sweepDeps = deps;
   sweeping = false;
