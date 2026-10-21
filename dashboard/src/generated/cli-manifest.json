@@ -3068,11 +3068,24 @@
       ]
     },
     {
+      "path": "super ask",
+      "desc": "Ask the owner YOUR own question (one at a time); its answer is his next message to you",
+      "args": [
+        "<text>"
+      ],
+      "valueFlags": [
+        "--options"
+      ]
+    },
+    {
       "path": "super brief",
-      "desc": "Set the one-line reminder a child's card shows",
+      "desc": "Set the job row's line (doing / next) its card shows too",
       "args": [
         "<child>",
         "<line>"
+      ],
+      "valueFlags": [
+        "--task"
       ]
     },
     {
@@ -3089,10 +3102,12 @@
     },
     {
       "path": "super delegate",
-      "desc": "Start a child chat in THIS project and open its card; returns its session id",
+      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap the job is kept in the pool",
       "args": [],
       "valueFlags": [
         "--prompt",
+        "--from",
+        "--succeeds",
         "--brief",
         "--mode",
         "--model",
@@ -3100,7 +3115,7 @@
         "--worktree",
         "--slug",
         "--base",
-        "--succeeds"
+        "--task"
       ]
     },
     {
@@ -3154,6 +3169,41 @@
       "valueFlags": [
         "--shape",
         "--title"
+      ]
+    },
+    {
+      "path": "super pool",
+      "desc": "Jobs kept for later (the job list's Havuz)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super pool add",
+      "desc": "Keep a job for later; start it with `delegate --from <id>` when a slot frees",
+      "args": [],
+      "valueFlags": [
+        "--prompt",
+        "--note",
+        "--brief",
+        "--mode",
+        "--model",
+        "--effort",
+        "--worktree",
+        "--slug",
+        "--base",
+        "--task"
+      ]
+    },
+    {
+      "path": "super pool list",
+      "desc": "The pooled jobs (title, note, task, held, maybe started)",
+      "args": []
+    },
+    {
+      "path": "super pool remove",
+      "desc": "Drop a job from the pool",
+      "args": [
+        "<id>"
       ]
     },
     {

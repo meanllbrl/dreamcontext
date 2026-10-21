@@ -65,7 +65,9 @@ import { Composer } from './chat/Composer';
 import { readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
-import { superEventOf } from './super/superHandover';
+import { groupSuperEventTurns, superEventOf, type SuperEventGroup } from './super/superHandover';
+import { SuperEventLine } from './super/SuperEventLine';
+import { useSuperEventContext } from './super/superJobsStore';
 import './super/SuperSurface.css';
 import './chat/cards.css';
 import './chat/overlays.css';
@@ -706,6 +708,16 @@ export function ChatPane({
   /** Connected peers, fetched once per pane — lets a `peer-<vault>` envoy run wear that
    *  vault's logo and name in the sub-agent card, rail and drill-in. */
   const peers = usePeerMentions();
+
+  // The Super Agent's centre (plan r4 D2, D8): each event turn folds into ONE line; the owner
+  // expands one with a click. Any other chat has no context and draws nothing new.
+  const superCtx = useSuperEventContext(session.mode === 'super' ? session.claudeId : null);
+  const [openEvents, setOpenEvents] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleEvent = useCallback((anchor: string) => setOpenEvents((prev) => {
+    const next = new Set(prev);
+    if (next.has(anchor)) next.delete(anchor); else next.add(anchor);
+    return next;
+  }), []);
 
   const [slideOver, setSlideOver] = useState<SlideOverState>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
@@ -1671,6 +1683,10 @@ export function ChatPane({
     // A turn the Super Agent's inbox injected — live (`superEvent`) or replayed from the
     // transcript (its `[super …]` prefix) — is a small event chip, not an owner's bubble.
     if (item.kind === 'user' && (item.superEvent || superEventOf(item.text))) {
+      const group = superGroups.get(item.id);
+      if (group && superCtx) {
+        return <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+      }
       return <SuperEventChip key={item.id} text={item.text} />;
     }
     const shape = shapeOf(item);
@@ -1766,9 +1782,18 @@ export function ChatPane({
   // edge (revealing older entries would otherwise re-shape a group the reader is looking at)
   // nor the history/live boundary. Quest-map bookkeeping weighs nothing there: it rides in a
   // run the real steps formed, and never forms one.
+  // Event turns fold INSIDE each piece too (plan r4 D8): a group never straddles the window
+  // edge, the history/live boundary or a notice; the anchor stays and renders the line.
+  const superGroups = new Map<string, SuperEventGroup>();
+  const foldSuper = <T extends ChatItem>(piece: T[]): T[] => {
+    if (!superCtx) return piece;
+    const { kept, groups } = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded: openEvents });
+    for (const [k, g] of groups) superGroups.set(k, g);
+    return kept;
+  };
   const historySlice = conv.history.slice(historyFrom);
   const liveSlice = conv.items.slice(itemsFrom);
-  const historySegments = segmentToolRuns(historySlice, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
+  const historySegments = segmentToolRuns(foldSuper(historySlice), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
   // The handoff receipt and the account move are drawn WHERE THEY HAPPENED, not docked under
   // the newest message: the turns that followed belong below them (owner, 2026-10-10). The
   // live slice is cut at each one's place and segmented piece by piece, so a tool run never
@@ -1837,11 +1862,11 @@ export function ChatPane({
   const liveSegments: RunSegment<ChatItem>[] = [];
   let pieceFrom = 0;
   for (const n of notices) {
-    liveSegments.push(...segmentToolRuns(liveSlice.slice(pieceFrom, n.cut), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+    liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom, n.cut)), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
     pieceFrom = Math.max(pieceFrom, n.cut);
     noticesAt.set(liveSegments.length, [...(noticesAt.get(liveSegments.length) ?? []), n]);
   }
-  liveSegments.push(...segmentToolRuns(liveSlice.slice(pieceFrom), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+  liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom)), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
   const noticeProbes = (i: number): StretchProbe[] => (noticesAt.get(i) ?? [])
     .map((n) => ({ key: `notice:${n.key}`, step: false, invisible: false, actor: 'lead', running: false }));
   // The accruing tail is the last segment that SHOWS something, not the last segment. An

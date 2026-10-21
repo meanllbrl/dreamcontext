@@ -13,13 +13,17 @@ import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from '
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
 import { OrbitPath, PanelChatTile } from './StageParts';
-import { QueueStrip } from './QueueStrip';
+import { JobBar } from './JobBar';
+import { publishSuperEventContext } from './superJobsStore';
+import { childModelChip } from './AgentCard';
 import { SuperContainer, chatStatus, useLiveSession } from './SuperContainer';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { isGroupId, planStage, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
-import { needsOwner, ownerQueueCount, queueHead, shownChild } from './superHandover';
+import { isGroupId, jobListRect, planStage, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
+import { hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
 import { liveWebIds, touchLru, dropFromLru } from './webBudget';
 import './SuperSurface.css';
+import './superTone.css';
+import './superCentre.css';
 
 export { runFlights, prefersReducedMotion, type FlightRun } from './motionRunner';
 export { samePlan } from './StageMotion';
@@ -120,8 +124,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
 
   // ── The plan ──
   const plan = useMemo(
-    () => planStage(stageItems(state.containers, state.groups, state.view), state.view, size, { dragging: pinned }),
-    [state.containers, state.groups, state.view, size, pinned],
+    () => planStage(stageItems(state.containers, state.groups, state.view), state.view, size, { dragging: pinned, terminals: props.terminals.length }),
+    [state.containers, state.groups, state.view, size, pinned, props.terminals.length],
   );
   const planRef = useRef(plan);
   planRef.current = plan;
@@ -278,6 +282,32 @@ export function SuperSurface(props: SuperSurfaceProps) {
 
   const head = queueHead(state);
   const asking = useMemo(() => new Set(state.queue.filter(needsOwner).map((q) => q.sessionId)), [state.queue]);
+  // The centre's event lines read the children's titles and which batches render full: published
+  // for the super session, notified only when one of them changes (superJobsStore).
+  const superId = superSession?.claudeId ?? null;
+  const titleKey = Object.keys(state.children).map((sid) => `${sid}=${props.titleFor(sid)}`).join('\u0001');
+  const batchKey = state.ownerBatches.join(',');
+  const titleForRef = useRef(props.titleFor);
+  titleForRef.current = props.titleFor;
+  // Published once the stage has landed, never mid-flight: a change re-renders the centre's
+  // transcript, which must not cost a frame of the hand-over. Kept across a take-back (only the
+  // super session's own chat reads it), so the next hand-over re-renders nothing.
+  useEffect(() => {
+    if (!superId || motion === 'running') return;
+    publishSuperEventContext(superId, { ownerBatches: state.ownerBatches, titleFor: (c) => titleForRef.current(c) }, `${batchKey}\u0002${titleKey}`);
+  }, [superId, batchKey, titleKey, state.ownerBatches, motion]);
+  // The job bar reads the same record and the children's live sessions (0 requests).
+  const jobLook: JobLook = {
+    live: (sid) => { const cs = props.sessionFor(sid); return cs ? chatStatus(cs).kind : null; },
+    titleFor: props.titleFor,
+    modelFor: (sid) => childModelChip(props.sessionFor(sid), hasOwnKey(state.children, sid) ? state.children[sid] : undefined),
+    superTitle: t('super.centre.name'),
+  };
+  // A child row in the list asks for side by side, as the card's own button does.
+  const showChild = (sid: string) => {
+    const c = state.containers.find((k) => k.kind === 'chat' && k.ref === sid);
+    if (c) actions.onSideBySide(c.id);
+  };
   const othersItems: OthersItem[] = plan.others.map((id) => {
     const g = groupsById.get(id);
     if (g) {
@@ -286,7 +316,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
     }
     const c = byId.get(id)!;
     const st = c.kind === 'chat' ? chatStatus(props.sessionFor(c.ref)).kind : null;
-    return { id, title: titleOf(c), kind: c.kind, status: st === 'asking' ? 'asking' : st === 'working' ? 'working' : st ? 'idle' : undefined };
+    const tone = st ? toneOfStatus(st) : null;
+    return { id, title: titleOf(c), kind: c.kind, status: tone === null ? undefined : tone === 'starting' ? 'idle' : tone };
   });
 
   return (
@@ -376,15 +407,21 @@ export function SuperSurface(props: SuperSurfaceProps) {
           {isGroupId(target) ? t('super.drop.join').replace('{name}', groupsById.get(target)?.name ?? '') : t('super.drop.group')}
         </div>
       )}
-      <QueueStrip
+      <JobBar
+        state={state}
         head={head}
         waiting={ownerQueueCount(state)}
         vault={props.vault}
-        superSession={state.session}
         rect={plan.queue}
+        listRect={jobListRect(plan)}
+        look={jobLook}
+        superSession={superSession}
         sessionFor={props.sessionFor}
         titleFor={props.titleFor}
         onReplyToSuper={props.onReplyToSuper}
+        onShowChild={showChild}
+        canShowChild={(sid) => state.containers.some((k) => k.kind === 'chat' && k.ref === sid)}
+        onOpenTask={(slug) => props.onOpenPage('tasks', slug)}
       />
       {state.containers.length === 0 && props.terminals.length === 0 && (
         <div className="super-empty-hint" data-testid="super-empty-hint" style={{ left: plan.centre.x, top: plan.dock.y, width: plan.centre.width, height: plan.dock.height }}>

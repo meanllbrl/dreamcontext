@@ -368,7 +368,7 @@ export type ChatEvent =
    *  payload is read with `readSuperStateView` (lib/superTypes.ts) where it is used. */
   | { kind: 'super-state'; state: Record<string, unknown> }
   /** The turn that just opened was injected by the super inbox: render it as an event chip. */
-  | { kind: 'super-event'; eventKind: string; child: string }
+  | { kind: 'super-event'; eventKind: string; child: string; batch?: { batch: string; items: Array<{ item: string; child: string; kind: string }> } }
   /** The owner's words typed on ANOTHER surface of the same Super Agent chat (the phone's mirror,
    *  or the window when the phone watches): drawn as the owner's own bubble. */
   | { kind: 'owner-echo'; text: string }
@@ -1198,7 +1198,17 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   if (subtype === 'super_event') {
     const eventKind = str(obj.kind);
     if (!eventKind) return ignored('_meta:super_event');
-    return { kind: 'super-event', eventKind, child: str(obj.child) ?? '' };
+    // A batch (plan r4 D10) names its id and every item it carries; anything else is dropped.
+    const batchId = str(obj.batch);
+    const items = Array.isArray(obj.items)
+      ? (obj.items as unknown[]).filter(isRecord).slice(0, 8)
+        .map((i) => ({ item: str(i.item) ?? '', child: str(i.child) ?? '', kind: str(i.kind) ?? '' }))
+        .filter((i) => i.item && i.child && i.kind)
+      : [];
+    return {
+      kind: 'super-event', eventKind, child: str(obj.child) ?? '',
+      ...(eventKind === 'batch' && batchId ? { batch: { batch: batchId, items } } : {}),
+    };
   }
   if (subtype === 'assistant_command') {
     const id = str(obj.id);

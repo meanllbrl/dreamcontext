@@ -235,13 +235,30 @@ describe('the glance and the rollup', () => {
   });
 
   it('an escalated question is the row, in the super agent\'s fenced words', async () => {
+    // The child is still asking it: an escalation nobody asks any more closes (plan r4 D16).
+    reg('c1').observe({
+      type: 'control_request', request_id: 'r-1',
+      request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which db?', options: [{ label: 'postgres' }] }] } },
+    });
     await makeVault({ queue: [{ id: 'q-e', sessionId: 'c1', kind: 'question', requestId: 'r-1', state: 'escalated', ownerText: 'Postgres or sqlite?', createdAt: 1 }] });
-    reg('c1');
     const r = res();
     await handleAssistantGlance(req(), r);
     const chats = r.json.chats as Array<Record<string, unknown>>;
     expect(chats).toHaveLength(1);
     expect((chats[0].ask as { text: string }).text).toBe('<untrusted-project-output vault="acme">Postgres or sqlite?</untrusted-project-output>');
+  });
+
+  it('the super agent\'s own ask is the row: its words fenced, its options, no child title (plan r4 D7)', async () => {
+    await makeVault({ queue: [{ id: 'q-a', sessionId: SUPER, kind: 'ask', state: 'escalated', ownerText: 'Ship it today?', options: ['Yes', 'Tomorrow'], createdAt: 1 }] });
+    const r = res();
+    await handleAssistantGlance(req(), r);
+    const chats = r.json.chats as Array<Record<string, unknown>>;
+    expect(chats).toHaveLength(1);
+    expect(chats[0].title).toBe('');
+    expect(chats[0].ask).toEqual({
+      id: 'q-a', kind: 'question', tool: 'SuperAsk', options: ['Yes', 'Tomorrow'],
+      text: '<untrusted-project-output vault="acme">Ship it today?</untrusted-project-output>',
+    });
   });
 
   it('after take-back the child is an ordinary row again', async () => {
