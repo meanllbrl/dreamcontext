@@ -45,7 +45,11 @@ export function JobList({ sections, rect, origin, focusSection, focusRow, bar, o
     if (!el) return;
     const sel = focusRow ? `[data-row="${CSS.escape(focusRow)}"]` : focusSection ? `[data-section="${focusSection}"]` : null;
     const target = sel ? el.querySelector<HTMLElement>(sel) : null;
-    if (target) el.scrollTop = Math.max(0, target.offsetTop - 8);
+    // Scroll only when the target is not in view already: a list that opens at its top keeps
+    // its first section whole.
+    if (target && (target.offsetTop < el.scrollTop || target.offsetTop + target.offsetHeight > el.scrollTop + el.clientHeight)) {
+      el.scrollTop = Math.max(0, target.offsetTop - 8);
+    }
   }, [focusRow, focusSection]);
   const now = Date.now();
   return (
