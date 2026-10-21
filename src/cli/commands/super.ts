@@ -14,6 +14,9 @@ import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
  * The SERVER decides who may call: only the vault's recorded super session, running in Super
  * Agent mode (src/server/routes/super.ts). From any other chat, a terminal or a `claude -p`
  * it refuses.
+ *
+ * Anywhere a verb takes a <child>, the first 8 or more characters of its session id name it
+ * (an ambiguous prefix is refused with the candidates).
  */
 
 export const NOT_THE_SUPER_AGENT = '`dreamcontext super` works only from the project\'s Super Agent chat';
@@ -155,7 +158,7 @@ export function registerSuperCommand(program: Command): void {
     .action((child: string, line: string, o: { task?: string }) => run('brief', { child, line, task: o.task }));
 
   s.command('read <child>')
-    .description('A child\'s last reply, whole (tool calls skipped), fenced as the child\'s text')
+    .description('A child\'s last reply, whole (tool calls skipped), fenced as the child\'s text. An event line that ends in "…" is cut: this prints the rest')
     .option('--bytes <n>', 'Instead: the raw end of its transcript, this many bytes (max 262144)')
     .action((child: string, o: { bytes?: string }) => run('read', { child, bytes: o.bytes ? Number(o.bytes) : undefined }));
 
@@ -203,7 +206,7 @@ export function registerSuperCommand(program: Command): void {
       run('adopt', { chat, brief: o.brief, force: o.force === true }));
 
   s.command('send <child> <text>')
-    .description('Send a message into a child chat (steered into its running turn; queued only while it asks)')
+    .description('Send a message into a child chat (steered into its running turn; queued only while it asks). A parked child is woken first, in the same command: "delivered" says how it arrived')
     .action((child: string, text: string) => run('send', { child, text }));
 
   const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread');

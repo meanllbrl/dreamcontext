@@ -35,7 +35,8 @@ export {
 export const WHITEBOARD_MAX_BODY_BYTES = 5 * 1024 * 1024;
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const REF_RE = /^[a-z0-9][a-z0-9\-/]{0,200}$/;
+// A task widget's ref is a task slug: up to MAX_TASK_SLUG_LENGTH (task-slug.ts), pinned by task-slug-limit.test.ts.
+const REF_RE = /^[a-z0-9][a-z0-9\-/]{0,251}$/;
 const TAG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 /** Payload text fields are capped so one widget cannot carry the whole body budget. */

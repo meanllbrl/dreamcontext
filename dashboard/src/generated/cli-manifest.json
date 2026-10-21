@@ -3244,7 +3244,7 @@
     },
     {
       "path": "super read",
-      "desc": "A child's last reply, whole (tool calls skipped), fenced as the child's text",
+      "desc": "A child's last reply, whole (tool calls skipped), fenced as the child's text. An event line that ends in \"…\" is cut: this prints the rest",
       "args": [
         "<child>"
       ],
@@ -3266,7 +3266,7 @@
     },
     {
       "path": "super send",
-      "desc": "Send a message into a child chat (steered into its running turn; queued only while it asks)",
+      "desc": "Send a message into a child chat (steered into its running turn; queued only while it asks). A parked child is woken first, in the same command: \"delivered\" says how it arrived",
       "args": [
         "<child>",
         "<text>"

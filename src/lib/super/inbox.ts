@@ -458,6 +458,22 @@ export const BATCH_LAST_LINE = [
   `If the owner writes to you during this turn, answer him normally (${OWNER_VOICE}); the no-message rule covers only your notes about the events. Then end your turn.`,
 ].join('\n');
 
+/** How much of a child's last reply an event line carries. */
+const LAST_REPLY_CHARS = 600;
+
+/**
+ * The child's last reply, fenced; cut at {@link LAST_REPLY_CHARS} it says so in the server's own
+ * words (outside the fence) and names the verb for the rest. Field 2026-10-21: a bare "…" sent
+ * the Super Agent into the child's transcript three times with a script.
+ */
+function lastReplyLines(vault: string, sid: string, last: string): string[] {
+  if (last.length <= LAST_REPLY_CHARS) return [wrapUntrusted(vault, `Last reply: ${last}`)];
+  return [
+    wrapUntrusted(vault, `Last reply: ${last.slice(0, LAST_REPLY_CHARS)}…`),
+    `(cut at ${LAST_REPLY_CHARS} of ${last.length} characters; the whole reply: \`dreamcontext super read ${sid}\`)`,
+  ];
+}
+
 function childLine(vault: string, s: SuperState, sid: string, now: number): string[] {
   const e = getChat(sid);
   const status = e ? activityOf(e, now) : 'gone';
@@ -466,7 +482,7 @@ function childLine(vault: string, s: SuperState, sid: string, now: number): stri
   const brief = s.children[sid]?.brief || (e ? chatTopic(e) : '');
   if (brief) lines.push(wrapUntrusted(vault, `Brief: ${brief}`));
   const last = e?.lastAssistantText[e.lastAssistantText.length - 1];
-  if (last) lines.push(wrapUntrusted(vault, `Last reply: ${last.length > 600 ? `${last.slice(0, 600)}…` : last}`));
+  if (last) lines.push(...lastReplyLines(vault, sid, last));
   return lines;
 }
 
@@ -489,7 +505,7 @@ function itemLines(vault: string, s: SuperState, item: SuperQueueItem, now: numb
     if (pq.options.length) lines.push(wrapUntrusted(vault, `Options: ${pq.options.join(' | ')}`));
   }
   const last = e?.lastAssistantText[e.lastAssistantText.length - 1];
-  if (last) lines.push(wrapUntrusted(vault, `Last reply: ${last.length > 600 ? `${last.slice(0, 600)}…` : last}`));
+  if (last) lines.push(...lastReplyLines(vault, sid, last));
   return lines;
 }
 

@@ -36,6 +36,7 @@ import {
   worktreeStatus, type CreatedWorktree,
 } from '../../lib/super/worktrees.js';
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
+import { expandChildRefs } from '../../lib/super/child-ref.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
 import { existsSync } from 'node:fs';
@@ -193,6 +194,9 @@ function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown
     case 'board':
       if (!SLUG_REF_RE.test(ref) || ref.split('/').some((s) => s === '..' || s === '.' || s === '')) return { error: 'a board container names a board file, project-relative (no ".." steps)' };
       return { ref };
+    case 'task':
+      // Any slug `tasks create` can write (task-slug.ts), not the generic 200-character ref.
+      return TASK_SLUG_RE.test(ref) ? { ref } : { error: 'a task container names its slug (lowercase letters, digits and dashes)' };
     default:
       if (!SLUG_REF_RE.test(ref) || ref.split('/').some((s) => s === '..' || s === '.' || s === '')) return { error: `a ${kind} container names its slug` };
       return { ref };
@@ -439,6 +443,28 @@ function fenceQueueItem(vault: string, q: SuperState['queue'][number]): SuperSta
   };
 }
 
+/** What the window answers for a tab that has no running process (windowVerbs.ts). */
+const WINDOW_NOT_RUNNING = /^that chat is not running/;
+const WAKE_TRIES = 24;
+let wakePollMs = 500;
+/** Test seam: how long `send` waits between asks while a woken child comes up. */
+export function _setSendWakePollForTests(ms: number | null): void { wakePollMs = ms ?? 500; }
+
+/** `super resume` for `child`, as the verb itself answers it; null when it came back (or ran), else the refusal. */
+async function wakeChild(c: SuperCaller, child: string): Promise<{ status: number; error: string; message: string } | null> {
+  let status = 0;
+  let json: Record<string, unknown> = {};
+  const sink = {
+    writeHead: (s: number) => { status = s; return sink; },
+    end: (b?: string) => { try { json = JSON.parse(b ?? '{}') as Record<string, unknown>; } catch { json = {}; } },
+  } as unknown as ServerResponse;
+  await SUPER_VERB_HANDLERS.resume(c, { child }, sink);
+  if (json.ok === true) return null;
+  const error = typeof json.error === 'string' ? json.error : 'not_woken';
+  const why = typeof json.message === 'string' ? json.message : 'it could not be reopened';
+  return { status: status >= 400 ? status : 409, error, message: `that child is parked and could not be woken (${error}): ${why}` };
+}
+
 /** Each verb's work. */
 export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   state: async (c, _b, res) => {
@@ -456,6 +482,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         ...(ch.endedAt !== undefined ? { endedAt: ch.endedAt } : {}),
         elapsedMs: Math.max(0, now - ch.startedAt),
         lastLine: last ? wrapUntrusted(vault, last.length > 600 ? `${last.slice(0, 600)}…` : last) : '',
+        ...(last.length > 600 ? { lastLineCut: `cut at 600 of ${last.length} characters; the whole reply: dreamcontext super read ${sid}` } : {}),
         ...(limit ? { limit: wrapUntrusted(vault, limit) } : {}),
         asking: e?.pendingQuestion ? { requestId: e.pendingQuestion.requestId, kind: e.pendingQuestion.isPermission ? 'permission' : 'question' } : null,
       };
@@ -517,7 +544,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (mcpRefused(root, job, res)) return;
     // One job, one owner: the child this one takes the work over from (succession.ts).
     const succeeds = str(b.succeeds);
-    if (succeeds !== undefined && (!SESSION_ID_RE.test(succeeds) || !c.state.children[succeeds] || succeeds === c.state.session)) {
+    if (succeeds !== undefined && (!SESSION_ID_RE.test(succeeds) || !hasChild(c.state, succeeds) || succeeds === c.state.session)) {
       refuse(res, 404, 'unknown_child', '--succeeds names none of your children (`dreamcontext super state` lists them)');
       return;
     }
@@ -845,16 +872,36 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const text = typeof b.text === 'string' ? b.text : '';
     if (!text.trim()) { refuse(res, 400, 'invalid_args', 'text is required'); return; }
     if (text.length > MAX_TEXT) { refuse(res, 400, 'invalid_args', 'text is too long'); return; }
+    // A parked child has no process: one command wakes it (`resume`), then the message goes in.
+    // The Super Agent never resumes by hand (field 2026-10-21: send, resume, sleep, send again).
+    let woke = false;
+    if (!isLiveChat(child)) {
+      const w = await wakeChild(c, child);
+      if (w) { refuse(res, w.status, w.error, w.message); return; }
+      woke = true;
+    }
     // Through the window, as an owner message into the child's own tab (so it reaches the
     // child's `writeOwnerTurn`, and its hand-over note rides with it).
-    const r = await sendWindowCommand(c.token, 'send', { tab: child, text });
+    let r = await sendWindowCommand(c.token, 'send', { tab: child, text });
+    // The window still draws the tab as parked, or the resumed process is not up yet: it answers
+    // "not running" until it is. Wake it (once) and ask again for a few seconds.
+    for (let i = 0; !r.ok && WINDOW_NOT_RUNNING.test(r.error) && i < WAKE_TRIES; i++) {
+      if (!woke) {
+        const w = await wakeChild(c, child);
+        if (w) { refuse(res, w.status, w.error, w.message); return; }
+        woke = true;
+      } else {
+        await new Promise((done) => setTimeout(done, wakePollMs));
+      }
+      r = await sendWindowCommand(c.token, 'send', { tab: child, text });
+    }
     if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the message did not reach the child'); return; }
     // The window says how: 'steered' (into the running turn), 'queued' (behind an open
     // question or permission card) or 'sent' (a new turn).
     const how = (r.result as { delivered?: unknown } | undefined)?.delivered;
     // Queued in the window's memory: also kept on disk, so a relaunch cannot lose it (outbox.ts).
     if (how === 'queued') await addToOutbox(c.who.contextRoot, child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
-    ok(res, { child, delivered: typeof how === 'string' ? how : true });
+    ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(woke ? { woke: true } : {}) });
   },
 
   'queue-list': async (c, _b, res) => {
@@ -1556,7 +1603,15 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
     sendError(res, 404, 'unknown_verb', `No super verb "${params.verb}". Verbs: ${SUPER_VERBS.join(', ')}.`);
     return;
   }
-  const body = (await parseJsonBody(req)) ?? {};
+  const raw = (await parseJsonBody(req)) ?? {};
+  // A child may be named by the first characters of its id (child-ref.ts); resolved once, here.
+  const expanded = expandChildRefs(caller.state, verb, raw as Record<string, unknown>);
+  if ('error' in expanded) {
+    const { error, message, matches } = expanded.error;
+    refuse(res, error === 'ambiguous_child' ? 409 : 404, error, message, matches ? { matches } : {});
+    return;
+  }
+  const body = expanded.body;
   const cue = CUED_VERBS.has(verb) ? captureOk(res) : null;
   try {
     await SUPER_VERB_HANDLERS[verb](caller, body as Record<string, unknown>, res);
