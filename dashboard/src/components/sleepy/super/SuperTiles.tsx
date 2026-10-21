@@ -107,7 +107,9 @@ function NoteTile({ container: c, title }: { container: Container; title: string
 
 function InsightTile({ container: c, title }: { container: Container; title: string }) {
   const { t, locale } = useI18n();
-  const { data, isError } = useLabInsight(c.ref);
+  const { data, isError: failed } = useLabInsight(c.ref);
+  // A refetch that failed over a figure already on screen is not "gone": only an unreadable insight is.
+  const isError = failed && !data;
   // The server's own stale verdict (the list the Lab board reads: one shared cache).
   const { data: list } = useLabInsights();
   const view = insightTile(data, list?.find((x) => x.slug === c.ref)?.stale);
