@@ -12,6 +12,7 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
+import { publishSuperEventContext } from './super/superJobsStore';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -1508,6 +1509,8 @@ export function AgentSurface() {
     // composer deliberately does NOT revoke them on unmount, because a respawn unmounts a pane
     // whose chips are still wanted.
     if (kind === 'chat' && claudeId) dropScratch(claudeId);
+    // The super chat's event-line context lives as long as its conversation (superJobsStore).
+    if (kind === 'chat' && claudeId) publishSuperEventContext(claudeId, null);
     // A conversation closed here is closed: it no longer rides along as an unjudged stored tab.
     if (claudeId) unrestoredRef.current = unrestoredRef.current.filter((m) => m.sessionId !== claudeId);
 
