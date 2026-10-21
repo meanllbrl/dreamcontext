@@ -106,11 +106,11 @@ describe('machineNotes (information for super state, never a hold)', () => {
   });
   it('one short fact per line crossed, soft and hard alike; an unreadable swap adds none', () => {
     expect(machineNotes(machineRoom({ ...ok, claudeSessions: 12, swapUsedGb: 3.8, diskFreeGb: 12, availMemGb: 1.5 }, { lightMode: true }))).toEqual([
-      '12 Claude sessions are open on this machine (about 10 fit its RAM)',
-      'swap is 95 % full (line 90 %)',
+      '12 Claude processes are running on this machine (about 10 fit its RAM)',
+      'swap is 95 % full (line 90 %); removing worktrees or files frees disk, not memory',
       '12 GB disk free (line 15 GB)',
-      '1.5 GB memory free (line 2 GB)',
-      'light mode is on',
+      '1.5 GB memory free (line 2 GB); removing worktrees or files frees disk, not memory',
+      expect.stringMatching(/^light mode is on \(.*\)\. It only slows the app's animations and polling/),
     ]);
     expect(machineNotes(machineRoom({ ...ok, swapUsedGb: null, swapTotalGb: null }, { platform: 'darwin' }))).toEqual([]);
   });

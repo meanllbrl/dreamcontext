@@ -30,7 +30,7 @@ import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJo
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
 import {
-  delegationAllowed, lightModeOn, machineNotes, machineRoom, readCapacityFacts, type CapacityFacts,
+  CLAUDE_SESSIONS_MEANS, delegationAllowed, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
 } from '../../lib/super/capacity.js';
 import { knownMcpServers, unknownMcpNames } from '../../lib/super/lean-mcp.js';
 import {
@@ -52,6 +52,7 @@ import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
 import { addToOutbox } from '../../lib/super/outbox.js';
 import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp } from '../../lib/super/disk-leftovers.js';
+import { readMachineFacts } from './machine.js';
 import { tmpdir } from 'node:os';
 
 /**
@@ -470,7 +471,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     let machine: unknown = null;
     let facts: CapacityFacts | null = null;
-    try { facts = await readCapacityFacts(); } catch { facts = null; }
+    try { facts = await readCapacityFactsForState(); } catch { facts = null; }
     // The largest leftovers on disk (last measurement; the next one runs in the background).
     if (facts) {
       const left = cachedLeftovers(() => defaultPlaces([dirname(root)]));
@@ -478,8 +479,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const leftovers = left.top.map((r) => ({ ...r, path: wrapUntrusted(vault, r.path) }));
       // `notes`: the lines the machine crossed, information only (owner, 2026-10-21): they never
       // hold a delegate and owe the owner no message.
-      const notes = machineNotes(machineRoom(facts, { lightMode: lightModeOn(facts) }));
-      machine = { ...facts, notes, leftovers, leftoversMeasuredAt: left.measuredAt };
+      const light = await lightModeNow(facts, readMachineFacts);
+      const notes = machineNotes(machineRoom(facts, { lightMode: light.on }), light);
+      machine = { ...facts, claudeSessionsMeans: CLAUDE_SESSIONS_MEANS, notes, leftovers, leftoversMeasuredAt: left.measuredAt };
     }
     // Container titles can be child text (an adopted chat's tab title or last reply): fenced
     // like every other child-derived string (D10).

@@ -20,8 +20,13 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    is the only limit. `dreamcontext super state` shows `machine` (memory, swap, disk, Claude
    sessions, and `notes` naming any line crossed): information only. A full swap or little free
    memory alone does not mean the machine cannot take one more (the system swaps on its own), so
-   it is never a reason to start fewer, to wait, or to tell the owner. The server parks idle
-   chats itself; heavy checks share 2 machine-wide slots (§5).
+   it is never a reason to start fewer, to wait, or to tell the owner. `claudeSessions` counts
+   running `claude` processes on the whole machine (every project, terminal tab, app chat and you);
+   a child that is `starting`, parked or ended has none, so it is not the number of children (read
+   those from `status`). Removing worktrees or files frees disk, never memory or swap: do not offer
+   it for a RAM squeeze. A `light mode is on` note is the app slowing its animations and polling:
+   it holds no job and nothing needs closing or switching off. The server parks idle chats itself;
+   heavy checks share 2 machine-wide slots (§5).
 7. **Publish at once.** Wave 1 via `dreamcontext super delegate`; every later unit via
    `dreamcontext super pool add` with "after <unit>" in its brief, so the job list shows the whole
    split immediately. Each `--brief` reads `<job> · <mode> <model>/<effort>`. Wait for no approval.
