@@ -13,6 +13,7 @@
  *
  *   npm run build && npm run eval:super-show            # every prompt, gold.runs times (vite-node)
  *   PROMPTS=tasks-tr RUNS=1 npm run eval:super-show     # a smoke run
+ *   EVAL_MODEL=claude-sonnet-5-5 EVAL_EFFORT=medium …     # the model every chat starts on
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -48,7 +49,12 @@ function makeRun(id) {
   const proj = join(root, 'acme-app');
   const bin = join(root, 'bin');
   for (const d of [join(home, '.dreamcontext'), join(proj, '_dream_context', 'state'), join(proj, '_dream_context', 'lab', 'insights'), bin]) mkdirSync(d, { recursive: true });
-  writeFileSync(join(home, '.dreamcontext', 'agent-ui.json'), JSON.stringify({ enabled: true, chatView: true, screenMigrated: true, chatPermissionMode: 'auto', superAgent: true, renderer: 'dom' }));
+  // The model every new chat (the super one included) starts on: EVAL_MODEL / EVAL_EFFORT, else
+  // the app's own default.
+  writeFileSync(join(home, '.dreamcontext', 'agent-ui.json'), JSON.stringify({
+    enabled: true, chatView: true, screenMigrated: true, chatPermissionMode: 'auto', superAgent: true, renderer: 'dom',
+    chatDefaultModel: process.env.EVAL_MODEL || '', chatDefaultEffort: process.env.EVAL_EFFORT || '',
+  }));
   writeFileSync(join(bin, 'dreamcontext'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI)} "$@"\n`);
   chmodSync(join(bin, 'dreamcontext'), 0o755);
   // Claude's sign-in: the keychain item is found only WITHOUT CLAUDE_CONFIG_DIR, so the scratch
@@ -143,8 +149,12 @@ async function once(pw, prompt, n) {
     await page.waitForTimeout(8000);
     await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
     await until(page, async () => !!recordOf(run)?.session, 30000);
-    // The hand-over event turn first: wait until the super chat settles.
+    // The hand-over event turn first (its chip drawn, the super chat settled), so the prompt's
+    // turn is not interleaved with it.
+    await until(page, async () => (await page.locator('[data-testid="super-event-chip"]').count()) > 0, 180000);
+    await page.waitForTimeout(3000);
     await until(page, async () => (await page.locator('.super-centre[data-status="idle"]').count()) > 0, 180000);
+    await page.waitForTimeout(2000);
     let preOpen = [];
     if (prompt.capacity) {
       // 12 ungrouped floating cards, some of them finished tasks (the owner's full stage).
@@ -165,12 +175,15 @@ async function once(pw, prompt, n) {
     // (an event turn's reply, e.g. the hand-over's, can land before or after it).
     const answer = await page.evaluate((prompt) => {
       const root = document.querySelector('.super-centre') ?? document;
-      const nodes = [...root.querySelectorAll('.chat-msg-user-row, .chat-msg-assistant-body')];
+      // The turn runs from the prompt's bubble to the next owner message or server event chip;
+      // its answer is the LAST assistant text in it (earlier ones are interim narration).
+      const nodes = [...root.querySelectorAll('.chat-msg-user-row, .chat-msg-assistant-body, [data-testid="super-event-chip"]')];
       const at = nodes.findIndex((n) => n.classList.contains('chat-msg-user-row') && (n.textContent ?? '').includes(prompt));
       if (at < 0) return '';
-      const after = nodes.slice(at + 1);
-      const reply = after.find((n) => n.classList.contains('chat-msg-assistant-body'));
-      return (reply?.innerText ?? '').trim();
+      const rest = nodes.slice(at + 1);
+      const end = rest.findIndex((n) => !n.classList.contains('chat-msg-assistant-body'));
+      const turn = end < 0 ? rest : rest.slice(0, end);
+      return (turn.at(-1)?.innerText ?? '').trim();
     }, prompt.text).catch(() => '');
     if (!answer) throw new Error('no reply to the prompt was found in the centre');
     await page.screenshot({ path: join(OUT, `${prompt.id}-${n}.png`) });
@@ -215,7 +228,7 @@ for (const prompt of GOLD.prompts.filter((p) => !ONLY.length || ONLY.includes(p.
   if (passed < need) allOk = false;
   lines.push(`| ${prompt.id} | \`${prompt.text}\` | ${passed}/${RUNS} | ${passed >= need ? 'PASS' : 'FAIL'} | $${promptCost.toFixed(2)} |`);
 }
-const model = process.env.EVAL_MODEL || [...models].join(', ') || 'the chat default';
+const model = `${[...models].join(', ') || process.env.EVAL_MODEL || 'the chat default'}${process.env.EVAL_EFFORT ? ` / ${process.env.EVAL_EFFORT}` : ''}`;
 const head = `\n## ${new Date().toISOString().slice(0, 10)} — model: ${model}, runs per prompt: ${RUNS}, threshold ${GOLD.threshold}/${GOLD.runs}, total cost $${cost.toFixed(2)}\n\n| prompt | text | passed | verdict | cost |\n|---|---|---|---|---|\n`;
 appendFileSync(join(HERE, 'RESULTS.md'), head + lines.join('\n') + '\n');
 console.log(`\n${allOk ? 'PASS' : 'FAIL'} (RESULTS.md updated)`);

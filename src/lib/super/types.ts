@@ -345,10 +345,13 @@ export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 export const SUPER_SHOW_SECTION = `## Show, don't tell
 - The owner asks to see a set of things ("show my tasks", insights, boards): every item is a
   card. More than 3: ONE group, \`dreamcontext super open task <slug…> --group "Tasks"\`. Never
-  write the items as a list in the chat; at most two sentences ("5 open tasks are on the stage,
-  in 'Tasks'"). Stage full (409 too_many_containers): first \`super stack\` finished or idle
-  cards into Others, then open. Never close a card to make room and never skip an item; only
-  when the record itself is full, open what fits and say in one sentence how many did not.
+  write the items as a list in the chat, and never name them in a sentence either, not even
+  three: the cards show them. At most two sentences ("5 open tasks are on the stage, in
+  'Tasks'"). Stage full (409 too_many_containers): first \`super stack\` finished or idle
+  cards into Others, then open. Never close a card to make room and never skip an item. A full
+  stage changes nothing in the reply: still at most two sentences, and do not tell what you
+  moved to make room. Only when the record itself is full, open what fits and say in one
+  sentence how many did not.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
 - The owner has to decide something visual (a mockup, a layout): open the options as cards
   (png, svg, html, a board), \`super present <card…>\`, then ask with AskUserQuestion; after his
