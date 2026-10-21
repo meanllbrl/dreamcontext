@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { superRestoreHold } from '../../src/lib/super/restore.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { superRestorePlan } from '../../dashboard/src/components/sleepy/superRestore';
-import { OUTBOX_BOOT, _resetSuperOutbox, addToOutbox, dropFromOutbox, arrivedInTranscript, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
+import { OUTBOX_BOOT, REASK_TEXT, _resetSuperOutbox, addToOutbox, dropFromOutbox, arrivedInTranscript, keepQuestionsAcrossRelaunch, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
 import { _resetChatParkForTests, parkChat, parkedSince, registerParkable } from '../../src/server/chat-park.js';
 
 const child = (sid: string, extra: Record<string, unknown> = {}) => ({ sessionId: sid, brief: sid, adopted: false, startedAt: 1, ...extra });
@@ -30,13 +30,17 @@ describe('superRestoreHold: who a relaunch resumes', () => {
     ...emptySuperState(), session: 'sup',
     children: {
       live: child('live'), ended: child('ended', { endedAt: 5 }), closed: child('closed'),
-      parked: child('parked'), gone: child('gone'), own: child('own', { adopted: true }),
+      parked: child('parked'), gone: child('gone', { row: 'gone' }), own: child('own', { adopted: true }),
+      ownGone: child('ownGone', { adopted: true, row: 'gone' }), ownNoCard: child('ownNoCard', { adopted: true }),
+      revived: child('revived'),
     },
-    containers: [card('live'), card('ended'), card('parked'), card('gone')],
+    containers: [card('live'), card('ended'), card('parked'), card('gone'), card('revived')],
     queue: [
       { id: 'q1', sessionId: 'gone', kind: 'gone', state: 'done', createdAt: 9 },
       { id: 'q2', sessionId: 'live', kind: 'gone', state: 'done', createdAt: 1 },
       { id: 'q3', sessionId: 'live', kind: 'idle', state: 'done', createdAt: 2 },
+      // Reported gone, then started again (its row was cleared): it is running, it resumes.
+      { id: 'q4', sessionId: 'revived', kind: 'gone', state: 'done', createdAt: 9 },
     ],
   } as unknown as SuperState;
 
@@ -44,6 +48,8 @@ describe('superRestoreHold: who a relaunch resumes', () => {
     ['live', false, null], ['ended', false, 'ended'], ['closed', false, 'closed'],
     ['parked', true, 'parked'], ['gone', false, 'gone'], ['own', false, null],
     ['sup', false, null], ['stranger', false, null],
+    // The owner's own chat: no card is still his tab, but gone or parked is not running.
+    ['ownNoCard', false, null], ['ownGone', false, 'gone'], ['own', true, 'parked'], ['revived', false, null],
   ] as const)('%s (parked %s) -> %s', (sid, parked, want) => {
     expect(superRestoreHold(s, sid, parked)).toBe(want);
   });
@@ -225,6 +231,33 @@ describe('the super send outbox', () => {
     expect(await arrivedInTranscript(transcript, 'hello', 1000)).toBe(false);
     expect(await arrivedInTranscript(transcript, 'hello', 5)).toBe(true);
     expect(await arrivedInTranscript(null, 'hello', 5)).toBe(false);
+  });
+  describe('a question the relaunch interrupted', () => {
+    const asked = { children: { c1: child('c1') }, queue: [{ id: 'q1', sessionId: 'c1', kind: 'question', requestId: 'r1', state: 'delivered', createdAt: 1 }] } as unknown as SuperState;
+    const line = (o: Record<string, unknown>) => `${JSON.stringify({ type: 'user', timestamp: new Date(2000).toISOString(), ...o })}\n`;
+
+    it('is asked again at the child\'s first idle once back, even with resume\'s interrupted tool result in the transcript', async () => {
+      expect(await keepQuestionsAcrossRelaunch(root, asked, 1000)).toBe(1);
+      // What a resume writes by itself: the interrupted tool result, a meta caveat, a stopped
+      // background task's notification, a slash command's echo. None of them answers it.
+      writeFileSync(transcript, line({ message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: '[Tool call interrupted]' }] } })
+        + line({ isMeta: true, message: { content: 'Caveat: resumed' } })
+        + line({ promptSource: 'system', origin: { kind: 'task-notification' }, message: { content: '<task-notification><status>stopped</status></task-notification>' } })
+        + line({ message: { content: '<command-name>/model</command-name>\n<command-args>opus</command-args>' } })
+        + line({ message: { content: '<local-command-stdout>Set model to opus</local-command-stdout>' } }));
+      const { d, sent } = deps();
+      expect((await pumpOutbox(root, undefined, d)).delivered).toHaveLength(1);
+      expect(sent).toEqual([['c1', REASK_TEXT]]);
+    });
+
+    it('is not asked again when the owner or the super answered the child meanwhile', async () => {
+      await keepQuestionsAcrossRelaunch(root, asked, 1000);
+      writeFileSync(transcript, line({ promptSource: 'sdk', message: { content: [{ type: 'text', text: 'postgres, go on' }] } }));
+      const { d, sent } = deps();
+      expect((await pumpOutbox(root, undefined, d)).dropped).toHaveLength(1);
+      expect(sent).toEqual([]);
+      expect(await readOutbox(root)).toEqual([]);
+    });
   });
 });
 

@@ -28,9 +28,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { STALE_MS, _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
-import { DONE_SETTLE_MS, OWNER_LEASE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
+import { DONE_SETTLE_MS, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
+import { GONE_DEBOUNCE_MS } from '../../src/lib/assistant/delegations.js';
+import { REASK_TEXT, readOutbox } from '../../src/lib/super/outbox.js';
+import { superRestoreHold } from '../../src/lib/super/restore.js';
 import {
-  _resetSuperInbox, _superInboxDrained, _sweepArmed, attachSuperInbox, reconcileRows, startSuperInbox,
+  _resetSuperInbox, _superInboxDrained, _sweepArmed, attachSuperInbox, noteChatStarted, reconcileRows, startSuperInbox,
   superOwnerSpoke, superTurnEnded, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
@@ -403,5 +406,117 @@ describe('one data source (AC6) and the sweep\'s death (D17)', { timeout: 30_000
     expect(_sweepArmed(root)).toBe(true);
     _resetSuperInbox();
     expect(_sweepArmed(root)).toBe(false);
+  });
+});
+
+describe('a relaunch brings back no old news (field 2026-10-21)', { timeout: 30_000 }, () => {
+  const kid = (sid: string, extra: Record<string, unknown> = {}) => ({ sessionId: sid, brief: `brief of ${sid}`, adopted: false, startedAt: 1, ...extra });
+  const card = (sid: string) => ({ id: `chat-${sid}`, kind: 'chat', ref: sid, shape: 'tall', place: 'float' });
+  const before = {
+    children: {
+      gone1: kid('gone1', { row: 'gone' }),
+      closed1: kid('closed1', { row: 'done' }),
+      own1: kid('own1', { adopted: true, row: 'gone' }),
+      ask1: kid('ask1', { row: 'asking' }),
+      live1: kid('live1', { row: 'done' }),
+      parked1: kid('parked1', { row: 'done' }),
+      ended1: kid('ended1', { row: 'done', endedAt: 1 }),
+    },
+    containers: ['gone1', 'ask1', 'live1', 'parked1'].map(card),
+    queue: [
+      { id: 'q-g', sessionId: 'gone1', kind: 'gone', state: 'done', createdAt: 1, batch: 'b-1' },
+      { id: 'q-o', sessionId: 'own1', kind: 'gone', state: 'done', createdAt: 1, batch: 'b-1' },
+      { id: 'q-c', sessionId: 'closed1', kind: 'done', state: 'done', createdAt: 1, batch: 'b-1' },
+      { id: 'q-l', sessionId: 'live1', kind: 'done', state: 'done', createdAt: 1, batch: 'b-1' },
+      { id: 'q-a', sessionId: 'ask1', kind: 'question', requestId: 'req-1', state: 'delivered', createdAt: 2, batch: 'b-2' },
+    ],
+  };
+  const relaunch = async () => {
+    const sup = reg(SUPER, 'super');
+    sup.userSent('');
+    sup.observe({ type: 'result' });
+    await startSuperInbox([root], { parked: (sid) => sid === 'parked1' });
+    const fi = fakeInbox();
+    attachSuperInbox(fi.inbox);
+    await drain();
+    return fi;
+  };
+
+  it('the held ones (gone, closed, parked, ended, the owner\'s gone chat) get no gone event; the live ones come back with no done again', async () => {
+    makeVault(before);
+    const { delivered } = await relaunch();
+    // The window resumes only the live ones.
+    reg('ask1');
+    reg('live1');
+    await advance(READOPT_GRACE_MS + GONE_DEBOUNCE_MS + DONE_SETTLE_MS + STALE_SWEEP_MS);
+    const s = await readSuperState(root);
+    expect(s.queue.filter((q) => q.kind === 'gone').map((q) => q.id).sort()).toEqual(['q-g', 'q-o']);
+    expect(s.queue.filter((q) => q.kind === 'done').map((q) => q.id).sort()).toEqual(['q-c', 'q-l']);
+    expect(delivered.filter((d) => /event=(gone|done)/.test(d.text))).toHaveLength(0);
+    // Who the next relaunch resumes, by the same record.
+    const hold = (sid: string, parked = false) => superRestoreHold(s, sid, parked);
+    expect([hold('gone1'), hold('closed1'), hold('own1'), hold('parked1', true), hold('ended1')]).toEqual(['gone', 'closed', 'gone', 'parked', 'ended']);
+    expect([hold('ask1'), hold('live1')]).toEqual([null, null]);
+  });
+
+  it('a child that does not come back is reported gone once, and once only across a second relaunch', async () => {
+    makeVault(before);
+    await relaunch();
+    await advance(READOPT_GRACE_MS + GONE_DEBOUNCE_MS);
+    // The two the window was to bring back did not come: that is news, once.
+    expect((await items('gone')).map((q) => q.sessionId).sort()).toEqual(['ask1', 'gone1', 'live1', 'own1']);
+    _resetSuperInbox();
+    _resetChatRegistry();
+    resetSuperIndex();
+    await relaunch();
+    await advance(READOPT_GRACE_MS + GONE_DEBOUNCE_MS);
+    const gone = (await items('gone')).map((q) => q.sessionId).sort();
+    expect(gone).toEqual(['ask1', 'gone1', 'live1', 'own1']);
+  });
+
+  it('a gone child that starts again is no longer held, and its next exit is reported', async () => {
+    makeVault(before);
+    await relaunch();
+    const h = reg('gone1');
+    await noteChatStarted('gone1');
+    await drain();
+    let s = await readSuperState(root);
+    expect(s.children.gone1.row).toBeUndefined();
+    expect(superRestoreHold(s, 'gone1', false)).toBeNull();
+    h.exited();
+    await advance(GONE_DEBOUNCE_MS + 1_000);
+    s = await readSuperState(root);
+    expect(s.children.gone1.row).toBe('gone');
+    expect(s.queue.filter((q) => q.sessionId === 'gone1' && q.kind === 'gone')).toHaveLength(2);
+  });
+
+  it('a held child left working or asking at the quit is set gone quietly: no event, its question closed, no endless sweep', async () => {
+    makeVault({
+      children: { shut: kid('shut', { row: 'working' }), shutAsk: kid('shutAsk', { row: 'asking' }) },
+      queue: [{ id: 'q-s', sessionId: 'shutAsk', kind: 'question', requestId: 'r-s', state: 'delivered', createdAt: 1, batch: 'b-1' }],
+    });
+    await relaunch();
+    let s = await readSuperState(root);
+    expect([s.children.shut.row, s.children.shutAsk.row]).toEqual(['gone', 'gone']);
+    expect(s.queue.find((q) => q.id === 'q-s')?.state).toBe('done');
+    expect(_sweepArmed(root)).toBe(false);
+    await advance(READOPT_GRACE_MS + GONE_DEBOUNCE_MS);
+    s = await readSuperState(root);
+    expect(s.queue.filter((q) => q.kind === 'gone')).toHaveLength(0);
+    // Its question is still asked again once the owner wakes it (outbox).
+    expect((await readOutbox(root)).map((i) => i.child)).toEqual(['shutAsk']);
+  });
+
+  it('a question open when the app went down is asked again once the child is back: one message, never two', async () => {
+    makeVault(before);
+    await relaunch();
+    const reask = async () => (await readOutbox(root)).filter((i) => i.text === REASK_TEXT).map((i) => i.child);
+    expect(await reask()).toEqual(['ask1']);
+    // A second relaunch before the child came back adds none.
+    _resetSuperInbox();
+    _resetChatRegistry();
+    resetSuperIndex();
+    await relaunch();
+    expect(await reask()).toEqual(['ask1']);
   });
 });

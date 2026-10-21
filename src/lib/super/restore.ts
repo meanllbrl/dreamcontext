@@ -9,8 +9,10 @@ import type { SuperState } from './types.js';
  *  - `ended`  — `super end` (or the owner's card close) ended it: the tab is dropped;
  *  - `closed` — its card was closed (`super close`): it comes back as a dormant tab;
  *  - `parked` — it was parked: dormant, labelled parked;
- *  - `gone`   — its process had already gone (the newest queue item about it says so): dormant.
- * The owner's own chats (adopted) and every non-child tab resume as before.
+ *  - `gone`   — its process had already gone (its row says so; a child that started again since
+ *               has its row cleared, inbox.ts): dormant.
+ * Parked and gone hold the owner's own chats (adopted) too: in Tilki eight of his chats, gone since
+ * the day before, came back `starting` (2026-10-21 11:03). Every non-child tab resumes as before.
  */
 export type SuperRestoreHold = 'ended' | 'closed' | 'parked' | 'gone';
 
@@ -23,10 +25,8 @@ export function superRestoreHold(
   const ch = state.children[sessionId];
   if (!ch) return null;
   if (ch.endedAt !== undefined) return 'ended';
-  if (ch.adopted) return null;
-  if (!state.containers.some((k) => k.kind === 'chat' && k.ref === sessionId)) return 'closed';
+  if (!ch.adopted && !state.containers.some((k) => k.kind === 'chat' && k.ref === sessionId)) return 'closed';
   if (parked) return 'parked';
-  const newest = [...state.queue].filter((q) => q.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt)[0];
-  if (newest?.kind === 'gone') return 'gone';
+  if (ch.row === 'gone') return 'gone';
   return null;
 }
