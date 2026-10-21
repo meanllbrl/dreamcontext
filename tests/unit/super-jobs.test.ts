@@ -246,6 +246,9 @@ describe('a working tile\'s border ring (owner 2026-10-21)', () => {
     // Rests when the window is not focused (or Light mode), pauses hidden: the ambient name.
     expect(css).toMatch(/\.super-tile-spin\[data-spin='on'\]::before \{\n\s*animation: var\(--dc-motion-ambient-name, superTileSpin\) 1\.4s linear infinite;\n\s*animation-play-state: var\(--dc-motion-play, running\);/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\n\s*\.super-tile-spin\[data-spin='on'\]::before \{ opacity: 1; \}/);
+    // One endless animation per ring: the closed track under the arc is a still layer.
+    expect((css.match(/animation: var\(--dc-motion-ambient-name/g) ?? []).length).toBe(1);
+    expect(css).not.toMatch(/superTileSpinClosed/);
     const card = read(`${SUPER}/AgentCard.tsx`);
     expect(card).toMatch(/\{working && <span className="super-tile-spin" data-spin=\{spin \? 'on' : 'closed'\}/);
   });

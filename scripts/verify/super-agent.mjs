@@ -1627,8 +1627,11 @@ async function board(engineName, browserType, base, full) {
     await page.waitForTimeout(1500);
     const centreOpen = (await geo(page)).c;
     ok(`${engineName}: the centre moves <= 1 px when it opens`, near1(centreBefore, centreOpen), JSON.stringify({ centreBefore, centreOpen }));
-    const during = apiReqs.slice(r0).filter((x) => !x.path.startsWith('/api/super/activity'));
-    ok(`${engineName}: 0 requests while the list is open`, during.length === 0, JSON.stringify(during.slice(0, 5)));
+    // The list reads the pushed record: no super route and nothing about a child while it is open
+    // (the app's own polls and focus refetches are not the list's).
+    const kids = Object.keys(record().children ?? {});
+    const during = apiReqs.slice(r0).filter((x) => (x.path.startsWith('/api/super/') && !x.path.startsWith('/api/super/activity')) || kids.some((k) => x.path.includes(k)));
+    ok(`${engineName}: 0 requests from the list while it is open`, during.length === 0, JSON.stringify(during.slice(0, 5)));
     if (engineName === 'chromium') {
       for (const [w, h] of [[1280, 800], [1920, 1080]]) for (const scheme of ['light', 'dark']) {
         await page.setViewportSize({ width: w, height: h });
@@ -1679,7 +1682,10 @@ async function board(engineName, browserType, base, full) {
     }));
     ok(`${engineName}: every chat tile carries a tone and keeps its state word`, tiles.length > 0 && tiles.every((x) => x.tone && x.state.trim().length > 0), JSON.stringify(tiles));
     ok(`${engineName}: an idle tile is purple (accent), a working one green (success)`, tiles.filter((x) => x.tone === 'idle').every((x) => x.toneColor === x.accent) && tiles.filter((x) => x.tone === 'working').every((x) => x.toneColor === x.success), JSON.stringify(tiles.map((x) => [x.tone, x.toneColor])));
-    ok(`${engineName}: a tile shows its model chip from the session (Opus here)`, tiles.some((x) => /^Opus/.test(x.model ?? '')), JSON.stringify(tiles.map((x) => x.model)));
+    // A chip only from what the session reported (its system:init): the flow's children ran turns
+    // in this page; a freshly opened page's children have not, and show no guess.
+    if (full) ok(`${engineName}: a tile shows its model chip from the session (Opus here)`, tiles.some((x) => /^Opus/.test(x.model ?? '')), JSON.stringify(tiles.map((x) => x.model)));
+    else ok(`${engineName}: no tile guesses a model it was not told`, tiles.every((x) => x.model === null || /^(Opus|Sonnet|Haiku|Fable)/.test(x.model)), JSON.stringify(tiles.map((x) => x.model)));
     ok(`${engineName}: titles take up to three lines in the 160 px tile`, tiles.every((x) => x.titleLines <= 3) && tiles.filter((x) => x.w).every((x) => Math.abs(x.w - 160) <= 1), JSON.stringify(tiles.map((x) => [x.titleLines, x.w])));
 
     if (full) {

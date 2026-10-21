@@ -18,7 +18,7 @@
    stepped by lib/motionClock.ts at 15 fps like every endless animation). It is a status the
    owner reads at a glance in THIS window, so it rests when the window is not focused or Light
    mode is on (the ambient variable: name `none`), and pauses when hidden. At rest the band is
-   a closed ring (the ::after's base style); under reduced motion a still arc. At most
+   a quiet closed ring (the still ::after track); under reduced motion a still arc over it. At most
    MAX_SPINNING tiles turn at once (spinSlots.ts); the others show the closed ring. */
 .super-tile-spin {
   position: absolute;
@@ -44,27 +44,22 @@
   opacity: 0;
 }
 .super-tile-spin::after {
+  /* The track: a quiet closed ring under the arc, and the whole resting look. A still layer,
+     not a second animation (one endless animation per ring: half the clock's work). */
   content: '';
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--tone) 70%, transparent);
+  z-index: -1;
+  background: color-mix(in srgb, var(--tone) 35%, transparent);
 }
 .super-tile-spin[data-spin='on']::before {
   animation: var(--dc-motion-ambient-name, superTileSpin) 1.4s linear infinite;
-  animation-play-state: var(--dc-motion-play, running);
-}
-.super-tile-spin[data-spin='on']::after {
-  animation: var(--dc-motion-ambient-name, superTileSpinClosed) 1.4s linear infinite;
   animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes superTileSpin {
   from { transform: translate(-50%, -50%) rotate(0turn); opacity: 1; }
   to { transform: translate(-50%, -50%) rotate(1turn); opacity: 1; }
 }
-@keyframes superTileSpinClosed {
-  from, to { opacity: 0; }
-}
 @media (prefers-reduced-motion: reduce) {
   .super-tile-spin[data-spin='on']::before { opacity: 1; }
-  .super-tile-spin[data-spin='on']::after { opacity: 0; }
 }
