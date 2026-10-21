@@ -3066,6 +3066,11 @@
       ]
     },
     {
+      "path": "super clean",
+      "desc": "Give disk back: remove ended children's worktrees that are merged and clean (branches kept) and this repo's own test temp folders older than a day. Chrome and system files are never touched",
+      "args": []
+    },
+    {
       "path": "super close",
       "desc": "Close a card (a child chat keeps running; `super end` ends it)",
       "args": [

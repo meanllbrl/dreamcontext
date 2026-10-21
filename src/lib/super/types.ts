@@ -287,6 +287,7 @@ export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
   'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
   'end', 'resume',
+  'clean',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 

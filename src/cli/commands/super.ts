@@ -186,6 +186,11 @@ export function registerSuperCommand(program: Command): void {
     .requiredOption('--into <topic>', 'The integration branch name (a-z, 0-9, -)')
     .action((children: string[], o: { into: string }) => run('merge', { children, into: o.into }));
 
+  s.command('clean')
+    .description('Give disk back: remove ended children\'s worktrees that are merged and clean (branches kept) and this repo\'s own test temp folders older than a day. Chrome and system files are never touched')
+    .option('--dry-run', 'Only list what would go, with sizes')
+    .action((o: { dryRun?: boolean }) => run('clean', { dryRun: o.dryRun === true }));
+
   const w = s.command('worktree').description('Your children\'s worktrees');
   w.command('list')
     .description('Each child\'s worktree, branch, dirty or clean, merged or not')

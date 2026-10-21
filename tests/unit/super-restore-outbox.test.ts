@@ -58,7 +58,7 @@ describe('superRestoreHold: who a relaunch resumes', () => {
 
 describe('parked tabs survive a restart', () => {
   let dir: string;
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'parked-')); });
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'super-parked-')); });
   afterEach(() => { _resetChatParkForTests(); rmSync(dir, { recursive: true, force: true }); });
 
   it('a park is written to disk, read back after a restart, and cleared when the tab runs again', async () => {

@@ -32,6 +32,9 @@ import { findParkable, parkChat, parkedSince, type ParkOutcome } from '../chat-p
 import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
 import { addToOutbox } from '../../lib/super/outbox.js';
+import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp } from '../../lib/super/disk-leftovers.js';
+import { promises as fsp } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -234,6 +237,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     let machine: unknown = null;
     try { machine = await readCapacityFacts(); } catch { machine = null; }
+    // The largest leftovers on disk (last measurement; the next one runs in the background).
+    if (machine && typeof machine === 'object') {
+      const left = cachedLeftovers(() => defaultPlaces([dirname(root)]));
+      machine = { ...machine, leftovers: left.top, leftoversMeasuredAt: left.measuredAt };
+    }
     // Container titles can be child text (an adopted chat's tab title or last reply): fenced
     // like every other child-derived string (D10).
     const containers = c.state.containers.map((k) => (k.title ? { ...k, title: wrapUntrusted(vault, k.title) } : k));
@@ -678,6 +686,44 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       rows.push({ child: sid, worktree: ch.worktree, branch: ch.branch, repo: repo?.name ?? null, ...st });
     }
     ok(res, { worktrees: rows });
+  },
+
+  clean: async (c, b, res) => {
+    const root = c.who.contextRoot;
+    const dry = b.dryRun === true;
+    // Only an ENDED child's worktree that git reports merged and clean, and our own old test
+    // temp folders. Live children, unmerged or dirty work, Chrome and system files: never.
+    const worktrees: Array<{ child: string; worktree: string; branch: string; repoPath: string }> = [];
+    for (const [sid, ch] of Object.entries(c.state.children)) {
+      if (ch.endedAt === undefined || !ch.worktree || !ch.branch || isLiveChat(sid)) continue;
+      const repo = await repoOfWorktree(dirname(root), ch.worktree).catch(() => null);
+      if (!repo) continue;
+      const st = await worktreeStatus(repo.path, ch.worktree, ch.branch).catch(() => null);
+      if (st?.listed && st.dirty === false && st.merged === true) worktrees.push({ child: sid, worktree: ch.worktree, branch: ch.branch, repoPath: repo.path });
+    }
+    const tmp = await oldTestTmp(tmpdir());
+    const sizes = await diskUsage([...worktrees.map((w) => w.worktree), ...tmp]);
+    const items = [
+      ...worktrees.map((w) => ({ kind: 'worktree', path: w.worktree, child: w.child, branch: w.branch, bytes: sizes.get(w.worktree) ?? 0 })),
+      ...tmp.map((t) => ({ kind: 'test-tmp', path: t, bytes: sizes.get(t) ?? 0 })),
+    ];
+    const total = items.reduce((n, i) => n + i.bytes, 0);
+    if (dry) { ok(res, { dryRun: true, items, bytes: total }); return; }
+    const removed: string[] = [];
+    const failed: Array<{ path: string; message: string }> = [];
+    for (const w of worktrees) {
+      try {
+        await removeChildWorktree({ repoPath: w.repoPath, worktree: w.worktree, branch: w.branch });
+        await writeSuper(root, (s) => { const x = s.children[w.child]; if (x) { delete x.worktree; delete x.branch; } });
+        removed.push(w.worktree);
+      } catch (err) { failed.push({ path: w.worktree, message: (err as Error).message }); }
+    }
+    for (const t of tmp) {
+      try { await fsp.rm(t, { recursive: true, force: true }); removed.push(t); } catch (err) { failed.push({ path: t, message: (err as Error).message }); }
+    }
+    forgetLeftovers();
+    const freed = items.filter((i) => removed.includes(i.path)).reduce((n, i) => n + i.bytes, 0);
+    ok(res, { removed, failed, bytesFreed: freed, branchesKept: worktrees.filter((w) => removed.includes(w.worktree)).map((w) => w.branch) });
   },
 
   'worktree-remove': async (c, b, res) => {
