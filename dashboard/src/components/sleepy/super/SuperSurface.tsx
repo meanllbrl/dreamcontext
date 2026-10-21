@@ -17,7 +17,8 @@ import { OrbitPath, PanelChatTile } from './StageParts';
 import { JobBar } from './JobBar';
 import { publishSuperEventContext } from './superJobsStore';
 import { childModelChip } from './AgentCard';
-import { SuperContainer, chatStatus, useLiveSession } from './SuperContainer';
+import { SuperContainer, chatStatus } from './SuperContainer';
+import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { isGroupId, jobListRect, planStage, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
 import { hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
@@ -295,7 +296,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
   };
 
   // ── The centre ──
-  useLiveSession(superSession);
+  // The stage follows the Super Agent's STATUS (the centre's glow and the mascot), never its every
+  // token: its transcript re-renders itself (liveSession.ts).
+  useLiveSession(superSession, () => { const s = chatStatus(superSession); return `${s.kind}|${s.mood}`; });
   const status = chatStatus(superSession);
   // The cape goes on WITH the hand-over (D18, AC13): the face mounts with the surface — inside
   // the centre, still at opacity 0 while its stand-in grows in — so the 400 ms entrance starts
@@ -424,7 +427,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               group={g}
               plan={topped.includes(g.id) ? { ...cp, z: cp.z + 2 * MAX_CONTAINERS + topped.indexOf(g.id) } : cp}
               members={members}
-              sessions={g.cards.map((id) => { const c = byId.get(id); return c?.kind === 'chat' ? props.sessionFor(c.ref) : undefined; })}
+              sessions={members.map((m) => { const c = byId.get(m.id); return c?.kind === 'chat' ? props.sessionFor(c.ref) : undefined; })}
               pending={pending.has(g.id)}
               dropTarget={target === g.id}
               onPress={onPressCard}

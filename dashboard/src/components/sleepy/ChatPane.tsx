@@ -63,6 +63,7 @@ import {
 } from './chat/Banners';
 import { Composer } from './chat/Composer';
 import { readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
+import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
 import { groupSuperEventTurns, superEventOf, type SuperEventGroup } from './super/superHandover';
@@ -673,7 +674,13 @@ export function ChatPane({
   readOnly?: boolean;
 }) {
   const [, force] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => session.subscribe(() => force()), [session]);
+  // A hidden pane (garaged, its overlay folded, a handed-over Super Agent's child) follows its
+  // session at most once a second and catches up the moment it is shown (hiddenRenderGate.ts).
+  useEffect(() => {
+    const gate = createHiddenRenderGate(force, () => session.minimized);
+    const off = session.subscribe(gate.notify);
+    return () => { off(); gate.dispose(); };
+  }, [session]);
   const { vault } = useVault();
   const api = useApi();
 

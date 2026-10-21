@@ -329,11 +329,15 @@ describe('the window rules (D10, AC12)', () => {
   it('agent cards make 0 network requests: they read the child\'s live session', () => {
     const card = read(`${superDir}/AgentCard.tsx`);
     const frame = read(`${superDir}/SuperContainer.tsx`);
-    for (const src of [card, frame]) expect(src).not.toMatch(/\bfetch\(|useApi|useQuery|api\.(get|post)|EventSource|WebSocket/);
-    // The card reads the child's live model; its frame re-renders on the session at most once a frame.
+    const live = read(`${superDir}/liveSession.ts`);
+    for (const src of [card, frame, live]) expect(src).not.toMatch(/\bfetch\(|useApi|useQuery|api\.(get|post)|EventSource|WebSocket/);
+    // The card reads the child's live model; card and frame follow the session in ONE shared frame
+    // (liveSession.ts), the frame only on a status change (frameKeyOf), the tile on what it draws.
     expect(card).toMatch(/session\?\.getModel\(\)/);
-    expect(frame).toMatch(/session\.subscribe\(/);
-    expect(frame).toMatch(/requestAnimationFrame\(\(\) => \{ raf = 0; force\(\); \}\)/);
+    expect(live).toMatch(/s\.subscribe\(\(\) => inNextFrame\(check\)\)/);
+    expect(live).toMatch(/requestAnimationFrame\(run\)/);
+    expect(frame).toMatch(/useLiveSession\(liveChat, \(\) => frameKeyOf\(liveChat\)\)/);
+    expect(card).toMatch(/useLiveSession\(session, \(\) => cardKeyOf\(session, false\)\)/);
     // The one clock follows pollMs (slower unfocused, doubled in Light mode).
     expect(card).toMatch(/pollMs\(30_000\)/);
   });

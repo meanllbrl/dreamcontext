@@ -2,12 +2,14 @@ import { STAGE, type StagePlan } from './superLayout';
 import type { SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import { ChatTile } from './AgentCard';
-import { chatStatus, useLiveSession } from './SuperContainer';
+import { chatStatus } from './SuperContainer';
+import { useLiveSession } from './liveSession';
 import { toneOfStatus } from './superHandover';
 
 /** A chat in an open panel: the same tile as on the stage, live, glowing as it does there. */
 export function PanelChatTile({ session, child, title, asksOwner }: { session: ChatSession | undefined; child: SuperStateView['children'][string] | undefined; title: string; asksOwner: boolean }) {
-  useLiveSession(session);
+  // The panel's frame follows the status; the tile inside follows its own lines.
+  useLiveSession(session, () => chatStatus(session).kind);
   const status = chatStatus(session);
   return (
     <div className="super-panel-tile" data-status={status.kind === 'asking' ? 'asking' : status.kind === 'working' ? 'working' : 'idle'} data-super-tone={toneOfStatus(status.kind)}>
