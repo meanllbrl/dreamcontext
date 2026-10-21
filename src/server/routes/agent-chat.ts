@@ -27,7 +27,7 @@ import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setu
 import { startHandoffRun, advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRun } from '../../lib/handoff-progress.js';
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
-import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
+import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
@@ -1763,7 +1763,9 @@ export function startChatSession(
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
     const modeBrief = [ownBrief, subagents?.roster ?? ''].filter(Boolean).join('\n\n');
-    const briefing = modeBrief ? `${CHAT_SURFACE_BRIEFING}\n${modeBrief}` : CHAT_SURFACE_BRIEFING;
+    // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent.
+    const surface = opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}` : CHAT_SURFACE_BRIEFING;
+    const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };

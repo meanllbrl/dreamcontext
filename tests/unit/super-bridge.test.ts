@@ -177,7 +177,7 @@ describe('the hand-over note rides on a child\'s next owner message (D17)', () =
 
   it('the notes are fixed text: nothing is interpolated', () => {
     expect(SUPER_NOTE_TEXT).toEqual({
-      handover: '<super-agent-note> From now on the owner talks to you through the Super Agent; it relays your questions and answers. </super-agent-note>',
+      handover: '<super-agent-note> From now on the owner talks to you through the Super Agent; it relays your questions and answers. Ask it with AskUserQuestion (the card goes to its queue); never look for it with ListAgents or SendMessage. </super-agent-note>',
       takeback: '<super-agent-note> The Super Agent mode is over; you talk directly with the owner again. </super-agent-note>',
     });
   });

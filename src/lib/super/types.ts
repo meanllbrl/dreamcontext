@@ -431,7 +431,7 @@ export const MAX_REF = 2048;
 export const MAX_OWNER_TEXT = 2000;
 export const MAX_QUEUE = 200;
 /** A child row's task link: a task slug, its file `state/<slug>.md` (checked at the verb). */
-export const TASK_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
+export { TASK_SLUG_RE } from '../task-slug.js';
 export const POOL_ID_RE = /^p-[a-z0-9-]{1,40}$/;
 /** The pool (plan r4 D9): rows, one prompt's UTF-8 bytes, and the pool's serialized total. */
 export const MAX_POOL = 30;
@@ -519,7 +519,7 @@ export type SuperEventKind = typeof SUPER_EVENT_KINDS[number];
  * Nothing is interpolated.
  */
 export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
-  handover: '<super-agent-note> From now on the owner talks to you through the Super Agent; it relays your questions and answers. </super-agent-note>',
+  handover: '<super-agent-note> From now on the owner talks to you through the Super Agent; it relays your questions and answers. Ask it with AskUserQuestion (the card goes to its queue); never look for it with ListAgents or SendMessage. </super-agent-note>',
   takeback: '<super-agent-note> The Super Agent mode is over; you talk directly with the owner again. </super-agent-note>',
 };
 

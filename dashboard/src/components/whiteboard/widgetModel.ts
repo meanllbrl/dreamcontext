@@ -15,7 +15,8 @@ export type TodoItem = NonNullable<WidgetPayload['items']>[number];
 export const REF_KINDS: readonly WidgetKind[] = ['insight', 'knowledge', 'task', 'lab-card', 'agent'];
 
 /** The server's ref rule (security invariants), re-checked here before a ref reaches a fetch. */
-const REF_RE = /^[a-z0-9][a-z0-9\-/]{0,200}$/;
+// Room for any task slug (src/lib/task-slug.ts MAX_TASK_SLUG_LENGTH = 252), pinned by task-slug-limit.test.ts.
+const REF_RE = /^[a-z0-9][a-z0-9\-/]{0,251}$/;
 
 export function isWidgetKind(v: unknown): v is WidgetKind {
   return typeof v === 'string' && (WIDGET_KINDS as readonly string[]).includes(v);

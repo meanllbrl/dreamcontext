@@ -349,3 +349,19 @@ describe('the window asks for a lean spawn', () => {
     expect(d.ok && d.mcp).toEqual(['whatsapp']);
   });
 });
+
+describe('the surface briefing of a delegated child', () => {
+  const briefingOf = (child: FakeChild): string => {
+    const a = argvOf(child);
+    const path = a[a.indexOf('--append-system-prompt-file') + 1];
+    return readFileSync(path, 'utf-8');
+  };
+
+  it('a lean (delegated) child is told how to reach its Super Agent; a normal chat is not', () => {
+    const lean = briefingOf(spawnChat({ leanMcp: [] }).child!);
+    expect(lean).toContain('## Reaching the Super Agent');
+    expect(lean).toContain('AskUserQuestion');
+    expect(lean).toMatch(/Never look for it among peers/);
+    expect(briefingOf(spawnChat().child!)).not.toContain('Reaching the Super Agent');
+  });
+});
