@@ -60,7 +60,7 @@ function print(r: CallResult): void {
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
 const usage = (message: string) => print({ status: 400, body: { error: 'invalid_args', message } });
 
-const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image';
+const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | browser';
 
 export function registerSuperCommand(program: Command): void {
   const s = program
@@ -95,12 +95,15 @@ export function registerSuperCommand(program: Command): void {
       return run('delegate', { ...jobBody(o), succeeds: o.succeeds });
     });
 
-  s.command('open <kind> <ref>')
-    .description(`Open a floating card: ${KINDS}. ref = a session id, a slug, a URL or a project path`)
+  s.command('open <kind> <refs...>')
+    .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once`)
+    .option('--group <name>', 'Put every card opened here in ONE group of this name (a set the owner asked to see)')
     .option('--shape <shape>', 'square | tall: recorded only; every floating card is a 1:1 tile')
-    .option('--title <text>', 'Its label')
-    .action((kind: string, ref: string, o: { shape?: string; title?: string }) =>
-      run('open', { kind, ref, shape: o.shape, title: o.title }));
+    .option('--title <text>', 'Its label (one ref only)')
+    .action((kind: string, refs: string[], o: { shape?: string; title?: string; group?: string }) =>
+      run('open', refs.length === 1
+        ? { kind, ref: refs[0], shape: o.shape, title: o.title, group: o.group }
+        : { kind, refs, shape: o.shape, group: o.group }));
 
   s.command('shape <card> <shape>')
     .description('Record a card\'s shape (square | tall); kept for older scripts: every floating card is drawn as a 1:1 tile')

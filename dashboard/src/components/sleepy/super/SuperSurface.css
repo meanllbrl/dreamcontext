@@ -1011,3 +1011,61 @@
   .super-drop-ring,
   .super-tile-corners { transition: none; }
 }
+
+/* ── A child's live browser (jarvis plan r9, K6) ── */
+.super-browser-card { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: inherit; }
+.super-browser-card.is-empty { align-items: center; justify-content: center; padding: var(--space-3); text-align: center; color: var(--color-text-tertiary); font-size: var(--font-size-sm); }
+.super-browser-frame { flex: 1 1 auto; min-height: 0; width: 100%; object-fit: cover; object-position: top center; display: block; }
+.super-browser-host { padding: var(--space-1) var(--space-2); font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.super-card-view--browser { padding: var(--space-2); }
+.super-browser-card.is-large .chat-browser { margin: 0; }
+
+/* ── Verb cues (AC16, useStageCues): one-time, transform/opacity only, on the card's inside so the
+      stage's own FLIP on the frame never fights them. Reduced motion: a plain fade. ── */
+.super-card-glint { position: absolute; inset: -6px; border-radius: var(--radius-xl); pointer-events: none; opacity: 0;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--color-accent) 38%, transparent), transparent 72%); }
+.super-card-frame[data-cue='delegate'] .super-card-clip,
+.super-card-frame[data-cue='delegate'] .super-card-lift { animation: super-cue-fly 620ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.super-card-frame[data-cue='delegate'] .super-card-glint { animation: super-cue-glint 900ms ease-out 380ms both; }
+.super-card-frame[data-cue='open'] .super-card-clip,
+.super-card-frame[data-cue='arrive'] .super-card-clip { animation: super-cue-pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+.super-card-frame[data-cue='open'] .super-card-glint,
+.super-card-frame[data-cue='arrive'] .super-card-glint { animation: super-cue-glint 800ms ease-out 120ms both; }
+.super-card-frame[data-cue='present'] .super-card-glint { animation: super-cue-glint 700ms ease-out both; }
+.super-card-frame[data-cue='stack'] .super-card-clip { animation: super-cue-sink 380ms ease-out both; }
+.super-card-frame[data-cue='float'] .super-card-clip { animation: super-cue-pop 380ms ease-out both; }
+.super-card-frame[data-cue='group'] .super-card-clip,
+.super-card-frame[data-cue='ungroup'] .super-card-clip { animation: super-cue-pulse 520ms ease-in-out both; }
+.super-card-frame[data-cue='answer'] .super-card-glint,
+.super-card-frame[data-cue='merge'] .super-card-glint { animation: super-cue-glint 700ms ease-out both; }
+.super-card-frame[data-cue='close'] { pointer-events: none; }
+.super-card-frame[data-cue='close'] .super-card-clip,
+.super-card-frame[data-cue='close'] .super-card-lift { animation: super-cue-fade 360ms ease-in both; }
+.super-card-frame[data-cue='close'] .super-card-actions { display: none; }
+
+@keyframes super-cue-fly {
+  from { opacity: 0; transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.35); }
+  70% { opacity: 1; }
+  to { opacity: 1; transform: none; }
+}
+@keyframes super-cue-pop { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: none; } }
+@keyframes super-cue-sink { from { transform: none; } to { transform: scale(0.94); opacity: 0.85; } }
+@keyframes super-cue-pulse { 0%, 100% { transform: none; } 45% { transform: scale(1.05); } }
+@keyframes super-cue-glint { from { opacity: 0; transform: scale(0.8); } 35% { opacity: 1; } to { opacity: 0; transform: scale(1.15); } }
+@keyframes super-cue-fade { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(0.9); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .super-card-frame[data-cue] .super-card-clip,
+  .super-card-frame[data-cue] .super-card-lift { animation: super-cue-plain 240ms ease-out both; }
+  /* Reduced motion: a closed card is gone at once (no fade). */
+  .super-card-frame[data-cue='close'] { opacity: 0; }
+  .super-card-frame[data-cue='close'] .super-card-clip,
+  .super-card-frame[data-cue='close'] .super-card-lift { animation: none; }
+  .super-card-frame[data-cue] .super-card-glint { animation: none; }
+}
+@keyframes super-cue-plain { from { opacity: 0; } to { opacity: 1; } }
+
+
+/* A page and a live browser fill the large card (the body scrolls, so it is not a flex box). */
+.super-card-view--web, .super-card-view--browser { height: 100%; }
+.super-card-view--web > .wb-widget { flex: 1 1 auto; min-height: 0; }

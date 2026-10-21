@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { claimOwnedPort } from '../server/owned-ports.js';
 
 /**
  * A chat's Playwright browser runs HEADLESS, with a side door the Chat view can watch through.
@@ -219,6 +220,8 @@ export function prepareBrowserOverride(
     return null;
   }
   let disposed = false;
+  // Chrome's CDP side door is ours while this spawn lives: no web card may load it.
+  const release = claimOwnedPort(port);
   return {
     configPath: mcpConfig,
     port,
@@ -226,6 +229,7 @@ export function prepareBrowserOverride(
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      release();
       try { rmSync(dir, { recursive: true, force: true }); } catch { /* already gone */ }
     },
   };

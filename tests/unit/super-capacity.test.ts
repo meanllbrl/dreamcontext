@@ -26,7 +26,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/
 import { MAX_LIVE_CHILDREN, emptySuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { parseVmStat, readCapacityFacts, resetCapacityForTests, type CapacityDeps } from '../../src/lib/super/capacity.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperVerb, DEV_SERVER_LINE } from '../../src/server/routes/super.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
 const VM_STAT = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -148,7 +148,8 @@ describe('super delegate', () => {
     const commands = frames.filter((f) => f.subtype === 'super_command');
     expect(commands).toEqual([expect.objectContaining({
       verb: 'delegate',
-      args: expect.objectContaining({ prompt: 'Write the migration for the users table.', mode: 'develop', brief: 'users migration', title: 'users migration' }),
+      // K10 (jarvis plan r9): every delegated prompt starts with the pin-your-dev-server line.
+      args: expect.objectContaining({ prompt: `${DEV_SERVER_LINE}\n\nWrite the migration for the users table.`, mode: 'develop', brief: 'users migration', title: 'users migration' }),
     })]);
     const deadline = (commands[0].args as { deadline: number }).deadline;
     expect(deadline).toBeGreaterThan(Date.now());

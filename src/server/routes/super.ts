@@ -3,16 +3,16 @@ import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
-import { isCrossSiteRequest, isLoopback, requireLocalDesktop } from './agent-spawn-shared.js';
+import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
-  WINDOW_TOKEN_HEADER, channelFor, identityOf, sendSuperCommand, sendWindowCommand, type WindowIdentity,
+  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, type WindowIdentity,
 } from '../../lib/window-control.js';
 import { SuperStoreRefused, isReservedId, readSuperState, superRootOfChild } from '../../lib/super/store.js';
 import {
-  CONTAINER_KINDS, CONTAINER_SHAPES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_OWNER_TEXT,
-  MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES,
-  MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, cleanAskOptions,
-  defaultShape, dissolveGroups, leaveGroups,
+  CONTAINER_KINDS, CONTAINER_SHAPES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
+  MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
+  MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, cleanAskOptions, cleanGroupName,
+  defaultShape, dissolveGroups, floatCount, leaveGroups,
   type ContainerKind, type ContainerShape, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperVerb,
 } from '../../lib/super/types.js';
 import {
@@ -29,6 +29,10 @@ import {
 } from '../../lib/super/worktrees.js';
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
+import { ownedLoopbackPorts } from '../owned-ports.js';
+import { existsSync } from 'node:fs';
+import { insightPath } from '../../lib/lab/store.js';
+import { noteDismissed } from '../../lib/super/proactive.js';
 import { activityOf, getChat, onChatChange } from '../../lib/assistant/chat-registry.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
@@ -69,6 +73,8 @@ const MAX_TEXT = 100_000;
 const SLUG_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
 const DELEGATE_TIMEOUT_MS = 30_000;
+/** `super open <kind> <ref…>` takes at most this many refs at once. */
+const MAX_OPEN_REFS = 12;
 /** How long past the frame's `deadline` the server still waits for the window's answer. */
 const DELEGATE_GRACE_MS = 5_000;
 
@@ -157,9 +163,13 @@ function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown
   switch (kind) {
     case 'chat':
       return hasChild(c.state, ref) ? { ref } : { error: 'a chat container shows one of your children: give its session id' };
+    case 'browser':
+      return hasChild(c.state, ref) ? { ref } : { error: 'a browser container shows one of your children\'s live browser: give its session id' };
     case 'web': {
-      const w = validateSuperWebUrl(ref);
-      return w.ok ? { ref: w.href } : { error: `a web container shows an https page on another host (${w.reason})` };
+      const w = validateSuperWebUrl(ref, ownedLoopbackPorts());
+      return w.ok
+        ? { ref: w.href }
+        : { error: `a web container shows an https page, a dev server on localhost (never this app's own ports) or a project file (${w.reason})` };
     }
     case 'image': {
       if (ref.length > 1024 || ref.startsWith('/') || ref.includes('\\') || ref.split('/').some((s) => s === '..' || s === '' || s === '.')) {
@@ -167,6 +177,12 @@ function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown
       }
       return IMAGE_EXT_RE.test(ref) ? { ref } : { error: 'an image is a .png, .jpg, .gif, .webp or .svg file' };
     }
+    case 'whiteboard':
+      // The window's own rule for a whiteboard's slug (`whiteboardPath` in SuperContainer.tsx).
+      return /^[a-z0-9][a-z0-9-]{0,80}$/.test(ref) ? { ref } : { error: 'a whiteboard container names its slug (lowercase letters, digits and dashes)' };
+    case 'board':
+      if (!SLUG_REF_RE.test(ref) || ref.split('/').some((s) => s === '..' || s === '.' || s === '')) return { error: 'a board container names a board file, project-relative (no ".." steps)' };
+      return { ref };
     default:
       if (!SLUG_REF_RE.test(ref) || ref.split('/').some((s) => s === '..' || s === '.' || s === '')) return { error: `a ${kind} container names its slug` };
       return { ref };
@@ -198,8 +214,33 @@ function newGroupId(): string {
   return `grp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Room for `n` new floating cards: the stage limit counts top-level floating items (a group is
+ *  one, Others none), the record limit every card. Checked only when opening. */
+function roomFor(s: Pick<SuperState, 'containers' | 'groups'>, n: number): boolean {
+  return floatCount(s) + n <= MAX_FLOAT && s.containers.length + n <= MAX_CONTAINERS;
+}
+
+/** The 409 for a full stage, with what is left of each limit. */
+function tooMany(res: ServerResponse, s: Pick<SuperState, 'containers' | 'groups'>): void {
+  const freeFloat = Math.max(0, MAX_FLOAT - floatCount(s));
+  const freeTotal = Math.max(0, MAX_CONTAINERS - s.containers.length);
+  refuse(res, 409, 'too_many_containers',
+    freeTotal === 0
+      ? `the record holds ${MAX_CONTAINERS} cards; close one first`
+      : `the stage shows at most ${MAX_FLOAT} floating cards or groups; \`super stack\` finished or idle ones into Others first (never close a card to make room)`,
+    { freeFloat, freeTotal });
+}
+
+/** An insight the vault really has (a card naming none would draw an empty tile). */
+function insightExists(contextRoot: string, slug: string): boolean {
+  try { return existsSync(insightPath(contextRoot, slug)); } catch { return false; }
+}
+
 /** `delegate` calls in flight per vault, counted against the cap until they settle. */
 const delegating = new Map<string, number>();
+
+/** K10: a delegated child pins the dev server it starts, so its site card opens by itself (S1). */
+export const DEV_SERVER_LINE = 'If you start a dev server, pin its url (a `dream-view` pin) so the owner sees the site.';
 
 function worktreePreamble(w: CreatedWorktree): string {
   return `You work in your own git worktree: ${w.path} (branch ${w.branch}, repo ${w.repo}). `
@@ -304,7 +345,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // that may still have opened a child never loses its worktree (review W2 #1).
     const deadline = Date.now() + DELEGATE_TIMEOUT_MS;
     const r = await sendSuperCommand(c.token, 'delegate', {
-      prompt: wt ? `${worktreePreamble(wt)}\n\n${job.prompt}` : job.prompt,
+      prompt: `${wt ? `${worktreePreamble(wt)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`,
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
     }, { timeoutMs: DELEGATE_TIMEOUT_MS + DELEGATE_GRACE_MS });
     const sid = r.ok && r.result && typeof r.result === 'object' ? (r.result as { sessionId?: unknown }).sessionId : undefined;
@@ -464,38 +505,71 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   open: async (c, b, res) => {
+    // One ref (`ref`) or several of one kind (`refs`, at most MAX_OPEN_REFS), optionally put in
+    // ONE named group (`group`): the owner asked to see a set of things (S8, AC11b). All or
+    // nothing, in one locked write. Only NEW refs need room: a ref already on the record is
+    // the same card (brought back from Others), and a group is one floating item.
     const kind = str(b.kind);
     if (!kind || !(CONTAINER_KINDS as readonly string[]).includes(kind)) { refuse(res, 400, 'invalid_args', `kind must be one of ${CONTAINER_KINDS.join(' | ')}`); return; }
     const shapeArg = str(b.shape);
     if (shapeArg && !(CONTAINER_SHAPES as readonly string[]).includes(shapeArg)) { refuse(res, 400, 'invalid_args', `shape must be one of ${CONTAINER_SHAPES.join(' | ')}`); return; }
-    const r = refFor(c, kind as ContainerKind, b.ref);
-    if ('error' in r) { refuse(res, 400, 'invalid_ref', r.error); return; }
-    const title = str(b.title) ? oneLine(str(b.title) as string).slice(0, MAX_TITLE) : undefined;
-    const id = containerIdFor(kind, r.ref);
-    const existing = c.state.containers.find((k) => k.id === id);
-    if (!existing && c.state.containers.length >= MAX_CONTAINERS) {
-      refuse(res, 409, 'too_many_containers', `at most ${MAX_CONTAINERS} containers; close one first`);
-      return;
+    const rawRefs: unknown[] = Array.isArray(b.refs) ? b.refs : [b.ref];
+    if (!rawRefs.length || rawRefs.length > MAX_OPEN_REFS) { refuse(res, 400, 'invalid_args', `name 1 to ${MAX_OPEN_REFS} refs of one kind`); return; }
+    const refs: string[] = [];
+    for (const raw of rawRefs) {
+      const r = refFor(c, kind as ContainerKind, raw);
+      if ('error' in r) { refuse(res, 400, 'invalid_ref', r.error); return; }
+      if (kind === 'insight' && !insightExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_insight', `no insight named ${r.ref} (\`dreamcontext insight list\`)`); return; }
+      if (!refs.includes(r.ref)) refs.push(r.ref);
     }
+    const title = refs.length === 1 && str(b.title) ? oneLine(str(b.title) as string).slice(0, MAX_TITLE) : undefined;
+    const groupName = str(b.group) ? cleanGroupName(b.group) : '';
+    if (str(b.group) && !groupName) { refuse(res, 400, 'invalid_args', 'a group needs a name'); return; }
+    const ids = refs.map((ref) => containerIdFor(kind, ref));
+    const plan = (s: SuperState): { fits: boolean; groupId: string | null } => {
+      const fresh = ids.filter((id) => !s.containers.some((k) => k.id === id)).length;
+      const named = groupName ? s.groups.find((g) => g.name === groupName) : undefined;
+      // A named group resting in Others comes back to the stage: one more floating item.
+      const addFloat = groupName ? (named && named.place === 'float' ? 0 : 1) : fresh;
+      const fits = (addFloat === 0 || floatCount(s) + addFloat <= MAX_FLOAT) && s.containers.length + fresh <= MAX_CONTAINERS;
+      return { fits, groupId: groupName ? (named?.id ?? newGroupId()) : null };
+    };
+    if (!plan(c.state).fits) { tooMany(res, c.state); return; }
+    let refused = false;
+    let groupId: string | null = null;
     const state = await writeSuper(c.who.contextRoot, (s) => {
-      const have = s.containers.find((k) => k.id === id);
-      if (have) {
-        // Re-opening brings it back from Others and keeps the owner's drop position.
-        if (shapeArg) have.shape = shapeArg as ContainerShape;
-        have.place = 'float';
-        if (title) have.title = title;
-        return;
-      }
-      if (s.containers.length >= MAX_CONTAINERS) return;
-      s.containers.push({
-        id, kind: kind as ContainerKind, ref: r.ref,
-        shape: (shapeArg as ContainerShape | undefined) ?? defaultShape(kind as ContainerKind),
-        place: 'float', ...(title ? { title } : {}),
+      const p = plan(s);
+      if (!p.fits) { refused = true; return; }
+      groupId = p.groupId;
+      refs.forEach((ref, i) => {
+        const have = s.containers.find((k) => k.id === ids[i]);
+        if (have) {
+          // Re-opening brings it back from Others and keeps the owner's drop position.
+          if (shapeArg) have.shape = shapeArg as ContainerShape;
+          have.place = 'float';
+          if (title) have.title = title;
+          return;
+        }
+        s.containers.push({
+          id: ids[i], kind: kind as ContainerKind, ref,
+          shape: (shapeArg as ContainerShape | undefined) ?? defaultShape(kind as ContainerKind),
+          place: 'float', ...(title ? { title } : {}),
+        });
       });
+      // The cards design's own group mutation: a card leaves any other group (a group left
+      // with one card dissolves when the record is settled).
+      if (groupId) {
+        applyGroupOp(s, { id: groupId, cards: ids, name: groupName });
+        // The group is what the stage draws: it floats, wherever it rested.
+        const g = s.groups.find((x) => x.id === groupId);
+        if (g) g.place = 'float';
+      }
     });
-    const made = state.containers.find((k) => k.id === id);
-    if (!made) { refuse(res, 409, 'too_many_containers', `at most ${MAX_CONTAINERS} containers; close one first`); return; }
-    ok(res, { container: made });
+    if (refused) { tooMany(res, state); return; }
+    const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
+    if (made.length !== ids.length) { tooMany(res, state); return; }
+    const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
+    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}) });
   },
 
   shape: async (c, b, res) => {
@@ -1315,19 +1389,63 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
     return;
   }
   const body = (await parseJsonBody(req)) ?? {};
+  const cue = CUED_VERBS.has(verb) ? captureOk(res) : null;
   try {
     await SUPER_VERB_HANDLERS[verb](caller, body as Record<string, unknown>, res);
   } catch (err) {
     if (!res.headersSent) storeRefusal(res, err);
   }
+  // AC16: the window shows what the verb did (a card flying out of the centre, a fade, a pulse)
+  // and may play a short sound. Pushed after the verb's own state push, on the super chat's socket.
+  const result = cue?.();
+  if (result !== undefined) pushFrame(caller.token, { subtype: SUPER_FRAME_CUE, verb, ids: cueIds(body as Record<string, unknown>, result) });
+}
+
+/** The verbs the window gives a visible cue (AC16). */
+const CUED_VERBS = new Set<SuperVerb>(['delegate', 'open', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'merge', 'answer']);
+
+/** Watch a response: returns the `result` of a 200 `{ok:true}` answer, undefined otherwise. */
+function captureOk(res: ServerResponse): () => unknown {
+  let status = 0;
+  let body = '';
+  const writeHead = res.writeHead.bind(res) as (...a: unknown[]) => ServerResponse;
+  const end = res.end.bind(res) as (...a: unknown[]) => ServerResponse;
+  (res as unknown as { writeHead: (...a: unknown[]) => ServerResponse }).writeHead = (...a: unknown[]) => { status = Number(a[0]); return writeHead(...a); };
+  (res as unknown as { end: (...a: unknown[]) => ServerResponse }).end = (...a: unknown[]) => { if (typeof a[0] === 'string') body = a[0]; return end(...a); };
+  return () => {
+    if (status !== 200 || !body) return undefined;
+    try {
+      const j = JSON.parse(body) as { ok?: unknown; result?: unknown };
+      return j.ok === true ? (j.result ?? null) : undefined;
+    } catch { return undefined; }
+  };
+}
+
+/** The cards a verb touched, for its cue: ids named in the request or returned in the result. */
+function cueIds(body: Record<string, unknown>, result: unknown): string[] {
+  const ids = new Set<string>();
+  const add = (v: unknown) => {
+    if (typeof v === 'string' && v.length <= 60) ids.add(v);
+    else if (v && typeof v === 'object' && !Array.isArray(v) && typeof (v as { id?: unknown }).id === 'string') ids.add((v as { id: string }).id);
+  };
+  const scan = (o: unknown) => {
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return;
+    const r = o as Record<string, unknown>;
+    for (const k of ['container', 'closed', 'group']) add(r[k]);
+    for (const k of ['containers', 'targets']) if (Array.isArray(r[k])) for (const x of r[k] as unknown[]) add(x);
+  };
+  scan(body);
+  scan(result);
+  return [...ids].slice(0, MAX_CONTAINERS);
 }
 
 // ─── The owner's door ────────────────────────────────────────────────────────
 
-/** Desktop app, this machine, a loopback Host, and not a cross-site request. Sends the 403. */
+/** Desktop app, this machine, a loopback Host, and this very origin (port included, T0):
+ *  not a cross-site request and not a page on another loopback port. Sends the 403. */
 export function requireSuperOwner(req: IncomingMessage, res: ServerResponse): boolean {
   if (!requireLocalDesktop(req, res)) return false;
-  if (isCrossSiteRequest(req)) {
+  if (isCrossSiteRequest(req) || !isSameOriginStrict(req)) {
     sendError(res, 403, 'forbidden', 'The Super Agent hand-over only answers this machine\'s own window.');
     return false;
   }
@@ -1367,7 +1485,7 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     const cards = body.cards === undefined ? [] : body.cards;
     const closed = body.closed === undefined ? [] : body.closed;
     if (!Array.isArray(cards) || !Array.isArray(closed) || cards.length > MAX_CONTAINERS || closed.length > MAX_CONTAINERS) {
-      sendError(res, 400, 'invalid_body', 'cards and closed must be lists of at most 12');
+      sendError(res, 400, 'invalid_body', `cards and closed must be lists of at most ${MAX_CONTAINERS}`);
       return;
     }
     const view = body.view;
@@ -1395,7 +1513,11 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       if (groupOp) applyGroupOp(s, groupOp);
       if (ungroup.length) dissolveGroups(s, ungroup);
       const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
-      if (gone.size) s.containers = s.containers.filter((x) => !gone.has(x.id));
+      if (gone.size) {
+        // The owner's "no" to an automatic card: not reopened automatically for a while (G5).
+        noteDismissed(s, s.containers.filter((x) => gone.has(x.id)), Date.now());
+        s.containers = s.containers.filter((x) => !gone.has(x.id));
+      }
       // The store sanitizes what this produced: positions clamped, a view naming no card → float.
       if (view !== undefined) s.view = view as SuperState['view'];
     });

@@ -71,10 +71,12 @@ describe('superBriefing', () => {
   // the child lifecycle that came with main (super end/resume/update/adopt, the Done line).
   const OWNER_RULES_2026_10_21 = 400;
   const CHILD_LIFECYCLE_2026_10_21 = 500;
-  it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules and lifecycle, with or without a guide', () => {
+  // Jarvis plan r9: "Show, don't tell", "Voice" and the revision marker.
+  const JARVIS_SHOW_VOICE_2026_10_21 = 1700;
+  it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle and jarvis sections, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21);
     }
   });
 });

@@ -303,6 +303,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/agent/board-assets': allow(`${CHAT}: a board's images inside this project; side-effect free`),
   'POST /api/agent/reveal': deny(DESKTOP),
   'POST /api/agent/grant': deny(DESKTOP),
+  'GET /api/agent/loopback-grants': deny(DESKTOP),
+  'POST /api/agent/loopback-grant': deny(DESKTOP),
   'GET /api/agent/goal-live': allow(`${CHAT}: a Develop run's live map; side-effect free`),
   'GET /api/agent/teammates': allow(`${CHAT}: the chat's sub-agents; side-effect free`),
   'GET /api/agent/teammate-history': allow(`${CHAT}: one sub-agent's transcript; side-effect free`),

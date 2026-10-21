@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import { Lightbox } from './Lightbox';
 import { readBrowserLive, setBrowserCollapsed, subscribeBrowserLive, type BrowserLiveState } from './browserLiveStore';
 import './BrowserLive.css';
@@ -36,15 +36,28 @@ function hostOf(url: string): string {
   }
 }
 
-export function BrowserLive({ sessionId }: { sessionId: string }) {
+/**
+ * `collapsed` + `onCollapsedChange`: the fold is the HOST's (a Super Agent browser card keeps its
+ * own; the store's per-session fold belongs to the chat pane). `frozen`: no subscription, the
+ * last frame stays drawn (the card is over the live budget, off screen or the window unfocused).
+ */
+export function BrowserLive({ sessionId, collapsed: hostCollapsed, onCollapsedChange, frozen = false, waiting = null }: {
+  sessionId: string;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
+  frozen?: boolean;
+  /** Drawn until the first frame (the chat pane draws nothing). */
+  waiting?: ReactNode;
+}) {
   const [state, setState] = useState<BrowserLiveState | null>(() => readBrowserLive(sessionId));
   const [idle, setIdle] = useState(false);
   const [opened, setOpened] = useState<string | null>(null);
 
   useEffect(() => {
     setState(readBrowserLive(sessionId));
+    if (frozen) return undefined;
     return subscribeBrowserLive(sessionId, setState);
-  }, [sessionId]);
+  }, [sessionId, frozen]);
 
   const frameAt = state?.frame.at ?? 0;
   useEffect(() => {
@@ -54,12 +67,13 @@ export function BrowserLive({ sessionId }: { sessionId: string }) {
     return () => clearTimeout(timer);
   }, [frameAt, state?.frame.data]);
 
-  if (!state) return null;
-  const { frame, collapsed } = state;
+  if (!state) return waiting ? <>{waiting}</> : null;
+  const { frame } = state;
+  const collapsed = hostCollapsed ?? state.collapsed;
   const src = `data:image/jpeg;base64,${frame.data}`;
   const where = hostOf(frame.url);
   const label = frame.title || where || 'Browser';
-  const toggle = () => setBrowserCollapsed(sessionId, !collapsed);
+  const toggle = () => (onCollapsedChange ? onCollapsedChange(!collapsed) : setBrowserCollapsed(sessionId, !collapsed));
   const openFull = () => setOpened(src);
   // The bar itself rolls the window up; its buttons do their own thing and stop there.
   const onBar = (e: MouseEvent<HTMLElement>) => {

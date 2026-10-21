@@ -8,6 +8,8 @@
  */
 
 export const MAX_LIVE_IFRAMES = 2;
+/** Live browser cards that re-render on new frames at once (jarvis AC7); the rest stay frozen. */
+export const MAX_LIVE_BROWSERS = 2;
 
 /** `id` became the most recently focused (moved to the front). */
 export function touchLru(lru: readonly string[], id: string): string[] {

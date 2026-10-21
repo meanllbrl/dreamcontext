@@ -139,7 +139,8 @@ describe('isCrossSiteWrite under remote access', () => {
   });
 
   it('leaves loopback and header-less clients exactly as they were', () => {
-    expect(isCrossSiteWrite(mockReq({ method: 'POST', origin: 'http://localhost:4173' }))).toBe(false);
+    expect(isCrossSiteWrite(mockReq({ method: 'POST', origin: 'http://localhost:4173', host: 'localhost:4173' }))).toBe(false);
+    expect(isCrossSiteWrite(mockReq({ method: 'POST', origin: 'http://localhost:5173', host: 'localhost:4173' }))).toBe(true);
     expect(isCrossSiteWrite(mockReq({ method: 'POST' }))).toBe(false);
     expect(isCrossSiteWrite(mockReq({ method: 'GET', origin: 'https://evil.com' }))).toBe(false);
   });

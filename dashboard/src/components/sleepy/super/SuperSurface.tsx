@@ -20,7 +20,9 @@ import { SuperContainer, chatStatus, useLiveSession } from './SuperContainer';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { isGroupId, jobListRect, planStage, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
 import { hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
-import { liveWebIds, touchLru, dropFromLru } from './webBudget';
+import { MAX_LIVE_BROWSERS, liveWebIds, touchLru, dropFromLru } from './webBudget';
+import { useWindowActivity } from '../../../lib/windowActivity';
+import { useStageCues, withGhosts } from './useStageCues';
 import './SuperSurface.css';
 import './superTone.css';
 import './superCentre.css';
@@ -185,6 +187,17 @@ export function SuperSurface(props: SuperSurfaceProps) {
     ? state.containers.filter((c) => c.kind === 'web' && plan.cards[c.id] && plan.cards[c.id].where !== 'others' && plan.cards[c.id].where !== 'float').map((c) => c.id)
     : [];
   const liveWeb = liveWebIds(lru, webOnScreen);
+  // ── Cues and the reveal gate (G1, AC16): new cards wait while the owner drags or types,
+  //    every verb's cards play their one-time cue, closed cards fade out. ──
+  const stageCues = useStageCues({ containers: state.containers, plan, superSession, dragging: !!drag, liveWeb });
+
+  // ── The live browser budget: at most two cards re-render on frames, only while this window is
+  //    visible and focused; the rest keep their last frame (AC7). ──
+  const activity = useWindowActivity();
+  const browserOnScreen = props.visible && activity.focused
+    ? state.containers.filter((c) => c.kind === 'browser' && plan.cards[c.id] && plan.cards[c.id].where !== 'others').map((c) => c.id)
+    : [];
+  const liveBrowser = liveWebIds(lru, browserOnScreen, MAX_LIVE_BROWSERS);
   useEffect(() => {
     setLru((prev) => (prev.every((id) => byId.has(id)) ? prev : prev.filter((id) => byId.has(id))));
   }, [byId]);
@@ -351,19 +364,33 @@ export function SuperSurface(props: SuperSurfaceProps) {
           </div>
           {hot === 'centre' && <div className="super-ask-target" data-testid="super-ask-target" aria-hidden>{t('super.card.askAbout')}</div>}
         </div>
-        {state.containers.map((c) => {
-          const cp = plan.cards[c.id];
+        {withGhosts(state.containers, stageCues.leaving.map((g) => ({ card: g.container, index: g.index }))).map((c) => {
+          // A closed card fades as itself: the SAME key, so React keeps its view mounted (no
+          // Excalidraw or transcript remount for a 360 ms fade), at its last spot.
+          const ghost = byId.has(c.id) ? undefined : stageCues.leaving.find((g) => g.container.id === c.id);
+          const cp = ghost ? ghost.plan : plan.cards[c.id];
           if (!cp || cp.where === 'others') return null;
+          const cue = ghost ? { kind: 'close' as const } : stageCues.cueFor(c.id);
+          const rect = cp.rect;
           return (
             <SuperContainer
               key={c.id}
               container={c}
+              cue={cue ? {
+                ...cue,
+                // Where a delegated card flies in from, measured on the plan being drawn.
+                dx: plan.centre.x + plan.centre.width / 2 - (rect.x + rect.width / 2),
+                dy: plan.centre.y + plan.centre.height / 2 - (rect.y + rect.height / 2),
+                at: 0,
+              } : undefined}
               plan={topped.includes(c.id) ? { ...cp, z: cp.z + 2 * MAX_CONTAINERS + topped.indexOf(c.id) } : cp}
               child={c.kind === 'chat' ? state.children[c.ref] : undefined}
               session={c.kind === 'chat' ? props.sessionFor(c.ref) : undefined}
               title={titleOf(c)}
-              pending={pending.has(c.id)}
-              webLive={liveWeb.has(c.id)}
+              pending={pending.has(c.id) || stageCues.held.has(c.id)}
+              webLive={liveWeb.has(c.id) || !!ghost?.webLive}
+              browserSessionId={c.kind === 'browser' ? props.sessionFor(c.ref)?.id : undefined}
+              browserLive={liveBrowser.has(c.id)}
               viewReady={viewsReady}
               asksOwner={c.kind === 'chat' && asking.has(c.ref)}
               shownSlot={shownCard?.id === c.id}

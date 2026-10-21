@@ -1,0 +1,20 @@
+{
+  "note": "Synthetic fixture (pattern: synthetic-fixtures). Tasks and whiteboards are created by run.mjs through the CLI; insights are written as files. Each prompt runs 5 times; the threshold is 4 of 5 PASS per prompt.",
+  "tasks": {
+    "open": [
+      ["Signup form", "todo"], ["Pricing page", "in_progress"], ["Email digest", "todo"], ["Search index", "in_progress"], ["Billing retry", "todo"]
+    ],
+    "done": [["Old landing", "completed"], ["Legacy export", "completed"], ["First deploy", "completed"]]
+  },
+  "insights": [["weekly-signups", "Weekly signups"], ["churn-rate", "Churn rate"], ["trial-conversion", "Trial conversion"]],
+  "whiteboards": ["Launch plan", "Onboarding flow"],
+  "prompts": [
+    { "id": "tasks-tr", "text": "görevlerimi göster", "kind": "task", "gold": "open-tasks" },
+    { "id": "open-work-tr", "text": "açık işleri göster", "kind": "task", "gold": "open-tasks" },
+    { "id": "tasks-en", "text": "show my tasks", "kind": "task", "gold": "open-tasks" },
+    { "id": "insights-tr", "text": "insight'ları göster", "kind": "insight", "gold": "insights" },
+    { "id": "tasks-full-stage", "text": "görevlerimi göster", "kind": "task", "gold": "open-tasks", "capacity": true }
+  ],
+  "runs": 5,
+  "threshold": 4
+}

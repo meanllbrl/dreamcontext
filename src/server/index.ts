@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
-import { handleCors, isCrossSiteWrite, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
+import { handleCors, isCrossSiteWrite, refuseForeignFrame, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
 import { carriesCloudflareHeaders, isPhoneSocket, macExposedVaults, markPhoneSocket } from './phone-origin.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
@@ -194,6 +194,7 @@ import {
 } from './routes/agent-terminal.js';
 import { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
+import { claimOwnedPort } from './owned-ports.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
   handleAgentAccountsSwitchPolicy, handleAgentAccountsList,
@@ -209,7 +210,7 @@ import {
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
 import { handleAppMachine } from './routes/machine.js';
-import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
+import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
@@ -587,6 +588,8 @@ export function buildRouter(): Router {
   router.post('/api/agent/reveal', handleAgentReveal);
   // The user allowing ONE named file outside the project root to be shown inline.
   router.post('/api/agent/grant', handleAgentGrant);
+  router.get('/api/agent/loopback-grants', handleLoopbackGrantsGet);
+  router.post('/api/agent/loopback-grant', handleLoopbackGrantSet);
   router.get('/api/agent/goal-live', handleAgentGoalLive);
   // Headless teammates: registered/launched `claude -p` runs, read off their own transcripts.
   router.get('/api/agent/teammates', handleAgentTeammates);
@@ -1132,6 +1135,8 @@ export function mainLaptopGate(req: IncomingMessage, res: ServerResponse, networ
     return false;
   }
   if (networkToken && !checkNetworkAuth(req, res, networkToken)) return false;
+  // Clickjacking / frame redirect: a foreign frame never loads anything from this origin.
+  if (refuseForeignFrame(req, res)) return false;
   // Handle CORS preflight
   if (handleCors(req, res)) return false;
   // CSRF defense: reject state-changing requests from a cross-site origin.
@@ -1226,6 +1231,9 @@ export async function startPhoneListener(opts: { port?: number } = {}): Promise<
       resolvePort(a && typeof a === 'object' ? a.port : 0);
     });
   });
+  // Its port is ours while it listens: no web card may load it (T1).
+  const release = claimOwnedPort(port);
+  server.once('close', release);
   phoneListener = { server, port, sockets };
   return { port };
 }
@@ -1301,6 +1309,11 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     server.setTimeout(30000);
 
     const onListening = () => {
+      // The dashboard's own port: no web card may load it (T1). Released when it closes.
+      {
+        const a = server.address();
+        if (a && typeof a === 'object') server.once('close', claimOwnedPort(a.port));
+      }
       const shownHost = host === '127.0.0.1' ? 'localhost' : host;
       const url = `http://${shownHost}:${port}`;
       console.log(`\n  Dashboard: ${url}\n`);

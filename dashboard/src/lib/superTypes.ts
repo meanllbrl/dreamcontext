@@ -11,7 +11,7 @@
 
 export const SUPER_STATE_VERSION = 1 as const;
 
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
 
 export const CONTAINER_SHAPES = ['square', 'tall'] as const;
@@ -23,7 +23,8 @@ export type ContainerPlace = typeof CONTAINER_PLACES[number];
 export const VIEW_MODES = ['float', 'half', 'present'] as const;
 export type ViewMode = typeof VIEW_MODES[number];
 
-export const MAX_CONTAINERS = 12;
+export const MAX_CONTAINERS = 48;
+export const MAX_FLOAT = 12;
 export const MAX_PRESENT = 4;
 export const MAX_LIVE_CHILDREN = 8;
 
@@ -40,7 +41,14 @@ export interface SuperContainer {
   /** Where the owner dropped it, as fractions (0..1) of the stage's free area. */
   pos?: { x: number; y: number };
   title?: string;
+  /** Opened by the server itself, not by a verb (a child's dev-server pin, its live browser). */
+  by?: 'auto';
+  /** The child an automatic card belongs to. */
+  of?: string;
 }
+
+export interface SuperDismissed { kind: ContainerKind; ref: string; until: number }
+export const MAX_DISMISSED = 50;
 
 /**
  * Cards put together, drawn on the stage as ONE tile (owner decision 2026-10-20): the owner
@@ -150,6 +158,7 @@ export interface SuperState {
   queue: SuperQueueItem[];
   notes: Record<string, SuperNote>;
   away: { since: number | null; events: number };
+  dismissed: SuperDismissed[];
   pool: SuperPoolItem[];
   /** Batch ids of event turns that render in full (the super agent asked the owner). */
   ownerBatches: string[];
@@ -328,6 +337,9 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     queue,
     notes,
     away: { since: typeof since === 'number' ? since : null, events: typeof v.away.events === 'number' ? v.away.events : 0 },
+    dismissed: Array.isArray(v.dismissed)
+      ? v.dismissed.filter((d): d is SuperDismissed => isRecord(d) && oneOf(CONTAINER_KINDS, d.kind) && typeof d.ref === 'string' && typeof d.until === 'number')
+      : [],
     pool,
     ownerBatches,
   };
