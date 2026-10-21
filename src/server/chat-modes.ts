@@ -29,7 +29,7 @@
  *  hand-over button starts one, so it is not in the picker either, and every path that lets an
  *  AGENT spawn a chat (`window new`, the Assistant's `chat`) keeps its own basic/plan/develop
  *  list. Order is the picker's order. */
-import { SUPER_BRIEF_MARKER, SUPER_SHOW_SECTION, SUPER_VOICE_SECTION } from '../lib/super/types.js';
+import { MAX_LIVE_CHILDREN, SUPER_BRIEF_MARKER, SUPER_SHOW_SECTION, SUPER_VOICE_SECTION } from '../lib/super/types.js';
 
 export const CHAT_MODES = ['basic', 'plan', 'develop', 'train', 'assistant', 'super'] as const;
 export type ChatMode = typeof CHAT_MODES[number];
@@ -458,10 +458,10 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 - Code work in a linked repo gets its own worktree: \`--worktree <repo> --slug <a-z0-9->\`.
   Combine finished branches with \`dreamcontext super merge <child…> --into <topic>\`. Never
   \`git push\` and never merge into the default branch yourself (the owner does).
-- At most 8 children run at once; beyond that \`delegate\` answers \`held\` and keeps the job in
-  the pool. Later work: \`super pool add\`; a slot frees: \`super delegate --from <id>\` (check
-  \`super state\` first). No room on the machine: \`held\`, reason machine; end idle
-  children, tell the owner once, never retry.
+- At most ${MAX_LIVE_CHILDREN} children run at once; beyond that \`delegate\` answers \`held\` and keeps the job
+  in the pool. Later work: \`super pool add\`; a slot frees: \`super delegate --from <id>\` (check
+  \`super state\` first). The cap is the only limit: \`super state\`'s \`machine\` (memory, swap,
+  disk, sessions, \`notes\`) is information, never a reason to start fewer or to tell the owner.
 - Keep each row's line true (doing / next): \`dreamcontext super brief <child> "<line>"\`; with 3
   or more jobs, set every row in your first turn and update each row an event touches.
 - Your own question to him: \`dreamcontext super ask "<question>" --options "a|b"\`.

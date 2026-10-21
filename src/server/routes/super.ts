@@ -10,7 +10,7 @@ import {
 import { SuperStoreRefused, isReservedId, okMember, readSuperState, superRootOfChild } from '../../lib/super/store.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
-  MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
+  MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, cleanAskOptions, cleanGroupName,
   defaultShape, dissolveGroups, floatCount, leaveGroups,
   type ContainerKind, type ContainerShape, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
@@ -28,7 +28,7 @@ import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJo
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
 import {
-  CAPACITY_TTL_MS, delegationAllowed, lightModeOn, machineHoldLine, machineRoom, readCapacityFacts, type CapacityFacts,
+  delegationAllowed, lightModeOn, machineNotes, machineRoom, readCapacityFacts, type CapacityFacts,
 } from '../../lib/super/capacity.js';
 import { knownMcpServers, unknownMcpNames } from '../../lib/super/lean-mcp.js';
 import {
@@ -330,29 +330,14 @@ function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<s
  *  cap holds it. `fromRow` is the pool row it came from: removed in the same write that records
  *  the child, kept on any refusal, marked `maybeStarted` when the window did not confirm. */
 async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, job: Job, fromRow: SuperPoolItem | undefined, succeeds?: string): Promise<void> {
-  // The machine's facts FIRST: the cap check and the in-flight count below must be one step
-  // with no await between them, or parallel delegates all pass the cap (end review r1).
-  let machine: CapacityFacts | null = null;
-  try { machine = await readCapacityFacts(); } catch { machine = null; }
-  // D11: the cap binds NEW delegations (calls in flight count too).
+  // D11: the cap is the ONLY hold on a NEW delegation (calls in flight count too). The
+  // machine's facts never hold (owner, 2026-10-21): `super state` shows them as information.
+  // No await between the cap check and the in-flight count, or parallel delegates all pass.
   const inFlight = delegating.get(root) ?? 0;
   const room = delegationAllowed(c.state);
-  // Orchestration plan r5 D11: the whole machine's room binds too. The facts may be up to a
-  // minute old, so the sessions this vault started since (in flight, or recorded in the last
-  // minute) are added to what `ps` saw; double counting only holds earlier. A null fact never
-  // holds alone (fail open); nobody overrides a hold: the way out is room (end idle children).
-  const now = Date.now();
-  const recent = Object.values(c.state.children).filter((ch) => !ch.adopted && ch.endedAt === undefined && now - ch.startedAt < CAPACITY_TTL_MS).length;
-  const seen = machine && typeof machine.claudeSessions === 'number' ? { ...machine, claudeSessions: machine.claudeSessions + inFlight + recent } : machine;
-  const mroom = seen ? machineRoom(seen, { lightMode: lightModeOn(seen) }) : null;
-  const capFull = room.live + inFlight >= room.max;
-  if (capFull || (mroom && !mroom.ok)) {
-    const hold = !capFull && mroom ? machineHoldLine(mroom) : null;
-    const facts = {
-      held: true, live: room.live + inFlight, max: room.max, machine,
-      ...(hold && mroom ? { reason: 'machine', hard: mroom.hard, reasons: mroom.reasons, ...(hold.closeSessions ? { closeSessions: hold.closeSessions } : {}) } : { reason: 'cap' }),
-    };
-    const running = hold ? `this machine has no room for another session: ${hold.line}` : `${room.live + inFlight} children are running (at most ${room.max})`;
+  if (room.live + inFlight >= room.max) {
+    const facts = { held: true, live: room.live + inFlight, max: room.max, reason: 'cap' };
+    const running = `${room.live + inFlight} children are running (at most ${room.max})`;
     if (fromRow) {
       refuse(res, 409, 'held', `${running}; the job stays in the pool as ${fromRow.id}`, { ...facts, pooled: fromRow.id });
       return;
@@ -479,13 +464,17 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       status.push({ sessionId: sid, ...row, ...(ch.worktree ? { worktree: ch.worktree, branch: ch.branch } : {}) });
     }
     let machine: unknown = null;
-    try { machine = await readCapacityFacts(); } catch { machine = null; }
+    let facts: CapacityFacts | null = null;
+    try { facts = await readCapacityFacts(); } catch { facts = null; }
     // The largest leftovers on disk (last measurement; the next one runs in the background).
-    if (machine && typeof machine === 'object') {
+    if (facts) {
       const left = cachedLeftovers(() => defaultPlaces([dirname(root)]));
       // Folder names under a worktree are a child's to choose: fenced like every child string (D10).
       const leftovers = left.top.map((r) => ({ ...r, path: wrapUntrusted(vault, r.path) }));
-      machine = { ...machine, leftovers, leftoversMeasuredAt: left.measuredAt };
+      // `notes`: the lines the machine crossed, information only (owner, 2026-10-21): they never
+      // hold a delegate and owe the owner no message.
+      const notes = machineNotes(machineRoom(facts, { lightMode: lightModeOn(facts) }));
+      machine = { ...facts, notes, leftovers, leftoversMeasuredAt: left.measuredAt };
     }
     // Container titles can be child text (an adopted chat's tab title or last reply): fenced
     // like every other child-derived string (D10).
@@ -503,7 +492,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const { teamLive: _ownerOnly, ...view } = superStateView(root, settled);
     ok(res, {
       ...view, children, containers, queue: settled.queue.map(fenceQ), status,
-      head: head ? fenceQ(head) : null, machine, pool: poolRows(vault, settled.pool), team, ...(warnings.length ? { warnings } : {}),
+      head: head ? fenceQ(head) : null, machine, limits: { maxChildren: MAX_LIVE_CHILDREN }, pool: poolRows(vault, settled.pool), team, ...(warnings.length ? { warnings } : {}),
       // The MCP servers `delegate --mcp` can grant (D14): names only, each one the narrow
       // [a-z0-9_-] shape (a name of any other shape is never listed, so nothing here is prose).
       mcpServers: [...knownMcpServers(dirname(root)).keys()],

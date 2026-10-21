@@ -9,7 +9,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { SUPER_MODE_HEADING, SUPER_ORCHESTRATION_GUIDE, modeBriefing, superBriefing } from '../../src/server/chat-modes.js';
 import { BATCH_LAST_LINE, OWNER_VOICE, superBatchText, superEventText } from '../../src/lib/super/inbox.js';
-import { emptySuperState } from '../../src/lib/super/types.js';
+import { MAX_LIVE_CHILDREN, emptySuperState } from '../../src/lib/super/types.js';
 import { modeFromSystemPrompt } from '../../src/server/chat-mode-drift.js';
 
 describe('superBriefing', () => {
@@ -47,11 +47,14 @@ describe('superBriefing', () => {
     expect(brief).toContain('dreamcontext super ask "<question>" --options "a|b"');
   });
 
-  it('names capacity and worktrees: 8 children, held, the machine hold, merge, never push', () => {
-    expect(brief).toContain('At most 8 children');
+  it('names capacity and worktrees: the cap, held, the machine as information only, merge, never push', () => {
+    expect(brief).toContain(`At most ${MAX_LIVE_CHILDREN} children`);
+    expect(MAX_LIVE_CHILDREN).toBe(15);
     expect(brief).toContain('`held`');
-    // The machine's limits are enforced by `delegate` now (orchestration plan r5 D11).
-    expect(brief).toContain('No room on the machine: `held`, reason machine; end idle\n  children, tell the owner once, never retry.');
+    // Owner, 2026-10-21: the machine never holds a delegate; its facts are information.
+    expect(brief).toContain('The cap is the only limit');
+    expect(brief).toContain('is information, never a reason to start fewer or to tell the owner.');
+    expect(brief).not.toMatch(/reason machine|No room on the machine/);
     expect(brief).toContain('--worktree <repo> --slug');
     expect(brief).toContain('dreamcontext super merge <child…> --into <topic>');
     expect(brief).toContain('Never\n  `git push` and never merge into the default branch yourself');

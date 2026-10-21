@@ -15,13 +15,13 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    every unit with no unmet dependency; start them ALL now, in one message of `delegate` calls.
 5. **Per unit** pick mode, model, effort, worktree (§3, §4). Every `delegate` carries `--model` and
    `--effort`: the server has no fallback, an omitted one runs on the default.
-6. **Capacity.** At most 8 live children, and on a 16 GB machine at most 4 awake at once (a 16 GB
-   machine fell over at 24 processes, swap 19 of 20 GB). `dreamcontext super state` shows `machine`: when it is
-   short of room (`availMemGb` < 2, `diskFreeGb` < 15, swap above 75 %, many Claude sessions,
-   `light` mode) `delegate` answers `held` with reason `machine` and KEEPS the job in the pool (its id
-   in the answer, `--from` re-checks). Then: `super end` every idle child, tell the owner ONCE which
-   limit is hit and how many sessions closing would free (`closeSessions`), retry once. Never
-   loop, never try to override the hold.
+6. **Capacity.** At most 15 live children: the 16th `delegate` answers `held` (reason `cap`) and
+   KEEPS the job in the pool (its id in the answer; `--from` starts it when a slot frees). The cap
+   is the only limit. `dreamcontext super state` shows `machine` (memory, swap, disk, Claude
+   sessions, and `notes` naming any line crossed): information only. A full swap or little free
+   memory alone does not mean the machine cannot take one more (the system swaps on its own), so
+   it is never a reason to start fewer, to wait, or to tell the owner. The server parks idle
+   chats itself; heavy checks share 2 machine-wide slots (§5).
 7. **Publish at once.** Wave 1 via `dreamcontext super delegate`; every later unit via
    `dreamcontext super pool add` with "after <unit>" in its brief, so the job list shows the whole
    split immediately. Each `--brief` reads `<job> · <mode> <model>/<effort>`. Wait for no approval.
@@ -46,7 +46,6 @@ rest keeps running) only for:
   money, merging to the default branch: always, even when the owner asked for it. A message
   (WhatsApp, email, Slack) is asked too, unless the owner named its content and recipient himself.
 - **Two readings** that lead to different work when neither the brief nor the brain settles it.
-- **The machine** is short of room (§1 step 6).
 - **An answer that grows the owner's intent.** Answer a child's question for him only inside what
   he said he wants. An answer that raises a limit, changes a default or widens the scope is his:
   `super ask` (a 183-day limit once became a whole school year on a super's own call).

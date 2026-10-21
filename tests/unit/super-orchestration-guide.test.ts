@@ -17,6 +17,7 @@ import { installCoreForPlatform } from '../../src/cli/commands/install-skill.js'
 import { platformSkillRoot } from '../../src/lib/catalog.js';
 import { emptyManifest } from '../../src/lib/manifest.js';
 import { MODEL_FACTS, MODEL_ALIASES } from '../../src/lib/model-facts.js';
+import { MAX_LIVE_CHILDREN } from '../../src/lib/super/types.js';
 import {
   SUPER_ORCHESTRATION_GUIDE, SUPER_ORCHESTRATION_GUIDE_PATH, superBriefing,
 } from '../../src/server/chat-modes.js';
@@ -54,6 +55,26 @@ function allOptionFlags(cmd: Command, into = new Set<string>()): Set<string> {
 }
 
 const spans = [...FLAT.matchAll(/`([^`]+)`/g)].map((m) => m[1].trim());
+
+describe('super-orchestration guide: capacity (owner, 2026-10-21)', () => {
+  // The guide and the CLI reference are static text: they must name the constant's number.
+  const CLI_REF = readFileSync(join(ROOT, 'skill/references/cli-reference.md'), 'utf-8').replace(/\s+/g, ' ');
+  it('names the cap the server applies, as the only limit', () => {
+    expect(FLAT).toContain(`At most ${MAX_LIVE_CHILDREN} live children`);
+    expect(FLAT).toContain(`the ${MAX_LIVE_CHILDREN + 1}th \`delegate\` answers \`held\` (reason \`cap\`)`);
+    expect(FLAT).toContain('The cap is the only limit.');
+    expect(CLI_REF).toContain(`At most ${MAX_LIVE_CHILDREN} live delegated children`);
+    expect(CLI_REF).toContain(`the delegate cap, ${MAX_LIVE_CHILDREN}`);
+  });
+
+  it('treats the machine as information: no machine hold, no owner message about it', () => {
+    expect(FLAT).toContain('information only');
+    expect(FLAT).toContain('never a reason to start fewer, to wait, or to tell the owner');
+    for (const text of [FLAT, CLI_REF]) {
+      expect(text).not.toMatch(/reason `?machine`?|closeSessions|short of room|The machine binds/);
+    }
+  });
+});
 
 describe('super-orchestration guide: shape', () => {
   it('is at most 14,000 bytes', () => {

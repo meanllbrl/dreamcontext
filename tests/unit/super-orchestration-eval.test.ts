@@ -19,7 +19,9 @@ import {
 } from '../../eval/super-orchestration/run-config.js';
 import { parseExtraction } from '../../eval/super-orchestration/extract.js';
 // @ts-expect-error plain .mjs shim, no types
-import { handleSuper } from '../../eval/super-orchestration/shim/handler.mjs';
+import { MACHINES, handleSuper } from '../../eval/super-orchestration/shim/handler.mjs';
+import { machineNotes, machineRoom } from '../../src/lib/super/capacity.js';
+import { MAX_LIVE_CHILDREN } from '../../src/lib/super/types.js';
 import { REFUSED_PAIRS, REFUSED_VERBS } from '../../src/lib/sleep-eval/scratch.js';
 
 const EVAL = resolve(__dirname, '..', '..', 'eval', 'super-orchestration');
@@ -390,14 +392,23 @@ describe('the shims', () => {
     expect(shim('dreamcontext.mjs', ['peer', 'send', 'x'], cfg).calls[0]).toMatchObject({ refused: true });
   });
 
-  it('super delegate on the overloaded machine is held with reason machine and starts nothing', () => {
+  it('super delegate on the overloaded machine starts the child: the machine never holds (owner, 2026-10-21)', () => {
     const ctx = { machine: 'overloaded', counters: { child: 0, pool: 0, ask: 0 }, started: [] as unknown[] };
     const r = handleSuper(['super', 'delegate', '--prompt', 'x'], ctx);
-    expect(r.held).toBe(true);
-    expect(JSON.parse(r.stderr).reason).toBe('machine');
-    expect(ctx.started).toEqual([]);
+    expect(r.held).toBeUndefined();
+    expect(JSON.parse(r.stdout).sessionId).toBe('child-1');
+    expect(ctx.started).toHaveLength(1);
+    const state = JSON.parse(handleSuper(['super', 'state'], ctx).stdout);
+    expect(state.limits).toEqual({ maxChildren: MAX_LIVE_CHILDREN });
+    expect(state.machine.notes.length).toBeGreaterThan(0);
     const ok = { machine: 'ok', counters: { child: 0, pool: 0, ask: 0 }, started: [] as unknown[] };
     expect(JSON.parse(handleSuper(['super', 'delegate', '--prompt', 'x'], ok).stdout).sessionId).toBe('child-1');
     expect(handleSuper(['super', '--help'], ok).passthrough).toBe(true);
+  });
+
+  it('the shim\'s machine notes are what the server would write for the same facts', () => {
+    for (const m of [MACHINES.ok, MACHINES.overloaded]) {
+      expect(m.notes).toEqual(machineNotes(machineRoom({ ...m, notes: undefined } as never, { platform: 'darwin' })));
+    }
   });
 });

@@ -26,7 +26,7 @@ export type ViewMode = typeof VIEW_MODES[number];
 export const MAX_CONTAINERS = 48;
 export const MAX_FLOAT = 12;
 export const MAX_PRESENT = 4;
-export const MAX_LIVE_CHILDREN = 8;
+export const MAX_LIVE_CHILDREN = 15;
 
 export function defaultShape(kind: ContainerKind): ContainerShape {
   return kind === 'chat' || kind === 'web' ? 'tall' : 'square';

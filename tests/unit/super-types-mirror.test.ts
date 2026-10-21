@@ -65,10 +65,10 @@ describe('super types — server record <-> window mirror', () => {
     expect(run(client)).toEqual(run(server));
   });
 
-  it('the limits are the owner\'s numbers: 12 floating items on the stage, 48 cards in the record, 8 live children', () => {
+  it('the limits are the owner\'s numbers: 12 floating items on the stage, 48 cards in the record, 15 live children', () => {
     expect(server.MAX_FLOAT).toBe(12);
     expect(server.MAX_CONTAINERS).toBe(48);
-    expect(server.MAX_LIVE_CHILDREN).toBe(8);
+    expect(server.MAX_LIVE_CHILDREN).toBe(15);
   });
 
   it('the window reads back exactly what the server would push', () => {

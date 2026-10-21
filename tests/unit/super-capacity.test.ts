@@ -2,7 +2,8 @@
  * Capacity (plan-r7 D11, AC9) and `super delegate` (AC3):
  *  - `availMemGb` comes from `vm_stat` on macOS (free + inactive + purgeable + speculative pages
  *    times the page size), `os.freemem()` elsewhere; disk and load beside it; memoized a minute;
- *  - a 9th live child is refused with `held` and the machine facts; nothing reaches the window;
+ *  - one live child past the cap is refused with `held` (reason `cap`, the only hold); nothing
+ *    reaches the window;
  *  - a delegation goes to the window as a `super_command`, and the child it opened is recorded
  *    with its brief and a chat container.
  */
@@ -159,18 +160,17 @@ describe('super delegate', () => {
     expect(s.containers.find((c) => c.kind === 'chat' && c.ref === 'new-child')).toBeTruthy();
   });
 
-  it('a 9th live child is held, with the machine facts, and nothing reaches the window', async () => {
+  it('one live child past the cap is held (reason cap), and nothing reaches the window', async () => {
     const ids = Array.from({ length: MAX_LIVE_CHILDREN }, (_, i) => `live-${i}`);
     write(ids);
     for (const id of ids) registerChat({ sessionId: id, conversationId: null, vault: 'acme', mode: 'basic' }).userSent('busy');
     const r = await delegate({ prompt: 'one more' });
     expect(r.status).toBe(409);
-    expect(r.json).toMatchObject({ error: 'held', held: true, live: MAX_LIVE_CHILDREN, max: MAX_LIVE_CHILDREN });
-    expect(r.json.machine).toBeDefined();
+    expect(r.json).toMatchObject({ error: 'held', held: true, reason: 'cap', live: MAX_LIVE_CHILDREN, max: MAX_LIVE_CHILDREN });
     expect(frames.filter((f) => f.subtype === 'super_command')).toHaveLength(0);
   });
 
-  it('8 delegated children the registry has not seen yet (< 60 s old) are live: the 9th is held', async () => {
+  it('a full cap of delegated children the registry has not seen yet (< 60 s old) are live: one more is held', async () => {
     const now = Date.now();
     writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({
       ...emptySuperState(), session: 'sup-1', enabled: true,

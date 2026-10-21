@@ -5,9 +5,12 @@
  */
 
 export const MACHINES = {
-  ok: { totalMemGb: 16, availMemGb: 9.2, diskFreeGb: 120, swapUsedGb: 2.1, swapTotalGb: 8, claudeSessions: 4, heavySteps: 0, load1: 1.4 },
+  ok: { totalMemGb: 16, availMemGb: 9.2, diskFreeGb: 120, swapUsedGb: 2.1, swapTotalGb: 8, claudeSessions: 4, heavySteps: 0, load1: 1.4, notes: [] },
   // The owner's measurement of 2026-10-20: swap 18.5/21.5 GB, disk 6.7 GB, 1.9 GB free, 25 claude sessions.
-  overloaded: { totalMemGb: 16, availMemGb: 1.9, diskFreeGb: 6.7, swapUsedGb: 18.5, swapTotalGb: 21.5, claudeSessions: 25, heavySteps: 2, load1: 9.8 },
+  overloaded: {
+    totalMemGb: 16, availMemGb: 1.9, diskFreeGb: 6.7, swapUsedGb: 18.5, swapTotalGb: 21.5, claudeSessions: 25, heavySteps: 2, load1: 9.8,
+    notes: ['25 Claude sessions are open on this machine (about 10 fit its RAM)', 'swap is 86 % full (line 75 %)', '6.7 GB disk free (line 8 GB)', '1.9 GB memory free (line 2 GB)'],
+  },
 };
 
 export const MCP_SERVERS = ['whatsapp', 'apple-mail', 'fathom', 'posthog', 'slack'];
@@ -42,12 +45,8 @@ export function handleSuper(argv, ctx) {
   const machine = MACHINES[ctx.machine] ?? MACHINES.ok;
   switch (verb) {
     case 'delegate': {
-      if (ctx.machine === 'overloaded') {
-        return {
-          held: true, exit: 1,
-          stderr: `${JSON.stringify({ error: 'held', held: true, reason: 'machine', message: 'the machine is short of room; the job was not started', reasons: ['swap 86%', 'disk 6.7 GB', '25 Claude sessions'], hard: true, machine }, null, 2)}\n`,
-        };
-      }
+      // The machine never holds a delegate (owner, 2026-10-21): only the cap does, and the
+      // eval never reaches it. An overloaded machine shows in `state` only.
       const id = `child-${++ctx.counters.child}`;
       ctx.started.push({ id, mode: opts.mode ?? 'basic', brief: opts.brief ?? '', worktree: opts.worktree ?? '', slug: opts.slug ?? '' });
       return json({ sessionId: id, status: 'started', ...(opts.worktree ? { worktree: `/scratch/${opts.worktree}-${opts.slug ?? id}`, branch: `super/${opts.slug ?? id}` } : {}) });
@@ -62,7 +61,7 @@ export function handleSuper(argv, ctx) {
       const children = [...(ctx.children ?? []), ...ctx.started.map((c) => ({ sessionId: c.id, status: 'working', brief: c.brief, lastLine: '' }))];
       return json({
         handedOver: true, children, containers: [], queue: [], head: null,
-        machine, mcpServers: MCP_SERVERS, limits: { maxChildren: 8 },
+        machine, mcpServers: MCP_SERVERS, limits: { maxChildren: 15 },
       });
     }
     case 'merge':

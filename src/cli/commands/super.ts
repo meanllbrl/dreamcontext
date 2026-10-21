@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { request } from 'node:http';
 import { windowEnv } from './window.js';
+import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
 
 /**
  * `dreamcontext super …` — the project's Super Agent drives the hand-over screen: its child
@@ -86,7 +87,7 @@ export function registerSuperCommand(program: Command): void {
   const jobBody = (o: JobOpts) => ({ prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base, task: o.task, mcp: o.mcp });
 
   job(s.command('delegate')
-    .description('Start a child chat in THIS project and open its card; returns its session id. At the cap, or when this machine has no room (`held`, reason machine), the job is kept in the pool')
+    .description(`Start a child chat in THIS project and open its card; returns its session id. At the cap (${MAX_LIVE_CHILDREN} live children, the only limit), the job is kept in the pool (\`held\`)`)
     .option('--prompt <text>', 'The child\'s first message, complete and self-contained')
     .option('--from <pool id>', 'Start a job the pool kept (`super pool list`), exactly as it was kept')
     .option('--force', 'With --from: start a job whose earlier start went unconfirmed')

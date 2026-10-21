@@ -37,8 +37,10 @@ export const MAX_CONTAINERS = 48;
 export const MAX_FLOAT = 12;
 /** A presentation shows at most this many cards. */
 export const MAX_PRESENT = 4;
-/** Live children (starting/working/asking) `super delegate` may run at once (D11). */
-export const MAX_LIVE_CHILDREN = 8;
+/** Live children (starting/working/asking) `super delegate` may run at once (D11). The ONLY
+ *  limit a new delegation has: the machine's facts are information, never a hold (owner,
+ *  2026-10-21: 15, up from 8). The briefing, the guide and the CLI text name this number. */
+export const MAX_LIVE_CHILDREN = 15;
 
 /** A card's default shape: a chat and a web page are tall, everything else square (a live
  *  browser card is a 1:1 tile like the rest). */
@@ -255,7 +257,7 @@ export interface SuperPoolItem {
   slug?: string;
   base?: string;
   mcp?: string[];
-  /** Kept because `delegate` hit the cap (or the machine had no room). */
+  /** Kept because `delegate` hit the cap. */
   held?: boolean;
   /** A `delegate --from` went unconfirmed: the child may be running. */
   maybeStarted?: boolean;
@@ -526,7 +528,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 1;
+export const SUPER_BRIEF_REV = 2;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

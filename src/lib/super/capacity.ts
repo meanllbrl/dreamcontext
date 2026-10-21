@@ -11,12 +11,14 @@ import { superWorktreeRoot } from './store.js';
 /**
  * How much room this machine has for another child chat (plan-r7 D11, decision 5).
  *
- * The HARD cap is {@link MAX_LIVE_CHILDREN} live children for a NEW `super delegate`; adoption
- * at hand-over is never refused (those chats already exist). The facts below are what the
- * briefing reasons over before it starts one more: free memory (`vm_stat` on macOS, where
- * `os.freemem()` reports only the truly free pages and reads an 8 GB Mac as nearly full), free
- * disk where worktrees go, and the 1-minute load. Every read is async (no `execFileSync` on a
- * request path) and memoized for a minute.
+ * The ONLY limit on a NEW `super delegate` is {@link MAX_LIVE_CHILDREN} live children; adoption
+ * at hand-over is never refused (those chats already exist). The facts below are information
+ * (`super state`'s `machine`) and the park sweep's signal, never a delegate hold (owner,
+ * 2026-10-21: a full swap or little free memory alone does not show the machine cannot take one
+ * more; the system swaps on its own): free memory (`vm_stat` on macOS, where `os.freemem()`
+ * reports only the truly free pages and reads an 8 GB Mac as nearly full), free disk where
+ * worktrees go, and the 1-minute load. Every read is async (no `execFileSync` on a request path)
+ * and memoized for a minute.
  */
 
 export interface CapacityFacts {
@@ -211,13 +213,13 @@ export function readCapacityFactsFresh(injected?: CapacityDeps): Promise<Capacit
 }
 
 // ── Machine room (orchestration plan r5 D11; the parking task P-D1) ────────────────────
-/** Soft limits: do not start more. */
+/** Soft lines: the park sweep parks chats idle >= 10 min. */
 export const SOFT_SWAP_SHARE = 0.75;
 export const SOFT_DISK_GB = 15;
 export const SOFT_AVAIL_MEM_GB = 2;
 /** One live Claude session per this many GB of RAM (10 on a 16 GB Mac). */
 export const GB_PER_SESSION = 1.6;
-/** Hard limits: tell the owner, and park harder. */
+/** Hard lines: the park sweep parks chats idle >= 3 min. */
 export const HARD_SWAP_SHARE = 0.9;
 export const HARD_DISK_GB = 8;
 
@@ -239,10 +241,11 @@ export interface MachineRoom {
 }
 
 /**
- * Is there room on this machine for more Claude work? One pure function, two consumers: the
- * Super Agent's `delegate` hold and the idle-chat park sweep. A null fact never blocks alone
- * (fail open toward the observable state), except that an unreadable swap on macOS, where it
- * is always readable, is reported as `swapUnknown` (it does not make `ok` false).
+ * Is this machine under load? One pure function, two consumers: the idle-chat park sweep (which
+ * acts on memory, swap and disk only) and the `notes` of `super state`'s `machine` (information:
+ * `delegate` never reads it, owner 2026-10-21). A null fact never counts alone (fail open
+ * toward the observable state), except that an unreadable swap on macOS, where it is always
+ * readable, is reported as `swapUnknown` (it does not make `ok` false).
  */
 export function machineRoom(facts: CapacityFacts, opts: { lightMode?: boolean; platform?: NodeJS.Platform } = {}): MachineRoom {
   const reasons: MachineReason[] = [];
@@ -283,24 +286,19 @@ export function lightModeOn(facts: Pick<CapacityFacts, 'totalMemGb'>, home: stri
 }
 
 /**
- * The owner's one sentence for a machine hold: which limits are crossed, and how many Claude
- * sessions closing would get under the session limit (when that is one of them). English facts; the Super Agent says it
- * in the owner's language.
+ * The machine's crossed lines as short English facts for `super state` (`machine.notes`):
+ * information for the Super Agent, never a hold and never a message the owner is owed.
  */
-export function machineHoldLine(room: MachineRoom): { line: string; closeSessions: number | null } {
-  const parts: string[] = [];
-  let closeSessions: number | null = null;
+export function machineNotes(room: MachineRoom): string[] {
+  const notes: string[] = [];
   for (const r of room.reasons) {
-    if (r.limit === 'sessions') {
-      closeSessions = (r.value ?? 0) - r.threshold + 1;
-      parts.push(`${r.value} Claude sessions are open on this machine (room for ${r.threshold - 1})`);
-    } else if (r.limit === 'swap') parts.push(`swap is ${r.value} % full (limit ${r.threshold} %)`);
-    else if (r.limit === 'disk') parts.push(`${r.value} GB disk free (needs ${r.threshold} GB)`);
-    else if (r.limit === 'availMem') parts.push(`${r.value} GB memory free (needs ${r.threshold} GB)`);
-    else if (r.limit === 'light') parts.push('light mode is on');
+    if (r.limit === 'sessions') notes.push(`${r.value} Claude sessions are open on this machine (about ${r.threshold} fit its RAM)`);
+    else if (r.limit === 'swap') notes.push(`swap is ${r.value} % full (line ${r.threshold} %)`);
+    else if (r.limit === 'disk') notes.push(`${r.value} GB disk free (line ${r.threshold} GB)`);
+    else if (r.limit === 'availMem') notes.push(`${r.value} GB memory free (line ${r.threshold} GB)`);
+    else if (r.limit === 'light') notes.push('light mode is on');
   }
-  const close = closeSessions !== null && closeSessions > 0 ? `; closing ${closeSessions} session(s) would make room` : '';
-  return { line: `${parts.join(', ')}${close}`, closeSessions: closeSessions !== null && closeSessions > 0 ? closeSessions : null };
+  return notes;
 }
 
 /** Tests only. */

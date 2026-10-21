@@ -3102,7 +3102,7 @@
     },
     {
       "path": "super delegate",
-      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap, or when this machine has no room (`held`, reason machine), the job is kept in the pool",
+      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap (15 live children, the only limit), the job is kept in the pool (`held`)",
       "args": [],
       "valueFlags": [
         "--prompt",

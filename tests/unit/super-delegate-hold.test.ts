@@ -1,9 +1,8 @@
 /**
- * The machine hold (orchestration plan r5 D11, AC "Machine facts"): when THIS machine is short
- * of room, `super delegate` and `delegate --from` are held with reason `machine`, the job is
- * kept in the pool and NEVER started (no window frame), the owner's one sentence names the
- * limits and how many sessions to close. Today's two measurements are held AND hard. A null
- * fact never holds alone. Nobody overrides a hold.
+ * The machine never holds a delegate (owner, 2026-10-21; this replaced the machine hold of
+ * orchestration plan r5 D11): only the cap of MAX_LIVE_CHILDREN live children does. On the most
+ * loaded machine ever measured here the child still starts; `super state` shows the machine's
+ * facts and the lines it crossed (`machine.notes`) as information, and the cap (`limits`).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -26,7 +25,7 @@ import { MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_PROMPT, MAX_QUEUE, emptySuperStat
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
 import {
-  machineHoldLine, machineRoom, resetCapacityForTests, setCapacityFactsForTests, type CapacityFacts,
+  machineNotes, machineRoom, resetCapacityForTests, setCapacityFactsForTests, type CapacityFacts,
 } from '../../src/lib/super/capacity.js';
 import { DEV_SERVER_LINE, handleSuperVerb } from '../../src/server/routes/super.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
@@ -104,7 +103,7 @@ afterEach(() => {
 });
 
 describe('machineRoom on today\'s measurements', () => {
-  it('both readings are not ok and hard', () => {
+  it('both readings cross hard lines (the park sweep\'s signal)', () => {
     for (const f of [OWNER_READING, PLAN_READING]) {
       const r = machineRoom(f, { platform: 'darwin' });
       expect(r.ok).toBe(false);
@@ -112,101 +111,89 @@ describe('machineRoom on today\'s measurements', () => {
     }
   });
 
-  it('the owner\'s sentence names the limits and how many sessions to close', () => {
-    const h = machineHoldLine(machineRoom(OWNER_READING, { platform: 'darwin' }));
-    expect(h.closeSessions).toBe(16);
-    expect(h.line).toMatch(/25 Claude sessions/);
-    expect(h.line).toMatch(/swap is 86 %/);
-    expect(h.line).toMatch(/6\.7 GB disk free/);
-    expect(h.line).toMatch(/closing 16 session\(s\) would make room/);
+  it('the notes name every line crossed, and nothing about closing sessions', () => {
+    const notes = machineNotes(machineRoom(OWNER_READING, { platform: 'darwin' }));
+    expect(notes).toEqual([
+      '25 Claude sessions are open on this machine (about 10 fit its RAM)',
+      'swap is 86 % full (line 75 %)',
+      '6.7 GB disk free (line 8 GB)',
+      '1.9 GB memory free (line 2 GB)',
+    ]);
+    expect(notes.join(' ')).not.toMatch(/clos/);
   });
 });
 
-describe('delegate on a machine short of room', () => {
+describe('the machine never holds a delegate', () => {
   for (const [name, facts] of [['the owner\'s reading', OWNER_READING], ['the planning reading', PLAN_READING]] as const) {
-    it(`${name}: held, reason machine, hard, kept in the pool, never started`, async () => {
+    it(`${name} (hard lines crossed): the child starts`, async () => {
       write();
       setCapacityFactsForTests(facts);
       const r = await verb('delegate', { prompt: 'Fix the avatar crash.', brief: 'avatar crash', mode: 'basic', model: 'sonnet', effort: 'medium' });
-      expect(r.status).toBe(409);
-      expect(r.json).toMatchObject({ error: 'held', reason: 'machine', hard: true, kept: true, held: true });
-      expect((r.json.reasons as Array<{ limit: string }>).map((x) => x.limit)).toEqual(expect.arrayContaining(['sessions', 'swap', 'disk']));
-      expect(String(r.json.message)).toMatch(/no room for another session/);
-      expect(commands()).toHaveLength(0);
+      expect(r.status).toBe(200);
+      expect(r.json.error).toBeUndefined();
+      expect(commands()).toHaveLength(1);
       const st = await readSuperState(root);
-      expect(st.pool).toEqual([expect.objectContaining({ id: r.json.pooled, held: true, model: 'sonnet', effort: 'medium' })]);
-      expect(Object.keys(st.children)).toEqual([]);
+      expect(st.pool).toEqual([]);
+      expect(Object.keys(st.children)).toEqual([CHILD_SID]);
     });
   }
 
-  it('delegate --from is held the same way and the row stays as it is', async () => {
+  it('delegate --from on that machine starts the pooled job and removes its row', async () => {
     write();
     const id = result(await verb('pool-add', { prompt: 'Later: the billing route.', brief: 'billing' })).pooled as string;
     setCapacityFactsForTests(OWNER_READING);
     const r = await verb('delegate', { from: id });
-    expect(r.status).toBe(409);
-    expect(r.json).toMatchObject({ error: 'held', reason: 'machine', pooled: id });
-    expect(commands()).toHaveLength(0);
-    expect((await readSuperState(root)).pool.map((p) => p.id)).toEqual([id]);
+    expect(r.status).toBe(200);
+    expect(commands()).toHaveLength(1);
+    expect((await readSuperState(root)).pool).toEqual([]);
   });
 
-  it('a soft limit alone holds (sessions >= RAM/1.6), and the answer is not hard', async () => {
+  it('soft lines and light mode never hold either', async () => {
     write();
-    setCapacityFactsForTests({ ...ROOMY, claudeSessions: 10 });
-    const r = await verb('delegate', { prompt: 'Fix the theme.' });
-    expect(r.json).toMatchObject({ error: 'held', reason: 'machine', hard: false, closeSessions: 1 });
-    expect(commands()).toHaveLength(0);
-  });
-
-  it('light mode on holds', async () => {
-    write();
-    setCapacityFactsForTests(ROOMY);
+    setCapacityFactsForTests({ ...ROOMY, claudeSessions: 30, availMemGb: 0.5, diskFreeGb: 12, swapUsedGb: 7, swapTotalGb: 8 });
     mkdirSync(join(process.env.HOME!, '.dreamcontext'), { recursive: true });
     writeFileSync(join(process.env.HOME!, '.dreamcontext', 'agent-ui.json'), JSON.stringify({ lightMode: 'on' }));
-    const r = await verb('delegate', { prompt: 'Fix the theme.' });
-    expect(r.json).toMatchObject({ error: 'held', reason: 'machine' });
-    expect((r.json.reasons as Array<{ limit: string }>).map((x) => x.limit)).toEqual(['light']);
+    expect((await verb('delegate', { prompt: 'Fix the theme.' })).status).toBe(200);
   });
 
-  it('room: the child starts; null facts never hold alone (fail open)', async () => {
-    write();
-    setCapacityFactsForTests(ROOMY);
-    expect((await verb('delegate', { prompt: 'Fix the theme.' })).status).toBe(200);
+  it('null facts start too', async () => {
     write();
     setCapacityFactsForTests({ availMemGb: 9, diskFreeGb: null, load1: 1, totalMemGb: 16, swapUsedGb: null, swapTotalGb: null, claudeSessions: null, heavySteps: null });
     expect((await verb('delegate', { prompt: 'Fix the settings.' })).status).toBe(200);
   });
 
-  it('ten parallel delegates start at most 8: the cap check and the in-flight count are one step (end review r1)', async () => {
+  it(`${MAX_LIVE_CHILDREN + 2} parallel delegates on an overloaded machine start exactly ${MAX_LIVE_CHILDREN}: the cap check and the in-flight count are one step`, async () => {
     write();
-    // A big machine, so only the cap can hold (in-flight calls count as sessions too).
-    // A cold measurement takes time: every call waits on it together, as on a real machine.
-    setCapacityFactsForTests({ ...ROOMY, totalMemGb: 64, claudeSessions: 1 }, { delayMs: 30 });
-    let n = 0;
+    // The cap is the only hold, even on the owner's reading. A cold measurement takes time.
+    setCapacityFactsForTests(OWNER_READING, { delayMs: 30 });
     answer = { ok: true, result: { sessionId: CHILD_SID } };
-    const rs = await Promise.all(Array.from({ length: 10 }, (_, i) => verb('delegate', { prompt: `Job ${i}.` }).then((r) => { n++; return r; })));
-    expect(n).toBe(10);
-    expect(rs.filter((r) => r.json.error === 'held').length).toBe(2);
-    expect(commands().length).toBe(8);
+    const rs = await Promise.all(Array.from({ length: MAX_LIVE_CHILDREN + 2 }, (_, i) => verb('delegate', { prompt: `Job ${i}.` })));
+    const held = rs.filter((r) => r.json.error === 'held');
+    expect(held.length).toBe(2);
+    for (const r of held) expect(r.json).toMatchObject({ reason: 'cap', max: MAX_LIVE_CHILDREN });
+    expect(commands().length).toBe(MAX_LIVE_CHILDREN);
   });
 
-  it('a burst within the facts\' minute counts the children it just started (end review r1)', async () => {
-    const now = Date.now();
-    const kid = (i: number) => [`k-${i}`, { sessionId: `k-${i}`, brief: '', adopted: false, startedAt: now - 1000 }];
-    write({ children: Object.fromEntries([kid(1), kid(2)]) });
-    // 16 GB -> room for 9 sessions; ps saw 8 a moment ago, and two children started since.
-    setCapacityFactsForTests({ ...ROOMY, claudeSessions: 8 });
-    const r = await verb('delegate', { prompt: 'One more.' });
-    expect(r.json).toMatchObject({ error: 'held', reason: 'machine' });
-    write({ children: Object.fromEntries([kid(1)]) });
-    expect((await verb('delegate', { prompt: 'One more.' })).status).toBe(200);
-  });
-
-  it('the cap still answers reason cap', async () => {
+  it('the cap answers reason cap, keeps the job in the pool, and names the number', async () => {
     fillCap();
     setCapacityFactsForTests(ROOMY);
     const r = await verb('delegate', { prompt: 'One more.' });
-    expect(r.json).toMatchObject({ error: 'held', reason: 'cap' });
+    expect(r.json).toMatchObject({ error: 'held', reason: 'cap', kept: true, live: MAX_LIVE_CHILDREN, max: MAX_LIVE_CHILDREN });
+    expect(String(r.json.message)).toContain(`at most ${MAX_LIVE_CHILDREN}`);
+    expect(r.json.hard).toBeUndefined();
+    expect(r.json.reasons).toBeUndefined();
+    expect(commands()).toHaveLength(0);
+  });
+
+  it('super state shows the machine as information: its facts, the lines crossed (notes), and the cap', async () => {
+    write();
+    setCapacityFactsForTests(OWNER_READING);
+    const st = result(await verb('state'));
+    expect(st.limits).toEqual({ maxChildren: MAX_LIVE_CHILDREN });
+    expect(st.machine).toMatchObject({ swapUsedGb: 18.5, claudeSessions: 25 });
+    expect((st.machine as { notes: string[] }).notes).toEqual(machineNotes(machineRoom(OWNER_READING, { lightMode: false })));
+    setCapacityFactsForTests(ROOMY);
+    expect((result(await verb('state')).machine as { notes: string[] }).notes).toEqual([]);
   });
 });
 

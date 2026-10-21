@@ -1,11 +1,11 @@
 /**
  * The machine signal (orchestration plan r5 D11, built by the parking task): swap, RAM and
- * the machine-wide `claude` count, and `machineRoom()` — one pure function for the Super
- * Agent's delegate hold and the idle-chat park sweep.
+ * the machine-wide `claude` count, and `machineRoom()` — one pure function for the idle-chat
+ * park sweep and the information notes of `super state` (it never holds a delegate).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  countClaudeSessions, machineRoom, parseProcMeminfoSwap, parseSwapUsage, readCapacityFacts, resetCapacityForTests,
+  countClaudeSessions, machineNotes, machineRoom, parseProcMeminfoSwap, parseSwapUsage, readCapacityFacts, resetCapacityForTests,
   type CapacityDeps, type CapacityFacts,
 } from '../../src/lib/super/capacity.js';
 
@@ -96,5 +96,22 @@ describe('machineRoom', () => {
     expect(mac.ok).toBe(true);
     expect(mac.reasons.map((r) => r.limit)).toEqual(['swapUnknown']);
     expect(machineRoom(blind, { platform: 'linux' }).reasons).toEqual([]);
+  });
+});
+
+describe('machineNotes (information for super state, never a hold)', () => {
+  const ok: CapacityFacts = { availMemGb: 6, diskFreeGb: 80, load1: 1, totalMemGb: 16, swapUsedGb: 1, swapTotalGb: 4, claudeSessions: 3 };
+  it('a quiet machine has no notes', () => {
+    expect(machineNotes(machineRoom(ok, { platform: 'darwin' }))).toEqual([]);
+  });
+  it('one short fact per line crossed, soft and hard alike; an unreadable swap adds none', () => {
+    expect(machineNotes(machineRoom({ ...ok, claudeSessions: 12, swapUsedGb: 3.8, diskFreeGb: 12, availMemGb: 1.5 }, { lightMode: true }))).toEqual([
+      '12 Claude sessions are open on this machine (about 10 fit its RAM)',
+      'swap is 95 % full (line 90 %)',
+      '12 GB disk free (line 15 GB)',
+      '1.5 GB memory free (line 2 GB)',
+      'light mode is on',
+    ]);
+    expect(machineNotes(machineRoom({ ...ok, swapUsedGb: null, swapTotalGb: null }, { platform: 'darwin' }))).toEqual([]);
   });
 });
