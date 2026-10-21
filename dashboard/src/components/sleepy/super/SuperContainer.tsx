@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile';
 import { useI18n } from '../../../context/I18nContext';
@@ -20,6 +20,7 @@ import { InsightCard } from './InsightCard';
 import { toneOfStatus } from './superHandover';
 import { KindTile, ResolvedTitle, TaskPageHead } from './SuperTiles';
 import { LAYOUT } from './handoverMotion';
+import { useLiveSession } from './liveSession';
 import type { CardPlan } from './superLayout';
 
 export const KIND_GLYPH: Record<Container['kind'], string> = {
@@ -31,21 +32,12 @@ export function whiteboardPath(slug: string): string | null {
   return /^[a-z0-9][a-z0-9-]{0,80}$/.test(slug) ? `_dream_context/whiteboards/${slug}/${slug}.excalidraw.md` : null;
 }
 
-/**
- * Re-render on the child's session events at most once a frame (a token storm costs one
- * render per frame, never one per token). The card reads the live session; 0 requests.
- */
-export function useLiveSession(session: ChatSession | undefined): void {
-  const [, force] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => {
-    if (!session) return undefined;
-    let raf = 0;
-    const off = session.subscribe(() => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => { raf = 0; force(); });
-    });
-    return () => { off(); if (raf) cancelAnimationFrame(raf); };
-  }, [session]);
+export { useLiveSession } from './liveSession';
+
+/** What a card's FRAME draws from its chat: the glow and tone (the status) and whether closing
+ *  it offers "end when done". A token changes none of it; the tile's own line is the tile's. */
+export function frameKeyOf(session: ChatSession | undefined): string {
+  return `${chatStatus(session).kind}|${session?.hasLiveWork() ? 1 : 0}`;
 }
 
 export function chatStatus(session: ChatSession | undefined): SessionStatusInfo {
@@ -115,7 +107,10 @@ export interface SuperContainerProps extends SuperCardActions {
 export function SuperContainer(props: SuperContainerProps) {
   const { container: c, plan, pending, session } = props;
   const { t } = useI18n();
-  useLiveSession(c.kind === 'chat' ? session : undefined);
+  // The frame follows only its chat's status (frameKeyOf); the tile and the large card follow
+  // the session's every change themselves (liveSession.ts).
+  const liveChat = c.kind === 'chat' ? session : undefined;
+  useLiveSession(liveChat, () => frameKeyOf(liveChat));
   const status = c.kind === 'chat' ? chatStatus(session) : null;
   const floating = plan.where === 'float';
   const large = plan.where === 'half' || plan.where === 'present' || plan.where === 'sheet';

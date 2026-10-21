@@ -488,6 +488,11 @@
 }
 .super-card-frame[data-where='float'][data-super-tone],
 .super-panel-tile[data-super-tone] { --tone-ring: 45%; }
+/* A floating tile is its own layout and paint island: a streaming child changes its doing-line
+   many times a second, and without this every change laid out the whole stage (measured,
+   scripts/verify/super-jank.mjs). The clip is a fixed box that already clips (overflow hidden),
+   so nothing it draws moves; its own border, shadow and focus ring are outside the containment. */
+.super-card-frame[data-where='float'] > .super-card-clip { contain: strict; }
 .super-tile {
   position: relative;
   flex: 1 1 auto;

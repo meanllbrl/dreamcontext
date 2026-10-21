@@ -5,6 +5,7 @@ import type { SuperChild } from '../../../lib/superTypes';
 import type { SessionStatusInfo, SessionStatusKind } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
 import { useSpinSlot } from './spinSlots';
+import { useLiveSession } from './liveSession';
 import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, modelChip, toneOfStatus, type DoingLine } from './superHandover';
 
 /**
@@ -34,6 +35,8 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
     const timer = window.setInterval(force, pollMs(30_000));
     return () => window.clearInterval(timer);
   }, []);
+  // Its own lines follow the session (the frame around it follows only the status).
+  useLiveSession(session, () => cardKeyOf(session, tall));
 
   const model = session?.getModel();
   const doing = session?.busy && model ? doingOf(model.items) : null;
@@ -94,6 +97,8 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
     const timer = window.setInterval(force, pollMs(30_000));
     return () => window.clearInterval(timer);
   }, []);
+  // Re-rendered only when what the tile shows from the session changed (liveSession.ts).
+  useLiveSession(session, () => cardKeyOf(session, false));
   const model = session?.getModel();
   const doing = session?.busy && model ? doingOf(model.items) : null;
   const line = doing ? doingText(t, doing) : (model ? lastLineOf(model.items) : '');
@@ -159,6 +164,21 @@ export function StatusRing({ kind, size = 18 }: { kind: SessionStatusKind; size?
       )}
     </svg>
   );
+}
+
+/** What a chat's tile (or, `tall`, its large card) draws from the live session, as one string:
+ *  a token that does not change the doing-line, the last lines, the background count, the clock
+ *  start or the model re-renders nothing. */
+export function cardKeyOf(session: ChatSession | undefined, tall: boolean): string {
+  const model = session?.getModel();
+  if (!model) return '';
+  const doing = session?.busy ? doingOf(model.items) : null;
+  const bg = backgroundOf(model.subAgents);
+  return [
+    doing ? `${doing.verb}\u0001${doing.subject}` : lastLineOf(model.items),
+    tall ? lastLinesOf(model.items, 4).join('\u0001') : '',
+    bg.shells, bg.agents, session?.busy ? model.turnStartedAt ?? 0 : 0, session?.model ?? '', session?.effort ?? '',
+  ].join('\u0002');
 }
 
 /** A child's model chip: its live session's spawn values (what its composer shows), else what the

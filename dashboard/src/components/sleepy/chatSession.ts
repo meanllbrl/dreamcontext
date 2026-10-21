@@ -453,6 +453,9 @@ export interface ChatSession {
    *  Only the pane can see them all (teammates come from a poll), so it reports this through
    *  {@link ChatSession.setAgentsWorking}; the tab and dock read it as `working`. */
   agentsWorking: boolean;
+  /** Not on screen: garaged, or its pane's overlay folded (AgentSurface's placement pass sets it).
+   *  Turning it OFF fires the subscribers once, so a pane that held its renders while hidden
+   *  (chat/hiddenRenderGate.ts) catches up before it paints. */
   minimized: boolean;
   capabilities: string[];
   model: string;
@@ -2873,6 +2876,20 @@ export function createChatSession(
     try { ws.close(); } catch { /* already closing */ }
     try { container.remove(); } catch { /* already detached */ }
   }
+
+  // `minimized` as an accessor: shown again (true -> false) fires the subscribers, so a pane
+  // whose renders were held while hidden draws its current state in the same placement pass.
+  let minimizedFlag = false;
+  Object.defineProperty(session, 'minimized', {
+    enumerable: true,
+    configurable: true,
+    get: () => minimizedFlag,
+    set: (v: boolean) => {
+      const shown = minimizedFlag && !v;
+      minimizedFlag = !!v;
+      if (shown && !disposed) renderFlush.flush();
+    },
+  });
 
   // A resumed conversation replays its transcript into `conv.history` (fire-and-forget —
   // an empty/missing transcript just leaves history empty, exactly like a fresh session).
