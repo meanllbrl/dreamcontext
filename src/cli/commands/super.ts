@@ -69,21 +69,32 @@ export function registerSuperCommand(program: Command): void {
     .description('The project\'s Super Agent: delegate to child chats, arrange their cards, answer the queue (only from the Super Agent chat)');
 
   s.command('state')
-    .description('Children (status, brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
+    .description('Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
     .action(() => run('state', {}));
 
-  s.command('delegate')
-    .description('Start a child chat in THIS project and open its card; returns its session id')
-    .requiredOption('--prompt <text>', 'The child\'s first message, complete and self-contained')
-    .option('--brief <line>', 'The one-line reminder its card shows')
+  const job = (c: Command): Command => c
+    .option('--brief <line>', 'The one-line reminder its row and card show')
     .option('--mode <mode>', 'basic | plan | develop', 'basic')
     .option('--model <id>', 'Model id or alias')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
     .option('--worktree <repo>', 'Give it its own worktree of this linked repo, on branch super/<slug>')
     .option('--slug <slug>', 'The worktree and branch name (a-z, 0-9, -)')
     .option('--base <ref>', 'The commit the worktree starts from (default: the repo\'s HEAD)')
-    .action((o: { prompt: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string }) =>
-      run('delegate', { prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base }));
+    .option('--task <slug>', 'Link its row to this task (state/<slug>.md)');
+  type JobOpts = { prompt?: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string; task?: string };
+  const jobBody = (o: JobOpts) => ({ prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base, task: o.task });
+
+  job(s.command('delegate')
+    .description('Start a child chat in THIS project and open its card; returns its session id. At the cap the job is kept in the pool')
+    .option('--prompt <text>', 'The child\'s first message, complete and self-contained')
+    .option('--from <pool id>', 'Start a job the pool kept (`super pool list`), exactly as it was kept')
+    .option('--force', 'With --from: start a job whose earlier start went unconfirmed')
+    .option('--succeeds <child>', 'It takes this child\'s work over (a context handoff): the card, brief and task pass to it, and the old child is ended (told to stop first if busy)'))
+    .action((o: JobOpts & { from?: string; force?: boolean; succeeds?: string }) => {
+      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds });
+      if (!o.prompt) return usage('give --prompt, or --from <pool id>');
+      return run('delegate', { ...jobBody(o), succeeds: o.succeeds });
+    });
 
   s.command('open <kind> <ref>')
     .description(`Open a floating card: ${KINDS}. ref = a session id, a slug, a URL or a project path`)
@@ -134,12 +145,13 @@ export function registerSuperCommand(program: Command): void {
     .action((targets: string[]) => run('ungroup', { targets }));
 
   s.command('brief <child> <line>')
-    .description('Set the one-line reminder a child\'s card shows')
-    .action((child: string, line: string) => run('brief', { child, line }));
+    .description('Set the job row\'s line (doing / next) its card shows too')
+    .option('--task <slug>', 'Link the row to this task (state/<slug>.md)')
+    .action((child: string, line: string, o: { task?: string }) => run('brief', { child, line, task: o.task }));
 
   s.command('read <child>')
-    .description('The end of a child\'s transcript (bounded), fenced as the child\'s text')
-    .option('--bytes <n>', 'How much of the end to read (max 262144)')
+    .description('A child\'s last reply, whole (tool calls skipped), fenced as the child\'s text')
+    .option('--bytes <n>', 'Instead: the raw end of its transcript, this many bytes (max 262144)')
     .action((child: string, o: { bytes?: string }) => run('read', { child, bytes: o.bytes ? Number(o.bytes) : undefined }));
 
   s.command('answer <child> <requestId> [choice...]')
@@ -206,10 +218,34 @@ export function registerSuperCommand(program: Command): void {
     .description('Mark an item handled (never a permission)')
     .action((item: string) => run('queue-done', { item }));
 
+  const p = s.command('pool').description('Jobs kept for later (the job list\'s Havuz)');
+  job(p.command('add')
+    .description('Keep a job for later; start it with `delegate --from <id>` when a slot frees')
+    .requiredOption('--prompt <text>', 'The job\'s first message, complete and self-contained (at most 16 KB)')
+    .option('--note <line>', 'Your note on its row'))
+    .action((o: JobOpts & { note?: string }) => run('pool-add', { ...jobBody(o), note: o.note }));
+  p.command('remove <id>')
+    .description('Drop a job from the pool')
+    .action((id: string) => run('pool-remove', { id }));
+  p.command('list')
+    .description('The pooled jobs (title, note, task, held, maybe started)')
+    .action(() => run('pool-list', {}));
+
+  s.command('ask <text>')
+    .description('Ask the owner YOUR own question (one at a time); its answer is his next message to you')
+    .option('--options <a|b>', 'Up to 4 short answers (each at most 24 characters), separated by |')
+    .action((text: string, o: { options?: string }) =>
+      run('ask', { text, ...(o.options ? { options: o.options.split('|').map((x) => x.trim()) } : {}) }));
+
   s.command('merge <children...>')
     .description('Merge the branch each child\'s worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)')
     .requiredOption('--into <topic>', 'The integration branch name (a-z, 0-9, -)')
     .action((children: string[], o: { into: string }) => run('merge', { children, into: o.into }));
+
+  s.command('clean')
+    .description('Give disk back: remove ended children\'s worktrees that are merged and clean (branches kept) and this repo\'s own test temp folders older than a day. Chrome and system files are never touched')
+    .option('--dry-run', 'Only list what would go, with sizes')
+    .action((o: { dryRun?: boolean }) => run('clean', { dryRun: o.dryRun === true }));
 
   const w = s.command('worktree').description('Your children\'s worktrees');
   w.command('list')

@@ -47,11 +47,11 @@ questions** section, not in Findings.
 
 ```markdown
 ## Executive Summary
-<≤120 words. Lead with the verdict in one sentence (PASS / CONCERNS / FAIL).
+<≤120 words. Lead with the verdict in one sentence (PASS / CONCERNS / FAIL / PARTIAL).
 Then 2–3 lines naming the top concerns. The main agent reads only this section.>
 
 ## Verdict
-PASS | CONCERNS | FAIL
+PASS | CONCERNS | FAIL | PARTIAL
 
 ## Findings
 
@@ -90,6 +90,8 @@ Omit empty severity sections entirely (don't write "None.").
 - `PASS` — no Critical, no Major, ≤2 Minor.
 - `CONCERNS` — no Critical, some Major OR many Minor.
 - `FAIL` — at least one Critical.
+- `PARTIAL` — the turn budget ran out before every scoped file was read (§10). Its
+  findings count at their severity; the files it never read are listed, not judged.
 
 The **main agent** re-applies this mapping across all specialist reports to
 produce the final verdict, which uses different labels:
@@ -97,6 +99,10 @@ produce the final verdict, which uses different labels:
 - `READY_TO_MERGE` — every specialist returned `PASS`.
 - `NEEDS_ATTENTION` — any specialist returned `CONCERNS`, none returned `FAIL`.
 - `NEEDS_WORK` — any specialist returned `FAIL`.
+
+A `PARTIAL` is never read as `PASS` and never as `FAIL` on its own: its Critical
+or Major findings stand, and the files under `Not reviewed:` go to a fresh copy of
+the same specialist scoped to those files only. The verdict waits for that re-run.
 
 ---
 
@@ -141,3 +147,19 @@ writing too much per issue. Pick the top findings by severity and ship those.
   specialist's job. Cross-domain leakage is what the main agent dedupes.
 - **Cite the skill** in the finding when a rule it loaded backs the call
   (e.g. "Per `engineering:firebase-cloud-functions` §retries, …").
+
+---
+
+## 10. Turn budget: return PARTIAL, never run out silently
+
+Your frontmatter `maxTurns` is a hard stop: the run ends mid-read and the caller
+gets no verdict at all. Count your tool calls. When you have 2 turns left, stop
+reading and emit the §4 report now, with what you have:
+
+- `## Verdict` is `PARTIAL` (or `FAIL` if you already hold a Critical).
+- Findings so far, at their real severity.
+- A final `Not reviewed:` line listing every scoped file you did not read in full,
+  one path each. The caller re-runs a fresh specialist on exactly that list.
+
+A report with findings and a `Not reviewed:` list is useful. No report is not.
+

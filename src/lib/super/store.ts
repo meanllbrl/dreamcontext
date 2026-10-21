@@ -3,11 +3,13 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
-  CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_ENDED_CHILDREN, MAX_PRESENT,
-  MAX_OWNER_TEXT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, TEAM_JOB_ID_RE, VIEW_MODES, defaultShape,
+  CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_ENDED_CHILDREN,
+  MAX_PRESENT, MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
+  POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, defaultShape,
   SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
-  type SuperChild, type SuperContainer, type SuperNote, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView,
+  type SuperChild, type SuperContainer, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView,
 } from './types.js';
+import { parseJob, promptHash } from './jobs.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 
 /**
@@ -30,7 +32,9 @@ import { isSafeAutomationSlug } from '../agents/slot.js';
  */
 
 export const SUPER_STATE_REL = join('state', '.super-agent.json');
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
+/** The read cap; a write that would exceed it is refused before the rename (plan r4 D9), so no
+ *  write can ever leave a record the next read refuses. */
+export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
 export class SuperStoreRefused extends Error {
   constructor(public readonly reason: 'symlink' | 'outside' | 'too_large', message: string) {
@@ -160,6 +164,7 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     };
     const endedAt = finite(c.endedAt);
     if (endedAt !== undefined) child.endedAt = endedAt;
+    if (typeof c.succeededBy === 'string' && okSessionId(c.succeededBy) && c.succeededBy !== key) child.succeededBy = c.succeededBy;
     if (c.mode === 'basic' || c.mode === 'plan' || c.mode === 'develop') child.mode = c.mode;
     if (typeof c.model === 'string' && /^[A-Za-z0-9._[\]-]{1,60}$/.test(c.model)) child.model = c.model;
     if (typeof c.effort === 'string' && /^(low|medium|high|xhigh|max)$/.test(c.effort)) child.effort = c.effort;
@@ -170,6 +175,13 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
         child.branch = c.branch;
       }
     }
+    // The job list's row (plan r4): every field to its own list or pattern, or dropped.
+    if (oneOf(CHILD_ROWS, c.row)) child.row = c.row;
+    const rowAt = finite(c.rowAt);
+    if (rowAt !== undefined) child.rowAt = rowAt;
+    if (c.settling === true) child.settling = true;
+    if (typeof c.task === 'string' && TASK_SLUG_RE.test(c.task)) child.task = c.task;
+    if (child.row === 'stuck' && oneOf(STUCK_REASONS, c.stuckReason)) child.stuckReason = c.stuckReason;
     out[key] = child;
   }
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that
@@ -179,7 +191,7 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
   return out;
 }
 
-function sanitizeQueue(raw: unknown): SuperQueueItem[] {
+function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
   if (!Array.isArray(raw)) return [];
   const out: SuperQueueItem[] = [];
   const ids = new Set<string>();
@@ -190,13 +202,23 @@ function sanitizeQueue(raw: unknown): SuperQueueItem[] {
     if (!oneOf(QUEUE_KINDS, q.kind) || !oneOf(QUEUE_STATES, q.state)) continue;
     const createdAt = finite(q.createdAt);
     if (createdAt === undefined) continue;
-    const requestId = typeof q.requestId === 'string' && /^[A-Za-z0-9_.:-]{1,120}$/.test(q.requestId) ? q.requestId : undefined;
+    // The super agent's own question (`super ask`) is always about the super session itself, and
+    // answers no child request (plan r4 D7).
+    const isAsk = q.kind === 'ask';
+    if (isAsk && q.sessionId !== session) continue;
+    const requestId = !isAsk && typeof q.requestId === 'string' && /^[A-Za-z0-9_.:-]{1,120}$/.test(q.requestId) ? q.requestId : undefined;
     // A permission is rendered only from the child's own tool name and input (D7): the super
     // agent's words never caption one, so none survive on a permission item.
-    const ownerText = q.kind === 'permission' ? undefined : cap(q.ownerText, MAX_OWNER_TEXT);
     // An approval item exists only for its member; one naming none (or a hostile one) is dropped.
     const member = q.kind === 'approval' && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
     if (q.kind === 'approval' && !member) continue;
+    const rawText = q.kind === 'permission' ? undefined : cap(q.ownerText, MAX_OWNER_TEXT);
+    const ownerText = rawText && isAsk ? askLine(rawText) : rawText;
+    // An ask's options are re-validated whole: one refused option drops them all (the bar then
+    // offers Reply only), never a cut one.
+    const options = isAsk ? cleanAskOptions(q.options) ?? [] : [];
+    const batch = typeof q.batch === 'string' && QUEUE_ID_RE.test(q.batch) ? q.batch : undefined;
+    const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? Math.min(v, 9) : 0);
     ids.add(q.id);
     out.push({
       id: q.id, sessionId: q.sessionId, kind: q.kind, state: q.state, createdAt,
@@ -204,8 +226,12 @@ function sanitizeQueue(raw: unknown): SuperQueueItem[] {
       ...(requestId ? { requestId } : {}),
       ...(ownerText ? { ownerText } : {}),
       ...(q.kind === 'ended' && typeof q.brief === 'string' ? { brief: stripControls(cap(q.brief, MAX_BRIEF) ?? '') } : {}),
-      // How many delivered turns ended with the item unsettled (wave 2, M1).
-      ...(typeof q.attempts === 'number' && Number.isInteger(q.attempts) && q.attempts > 0 ? { attempts: Math.min(q.attempts, 9) } : {}),
+      // How many delivered turns ended with the item unsettled (wave 2, M1), and how many process
+      // exits ended a turn that carried it (plan r4 D10).
+      ...(count(q.attempts) ? { attempts: count(q.attempts) } : {}),
+      ...(count(q.exits) ? { exits: count(q.exits) } : {}),
+      ...(batch ? { batch } : {}),
+      ...(options.length ? { options } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest.
@@ -252,6 +278,61 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
   return out.sort((a, b) => b.startedAt - a.startedAt).slice(0, MAX_TEAM_JOBS);
 }
 
+/**
+ * The pool (plan r4 D9): every row read back through the verbs' own job parser, a prompt of at
+ * most MAX_POOL_PROMPT bytes, at most MAX_POOL rows and MAX_POOL_BYTES serialized (the oldest
+ * rows win: a row past either cap is dropped). A worktree a `--from` may have opened travels
+ * with its branch, under the same rule as a child's.
+ */
+function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SuperPoolItem[] = [];
+  const ids = new Set<string>();
+  let bytes = 2;
+  for (const p of raw) {
+    if (out.length >= MAX_POOL) break;
+    if (!isRecord(p) || typeof p.id !== 'string' || !POOL_ID_RE.test(p.id) || ids.has(p.id)) continue;
+    const createdAt = finite(p.createdAt);
+    if (createdAt === undefined) continue;
+    if (typeof p.prompt !== 'string' || Buffer.byteLength(p.prompt, 'utf-8') > MAX_POOL_PROMPT) continue;
+    const parsed = parseJob({ ...p, brief: p.title });
+    if ('error' in parsed) continue;
+    const j = parsed.job;
+    const note = stripControls(cap(p.note, MAX_BRIEF) ?? '').trim();
+    const row: SuperPoolItem = {
+      id: p.id, title: j.title, prompt: j.prompt, hash: promptHash(j.prompt), createdAt,
+      ...(note ? { note } : {}),
+      ...(j.task ? { task: j.task } : {}),
+      ...(j.mode !== 'basic' ? { mode: j.mode } : {}),
+      ...(j.model ? { model: j.model } : {}),
+      ...(j.effort ? { effort: j.effort } : {}),
+      ...(j.worktree ? { worktree: j.worktree } : {}),
+      ...(j.slug ? { slug: j.slug } : {}),
+      ...(j.base ? { base: j.base } : {}),
+      ...(p.held === true ? { held: true } : {}),
+      ...(p.maybeStarted === true ? { maybeStarted: true } : {}),
+    };
+    if (row.maybeStarted && acceptableWorktree(p.startedIn, opts) && typeof p.startedBranch === 'string' && SUPER_BRANCH_RE.test(p.startedBranch)) {
+      row.startedIn = p.startedIn;
+      row.startedBranch = p.startedBranch;
+    }
+    const size = Buffer.byteLength(JSON.stringify(row), 'utf-8') + 1;
+    if (bytes + size > MAX_POOL_BYTES) break;
+    bytes += size;
+    ids.add(p.id);
+    out.push(row);
+  }
+  return out;
+}
+
+/** Batch ids of the turns that render in full: unique, newest MAX_OWNER_BATCHES kept. */
+function sanitizeOwnerBatches(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const b of raw) if (typeof b === 'string' && QUEUE_ID_RE.test(b) && !out.includes(b)) out.push(b);
+  return out.slice(-MAX_OWNER_BATCHES);
+}
+
 /** A record read from disk (or built by a caller), with everything hostile dropped. */
 export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): SuperState {
   const base = emptySuperState();
@@ -278,9 +359,11 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     groups,
     view: sanitizeView(raw.view, containers),
     children,
-    queue: sanitizeQueue(raw.queue),
+    queue: sanitizeQueue(raw.queue, session),
     notes,
     away: { since: since ?? null, events: events !== undefined && events > 0 ? Math.floor(events) : 0 },
+    pool: sanitizePool(raw.pool, opts),
+    ownerBatches: sanitizeOwnerBatches(raw.ownerBatches),
     team: sanitizeTeam(raw.team),
   };
 }
@@ -346,8 +429,11 @@ export async function readSuperState(contextRoot: string, opts: SanitizeOpts = {
 
 async function writeSuperState(contextRoot: string, state: SuperState): Promise<void> {
   const path = await assertContained(contextRoot);
+  const text = `${JSON.stringify(state, null, 2)}\n`;
+  // Measured in UTF-8 bytes, as the read's `st.size` is: never write what the read refuses.
+  if (Buffer.byteLength(text, 'utf-8') > MAX_FILE_BYTES) throw new SuperStoreRefused('too_large', 'this change would make .super-agent.json too large; nothing was written');
   const tmp = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-  await fsp.writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
+  await fsp.writeFile(tmp, text, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
   try {
     await fsp.rename(tmp, path);
   } catch (err) {

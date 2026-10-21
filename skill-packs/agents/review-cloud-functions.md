@@ -26,7 +26,7 @@ tools:
   - Glob
   - Grep
   - Bash
-maxTurns: 12
+maxTurns: 24
 skills:
   - engineering
   - dreamcontext-agent-core
@@ -136,6 +136,11 @@ verify a finding, but do not read the entire repository.
    ```
 6. **Cite the cloud-functions skill** in findings when a rule backs the call.
 7. **Emit your report** in the format from `REVIEWER_SHARED.md` §4.
+
+
+**Turn budget (24):** with 2 turns left, stop reading and emit the report with
+verdict `PARTIAL` and a `Not reviewed:` list (`REVIEWER_SHARED.md` §10). Running
+out with no report leaves the caller waiting on nothing.
 
 ## Output
 

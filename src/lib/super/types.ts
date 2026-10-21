@@ -98,6 +98,17 @@ export interface SuperChild {
   /** `super/<slug>`, beside `worktree`. */
   branch?: string;
   startedAt: number;
+  /** The job list's row (plan r4 D5, D6, D15): written by the SERVER from the registry, never
+   *  by an agent verb. Absent in an older record: derived from the live status until reconciled. */
+  row?: ChildRow;
+  /** When `row` last moved (epoch ms). */
+  rowAt?: number;
+  /** The 30 s settle window after a turn end is running (the list's "bitiyor" chip). */
+  settling?: boolean;
+  /** The task this job belongs to (`super brief --task`, `delegate --task`): a slug under state/. */
+  task?: string;
+  /** Why the row is `stuck`: an error turn, or a working turn silent past the stale bar. */
+  stuckReason?: StuckReason;
   /** What it runs with (`super delegate`, then `super update --mode/--model/--effort`), so
    *  `super resume` reopens it the same way. Absent = basic, the default model and effort. */
   mode?: string;
@@ -106,16 +117,32 @@ export interface SuperChild {
   /** `super end` closed it (epoch ms): no process, no tab, no card; the transcript stays and
    *  `super resume` reopens it (which clears this). Absent = a child that may be running. */
   endedAt?: number;
+  /** `super delegate --succeeds` handed its card, brief and task to this child (one job, one
+   *  owner); it is ended, and `super state` warns while it still runs. */
+  succeededBy?: string;
 }
 
 /** Ended children the record keeps (newest first); older ones drop out of it, except one that
  *  still owns a worktree (it leaves when `super worktree remove` clears it). */
 export const MAX_ENDED_CHILDREN = 30;
 
-/** `approval`: an AI Team member the super gave a job to is not approved on this machine. The
- *  server writes it (never the super agent's words, like a permission) and the owner settles it in
- *  AI Team; `super team ask` succeeding for that member, or `super queue done`, closes it. */
-export const QUEUE_KINDS = ['permission', 'question', 'idle', 'gone', 'recap', 'handover', 'ended', 'approval'] as const;
+/** A child's row in the job list. `asking` = the super agent is handling its question. */
+export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone'] as const;
+export type ChildRow = typeof CHILD_ROWS[number];
+export const STUCK_REASONS = ['error', 'stale'] as const;
+export type StuckReason = typeof STUCK_REASONS[number];
+
+/**
+ * What reaches the queue. `idle` left with plan r4 (a child's turn end updates its row and spends
+ * no super turn); an older record's idle items drop on first read. `done` = settled idle for
+ * DONE_SETTLE_MS, `stuck` = an error turn or a stale one, `ask` = the super agent's own question
+ * to the owner (`super ask`). `ended` = `super end` closed the child: born `done`, a record of
+ * its last brief, never delivered as a turn. `approval`: an AI Team member the super gave a job to
+ * is not approved on this machine. The server writes it (never the super agent's words, like a
+ * permission) and the owner settles it in AI Team; it closes once the member is approved, turned
+ * off or gone, or by `super queue done`.
+ */
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -134,6 +161,12 @@ export interface SuperQueueItem {
   createdAt: number;
   /** Delivered turns that ended with this question unsettled (server-only bookkeeping). */
   attempts?: number;
+  /** The `[super events]` turn that carried it (or, on an `ask`, the turn it was asked in). */
+  batch?: string;
+  /** An `ask`'s answers, each one line of at most MAX_ASK_OPTION characters (never cut). */
+  options?: string[];
+  /** Process exits that ended a turn carrying it (server-only, plan r4 D10). */
+  exits?: number;
   /** An `ended` item's record of the child's last brief (who and when are `sessionId` and
    *  `createdAt`). Born `done`: a record, never delivered as a turn. */
   brief?: string;
@@ -182,6 +215,35 @@ export type TeamJobStatus = typeof TEAM_JOB_STATUSES[number];
 export const MAX_TEAM_JOBS = 30;
 export const TEAM_JOB_ID_RE = /^team-[a-z0-9-]{1,35}$/;
 
+/**
+ * A job the super agent keeps for later (`super pool add`, or a `delegate` refused at the cap):
+ * the list's "Havuz". `worktree` here is the REPO to make a worktree in, as `delegate --worktree`
+ * takes it; `startedIn`/`startedBranch` name the worktree a `delegate --from` that the window did
+ * not confirm may have opened (`maybeStarted`).
+ */
+export interface SuperPoolItem {
+  id: string;
+  title: string;
+  prompt: string;
+  /** sha1 of the prompt: the same job is pooled once. */
+  hash: string;
+  note?: string;
+  task?: string;
+  mode?: string;
+  model?: string;
+  effort?: string;
+  worktree?: string;
+  slug?: string;
+  base?: string;
+  /** Kept because `delegate` hit the cap. */
+  held?: boolean;
+  /** A `delegate --from` went unconfirmed: the child may be running. */
+  maybeStarted?: boolean;
+  startedIn?: string;
+  startedBranch?: string;
+  createdAt: number;
+}
+
 /** The note a child's next OWNER message carries (D17). */
 export const SUPER_NOTES = ['handover', 'takeback'] as const;
 export type SuperNote = typeof SUPER_NOTES[number];
@@ -201,12 +263,17 @@ export interface SuperState {
   notes: Record<string, SuperNote>;
   /** The owner's absence, for the return recap (D13). */
   away: { since: number | null; events: number };
+  /** Jobs kept for later (plan r4 D9). Absent in an older record = none. */
+  pool: SuperPoolItem[];
+  /** Batch ids of event turns in which the super agent asked the owner something (`queue ask`,
+   *  `super ask`): those turns render in full. A ring of MAX_OWNER_BATCHES, never mutated after. */
+  ownerBatches: string[];
   /** Jobs given to AI Team members (`super team ask`), newest first. Absent in an older record = none. */
   team: SuperTeamJob[];
 }
 
 export function emptySuperState(): SuperState {
-  return { v: SUPER_STATE_VERSION, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children: {}, queue: [], notes: {}, away: { since: null, events: 0 }, team: [] };
+  return { v: SUPER_STATE_VERSION, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children: {}, queue: [], notes: {}, away: { since: null, events: 0 }, pool: [], ownerBatches: [], team: [] };
 }
 
 // ─── Groups (MIRRORED in the window, behaviour pinned by super-types-mirror.test.ts) ──
@@ -327,13 +394,62 @@ export const MAX_TITLE = 120;
 export const MAX_REF = 2048;
 export const MAX_OWNER_TEXT = 2000;
 export const MAX_QUEUE = 200;
+/** A child row's task link: a task slug, its file `state/<slug>.md` (checked at the verb). */
+export const TASK_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
+export const POOL_ID_RE = /^p-[a-z0-9-]{1,40}$/;
+/** The pool (plan r4 D9): rows, one prompt's UTF-8 bytes, and the pool's serialized total. */
+export const MAX_POOL = 30;
+export const MAX_POOL_PROMPT = 16_384;
+export const MAX_POOL_BYTES = 524_288;
+export const MAX_OWNER_BATCHES = 100;
+/** `super ask`: at most this many options, each at most this many characters (refused, never cut). */
+export const MAX_ASK_OPTIONS = 4;
+export const MAX_ASK_OPTION = 24;
+/** A child's turn end is "done" once it has stayed idle this long (plan r4 D5). */
+export const DONE_SETTLE_MS = 30_000;
+/** How often the stale sweep looks at working rows (plan r4 D17). */
+export const STALE_SWEEP_MS = 60_000;
+/** At most this many events go in one `[super events]` turn (plan r4 D10). */
+export const MAX_BATCH = 8;
+
+/** An `ask` text or option as one clean line: the invisible Unicode format characters
+ *  (zero-width, bidi overrides and isolates, BOM) removed, control characters made spaces. */
+export function askLine(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  // Every Unicode format character (Cf: zero-width, bidi marks and isolates, soft hyphen, BOM)
+  // goes; C0 and C1 controls become a space (security review Minor 2).
+  return raw.replace(/\p{Cf}/gu, '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** One `ask` option as stored: format characters stripped, one line, trimmed. Empty or longer
+ *  than MAX_ASK_OPTION = refused (null), never cut. */
+export function cleanAskOption(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const v = askLine(raw);
+  return v && [...v].length <= MAX_ASK_OPTION ? v : null;
+}
+
+/** An `ask`'s options, or null when any of them is refused (empty, too long, a duplicate, too many). */
+export function cleanAskOptions(raw: unknown): string[] | null {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw) || raw.length > MAX_ASK_OPTIONS) return null;
+  const out: string[] = [];
+  for (const o of raw) {
+    const v = cleanAskOption(o);
+    if (!v || out.includes(v)) return null;
+    out.push(v);
+  }
+  return out;
+}
 
 // ─── The agent's verbs (`dreamcontext super <verb>` → POST /api/super/v/:verb) ────
 
 export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
   'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
-  'end', 'resume', 'update', 'adopt', 'team-ask',
+  'pool-add', 'pool-remove', 'pool-list', 'ask',
+  'end', 'resume', 'update', 'adopt',
+  'clean', 'team-ask',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 
@@ -348,11 +464,13 @@ export const SUPER_FRAME_RESULT = 'super_command_result' as const;
 export const SUPER_FRAME_STATE = 'super_state' as const;
 export const SUPER_FRAME_EVENT = 'super_event' as const;
 
-/** The prefixes an injected super turn starts with; history replay renders them as event chips. */
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]'] as const;
+/** The prefixes an injected super turn starts with; history replay renders them as event lines.
+ *  `[super event]` stays for a transcript written before plan r4. */
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]'] as const;
 
-/** What a `super_event` frame says about the turn it opened. */
-export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover'] as const;
+/** What a `super_event` frame says about the turn it opened: `batch` since plan r4 (the other
+ *  kinds stay for replay of older transcripts). */
+export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover', 'batch'] as const;
 export type SuperEventKind = typeof SUPER_EVENT_KINDS[number];
 
 // ─── Server-side constants (wave 2; not mirrored: the window never needs them) ───

@@ -951,6 +951,10 @@ interface AgentUiSettings {
   superAgent: boolean;
   /** Park idle chats under machine load (default true). */
   parkIdleChats: boolean;
+  /** The Super Agent session's own model and effort (plan r4 D3, D12): `sonnet` / `medium` by
+   *  default, never the chat default. Mirrors dashboard/src/lib/agentSettings. */
+  superModel: string;
+  superEffort: string;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -968,6 +972,8 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   lightMode: 'auto',
   superAgent: false,
   parkIdleChats: true,
+  superModel: 'sonnet',
+  superEffort: 'medium',
 };
 
 function agentSettingsPath(): string {
@@ -1024,6 +1030,10 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     // Default-TRUE: only an explicit `false` stops parking idle chats under load
     // (src/server/chat-park.ts reads the same rule straight from the file).
     parkIdleChats: raw.parkIdleChats !== false,
+    // The super session's own pair: the spawn gates again, but an unusable value falls back to
+    // the Super Agent's default (Sonnet · medium), never to "inherit".
+    superModel: sanitizeModel(typeof raw.superModel === 'string' ? raw.superModel : null) || AGENT_UI_DEFAULTS.superModel,
+    superEffort: sanitizeEffort(typeof raw.superEffort === 'string' ? raw.superEffort : null) || AGENT_UI_DEFAULTS.superEffort,
   };
 }
 

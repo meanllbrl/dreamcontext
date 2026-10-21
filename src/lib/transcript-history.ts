@@ -170,6 +170,23 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
       continue;
     }
 
+    // A user frame written WHILE a turn ran (a steer: an owner message folded into the running
+    // turn) is not a `user` entry: MEASURED on claude 2.1.304 (2026-10-21, one real steered
+    // stream-json session), the CLI stores it as `attachment{type:'queued_command', prompt}`,
+    // `prompt` a list of text blocks (a string for cross-session messages). Replayed as what the
+    // owner typed, with the same `<`-wrapped-stub rule; an injected `[super events]` or
+    // `[delegated-session event]` turn keeps its prefix, so the window routes it as before.
+    const att = (obj as { attachment?: { type?: unknown; prompt?: unknown } }).attachment;
+    if (obj.type === 'attachment' && att && att.type === 'queued_command') {
+      const p = att.prompt;
+      const blocks = typeof p === 'string' ? [p] : Array.isArray(p)
+        ? p.map((b) => (b && typeof b === 'object' && (b as { type?: unknown }).type === 'text' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : ''))
+        : [];
+      const text = blocks.map((t) => t.trim()).filter((t) => t && !t.startsWith('<')).join('\n').trim();
+      if (text) items.push({ kind: 'user', ...(typeof obj.uuid === 'string' ? { uuid: obj.uuid } : {}), text, ...when });
+      continue;
+    }
+
     if (obj.type === 'user') {
       if (obj.isMeta === true || obj.isSynthetic === true) continue;
       const content = obj.message?.content;

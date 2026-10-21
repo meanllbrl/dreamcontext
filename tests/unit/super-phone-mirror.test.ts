@@ -6,7 +6,8 @@
  *  - the open (AC2): the phone MIRRORS the live super child, beside the window that holds it; any
  *    other phone open naming that session, and `mode=super`, is refused;
  *  - the mirror (AC3-AC5), through the REAL `startChatSession` with a mocked child: only the
- *    owner's text goes up, and it joins the desktop's own queue (the D8 hold); the window's
+ *    owner's text goes up, and it steers into the running turn at once, as the desktop's does
+ *    (plan r4 D4: no hold), keeping its origin on that path; the window's
  *    verbs, state and the CLI's prompts never come down; the owner's words show on the other
  *    surface; a signed-out device and the child's end close it.
  */
@@ -69,7 +70,7 @@ const { findLiveChat } = await import('../../src/server/routes/agent-chat-live.j
 const { _resetChatRegistry } = await import('../../src/lib/assistant/chat-registry.js');
 const { SUPER_STATE_REL, readSuperState, resetSuperIndex } = await import('../../src/lib/super/store.js');
 const { emptySuperState } = await import('../../src/lib/super/types.js');
-const { _resetSuperInbox, _superInboxFor } = await import('../../src/lib/super/inbox.js');
+const { _resetSuperInbox, _superInboxFor, isSuperEventTurn, markSuperEventTurn } = await import('../../src/lib/super/inbox.js');
 const {
   MAX_MIRRORS, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REPLACED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorCarriesLine, mirrorOwnerText, phoneLiveChats, phoneSuperOpen,
 } = await import('../../src/lib/super/phone-mirror.js');
@@ -253,21 +254,25 @@ describe('a phone mirror on the live super chat (AC2-AC5)', () => {
     await vi.waitFor(() => expect(userTexts(child)).toEqual(['what is running?']), { timeout: 10_000 });
   });
 
-  it('the phone\'s words wait out an inbox turn in the same queue as the desktop\'s (D8)', async () => {
+  it('the phone\'s words steer into a running inbox turn at once, as the desktop\'s do: no hold, no replay (plan r4 D4)', async () => {
     await record({ enabled: true });
     const { ws, child } = startSuper();
     const phone = mirror();
-    await expect(_superInboxFor(SUPER)!.deliver('[super event] item=q-1 child=c1 status=idle', 'idle', 'c1')).resolves.toBe(true);
-    ws.emit('message', JSON.stringify({ type: 'user', text: 'one (desktop)' }));
+    const ev = { kind: 'batch' as const, child: 'c1', batch: 'b-1', items: [{ item: 'q-1', child: 'c1', kind: 'done' as const }] };
+    // As the pump does: the turn it writes is an event turn until the owner speaks into it.
+    markSuperEventTurn(SUPER, true);
+    await expect(_superInboxFor(SUPER)!.deliver('[super events] batch=b-1 items=1', ev)).resolves.toBe(true);
+    expect(isSuperEventTurn(SUPER)).toBe(true);
     phone.emit('message', JSON.stringify({ type: 'user', text: 'two (phone)' }));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(userTexts(child)).toEqual(['[super event] item=q-1 child=c1 status=idle']);
-    line(child, { type: 'result' });
-    await vi.waitFor(() => expect(userTexts(child)).toHaveLength(2), { timeout: 10_000 });
-    expect(userTexts(child)[1]).toBe('one (desktop)');
-    line(child, { type: 'result' });
+    // Written before the event turn's result: folded into it, and the turn is the owner's now.
+    await vi.waitFor(() => expect(userTexts(child)).toEqual(['[super events] batch=b-1 items=1', 'two (phone)']), { timeout: 10_000 });
+    expect(isSuperEventTurn(SUPER)).toBe(false);
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'one (desktop)' }));
     await vi.waitFor(() => expect(userTexts(child)).toHaveLength(3), { timeout: 10_000 });
-    expect(userTexts(child)[2]).toBe('two (phone)');
+    expect(userTexts(child)[2]).toBe('one (desktop)');
+    line(child, { type: 'result' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(userTexts(child)).toHaveLength(3);
   });
 
   it('the window\'s verbs and state and the CLI\'s prompts stay on the window; the stream and event chips come down', async () => {
@@ -280,7 +285,7 @@ describe('a phone mirror on the live super chat (AC2-AC5)', () => {
     const token = tokenOfSession(SUPER)!;
     expect(token).toBeTruthy();
     pushFrame(token, { subtype: 'super_state', state: { enabled: true } });
-    await _superInboxFor(SUPER)!.deliver('[super event] item=q-2 child=c1 status=idle', 'idle', 'c1');
+    await _superInboxFor(SUPER)!.deliver('[super events] batch=b-2 items=1', { kind: 'batch', child: 'c1', batch: 'b-2', items: [{ item: 'q-2', child: 'c1', kind: 'done' }] });
     pushFrame(token, { subtype: 'super_command', id: 'c1', verb: 'delegate', args: {} });
     const phoneTypes = sent(phone).map((f) => (f.type === '_meta' ? `_meta:${f.subtype}` : f.type));
     expect(phoneTypes).toContain('assistant');
@@ -404,14 +409,16 @@ describe('a mirror\'s lifetime (review r1)', () => {
     expect(branch).toMatch(/rejectUpgrade\(socket, 503\)/);
   });
 
-  it('a phone frame with no window attached is never held for an account switch, even after a D8 hold', async () => {
+  it('a phone frame keeps its origin on the steered write path: with no window attached it is never held for an account switch', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../../src/server/routes/agent-chat.ts', import.meta.url), 'utf-8');
-    // The mark rides on the frame (it survives heldOwnerFrames and a successor's replay) and
-    // `detached` is read when the gate reaches the frame.
+    // The mark rides on the frame (it survives the switch gate and a successor's replay) and
+    // `detached` is read when the gate reaches the frame. The owner-frame hold is gone (plan r4
+    // D4) and must not come back to carry it.
     expect(src).toMatch(/const frame = Buffer\.from\(raw, 'utf-8'\);\s*mirrorFrames\.add\(frame\);\s*onWsMessage\(frame\);/);
     expect(src).toMatch(/const fromMirror = typeof raw !== 'string' && mirrorFrames\.has\(raw\);\s*switchGate = switchGate\.then\(\(\) => \(fromMirror && detached \? Promise\.resolve\(false\) : maybeSwitchAccount\(text\)\)/);
     expect(src).not.toMatch(/mirrorFrameUnheld/);
+    expect(src).not.toMatch(/heldOwnerFrames|releaseOneHeldOwnerFrame|stashHeldOwnerTexts|takeHeldOwnerTexts/);
   });
 
   it('the take-back closes the phone mirrors even if the window keeps the parked child', async () => {

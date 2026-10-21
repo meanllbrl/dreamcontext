@@ -12,6 +12,7 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
+import { publishSuperEventContext } from './super/superJobsStore';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -23,6 +24,7 @@ import {
 import { deriveSessionStatus, rollupProject, type ProjectRollup, type SessionRow } from './agentStatus';
 import { PaneFragment, type PaneActions } from './PaneFragment';
 import { usePaneFocusGlide } from './usePaneFocusGlide';
+import { superRestorePlan, type SuperHold } from './superRestore';
 import { AgentTabs, type PaneVM } from './AgentTabs';
 import { createTabDragStore, type TabDropTarget } from './tabDrag';
 import { MobileSessionDrawer } from './MobileSessionDrawer';
@@ -281,6 +283,8 @@ interface SavedMeta {
   active?: boolean;
   /** Mirrors `SessionMeta.titleByAgent` — the tab's agent named it and may rename it. */
   titleByAgent?: boolean;
+  /** GET-response-ONLY: a super child a relaunch must not resume, and why (superRestore.ts). */
+  superHold?: SuperHold;
 }
 
 /** The whole `GET /api/agent/sessions` body: the roster plus the two surface-level facts that
@@ -1076,8 +1080,9 @@ export function AgentSurface() {
         // row still named "Terminal N" (a stale shell saved before we stopped persisting
         // them; auto-title only ever renames AGENTS, so that default name is a reliable
         // shell marker). What's left is agents + chats.
+        // An ended super child is not a tab any more (superRestore.ts).
         const stored = Array.isArray(res.sessions)
-          ? res.sessions.filter((m) => m.kind !== 'shell' && !/^Terminal \d+$/.test((m.title ?? '').trim()))
+          ? res.sessions.filter((m) => m.kind !== 'shell' && !/^Terminal \d+$/.test((m.title ?? '').trim()) && superRestorePlan(m.superHold) !== 'drop')
           : [];
         // Mac mode's phone brings back only the chats the Mac is running now, adopted below with
         // no spawn; every other stored tab stays a closed chat (rosterRehydrate.ts `phoneRestorable`).
@@ -1171,6 +1176,18 @@ export function AgentSurface() {
             // UUID). A shell has nothing to resume, and auto-spawning shells on launch is
             // surprising — so shells (and legacy tabs without a conversation id) restore
             // DORMANT, spawning a fresh session only on an explicit Resume click.
+            // A card-closed, parked or gone super child comes back DORMANT on its own
+            // conversation: Resume reopens it, nothing runs until then (superRestore.ts).
+            if ((kind === 'agent' || kind === 'chat') && m.sessionId && superRestorePlan(m.superHold) === 'dormant') {
+              return {
+                id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, dormant: true,
+                ...(kind === 'chat' ? { mode: knownChatMode(m.mode) ?? DEFAULT_CHAT_MODE } : {}),
+                ...(m.agent ? { agent: m.agent } : {}),
+                // The roster keeps no model, effort or account: Resume uses the defaults for those.
+                ...(m.superHold === 'parked' ? { parked: { at: Date.now(), transport: kind === 'chat' ? 'chat' as const : 'agent' as const } } : {}),
+                ...(m.titleByAgent ? { titleByAgent: true } : {}),
+              };
+            }
             if ((kind === 'agent' || kind === 'chat') && m.sessionId) {
               // A saved CHAT tab reopens under the mode it was last in — a Develop session that
               // survives a relaunch is still a Develop session. `knownChatMode` drops anything
@@ -1508,6 +1525,8 @@ export function AgentSurface() {
     // composer deliberately does NOT revoke them on unmount, because a respawn unmounts a pane
     // whose chips are still wanted.
     if (kind === 'chat' && claudeId) dropScratch(claudeId);
+    // The super chat's event-line context lives as long as its conversation (superJobsStore).
+    if (kind === 'chat' && claudeId) publishSuperEventContext(claudeId, null);
     // A conversation closed here is closed: it no longer rides along as an unjudged stored tab.
     if (claudeId) unrestoredRef.current = unrestoredRef.current.filter((m) => m.sessionId !== claudeId);
 
@@ -1547,12 +1566,15 @@ export function AgentSurface() {
     // A PARKED tab comes back as what it was (a chat stays a chat, in its mode, on its model,
     // effort and account), never as whatever the Agent screen preference says today.
     // Keyed on the TRANSPORT it ran as, so a parked automation tab (display kind) comes back too.
+    // A super child the relaunch held dormant (superRestore.ts) carries its saved mode and
+    // agent with no `parked`: it too comes back as the chat it was, under its own bypass.
     const parked = meta.parked;
-    if (parked?.transport === 'chat') bindChatAgent(meta.claudeId, meta.agent ?? '');
+    const asChat = parked ? parked.transport === 'chat' : meta.kind === 'chat' && !!meta.mode;
+    if (asChat) bindChatAgent(meta.claudeId, meta.agent ?? '');
     const s = meta.kind === 'shell'
       ? spawn(meta.bypass, undefined, false, 'shell')
-      : parked?.transport === 'chat'
-        ? spawn(meta.bypass, meta.claudeId, true, 'chat', '', parked.model ?? '', true, '', false, parked.effort ?? '', true, meta.mode ?? DEFAULT_CHAT_MODE, parked.account ?? '')
+      : asChat
+        ? spawn(meta.bypass, meta.claudeId, true, 'chat', '', parked?.model ?? '', true, '', false, parked?.effort ?? '', true, meta.mode ?? DEFAULT_CHAT_MODE, parked?.account ?? '')
         : spawn(meta.bypass, meta.claudeId, true, parked ? parked.transport : claudeKind);
     // 'automation' is a DISPLAY kind decoupled from transport (see hydration above and
     // `openAutomationRunChat` below) — preserve it rather than letting the spawned session's
@@ -3182,7 +3204,10 @@ export function AgentSurface() {
     if (!canSpawn) return null;
     const fresh = superFreshRef.current === session;
     superFreshRef.current = null;
-    const s = spawn(false, session, !fresh, 'chat', '', '', true, '', false, '', false, 'super') as ChatSession;
+    // Its own default model and effort (plan r4 D3, D12: Sonnet at medium, Settings -> Chat ->
+    // Super Agent), like the notch Assistant's, never the chat default.
+    const { superModel, superEffort } = agentSettingsRef.current;
+    const s = spawn(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super') as ChatSession;
     // Registered in the roster (so it is portaled and homed) but NEVER in a pane.
     const meta: SessionMeta = { id: s.id, title: 'Claude', kind: 'chat', bypass: s.bypass, claudeId: session, mode: 'super' };
     sessionListRef.current = [...sessionListRef.current, meta];
@@ -4177,6 +4202,9 @@ export function AgentSurface() {
       // An open group (or Others) on the Super Agent's stage owns Esc: it closes the panel and
       // gives focus back to its tile (GroupPanel). Same presence test, same registration order.
       if (document.querySelector('.super-group-panel')) return;
+      // The job list open under the bar owns Esc the same way: it closes the list (JobList), never
+      // the stage, and its listener is added when it opens, after this one (plan r4 AC7).
+      if (document.querySelector('.super-job-list')) return;
       // A card held on that stage owns Esc too: the drag's own listener cancels it, but it is
       // added at the press, after this one, so its stopPropagation cannot reach us.
       if (document.querySelector('.super-surface[data-dragging]')) return;

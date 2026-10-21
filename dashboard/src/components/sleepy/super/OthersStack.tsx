@@ -8,7 +8,7 @@ export interface OthersItem {
   title: string;
   kind: ContainerKind | 'group';
   /** A chat's (or a group's) glow state, so an asking card in Others is still obvious at a glance. */
-  status?: 'working' | 'asking' | 'idle';
+  status?: 'working' | 'asking' | 'idle' | 'ended';
 }
 
 /**
@@ -51,7 +51,7 @@ export function OthersStack({ items, rect, open, onToggle, stackRef }: {
         </span>
         <span className="super-others-name">{t('super.others.name')}</span>
         <span className="super-others-dots" aria-hidden>
-          {items.slice(0, 4).map((it) => <span key={it.id} className="super-others-dot" data-status={it.status} />)}
+          {items.slice(0, 4).map((it) => <span key={it.id} className="super-others-dot" data-status={it.status} data-super-tone={it.status} />)}
         </span>
         <span className="super-others-count">{items.length}</span>
       </button>

@@ -2078,7 +2078,7 @@ export function createChatSession(
     if (ev.kind === 'super-event') {
       applyAndNotify(() => {
         const item: ChatUserItem = {
-          kind: 'user', id: `super-${id}-${++superEventSeq}`, text: superEventText(ev.eventKind, ev.child),
+          kind: 'user', id: `super-${id}-${++superEventSeq}`, text: superEventText(ev.eventKind, ev.child, ev.batch),
           ts: Date.now(), superEvent: ev.eventKind,
         };
         conv = { ...conv, items: [...conv.items, item] };
@@ -2246,15 +2246,26 @@ export function createChatSession(
     });
   }
 
+  /** Tell the server which queued texts the owner took back (see ClientControl `queue_dropped`). */
+  function noteQueueDropped(texts: string[]): void {
+    if (texts.length) sendControl({ type: 'queue_dropped', texts: texts.slice(0, 50) });
+  }
+
   function pauseQueue(): void {
-    if (conv.queued.length > 0) applyAndNotify(() => { conv = { ...conv, queuePaused: true }; });
+    if (conv.queued.length > 0) {
+      noteQueueDropped(conv.queued.map((q) => q.text));
+      applyAndNotify(() => { conv = { ...conv, queuePaused: true }; });
+    }
   }
 
   function editQueued(qid: string, text: string): void {
+    const was = conv.queued.find((q) => q.id === qid)?.text;
+    if (was !== undefined && was !== text) noteQueueDropped([was]);
     applyAndNotify(() => { setQueued(queue.editQueued(conv.queued, qid, text)); });
   }
 
   function removeQueued(qid?: string): void {
+    noteQueueDropped(conv.queued.filter((q) => qid === undefined || q.id === qid).map((q) => q.text));
     applyAndNotify(() => { setQueued(queue.removeQueued(conv.queued, qid)); });
   }
 

@@ -5,9 +5,11 @@
  * data, never drive the dashboard through raw HTTP or WebSocket. Short: it rides every turn.
  */
 import { describe, it, expect } from 'vitest';
-import {
-  SUPER_MODE_HEADING, SUPER_ORCHESTRATION_GUIDE, modeBriefing, superBriefing,
-} from '../../src/server/chat-modes.js';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { SUPER_MODE_HEADING, SUPER_ORCHESTRATION_GUIDE, modeBriefing, superBriefing } from '../../src/server/chat-modes.js';
+import { BATCH_LAST_LINE, OWNER_VOICE, superBatchText, superEventText } from '../../src/lib/super/inbox.js';
+import { emptySuperState } from '../../src/lib/super/types.js';
 import { modeFromSystemPrompt } from '../../src/server/chat-mode-drift.js';
 
 describe('superBriefing', () => {
@@ -25,12 +27,24 @@ describe('superBriefing', () => {
     expect(brief).toContain('dreamcontext super brief <child>');
   });
 
-  it('names the queue rules: answer only when settled, ONE escalation, permissions never', () => {
+  it('names the queue rules: answer only when settled, ONE escalation, permissions never, batched events', () => {
     expect(brief).toContain('dreamcontext super answer <child> <question id>');
     expect(brief).toContain('escalate ONE clear question');
     expect(brief).toContain('dreamcontext super queue ask <item>');
     expect(brief).toContain('Permission requests never reach you: the owner answers them.');
-    for (const prefix of ['[super event]', '[super handover]', '[super recap]']) expect(brief).toContain(prefix);
+    for (const prefix of ['[super events]', '[super handover]', '[super recap]']) expect(brief).toContain(prefix);
+    expect(brief).toContain('only a question, done, gone or stuck reaches\nyou, batched, and nothing while a question is open with the owner');
+    expect(brief).toContain('He sees an event turn as one line: write him nothing there unless he wrote to you.');
+  });
+
+  it('names the job list verbs: the row line, the pool, --from, --task, the own question (plan r4)', () => {
+    expect(brief).toContain('row in the job list');
+    expect(brief).toContain('dreamcontext super brief <child> "<line>"');
+    expect(brief).toContain('super pool add');
+    expect(brief).toContain('super delegate --from <id>');
+    expect(brief).toContain('check\n  `super state` first');
+    expect(brief).toContain('--task <slug>');
+    expect(brief).toContain('dreamcontext super ask "<question>" --options "a|b"');
   });
 
   it('names capacity and worktrees: 8 children, held, the machine thresholds, merge, never push', () => {
@@ -52,19 +66,107 @@ describe('superBriefing', () => {
     expect(modeFromSystemPrompt(`# Surface: dreamcontext Chat\n\n${brief}`)).toBe('super');
   });
 
+  // The owner's field rules of 2026-10-21 (his language, no jargon, an estimate, rows kept from
+  // the first turn, no reply to a repeat) are an explicit allowance on top of the 15 %, and so is
+  // the child lifecycle that came with main (super end/resume/update/adopt, the Done line).
+  const OWNER_RULES_2026_10_21 = 400;
+  const CHILD_LIFECYCLE_2026_10_21 = 500;
+  // The AI Team line (`super team ask`, 2026-10-21): the owner's ask that the Super Agent gives the
+  // team's members work too.
+  const AI_TEAM_2026_10_21 = 250;
+  it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle and AI Team line, with or without a guide', () => {
+    for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
+      expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + AI_TEAM_2026_10_21);
+    }
+  });
+});
+
+/** The owner's voice (plan r4 D13): one subject, the result first, 2-4 short sentences, no ids,
+ *  paths or commands unless asked, one question at the end, irreversible actions named. */
+describe('how the super agent talks to the owner', () => {
+  const brief = superBriefing();
+
+  it('the briefing has the voice section, worded for every user', () => {
+    expect(brief).toContain('## How you talk to the owner');
+    expect(brief).toContain('Write in his language, for someone juggling many things who must not lose the thread');
+    for (const rule of [
+      'one\nsubject per message', 'the result or what you need from him first', '2-4 short sentences',
+      'ids,\nhashes, paths and commands only when he asks', 'never switch subject mid-message', 'at most one\nquestion, at the end',
+      'Name any irreversible or outward action (push, merge, delete, a message sent) in plain words',
+    ]) expect(brief).toContain(rule);
+  });
+
+  it('the owner\'s field rules of 2026-10-21: his language, no jargon, an estimate, rows from the first turn, no reply to a repeat', () => {
+    for (const rule of [
+      'Write in his language', 'no inside jargon ("its own copy", not worktree)',
+      'Anything\nstill running gets an estimate of when it is ready', 'Write nothing between tool calls',
+      'nothing\nfor an event that only renamed a job or repeats a result he already has',
+      'with 3\n  or more jobs, set every row in your first turn and update each row an event touches',
+    ]) expect(brief).toContain(rule);
+    for (const rule of ['in his language and plain words', 'inside jargon', 'an estimate of when anything still running is ready']) expect(OWNER_VOICE).toContain(rule);
+  });
+
+  it('every event last line, the handover and the recap carry the same rules', () => {
+    for (const rule of ['one subject', 'the result or what you need from him first', '2-4 short sentences', 'no ids, hashes, paths, commands or inside jargon unless he asks', 'at most one question and only at the end', 'in plain words']) {
+      expect(OWNER_VOICE).toContain(rule);
+    }
+    const s = { ...emptySuperState(), session: 'sup', enabled: true };
+    const handover = superEventText('/tmp/acme/_dream_context', s, { id: 'q-h', sessionId: 'sup', kind: 'handover', state: 'pending', createdAt: 1 });
+    const recap = superEventText('/tmp/acme/_dream_context', s, { id: 'q-r', sessionId: 'sup', kind: 'recap', state: 'pending', createdAt: 1 });
+    const batch = superBatchText('/tmp/acme/_dream_context', s, [{ id: 'q-d', sessionId: 'c1', kind: 'done', state: 'pending', createdAt: 1 }], 'b-1');
+    for (const text of [handover, recap, batch]) expect(text).toContain(OWNER_VOICE);
+    // A steered owner message is answered normally; the no-message rule is about the events only.
+    expect(BATCH_LAST_LINE).toContain('If the owner writes to you during this turn, answer him normally');
+    expect(BATCH_LAST_LINE).toContain('the no-message rule covers only your notes about the events');
+  });
+
+  it('the shipped text never names a condition', () => {
+    const files: string[] = [];
+    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx|md)$/.test(f)) files.push(p); } };
+    for (const d of ['src', 'skill', 'dashboard/src']) walk(d);
+    const hits = files.filter((f) => /\bADHD\b/i.test(readFileSync(f, 'utf-8')));
+    expect(hits).toEqual([]);
+  });
+});
+
+/** The orchestration slot (plan r4 D20): one bullet, only while a guide is set. */
+describe('the orchestration guide slot', () => {
+  const BULLET = '- Before you split work, read the orchestration guide: ';
+
+  it('ships empty: no bullet, no guide path', () => {
+    expect(SUPER_ORCHESTRATION_GUIDE).toBeNull();
+    const b = superBriefing(null);
+    expect(b).toBe(superBriefing());
+    expect(b).not.toContain('orchestration guide');
+    expect(superBriefing('  ')).toBe(b);
+  });
+
+  it('a set guide is exactly one bullet, the first in "Lead, do not do"', () => {
+    const b = superBriefing('docs/orchestration.md');
+    const line = `${BULLET}docs/orchestration.md.`;
+    expect(b.split(line).length - 1).toBe(1);
+    expect(b).toContain(`## Lead, do not do\n${line}\n- Delegate real work`);
+    expect(line).not.toMatch(/[\r\n]/);
+  });
+
+  it('a guide with a line break is refused; both states keep exactly one # Mode: heading', () => {
+    expect(() => superBriefing('a\nb')).toThrow();
+    for (const b of [superBriefing(null), superBriefing('docs/orchestration.md')]) {
+      expect(b.match(/^# Mode:/gm)).toHaveLength(1);
+    }
+  });
+});
+
+describe('the child lifecycle and the installed guide path', () => {
+  const brief = superBriefing();
+
   it('names the child lifecycle: end, resume, update, adopt (the owner\'s chats only on his word)', () => {
     expect(brief).toContain('dreamcontext super end <child>');
     expect(brief).toContain('super resume <child>');
     expect(brief).toContain('super update <child> --model|--effort|--mode');
     expect(brief).toContain('super adopt <chat>');
     expect(brief).toContain('The owner\'s own chats take `--force`, only when he asks.');
-  });
-
-  it('stays short', () => {
-    // 2600 -> 2800 (2026-10-21): the child lifecycle line (`super update`, `super adopt`).
-    // 2800 -> 3000 (2026-10-21): the AI Team line (`super team ask`), the owner's ask that the
-    // Super Agent gives the team's members work too.
-    expect(brief.length).toBeLessThan(3000);
   });
 
   describe('the orchestration slot', () => {
@@ -94,9 +196,6 @@ describe('superBriefing', () => {
     });
 
     it('adds only the one pointer line when set (the job-list task\'s length rule replaces the cap)', () => {
-      expect(superBriefing(null).length).toBeLessThan(3000);
-      // The base cap plus the pointer line: 3000 -> 3200 (2026-10-21) with the AI Team line.
-      expect(superBriefing(PATH).length).toBeLessThan(3200);
       expect(superBriefing(PATH).length - superBriefing(null).length).toBe(bullet.length + 1);
     });
   });

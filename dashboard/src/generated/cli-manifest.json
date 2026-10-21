@@ -3068,12 +3068,30 @@
       ]
     },
     {
+      "path": "super ask",
+      "desc": "Ask the owner YOUR own question (one at a time); its answer is his next message to you",
+      "args": [
+        "<text>"
+      ],
+      "valueFlags": [
+        "--options"
+      ]
+    },
+    {
       "path": "super brief",
-      "desc": "Set the one-line reminder a child's card shows",
+      "desc": "Set the job row's line (doing / next) its card shows too",
       "args": [
         "<child>",
         "<line>"
+      ],
+      "valueFlags": [
+        "--task"
       ]
+    },
+    {
+      "path": "super clean",
+      "desc": "Give disk back: remove ended children's worktrees that are merged and clean (branches kept) and this repo's own test temp folders older than a day. Chrome and system files are never touched",
+      "args": []
     },
     {
       "path": "super close",
@@ -3084,17 +3102,20 @@
     },
     {
       "path": "super delegate",
-      "desc": "Start a child chat in THIS project and open its card; returns its session id",
+      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap the job is kept in the pool",
       "args": [],
       "valueFlags": [
         "--prompt",
+        "--from",
+        "--succeeds",
         "--brief",
         "--mode",
         "--model",
         "--effort",
         "--worktree",
         "--slug",
-        "--base"
+        "--base",
+        "--task"
       ]
     },
     {
@@ -3151,6 +3172,41 @@
       ]
     },
     {
+      "path": "super pool",
+      "desc": "Jobs kept for later (the job list's Havuz)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super pool add",
+      "desc": "Keep a job for later; start it with `delegate --from <id>` when a slot frees",
+      "args": [],
+      "valueFlags": [
+        "--prompt",
+        "--note",
+        "--brief",
+        "--mode",
+        "--model",
+        "--effort",
+        "--worktree",
+        "--slug",
+        "--base",
+        "--task"
+      ]
+    },
+    {
+      "path": "super pool list",
+      "desc": "The pooled jobs (title, note, task, held, maybe started)",
+      "args": []
+    },
+    {
+      "path": "super pool remove",
+      "desc": "Drop a job from the pool",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
       "path": "super present",
       "desc": "Presentation: you move left, 1-4 cards fill the right; --off returns to the floating cards",
       "args": [
@@ -3185,7 +3241,7 @@
     },
     {
       "path": "super read",
-      "desc": "The end of a child's transcript (bounded), fenced as the child's text",
+      "desc": "A child's last reply, whole (tool calls skipped), fenced as the child's text",
       "args": [
         "<child>"
       ],
@@ -3230,7 +3286,7 @@
     },
     {
       "path": "super state",
-      "desc": "Children (status, brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
+      "desc": "Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
       "args": []
     },
     {

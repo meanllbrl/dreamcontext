@@ -1,0 +1,41 @@
+/* ── An event turn as one line in the centre chat (plan r4 D2, D8) ─────────────────
+   Short by design: it never pushes the owner's conversation up. Tokens only. */
+.super-event-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 4px 0;
+  padding: 4px 10px;
+  min-height: 28px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+.super-event-line[data-full='true'] { background: none; padding-left: 0; }
+.super-event-line-names { color: var(--color-text); font-weight: 600; min-width: 0; }
+.super-event-line-name {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.super-event-line-name:hover { text-decoration: underline; }
+.super-event-line-more, .super-event-line-cmds { color: var(--color-text-tertiary); }
+.super-event-line-toggle {
+  margin-left: auto;
+  padding: 0 8px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  cursor: pointer;
+}
+.super-event-line-toggle:hover { border-color: var(--color-border-hover); color: var(--color-text); }

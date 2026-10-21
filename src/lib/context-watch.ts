@@ -31,6 +31,7 @@ import { ensureGitignoreEntries } from './gitignore.js';
 import { isSafeSessionId } from './transcript-locate.js';
 import { readSetupConfig, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
 import { HANDOFF_FIELDS } from './handoff-readiness.js';
+import { superHandoffContext, superNudgeLine } from './super/handoff-task.js';
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -589,8 +590,11 @@ export function maybeNudge(
 
     const tone = nudgeTone(ctx, cfg);
     writeNudgeState(contextRoot, sessionId, ctx, tone);
-    const active = activeTaskForNudge(contextRoot);
-    return renderNudge(ctx, cfg, active?.slug ?? null, tone);
+    // The Super Agent hands off into its own coordination task, never a child's (super/handoff-task.ts).
+    const sup = superHandoffContext(contextRoot, [tab, sessionId]);
+    const active = sup ? sup.task : activeTaskForNudge(contextRoot);
+    const text = renderNudge(ctx, cfg, active?.slug ?? null, tone);
+    return sup ? `${text}\n${superNudgeLine(sup)}` : text;
   } catch {
     return null;
   }
