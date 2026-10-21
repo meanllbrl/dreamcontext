@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { listVaults } from '../vaults.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS, IDLE_DEBOUNCE_MS, eventText } from '../assistant/delegations.js';
+import { BROWSER_IDLE_MS, settleChild } from './proactive.js';
 import {
   STARTING_GRACE_MS, activityOf, chatTopic, getChat, onChatChange, type ChatChange, type ChatEntry,
 } from '../assistant/chat-registry.js';
@@ -12,7 +13,7 @@ import {
   updateSuperState, type SanitizeOpts,
 } from './store.js';
 import {
-  MAX_CONTAINERS, OWNER_LEASE_MS, READOPT_GRACE_MS, SUPER_FRAME_STATE,
+  MAX_CONTAINERS, MAX_FLOAT, OWNER_LEASE_MS, READOPT_GRACE_MS, SUPER_FRAME_STATE, floatCount,
   type QueueKind, type SuperContainer, type SuperEventKind, type SuperQueueItem,
   type SuperState, type SuperStateView,
 } from './types.js';
@@ -84,14 +85,16 @@ export function containerIdFor(kind: string, ref: string): string {
   return `${kind}-${createHash('sha1').update(ref).digest('hex').slice(0, 12)}`;
 }
 
-/** A child's `chat` card, appended when there is room (the 13th is never added): tall,
- *  floating, placed automatically (plan-r8 F1). */
+/** A child's `chat` card: tall, placed automatically (plan-r8 F1). Floating while the stage has
+ *  room (MAX_FLOAT top-level items), in Others when it is full; only a record holding
+ *  MAX_CONTAINERS cards adds none (null). */
 export function ensureChatContainer(s: SuperState, sessionId: string, title?: string): string | null {
   const have = s.containers.find((c) => c.kind === 'chat' && c.ref === sessionId);
   if (have) return have.id;
   if (s.containers.length >= MAX_CONTAINERS) return null;
   const id = containerIdFor('chat', sessionId);
-  s.containers.push({ id, kind: 'chat', ref: sessionId, shape: 'tall', place: 'float', ...(title ? { title } : {}) });
+  const place = floatCount(s) < MAX_FLOAT ? 'float' : 'others';
+  s.containers.push({ id, kind: 'chat', ref: sessionId, shape: 'tall', place, ...(title ? { title } : {}) });
   return id;
 }
 
@@ -555,6 +558,9 @@ async function pumpOnce(key: string): Promise<void> {
 
 const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const goneTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** A child's live browser card goes to Others BROWSER_IDLE_MS after it settled idle (S2). Born
+ *  after the idle debounce; dies on any other status, on a new browser call, on gone. */
+const browserTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const regraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let unsubscribe: (() => void) | null = null;
 
@@ -617,6 +623,38 @@ async function onAsking(root: string, entry: ChatEntry): Promise<void> {
   if (added && !q.isPermission) void pumpSuper(root);
 }
 
+/** The server's own card edits for a child (jarvis S1-S3), written only when they change
+ *  something. */
+export async function settleSuperChild(root: string, sid: string, how: 'idle' | 'gone'): Promise<void> {
+  const cur = await readSuperState(root, superSanitizeOpts());
+  const probe: SuperState = JSON.parse(JSON.stringify(cur));
+  if (!settleChild(probe, sid, how, Date.now())) return;
+  await writeSuper(root, (s) => { settleChild(s, sid, how, Date.now()); });
+}
+
+/** Browser idle delay; the verify run shortens it (`DREAMCONTEXT_SUPER_BROWSER_IDLE_MS`). */
+function browserIdleMs(): number {
+  const n = Number(process.env.DREAMCONTEXT_SUPER_BROWSER_IDLE_MS);
+  return Number.isFinite(n) && n > 0 ? n : BROWSER_IDLE_MS;
+}
+
+function armBrowserIdle(root: string, sid: string): void {
+  clearTimer(browserTimers, sid);
+  const t = setTimeout(() => {
+    browserTimers.delete(sid);
+    const now = getChat(sid);
+    if (!now || now.status !== 'idle' || !superIndex(root).enabled) return;
+    void track(settleSuperChild(root, sid, 'idle'));
+  }, browserIdleMs());
+  t.unref?.();
+  browserTimers.set(sid, t);
+}
+
+/** A child called its browser again: its idle clock starts over. */
+export function noteChildBrowserCall(sid: string): void {
+  clearTimer(browserTimers, sid);
+}
+
 function armIdle(root: string, sid: string): void {
   clearTimer(idleTimers, sid);
   const t = setTimeout(() => {
@@ -624,6 +662,7 @@ function armIdle(root: string, sid: string): void {
     const now = getChat(sid);
     if (!now || now.status !== 'idle' || !superIndex(root).enabled) return;
     void track(addEvent(root, sid, 'idle'));
+    armBrowserIdle(root, sid);
   }, IDLE_DEBOUNCE_MS);
   t.unref?.();
   idleTimers.set(sid, t);
@@ -636,7 +675,11 @@ function armGone(root: string, sid: string, ms: number, map: Map<string, ReturnT
     if (isLive(getChat(sid))) return;
     const idx = superIndex(root);
     if (!idx.enabled || !idx.children.has(sid)) return;
+    clearTimer(browserTimers, sid);
     void track(addEvent(root, sid, 'gone'));
+    // Really ended (re-checked above): its cards settle (S3). A mode switch or a server restart
+    // re-registers the same id first, so it never reaches here.
+    void track(settleSuperChild(root, sid, 'gone'));
   }, ms);
   t.unref?.();
   map.set(sid, t);
@@ -653,7 +696,7 @@ function onChange({ entry }: ChatChange): void {
   const root = superRootOfChild(sid);
   if (!root) return;
   if (entry.status !== 'gone') { clearTimer(goneTimers, sid); clearTimer(regraceTimers, sid); }
-  if (entry.status !== 'idle') clearTimer(idleTimers, sid);
+  if (entry.status !== 'idle') { clearTimer(idleTimers, sid); clearTimer(browserTimers, sid); }
   if (!superIndex(root).enabled) return;
   // Failures are swallowed by `track` (a write that could not land: the next change retries).
   switch (entry.status) {
@@ -713,7 +756,7 @@ export async function _superInboxDrained(): Promise<void> {
 
 /** Tests only. */
 export function _resetSuperInbox(): void {
-  for (const m of [idleTimers, goneTimers, regraceTimers]) { for (const t of m.values()) clearTimeout(t); m.clear(); }
+  for (const m of [idleTimers, goneTimers, regraceTimers, browserTimers]) { for (const t of m.values()) clearTimeout(t); m.clear(); }
   for (const r of retry.values()) clearTimeout(r.t);
   retry.clear();
   inboxes.clear();

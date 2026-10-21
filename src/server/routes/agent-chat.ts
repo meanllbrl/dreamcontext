@@ -3,13 +3,16 @@ import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { join, dirname, basename, extname } from 'node:path';
+import { join, dirname, basename, extname, resolve } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import {
   writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
   realpathSync, openSync, readSync, closeSync, lstatSync, fstatSync, constants as fsConstants,
 } from 'node:fs';
-import { sendJson, sendError, isForeignOriginUpgrade } from '../middleware.js';
+import { sendJson, sendError, isForeignOriginUpgrade, parseJsonBody } from '../middleware.js';
+import { ownedLoopbackPorts } from '../owned-ports.js';
+import { createSuperSignalObserver } from '../super-signals.js';
+import { readLoopbackGrants, setLoopbackGrant } from '../../lib/loopback-grants.js';
 import { serveMedia } from '../media.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { authFor, deviceIdHash, macHandsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
@@ -28,7 +31,7 @@ import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import { modeBriefing, type ChatMode } from '../chat-modes.js';
-import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote } from '../chat-mode-drift.js';
+import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote, superBriefState } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
 import { autoModeSettings } from '../../lib/auto-mode-rules.js';
 import { clearSessionCheckout, enterSessionCheckout, exitSessionCheckout } from '../../lib/session-cwd.js';
@@ -73,7 +76,7 @@ import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { clearSuperNote, peekSuperNote, superIndex, superRootOfChild } from '../../lib/super/store.js';
-import { SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
+import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_BRIEF_TEXT, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
 import {
   attachSuperInbox, markSuperEventTurn, stashHeldOwnerTexts, superSocketAttached, superTurnEnded, takeHeldOwnerTexts,
 } from '../../lib/super/inbox.js';
@@ -89,7 +92,7 @@ import {
 } from './agent-chat-live.js';
 import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOutcome } from '../chat-park.js';
 import {
-  isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
+  isLoopback, isSameOriginStrict, isCrossSiteRequest, requireLocalDesktop, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
   claudeConversationExists, redeemPromptToken, findFirstTranscriptPath,
 } from './agent-spawn-shared.js';
@@ -958,9 +961,16 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       if (!isDesktop() || !isLoopback(req)) { rejectUpgrade(socket, 403); return; }
       // …and only from the app's own pages: a website the owner visits is loopback too.
       if (isForeignOriginUpgrade(req)) { rejectUpgrade(socket, 403); return; }
+      // …and only from THIS origin, port included, under a loopback Host (T0): an approved
+      // dev server on another loopback port, or a rebinding page, is not the app.
+      if (!isSameOriginStrict(req)) { rejectUpgrade(socket, 403); return; }
       if (!assistantExists()) { rejectUpgrade(socket, 400); return; }
     } else {
-      const trusted = isLoopback(req) || isTrustedRemotePeer(req, opts.networkToken ?? null);
+      // A loopback peer must be this very origin (T0: a page on another loopback port could
+      // otherwise drive a `bypass=1` session); a tailnet peer keeps its own three-fact gate.
+      const trusted = isLoopback(req)
+        ? isSameOriginStrict(req)
+        : isTrustedRemotePeer(req, opts.networkToken ?? null);
       if (!isDesktop() || !trusted) { rejectUpgrade(socket, 403); return; }
     }
 
@@ -1627,10 +1637,16 @@ export function startChatSession(
   let modeNoteArg: string[] = [];
   let cleanupModeNote = () => { /* nothing written */ };
   const tmpFiles: string[] = [];
+  // The Super Agent's briefing revision (K9): a new session carries it in its system prompt; a
+  // resumed one learns from its transcript whether this revision still has to reach it.
+  const superBrief = { inPrompt: true, due: false };
   if (resumeTarget && !isAssistant && !card) {
     try {
       const transcript = findFirstTranscriptPath([resumeTarget]);
-      const state = transcript ? heldModeFromTranscript(readFileSync(transcript, 'utf-8')) : null;
+      const jsonl = transcript ? readFileSync(transcript, 'utf-8') : '';
+      // No transcript found for a resume: nothing proves the revision arrived, so it rides once.
+      if (isSuper) Object.assign(superBrief, transcript ? superBriefState(jsonl, SUPER_BRIEF_REV) : { inPrompt: false, due: true });
+      const state = transcript ? heldModeFromTranscript(jsonl) : null;
       const sources = modeNoteSources(state, mode);
       if (state && sources.length) {
         const brief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
@@ -1869,6 +1885,12 @@ export function startChatSession(
    *  meanwhile are held and written after that turn's `result`, as their own turn. */
   let superEventTurnOpen = false;
   const heldOwnerFrames: Array<Buffer | string> = [];
+  /** Owner texts sent spoken (`voice: true`) not yet written to the CLI. */
+  const spokenTexts = new Set<string>();
+  /** A spoken owner message was written and its turn's `result` has not come yet. */
+  let voiceArmed = false;
+  /** The last owner text written (`lastSentText`) was spoken: a limit-refused resend keeps it. */
+  let lastSentSpoken = false;
   /** Set while a held frame is handed to `onWsMessage`, so it is not held a second time. */
   let releasingHeld = false;
   /** The request id of the interrupt last written, so ITS `control_response` can be told apart
@@ -2080,6 +2102,8 @@ export function startChatSession(
   const closeTurn = (): void => {
     turnsInFlight = 0;
     outstandingAsks.clear();
+    // Every frame written before this result is answered by it (the CLI folds them in one turn).
+    if (voiceArmed) { voiceArmed = false; sendMeta({ subtype: 'voice_turn_end' }); }
     if (live) markTurnEnded(live);
     // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
     reannounceSwitch();
@@ -2116,6 +2140,7 @@ export function startChatSession(
       // A refused opening prompt is the worst one to lose: the user never typed it into a
       // composer they could scroll back to.
       lastSentText = submitPrompt;
+      lastSentSpoken = false;
       turnProgressed = false;
       registry?.userSent(submitPrompt);
       child.stdin.write(JSON.stringify({
@@ -2165,12 +2190,23 @@ export function startChatSession(
     // happened (the note it delivered, nothing written meanwhile).
     const note = registry && !isSuper && !text.startsWith('/') ? peekSuperNote(chatRegistryId) : null;
     if (note) content.push({ type: 'text', text: SUPER_NOTE_TEXT[note] });
+    // The Super Agent's briefing changed since its session began (K9): this owner message
+    // carries the new sections, once; again only after a compaction drops them.
+    const brief = isSuper && superBrief.due && !text.startsWith('/');
+    if (brief) content.push({ type: 'text', text: SUPER_BRIEF_TEXT });
+    // A spoken message to the Super Agent (K1): its answer is read aloud. The window reads
+    // only what streams between `voice_turn` and `voice_turn_end`; an event turn never arms it.
+    const voice = isSuper && spokenTexts.delete(text);
+    if (voice) content.push({ type: 'text', text: OWNER_VOICE_TEXT });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     if (note && wrote) {
       void clearSuperNote(superRootOfChild(chatRegistryId) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }
+    if (brief && wrote) superBrief.due = false;
+    if (voice && wrote && !voiceArmed) { voiceArmed = true; sendMeta({ subtype: 'voice_turn' }); }
+    lastSentSpoken = voice && wrote;
   };
 
   const sendMeta = (frame: Record<string, unknown>): void => {
@@ -2180,6 +2216,9 @@ export function startChatSession(
   };
 
   // The live browser view: watches the override's CDP port once the agent calls a browser tool.
+  // The Super Agent's stage reads every non-super chat's output for a dev-server pin or a
+  // live browser (jarvis S1, S2); a chat that is not a super child returns on the first check.
+  const superSignals = isSuper ? null : createSuperSignalObserver(chatRegistryId, browserOverride?.server ?? null);
   const browserMirror = browserOverride
     ? createBrowserMirror({ port: browserOverride.port, server: browserOverride.server, send: (frame) => sendMeta(frame) })
     : null;
@@ -2264,6 +2303,7 @@ export function startChatSession(
    *  alone. Untracking here (and only here) is what lets a tab-less, still-draining child
    *  remain reapable by the server's own shutdown (`killTrackedChildren`). */
   const teardown = (): void => {
+    if (voiceArmed) { voiceArmed = false; sendMeta({ subtype: 'voice_turn_end' }); }
     if (!alive) return;
     alive = false;
     // Owner messages held for the Super Agent outlive this process (M2).
@@ -2428,6 +2468,8 @@ export function startChatSession(
     // Tells the client it got the SAME process back and whether a turn is still running —
     // what it missed meanwhile it replays from chat-history.
     sendMeta({ subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 });
+    // A spoken turn still being answered: the new socket reads the rest of it aloud.
+    if (isSuper && voiceArmed) sendMeta({ subtype: 'voice_turn' });
     if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
     for (const line of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
@@ -2524,6 +2566,9 @@ export function startChatSession(
 
       registry?.observe(obj);
       browserMirror?.observe(obj);
+      superSignals?.observe(obj);
+      // A compaction drops the message that carried the briefing update (never the system prompt).
+      if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary' && !superBrief.inPrompt) superBrief.due = true;
       if (obj.type === 'system' && obj.subtype === 'background_tasks_changed') {
         backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
       }
@@ -2788,6 +2833,8 @@ export function startChatSession(
       ...pendingSwitchFrame,
       turnInFlight: turnsInFlight > 0,
       ...(heldTexts.length > 0 ? { pendingText: heldTexts[0], pendingTexts: [...heldTexts] } : {}),
+      // The spoken ones stay spoken through the restart (the client resubmits them, K1).
+      ...(isSuper && heldTexts.some((t) => spokenTexts.has(t)) ? { pendingSpoken: heldTexts.filter((t) => spokenTexts.has(t)) } : {}),
     });
     armSwitchStall();
   };
@@ -3031,6 +3078,8 @@ export function startChatSession(
       until: previousResetAt ?? null,
     });
     heldTexts = resubmit && text ? [text] : [];
+    // The refused message is resent after the restart: if it was spoken, it stays spoken (K1).
+    if (isSuper && resubmit && text && lastSentSpoken && text === lastSentText) spokenTexts.add(text);
     // The system chose this account, so the reopened pane is still free to come home later.
     noteAutoPlaced(pinId, target.id);
     if (cause !== 'come_home' && activeAccountId) {
@@ -3441,7 +3490,7 @@ export function startChatSession(
     let msg: {
       type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
       message?: string; model?: string; effort?: string; targetUuid?: string; mode?: string;
-      taskId?: string; enabled?: boolean; visible?: boolean;
+      taskId?: string; enabled?: boolean; visible?: boolean; voice?: boolean;
     };
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
@@ -3462,6 +3511,8 @@ export function startChatSession(
       // turn's end and then runs as its own turn (D8), never folded into the event's.
       // Held too while earlier held messages wait their turn, so the owner's order is kept.
       if (isSuper && !releasingHeld && (superEventTurnOpen || heldOwnerFrames.length > 0)) { heldOwnerFrames.push(raw); return; }
+      // A spoken message (the frame's `voice`) stays spoken through the account-switch gate.
+      if (isSuper && msg.voice === true) spokenTexts.add(msg.text);
       // Auto-switch evaluates BEFORE the turn goes to the CLI — the whole point is that the
       // message does not have to fail first. `maybeSwitchAccount` either sends the turn on
       // this account (the overwhelmingly common answer, and the answer whenever anything is
@@ -4240,6 +4291,61 @@ export async function handleAgentGrant(
 
   addGrant(contextRoot, target);
   sendJson(res, 200, { granted: true, path: target });
+}
+
+/** The owner's own window: desktop app, this machine, a loopback Host, and this very origin
+ *  (port included). A page on another loopback port (an approved dev server in a web card)
+ *  can neither read nor write a grant (T0, AC3). Sends the 403. */
+function requireGrantOwner(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!requireLocalDesktop(req, res)) return false;
+  if (!isSameOriginStrict(req) || isCrossSiteRequest(req)) {
+    sendError(res, 403, 'forbidden', 'Only this app\'s own window can change what a web card may load.');
+    return false;
+  }
+  return true;
+}
+
+function vaultRealPath(contextRoot: string): string {
+  try { return realpathSync(contextRoot); } catch { return resolve(contextRoot); }
+}
+
+/**
+ * GET /api/agent/loopback-grants — the loopback ports this vault's web cards may load without
+ * asking (`~/.dreamcontext/loopback-grants.json`), and the ports this process owns right now,
+ * which no card may ever load (the window refuses them too: they change every launch).
+ */
+export async function handleLoopbackGrantsGet(
+  req: IncomingMessage, res: ServerResponse, _params: Record<string, string>, contextRoot: string,
+): Promise<void> {
+  if (!requireGrantOwner(req, res)) return;
+  const owned = ownedLoopbackPorts();
+  sendJson(res, 200, { grants: readLoopbackGrants(vaultRealPath(contextRoot), owned), ownedPorts: [...owned].sort((a, b) => a - b) });
+}
+
+/** POST /api/agent/loopback-grant `{port, op:'grant'|'revoke'}` — the owner's "Always allow
+ *  localhost:PORT" in a web card, or its removal in Settings. Never an owned port. */
+export async function handleLoopbackGrantSet(
+  req: IncomingMessage, res: ServerResponse, _params: Record<string, string>, contextRoot: string,
+): Promise<void> {
+  if (!requireGrantOwner(req, res)) return;
+  const body = (await parseJsonBody(req)) ?? {};
+  const port = body.port;
+  const op = body.op === 'revoke' ? 'revoke' : body.op === 'grant' ? 'grant' : null;
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535 || !op) {
+    sendError(res, 400, 'invalid_body', 'Send {port, op: "grant" | "revoke"}.');
+    return;
+  }
+  const owned = ownedLoopbackPorts();
+  if (op === 'grant' && owned.has(port)) {
+    sendError(res, 403, 'owned_port', `localhost:${port} is this app's own port; it is never shown in a card.`);
+    return;
+  }
+  try {
+    const grants = setLoopbackGrant(vaultRealPath(contextRoot), port, op, owned);
+    sendJson(res, 200, { grants, ownedPorts: [...owned].sort((a, b) => a - b) });
+  } catch (err) {
+    sendError(res, 500, 'grant_unwritable', `The grant could not be saved: ${(err as Error).message}`);
+  }
 }
 
 /**

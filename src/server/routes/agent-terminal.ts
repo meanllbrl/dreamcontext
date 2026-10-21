@@ -35,7 +35,7 @@ import { claudeAuthStatus } from '../../lib/claude-auth.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import { readClaudeUpdateStatus, runClaudeUpdateCheck } from '../../lib/claude-update.js';
 import {
-  isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf, requireLocalDesktop,
+  isLoopback, isSameOriginStrict, rejectUpgrade, resolveVaultProjectRoot, projectRootOf, requireLocalDesktop,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt, EFFORT_LEVELS,
   claudeConversationExists, redeemPromptToken,
   sanitizeExecCommand, sanitizeRelativeDir,
@@ -662,6 +662,9 @@ export function attachAgentTerminal(server: Server): void {
 
     // Hard gates. Reject (don't just ignore) so a misconfigured client sees the close.
     if (!isDesktop() || !isLoopback(req)) { rejectUpgrade(socket, 403); return; }
+    // Only this very origin, under a loopback Host (T0): a page on another loopback port, or a
+    // rebinding page, must not open a shell.
+    if (!isSameOriginStrict(req)) { rejectUpgrade(socket, 403); return; }
 
     const vault = url.searchParams.get('vault');
     // No terminal on the dreamcontext Assistant's hidden vault — ever. Its one surface is the

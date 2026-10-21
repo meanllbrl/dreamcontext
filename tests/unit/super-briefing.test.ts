@@ -51,6 +51,7 @@ describe('superBriefing', () => {
   });
 
   it('stays short', () => {
-    expect(brief.length).toBeLessThan(2600);
+    // Jarvis plan r9 added "Show, don't tell" and "Voice" (and the revision marker).
+    expect(brief.length).toBeLessThan(4400);
   });
 });

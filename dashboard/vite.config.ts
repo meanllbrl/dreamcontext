@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { excalidrawWidgetLinkIcon } from './excalidraw-widget-link-icon';
+import { rewrittenOrigin } from './devProxyOrigin';
 
 // The CLI package version this bundle ships with. The app compares it against
 // /api/health's `version` to detect a stale (upgraded-under) server process.
@@ -23,6 +24,8 @@ function excalidrawFonts(): Plugin {
   };
 }
 
+const API_TARGET = 'http://localhost:4173';
+
 export default defineConfig({
   plugins: [react(), excalidrawFonts(), excalidrawWidgetLinkIcon()],
   define: {
@@ -34,7 +37,22 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:4173',
+      // The server is port-strict about Origin on loopback (a page on another port is another
+      // origin), and this proxy sends `Host: localhost:4173` with the page's `Origin:
+      // localhost:5173`. Rewrite the dev page's OWN Origin to the target's, nothing else (a foreign
+      // Origin passes through and is refused), HTTP only (no `ws: true`). Safe only while Vite's
+      // default host check runs first (no `allowedHosts: true`, no non-loopback `host`): it is what
+      // keeps a rebinding page's own matching Origin from being rewritten.
+      '/api': {
+        target: API_TARGET,
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            const next = rewrittenOrigin(req.headers.origin, req.headers.host, API_TARGET);
+            if (next) proxyReq.setHeader('origin', next);
+          });
+        },
+      },
     },
   },
 });

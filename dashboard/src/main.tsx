@@ -11,6 +11,7 @@ import { installExternalLinkHandler } from './lib/externalLinks';
 import { installAppLinkListener } from './lib/appLink';
 import { sweepExpiredPins } from './lib/pinStore';
 import { sweepExpired as sweepExpiredChecklists } from './lib/checklistStore';
+import { isFramedByForeignParent } from './lib/frameGuard';
 
 // A link is the one thing on the page that can destroy the app: the desktop shell has
 // no back button, so following a URL in-place leaves nothing to return with. Install
@@ -49,8 +50,13 @@ if (isTauri && navigator.platform.toLowerCase().includes('mac')) {
   document.documentElement.classList.add('tauri-overlay');
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+// Framed by a page of another origin (an approved web card redirecting its frame here, a site
+// clickjacking an "allow" button): draw nothing. The server's frame gate is the first wall;
+// this is the one an old WebKit without Fetch Metadata still meets.
+if (!isFramedByForeignParent(window)) {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}

@@ -8,6 +8,8 @@ import { DocumentReader } from '../../appLink/DocumentReader';
 import { KnowledgeWidget } from '../../whiteboard/widgets/KnowledgeWidget';
 import { TaskWidget } from '../../whiteboard/widgets/TaskWidget';
 import { WebWidget } from '../../whiteboard/widgets/WebWidget';
+import { BrowserCard } from './BrowserCard';
+import type { StageCue } from './useStageCues';
 import { targetPath } from '../../whiteboard/pagePopupModel';
 import '../../whiteboard/widgets/widgets.css';
 import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
@@ -18,7 +20,7 @@ import { LAYOUT } from './handoverMotion';
 import type { CardPlan } from './superLayout';
 
 export const KIND_GLYPH: Record<Container['kind'], string> = {
-  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣',
+  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', browser: '◉',
 };
 
 /** A whiteboard's board file, from its slug (`whiteboards/<slug>/<slug>.excalidraw.md`). */
@@ -71,6 +73,12 @@ export interface SuperContainerProps extends SuperCardActions {
   pending: boolean;
   /** `web`: may hold a live iframe right now (webBudget.ts). */
   webLive: boolean;
+  /** `browser`: the child's `ChatSession.id` (the live frames' key), and whether this card may
+   *  re-render on new frames right now (at most two, on screen, window focused). */
+  browserSessionId?: string;
+  browserLive?: boolean;
+  /** A one-time cue playing on this card (AC16, useStageCues): `close` = a card fading out. */
+  cue?: StageCue;
   /** The hand-over has landed: a non-chat card may mount its view (SuperSurface). */
   viewReady: boolean;
   asksOwner: boolean;
@@ -113,10 +121,15 @@ export function SuperContainer(props: SuperContainerProps) {
       data-owner={plan.owner ? 'true' : undefined}
       data-status={status ? glowOf(status) : undefined}
       data-drop-target={props.dropTarget ? 'card' : undefined}
+      data-cue={props.cue?.kind}
+      inert={props.cue?.kind === 'close' ? true : undefined}
       role="group"
       aria-label={props.title}
       tabIndex={floating ? 0 : -1}
-      style={{ left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: 10 + plan.z }}
+      style={{
+        left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: 10 + plan.z,
+        ...(props.cue ? { ['--cue-dx' as string]: `${props.cue.dx}px`, ['--cue-dy' as string]: `${props.cue.dy}px` } : {}),
+      }}
       onPointerDown={floating ? (e) => props.onPress(e, c.id) : undefined}
       onClick={floating ? (e) => { if (!(e.target as HTMLElement).closest('button')) props.onSideBySide(c.id); } : undefined}
       onKeyDown={onKeyDown}
@@ -126,6 +139,7 @@ export function SuperContainer(props: SuperContainerProps) {
         {large ? <LargeBody {...props} status={status} /> : <FloatBody {...props} status={status} />}
       </div>
       <span className="super-drop-ring" aria-hidden />
+      {props.cue && <span className="super-card-glint" aria-hidden />}
       <div className="super-card-actions">
         {floating ? (
           <>
@@ -195,7 +209,9 @@ function FloatBody(p: BodyProps): ReactNode {
     <div className="super-card-body" data-inert="true">
       {c.kind === 'chat'
         ? <ChatTile session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} />
-        : <KindTile container={c} title={p.title} viewReady={p.viewReady} />}
+        : c.kind === 'browser'
+          ? <BrowserCard sessionId={p.browserSessionId} live={!!p.browserLive} large={false} />
+          : <KindTile container={c} title={p.title} viewReady={p.viewReady} />}
     </div>
   );
 }
@@ -271,6 +287,8 @@ function viewFor(p: BodyProps): ReactNode {
         : <WebPlaceholder title={c.title || c.ref} onLoad={() => p.onLoadWeb(c.id)} />;
     case 'image':
       return <div className="super-card-view"><DocumentReader path={c.ref} onOpen={() => { /* read-only: links stay closed */ }} embedded /></div>;
+    case 'browser':
+      return <div className="super-card-view super-card-view--browser"><BrowserCard sessionId={p.browserSessionId} live={!!p.browserLive} large /></div>;
     case 'board':
       return <div className="super-card-view super-card-view--board"><BoardContainer path={c.ref} /></div>;
     case 'whiteboard': {

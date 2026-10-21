@@ -124,7 +124,7 @@ describe('readAloud module', () => {
 
 describe('the composer read-aloud switch', () => {
   const composer = code(read('dashboard/src/components/sleepy/chat/Composer.tsx'));
-  const button = composer.match(/\{voiceEnabled && \(\s*<button[^>]*?className="chat-cmp-iconbtn chat-cmp-readaloud"[\s\S]*?<\/button>\s*\)\}/)?.[0] ?? '';
+  const button = composer.match(/\{voiceEnabled && mode === 'assistant' && \(\s*<button[^>]*?className="chat-cmp-iconbtn chat-cmp-readaloud"[\s\S]*?<\/button>\s*\)\}/)?.[0] ?? '';
 
   it('is drawn only where voice is, as a pressed/unpressed toggle', () => {
     expect(button).not.toBe('');

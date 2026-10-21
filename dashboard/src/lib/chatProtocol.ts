@@ -171,6 +171,8 @@ export type ChatEvent =
   | { kind: 'browser-frame'; frame: BrowserFrame }
   /** That browser went away (closed by the agent, or its session ended). */
   | { kind: 'browser-closed' }
+  /** The Super Agent's spoken turn opened (read its answer aloud) or ended. */
+  | { kind: 'voice-turn'; open: boolean }
   /** The CLI's authoritative roster of tasks STILL RUNNING in the background, pushed on
    *  every change (empirically verified on CLI 2.1.220: fires when a `run_in_background`
    *  Bash starts, and again with `tasks: []` when the last one ends).
@@ -299,6 +301,8 @@ export type ChatEvent =
        *  A message typed while the restart is owed joins it instead of going out on the account
        *  being left, so the frame is re-sent with the longer list. */
       pendingTexts?: string[];
+      /** Those of `pendingTexts` the owner SPOKE (the Super Agent answers them aloud, K1). */
+      pendingSpoken?: string[];
       /** The winner is signed in but publishes no usage numbers — there is no percent behind
        *  this choice, and the banner must say so rather than imply a measured one. */
       unmeasured?: boolean;
@@ -367,6 +371,8 @@ export type ChatEvent =
   | { kind: 'super-state'; state: Record<string, unknown> }
   /** The turn that just opened was injected by the super inbox: render it as an event chip. */
   | { kind: 'super-event'; eventKind: string; child: string }
+  /** A Super Agent verb landed (AC16): the stage shows it, `ids` are the cards it touched. */
+  | { kind: 'super-cue'; verb: string; ids: string[] }
   /** The server's fresh-session branch guard reporting what it did to the working tree.
    *  `warn` for a refusal, `info` for a move it made. See `fromMeta`. */
   | { kind: 'branch-start'; tone: 'info' | 'warn'; message: string }
@@ -412,7 +418,8 @@ export function isUrgentChatEvent(ev: ChatEvent): boolean {
 // ─── Client → server control frames ───────────────────────────────────────────────
 
 export type ClientControl =
-  | { type: 'user'; text: string }
+  /** `voice`: the owner spoke this message (the Super Agent answers aloud, K1). */
+  | { type: 'user'; text: string; voice?: true }
   | { type: 'answer'; requestId: string; behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }
   | { type: 'interrupt' }
   /** Live model switch — the server translates this into a `set_model` control_request
@@ -1147,6 +1154,9 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       ...(Array.isArray(obj.pendingTexts) && obj.pendingTexts.some((t) => str(t))
         ? { pendingTexts: obj.pendingTexts.flatMap((t) => (str(t) ? [str(t)!] : [])) }
         : {}),
+      ...(Array.isArray(obj.pendingSpoken) && obj.pendingSpoken.some((t) => str(t))
+        ? { pendingSpoken: obj.pendingSpoken.flatMap((t) => (str(t) ? [str(t)!] : [])) }
+        : {}),
       ...(obj.unmeasured === true ? { unmeasured: true } : {}),
       ...(typeof obj.turnInFlight === 'boolean' ? { turnInFlight: obj.turnInFlight } : {}),
     };
@@ -1180,6 +1190,12 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   if (subtype === 'super_state') {
     return isRecord(obj.state) ? { kind: 'super-state', state: obj.state } : ignored('_meta:super_state');
   }
+  if (subtype === 'super_cue') {
+    const verb = str(obj.verb);
+    if (!verb) return ignored('_meta:super_cue');
+    const ids = Array.isArray(obj.ids) ? obj.ids.filter((x): x is string => typeof x === 'string').slice(0, 48) : [];
+    return { kind: 'super-cue', verb, ids };
+  }
   if (subtype === 'super_event') {
     const eventKind = str(obj.kind);
     if (!eventKind) return ignored('_meta:super_event');
@@ -1206,6 +1222,9 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   if (subtype === 'browser_state') {
     return obj.state === 'closed' ? { kind: 'browser-closed' } : ignored('_meta:browser_state');
   }
+  // A spoken owner message to the Super Agent was written / its turn ended (K1).
+  if (subtype === 'voice_turn') return { kind: 'voice-turn', open: true };
+  if (subtype === 'voice_turn_end') return { kind: 'voice-turn', open: false };
   return ignored('_meta:' + (subtype ?? 'unknown'));
 }
 

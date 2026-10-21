@@ -10,7 +10,7 @@ import {
   NARROW_STAGE_PX, STAGE, applyLayoutPatch, dropTargetAt, overCentre, overOthersZone, patchEchoed, planStage,
   posFromRect, preferredCentre, rectFromPos, stageItems, type Rect, type StagePlan,
 } from '../../dashboard/src/components/sleepy/super/superLayout.js';
-import { MAX_CONTAINERS, MAX_PRESENT, type SuperContainer, type SuperGroup, type SuperView } from '../../dashboard/src/lib/superTypes.js';
+import { MAX_CONTAINERS, MAX_FLOAT, MAX_PRESENT, type SuperContainer, type SuperGroup, type SuperView } from '../../dashboard/src/lib/superTypes.js';
 
 const card = (id: string, shape: SuperContainer['shape'] = 'tall', extra: Partial<SuperContainer> = {}): SuperContainer =>
   ({ id, kind: shape === 'tall' ? 'chat' : 'insight', ref: `ref-${id}`, shape, place: 'float', ...extra });
@@ -134,7 +134,7 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
   });
 
   it('an outer column opens only once the inner one is full, and only where the side has the room', () => {
-    const many = Array.from({ length: MAX_CONTAINERS }, (_, i) => card(`k${i}`));
+    const many = Array.from({ length: MAX_FLOAT }, (_, i) => card(`k${i}`));
     const wide = planStage(many, FLOAT, STAGES[3]);
     expect(wide.others).toEqual([]);
     const xs = new Set(floats(wide).filter((c) => c.rect.x < wide.centre.x).map((c) => Math.round(c.rect.x)));
@@ -151,7 +151,7 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
   });
 
   it('a card that fits nowhere is DRAWN in Others; the record stays float', () => {
-    const many = Array.from({ length: MAX_CONTAINERS }, (_, i) => card(`k${i}`));
+    const many = Array.from({ length: MAX_FLOAT }, (_, i) => card(`k${i}`));
     const p = planStage(many, FLOAT, { width: 1100, height: 600 });
     expect(p.others.length).toBeGreaterThan(0);
     for (const id of p.others) expect(p.cards[id].where).toBe('others');
@@ -163,13 +163,13 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
   });
 
   it('what does not fit goes to Others, the last ones first; a tile never shrinks', () => {
-    const many = Array.from({ length: MAX_CONTAINERS }, (_, i) => card(`k${i}`));
+    const many = Array.from({ length: MAX_FLOAT }, (_, i) => card(`k${i}`));
     for (const s of STAGES.slice(0, 3)) {
       const p = planStage(many, FLOAT, s);
       expect(p.others.length).toBeGreaterThan(0);
       for (const c of floats(p)) expect(c.rect.width).toBe(T);
       expect(p.others).toEqual(many.map((c) => c.id).filter((id) => p.others.includes(id)));
-      expect(p.others).toContain(`k${MAX_CONTAINERS - 1}`);
+      expect(p.others).toContain(`k${MAX_FLOAT - 1}`);
     }
   });
 
@@ -190,7 +190,7 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
     expect(p.cards.b.rect).toEqual(p.othersRect);
   });
 
-  it('never lays out more than the record\'s 12 cards plus the 4 a view may present beside their group', () => {
+  it('never lays out more than the record\'s MAX_CONTAINERS cards plus the 4 a view may present beside their group', () => {
     const many = Array.from({ length: MAX_CONTAINERS + MAX_PRESENT + 1 }, (_, i) => card(`k${i}`, 'square'));
     expect(Object.keys(planStage(many, FLOAT, STAGES[3]).cards)).toHaveLength(MAX_CONTAINERS + MAX_PRESENT);
   });
@@ -198,7 +198,7 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
 
 describe('the centre takes the larger share and never moves (stage v2, 2026-10-20)', () => {
   it('56% of the stage (within its floor and ceiling), centred, whatever opens or closes', () => {
-    for (const s of STAGES) for (let n = 0; n <= MAX_CONTAINERS; n++) {
+    for (const s of STAGES) for (let n = 0; n <= MAX_FLOAT; n++) {
       const p = planStage(Array.from({ length: n }, (_, i) => card(`k${i}`, i % 2 ? 'square' : 'tall')), FLOAT, s);
       expect(p.centre.width, `${n} cards at ${s.width}`).toBeCloseTo(preferredCentre(s.width), 6);
       expect(p.centre.width / s.width).toBeGreaterThanOrEqual(0.55);
@@ -261,7 +261,7 @@ describe('groups on the stage (2026-10-20)', () => {
   });
 
   it('12 cards, a group of two presented beside two others: every card has a place (end review)', () => {
-    const list = Array.from({ length: MAX_CONTAINERS }, (_, i) => card(`c${i}`));
+    const list = Array.from({ length: MAX_FLOAT }, (_, i) => card(`c${i}`));
     const g: SuperGroup = { id: 'grp-1', name: 'X', cards: ['c0', 'c1'], place: 'float' };
     const view: SuperView = { mode: 'present', cards: ['c0', 'c1', 'c2', 'c3'] };
     const p = planStage(grouped(list, [g], view), view, STAGES[2]);

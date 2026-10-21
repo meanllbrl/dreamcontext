@@ -157,6 +157,15 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
     expect((await owner(handleSuperStateGet, { method: 'GET', headers: { origin: 'https://evil.example' } })).status).toBe(403);
   });
 
+  it('a page on another loopback port (an approved dev server in a web card) → 403; the CLI and the app pass (jarvis T0)', async () => {
+    expect((await owner(handleSuperEnable, { headers: { origin: 'http://localhost:5173' } })).status).toBe(403);
+    expect((await owner(handleSuperStateGet, { method: 'GET', headers: { origin: 'http://127.0.0.1:5173' } })).status).toBe(403);
+    expect((await owner(handleSuperStateGet, { method: 'GET', headers: { 'sec-fetch-site': 'same-site' } })).status).toBe(403);
+    expect((await owner(handleSuperStateGet, { method: 'GET', headers: { host: 'evil.test:4173', origin: 'http://evil.test:4173' } })).status).toBe(403);
+    expect((await owner(handleSuperStateGet, { method: 'GET' })).status).toBe(200);
+    expect((await owner(handleSuperStateGet, { method: 'GET', headers: { origin: 'http://127.0.0.1:4173', 'sec-fetch-site': 'same-origin' } })).status).toBe(200);
+  });
+
   it('outside the desktop app, from another host, under a foreign Host header, or from the phone → 403', async () => {
     delete process.env.DREAMCONTEXT_DESKTOP;
     expect((await owner(handleSuperEnable)).status).toBe(403);

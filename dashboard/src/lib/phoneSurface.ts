@@ -155,6 +155,8 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/agent/mcp/project/remove',
   'POST /api/agent/reveal',
   'POST /api/agent/grant',
+  'GET /api/agent/loopback-grants',
+  'POST /api/agent/loopback-grant',
   'POST /api/agent/open-terminal',
   'POST /api/agent/install',
   'GET /api/agent/install/status',

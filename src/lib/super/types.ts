@@ -11,7 +11,7 @@
 export const SUPER_STATE_VERSION = 1 as const;
 
 /** What a container can show. `chat` is a child chat's card; the rest are read-only views. */
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
 
 /** A card's recorded shape, square (1:1) or tall (3:4): plan-r8 F1 and stage v2. Since the
@@ -29,14 +29,19 @@ export type ContainerPlace = typeof CONTAINER_PLACES[number];
 export const VIEW_MODES = ['float', 'half', 'present'] as const;
 export type ViewMode = typeof VIEW_MODES[number];
 
-/** The 13th container is refused (AC4). */
-export const MAX_CONTAINERS = 12;
+/** Every card the record holds, Others and group members included (jarvis plan r9): the 49th
+ *  is refused. The stage limit is {@link MAX_FLOAT}. */
+export const MAX_CONTAINERS = 48;
+/** Top-level FLOATING items an `open` may add to: an ungrouped floating card, or a group (one
+ *  item, however many cards). Others does not count. Applied only when opening. */
+export const MAX_FLOAT = 12;
 /** A presentation shows at most this many cards. */
 export const MAX_PRESENT = 4;
 /** Live children (starting/working/asking) `super delegate` may run at once (D11). */
 export const MAX_LIVE_CHILDREN = 8;
 
-/** A card's default shape: a chat and a web page are tall, everything else square. */
+/** A card's default shape: a chat and a web page are tall, everything else square (a live
+ *  browser card is a 1:1 tile like the rest). */
 export function defaultShape(kind: ContainerKind): ContainerShape {
   return kind === 'chat' || kind === 'web' ? 'tall' : 'square';
 }
@@ -54,7 +59,18 @@ export interface SuperContainer {
    *  area. Absent = placed automatically. No agent verb writes it. */
   pos?: { x: number; y: number };
   title?: string;
+  /** Opened by the server itself (a child's dev-server pin, its live browser), never by a verb:
+   *  only the server writes it; the agent's `open` and the owner's layout cannot carry it. */
+  by?: 'auto';
+  /** The child an automatic card belongs to (its dev server, its browser): the card goes to
+   *  Others when the child withdraws the pin or ends. Server-written, like `by`. */
+  of?: string;
 }
+
+/** The owner closed an automatic card: the same (kind, ref) is not opened again automatically
+ *  until `until` (G5). */
+export interface SuperDismissed { kind: ContainerKind; ref: string; until: number }
+export const MAX_DISMISSED = 50;
 
 /**
  * Cards put together, drawn on the stage as ONE tile (owner decision 2026-10-20): the owner
@@ -139,10 +155,12 @@ export interface SuperState {
   notes: Record<string, SuperNote>;
   /** The owner's absence, for the return recap (D13). */
   away: { since: number | null; events: number };
+  /** Automatic cards the owner closed, not reopened automatically for a while (G5). */
+  dismissed: SuperDismissed[];
 }
 
 export function emptySuperState(): SuperState {
-  return { v: SUPER_STATE_VERSION, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children: {}, queue: [], notes: {}, away: { since: null, events: 0 } };
+  return { v: SUPER_STATE_VERSION, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children: {}, queue: [], notes: {}, away: { since: null, events: 0 }, dismissed: [] };
 }
 
 // ─── Groups (MIRRORED in the window, behaviour pinned by super-types-mirror.test.ts) ──
@@ -248,6 +266,14 @@ export function dissolveGroups(state: { containers: SuperContainer[]; groups: Su
   state.groups = state.groups.filter((g) => !ids.includes(g.id));
 }
 
+/** Top-level floating items on the stage: ungrouped floating cards plus floating groups (a
+ *  group is ONE item). Others is not counted. Pure. */
+export function floatCount(state: { containers: readonly SuperContainer[]; groups: readonly SuperGroup[] }): number {
+  const grouped = new Set(state.groups.flatMap((g) => g.cards));
+  return state.containers.filter((c) => c.place === 'float' && !grouped.has(c.id)).length
+    + state.groups.filter((g) => g.place === 'float').length;
+}
+
 // ─── Identifiers ────────────────────────────────────────────────────────────────
 
 /** A session id as the chat registry and the roster hold it. */
@@ -282,6 +308,8 @@ export const SUPER_FRAME_COMMAND = 'super_command' as const;
 export const SUPER_FRAME_RESULT = 'super_command_result' as const;
 export const SUPER_FRAME_STATE = 'super_state' as const;
 export const SUPER_FRAME_EVENT = 'super_event' as const;
+/** A verb landed: what the window shows for it (AC16), `{verb, ids}`. */
+export const SUPER_FRAME_CUE = 'super_cue' as const;
 
 /** The prefixes an injected super turn starts with; history replay renders them as event chips. */
 export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]'] as const;
@@ -301,6 +329,50 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
   handover: '<super-agent-note> From now on the owner talks to you through the Super Agent; it relays your questions and answers. </super-agent-note>',
   takeback: '<super-agent-note> The Super Agent mode is over; you talk directly with the owner again. </super-agent-note>',
 };
+
+/**
+ * The Super Agent briefing's revision (jarvis plan r9, K9). A super session is born once per
+ * vault and resumed for months, and `--resume` restores the system prompt it was born with, so a
+ * briefing change reaches a running session as SUPER_BRIEF_TEXT on its next owner message
+ * (and again after a compaction drops that message). The fixed `<super-brief rev=N>` marker is
+ * how the transcript tells whether this revision already arrived. Whoever changes the sections
+ * bumps the number.
+ */
+export const SUPER_BRIEF_REV = 1;
+export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
+
+/** S4-S8: show, don't tell. */
+export const SUPER_SHOW_SECTION = `## Show, don't tell
+- The owner asks to see a set of things ("show my tasks", insights, boards): every item is a
+  card. More than 3: ONE group, \`dreamcontext super open task <slug…> --group "Tasks"\`. Never
+  write the items as a list in the chat; at most two sentences ("5 open tasks are on the stage,
+  in 'Tasks'"). Stage full (409 too_many_containers): first \`super stack\` finished or idle
+  cards into Others, then open. Never close a card to make room and never skip an item; only
+  when the record itself is full, open what fits and say in one sentence how many did not.
+- A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
+- The owner has to decide something visual (a mockup, a layout): open the options as cards
+  (png, svg, html, a board), \`super present <card…>\`, then ask with AskUserQuestion; after his
+  answer, \`super present --off\`.
+- Your answer would describe something he can look at: open it and write one line.
+- The server opens a child's dev-server site and its live browser as cards by itself; you see
+  them in \`super state\`. Do not reopen or describe them. A child says its dev server runs but
+  did not pin it: \`super open web <url>\`.`;
+
+/** The spoken reply rule (K1). */
+export const SUPER_VOICE_SECTION = `## Voice
+A message carrying an \`<owner-voice>\` block was spoken by the owner, and your reply is read
+aloud: one or two short sentences, any detail on a card. How you talk otherwise still holds.`;
+
+/** The briefing update a resumed super session receives (second block, starts with \`<\`). */
+export const SUPER_BRIEF_TEXT = `${SUPER_BRIEF_MARKER} Your Super Agent briefing has new sections since this conversation began. They apply from now on, beside everything else you were told.
+
+${SUPER_SHOW_SECTION}
+
+${SUPER_VOICE_SECTION}
+</super-brief>`;
+
+/** Rides on a spoken owner message to the super agent (a second block, never stored). */
+export const OWNER_VOICE_TEXT = '<owner-voice> The owner spoke this message; your reply is read aloud. Answer in one or two short spoken sentences; put any detail on a card. </owner-voice>';
 
 /** The owner typed in the super composer this recently: no event is delivered (D7). */
 export const OWNER_LEASE_MS = 15_000;

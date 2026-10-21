@@ -3123,12 +3123,13 @@
     },
     {
       "path": "super open",
-      "desc": "Open a floating card: chat | insight | task | knowledge | whiteboard | board | web | image. ref = a session id, a slug, a URL or a project path",
+      "desc": "Open floating cards: chat | insight | task | knowledge | whiteboard | board | web | image | browser. ref = a session id (chat, browser), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once",
       "args": [
         "<kind>",
-        "<ref>"
+        "<refs...>"
       ],
       "valueFlags": [
+        "--group",
         "--shape",
         "--title"
       ]

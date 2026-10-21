@@ -211,9 +211,14 @@ export type SuperCommandHandler = WindowCommandHandler;
 
 /** What the server pushes about the Super Agent down its own socket: the whole state after
  *  every store write, and the kind of each turn its inbox opens. Never conversation state. */
+/** Owner texts that were SPOKEN when an account switch held them, keyed by the pane's
+ *  conversation: the restarted session (a new closure) sends them with `voice: true`. */
+const spokenCarry = new Map<string, Set<string>>();
+
 export type SuperSignal =
   | { kind: 'state'; state: Record<string, unknown> }
-  | { kind: 'event'; eventKind: string; child: string };
+  | { kind: 'event'; eventKind: string; child: string }
+  | { kind: 'cue'; verb: string; ids: string[] };
 
 export interface ChatResultInfo {
   success: boolean;
@@ -616,6 +621,10 @@ export interface ChatSession {
    *  button, synchronously inside the press handler (see the implementation for why both
    *  jobs have to happen there). A no-op outside assistant mode. */
   bargeInSpeech: () => void;
+  /** The next message written with exactly this text was spoken (`voice: true`). */
+  armSpoken: (text: string) => void;
+  /** When the owner last typed in this composer (epoch ms, 0 = never). */
+  typedAt: () => number;
   /**
    * Subscribe to "is this turn speaking", for the composer's speaking controls. Returns the
    * unsubscribe; fires immediately with the current value.
@@ -997,7 +1006,13 @@ export function createChatSession(
   // `claudeId` identifies this pane to the server's audio-focus ledger: one conversation is
   // one pane is one speaker claimant. Two assistant panes are two ids, and exactly one of
   // them is granted the speaker for any given turn (`lib/voice/audioFocus.ts`).
-  const speech = mode === 'assistant' ? new SpeechQueue(claudeId) : null;
+  const speech = mode === 'assistant' || mode === 'super' ? new SpeechQueue(claudeId) : null;
+  /** Super: the server said a spoken owner message is being answered (`voice_turn`), until
+   *  `voice_turn_end`. Only text streamed in between is read; the client never arms it on its
+   *  own (an event turn may be running when the owner speaks). */
+  let voiceTurn = false;
+  /** The text of the next spoken message (`armSpoken`). */
+  let spokenNext: string | null = null;
 
   /**
    * How many characters of each TEXT ITEM have already been handed to the speech queue,
@@ -1045,11 +1060,19 @@ export function createChatSession(
     }
   }
 
+  /** The Super Agent speaks only the answer to a spoken question (K1), and never needs the
+   *  read-aloud switch: asking aloud is the request. */
+  function speakSuperTail(itemId: string, full: string, already: number): void {
+    if (voiceTurn) speech?.push(full.slice(already), itemId);
+    spokenChars.set(itemId, full.length);
+  }
+
   /** Speak the part of `full` that item `itemId` has not contributed yet. */
   function speakTail(itemId: string, full: string): void {
     if (!speech) return;
     const already = spokenChars.get(itemId) ?? 0;
     if (full.length <= already) return;
+    if (mode === 'super') { speakSuperTail(itemId, full, already); return; }
     // A progress line is shown, never read: the Assistant marked it as thinking out loud.
     if (cues.get(itemId)?.kind === 'progress') { spokenChars.set(itemId, full.length); return; }
     // Read aloud is opt-in (the composer's switch). Off means nothing reaches the queue, so
@@ -1097,6 +1120,8 @@ export function createChatSession(
   let focusTarget: HTMLElement | null = null;
   let transcriptRepin: (() => void) | null = null;
   let draftListener: ((text: string) => void) | null = null;
+  /** When the owner last typed in this composer (the Super stage holds new cards meanwhile, G1). */
+  let lastTypedAt = 0;
   let disposed = false;
 
   // ── Phone: is this chat on screen (the server's push suppression, D2) ──────────────────
@@ -1165,6 +1190,8 @@ export function createChatSession(
     setDraftListener: (fn) => { draftListener = fn; },
     interrupt,
     bargeInSpeech,
+    armSpoken: (text: string) => { spokenNext = text.trim() || null; },
+    typedAt: () => lastTypedAt,
     onSpeaking,
     onSpokenChunk,
     onPresent,
@@ -1264,6 +1291,7 @@ export function createChatSession(
     // Mirror only — no subscriber fire (a per-keystroke transcript re-render buys nothing)
     // and no epoch bump (the textarea already shows this text; adoption would be a no-op).
     conv = { ...conv, draft: text };
+    lastTypedAt = Date.now();
     try { draftListener?.(text); } catch { /* a listener never breaks typing */ }
   }
 
@@ -1520,6 +1548,7 @@ export function createChatSession(
         return;
       }
       case 'account-switch': {
+        if (mode === 'super' && ev.pendingSpoken?.length) spokenCarry.set(claudeId, new Set(ev.pendingSpoken));
         // Recorded, NOT acted on here — and `busy` is untouched, exactly as `auth-changed`
         // leaves it. The server HELD the turn before sending this, so nothing is in flight
         // on the old account; `AgentSurface.armAccountSwitch` performs the restart at the
@@ -1556,6 +1585,7 @@ export function createChatSession(
             ...(ev.rejected ? { rejected: ev.rejected } : {}),
             ...(ev.pendingText ? { pendingText: ev.pendingText } : {}),
             ...(ev.pendingTexts ? { pendingTexts: ev.pendingTexts } : {}),
+            // (the spoken ones ride to the restarted session through `spokenCarry`, below)
             ...(ev.turnInFlight === undefined ? {} : { turnInFlight: ev.turnInFlight }),
             at,
           },
@@ -1834,6 +1864,8 @@ export function createChatSession(
       }
       case 'meta-exit': {
         session.busy = false;
+        // The process is gone: a spoken turn it was answering ends with it.
+        voiceTurn = false;
         // Distinguishes a real process exit from a network drop (ws.onclose/onerror never
         // set this) so the Session-ended banner shows only for the former.
         conv = { ...conv, exited: { code: ev.code } };
@@ -1980,6 +2012,8 @@ export function createChatSession(
 
   function onSocketClosed(code = 0): void {
     clearConnectTimer();
+    // A spoken turn's end may be lost with the socket: the server re-announces it on reattach.
+    voiceTurn = false;
     if (disposed) return;
     if (code === MAC_CLOSE_TAKEN_OVER) {
       // Another screen holds this chat. Reconnecting would only take it back and start a
@@ -2090,6 +2124,17 @@ export function createChatSession(
     // so six frames a second never re-render the transcript (chat/browserLiveStore.ts).
     if (ev.kind === 'browser-frame') { pushBrowserFrame(session.id, ev.frame); return; }
     if (ev.kind === 'browser-closed') { dropBrowserLive(session.id); return; }
+    if (ev.kind === 'super-cue') { emitSuper({ kind: 'cue', verb: ev.verb, ids: ev.ids }); return; }
+    if (ev.kind === 'voice-turn') {
+      if (mode !== 'super') return;
+      if (ev.open && !voiceTurn) {
+        // What streamed before this frame belongs to an earlier turn: it is never read.
+        for (const it of conv.items) if (it.kind === 'text') spokenChars.set(it.id, Math.max(spokenChars.get(it.id) ?? 0, it.text.length));
+      }
+      if (!ev.open && voiceTurn) speech?.flushTurn();
+      voiceTurn = ev.open;
+      return;
+    }
     // The ONE place coalescing is allowed: a socket frame nobody is waiting to act on can
     // ride the next paint instead of forcing a React commit per streamed token.
     applyAndNotify(() => applyEvent(ev), !isUrgentChatEvent(ev));
@@ -2125,7 +2170,12 @@ export function createChatSession(
   function writeUser(text: string, opts: { steered: boolean }): boolean {
     const clean = text.trim();
     if (!clean || ws.readyState !== WebSocket.OPEN) return false;
-    const frame: ClientControl = { type: 'user', text: clean };
+    // Spoken now, or spoken before an account switch restarted this pane (`spokenCarry`).
+    const carried = spokenCarry.get(claudeId);
+    const spoken = (spokenNext !== null && spokenNext === clean) || !!carried?.delete(clean);
+    if (carried && carried.size === 0) spokenCarry.delete(claudeId);
+    spokenNext = null;
+    const frame: ClientControl = spoken ? { type: 'user', text: clean, voice: true } : { type: 'user', text: clean };
     try { ws.send(JSON.stringify(frame)); } catch { return false; }
     turnTrace.mark(vault, 'sent');
     applyAndNotify(() => {

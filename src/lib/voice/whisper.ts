@@ -31,6 +31,7 @@ import { existsSync, statSync } from 'node:fs';
 import { homedir, cpus } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { claimOwnedPort } from '../../server/owned-ports.js';
 
 /** Binaries that speak whisper.cpp's server protocol, in the order they are looked for. */
 const SERVER_BINARIES = ['whisper-server'];
@@ -231,8 +232,10 @@ function ensureServer(install: WhisperInstall): Running {
     stdio: 'ignore',
     detached: false,
   });
-  child.on('exit', () => { if (running?.child === child) running = null; });
-  child.on('error', () => { if (running?.child === child) running = null; });
+  // Its port is ours while the child lives: no web card may load it.
+  const release = claimOwnedPort(PORT);
+  child.on('exit', () => { release(); if (running?.child === child) running = null; });
+  child.on('error', () => { release(); if (running?.child === child) running = null; });
 
   const started: Running = {
     child,

@@ -73,6 +73,32 @@ export function isForeignOriginUpgrade(req: IncomingMessage): boolean {
   return !!origin && !LOCAL_ORIGIN_RE.test(origin);
 }
 
+/** `Sec-Fetch-Dest` values of a document loaded into a frame. */
+const FRAME_DESTS = new Set(['iframe', 'frame', 'embed', 'object', 'fencedframe']);
+
+/**
+ * A navigation of a FRAME into this server, started by a page of another origin (T1b): an
+ * approved web card redirecting its own frame here, or any site embedding the dashboard to
+ * clickjack an "allow" button. `Sec-Fetch-Site: same-site` is refused too: a dev server on
+ * `localhost:5173` is the same site as `localhost:4173`, and `frame-ancestors 'self'` would not
+ * catch it. The dashboard's own frames are `srcdoc` or its own `src` (same-origin), so they pass.
+ * An old WebKit sends no Fetch Metadata: the SPA's own fallback (`main.tsx`) draws nothing in a
+ * foreign parent.
+ */
+export function isForeignFrameNavigation(req: Pick<IncomingMessage, 'headers'>): boolean {
+  const dest = req.headers['sec-fetch-dest'];
+  if (typeof dest !== 'string' || !FRAME_DESTS.has(dest.trim().toLowerCase())) return false;
+  const site = req.headers['sec-fetch-site'];
+  return typeof site !== 'string' || site.trim().toLowerCase() !== 'same-origin';
+}
+
+/** {@link isForeignFrameNavigation} as a gate: sends the 403, true when refused. */
+export function refuseForeignFrame(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!isForeignFrameNavigation(req)) return false;
+  sendError(res, 403, 'forbidden', 'This page cannot be shown inside another site.');
+  return true;
+}
+
 /**
  * True for a state-changing request issued from a cross-site origin.
  * Browsers always attach Origin on POST/PUT/PATCH/DELETE; a non-browser
@@ -84,7 +110,11 @@ export function isCrossSiteWrite(req: IncomingMessage): boolean {
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
   const origin = req.headers.origin;
   if (!origin) return false;
-  if (LOCAL_ORIGIN_RE.test(origin)) return false;
+  // Port-strict on loopback (T3): a page on another loopback port (an approved dev server in
+  // a web card, any localhost tab) is another origin. A loopback-spelled Origin passes only
+  // when it IS the dialed host; then Host is loopback too, so a rebinding page (whose Origin
+  // is its own name) never takes this branch.
+  if (LOCAL_ORIGIN_RE.test(origin)) return !isSameOriginAsHost(req);
   // Remote access (see `remote-access.ts`): the dashboard now answers on a tailnet address,
   // so a phone's own writes carry `Origin: http://100.x.y.z:4173` — same-origin in every
   // sense a browser means it, but not a spelling `LOCAL_ORIGIN_RE` can enumerate. Accept it
@@ -94,7 +124,7 @@ export function isCrossSiteWrite(req: IncomingMessage): boolean {
 }
 
 /**
- * CORS for the local dashboard. Reflects ONLY a loopback origin — or, with remote access
+ * CORS for the local dashboard. Reflects ONLY this server's own loopback origin — or, with remote access
  * on, the host this request was sent to — never a wildcard, so a third-party web page
  * cannot read API responses.
  * Returns true if the request was a handled OPTIONS preflight.
@@ -104,8 +134,11 @@ export function handleCors(req: IncomingMessage, res: ServerResponse): boolean {
   // Same widening as `isCrossSiteWrite`, and for the same reason: with remote access on, a
   // reflectable origin is either a loopback spelling or the host this very request was sent
   // to. Never a wildcard, and never a third-party origin.
-  const reflectable = !!origin
-    && (LOCAL_ORIGIN_RE.test(origin) || (remoteAccessEnabled() && isSameOriginAsHost(req)));
+  // Loopback is port-strict, like the write guard: only this very origin is reflected, so a
+  // page on another loopback port cannot read API responses (the vault list, a transcript).
+  const reflectable = !!origin && (LOCAL_ORIGIN_RE.test(origin)
+    ? isSameOriginAsHost(req)
+    : remoteAccessEnabled() && isSameOriginAsHost(req));
   if (origin && reflectable) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');

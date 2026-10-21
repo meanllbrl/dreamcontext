@@ -39,6 +39,8 @@ import {
 } from '../lib/agentSettings';
 import { useLightMode } from '../lib/lightMode';
 import './SettingsPage.css';
+import { LoopbackPorts } from '../components/settings/LoopbackPorts';
+import { setSuperSounds, superSoundsEnabled } from '../lib/superSfx';
 
 // ─── Platform options (duplicated client-side — can't import from src/lib) ────
 
@@ -148,6 +150,7 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ focus }: SettingsPageProps) {
+  const [superSounds, setSuperSoundsState] = useState(superSoundsEnabled);
   const { t } = useI18n();
   const { data: config, isLoading: configLoading, isError: configError } = useConfig();
   const updateConfig = useUpdateConfig();
@@ -611,6 +614,16 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                     onChange={(next) => updateAgentCfg({ superAgent: next })}
                   />
                 }
+              />
+              <SettingRow
+                title={t('settings.super.sounds')}
+                hint={t('settings.super.soundsNote')}
+                control={<Toggle label={t('settings.super.sounds')} checked={superSounds} onChange={(next) => { setSuperSounds(next); setSuperSoundsState(next); }} />}
+              />
+              <SettingRow
+                title={t('settings.super.ports.title')}
+                hint={t('settings.super.ports.note')}
+                control={<LoopbackPorts />}
               />
             </SettingGroup>
           )}
