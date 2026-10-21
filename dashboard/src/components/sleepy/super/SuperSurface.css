@@ -567,6 +567,12 @@
   word-break: break-word;
 }
 .super-tile-name { font-family: var(--font-family-display); font-size: var(--font-size-base); font-weight: 700; -webkit-line-clamp: 1; }
+/* A team card (an AI Team job): the member's face beside "<name> took the job". */
+.super-team-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.super-team-who .agent-av,
+.super-team-who img { flex: none; }
+.super-tile[data-tile='team'] .super-tile-line { -webkit-line-clamp: 2; }
+.super-card-view--team { display: flex; height: 100%; }
 /* A chat tile's title reads whole (owner 2026-10-21): up to three lines, its doing-line one. */
 .super-tile[data-tile='chat'] .super-tile-title { -webkit-line-clamp: 3; flex: none; }
 .super-tile[data-tile='chat'] .super-tile-line { -webkit-line-clamp: 1; }

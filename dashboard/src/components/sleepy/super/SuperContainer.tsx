@@ -1,4 +1,6 @@
 import { useEffect, useReducer, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { requestOpenAgents } from '../../../lib/openAgents';
+import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile';
 import { useI18n } from '../../../context/I18nContext';
 import type { SuperChild, SuperContainer as Container } from '../../../lib/superTypes';
 import type { WidgetSize } from '../../../lib/whiteboardWidgets';
@@ -21,7 +23,7 @@ import { LAYOUT } from './handoverMotion';
 import type { CardPlan } from './superLayout';
 
 export const KIND_GLYPH: Record<Container['kind'], string> = {
-  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', browser: '◉',
+  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', browser: '◉', team: '◈',
 };
 
 /** A whiteboard's board file, from its slug (`whiteboards/<slug>/<slug>.excalidraw.md`). */
@@ -98,6 +100,8 @@ export interface SuperContainerProps extends SuperCardActions {
   endPending?: boolean;
   /** The server did not record this child's end: it still runs, and the card says so. */
   endFailed?: boolean;
+  /** `team`: the AI Team job behind the card and its status now. */
+  team?: TeamCard;
 }
 
 /**
@@ -128,9 +132,15 @@ export function SuperContainer(props: SuperContainerProps) {
   }, [closeAsk]);
   const onCloseClick = () => (asksOnClose ? setCloseAsk((v) => !v) : props.onClose(c.id));
   const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
+  // A floating card's one action, for a click and for Enter/Space alike: a team card opens its
+  // member in AI Team (where the job is), any other card shows side by side.
+  const openCard = () => {
+    if (c.kind === 'team') { if (props.team) requestOpenAgents({ slug: props.team.job.member }); return; }
+    props.onSideBySide(c.id);
+  };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget || !floating) return;
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onSideBySide(c.id); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCard(); }
   };
   return (
     <div
@@ -143,7 +153,7 @@ export function SuperContainer(props: SuperContainerProps) {
       data-shape={plan.shape}
       data-owner={plan.owner ? 'true' : undefined}
       data-status={status ? glowOf(status) : undefined}
-      data-super-tone={status ? toneOfStatus(status.kind) : undefined}
+      data-super-tone={status ? toneOfStatus(status.kind) : props.team ? toneOfStatus(teamRingKind(teamStatusOf(props.team))) : undefined}
       data-drop-target={props.dropTarget ? 'card' : undefined}
       data-cue={props.cue?.kind}
       inert={props.cue?.kind === 'close' ? true : undefined}
@@ -155,7 +165,7 @@ export function SuperContainer(props: SuperContainerProps) {
         ...(props.cue ? { ['--cue-dx' as string]: `${props.cue.dx}px`, ['--cue-dy' as string]: `${props.cue.dy}px` } : {}),
       }}
       onPointerDown={floating ? (e) => props.onPress(e, c.id) : undefined}
-      onClick={floating ? (e) => { if (!(e.target as HTMLElement).closest('button')) props.onSideBySide(c.id); } : undefined}
+      onClick={floating ? (e) => { if (!(e.target as HTMLElement).closest('button')) openCard(); } : undefined}
       onKeyDown={onKeyDown}
     >
       <div className="super-card-lift" aria-hidden />
@@ -255,7 +265,9 @@ function FloatBody(p: BodyProps): ReactNode {
         ? <ChatTile session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} />
         : c.kind === 'browser'
           ? <BrowserCard sessionId={p.browserSessionId} live={!!p.browserLive} large={false} />
-          : <KindTile container={c} title={p.title} viewReady={p.viewReady} />}
+          : c.kind === 'team' && p.team
+            ? <TeamTile card={p.team} />
+            : <KindTile container={c} title={p.title} viewReady={p.viewReady} />}
     </div>
   );
 }
@@ -333,6 +345,8 @@ function viewFor(p: BodyProps): ReactNode {
       return <div className="super-card-view"><DocumentReader path={c.ref} onOpen={() => { /* read-only: links stay closed */ }} embedded /></div>;
     case 'browser':
       return <div className="super-card-view super-card-view--browser"><BrowserCard sessionId={p.browserSessionId} live={!!p.browserLive} large /></div>;
+    case 'team':
+      return p.team ? <div className="super-card-view super-card-view--team"><TeamTile card={p.team} /></div> : null;
     case 'board':
       return <div className="super-card-view super-card-view--board"><BoardContainer path={c.ref} /></div>;
     case 'whiteboard': {

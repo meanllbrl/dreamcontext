@@ -6,6 +6,7 @@ import { MAX_CONTAINERS, type SuperContainer as Container, type SuperGroup, type
 import { SleepyMascot } from '../SleepyMascot';
 import type { ChatSession } from '../chatSession';
 import { prefersReducedMotion } from './motionRunner';
+import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
 import { GroupPanel } from './GroupPanel';
 import { SuperGroupCard } from './SuperGroupCard';
@@ -153,7 +154,15 @@ export function SuperSurface(props: SuperSurfaceProps) {
 
   const byId = useMemo(() => new Map(state.containers.map((c) => [c.id, c] as const)), [state.containers]);
   const groupsById = useMemo(() => new Map(state.groups.map((g) => [g.id, g] as const)), [state.groups]);
-  const titleOf = useCallback((c: Container) => (c.kind === 'chat' ? props.titleFor(c.ref) : c.title || c.ref), [props.titleFor]);
+  const titleOf = useCallback((c: Container) => (c.kind === 'chat' ? props.titleFor(c.ref) : c.kind === 'team' ? state.team.find((j) => j.id === c.ref)?.member ?? c.ref : c.title || c.ref), [props.titleFor, state.team]);
+  /** A team card's job and its status now (the view's `teamLive`); undefined when the job is gone. */
+  const teamCardOf = useCallback((c: Container): TeamCard | undefined => {
+    if (c.kind !== 'team') return undefined;
+    const job = state.team.find((j) => j.id === c.ref);
+    if (!job) return undefined;
+    const live = state.teamLive?.[job.id];
+    return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '' };
+  }, [state.team, state.teamLive]);
   /** A group's cards as its tile shows them: kind, title and (a chat's) live state. */
   const membersOf = (g: SuperGroup): GroupMember[] => g.cards.flatMap((id) => {
     const c = byId.get(id);
@@ -280,6 +289,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
     if (c.kind === 'chat') {
       return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.has(c.ref)} />;
     }
+    const team = teamCardOf(c);
+    if (team) return <div className="super-panel-tile"><div className="super-panel-clip"><TeamTile card={team} /></div></div>;
     return <div className="super-panel-tile"><div className="super-panel-clip"><KindTile container={c} title={titleOf(c)} viewReady={viewsReady} /></div></div>;
   };
 
@@ -398,6 +409,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               dropTarget={target === c.id}
               endPending={c.kind === 'chat' && props.endPending.has(c.ref)}
               endFailed={c.kind === 'chat' && props.endFailed.has(c.ref)}
+              team={teamCardOf(c)}
               {...actions}
             />
           );

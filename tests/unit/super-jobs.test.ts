@@ -168,7 +168,8 @@ describe('the ONE status tone (owner 2026-10-21)', () => {
     expect(map).toEqual({ working: 'var(--color-success)', idle: 'var(--color-accent)', asking: 'var(--mood-waiting)', ended: 'var(--color-error)', starting: 'var(--color-warning)' });
     // Every frame carries its chat's tone itself (a tall card, a live chat, a tile alike: frontend
     // review Major 1 and its re-check), so no rule looks into a frame with :has().
-    expect(read(`${SUPER}/SuperContainer.tsx`)).toMatch(/data-super-tone=\{status \? toneOfStatus\(status\.kind\) : undefined\}/);
+    // The frame carries its chat's tone, or its AI Team job's (a team card), itself.
+    expect(read(`${SUPER}/SuperContainer.tsx`)).toMatch(/data-super-tone=\{status \? toneOfStatus\(status\.kind\) : props\.team \? toneOfStatus\(teamRingKind\(teamStatusOf\(props\.team\)\)\) : undefined\}/);
     expect(tone).not.toMatch(/:has\(/);
     expect(read(`${SUPER}/SuperSurface.css`).replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/data-super-tone[^{]*:has\(|:has\([^)]*data-super-tone/);
     expect(read(`${SUPER}/AgentCard.tsx`)).toMatch(/<div className="super-card" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}>/);

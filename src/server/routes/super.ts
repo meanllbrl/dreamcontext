@@ -15,9 +15,9 @@ import {
   defaultShape, dissolveGroups, floatCount, leaveGroups,
   type ContainerKind, type ContainerShape, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
 } from '../../lib/super/types.js';
-import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
+import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, setTeamLiveSource, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
 import { sayToAgent } from './automations.js';
-import { currentAutomationJob, currentReplyJob, whenReplySettles } from '../automation-job.js';
+import { currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
 import { getAutomation } from '../../lib/automations/store.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
@@ -170,6 +170,8 @@ function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown
       return hasChild(c.state, ref) ? { ref } : { error: 'a chat container shows one of your children: give its session id' };
     case 'browser':
       return hasChild(c.state, ref) ? { ref } : { error: 'a browser container shows one of your children\'s live browser: give its session id' };
+    case 'team':
+      return c.state.team.some((j) => j.id === ref) ? { ref } : { error: 'a team container shows one of your AI Team jobs: give its job id (`super state` lists them)' };
     case 'web': {
       const w = validateSuperWebUrl(ref, ownedLoopbackPorts());
       return w.ok
@@ -463,8 +465,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const st = (children[sid] as { status?: unknown } | undefined)?.status;
       return st !== 'ended' && st !== 'gone' && st !== 'parked';
     });
+    // `teamLive` is the owner window's (member text, unfenced): the agent reads each team job's
+    // status and last line from `team` below, fenced (D10).
+    const { teamLive: _ownerOnly, ...view } = superStateView(root, settled);
     ok(res, {
-      ...superStateView(root, settled), children, containers, queue: settled.queue.map(fenceQ), status,
+      ...view, children, containers, queue: settled.queue.map(fenceQ), status,
       head: head ? fenceQ(head) : null, machine, pool: poolRows(vault, settled.pool), team, ...(warnings.length ? { warnings } : {}),
     });
   },
@@ -1276,6 +1281,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     };
     await writeSuper(root, (s) => recordTeamJob(s, job));
     if (job.jobKind === 'reply' && job.jobId) recordReplyEnding(root, job.id, job.jobId);
+    // A run's ending is in its thread and run cache already: the write only pushes the window,
+    // so the job's card turns done or failed without a poll.
+    if (job.jobKind === 'run' && job.jobId) void whenRunSettles(job.jobId)?.then(() => writeSuper(root, () => {})).catch(() => { /* best-effort */ });
     ok(res, { job: job.id, member, runId, queued: job.queued, status: job.queued ? 'queued' : 'running' });
   },
 };
@@ -1335,6 +1343,10 @@ async function settleApprovals(root: string, state: SuperState): Promise<SuperSt
     return await writeSuper(root, (s) => { closeSettledApprovals(s, (m) => waiting.get(m) ?? true); });
   } catch { return state; }
 }
+
+// The window's view reads each team card's status through the same live jobs (team.ts imports no
+// server code).
+setTeamLiveSource(liveSayJob);
 
 /** The say path's own job for a team job, while it is in memory. */
 function liveSayJob(root: string, j: SuperTeamJob): LiveSayJob | null {

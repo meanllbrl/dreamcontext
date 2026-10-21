@@ -4,6 +4,7 @@ import { listVaults } from '../vaults.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
+import { teamLiveRows } from './team.js';
 import {
   STARTING_GRACE_MS, activityOf, chatTopic, getChat, onChatChange, type ChatChange, type ChatEntry,
 } from '../assistant/chat-registry.js';
@@ -79,7 +80,8 @@ export function superVaultName(contextRoot: string): string {
 }
 
 export function superView(contextRoot: string, state: SuperState): SuperStateView {
-  return { ...state, vault: superVaultName(contextRoot) };
+  const teamLive = teamLiveRows(contextRoot, state);
+  return { ...state, vault: superVaultName(contextRoot), ...(teamLive ? { teamLive } : {}) };
 }
 
 export function newQueueId(): string {

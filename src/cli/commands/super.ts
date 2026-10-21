@@ -61,7 +61,7 @@ function print(r: CallResult): void {
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
 const usage = (message: string) => print({ status: 400, body: { error: 'invalid_args', message } });
 
-const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | browser';
+const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | browser | team';
 
 export function registerSuperCommand(program: Command): void {
   const s = program
@@ -97,7 +97,7 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('open <kind> <refs...>')
-    .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once`)
+    .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once`)
     .option('--group <name>', 'Put every card opened here in ONE group of this name (a set the owner asked to see)')
     .option('--shape <shape>', 'square | tall: recorded only; every floating card is a 1:1 tile')
     .option('--title <text>', 'Its label (one ref only)')

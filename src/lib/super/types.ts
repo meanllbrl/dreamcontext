@@ -11,7 +11,7 @@
 export const SUPER_STATE_VERSION = 1 as const;
 
 /** What a container can show. `chat` is a child chat's card; the rest are read-only views. */
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser', 'team'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
 
 /** A card's recorded shape, square (1:1) or tall (3:4): plan-r8 F1 and stage v2. Since the
@@ -570,4 +570,7 @@ export const READOPT_GRACE_MS = 2 * 60_000;
  */
 export interface SuperStateView extends SuperState {
   vault: string;
+  /** Each AI Team job on the stage (a `team` card): its status and last line, read now from the
+   *  member's thread. Absent when no team card is open. */
+  teamLive?: Record<string, { status: TeamJobStatus; lastLine: string }>;
 }

@@ -18,6 +18,9 @@
  *   T3  the owner approves it (`agents approve --yes`), the super asks again: 200, the approval item
  *       is done and the strip is empty; the member's own thread holds the super's ask (via
  *       `super`); its run ends and `super state` shows the team job done, with its last line.
+ *   T4  the job's card is on the stage: the member's face and "Scout took the job", done (pushed
+ *       when the run ended) with its last line, in the shared tone map's colour on tile and frame
+ *       (screenshots at 1280 and 1920 px); a click opens the member in AI Team.
  *   No console errors.
  */
 
@@ -282,6 +285,61 @@ async function run(engineName, base) {
   ok(tag('T3 super state shows the team job done'), row?.status === 'done', JSON.stringify(row));
   ok(tag('T3 …with the member\'s last line, fenced'), typeof row?.lastLine === 'string' && row.lastLine.includes('Signups fell 4%') && row.lastLine.startsWith('<untrusted-project-output'), JSON.stringify(row));
   await page.screenshot({ path: join(OUT, `${engineName}-after.png`) });
+
+  console.log(`── ${engineName}: T4 the job's card on the stage`);
+  const card = page.locator('[data-testid="super-team-tile"]:visible');
+  ok(tag('T4 the job has its card on the stage'), await until(page, async () => (await card.count()) === 1, 15000));
+  // New cards wait while the owner types (G1) and then play their entrance: the card must end up
+  // really drawn (its frame no longer pending, fully opaque), not just present in the DOM.
+  const shown = async () => card.evaluate((el) => {
+    const frame = el.closest('[data-container-id]');
+    let o = 1;
+    for (let n = el; n; n = n.parentElement) o *= Number(getComputedStyle(n).opacity);
+    return !!frame && !frame.classList.contains('super-card-frame--pending') && o > 0.99;
+  }).catch(() => false);
+  ok(tag('T4 it is revealed: drawn fully opaque once the owner stops typing'), await until(page, shown, 30000));
+  ok(tag('T4 with the member\'s face and "Scout took the job"'), await until(page, async () =>
+    /Scout took the job/.test(await card.getByTestId('super-team-took').innerText().catch(() => ''))
+    && (await card.locator('.super-team-who .agent-av, .super-team-who img').count()) === 1, 15000));
+  ok(tag('T4 it reads done (pushed when the run ended), with the member\'s last line'), await until(page, async () =>
+    (await card.getAttribute('data-team-status')) === 'done'
+    && /Signups fell 4%/.test(await card.getByTestId('super-team-line').innerText().catch(() => '')), 30000),
+    `${await card.getAttribute('data-team-status')} | ${await card.getByTestId('super-team-line').innerText().catch(() => '')}`);
+  // The same tone language as a chat card: the state word is drawn in the tone superTone.css maps
+  // its status to (done -> idle -> the accent token), and the frame carries that tone too.
+  const tones = await card.evaluate((el) => {
+    const frame = el.closest('[data-container-id]');
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--color-accent)';
+    document.body.appendChild(probe);
+    const accent = getComputedStyle(probe).color;
+    probe.remove();
+    return { tile: el.getAttribute('data-super-tone'), frame: frame?.getAttribute('data-super-tone'), word: getComputedStyle(el.querySelector('.super-tile-state')).color, accent };
+  });
+  ok(tag('T4 its tone is the shared map\'s (idle for done), on the tile and the frame'), tones.tile === 'idle' && tones.frame === 'idle' && tones.word === tones.accent, JSON.stringify(tones));
+  for (const w of [1280, 1920]) {
+    await page.setViewportSize({ width: w, height: w === 1280 ? 800 : 1080 });
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: join(OUT, `${engineName}-team-card-${w}.png`) });
+    const box = await card.boundingBox();
+    ok(tag(`T4 the card is on screen and drawn at ${w} px`), !!box && box.width > 100 && box.x >= 0 && box.x + box.width <= w && await shown(), JSON.stringify(box));
+  }
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.waitForTimeout(500);
+  // The keyboard does what the click does: Enter on the focused card opens the member.
+  await card.evaluate((el) => el.closest('[data-container-id]').focus());
+  await page.keyboard.press('Enter');
+  ok(tag('T4 Enter on the focused card opens the member in AI Team too'), await until(page, async () =>
+    (await page.locator('.aiteam:visible').count()) === 1, 15000));
+  await openChat(page, base);
+  await until(page, async () => (await card.count()) === 1 && await shown(), 20000);
+  // A real mouse click on the card (the card frame takes it: a floating card is one grab handle).
+  const cb = await card.boundingBox();
+  await page.mouse.click(cb.x + cb.width / 2, cb.y + cb.height / 2);
+  ok(tag('T4 a click on the card opens the member in AI Team'), await until(page, async () =>
+    (await page.locator('.aiteam:visible').count()) === 1
+    && (await page.locator('.aiteam-convo:visible').filter({ hasText: 'Scout' }).count()) >= 1, 15000));
+  await page.screenshot({ path: join(OUT, `${engineName}-team-card-opened.png`) });
 
   ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));
   await browser.close();

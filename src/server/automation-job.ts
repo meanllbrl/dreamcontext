@@ -101,6 +101,15 @@ function pruneSettledJobs(): void {
  * one before any settled one — which is what the single-slot callers (`GET /runs`, the
  * "run now" poll) always read, so they keep their meaning.
  */
+/** Each run job's settlement, for a caller that must know when it ended (the Super Agent's team
+ *  card). Dropped a minute after it settles. */
+const runSettled = new Map<string, Promise<AutomationJobState>>();
+
+/** Resolves with the run job once it settled; null for a job this process does not know. */
+export function whenRunSettles(jobId: string): Promise<AutomationJobState> | null {
+  return runSettled.get(jobId) ?? null;
+}
+
 export function currentAutomationJob(contextRoot: string, slug?: string): AutomationJobState | null {
   pruneSettledJobs();
   const bySlug = jobs.get(contextRoot);
@@ -155,7 +164,9 @@ export function startAutomationJob(
   };
   if (!bySlug) { bySlug = new Map(); jobs.set(contextRoot, bySlug); }
   bySlug.set(slug, job);
-  void runJob(contextRoot, job, ask);
+  const settled = runJob(contextRoot, job, ask).then(() => job, () => job);
+  runSettled.set(job.id, settled);
+  void settled.then(() => { setTimeout(() => runSettled.delete(job.id), 60_000).unref?.(); });
   return { job, started: true };
 }
 

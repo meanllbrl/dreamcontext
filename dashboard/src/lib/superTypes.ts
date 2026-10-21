@@ -11,7 +11,7 @@
 
 export const SUPER_STATE_VERSION = 1 as const;
 
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser', 'team'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
 
 export const CONTAINER_SHAPES = ['square', 'tall'] as const;
@@ -190,6 +190,9 @@ export interface SuperState {
 
 export interface SuperStateView extends SuperState {
   vault: string;
+  /** Each AI Team job on the stage (a `team` card): its status and last line, read now from the
+   *  member's thread. Absent when no team card is open. */
+  teamLive?: Record<string, { status: TeamJobStatus; lastLine: string }>;
 }
 
 export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
@@ -340,6 +343,15 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     isRecord(j) && typeof j.id === 'string' && typeof j.member === 'string' && typeof j.runId === 'string'
     && typeof j.brief === 'string' && typeof j.startedAt === 'number' && typeof j.queued === 'boolean'
     && (j.jobKind === 'run' || j.jobKind === 'reply'));
+  // Each team card's status now: only a known job, a known status and a string line survive.
+  let teamLive: SuperStateView['teamLive'];
+  if (isRecord(v.teamLive)) {
+    teamLive = {};
+    for (const j of team) {
+      const row = (v.teamLive as Record<string, unknown>)[j.id];
+      if (isRecord(row) && oneOf(TEAM_JOB_STATUSES, row.status) && typeof row.lastLine === 'string') teamLive[j.id] = { status: row.status, lastLine: row.lastLine };
+    }
+  }
   const children: Record<string, SuperChild> = {};
   for (const [k, c] of Object.entries(v.children)) {
     if (isRecord(c) && c.sessionId === k && typeof c.brief === 'string' && typeof c.adopted === 'boolean' && typeof c.startedAt === 'number') {
@@ -371,5 +383,6 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     pool,
     ownerBatches,
     team,
+    ...(teamLive ? { teamLive } : {}),
   };
 }

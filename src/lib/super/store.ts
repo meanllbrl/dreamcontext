@@ -104,7 +104,7 @@ const unit = (v: unknown): number | undefined => {
  * regions, a focus flag) reads back as floating cards. A drop position needs two finite
  * numbers, clamped into [0, 1]; anything else is no position (placed automatically).
  */
-function sanitizeContainers(raw: unknown, children: Readonly<Record<string, SuperChild>>): SuperContainer[] {
+function sanitizeContainers(raw: unknown, children: Readonly<Record<string, SuperChild>>, teamIds: ReadonlySet<string>): SuperContainer[] {
   if (!Array.isArray(raw)) return [];
   const out: SuperContainer[] = [];
   const ids = new Set<string>();
@@ -116,6 +116,8 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
     if (typeof c.ref !== 'string' || !c.ref || c.ref.length > MAX_REF || /[\u0000-\u001f\u007f]/.test(c.ref)) continue;
     // A live browser card shows a recorded child's frames: any other ref names nothing.
     if (c.kind === 'browser' && !(okSessionId(c.ref) && Object.prototype.hasOwnProperty.call(children, c.ref))) continue;
+    // A team card shows one of the super's AI Team jobs, by its id.
+    if (c.kind === 'team' && !(TEAM_JOB_ID_RE.test(c.ref) && teamIds.has(c.ref))) continue;
     const title = cap(c.title, MAX_TITLE);
     const pos = isRecord(c.pos) ? { x: unit(c.pos.x), y: unit(c.pos.y) } : null;
     ids.add(c.id);
@@ -361,7 +363,9 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
   const children = sanitizeChildren(raw.children, session, opts);
   // Groups settle against the cards (a closed card leaves its group, a group of one dissolves
   // into its card), so they come back with the cards they may have changed.
-  const { containers, groups } = normalizeGroups(sanitizeContainers(raw.containers, children), raw.groups);
+  // A team card shows a recorded job: one whose job fell off the record goes with it.
+  const team = sanitizeTeam(raw.team);
+  const { containers, groups } = normalizeGroups(sanitizeContainers(raw.containers, children, new Set(team.map((j) => j.id))), raw.groups);
   const notes: Record<string, SuperNote> = {};
   if (isRecord(raw.notes)) {
     for (const [k, n] of Object.entries(raw.notes)) {
@@ -385,7 +389,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     dismissed: sanitizeDismissed(raw.dismissed, opts.now ?? Date.now()),
     pool: sanitizePool(raw.pool, opts),
     ownerBatches: sanitizeOwnerBatches(raw.ownerBatches),
-    team: sanitizeTeam(raw.team),
+    team,
   };
 }
 

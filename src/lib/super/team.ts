@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { readRunAnswer } from '../automations/feed.js';
 import { readAutomationCache } from '../automations/store.js';
-import { plainPostText, readThreadRun } from '../automations/threads.js';
+import { plainPostText, readThread } from '../automations/threads.js';
 import type { ThreadEntry } from '../automations/types.js';
-import { MAX_TEAM_JOBS, type SuperState, type SuperTeamJob, type TeamJobStatus } from './types.js';
-import { newQueueId } from './inbox.js';
+import { MAX_CONTAINERS, MAX_FLOAT, MAX_TEAM_JOBS, floatCount, type SuperState, type SuperTeamJob, type TeamJobStatus } from './types.js';
+import { containerIdFor, newQueueId } from './inbox.js';
 
 /**
  * The Super Agent's jobs for the project's AI Team (`super team ask`, task
@@ -18,11 +18,57 @@ export function newTeamJobId(): string {
   return `team-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
 }
 
-/** Record a job (newest first, capped), and close every open approval question about its member:
- *  a member that just took a job is approved. */
+/** Record a job (newest first, capped), put its card on the stage, and close every open approval
+ *  question about its member: a member that just took a job is approved. */
 export function recordTeamJob(s: SuperState, job: SuperTeamJob): void {
   s.team = [job, ...s.team.filter((j) => j.id !== job.id)].slice(0, MAX_TEAM_JOBS);
+  // A job that fell off the record takes its card with it (no tile without a job).
+  const kept = new Set(s.team.map((j) => j.id));
+  s.containers = s.containers.filter((c) => c.kind !== 'team' || kept.has(c.ref));
+  ensureTeamContainer(s, job.id);
   for (const q of s.queue) if (q.kind === 'approval' && q.member === job.member && q.state !== 'done') q.state = 'done';
+}
+
+/** A team job's card: square, placed like a child's chat card (floating while the stage has
+ *  room, in Others when it is full; none when the record holds MAX_CONTAINERS). */
+export function ensureTeamContainer(s: SuperState, jobId: string): string | null {
+  const have = s.containers.find((c) => c.kind === 'team' && c.ref === jobId);
+  if (have) return have.id;
+  if (s.containers.length >= MAX_CONTAINERS) return null;
+  const id = containerIdFor('team', jobId);
+  s.containers.push({ id, kind: 'team', ref: jobId, shape: 'square', place: floatCount(s) < MAX_FLOAT ? 'float' : 'others' });
+  return id;
+}
+
+/** Where the say path's live jobs are read from: the server injects it (this module imports no
+ *  server code), so the window's view can say what each team card is doing now. */
+let liveSource: ((contextRoot: string, job: SuperTeamJob) => LiveSayJob | null) | null = null;
+export function setTeamLiveSource(fn: typeof liveSource): void { liveSource = fn; }
+
+/** A finished job's row never changes: read once per process, not on every push. Keyed by
+ *  vault and job; pruned to the jobs still shown on each read. */
+const finished = new Map<string, { status: TeamJobStatus; lastLine: string }>();
+
+/** Status and last line of every team job that has a card on the stage (the window's view). */
+export function teamLiveRows(contextRoot: string, s: Pick<SuperState, 'team' | 'containers'>): Record<string, { status: TeamJobStatus; lastLine: string }> | undefined {
+  const shown = new Set(s.containers.filter((c) => c.kind === 'team').map((c) => c.ref));
+  const keyOf = (id: string) => `${contextRoot}\u0000${id}`;
+  const live = new Set([...shown].map(keyOf));
+  for (const k of finished.keys()) if (k.startsWith(`${contextRoot}\u0000`) && !live.has(k)) finished.delete(k);
+  if (!shown.size) return undefined;
+  const out: Record<string, { status: TeamJobStatus; lastLine: string }> = {};
+  for (const j of s.team) {
+    if (!shown.has(j.id)) continue;
+    const hit = finished.get(keyOf(j.id));
+    if (hit) { out[j.id] = hit; continue; }
+    try {
+      const row = teamJobLive(contextRoot, j, liveSource ? liveSource(contextRoot, j) : null);
+      out[j.id] = row;
+      // A reply is final only once its outcome is recorded (its zero-post mirror lands just after it settles).
+      if ((row.status === 'done' || row.status === 'failed') && (j.jobKind === 'run' || j.outcome)) finished.set(keyOf(j.id), row);
+    } catch { /* a card with no status reads as its job only */ }
+  }
+  return out;
 }
 
 /**
@@ -82,7 +128,11 @@ export function teamJobLive(
   live: LiveSayJob | null,
 ): { status: TeamJobStatus; lastLine: string } {
   let entries: ThreadEntry[] = [];
-  try { entries = readThreadRun(contextRoot, job.member, job.runId); } catch { entries = []; }
+  // Only the day files a run can be in: from the day before its fire day (a day file is named by
+  // the writer's local date, the run id is UTC), never the member's whole history.
+  const fired = Date.parse(job.runId);
+  const fromDay = Number.isFinite(fired) ? new Date(fired - 86_400_000).toISOString().slice(0, 10) : undefined;
+  try { entries = readThread(contextRoot, job.member, { runId: job.runId, ...(fromDay ? { fromDay } : {}) }); } catch { entries = []; }
   const ordered = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const at = job.entryId ? ordered.findIndex((e) => e.id === job.entryId) : ordered.findIndex((e) => e.kind === 'user');
   const after = at >= 0 ? ordered.slice(at + 1) : [];

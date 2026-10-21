@@ -264,6 +264,9 @@ export interface ReadThreadOptions {
    * per-run read should do.
    */
   days?: number;
+  /** Read only day files dated on or after this YYYY-MM-DD (an I/O bound for a run whose
+   *  entries cannot be older than its fire day). */
+  fromDay?: string;
 }
 
 /**
@@ -287,6 +290,7 @@ export function readThread(contextRoot: string, slug: string, opts: ReadThreadOp
   if (opts.days !== undefined && opts.days >= 0 && files.length > opts.days) {
     files = files.slice(files.length - opts.days);
   }
+  if (opts.fromDay && /^\d{4}-\d{2}-\d{2}$/.test(opts.fromDay)) files = files.filter((f) => f.slice(0, 10) >= opts.fromDay!);
 
   const byId = new Map<string, ThreadEntry>();
   for (const name of files) {
