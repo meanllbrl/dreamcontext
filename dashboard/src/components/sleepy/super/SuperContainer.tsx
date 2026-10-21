@@ -4,7 +4,6 @@ import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile'
 import { useI18n } from '../../../context/I18nContext';
 import type { SuperChild, SuperContainer as Container } from '../../../lib/superTypes';
 import type { WidgetSize } from '../../../lib/whiteboardWidgets';
-import { InsightView } from '../chat/InsightView';
 import { BoardEmbed, BoardFullscreen } from '../chat/BoardEmbed';
 import { DocumentReader } from '../../appLink/DocumentReader';
 import { KnowledgeWidget } from '../../whiteboard/widgets/KnowledgeWidget';
@@ -17,6 +16,7 @@ import '../../whiteboard/widgets/widgets.css';
 import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
 import { AgentCard, ChatTile } from './AgentCard';
+import { InsightCard } from './InsightCard';
 import { toneOfStatus } from './superHandover';
 import { KindTile, ResolvedTitle, TaskPageHead } from './SuperTiles';
 import { LAYOUT } from './handoverMotion';
@@ -316,7 +316,7 @@ function viewFor(p: BodyProps): ReactNode {
   const size = widgetSize(p.plan);
   switch (c.kind) {
     case 'insight':
-      return <div className="super-card-view"><InsightView spec={{ type: 'insight', id: c.ref }} /></div>;
+      return <InsightCard container={c} size={size} elementId={`super-${c.id}`} />;
     case 'task':
     case 'knowledge': {
       // Large (side by side, presented, a sheet): the page itself, read the way a whiteboard's

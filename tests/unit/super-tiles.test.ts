@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
-import { criteriaProgress, plainCriterion } from '../../dashboard/src/components/sleepy/super/tileModel.js';
+import { criteriaProgress, insightTile, plainCriterion } from '../../dashboard/src/components/sleepy/super/tileModel.js';
 
 const { StatusRing, ChatTile } = await import('../../dashboard/src/components/sleepy/super/AgentCard.js');
 const { GroupTile, groupStatus } = await import('../../dashboard/src/components/sleepy/super/SuperTiles.js');
@@ -48,6 +48,65 @@ describe('a task tile reads its own criteria', () => {
     expect(criteriaProgress('')).toEqual({ done: 0, total: 0, next: null });
     expect(criteriaProgress(undefined)).toEqual({ done: 0, total: 0, next: null });
     expect(criteriaProgress('- [x] a\n- [x] b')).toEqual({ done: 2, total: 2, next: null });
+  });
+});
+
+describe('an insight tile reads its cached detail (owner 2026-10-21)', () => {
+  const detail = (over: Record<string, unknown> = {}, render = 'number') => ({
+    insight: { render, unit: 'users' },
+    cache: { fetchedAt: '2026-10-21T11:30:00Z', series: [] as { points: { t: string; v: number }[] }[], ...over },
+  });
+  const days = (...vs: number[]) => vs.map((v, i) => ({ t: `2026-10-${10 + i}`, v }));
+
+  it('a series is its latest figure, the change from the point before and a trend', () => {
+    const v = insightTile(detail({ latest: 9660, series: [{ points: days(9400, 9690, 9660) }] }))!;
+    expect(v).toMatchObject({ shape: 'trend', value: 9660, delta: -30, unit: 'users', fresh: 'fresh' });
+    expect(v.points.map((p) => p.v)).toEqual([9400, 9690, 9660]);
+  });
+
+  it('a funnel is the share of the top that reaches its last step, never "the last step and a drop"', () => {
+    const steps = [4120, 3811, 1280, 38];
+    const legacy = insightTile(detail({ series: [{ points: days(...steps) }] }, 'funnel'))!;
+    expect(legacy).toMatchObject({ shape: 'funnel', top: 4120, last: 38, delta: null });
+    expect(legacy.value).toBeCloseTo((38 / 4120) * 100, 5);
+    expect(legacy.lane[0]).toBe(1);
+    expect(legacy.lane).toHaveLength(4);
+    // A funnel SET reads its first funnel (`set.primary` names a metric, not a funnel); the series is not looked at.
+    const set = insightTile(detail({ series: [{ points: days(1, 2) }], funnel: { set: { primary: 'users', funnels: [{ id: 'a', steps: [{ users: 200 }, { users: 50 }] }, { id: 'users', steps: [{ users: 10 }] }] } } }, 'funnel'))!;
+    expect(set).toMatchObject({ shape: 'funnel', top: 200, last: 50, value: 25 });
+  });
+
+  it('an unmeasured step is not a zero, and a funnel never turns into a trend', () => {
+    const set = (steps: { users: number; measured?: boolean }[]) => insightTile(detail({ series: [{ points: days(1280, 38) }], latest: 7, funnel: { set: { funnels: [{ id: 'a', steps }] } } }, 'funnel'))!;
+    // The last step is not measured: the reach is of the last MEASURED one.
+    expect(set([{ users: 4000 }, { users: 1000 }, { users: 0, measured: false }])).toMatchObject({ shape: 'funnel', top: 4000, last: 1000, value: 25 });
+    // The top is not measured: the first measured step is the top (as the Lab card reads it).
+    expect(set([{ users: 0, measured: false }, { users: 800 }, { users: 200 }])).toMatchObject({ shape: 'funnel', top: 800, last: 200, value: 25 });
+    // Nothing measured, or no traffic at all: empty, never the series read as a trend with a "drop".
+    expect(set([{ users: 0, measured: false }])).toMatchObject({ shape: 'empty', value: null, delta: null });
+    expect(set([{ users: 0 }, { users: 0 }])).toMatchObject({ shape: 'empty', value: null, delta: null });
+  });
+
+  it('a long funnel keeps at most 24 bars and each one is its run\'s lowest, so a drop does not vanish', () => {
+    const users = Array.from({ length: 60 }, (_, i) => (i === 31 ? 5 : 1000 - i));
+    const v = insightTile(detail({ series: [{ points: days(...users) }] }, 'funnel'))!;
+    expect(v.lane).toHaveLength(24);
+    expect(Math.min(...v.lane)).toBeCloseTo(5 / 1000, 5);
+  });
+
+  it('freshness is one word: failed, never synced, stale (the server\'s verdict), or up to date', () => {
+    expect(insightTile(detail({ error: 'HTTP 500' }))!.fresh).toBe('failed');
+    expect(insightTile(detail({ fetchedAt: null }))!.fresh).toBe('never');
+    expect(insightTile(detail(), true)!.fresh).toBe('stale');
+    expect(insightTile(detail(), false)!.fresh).toBe('fresh');
+    // Stale is never re-derived from the fetch time: an old fetch the server calls fresh stays fresh.
+    expect(insightTile(detail({ fetchedAt: '2020-01-01T00:00:00Z' }))!.fresh).toBe('fresh');
+  });
+
+  it('one figure and no series is the figure; nothing at all is empty; no detail yet is null', () => {
+    expect(insightTile(detail({ latest: 3 }))).toMatchObject({ shape: 'figure', value: 3 });
+    expect(insightTile(detail())).toMatchObject({ shape: 'empty', value: null });
+    expect(insightTile(undefined)).toBeNull();
   });
 });
 
