@@ -178,13 +178,20 @@ async function measure(deps: CapacityDeps): Promise<CapacityFacts> {
 
 /** Tests only: what the no-argument readers answer instead of this machine (null = measure). */
 let factsOverride: CapacityFacts | null = null;
-export function setCapacityFactsForTests(facts: CapacityFacts | null): void {
+let factsOverrideDelayMs = 0;
+/** `delayMs` stands in for a cold measurement (`ps`, `sysctl`, `statfs` take real time). */
+export function setCapacityFactsForTests(facts: CapacityFacts | null, opts: { delayMs?: number } = {}): void {
   factsOverride = facts;
+  factsOverrideDelayMs = opts.delayMs ?? 0;
+}
+function overridden(): Promise<CapacityFacts> {
+  const facts = { ...(factsOverride as CapacityFacts) };
+  return factsOverrideDelayMs > 0 ? new Promise((r) => { setTimeout(() => r(facts), factsOverrideDelayMs); }) : Promise.resolve(facts);
 }
 
 /** The facts, memoized for {@link CAPACITY_TTL_MS}. Injectable readers for tests. */
 export function readCapacityFacts(injected?: CapacityDeps): Promise<CapacityFacts> {
-  if (!injected && factsOverride) return Promise.resolve({ ...factsOverride });
+  if (!injected && factsOverride) return overridden();
   const deps = injected ?? defaultDeps();
   const t = deps.now();
   if (memo && t - memo.at < CAPACITY_TTL_MS) return memo.value;
@@ -196,7 +203,7 @@ export function readCapacityFacts(injected?: CapacityDeps): Promise<CapacityFact
 /** The facts read fresh, past the memo (the park sweep reads once a minute anyway and must see
  *  what its last parking freed). Refreshes the memo for the other readers. */
 export function readCapacityFactsFresh(injected?: CapacityDeps): Promise<CapacityFacts> {
-  if (!injected && factsOverride) return Promise.resolve({ ...factsOverride });
+  if (!injected && factsOverride) return overridden();
   const deps = injected ?? defaultDeps();
   const value = measure(deps);
   memo = { at: deps.now(), value };

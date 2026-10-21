@@ -177,6 +177,31 @@ describe('delegate on a machine short of room', () => {
     expect((await verb('delegate', { prompt: 'Fix the settings.' })).status).toBe(200);
   });
 
+  it('ten parallel delegates start at most 8: the cap check and the in-flight count are one step (end review r1)', async () => {
+    write();
+    // A big machine, so only the cap can hold (in-flight calls count as sessions too).
+    // A cold measurement takes time: every call waits on it together, as on a real machine.
+    setCapacityFactsForTests({ ...ROOMY, totalMemGb: 64, claudeSessions: 1 }, { delayMs: 30 });
+    let n = 0;
+    answer = { ok: true, result: { sessionId: CHILD_SID } };
+    const rs = await Promise.all(Array.from({ length: 10 }, (_, i) => verb('delegate', { prompt: `Job ${i}.` }).then((r) => { n++; return r; })));
+    expect(n).toBe(10);
+    expect(rs.filter((r) => r.json.error === 'held').length).toBe(2);
+    expect(commands().length).toBe(8);
+  });
+
+  it('a burst within the facts\' minute counts the children it just started (end review r1)', async () => {
+    const now = Date.now();
+    const kid = (i: number) => [`k-${i}`, { sessionId: `k-${i}`, brief: '', adopted: false, startedAt: now - 1000 }];
+    write({ children: Object.fromEntries([kid(1), kid(2)]) });
+    // 16 GB -> room for 9 sessions; ps saw 8 a moment ago, and two children started since.
+    setCapacityFactsForTests({ ...ROOMY, claudeSessions: 8 });
+    const r = await verb('delegate', { prompt: 'One more.' });
+    expect(r.json).toMatchObject({ error: 'held', reason: 'machine' });
+    write({ children: Object.fromEntries([kid(1)]) });
+    expect((await verb('delegate', { prompt: 'One more.' })).status).toBe(200);
+  });
+
   it('the cap still answers reason cap', async () => {
     fillCap();
     setCapacityFactsForTests(ROOMY);

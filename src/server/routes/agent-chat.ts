@@ -77,7 +77,7 @@ import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '..
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
-import { clearSuperNote, peekSuperNote, superIndex, superRootOfChild } from '../../lib/super/store.js';
+import { clearSuperNote, delegatedChildMcp, peekSuperNote, superIndex, superRootOfChild } from '../../lib/super/store.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
 import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen } from '../../lib/super/phone-mirror.js';
 import {
@@ -88,7 +88,7 @@ import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
-  knownMcpServers, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unknownMcpNames, writeLeanMcpConfig,
+  knownMcpServers, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
 import { deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
@@ -410,6 +410,30 @@ export function withoutShellJobControlNoise(stderr: string): string {
 export function mcpConfigArgs(paths: Array<string | null>): string[] {
   const files = paths.filter((p): p is string => !!p);
   return files.length ? ['--mcp-config', ...files] : [];
+}
+
+/**
+ * Is this chat open a LEAN Super Agent child, and with which servers (orchestration plan r5
+ * D14)? A child the super record names is lean from its RECORD, whatever the URL says (a window
+ * that reloaded before the record arrived asks for nothing); the URL's `lean=1&mcp=` covers a
+ * child opened before its record lands. A name the user no longer has is DROPPED: narrower,
+ * never wider, never a refusal that locks the conversation out. Never the Assistant or a Super
+ * Agent's own session. Null = not lean (every other chat, as before); 'refuse' = a malformed list.
+ */
+export function leanMcpForUpgrade(o: {
+  assistant: boolean; mode: string; conversation: string; lean: string | null; mcp: string | null;
+  recorded: (conversation: string) => string[] | null; known: () => ReadonlyMap<string, unknown>;
+}): string[] | null | 'refuse' {
+  if (o.assistant || o.mode === 'super' || o.mode === 'assistant') return null;
+  let asked = o.recorded(o.conversation);
+  if (!asked && o.lean === '1') {
+    const parsed = parseMcpNames(o.mcp ?? '');
+    if ('error' in parsed) return 'refuse';
+    asked = parsed.names;
+  }
+  if (!asked) return null;
+  const known = o.known();
+  return asked.filter((n) => known.has(n));
 }
 
 /**
@@ -1031,12 +1055,16 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // costs its sender servers; the names are re-checked here against the servers the user
     // really has (own keys), and again when the subset is written. Never the Assistant or a
     // Super Agent's own session.
-    let leanMcp: string[] | undefined;
-    if (url.searchParams.get('lean') === '1' && !assistant && mode !== 'super' && mode !== 'assistant') {
-      const parsed = parseMcpNames(url.searchParams.get('mcp') ?? '');
-      if ('error' in parsed || unknownMcpNames(parsed.names, knownMcpServers(projectRoot)).length > 0) { rejectUpgrade(socket, 400); return; }
-      leanMcp = parsed.names;
-    }
+    // A child the super record names is lean from its RECORD, whatever the URL says (a window
+    // that reloaded before the record arrived asks for nothing); the URL's `lean` covers a child
+    // opened before its record lands. A name the user no longer has is DROPPED, never widened,
+    // never a refusal that would lock the conversation out.
+    const lean = leanMcpForUpgrade({
+      assistant, mode, conversation: resumeId || sessionId, lean: url.searchParams.get('lean'), mcp: url.searchParams.get('mcp'),
+      recorded: delegatedChildMcp, known: () => knownMcpServers(projectRoot),
+    });
+    if (lean === 'refuse') { rejectUpgrade(socket, 400); return; }
+    const leanMcp = lean ?? undefined;
     // The project's Super Agent (plan-r7 D3): exactly ONE super session per vault, the one the
     // hand-over recorded (`POST /api/super/enable` mints it). A different id is a second super
     // agent and is refused; a same-id respawn (account switch, Resume, reattach) passes. The
@@ -1606,12 +1634,23 @@ export function startChatSession(
   // The project's Playwright MCP, re-declared headless with a loopback CDP port so its browser
   // never takes the screen and the pane can show it live (browser-override.ts). Not for a
   // scoped card (no MCP at all).
-  // A lean child's own MCP subset (D14): written per spawn, removed when it exits. An unknown
-  // name now (the config changed since the upgrade) refuses the spawn rather than widening it.
+  // A lean child's own MCP subset (D14): written per spawn, removed when it exits. A name the
+  // user no longer has (the config changed since the upgrade) is dropped: narrower, never wider.
   let leanMcpPath: string | null = null;
+  // Every lean path rides the double-quoted login-shell script: only a shell-safe one may
+  // (security review r1). The project's `.mcp.json` under an odd project folder name is left
+  // out (narrower, never a shell expansion); an unsafe subset path refuses the spawn.
+  const leanProjectMcp = opts.leanMcp ? projectMcpJson(projectRoot) : null;
+  const leanProjectMcpSafe = leanProjectMcp && isShellSafePath(leanProjectMcp) ? leanProjectMcp : null;
   if (opts.leanMcp && !scopedCard) {
     try {
-      leanMcpPath = writeLeanMcpConfig(opts.leanMcp, knownMcpServers(projectRoot));
+      const known = knownMcpServers(projectRoot);
+      leanMcpPath = writeLeanMcpConfig(opts.leanMcp.filter((n) => known.has(n)), known);
+      if (leanMcpPath && !isShellSafePath(leanMcpPath)) {
+        removeLeanMcpConfig(leanMcpPath);
+        leanMcpPath = null;
+        throw new Error('its MCP config path is not shell-safe');
+      }
     } catch (err) {
       try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'mcp_refused', message: `This child cannot start: ${(err as Error).message}.` })); } catch { /* gone */ }
       try { ws.close(); } catch { /* already closed */ }
@@ -1842,7 +1881,7 @@ export function startChatSession(
     // and the shared config may carry the owner's headed `playwright` too.
     // A LEAN child (D14) instead: strict, and only its subset, the project's own `.mcp.json`
     // (strict would drop it) and the browser override, LAST as above. Never the shared config.
-    ...(scopedCard ? [] : leanChildMcpArgs(opts.leanMcp ? { leanMcpPath, projectMcp: projectMcpJson(projectRoot), browser: browserOverride?.configPath ?? null } : null, [mcpConfigPath, computerMcpPath, browserOverride?.configPath ?? null])),
+    ...(scopedCard ? [] : leanChildMcpArgs(opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [mcpConfigPath, computerMcpPath, browserOverride?.configPath ?? null])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized

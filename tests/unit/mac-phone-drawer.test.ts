@@ -26,7 +26,7 @@ describe('phone drawer (AC9)', () => {
     expect(drawer).toMatch(/onAdoptLive\?\.\(chat\)/);
     expect(surface).toMatch(/const adoptLiveChat = useCallback\(\(chat: LiveChatWire\) => \{\s*resumePastSession\([\s\S]*?'1'\)/);
     expect(surface).toMatch(/spawn\(bypass, past\.id, true, 'chat', '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, '', '', reattach\)/);
-    expect(surface).toMatch(/createChatSession\(vault \?\? '', [\s\S]{0,200}origin, null, reattach\)/);
+    expect(surface).toMatch(/createChatSession\(vault \?\? '', [\s\S]{0,200}origin, null, reattach, lean\)/);
   });
 
   it('AC16: one chosen project shows its name only; several show the project list (only the chosen ones, from /vaults)', () => {

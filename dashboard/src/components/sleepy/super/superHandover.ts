@@ -744,12 +744,13 @@ export function delegateArgs(args: Record<string, unknown>): {
 /** Mirrors `src/lib/super/lean-mcp.ts` (`MCP_NAME_RE`, `MAX_LEAN_MCP`); the server re-checks. */
 const MCP_NAME_RE = /^[a-z0-9_-]{1,40}$/;
 const MAX_LEAN_MCP = 6;
+const FORBIDDEN_MCP_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 
 /** The well-formed server names in `v` (a list), at most six; anything else drops out. */
 export function mcpNames(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   const out: string[] = [];
-  for (const n of v) if (typeof n === 'string' && MCP_NAME_RE.test(n) && !out.includes(n)) out.push(n);
+  for (const n of v) if (typeof n === 'string' && MCP_NAME_RE.test(n) && !FORBIDDEN_MCP_NAMES.has(n) && !out.includes(n)) out.push(n);
   return out.slice(0, MAX_LEAN_MCP);
 }
 

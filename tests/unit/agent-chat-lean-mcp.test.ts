@@ -120,7 +120,7 @@ vi.mock('../../src/cli/commands/sleep.js', async (importOriginal) => {
   return { ...real, resolveRecallMode: () => state.vaultMode };
 });
 
-const { startChatSession, leanChildMcpArgs, mcpConfigArgs } = await import('../../src/server/routes/agent-chat.js');
+const { startChatSession, leanChildMcpArgs, leanMcpForUpgrade, mcpConfigArgs } = await import('../../src/server/routes/agent-chat.js');
 const { _resetChatRegistry } = await import('../../src/lib/assistant/chat-registry.js');
 const { setAutoSwitchEnabled } = await import('../../src/lib/claude-accounts.js');
 const {
@@ -226,11 +226,29 @@ describe('the spawn', () => {
     expect(files).toEqual([expect.stringContaining(leanMcpDir(fakeHome)), join(projectRoot, '.mcp.json')]);
   });
 
-  it('a name the user no longer has at spawn time refuses the spawn: nothing starts, nothing is widened', () => {
-    const { ws, child } = spawnChat({ leanMcp: ['posthog'] });
-    expect(child).toBeUndefined();
-    expect(String(ws.send.mock.calls[0]?.[0])).toMatch(/mcp_refused/);
-    expect(ws.close).toHaveBeenCalled();
+  it('a name the user no longer has at spawn time is dropped: the child still starts lean, never wider', () => {
+    const a = argvOf(spawnChat({ leanMcp: ['posthog', 'whatsapp'] }).child!);
+    expect(a).toContain('--strict-mcp-config');
+    expect(Object.keys(JSON.parse(readFileSync(mcpFiles(a)[0], 'utf-8')).mcpServers)).toEqual(['whatsapp']);
+    const b = argvOf(spawnChat({ leanMcp: ['posthog'] }).child!);
+    expect(b).toContain('--strict-mcp-config');
+    expect(b).not.toContain('--mcp-config');
+  });
+
+  it('a project folder a shell would expand keeps its .mcp.json out of the script (narrower, never an expansion)', () => {
+    const odd = mkdtempSync(join(tmpdir(), 'dc-lean-proj-$x-'));
+    mkdirSync(join(odd, '_dream_context'), { recursive: true });
+    writeFileSync(join(odd, '.mcp.json'), JSON.stringify({ mcpServers: {} }));
+    const saved = projectRoot;
+    projectRoot = odd;
+    try {
+      const a = argvOf(spawnChat({ leanMcp: [] }).child!);
+      expect(a).toContain('--strict-mcp-config');
+      expect(a.join(' ')).not.toContain('.mcp.json');
+    } finally {
+      projectRoot = saved;
+      rmSync(odd, { recursive: true, force: true });
+    }
   });
 
   it('a resumed lean child keeps its set; its successor process too', () => {
@@ -253,14 +271,54 @@ describe('the spawn', () => {
     expect(leanChildMcpArgs({ leanMcpPath: null, projectMcp: null, browser: '/b.json' }, normal)).toEqual(['--strict-mcp-config', '--mcp-config', '/b.json']);
   });
 
-  it('leftover subsets (a SIGKILLed child) are swept at server start', () => {
+  it('leftover subsets of a server that is gone are swept at start; a live server\'s stay', () => {
     const known = knownMcpServers(projectRoot, fakeHome);
     const dir = leanMcpDir(fakeHome);
     writeLeanMcpConfig(['whatsapp'], known, dir);
+    writeFileSync(join(dir, 'lean-2147483000-dead.json'), '{}');
+    writeFileSync(join(dir, `lean-${process.ppid}-live.json`), '{}');
     writeFileSync(join(dir, 'unrelated.txt'), 'x');
-    expect(sweepLeanMcpDir(dir)).toBe(1);
-    expect(readdirSync(dir)).toEqual(['unrelated.txt']);
+    expect(sweepLeanMcpDir(dir)).toBe(2);
+    expect(readdirSync(dir).sort()).toEqual([`lean-${process.ppid}-live.json`, 'unrelated.txt']);
     expect(() => writeLeanMcpConfig(['nope'], known, dir)).toThrow(/unknown MCP server/);
+  });
+});
+
+describe('the upgrade decides lean from the record (end review r1)', () => {
+  const known = () => new Map<string, unknown>([['whatsapp', {}], ['fathom', {}]]);
+  const base = { assistant: false, mode: 'basic', conversation: 'kid', lean: null, mcp: null, known };
+  it('a delegated child is lean from its RECORD even when the URL asks for nothing (a reload before the record)', () => {
+    expect(leanMcpForUpgrade({ ...base, recorded: (id) => (id === 'kid' ? ['whatsapp'] : null) })).toEqual(['whatsapp']);
+    expect(leanMcpForUpgrade({ ...base, recorded: () => [] })).toEqual([]);
+  });
+  it('the record wins over the URL; a removed name is dropped, never a refusal', () => {
+    expect(leanMcpForUpgrade({ ...base, lean: '1', mcp: 'fathom', recorded: () => ['whatsapp', 'gone'] })).toEqual(['whatsapp']);
+  });
+  it('no record: the URL\'s lean (a child opening before its record), malformed refused, unknown dropped', () => {
+    const none = () => null;
+    expect(leanMcpForUpgrade({ ...base, lean: '1', mcp: 'fathom,gone', recorded: none })).toEqual(['fathom']);
+    expect(leanMcpForUpgrade({ ...base, lean: '1', mcp: '__proto__', recorded: none })).toBe('refuse');
+    expect(leanMcpForUpgrade({ ...base, recorded: none })).toBeNull();
+  });
+  it('never the Assistant or a Super Agent\'s own session', () => {
+    const rec = () => ['whatsapp'];
+    expect(leanMcpForUpgrade({ ...base, mode: 'super', recorded: rec })).toBeNull();
+    expect(leanMcpForUpgrade({ ...base, assistant: true, mode: 'assistant', recorded: rec })).toBeNull();
+  });
+  it('the record index: delegated children (live or ended) by own id; adopted ones are not', async () => {
+    const { noteSuperState, resetSuperIndex, delegatedChildMcp } = await import('../../src/lib/super/store.js');
+    const { emptySuperState } = await import('../../src/lib/super/types.js');
+    resetSuperIndex();
+    const ch = (sessionId: string, adopted: boolean, extra = {}) => ({ sessionId, brief: '', adopted, startedAt: 1, ...extra });
+    noteSuperState('/v/_dream_context', { ...emptySuperState(), session: 'sup', enabled: false, children: {
+      kid: ch('kid', false, { mcp: ['whatsapp'] }), old: ch('old', false, { endedAt: 5 }), mine: ch('mine', true, { mcp: ['whatsapp'] }),
+    } });
+    expect(delegatedChildMcp('kid')).toEqual(['whatsapp']);
+    expect(delegatedChildMcp('old')).toEqual([]);
+    expect(delegatedChildMcp('mine')).toBeNull();
+    expect(delegatedChildMcp('sup')).toBeNull();
+    expect(delegatedChildMcp('constructor')).toBeNull();
+    resetSuperIndex();
   });
 });
 
@@ -286,7 +344,7 @@ describe('the window asks for a lean spawn', () => {
     expect(leanMcpParam(null)).toBe('');
     expect(leanMcpParam([])).toBe('&lean=1');
     expect(leanMcpParam(['whatsapp', 'apple-mail'])).toBe('&lean=1&mcp=whatsapp%2Capple-mail');
-    expect(mcpNames(['ok', 'Bad Name', 'ok', 7])).toEqual(['ok']);
+    expect(mcpNames(['ok', 'Bad Name', 'ok', 7, '__proto__', 'constructor'])).toEqual(['ok']);
     const d = delegateArgs({ prompt: 'x', mcp: ['whatsapp'] });
     expect(d.ok && d.mcp).toEqual(['whatsapp']);
   });

@@ -28,7 +28,7 @@ import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJo
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
 import {
-  delegationAllowed, lightModeOn, machineHoldLine, machineRoom, readCapacityFacts, type CapacityFacts,
+  CAPACITY_TTL_MS, delegationAllowed, lightModeOn, machineHoldLine, machineRoom, readCapacityFacts, type CapacityFacts,
 } from '../../lib/super/capacity.js';
 import { knownMcpServers, unknownMcpNames } from '../../lib/super/lean-mcp.js';
 import {
@@ -330,14 +330,21 @@ function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<s
  *  cap holds it. `fromRow` is the pool row it came from: removed in the same write that records
  *  the child, kept on any refusal, marked `maybeStarted` when the window did not confirm. */
 async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, job: Job, fromRow: SuperPoolItem | undefined, succeeds?: string): Promise<void> {
+  // The machine's facts FIRST: the cap check and the in-flight count below must be one step
+  // with no await between them, or parallel delegates all pass the cap (end review r1).
+  let machine: CapacityFacts | null = null;
+  try { machine = await readCapacityFacts(); } catch { machine = null; }
   // D11: the cap binds NEW delegations (calls in flight count too).
   const inFlight = delegating.get(root) ?? 0;
   const room = delegationAllowed(c.state);
-  let machine: CapacityFacts | null = null;
-  try { machine = await readCapacityFacts(); } catch { machine = null; }
-  // Orchestration plan r5 D11: the whole machine's room binds too. A null fact never holds
-  // alone (fail open); nobody overrides a hold: the way out is room (end idle children).
-  const mroom = machine ? machineRoom(machine, { lightMode: lightModeOn(machine) }) : null;
+  // Orchestration plan r5 D11: the whole machine's room binds too. The facts may be up to a
+  // minute old, so the sessions this vault started since (in flight, or recorded in the last
+  // minute) are added to what `ps` saw; double counting only holds earlier. A null fact never
+  // holds alone (fail open); nobody overrides a hold: the way out is room (end idle children).
+  const now = Date.now();
+  const recent = Object.values(c.state.children).filter((ch) => !ch.adopted && ch.endedAt === undefined && now - ch.startedAt < CAPACITY_TTL_MS).length;
+  const seen = machine && typeof machine.claudeSessions === 'number' ? { ...machine, claudeSessions: machine.claudeSessions + inFlight + recent } : machine;
+  const mroom = seen ? machineRoom(seen, { lightMode: lightModeOn(seen) }) : null;
   const capFull = room.live + inFlight >= room.max;
   if (capFull || (mroom && !mroom.ok)) {
     const hold = !capFull && mroom ? machineHoldLine(mroom) : null;

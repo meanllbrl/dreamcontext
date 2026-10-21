@@ -266,4 +266,15 @@ describe('the done-child backstop (orchestration plan r5 D13)', () => {
     expect(await parkChat('kid', 'super-done')).toBe('already');
     resetSuperIndex();
   });
+
+  it('the backstop keeps a child whose transcript was written inside the idle window (end review r1)', async () => {
+    const { noteSuperState, resetSuperIndex } = await import('../../src/lib/super/store.js');
+    const { emptySuperState } = await import('../../src/lib/super/types.js');
+    resetSuperIndex();
+    noteSuperState('/vault/_dream_context', { ...emptySuperState(), session: 'sup', enabled: true, children: { kid: { sessionId: 'kid', brief: '', adopted: false, startedAt: 1 } } });
+    const kid = parkable('kid', 30);
+    await sweepOnce(deps(quiet, { activity: () => ({ readable: true, at: NOW - 2 * MIN, subagentAt: 0 }) }));
+    expect(kid.parked).toEqual([]);
+    resetSuperIndex();
+  });
 });

@@ -510,6 +510,8 @@ interface IndexEntry {
   children: Set<string>;
   /** The live children `super delegate` started (never the owner's adopted chats). */
   delegated: Set<string>;
+  /** Every child `super delegate` started (live or ended), with the MCP servers it runs with. */
+  leanMcp: Map<string, string[]>;
   /** Children `super end` closed: a NEW process of one is the owner reopening it. */
   ended: Set<string>;
   notes: Map<string, SuperNote>;
@@ -537,6 +539,7 @@ function indexState(key: string, state: SuperState): void {
     // An ended child is history, not a child: no events, the notch shows it if reopened.
     children: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined)),
     delegated: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined && !state.children[k].adopted)),
+    leanMcp: new Map(Object.keys(state.children).filter((k) => !state.children[k].adopted).map((k) => [k, state.children[k].mcp ?? []])),
     ended: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt !== undefined)),
     notes,
   });
@@ -588,6 +591,18 @@ export function superRootOfSession(sessionId: string): string | null {
 export function isSuperChild(sessionId: string): boolean {
   for (const e of index.values()) if (e.enabled && e.children.has(sessionId)) return true;
   return false;
+}
+
+/**
+ * The MCP servers a child `super delegate` started runs with (orchestration plan r5 D14), from
+ * its record: [] = none. Null = not such a child (the owner's adopted chats, the super, any
+ * other chat). Handed over or not, live or ended: a delegated child is lean for its whole life,
+ * whichever window or reload spawns it (the server decides, never the URL alone).
+ */
+export function delegatedChildMcp(sessionId: string): string[] | null {
+  if (!sessionId) return null;
+  for (const e of index.values()) { const m = e.leanMcp.get(sessionId); if (m) return [...m]; }
+  return null;
 }
 
 /** A child `super delegate` started, of a vault handed over right now (never an adopted chat

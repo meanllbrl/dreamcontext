@@ -107,12 +107,20 @@ export function removeLeanMcpConfig(path: string | null): void {
   try { rmSync(path, { force: true }); } catch { /* already gone */ }
 }
 
-/** Server start: every subset left by a child the server never saw exit (a SIGKILL). */
+/** Is the process that wrote a subset (its pid is in the name) still running? */
+function writerAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
+  try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException)?.code !== 'ESRCH'; }
+}
+
+/** Server start: every subset left by a server that is gone (a SIGKILL skips the exit cleanup).
+ *  A subset another LIVE server process wrote is its children's and stays. */
 export function sweepLeanMcpDir(dir: string = leanMcpDir()): number {
   if (!existsSync(dir)) return 0;
   let n = 0;
   for (const f of readdirSync(dir)) {
-    if (!/^lean-.*\.json(\.tmp)?$/.test(f)) continue;
+    const m = /^lean-(\d+)-.*\.json(\.tmp)?$/.exec(f);
+    if (!m || writerAlive(Number(m[1]))) continue;
     try { rmSync(join(dir, f), { force: true }); n += 1; } catch { /* next start */ }
   }
   return n;

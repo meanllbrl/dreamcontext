@@ -395,11 +395,14 @@ function candidateOf(p: Parkable): ParkCandidate {
 /** A delegated Super Agent child idle this long after its turn ended is parked (D13). */
 export const DONE_CHILD_IDLE_MS = 10 * 60_000;
 
-async function parkDoneChildren(now: number): Promise<string[]> {
+async function parkDoneChildren(now: number, activity: SweepDeps['activity']): Promise<string[]> {
   const out: string[] = [];
   for (const p of [...parkables.values()]) {
     if (p.kind !== 'chat' || !isDelegatedSuperChild(p.id)) continue;
     if (keepReason(candidateOf(p), DONE_CHILD_IDLE_MS, now, parkFocusGraceMs())) continue;
+    // The same last guard as the pressure path: a transcript (or a sub-agent's) written inside
+    // the idle window means something still works, whatever the background count says.
+    if (now - activity(p).at < DONE_CHILD_IDLE_MS) continue;
     const outcome = await parkChat(p.id, 'super-done').catch((): ParkOutcome => 'refused');
     if (outcome === 'parked' || outcome === 'drained') out.push(p.id);
   }
@@ -415,7 +418,7 @@ export async function sweepOnce(deps: SweepDeps = sweepDeps ?? defaultSweepDeps(
     // this long has handed in its result; it is parked whatever the load, by the same primitive
     // (so this, the pressure policy and `super end` never fight). Not behind the load switch:
     // it is the super's own housekeeping, not the owner's "park under load" setting.
-    await parkDoneChildren(deps.now());
+    await parkDoneChildren(deps.now(), deps.activity);
     if (!deps.enabled()) return { parked: [], pressure: null };
     const facts = await deps.readFacts();
     const forced = forcedPressure();
