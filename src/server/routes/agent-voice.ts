@@ -46,7 +46,10 @@ import {
   phoneSttGate, PHONE_MAX_STT_BYTES, PHONE_MAX_STT_SECONDS, wavSeconds,
 } from '../../lib/voice/limits.js';
 import { speakable } from '../../lib/voice/speakable.js';
-import { wavFromPcm16, normalizeSpeech, pcmSeconds, PCM16_SAMPLE_RATE } from '../../lib/voice/wav.js';
+import {
+  wavFromPcm16, normalizeSpeech, pcmSeconds, PCM16_SAMPLE_RATE,
+  trimSpeechTail, SENTENCE_TAIL_MS, CLAUSE_TAIL_MS,
+} from '../../lib/voice/wav.js';
 import {
   transcribeLocal, findWhisper, warmWhisper,
 } from '../../lib/voice/whisper.js';
@@ -127,8 +130,66 @@ export const JARVIS_FEWSHOT = [
  * the line and nothing else. And because a retry costs a whole extra generation, making the
  * FIRST attempt reliable is also the biggest latency win available on this path.
  */
-export function scriptLine(text: string): string {
-  return `Read this line of script aloud, exactly as written, and say nothing else:\n\n«${text}»`;
+export function scriptLine(text: string, continues = false): string {
+  const line = `Read this line of script aloud, exactly as written, and say nothing else:\n\n«${text}»`;
+  return continues ? `${CONTINUES_NOTE}\n\n${line}` : line;
+}
+
+/**
+ * Said before a line that stops MID-sentence. Without it the model lands every line like a
+ * full stop — the falling pitch that made a comma-cut sentence sound like two.
+ */
+export const CONTINUES_NOTE =
+  'This line stops in the middle of a sentence and the sentence carries on in the next line, '
+  + 'so keep your intonation open at its end instead of landing it like a full stop.';
+
+/** Does this (speakable) line stop mid-sentence? Read off the text itself, so a direct POST and
+ *  the queue agree. A line with no punctuation at all — a heading, a list item — does not. */
+export function lineContinues(line: string): boolean {
+  return /[,;:—–]$/.test(line.trim());
+}
+
+/** How much of the previous chunk is kept as context (the client sends at most this much). */
+export const PREV_CONTEXT_CHARS = 240;
+
+/**
+ * The messages for one line, WITH the line before it when there is one.
+ *
+ * ── WHY THE PREVIOUS LINE RIDES ALONG ───────────────────────────────────────────────────
+ * Every chunk is a separate generation, so each sentence used to be read cold: no idea it was
+ * the second half of a thought, its pitch and pace reset at every seam. There is no
+ * "previous text" parameter on a chat model, but there is a conversation: the line before is
+ * placed as one more turn of the job ALREADY DONE — the script handed over, the line read —
+ * in the exact shape of {@link JARVIS_FEWSHOT}. The model then reads the new line as the next
+ * line of the same script.
+ *
+ * Measured on the live model before shipping (2026-10-21): 8 of 8 lines read verbatim with the
+ * previous line in context, including the short addressed ones that are the model's known
+ * failure ("Söyle, hangi konuya girelim?", "Are you there?", "Evet, duyuyorum."). The
+ * verbatim guard still checks every result, so a regression here cannot be heard — only
+ * logged and retried.
+ */
+export function speechMessages(spoken: string, prev?: string): Array<{ role: string; content: string }> {
+  const messages: Array<{ role: string; content: string }> = [
+    { role: 'system', content: JARVIS_INSTRUCTIONS },
+    ...JARVIS_FEWSHOT,
+  ];
+  if (prev) {
+    messages.push(
+      { role: 'user', content: scriptLine(prev, lineContinues(prev)) },
+      { role: 'assistant', content: prev },
+    );
+  }
+  messages.push({ role: 'user', content: scriptLine(spoken, lineContinues(spoken)) });
+  return messages;
+}
+
+/** The previous chunk as context: a string from the body, stripped like the line itself and
+ *  capped. Anything else — or nothing speakable — is no context at all, never an error. */
+export function contextLine(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  const line = speakable(raw.slice(-PREV_CONTEXT_CHARS * 2)).slice(-PREV_CONTEXT_CHARS).trim();
+  return line || undefined;
 }
 
 /** How long a single speech generation may take before it is abandoned. Generation runs at
@@ -391,9 +452,20 @@ export async function handleVoiceTts(
     // dash. Applied AFTER the character cap, so a hostile direct POST cannot pad its way
     // under the limit with markup that strips away.
     const spoken = speakable(text);
-    // One line per chunk in voice.jsonl: which were spoken, rescued, or dropped, and why.
+    // Context, never content: the chunk before this one, so the voice reads on rather than
+    // starting cold (`speechMessages`). It is not spoken and not verbatim-checked.
+    const prev = contextLine(body?.prev);
+    // The pause this chunk leaves before the next: a breath after a sentence, almost none in
+    // the middle of one (`trimSpeechTail`).
+    const tailMs = lineContinues(spoken) ? CLAUSE_TAIL_MS : SENTENCE_TAIL_MS;
+    const startedAt = Date.now();
+    // One line per chunk in voice.jsonl: which were spoken, rescued, or dropped, and why —
+    // and how long the speech took to make (`genMs`), the number a seam gap is made of.
     const chunkLog = (outcome: string, extra: Record<string, unknown> = {}) =>
-      logVoiceEvent({ kind: 'tts', outcome, chars: text.length, spokenChars: spoken.length, ...idField, ...extra });
+      logVoiceEvent({
+        kind: 'tts', outcome, chars: text.length, spokenChars: spoken.length, ...idField,
+        ...(prev ? { context: true } : {}), genMs: Date.now() - startedAt, ...extra,
+      });
     if (!spoken) {
       // Nothing speakable survived — a chunk that was only a link, or only a fence. This is
       // not a failure, so it is not `tts_failed`: the queue treats 204 as "skip this one and
@@ -485,11 +557,8 @@ export async function handleVoiceTts(
           audio: { voice: cfg.voice || DEFAULT_VOICE, format: 'pcm16' },
           // The few-shot sits between the system prompt and the line, and is what makes a
           // one-word line get READ rather than answered. See `JARVIS_FEWSHOT`.
-          messages: [
-            { role: 'system', content: JARVIS_INSTRUCTIONS },
-            ...JARVIS_FEWSHOT,
-            { role: 'user', content: scriptLine(spoken) },
-          ],
+          // The previous line rides along as context — see `speechMessages`.
+          messages: speechMessages(spoken, prev),
         }),
       });
       if (!upstream.ok) {
@@ -553,7 +622,7 @@ export async function handleVoiceTts(
         res.writeHead(204).end();
         return;
       }
-      const wav = wavFromPcm16(normalizeSpeech(rescued), PCM16_SAMPLE_RATE);
+      const wav = wavFromPcm16(normalizeSpeech(trimSpeechTail(rescued, tailMs)), PCM16_SAMPLE_RATE);
       console.info(`[voice:tts] ${pcmSeconds(rescued).toFixed(1)}s spoken by the fallback`);
       chunkLog('spoken-by-fallback', { seconds: Number(pcmSeconds(rescued).toFixed(1)) });
       res.writeHead(200, {
@@ -577,11 +646,14 @@ export async function handleVoiceTts(
     // NORMALISED BEFORE IT IS WRAPPED. This is the only point in the path where the answer
     // can actually be made louder: after this it is a WAV played through a master volume the
     // app does not own. See `normalizeSpeech` for why the client's gain node cannot do it.
-    const audio = wavFromPcm16(normalizeSpeech(pcm), PCM16_SAMPLE_RATE);
+    // The seam first: the model's half-second tail cut to a breath (`trimSpeechTail`).
+    const trimmed = trimSpeechTail(pcm, tailMs);
+    const audio = wavFromPcm16(normalizeSpeech(trimmed), PCM16_SAMPLE_RATE);
     console.info(`[voice:tts] ${pcmSeconds(pcm).toFixed(1)}s spoken`);
     chunkLog('spoken', {
       retried,
-      seconds: Number(pcmSeconds(pcm).toFixed(1)),
+      seconds: Number(pcmSeconds(trimmed).toFixed(1)),
+      trimmedMs: Math.round((pcmSeconds(pcm) - pcmSeconds(trimmed)) * 1000),
       // Below 1 means the voice left words out (a full read scores 1.00, measured 2026-10-13).
       ratio: speech.transcript ? Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) : null,
     });

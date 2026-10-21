@@ -15,6 +15,8 @@
  *   • A file path is worse: slashes, dots and extensions, each announced.
  *   • An em dash gets no pause from most engines, so the clause it separates runs on. A
  *     comma does get one, which is what the dash was standing in for.
+ *   • A commit hash is spelled out character by character; an emoji is either named aloud
+ *     ("party popper") or stumbled over. Neither is what the sentence said.
  *
  * Pure and synchronous, so it is testable without a browser, a network or a clock.
  */
@@ -47,6 +49,22 @@ const LINE_PREFIX = /^[ \t]*(?:#{1,6}\s+|[-*+]\s+|>\s+|\d+[.)]\s+)/gm;
 const HIGHLIGHT = /==[+!]?([^=]*)==/g;
 
 /**
+ * A commit hash or similar hex id (`75ef8906`, `f09dc690…`): seven or more hex characters
+ * with at least one digit AND one letter, so "deadbeef"-style words and plain numbers stay.
+ * Read aloud it is eight letters and digits spelled out, longer than the sentence around it.
+ */
+const HEX_ID = /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/gi;
+
+/** A task-list box at the start of an item — `[x]`, `[ ]` — read as "x" or as nothing useful. */
+const CHECKBOX = /^[ \t]*\[[ xX]\][ \t]+/gm;
+
+/**
+ * Emoji, with their joiners and variation selectors. A voice either names them ("party
+ * popper") or stumbles; the words around them already say what the emoji decorated.
+ */
+const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}\u{20E3}]/gu;
+
+/**
  * Strip a written chunk down to what should be read aloud.
  *
  * Returns `''` when nothing speakable survives — a chunk that was ONLY a link, or only a
@@ -63,7 +81,10 @@ export function speakable(input: string): string {
   out = out.replace(BARE_URL, ' ');
   out = out.replace(FILE_PATH, ' ');
   out = out.replace(LINE_PREFIX, '');
+  out = out.replace(CHECKBOX, '');
   out = out.replace(EMPHASIS, '');
+  out = out.replace(HEX_ID, ' ');
+  out = out.replace(EMOJI, ' ');
 
   // Dashes → a comma, because a comma is the pause the dash was standing for. The trailing
   // space handling matters: "one — two" must become "one, two", not "one , two".

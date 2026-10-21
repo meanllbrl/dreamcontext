@@ -286,6 +286,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-model-override-',
   'dc-model-override-home-',
   'dc-nano-',
+  'dc-natchunk-',
   'dc-native-',
   'dc-node-fixture-',
   'dc-nopat-',
