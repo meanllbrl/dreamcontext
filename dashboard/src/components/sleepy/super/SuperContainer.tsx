@@ -2,7 +2,7 @@ import { useEffect, useReducer, useState, type KeyboardEvent, type PointerEvent,
 import { useI18n } from '../../../context/I18nContext';
 import type { SuperChild, SuperContainer as Container } from '../../../lib/superTypes';
 import type { WidgetSize } from '../../../lib/whiteboardWidgets';
-import { InsightView } from '../chat/InsightView';
+import { InsightWidget } from '../../whiteboard/widgets/InsightWidget';
 import { BoardEmbed, BoardFullscreen } from '../chat/BoardEmbed';
 import { DocumentReader } from '../../appLink/DocumentReader';
 import { KnowledgeWidget } from '../../whiteboard/widgets/KnowledgeWidget';
@@ -304,7 +304,9 @@ function viewFor(p: BodyProps): ReactNode {
   const size = widgetSize(p.plan);
   switch (c.kind) {
     case 'insight':
-      return <div className="super-card-view"><InsightView spec={{ type: 'insight', id: c.ref }} /></div>;
+      // The whiteboard's insight widget IS the Lab card at this size (a funnel set opens as its
+      // explorer, a chart fills the card, a table or an app scrolls): one drawing, not a copy.
+      return <div className="super-card-view super-card-view--insight"><InsightWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'insight', ref: c.ref, title: '' }} active size={size} /></div>;
     case 'task':
     case 'knowledge': {
       // Large (side by side, presented, a sheet): the page itself, read the way a whiteboard's

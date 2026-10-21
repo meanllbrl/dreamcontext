@@ -1,0 +1,66 @@
+/* An insight on the Super stage: the 160 px tile (name, figure, trend or funnel silhouette, freshness
+   dot) and the large card, which is the whiteboard's insight widget, i.e. the Lab card itself.
+   Tokens only; both themes follow. */
+
+/* The tile ------------------------------------------------------------------------------ */
+.super-tile-fresh {
+  margin-left: auto;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+}
+.super-tile-fresh[data-fresh='fresh'] { background: var(--color-success); }
+.super-tile-fresh[data-fresh='stale'] { background: var(--color-warning); }
+.super-tile-fresh[data-fresh='failed'] { background: var(--color-error); }
+/* Never synced: a hollow dot, so the state is the shape as well as the (absent) colour. */
+.super-tile-fresh[data-fresh='never'] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--color-text-tertiary); }
+
+/* The figure keeps its room: the glyph (trend line or funnel silhouette) takes what is left of the
+   row, the change / reach / unit sit on the line under it. */
+.super-tile-figure { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 2px; }
+.super-tile-figure .super-tile-value { margin-top: 0; flex: 0 0 auto; max-width: 100%; font-variant-numeric: tabular-nums; }
+.super-tile-trail,
+.super-tile-lane { flex: 1 1 0; min-width: 0; height: 24px; }
+.super-tile-trail { display: flex; align-items: center; }
+.super-tile-trail svg { width: 100%; height: 24px; }
+.super-tile-meta { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: var(--font-size-2xs); color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; }
+.super-tile-meta .super-tile-delta { font-family: var(--font-mono); font-size: var(--font-size-2xs); }
+.super-tile-reach { font-family: var(--font-mono); }
+.super-tile-unit { font-size: var(--font-size-2xs); color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; }
+
+/* The funnel's silhouette: one bar per step, its height the step's share of the top. */
+.super-tile-lane { display: flex; align-items: flex-end; gap: 1px; }
+.super-tile-lane-bar {
+  flex: 1 1 0;
+  min-width: 1px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+.super-tile-lane-bar:last-child { background: var(--color-accent); }
+.super-tile-line[data-fresh='failed'] { color: var(--color-error-ink, var(--color-error)); }
+
+/* The large card: the Lab card in the frame's own surface ------------------------------- */
+.super-card-view--insight { position: relative; height: 100%; min-height: 0; }
+/* The widget fills the view with a DEFINITE size (a chart draws to its box), and sits in a card
+   already: no second border, radius or fill. The card head says the name and the kind, so the
+   widget's own copies go; what stays in its head is the date window. */
+.super-card-view--insight .wb-widget {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.super-card-view--insight :is(.wb-widget-kind, .wb-widget-title) { display: none; }
+.super-card-view--insight .wb-widget-head { min-height: 0; padding-top: var(--space-1); padding-bottom: 0; }
+/* Whatever does not fit scrolls (a 30-step bar list, a table), never crushes. */
+.super-card-view--insight .wb-widget-body { overflow: auto; }
+/* The plain insight card (a series funnel, a table) is drawn inside this card: its own frame,
+   title and unit say what the card head already does. The as-of line stays. */
+.super-card-view--insight .chat-insightcard { border: 0; border-radius: 0; background: transparent; padding: 0; }
+.super-card-view--insight .chat-insightcard-head { display: none; }
