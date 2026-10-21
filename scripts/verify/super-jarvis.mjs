@@ -442,6 +442,51 @@ async function flow(pw, base, dashPort, devPorts, restart) {
     && (await page.getByTestId('web-loopback-prompt').count()) === 0, 12000));
   await page.screenshot({ path: join(OUT, 'jarvis-05-after-restart.png') });
 
+  console.log('\n── AC16: closing a LIVE web card fades it as itself (no reload); reduced motion = gone at once');
+  const live = record().containers.find((c) => c.kind === 'web' && c.ref === siteRef);
+  if (live && (await page.locator(`[data-container-id="${live.id}"] iframe`).count())) {
+    await page.evaluate((id) => {
+      const el = document.querySelector(`[data-container-id="${id}"]`);
+      el.dataset.probe = 'same-node';
+      window.__loads = 0;
+      el.querySelector('iframe')?.addEventListener('load', () => { window.__loads += 1; });
+    }, live.id);
+    await sayToSuper(page, `GO-CLOSE ${live.id}`);
+    const sawFade = await until(page, async () => (await page.locator(`[data-container-id="${live.id}"][data-cue="close"]`).count()) > 0, 15000);
+    const during = await page.evaluate((id) => {
+      const el = document.querySelector(`[data-container-id="${id}"]`);
+      return { probe: el?.dataset.probe ?? null, web: !!el?.querySelector('.super-card-view--web iframe'), placeholder: !!el?.querySelector('[data-testid="super-web-placeholder"], .super-web-placeholder') };
+    }, live.id);
+    await page.screenshot({ path: join(OUT, 'jarvis-09-live-web-fading.png') });
+    await page.waitForTimeout(1300);
+    const loads = await page.evaluate(() => window.__loads);
+    ok('a live web card closing fades as the same node with its page, no reload', sawFade && during.probe === 'same-node' && during.web && !during.placeholder && loads === 0, JSON.stringify({ sawFade, during, loads }));
+    ok('…and is gone after the fade', (await page.locator(`[data-container-id="${live.id}"]`).count()) === 0);
+  } else note('no live web card to close at this point');
+  const ref3 = `http://localhost:${devPorts[2]}/`;
+  await sayToSuper(page, `GO-OPENWEB ${ref3}`);
+  await until(page, async () => record().containers.some((c) => c.ref === ref3 && c.place === 'float'), 20000);
+  await page.waitForTimeout(1200);
+  const third = record().containers.find((c) => c.ref === ref3);
+  if (third && (await page.locator(`[data-container-id="${third.id}"]`).count())) {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.evaluate((id) => {
+      window.__closeOpacity = null;
+      new MutationObserver((ms, mo) => {
+        for (const m of ms) {
+          const el = m.target.nodeType === 1 && m.target.closest?.(`[data-container-id="${id}"][data-cue="close"]`);
+          if (el) { window.__closeOpacity = getComputedStyle(el).opacity; mo.disconnect(); return; }
+        }
+      }).observe(document.body, { attributes: true, attributeFilter: ['data-cue'], subtree: true, childList: true });
+    }, third.id);
+    await sayToSuper(page, `GO-CLOSE ${third.id}`);
+    await until(page, async () => (await page.evaluate(() => window.__closeOpacity)) !== null || !record().containers.some((c) => c.id === third.id), 15000);
+    await page.waitForTimeout(100);
+    const op = await page.evaluate(() => window.__closeOpacity);
+    ok('reduced motion: a closed card is invisible at once (opacity 0 when its close cue lands)', op === '0', JSON.stringify({ op }));
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+  } else note('no third card to close under reduced motion');
+
   await context.close();
   await browser.close();
   return { errors, strip };

@@ -13,7 +13,21 @@ export interface StageCue { kind: SuperCueKind; dx: number; dy: number; at: numb
 
 /** A card that just left the record, still drawn while it fades (its last plan, and whether its
  *  web frame was live, so the fade shows the page and not the Load placeholder). */
-export interface LeavingCard { container: SuperContainer; plan: CardPlan; webLive: boolean; at: number }
+export interface LeavingCard { container: SuperContainer; plan: CardPlan; webLive: boolean; at: number; index: number }
+
+/**
+ * The cards to draw: the record's, with each fading card put back at the index it had, so React
+ * keeps its DOM node where it was (moving a node that holds an iframe reloads the page, and the
+ * fade would show a blank frame). Pure.
+ */
+export function withGhosts<T extends { id: string }>(cards: readonly T[], ghosts: ReadonlyArray<{ card: T; index: number }>): T[] {
+  const live = new Set(cards.map((c) => c.id));
+  const out = [...cards];
+  for (const g of [...ghosts].filter((x) => !live.has(x.card.id)).sort((a, b) => a.index - b.index)) {
+    out.splice(Math.min(Math.max(0, g.index), out.length), 0, g.card);
+  }
+  return out;
+}
 
 /**
  * The stage's cues and its reveal gate (jarvis plan r9 G1, AC16), beside the surface so the
@@ -46,13 +60,13 @@ export function useStageCues(opts: {
   const [seenContainers, setSeenContainers] = useState(containers);
   if (containers !== seenContainers) {
     const ids = new Set(containers.map((c) => c.id));
-    const gone = seenContainers.filter((c) => !ids.has(c.id) && lastPlans.current[c.id] && lastPlans.current[c.id].where !== 'others');
+    const gone = seenContainers.flatMap((c, index) => (!ids.has(c.id) && lastPlans.current[c.id] && lastPlans.current[c.id].where !== 'others' ? [{ c, index }] : []));
     setSeenContainers(containers);
     const at = Date.now();
     setLeaving((prev) => {
       const kept = prev.filter((g) => !ids.has(g.container.id));
       return gone.length || kept.length !== prev.length
-        ? [...kept, ...gone.map((c) => ({ container: c, plan: lastPlans.current[c.id], webLive: lastLiveWeb.current.has(c.id), at }))]
+        ? [...kept, ...gone.map(({ c, index }) => ({ container: c, plan: lastPlans.current[c.id], webLive: lastLiveWeb.current.has(c.id), at, index }))]
         : prev;
     });
   }

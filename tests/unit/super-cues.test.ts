@@ -54,3 +54,29 @@ describe('verb sounds', () => {
     expect(superSoundsEnabled(s)).toBe(false);
   });
 });
+
+describe('a closed card fades out where it stood; with reduced motion it is gone at once (owner, 2026-10-21)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { withGhosts } = await import('../../dashboard/src/components/sleepy/super/useStageCues.js');
+  const css = readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperSurface.css', import.meta.url), 'utf-8');
+  const card = (id: string) => ({ id });
+
+  it('the fading card keeps its index among the others (its node is not moved, an iframe in it does not reload)', () => {
+    expect(withGhosts([card('a'), card('c')], [{ card: card('b'), index: 1 }]).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+    expect(withGhosts([card('b')], [{ card: card('a'), index: 0 }, { card: card('c'), index: 2 }]).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+    // Back in the record meanwhile: drawn once, as itself.
+    expect(withGhosts([card('a'), card('b')], [{ card: card('b'), index: 0 }]).map((c) => c.id)).toEqual(['a', 'b']);
+    expect(withGhosts([], [{ card: card('x'), index: 9 }]).map((c) => c.id)).toEqual(['x']);
+  });
+
+  it('close = a one-time opacity fade to 0 on transform/opacity only; reduced motion = no animation, opacity 0 at once', () => {
+    const fade = /@keyframes super-cue-fade \{([^}]*\}[^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(fade).toMatch(/to \{ opacity: 0;/);
+    expect(fade).not.toMatch(/width|height|top|left|filter/);
+    expect(css).toMatch(/\.super-card-frame\[data-cue='close'\] \.super-card-clip,\s*\.super-card-frame\[data-cue='close'\] \.super-card-lift \{ animation: super-cue-fade 360ms ease-in both; \}/);
+    const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(reduced).toMatch(/\.super-card-frame\[data-cue='close'\] \{ opacity: 0; \}/);
+    expect(reduced).toMatch(/\.super-card-frame\[data-cue='close'\] \.super-card-lift \{ animation: none; \}/);
+    expect(css).not.toMatch(/super-cue[\w-]*[^;]*infinite/);
+  });
+});

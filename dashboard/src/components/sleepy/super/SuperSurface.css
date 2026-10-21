@@ -995,12 +995,13 @@
 @media (prefers-reduced-motion: reduce) {
   .super-card-frame[data-cue] .super-card-clip,
   .super-card-frame[data-cue] .super-card-lift { animation: super-cue-plain 240ms ease-out both; }
+  /* Reduced motion: a closed card is gone at once (no fade). */
+  .super-card-frame[data-cue='close'] { opacity: 0; }
   .super-card-frame[data-cue='close'] .super-card-clip,
-  .super-card-frame[data-cue='close'] .super-card-lift { animation: super-cue-fade-plain 240ms ease-in both; }
+  .super-card-frame[data-cue='close'] .super-card-lift { animation: none; }
   .super-card-frame[data-cue] .super-card-glint { animation: none; }
 }
 @keyframes super-cue-plain { from { opacity: 0; } to { opacity: 1; } }
-@keyframes super-cue-fade-plain { from { opacity: 1; } to { opacity: 0; } }
 
 
 /* A page and a live browser fill the large card (the body scrolls, so it is not a flex box). */

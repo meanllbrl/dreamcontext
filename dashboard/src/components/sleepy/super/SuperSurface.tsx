@@ -20,7 +20,7 @@ import { isGroupId, planStage, stageItems, type LayoutPatch, type StagePlan } fr
 import { needsOwner, ownerQueueCount, queueHead, shownChild } from './superHandover';
 import { MAX_LIVE_BROWSERS, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { useWindowActivity } from '../../../lib/windowActivity';
-import { useStageCues } from './useStageCues';
+import { useStageCues, withGhosts } from './useStageCues';
 import './SuperSurface.css';
 
 export { runFlights, prefersReducedMotion, type FlightRun } from './motionRunner';
@@ -315,7 +315,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           </div>
           {hot === 'centre' && <div className="super-ask-target" data-testid="super-ask-target" aria-hidden>{t('super.card.askAbout')}</div>}
         </div>
-        {[...state.containers, ...stageCues.leaving.filter((g) => !byId.has(g.container.id)).map((g) => g.container)].map((c) => {
+        {withGhosts(state.containers, stageCues.leaving.map((g) => ({ card: g.container, index: g.index }))).map((c) => {
           // A closed card fades as itself: the SAME key, so React keeps its view mounted (no
           // Excalidraw or transcript remount for a 360 ms fade), at its last spot.
           const ghost = byId.has(c.id) ? undefined : stageCues.leaving.find((g) => g.container.id === c.id);
