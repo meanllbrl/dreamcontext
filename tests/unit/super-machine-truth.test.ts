@@ -121,6 +121,25 @@ describe('light mode: why it is on, what ends it, and that nothing needs closing
   });
 });
 
+describe('a stalled power read cannot stall super state', () => {
+  it('Auto answers without power facts after the wait, and a failing read does the same', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'super-pool-'));
+    setCapacityFactsForTests(null); // production path: the real race, no test override
+    try {
+      const t0 = Date.now();
+      const stalled = await lightModeNow({ totalMemGb: 16 }, () => new Promise(() => {}), home, 40);
+      expect(stalled).toMatchObject({ on: false, reason: null, setting: 'auto' });
+      expect(Date.now() - t0).toBeLessThan(1_000);
+      expect((await lightModeNow({ totalMemGb: 16 }, async () => { throw new Error('pmset'); }, home, 40)).on).toBe(false);
+      const quick = await lightModeNow({ totalMemGb: 16 }, async () => ({ onBattery: true, batteryPercent: 9 }), home, 1_000);
+      expect(quick.reason).toBe('battery');
+    } finally {
+      setCapacityFactsForTests({ availMemGb: 12, diskFreeGb: 200, load1: 1, totalMemGb: 32, swapUsedGb: 0, swapTotalGb: 4, claudeSessions: 1, heavySteps: 0 });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('notes never send RAM or swap pressure to disk cleanup', () => {
   const squeezed: CapacityFacts = { availMemGb: 1.5, diskFreeGb: 40, load1: 4, totalMemGb: 16, swapUsedGb: 3.1, swapTotalGb: 4, claudeSessions: 12 };
   it('swap and free-memory lines say disk cleanup frees disk, not memory; the disk line does not say it', () => {

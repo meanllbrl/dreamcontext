@@ -338,16 +338,27 @@ export function setPowerFactsForTests(power: PowerFacts | null): void { powerOve
  * Is light mode on, and why? The power facts (`pmset`) are read only when Auto could still turn
  * it on by them; under a test override no `pmset` runs.
  */
+/** How long `super state` waits for the power read (`pmset` can stall for minutes): Auto then
+ *  answers without power facts, as the app does while its facts have not arrived. */
+export const POWER_WAIT_MS = 1_500;
+
 export async function lightModeNow(
   facts: Pick<CapacityFacts, 'totalMemGb'>,
   readPower: () => Promise<PowerFacts | null>,
   home: string = homedir(),
+  waitMs: number = POWER_WAIT_MS,
 ): Promise<LightMode> {
   const setting = readLightSetting(home);
   const bare = lightModeState(setting, facts);
   if (setting !== 'auto' || bare.on) return bare;
   let power: PowerFacts | null = null;
-  try { power = factsOverride ? powerOverride : await readPower(); } catch { power = null; }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    power = factsOverride ? powerOverride : await Promise.race([
+      readPower(),
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), waitMs); }),
+    ]);
+  } catch { power = null; } finally { if (timer) clearTimeout(timer); }
   return lightModeState(setting, facts, power);
 }
 
