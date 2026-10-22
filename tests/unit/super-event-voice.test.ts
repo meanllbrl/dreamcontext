@@ -5,7 +5,8 @@
  *    working: no `done` until that work ends too, then exactly one;
  *  - a job the Super Agent started in the owner's own turn is one he waits on (`awaited`): its
  *    `done` tells the super to give him the result, and the turn renders in full (ownerBatches);
- *    a job started in an event turn stays silent, and the flag is spent once its result went out;
+ *    a job started in an event turn stays silent; the mark lasts until the child is gone, and the
+ *    owner's own word through `super send` / `super resume` sets it again;
  *  - every event text keeps the owner's language, and the silent rule means no text at all.
  *
  * Through the REAL registry, inbox and verb handlers, on a fake clock.
@@ -34,7 +35,7 @@ import {
 } from '../../src/lib/super/inbox.js';
 import { resetCapacityForTests } from '../../src/lib/super/capacity.js';
 import { handleSuperVerb } from '../../src/server/routes/super.js';
-import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
+import { deliverSuperResult, deliverWindowResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
 const SUPER = 'sup-1';
 let dir: string;
@@ -202,7 +203,7 @@ describe('a job the owner waits on', { timeout: 60_000 }, () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('its done tells the super to give him the result, the turn renders in full, and the flag is spent once', async () => {
+  it('its done tells the super to give him the result, the turn renders in full, and so does every later done of it', async () => {
     const { hs, delivered, flags } = await boot({ waited: { awaited: true }, other: {} });
     // Both finish while the super is busy: one batch carries both.
     flags.busy = true;
@@ -218,20 +219,19 @@ describe('a job the owner waits on', { timeout: 60_000 }, () => {
     expect(text).toContain(AWAITED_LINE);
     let s = await readSuperState(root);
     expect(s.ownerBatches).toContain(event.batch);
-    expect(s.children.waited.awaited).toBe(true);
-    // The turn that carried it ends: the result went out, the flag is spent.
+    // The turn that carried it ends: the job is still his (field d8b7741d: the second result
+    // after his notes went in arrived as plain `event=done`, and the super stayed silent).
     superTurnEnded(SUPER);
     await drain();
     s = await readSuperState(root);
-    expect(s.children.waited.awaited).toBeUndefined();
-    // Its next turn end is ordinary news: silent, and the turn folds to one line.
+    expect(s.children.waited.awaited).toBe(true);
     hs[0].userSent('one more thing');
     hs[0].observe({ type: 'result' });
     await advance(DONE_SETTLE_MS + 5_000);
     expect(delivered).toHaveLength(2);
-    expect(delivered[1].text).toMatch(/child=waited event=done status=/);
-    expect(delivered[1].text).not.toContain(AWAITED_LINE);
-    expect((await readSuperState(root)).ownerBatches).not.toContain(delivered[1].event.batch);
+    expect(delivered[1].text).toMatch(/child=waited event=done awaited=owner/);
+    expect(delivered[1].text).toContain(AWAITED_LINE);
+    expect((await readSuperState(root)).ownerBatches).toContain(delivered[1].event.batch);
   });
 
   it('a stale stuck is not his result: the mark stays for the real done', async () => {
@@ -277,7 +277,12 @@ describe('delegate marks a job awaited only in the owner\'s own turn', () => {
     resetWindowControl();
     resetCapacityForTests();
     token = mintWindowToken({
-      send: (frame) => { setImmediate(() => deliverSuperResult(token, frame.id, { ok: true, result: { sessionId: CHILD_SID } })); return true; },
+      send: (frame) => {
+        setImmediate(() => (frame.subtype === 'window_command'
+          ? deliverWindowResult(token, frame.id, { ok: true, result: { delivered: 'sent' } })
+          : deliverSuperResult(token, frame.id, { ok: true, result: { sessionId: CHILD_SID } })));
+        return true;
+      },
       vault: 'acme', contextRoot: root, sessionId: SUPER, mode: 'super',
     }).token;
     writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SUPER, enabled: true }));
@@ -307,6 +312,36 @@ describe('delegate marks a job awaited only in the owner\'s own turn', () => {
     markSuperEventTurn(SUPER, true);
     expect(await delegate()).toBe(200);
     expect((await readSuperState(root)).children[CHILD_SID].awaited).toBeUndefined();
+  });
+
+  async function verb(verb: string, body: unknown): Promise<number> {
+    const out = { status: 0 } as ServerResponse & { status: number };
+    (out as unknown as { writeHead: (s: number) => void }).writeHead = (s: number) => { out.status = s; };
+    (out as unknown as { end: () => void }).end = () => undefined;
+    await handleSuperVerb(req(body), out, { verb });
+    return out.status;
+  }
+
+  it('his word through `super send` in his own turn makes it his again; one sent from an event turn does not', async () => {
+    markSuperEventTurn(SUPER, true);
+    expect(await delegate()).toBe(200);
+    const h = reg(CHILD_SID);
+    h.userSent('go');
+    expect(await verb('send', { child: CHILD_SID, text: 'and also check March' })).toBe(200);
+    expect((await readSuperState(root)).children[CHILD_SID].awaited).toBeUndefined();
+    markSuperEventTurn(SUPER, false);
+    expect(await verb('send', { child: CHILD_SID, text: 'the owner says: use the new cohort' })).toBe(200);
+    expect((await readSuperState(root)).children[CHILD_SID].awaited).toBe(true);
+  });
+
+  it('a running child `super resume` takes back in his own turn is his again', async () => {
+    markSuperEventTurn(SUPER, true);
+    expect(await delegate()).toBe(200);
+    const h = reg(CHILD_SID);
+    h.userSent('go');
+    markSuperEventTurn(SUPER, false);
+    expect(await verb('resume', { child: CHILD_SID })).toBe(200);
+    expect((await readSuperState(root)).children[CHILD_SID].awaited).toBe(true);
   });
 });
 

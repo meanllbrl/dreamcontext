@@ -398,10 +398,10 @@ async function settleCarried(key: string): Promise<boolean> {
         }
         if (it.kind !== 'question') {
           it.state = 'done';
-          // Its result went out: the owner's wait is over, a later event is ordinary news.
+          // The owner's job stays his until the child is gone: its second and later results reach
+          // him too (field d8b7741d: the done after his notes went in came as a plain event=done).
           const ch = s.children[it.sessionId];
-          // A stale stuck is not his result (the child may still finish): the mark stays.
-          if (ch?.awaited && (it.kind === 'done' || it.kind === 'gone' || (it.kind === 'stuck' && ch.stuckReason !== 'stale'))) delete ch.awaited;
+          if (ch?.awaited && it.kind === 'gone') delete ch.awaited;
           continue;
         }
         if (!stillAsking(it)) { it.state = 'done'; continue; }
@@ -517,7 +517,7 @@ export const OWNER_VOICE = 'in the language the owner writes to you in, never th
  *  to the owner" still wrote him a one-line note (in this note's language, Tilki 2026-10-21), so
  *  the rule says no text at all, in so many words. */
 export const BATCH_LAST_LINE = [
-  'These events already updated the job list the owner reads; he sees this turn as ONE line unless it gives him an awaited=owner result.',
+  'These events already updated the job list the owner reads; he sees this turn as ONE line unless it gives him an awaited=owner result, and every result of an awaited=owner job is one, the second and later ones too.',
   'A question: answer it with `dreamcontext super answer <child> <question id> "<option>"` only when the brief and the project settle it; otherwise escalate ONE clear question with `dreamcontext super queue ask <item> "<question>"` (never AskUserQuestion: it locks your turn until he answers) and write him that question in this turn too: an escalating turn shows in full. Its reply says whether it `reached` him.',
   'Done, stuck or closed: set the row with `dreamcontext super brief <child> "<doing / next>"`; when a slot frees, start the next job with `dreamcontext super delegate --from <pool id>`. Apart from an awaited=owner result or a question you escalate, write no text at all in this turn: no summary, no note, not one line; the commands are the whole turn.',
   `If the owner writes to you during this turn, answer him normally (${OWNER_VOICE}); the no-message rule covers only your notes about the events. Then end your turn.`,

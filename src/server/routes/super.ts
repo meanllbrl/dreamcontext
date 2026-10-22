@@ -394,7 +394,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
   }
   delegating.set(root, inFlight + 1);
   // Started in the owner's own turn (not an event turn): he waits on its result (`awaited`).
-  const awaited = !!c.state.session && !isSuperEventTurn(c.state.session);
+  const awaited = ownersTurn(c);
   let wt: CreatedWorktree | null = null;
   try {
     if (job.worktree) {
@@ -484,6 +484,20 @@ const WAKE_TRIES = 24;
 let wakePollMs = 500;
 /** Test seam: how long `send` waits between asks while a woken child comes up. */
 export function _setSendWakePollForTests(ms: number | null): void { wakePollMs = ms ?? 500; }
+
+/** The super is in the owner's own turn (not a server-opened event turn): what it does is his. */
+function ownersTurn(c: SuperCaller): boolean {
+  return !!c.state.session && !isSuperEventTurn(c.state.session);
+}
+
+/** His word reached the child (`send`, `resume` in his turn): its next result is his again. */
+async function markOwnersJob(c: SuperCaller, child: string): Promise<void> {
+  if (!ownersTurn(c)) return;
+  // Set inside the write, never from the caller's snapshot: a `gone` settled since may have cleared it.
+  await writeSuper(c.who.contextRoot, (s) => { const x = s.children[child]; if (x) x.awaited = true; })
+    // His message already went in: a record that could not be written must not refuse (and resend) it.
+    .catch((err) => console.warn(`[super] could not mark ${child} as the owner's job: ${(err as Error).message}`));
+}
 
 /** `super resume` for `child`, as the verb itself answers it; null when it came back (or ran), else the refusal. */
 async function wakeChild(c: SuperCaller, child: string): Promise<{ status: number; error: string; message: string } | null> {
@@ -954,6 +968,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const how = (r.result as { delivered?: unknown } | undefined)?.delivered;
     // Queued in the window's memory: also kept on disk, so a relaunch cannot lose it (outbox.ts).
     if (how === 'queued') await addToOutbox(c.who.contextRoot, child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
+    await markOwnersJob(c, child);
     ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(woke ? { woke: true } : {}) });
   },
 
@@ -1229,6 +1244,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
           container = ensureChatContainer(s, child, x.brief);
         });
       }
+      await markOwnersJob(c, child);
       ok(res, { child, resumed: false, running: true, ...(container ? { container } : {}) });
       return;
     }
@@ -1264,6 +1280,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (used.effort) x.effort = used.effort; else if (used.reported) delete x.effort;
         container = ensureChatContainer(s, child, x.brief);
       });
+      await markOwnersJob(c, child);
       const asked = { mode: str(b.mode), model: str(b.model), effort: str(b.effort) };
       const ignored = (['mode', 'model', 'effort'] as const).filter((k) => asked[k] && asked[k] !== used[k]);
       ok(res, {
