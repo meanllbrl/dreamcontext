@@ -86,16 +86,19 @@ export function MediaSection({ task }: { task: Task }) {
 
   const send = useCallback(async (list: { file: Blob; name: string }[]) => {
     setError(null);
+    const target = slug;
     for (const item of list) {
+      // The tile shows from the first byte (a fast upload may never report progress).
+      setProgress({ name: item.name, loaded: 0, total: item.file.size });
       try {
-        await upload.mutateAsync(item);
+        await upload.mutateAsync({ ...item, target });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Upload failed.');
         break;
       }
     }
     setProgress(null);
-  }, [upload]);
+  }, [upload, slug]);
 
   // ⌘V while this drawer is open: an image on the clipboard becomes paste-<time>.png.
   useEffect(() => {
@@ -184,6 +187,7 @@ export function MediaSection({ task }: { task: Task }) {
           <span className="dmedia-drop-sub">Saved to this task's assets folder</span>
         </div>
       )}
+      {data?.truncated && <div className="prop-hint">Very large folder: counts stop at 2000 files; open the folder on your computer for the rest.</div>}
       {error && <div className="prop-error" role="alert">{error}</div>}
       {note && <div className="dmedia-note" role="status">{note}</div>}
       {viewer !== null && viewer >= 0 && files.length > 0 && (

@@ -66,7 +66,9 @@ export async function handleTaskAssetsList(
  */
 function safeRelativeSegments(raw: string): string[] | null {
   const forms = [raw];
-  try { forms.push(decodeURIComponent(raw)); } catch { return null; }
+  // A name with a literal `%` (100%.png) does not decode a second time; it cannot hide a
+  // traversal either, so only the form as given is checked.
+  try { forms.push(decodeURIComponent(raw)); } catch { /* not double-encoded */ }
   for (const f of forms) {
     if (!f || f.startsWith('/') || f.includes('\\') || f.includes('\0') || /^[A-Za-z]:/.test(f)) return null;
     const segs = f.split('/');

@@ -122,12 +122,20 @@ function visible(d: Dirent): boolean {
   return !d.name.startsWith('.') && !d.isSymbolicLink();
 }
 
-/** List an assets folder. Symlinks and dotfiles are skipped at every depth. */
+/**
+ * List an assets folder. Symlinks and dotfiles are skipped at every depth. The TOP level is
+ * listed first, in full (up to the entry bound), so a huge subfolder can never hide a file
+ * that sits beside it; folder counts then share what is left of the walk bound.
+ */
 export function listAssets(dir: string): AssetListing {
-  let seen = 0;
   let truncated = false;
+  let top: Dirent[];
+  try { top = readdirSync(dir, { withFileTypes: true }); } catch { return { entries: [], total: 0, truncated: false }; }
+  const shown = top.filter((d) => visible(d) && (d.isFile() || d.isDirectory())).sort(byName);
+  if (shown.length > WALK_MAX_ENTRIES) { truncated = true; shown.length = WALK_MAX_ENTRIES; }
+  let budget = WALK_MAX_ENTRIES - shown.length;
 
-  /** Files under `abs`, recursively, counting toward the walk bound. */
+  /** Files under `abs`, recursively, within what is left of the walk bound. */
   const countFiles = (abs: string, depth: number): number => {
     if (depth > WALK_MAX_DEPTH) { truncated = true; return 0; }
     let ents: Dirent[];
@@ -135,32 +143,29 @@ export function listAssets(dir: string): AssetListing {
     let n = 0;
     for (const d of ents) {
       if (!visible(d)) continue;
-      if (seen >= WALK_MAX_ENTRIES) { truncated = true; break; }
-      seen++;
+      if (budget <= 0) { truncated = true; break; }
+      budget--;
       if (d.isFile()) n++;
       else if (d.isDirectory()) n += countFiles(join(abs, d.name), depth + 1);
     }
     return n;
   };
 
-  let top: Dirent[];
-  try { top = readdirSync(dir, { withFileTypes: true }); } catch { return { entries: [], total: 0, truncated: false }; }
   const files: AssetFileEntry[] = [];
   const folders: AssetFolderEntry[] = [];
   let total = 0;
-  for (const d of top.filter(visible).sort(byName)) {
-    if (seen >= WALK_MAX_ENTRIES) { truncated = true; break; }
-    seen++;
-    if (d.isFile()) {
-      let size = 0;
-      try { size = lstatSync(join(dir, d.name)).size; } catch { continue; }
-      files.push({ name: d.name, path: d.name, kind: kindOf(extname(d.name)), size });
-      total++;
-    } else if (d.isDirectory()) {
-      const count = countFiles(join(dir, d.name), 2);
-      folders.push({ name: d.name, path: d.name, kind: 'folder', count });
-      total += count;
-    }
+  for (const d of shown) {
+    if (!d.isFile()) continue;
+    let size = 0;
+    try { size = lstatSync(join(dir, d.name)).size; } catch { continue; }
+    files.push({ name: d.name, path: d.name, kind: kindOf(extname(d.name)), size });
+    total++;
+  }
+  for (const d of shown) {
+    if (!d.isDirectory()) continue;
+    const count = countFiles(join(dir, d.name), 2);
+    folders.push({ name: d.name, path: d.name, kind: 'folder', count });
+    total += count;
   }
   return { entries: [...files, ...folders], total, truncated };
 }
@@ -249,6 +254,11 @@ export function writeUploadStream(
   name: string,
   capBytes: number,
 ): Promise<UploadResult> {
+  // A request that died while the caller was still awaiting (before these listeners exist)
+  // will never emit close/aborted again: settle now, or the caller's slot is never released.
+  if (req.destroyed || req.readableAborted || req.socket?.destroyed) {
+    return Promise.resolve({ ok: false, status: 400, code: 'aborted', message: 'The upload was interrupted.' });
+  }
   pruneStaleUploads(dir);
   const tmp = join(dir, `${UPLOAD_PREFIX}${randomBytes(8).toString('hex')}`);
   return new Promise((resolve) => {

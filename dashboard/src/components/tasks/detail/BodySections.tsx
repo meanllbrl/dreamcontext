@@ -5,7 +5,7 @@ import '../../../lib/markdownMark';
 import type { Task } from '../../../hooks/useTasks';
 import { useAddTaskChangelog, useInsertTaskSection } from '../../../hooks/useTasks';
 import {
-  SECTION_HEADINGS, latestEntries, missingSections, sectionContent, splitSections,
+  SECTION_HEADINGS, checkItems, latestEntries, missingSections, sectionContent, splitSections,
   type BodySection, type SectionKey,
 } from './sectionModel';
 import { sanitizeTaskHtml } from './sanitize';
@@ -24,12 +24,15 @@ export function toSafeHtml(md: string): string {
  * One rendered markdown block: sanitized HTML, mermaid blocks drawn as zoomable SVGs, and, for
  * a tickable section (User Stories), its checkboxes wired back to the body by index.
  */
-function MarkdownBlock({ md, slug, theme, sectionKey, onToggle, className }: {
+function MarkdownBlock({ md, slug, theme, sectionKey, onToggle, expectedBoxes, className }: {
   md: string;
   slug: string;
   theme: Theme;
   sectionKey: SectionKey;
   onToggle?: (key: SectionKey, index: number, checked: boolean) => void;
+  /** How many checkboxes the body model counts in this section. Ticking is wired only when the
+   *  rendered boxes match it one for one; otherwise a click could flip the wrong line. */
+  expectedBoxes?: number;
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -52,6 +55,7 @@ function MarkdownBlock({ md, slug, theme, sectionKey, onToggle, className }: {
     const root = ref.current;
     if (!root || !toggleRef.current) return;
     const inputs = root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    if (expectedBoxes !== undefined && inputs.length !== expectedBoxes) return;
     inputs.forEach((el, i) => { el.removeAttribute('disabled'); el.dataset.criterionIndex = String(i); });
     const onChange = (e: Event) => {
       const target = e.target as HTMLInputElement;
@@ -60,7 +64,7 @@ function MarkdownBlock({ md, slug, theme, sectionKey, onToggle, className }: {
     };
     root.addEventListener('change', onChange);
     return () => root.removeEventListener('change', onChange);
-  }, [safeHtml, sectionKey]);
+  }, [safeHtml, sectionKey, expectedBoxes]);
 
   return <div ref={ref} className={`markdown-body ${className ?? ''}`} />;
 }
@@ -253,7 +257,7 @@ export function BodySections({ task, body, theme, slots, onToggle }: {
       {slots.media}
       {stories && (
         <Section k="user_stories" title="User Stories">
-          <MarkdownBlock md={stories.text} slug={slug} theme={theme} sectionKey="user_stories" onToggle={onToggle} />
+          <MarkdownBlock md={stories.text} slug={slug} theme={theme} sectionKey="user_stories" onToggle={onToggle} expectedBoxes={checkItems(body, 'user_stories').length} />
         </Section>
       )}
       {workflow && (

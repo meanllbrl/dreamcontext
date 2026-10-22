@@ -121,7 +121,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const parentNameOf = useCallback((t: Task) => {
     if (!t.parent_task) return null;
     const p = taskBySlug.get(t.parent_task);
-    return p ? (p.name || p.slug) : t.parent_task;
+    // A dangling link (the parent is gone) draws no '↑' line: the task reads as top-level.
+    return p ? (p.name || p.slug) : null;
   }, [taskBySlug]);
   // Only drawn on a card whose parent is NOT folding it in (the parent is filtered out).
   const nestedSlugs = useMemo(() => new Set([...nested.childrenByParent.values()].flat().map((t) => t.slug)), [nested]);
@@ -338,6 +339,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 
       {selectedTask && (
         <TaskDetailPanel
+          key={selectedTask.slug}
           task={selectedTask}
           allTasks={tasks}
           onOpenTask={(slug) => setSelectedSlug(slug)}

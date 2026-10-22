@@ -278,10 +278,12 @@ export interface TaskAssetUploadProgress { name: string; loaded: number; total: 
 export function useUploadTaskAsset(slug: string, onProgress?: (p: TaskAssetUploadProgress) => void) {
   const queryClient = useQueryClient();
   const { vault } = useVault();
-  return useMutation<{ name: string; size: number }, Error, { file: Blob; name: string }>({
-    mutationFn: ({ file, name }) => new Promise((resolve, reject) => {
+  // The target task rides in the VARIABLES, fixed when the upload starts: a batch keeps going to
+  // the task it was dropped on even if the drawer moves to another task meanwhile.
+  return useMutation<{ name: string; size: number }, Error, { file: Blob; name: string; target?: string }>({
+    mutationFn: ({ file, name, target = slug }) => new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `/api/tasks/${encodeURIComponent(slug)}/assets?name=${encodeURIComponent(name)}`);
+      xhr.open('POST', `/api/tasks/${encodeURIComponent(target)}/assets?name=${encodeURIComponent(name)}`);
       xhr.setRequestHeader('Content-Type', 'application/octet-stream');
       if (vault) xhr.setRequestHeader('X-Dreamcontext-Vault', vault);
       xhr.upload.onprogress = (e) => onProgress?.({ name, loaded: e.loaded, total: e.lengthComputable ? e.total : file.size });
@@ -294,8 +296,8 @@ export function useUploadTaskAsset(slug: string, onProgress?: (p: TaskAssetUploa
       xhr.onerror = () => reject(new Error('Upload failed: the connection dropped.'));
       xhr.send(file);
     }),
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['task-assets', slug] });
+    onSettled: (_d, _e, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['task-assets', vars.target ?? slug] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
   });

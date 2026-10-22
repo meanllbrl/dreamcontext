@@ -44,3 +44,18 @@ describe('every marked output in the drawer is sanitized', () => {
     }
   });
 });
+
+describe('every URL attribute is checked', () => {
+  it('a later srcset candidate pointing at /api/ is blocked', async () => {
+    const { attrHasBlockedUrl } = await import('../../dashboard/src/components/tasks/detail/sanitize');
+    expect(attrHasBlockedUrl('srcset', 'a.png 1x, /api/tasks 2x', BASE)).toBe(true);
+    expect(attrHasBlockedUrl('srcset', 'a.png 1x, b.png 2x', BASE)).toBe(false);
+    expect(attrHasBlockedUrl('background', '/api/launcher/discover', BASE)).toBe(true);
+    expect(attrHasBlockedUrl('xlink:href', '/api/launcher/detect', BASE)).toBe(true);
+  });
+  it('the config forbids the style and background attributes', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'tasks', 'detail', 'sanitize.ts'), 'utf-8');
+    expect(src).toMatch(/FORBID_ATTR:\s*\['style', 'background'\]/);
+    expect(src).toMatch(/'xlink:href'/);
+  });
+});

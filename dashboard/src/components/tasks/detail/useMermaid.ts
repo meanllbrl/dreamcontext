@@ -2,6 +2,7 @@ import { useEffect, type RefObject } from 'react';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
 import { initMermaid, normalizeMermaidSvg } from '../../../lib/mermaidRender';
+import { stripBlockedUrls } from './sanitize';
 
 /**
  * Mermaid in the task drawer: every ```mermaid block inside `rootRef` (already sanitized HTML,
@@ -137,6 +138,8 @@ export function useMermaid(rootRef: RefObject<HTMLElement | null>, html: string,
           const { svg, bindFunctions } = await mermaid.render(id, source);
           if (cancelled) break;
           stage.innerHTML = svg;
+          // Mermaid sanitizes its own labels; this drawer's URL rule (no /api/, no javascript:) still applies.
+          stripBlockedUrls(stage);
           bindFunctions?.(stage);
           wrap.dataset.mermaidRendered = '1';
 

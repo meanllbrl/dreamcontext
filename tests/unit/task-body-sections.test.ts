@@ -135,3 +135,14 @@ describe('missingSections', () => {
     expect(missingSections('## Why\n<!-- hint only -->\n')).toContain('why');
   });
 });
+
+describe('checkbox counting matches what marked renders', () => {
+  it('counts ordered task items, skips commented examples, keeps CRLF', () => {
+    const b = '## User Stories\r\n<!--\r\n- [ ] example hint\r\n-->\r\n1. [ ] first story\r\n2. [x] second story\r\n- [ ] third story\r\n';
+    expect(checkItems(b, 'user_stories').map((i) => i.text)).toEqual(['first story', 'second story', 'third story']);
+    const r = toggleCheckbox(b, 'user_stories', 2)!;
+    expect(r.body).toContain('- [x] third story\r\n');
+    expect(r.body).toContain('- [ ] example hint');
+    expect(toggleCheckbox(b, 'user_stories', 0)!.body).toContain('1. [x] first story\r\n');
+  });
+});

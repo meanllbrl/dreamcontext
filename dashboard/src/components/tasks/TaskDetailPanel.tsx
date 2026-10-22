@@ -52,28 +52,49 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
   // bodySourceRef: the last SERVER body (rollback target). pendingBodyRef: the optimistic body
   // every toggle computes from, updated SYNCHRONOUSLY before the PATCH fires, so a second tick
   // made before the first PATCH resolves builds on it instead of on the stale server copy.
+  //
+  // Writes are CHAINED: one PATCH in flight at a time. A tick made while one is in flight only
+  // marks the body dirty; when the write settles, the latest pending body goes out. And the
+  // server's body is adopted only when nothing is in flight or queued — a refetch that lands
+  // mid-burst (each PATCH invalidates the list) carries an older body and must not reset ticks.
   const bodySourceRef = useRef(task.body ?? '');
   const pendingBodyRef = useRef<string>(task.body ?? '');
+  const inflightRef = useRef(false);
+  const queuedRef = useRef(false);
   const [shownBody, setShownBody] = useState(task.body ?? '');
   useEffect(() => {
     bodySourceRef.current = task.body ?? '';
+    if (inflightRef.current || queuedRef.current) return;
     pendingBodyRef.current = task.body ?? '';
     setShownBody(task.body ?? '');
   }, [task.body, task.slug]);
 
-  const writeBody = (next: string) => {
-    pendingBodyRef.current = next;
-    setShownBody(next);
+  const flushBody = () => {
+    inflightRef.current = true;
+    queuedRef.current = false;
+    const sent = pendingBodyRef.current;
     updateTask.mutate(
-      { slug: task.slug, updates: { body: next } },
+      { slug: task.slug, updates: { body: sent } },
       {
+        onSuccess: () => { bodySourceRef.current = sent; },
         onError: (err: Error) => {
+          queuedRef.current = false;
           pendingBodyRef.current = bodySourceRef.current;
           setShownBody(bodySourceRef.current);
           onMutationError(err);
         },
+        onSettled: () => {
+          inflightRef.current = false;
+          if (queuedRef.current) flushBody();
+        },
       },
     );
+  };
+  const writeBody = (next: string) => {
+    pendingBodyRef.current = next;
+    setShownBody(next);
+    if (inflightRef.current) queuedRef.current = true;
+    else flushBody();
   };
   const onToggle = (key: SectionKey, index: number, checked: boolean) => {
     const next = toggleCriterion(pendingBodyRef.current, key, index, checked);
@@ -102,14 +123,21 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
     deleteTask.mutate(task.slug, { onError: onMutationError, onSuccess: () => onClose?.() });
   };
 
-  // Esc closes the drawer (inner menus and inputs stop their own Esc first).
+  // Esc closes the drawer — but never an Esc meant for something inside it: a field being typed
+  // in (its draft would be lost), an open picker or menu (they mark their Esc as handled).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest?.('input, textarea, select, [contenteditable="true"], [role="listbox"], [role="menu"], .ss-pop')) return;
+      onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const subtasksSlot = (children.length > 0 || !task.parent_task)
+  // A dangling parent link (the parent is gone) reads as top-level.
+  const subtasksSlot = (children.length > 0 || !parent)
     ? <SubtasksSection task={task} children={children} onOpen={open} />
     : null;
 
@@ -138,7 +166,7 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
               onToggle={onToggle}
               slots={{
                 // A subtask has no subtasks of its own (two levels max), so it gets no section.
-                subtasks: task.parent_task ? null : subtasksSlot,
+                subtasks: parent ? null : subtasksSlot,
                 criteria: <CriteriaSection body={shownBody} onToggle={(i, c) => onToggle('acceptance_criteria', i, c)} />,
                 media: <MediaSection task={task} />,
               }}

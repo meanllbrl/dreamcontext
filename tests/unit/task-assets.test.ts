@@ -396,3 +396,25 @@ describe('POST /api/tasks/:slug/assets', () => {
     expect(existsSync(join(contextRoot, 'state', 'assets', 'ghost'))).toBe(false);
   });
 });
+
+describe('the walk bound never hides a top-level file', () => {
+  it('a huge subfolder sorted first still leaves every top-level file listed', () => {
+    const dir = join(contextRoot, 'state', 'assets', 'empty');
+    mkdirSync(join(dir, 'aaa-frames'), { recursive: true });
+    for (let i = 0; i < 2100; i++) writeFileSync(join(dir, 'aaa-frames', `f${i}.png`), '');
+    writeFileSync(join(dir, 'zz-screenshot.png'), 'x');
+    const l = listAssets(dir);
+    expect(l.entries.map((e) => e.name)).toEqual(['zz-screenshot.png', 'aaa-frames']);
+    expect(l.truncated).toBe(true);
+  });
+});
+
+describe('an upload aborted before the stream is read', () => {
+  it('releases its slot even when the request died during the task lookup', async () => {
+    const req = uploadReq('/api/tasks/empty/assets?name=a.bin');
+    req.destroy();
+    const r = makeRes();
+    await handleTaskAssetUpload(req, r.res, { slug: 'empty' }, contextRoot);
+    expect(activeTaskAssetUploads()).toBe(0);
+  });
+});

@@ -96,7 +96,7 @@ export function PropertiesPanel({ task, allTasks, update, onDelete, deleting, pa
   // A parent must be a top-level task other than this one; a task with subtasks cannot get one.
   const hasChildren = allTasks.some((x) => x.parent_task === task.slug);
   const parentOptions = allTasks
-    .filter((x) => x.slug !== task.slug && !x.parent_task)
+    .filter((x) => x.slug !== task.slug && (!x.parent_task || !allTasks.some((p) => p.slug === x.parent_task)))
     .map((x) => ({ value: x.slug, label: x.name || x.slug, hint: x.slug }));
 
   const customCount = customFieldDefs?.length ?? 0;

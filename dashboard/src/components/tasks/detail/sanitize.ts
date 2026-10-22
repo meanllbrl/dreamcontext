@@ -29,6 +29,24 @@ export function isBlockedUrl(raw: string | null | undefined, base?: string): boo
   }
 }
 
+/** Every attribute that can make the browser load or link a URL. */
+const URL_ATTRS = ['src', 'href', 'srcset', 'poster', 'background', 'xlink:href', 'action', 'formaction', 'data'] as const;
+
+/** True when any URL an attribute carries is blocked; `srcset` is a comma list of candidates. */
+export function attrHasBlockedUrl(attr: string, value: string | null, base?: string): boolean {
+  if (value == null) return false;
+  const urls = attr === 'srcset' ? value.split(',').map((c) => c.trim().split(/\s+/)[0]) : [value];
+  return urls.some((u) => isBlockedUrl(u, base));
+}
+
+/** Remove blocked URL attributes from an already-rendered subtree (mermaid's own SVG output). */
+export function stripBlockedUrls(root: Element): void {
+  for (const el of [root, ...Array.from(root.querySelectorAll('*'))]) {
+    for (const attr of URL_ATTRS) if (attrHasBlockedUrl(attr, el.getAttribute(attr))) el.removeAttribute(attr);
+    if (el.hasAttribute('style') && /url\s*\(/i.test(el.getAttribute('style') ?? '')) el.removeAttribute('style');
+  }
+}
+
 let instance: DOMPurifyInstance | null = null;
 
 function purifier(): DOMPurifyInstance {
@@ -37,8 +55,8 @@ function purifier(): DOMPurifyInstance {
   p.addHook('afterSanitizeAttributes', (node) => {
     const el = node as Element;
     if (!el.getAttribute) return;
-    for (const attr of ['src', 'href', 'srcset', 'poster'] as const) {
-      if (el.hasAttribute(attr) && isBlockedUrl(el.getAttribute(attr))) el.removeAttribute(attr);
+    for (const attr of URL_ATTRS) {
+      if (el.hasAttribute(attr) && attrHasBlockedUrl(attr, el.getAttribute(attr))) el.removeAttribute(attr);
     }
     if (el.tagName === 'A' && el.hasAttribute('href')) {
       el.setAttribute('rel', 'noopener noreferrer');
@@ -53,6 +71,9 @@ function purifier(): DOMPurifyInstance {
 export function sanitizeTaskHtml(html: string): string {
   return purifier().sanitize(html, {
     FORBID_TAGS: [...TASK_FORBID_TAGS],
+    // `style` can load a url() and can lay a fake full-window panel over the app; `background`
+    // is a legacy URL attribute. Neither has a place in a task body.
+    FORBID_ATTR: ['style', 'background'],
     ADD_ATTR: ['target'],
   }) as string;
 }

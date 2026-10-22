@@ -51,7 +51,7 @@ feature('billing', 'Billing');
 feature('sync', 'Offline sync');
 
 // One project custom field (overrides/task.md).
-writeFileSync(join(dc, 'overrides', 'task.md'), `---\ncustom_fields:\n  - name: Platform\n    key: platform\n    type: select\n    options: [macOS, iOS, Web]\n    sync: []\n---\n`);
+writeFileSync(join(dc, 'overrides', 'task.md'), `---\ncustom_fields:\n  - name: Platform\n    key: platform\n    type: select\n    options: [macOS, iOS, Web]\n    sync: []\nstatuses:\n  - name: Cancelled\n    key: cancelled\n    kind: cancelled\n    order: 99\n---\n`);
 
 const fm = (o) => Object.entries(o).map(([k, v]) => `${k}: ${v === null ? 'null' : typeof v === 'string' ? `'${v.replace(/'/g, "''")}'` : Array.isArray(v) ? `[${v.join(', ')}]` : v}`).join('\n');
 const seed = (slug, front, body) => writeFileSync(join(state, `${slug}.md`), `---\n${fm({
@@ -108,6 +108,9 @@ Fixture markup the drawer must strip: <script>window.__xss = 1</script>
 <img src="x" onerror="window.__xss = 2">
 <iframe src="https://example.com/frame"></iframe>
 [a script link](javascript:window.__xss=3) and ![api image](/api/health)
+<img srcset="x.png 1x, /api/health 2x"> <table background="/api/health"><tr><td>t</td></tr></table>
+<div style="position:fixed;inset:0;background:url(/api/health)">overlay</div>
+<svg><image xlink:href="/api/health" width="1" height="1"/></svg>
 
 ## Changelog
 
@@ -121,6 +124,7 @@ Fixture markup the drawer must strip: <script>window.__xss = 1</script>
 - Oldest entry`);
 seed('card-form-validation', { name: 'Card form validation', status: 'completed', parent_task: PARENT, related_feature: 'checkout', version: '1.4.0' }, '## Why\n\nPart of Redesign the checkout flow.\n\n## Acceptance Criteria\n\n- [x] Inline errors\n- [x] Luhn check\n');
 seed('address-autocomplete', { name: 'Address autocomplete', status: 'in_progress', parent_task: PARENT, related_feature: 'checkout', version: '1.4.0' }, '## Why\n\nPart of Redesign the checkout flow.\n');
+seed('gift-wrap-option', { name: 'Gift wrap option', status: 'cancelled', parent_task: PARENT, related_feature: 'checkout', version: '1.4.0' }, '## Why\n\nPart of Redesign the checkout flow. Dropped.\n');
 seed('receipt-email', { name: 'Receipt email', status: 'todo', parent_task: PARENT, related_feature: 'billing', version: '1.4.0' }, '## Why\n\nPart of Redesign the checkout flow.\n');
 const MEDIA = 'offline-sync-for-drafts';
 seed(MEDIA, { name: 'Offline sync for drafts', status: 'todo', related_feature: 'sync', version: '1.5.0' }, '## Why\n\nDrafts typed on a plane must not be lost.\n\n## Acceptance Criteria\n\n- [ ] Drafts survive a restart\n');
@@ -278,9 +282,9 @@ try {
     if (shown !== label) countsOk = false;
   }
   check('AC6 column counts equal the cards shown', countsOk, countDetail.join(' '));
-  check('AC6 a child of a visible parent is not drawn as its own card', (await card('card-form-validation').count()) === 0 && (await card('address-autocomplete').count()) === 0);
+  check('AC6 a child of a visible parent is not drawn as its own card', (await card('card-form-validation').count()) === 0 && (await card('address-autocomplete').count()) === 0 && (await card('gift-wrap-option').count()) === 0);
   const subChip = card(PARENT).locator('[data-testid="subtask-chip"]');
-  check('AC6 the parent card shows "n/m" (done / not cancelled) with a bar', /1\/3/.test(await subChip.innerText().catch(() => '')) && (await subChip.locator('.bd-sub-bar').count()) === 1, await subChip.innerText().catch(() => 'none'));
+  check('AC6 the parent card shows "n/m" (done / not cancelled — the cancelled child is not counted) with a bar', /1\/3/.test(await subChip.innerText().catch(() => '')) && (await subChip.locator('.bd-sub-bar').count()) === 1, await subChip.innerText().catch(() => 'none'));
   check('AC7 card shows feature, criteria count, priority chip and the Versions & Sprints chip',
     /Checkout/.test(await card(PARENT).innerText()) && /✓ 1\/6/.test(await card(PARENT).innerText())
       && (await card(PARENT).locator('.bd-prio-chip').count()) === 1 && (await card(PARENT).locator('.bd-ver-chip').count()) === 1);
@@ -293,7 +297,7 @@ try {
   await subChip.click();
   await until(async () => (await page.locator('[data-testid="board-subtasks"]').count()) === 1);
   const rows = await page.locator('[data-testid="board-subtasks"] .bd-sub-row').allInnerTexts();
-  check('AC6 the chip opens a thin list: status dot + name per child', rows.length === 3 && rows.some((r) => /Receipt email/.test(r)), rows.join(' | '));
+  check('AC6 the chip opens a thin list: status dot + name per child', rows.length === 4 && rows.some((r) => /Receipt email/.test(r)), rows.join(' | '));
   check('AC6 the chip says it is expanded', (await subChip.getAttribute('aria-expanded')) === 'true');
   await page.locator('[data-testid="board-subtasks"] .bd-sub-add').click();
   await page.keyboard.type('Tax line in receipt');
@@ -394,8 +398,12 @@ try {
     apiImgs: document.querySelectorAll('.detail-panel img[src^="/api/"]').length,
     onerror: document.querySelectorAll('.detail-panel [onerror]').length,
     scripts: document.querySelectorAll('.detail-panel script').length,
+    srcset: [...document.querySelectorAll('.detail-panel [srcset]')].filter((e) => /\/api\//.test(e.getAttribute('srcset'))).length,
+    background: document.querySelectorAll('[data-section="notes"] [background]').length,
+    style: document.querySelectorAll('[data-section="notes"] .markdown-body [style]').length,
+    xlink: [...document.querySelectorAll('[data-section="notes"] image')].filter((e) => /\/api\//.test(e.getAttribute('xlink:href') || e.getAttribute('href') || '')).length,
   }));
-  check('AC10 body HTML is sanitized (script, iframe, on* handlers, javascript: and /api/ urls stripped)', xss.flag === null && !xss.iframes && !xss.jsLinks && !xss.apiImgs && !xss.onerror && !xss.scripts, JSON.stringify(xss));
+  check('AC10 body HTML is sanitized (script, iframe, on* handlers, javascript: and /api/ urls stripped)', xss.flag === null && !xss.iframes && !xss.jsLinks && !xss.apiImgs && !xss.onerror && !xss.scripts && !xss.srcset && !xss.background && !xss.style && !xss.xlink, JSON.stringify(xss));
   const wfSvg = page.locator('[data-section="workflow"] .mermaid-stage > svg');
   const wfOk = await until(async () => (await wfSvg.count()) === 1, 10000);
   const wfDebug = await page.locator('[data-section="workflow"]').evaluate((el) => `stage-svg=${el.querySelectorAll('.mermaid-stage > svg').length} any-svg=${el.querySelectorAll('svg').length} wraps=${el.querySelectorAll('.mermaid-rendered').length} ctrl=${el.querySelectorAll('.mermaid-controls button').length} raw=${el.querySelectorAll('pre > code.language-mermaid').length}`).catch((e) => String(e));
@@ -405,10 +413,19 @@ try {
   await box(0).click();
   const linked = await until(async () => /- \[x\] AC1 The card form validates inline/.test(taskFile(PARENT)) && /s1\[Validate card\]:::done/.test(taskFile(PARENT)), 8000);
   check('AC11/AC16 ticking a linked criterion flips that line and its mermaid node', linked);
+  // The race the serialization exists for: every PATCH invalidates the task list, and a slow
+  // refetch carrying an OLDER body lands in the middle of a burst of ticks.
+  await until(async () => (await box(0).isChecked()), 4000);
+  await page.route('**/api/tasks', async (route) => { if (route.request().method() === 'GET') await new Promise((r) => setTimeout(r, 900)); await route.continue(); });
   await box(1).click();
+  await wait(350);
   await box(2).click();
-  const rapid = await until(async () => /- \[x\] AC2 /.test(taskFile(PARENT)) && /- \[x\] AC3 /.test(taskFile(PARENT)), 8000);
-  check('AC11 rapid toggles are serialized (no lost update)', rapid && /- \[x\] AC1 /.test(taskFile(PARENT)));
+  await wait(1100);
+  check('AC11 a tick does not visibly undo itself when an older refetch lands', await box(2).isChecked().catch(() => false));
+  await box(4).click();
+  const rapid = await until(async () => /- \[x\] AC2 /.test(taskFile(PARENT)) && /- \[x\] AC3 /.test(taskFile(PARENT)) && /- \[x\] AC5 /.test(taskFile(PARENT)), 12000);
+  await page.unroute('**/api/tasks');
+  check('AC11 rapid toggles across a mid-burst refetch are serialized (no lost update)', rapid && /- \[x\] AC1 /.test(taskFile(PARENT)), taskFile(PARENT).split('\n').filter((l) => /AC\d /.test(l)).join(' | '));
   check('AC11 User Stories and the fenced lines were not touched', /- \[ \] As a shopper I see the total/.test(taskFile(PARENT)));
   await until(async () => (await wfSvg.count()) === 1, 8000);
   await page.locator('[data-section="workflow"]').scrollIntoViewIfNeeded();
@@ -457,8 +474,12 @@ try {
   await shoot('drag-overlay');
   await media.evaluate((el) => { el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__dt })); });
   check('AC13 a dropped file is uploaded into state/assets/<slug>/', await until(async () => existsSync(join(assets, 'dropped-note.txt')), 8000));
-  // Browse.
+  // Browse — with the upload held for a moment, so the progress tile is on screen to check.
+  await page.route('**/api/tasks/*/assets?name=*', async (route) => { await new Promise((r) => setTimeout(r, 2500)); await route.continue(); });
   await page.locator('[data-testid="media-input"]').setInputFiles({ name: 'browsed.txt', mimeType: 'text/plain', buffer: Buffer.from('browsed') });
+  check('AC13 an upload shows a progress tile', await until(async () => (await page.locator('[data-testid="media-progress"]').count()) === 1, 3000));
+  await shoot('upload-progress');
+  await page.unroute('**/api/tasks/*/assets?name=*');
   check('AC13 Browse uploads a file', await until(async () => existsSync(join(assets, 'browsed.txt')), 8000));
   // ⌘V paste of an image.
   const pngBytes = readFileSync(join(assets, 'airplane-mode.png')).toString('base64');
@@ -526,7 +547,6 @@ try {
   await closeDrawer();
 
   // ── AC15 — regressions: drag between columns, create, delete; opening never rewrites ──
-  check('AC15 opening a task never rewrote its file (before any edit)', true);
   await openBoard();
   const loginCard = card('fix-login-timeout');
   const target = page.locator('[data-column="in_review"]');

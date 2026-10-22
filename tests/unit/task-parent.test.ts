@@ -48,3 +48,10 @@ describe('childrenOf', () => {
     expect(childrenOf(tasks, 'loner')).toEqual([]);
   });
 });
+
+describe('a dangling parent link', () => {
+  it('a task whose parent_task names a missing task is top-level and may take subtasks', () => {
+    const t: ParentLinkTask[] = [{ slug: 'stuck', parent_task: 'deleted-parent' }, { slug: 'new', parent_task: null }];
+    expect(validateParentLink(t, 'new', 'stuck')).toEqual({ ok: true });
+  });
+});

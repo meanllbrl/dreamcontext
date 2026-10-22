@@ -40,7 +40,9 @@ export function validateParentLink(
   if (!parent) {
     return { ok: false, code: 'parent_missing', message: `Parent task not found: ${parentSlug}` };
   }
-  if (parent.parent_task) {
+  // A parent link naming a task that no longer exists (deleted from the CLI, by hand, or by a
+  // teammate) is dangling: that task reads as top-level, so it may take subtasks.
+  if (parent.parent_task && parent.parent_task !== parent.slug && tasks.some((t) => t.slug === parent.parent_task)) {
     return {
       ok: false,
       code: 'parent_is_child',

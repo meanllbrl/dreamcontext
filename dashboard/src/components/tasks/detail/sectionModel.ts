@@ -42,7 +42,8 @@ export interface BodySection {
 
 const FENCE_RE = /^\s*(```|~~~)/;
 const HEADING_RE = /^##\s+(.+?)\s*#*\s*$/;
-const CHECKBOX_LINE_RE = /^(\s*[-*+]\s+)\[( |x|X)\](\s+)(.*)$/;
+// Bullet or ordered (`1.` / `1)`) task-list items, as marked renders them; a CRLF body's `\r` is not part of the text.
+const CHECKBOX_LINE_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)\[( |x|X)\](\s+)(.*?)(\r?)$/;
 
 /** Every `## ` section in order, plus a leading `other` preamble when there is text before the first heading. */
 export function splitSections(body: string): BodySection[] {
@@ -98,8 +99,12 @@ export function checkItems(body: string, key: SectionKey): CheckItem[] {
   const lines = body.split('\n');
   const items: CheckItem[] = [];
   let fence: string | null = null;
+  let inComment = false;
   for (let i = sec.start + (sec.heading ? 1 : 0); i < sec.end; i++) {
     const line = lines[i];
+    // An HTML comment (a template hint) renders nothing, so a checkbox inside one is not a box.
+    if (inComment) { if (line.includes('-->')) inComment = false; continue; }
+    if (fence === null && /^\s*<!--/.test(line)) { if (!line.includes('-->')) inComment = true; continue; }
     const f = FENCE_RE.exec(line);
     if (f) {
       if (fence === null) fence = f[1];
@@ -131,8 +136,8 @@ export function toggleCheckbox(
   const m = CHECKBOX_LINE_RE.exec(lines[item.line]);
   if (!m) return null;
   const next = checked ?? !item.checked;
-  const [, prefix, , spacing, rest] = m;
-  lines[item.line] = `${prefix}${next ? '[x]' : '[ ]'}${spacing}${rest}`;
+  const [, prefix, , spacing, rest, cr] = m;
+  lines[item.line] = `${prefix}${next ? '[x]' : '[ ]'}${spacing}${rest}${cr}`;
   const node = /<!--\s*node:([A-Za-z0-9_-]+)\s*-->/.exec(rest);
   return { body: lines.join('\n'), nodeId: node ? node[1] : null, checked: next };
 }

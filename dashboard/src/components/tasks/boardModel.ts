@@ -385,7 +385,7 @@ export function criteriaCount(t: Task): { done: number; total: number } {
   for (const line of (t.acceptance_criteria || '').split('\n')) {
     if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue; }
     if (fence) continue;
-    const m = /^\s*[-*+]\s+\[( |x|X)\]\s/.exec(line);
+    const m = /^\s*(?:[-*+]|\d+[.)])\s+\[( |x|X)\]\s/.exec(line);
     if (!m) continue;
     total++;
     if (m[1] !== ' ') done++;
