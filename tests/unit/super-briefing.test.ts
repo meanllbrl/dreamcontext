@@ -87,10 +87,11 @@ describe('superBriefing', () => {
   // A job the owner waits on (Tilki field, 2026-10-21): the Events line names `awaited=owner`
   // (+78 characters). This test was already 35 over on main 3da65546 (5794 vs 5759).
   const AWAITED_EVENT_2026_10_21 = 80;
+  const CHILD_EFFORT_2026_10_22 = 150; // xhigh only for the few jobs that earn it; the server's default effort
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22);
     }
   });
 });
