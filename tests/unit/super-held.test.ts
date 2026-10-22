@@ -148,13 +148,14 @@ describe('the super\'s own question open: the pile rides WITH the owner\'s answe
     }, W);
     expect(superAnswerDigest(SUPER)).toBeNull();
 
-    // That turn ends: the result counts as told (the owner's wait is over); the question it did
-    // not settle comes back once, as an ordinary event (never lost).
+    // That turn ends: the result counts as told; the owner's job stays his until the child is gone
+    // (its later results reach him too); the question it did not settle comes back once, as an
+    // ordinary event (never lost).
     superTurnEnded(SUPER);
     await vi.waitFor(async () => {
       const s = await readSuperState(root);
       expect(s.queue.find((q) => q.id === 'q-done-c2')?.state).toBe('done');
-      expect(s.children.c2.awaited).toBeUndefined();
+      expect(s.children.c2.awaited).toBe(true);
       expect(s.queue.find((q) => q.kind === 'question')).toMatchObject({ state: 'pending', attempts: 1 });
     }, W);
     // No event turn re-tells the done items silently.

@@ -42,6 +42,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/agents/AgentsFeed.css::.agent-msg--unread::before': 'unread bar',
   'components/automations/AutomationCard.css::.auto-card-status-dot--awaiting-review': 'status dot',
   'components/brain/TeamUpdatesBadge.css::.team-updates-badge .update-badge-dot': 'dot',
+  'components/sleepy/super/SuperAgenda.css::.super-agenda-row[data-state=\'new\'] .super-agenda-dot': 'dot',
   'components/core/JsonPreview.css::.json-date-dot': 'dot',
   'components/council/_ds-council-primitives.css::.council-status--synth .council-status-dot': 'dot',
   'pages/CouncilPage.css::.council-hall-status--synth .council-hall-status-dot': 'dot',

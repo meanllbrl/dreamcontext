@@ -5,7 +5,7 @@ import { requestOpenAgents } from '../../../lib/openAgents';
 import type { SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission } from '../chatSession';
 import {
-  optionsFit, permissionSummary, superJobs, type JobLook, type JobSection, type OptionsFit,
+  optionsFit, permissionSummary, type JobLook, type OptionsFit,
 } from './superHandover';
 import {
   claimOwnerAnswer, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent,
@@ -13,15 +13,13 @@ import {
 } from './superQuestions';
 import type { Rect } from './superLayout';
 import { SuperAgentIcon } from '../../layout/NavIcons';
-import { JobList, JOB_SECTIONS } from './JobList';
-import { onOpenJobRow } from './superJobsStore';
 import './JobBar.css';
 
 /**
- * The job bar (plan r4 D1, §2): the top band above the centre. Its head is the ONE question
- * queue below, unchanged; beside it four counts (Senden bekliyor / Çalışıyor / Havuz / Bitti)
- * from the same record the super agent reads; a count opens the list over the centre's top
- * (JobList). Nothing here polls: the record is pushed, the counts are derived.
+ * The question band (plan r4 D1): the top band above the centre holds ONLY the head of the one
+ * question queue below. The counts and the job list it carried moved into the agenda, the
+ * always-visible column left of the stage (SuperAgenda.tsx, task super-agent-ajandasi-…), so
+ * there is one list. Nothing here polls: the record is pushed. Empty: nothing is drawn.
  *
  * The ONE question queue (plan-r7 D7, D16, owner decision 2), as a pill centred in the top band
  * directly above the centre window (plan-r8 F7): the owner looks at the centre, so what he must
@@ -52,18 +50,13 @@ import './JobBar.css';
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
  * request re-sent by the server (the answer never landed), reopens it.
  */
-export function JobBar({ state, head, waiting, rect, listRect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild, canShowChild, onOpenTask }: {
+export function JobBar({ state, head, waiting, rect, look, superSession, sessionFor, titleFor, onReplyToSuper }: {
   state: SuperStateView;
   head: SuperQueueItem | null;
   /** The top band above the centre (planStage's `queue`). */
   rect: Rect;
-  /** Where the list opens: over the centre's top (`jobListRect`). */
-  listRect: Rect;
   look: JobLook;
   superSession: ChatSession | undefined;
-  onShowChild: (sid: string) => void;
-  canShowChild: (sid: string) => boolean;
-  onOpenTask: (slug: string) => void;
   /** How many items wait on the owner in all (the head included). */
   waiting: number;
   /** The project (no longer read here: the alarm moved to AgentSurface; kept for the caller). */
@@ -125,23 +118,18 @@ export function JobBar({ state, head, waiting, rect, listRect, look, superSessio
     return () => { live = false; ro.disconnect(); };
   }, [fitKey, showOptions]);
 
-  // The list: closed by default; a count, or a name in an event line (superJobsStore), opens it.
-  const [open, setOpen] = useState<{ section: JobSection | null; row: string | null } | null>(null);
-  useEffect(() => onOpenJobRow((row) => setOpen({ section: null, row })), []);
-  const sections = superJobs(state, look);
-  const barRef = useRef<HTMLDivElement | null>(null);
+  // Empty: nothing is drawn (the agenda, left of the stage, holds every count and row).
+  if (!head) return null;
 
   return (
     <div
-      ref={barRef}
       className="super-queue-strip super-job-bar"
       data-testid="super-job-bar"
       role="region"
       aria-label={t('super.queue.label')}
       style={{ left: rect.x, top: rect.y, width: rect.width, minHeight: rect.height }}
     >
-      {!head ? null : (
-        <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
+      <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
           {head.kind === 'ask' && <span className="super-queue-super" aria-hidden><SuperAgentIcon size={16} /></span>}
           <span className="super-queue-who">{head.kind === 'ask' ? look.superTitle : head.kind === 'approval' ? t('super.queue.team') : titleFor(head.sessionId)}</span>
           {head.kind === 'permission'
@@ -152,57 +140,7 @@ export function JobBar({ state, head, waiting, rect, listRect, look, superSessio
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
               : <QuestionHead item={head} text={head.ownerText ?? t('super.queue.escalatedAlarm')} onReplyToSuper={onReplyToSuper} />}
           {waiting > 1 && <span className="super-queue-more">{t('super.queue.more').replace('{n}', String(waiting - 1))}</span>}
-        </div>
-      )}
-      <div className="super-job-counts" role="group" aria-label={t('super.jobs.label')}>
-        {/* A question the owner must answer owns the band: the four counts fold into one button,
-            so its options keep their full width (an answer is never a cut label). */}
-        {head && (
-          <button
-            type="button"
-            className="super-job-count"
-            data-testid="super-job-count-all"
-            data-section="all"
-            data-on={open ? 'true' : undefined}
-            aria-expanded={!!open}
-            onClick={() => setOpen((o) => (o ? null : { section: null, row: null }))}
-            aria-label={`${t('super.jobs.label')} (${sections.waiting.length + sections.working.length})`}
-            title={`${t('super.jobs.label')} (${sections.waiting.length + sections.working.length})`}
-          >
-            <span className="super-job-count-glyph" aria-hidden>☰</span>
-            <span className="super-job-count-n" aria-hidden>{sections.waiting.length + sections.working.length}</span>
-          </button>
-        )}
-        {!head && JOB_SECTIONS.map((sec) => (
-          <button
-            key={sec}
-            type="button"
-            className="super-job-count"
-            data-testid={`super-job-count-${sec}`}
-            data-section={sec}
-            data-on={open && (open.section === sec || open.section === null) ? 'true' : undefined}
-            aria-expanded={!!open}
-            onClick={() => setOpen((o) => (o && o.section === sec ? null : { section: sec, row: null }))}
-          >
-            <span className="super-job-count-label">{t(`super.jobs.section.${sec}`)}</span>
-            <span className="super-job-count-n">{sections[sec].length}</span>
-          </button>
-        ))}
       </div>
-      {open && (
-        <JobList
-          sections={sections}
-          rect={listRect}
-          origin={rect}
-          focusSection={open.section}
-          focusRow={open.row}
-          bar={barRef}
-          onClose={() => setOpen(null)}
-          onShowChild={onShowChild}
-          canShowChild={canShowChild}
-          onOpenTask={onOpenTask}
-        />
-      )}
     </div>
   );
 }
@@ -231,9 +169,10 @@ function QuestionHead({ item, text, onReplyToSuper }: { item: SuperQueueItem; te
 }
 
 /** Bring the question's card in the super chat into view and put the keyboard on it. False when
- *  no card is drawn (the chat not on screen): the caller focuses the composer instead. */
-function showQuestionCard(itemId: string): boolean {
-  const card = [...document.querySelectorAll<HTMLElement>('[data-testid="super-question-card"]')].find((el) => el.dataset.item === itemId);
+ *  no card is drawn (the chat not on screen): the caller falls back. The band's Answer and the
+ *  agenda's Waiting row both open a question this one way. */
+export function showQuestionCard(itemId: string): boolean {
+  const card = [...document.querySelectorAll<HTMLElement>('[data-super-slot="centre"] [data-testid="super-question-card"]')].find((el) => el.dataset.item === itemId);
   if (!card) return false;
   const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });

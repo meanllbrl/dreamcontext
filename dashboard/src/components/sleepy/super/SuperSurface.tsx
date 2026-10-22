@@ -14,13 +14,14 @@ import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from '
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
 import { OrbitPath, PanelChatTile } from './StageParts';
-import { JobBar } from './JobBar';
+import { JobBar, showQuestionCard } from './JobBar';
+import { AGENDA_RAIL_W, AGENDA_W, SuperAgenda } from './SuperAgenda';
 import { publishSuperEventContext } from './superJobsStore';
 import { childModelChip } from './AgentCard';
 import { SuperContainer, chatStatus, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { anchoredPos, fitsNow, isGroupId, jobListRect, planStage, sizeOf, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
+import { NARROW_STAGE_PX, anchoredPos, fitsNow, isGroupId, planStage, sizeOf, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import type { CardFullscreen } from './SuperContainer';
@@ -50,6 +51,10 @@ export interface SuperSurfaceProps {
   vault: string;
   sessionFor: (claudeId: string) => ChatSession | undefined;
   titleFor: (claudeId: string) => string;
+  /** A child's job NAME for the agenda: its tab title (the brief is its second line). */
+  nameFor?: (claudeId: string) => string;
+  /** The owner looked at finished jobs in the agenda (`POST /api/super/seen`); rejects on failure. */
+  onSeen: (rows: ReadonlyArray<{ id: string; at: number }>) => Promise<unknown>;
   terminals: readonly TerminalRowItem[];
   /** The owner's gesture, as the server's patch (F3, §0 C3). */
   onLayout: (patch: LayoutPatch) => void;
@@ -95,7 +100,24 @@ export function SuperSurface(props: SuperSurfaceProps) {
   stateRef.current = state;
 
   // ── The stage's size: measured before the first paint; resizes SNAP (FE4) ──
-  const [size, setSize] = useState({ width: props.initialWidth, height: props.initialHeight });
+  // The agenda column takes AGENDA_W of the surface, or folds to its rail where the full column
+  // would leave the stage narrow (cards in Others, side by side as a sheet): the stage plans for
+  // the rest. The shell's width decides; the stage measures itself below as before.
+  const agendaWidth = (shellW: number) => (shellW - AGENDA_W >= NARROW_STAGE_PX ? AGENDA_W : AGENDA_RAIL_W);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [shellW, setShellW] = useState(props.initialWidth);
+  useLayoutEffect(() => {
+    const el = shellRef.current;
+    if (!el) return undefined;
+    const read = () => { const w = el.clientWidth; if (w > 0) setShellW(w); };
+    read();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const agendaCompact = agendaWidth(shellW) !== AGENDA_W;
+  const [size, setSize] = useState({ width: Math.max(0, props.initialWidth - agendaWidth(props.initialWidth)), height: props.initialHeight });
   const sizeRef = useRef(size);
   sizeRef.current = size;
   useLayoutEffect(() => {
@@ -370,10 +392,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
     if (!superId || motion === 'running') return;
     publishSuperEventContext(superId, { ownerBatches: state.ownerBatches, titleFor: (c) => titleForRef.current(c) }, `${batchKey}\u0002${titleKey}`);
   }, [superId, batchKey, titleKey, state.ownerBatches, motion]);
-  // The job bar reads the same record and the children's live sessions (0 requests).
+  // The agenda and the question band read the same record and the children's live sessions (0 requests).
   const jobLook: JobLook = {
     live: (sid) => { const cs = props.sessionFor(sid); return cs ? chatStatus(cs).kind : null; },
     titleFor: props.titleFor,
+    nameFor: props.nameFor,
     modelFor: (sid) => childModelChip(props.sessionFor(sid), hasOwnKey(state.children, sid) ? state.children[sid] : undefined),
     superTitle: t('super.centre.name'),
   };
@@ -381,6 +404,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const showChild = (sid: string) => {
     const c = state.containers.find((k) => k.kind === 'chat' && k.ref === sid);
     if (c) actions.onSideBySide(c.id);
+  };
+  // The super's own question (or an approval) in the agenda: its card in the centre chat.
+  const showQuestion = (item: string) => {
+    if (showQuestionCard(item)) return;
+    document.querySelector<HTMLElement>('[data-testid="super-queue-head"]')?.scrollIntoView({ block: 'center' });
   };
   const othersItems: OthersItem[] = plan.others.map((id) => {
     const g = groupsById.get(id);
@@ -395,6 +423,16 @@ export function SuperSurface(props: SuperSurfaceProps) {
   });
 
   return (
+    <div ref={shellRef} className="super-shell" data-testid="super-shell">
+    <SuperAgenda
+      state={state}
+      look={jobLook}
+      compact={agendaCompact}
+      canShowChild={(sid) => state.containers.some((k) => k.kind === 'chat' && k.ref === sid)}
+      onShowChild={showChild}
+      onShowQuestion={showQuestion}
+      onSeen={props.onSeen}
+    />
     <div
       ref={rootRef}
       className="super-surface"
@@ -506,15 +544,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
         waiting={ownerQueueCount(state)}
         vault={props.vault}
         rect={plan.queue}
-        listRect={jobListRect(plan)}
         look={jobLook}
         superSession={superSession}
         sessionFor={props.sessionFor}
         titleFor={props.titleFor}
         onReplyToSuper={props.onReplyToSuper}
-        onShowChild={showChild}
-        canShowChild={(sid) => state.containers.some((k) => k.kind === 'chat' && k.ref === sid)}
-        onOpenTask={(slug) => props.onOpenPage('tasks', slug)}
       />
       {state.containers.length === 0 && props.terminals.length === 0 && (
         <div className="super-empty-hint" data-testid="super-empty-hint" style={{ left: plan.centre.x, top: plan.dock.y, width: plan.centre.width, height: plan.dock.height }}>
@@ -559,6 +593,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
       {full && <CardFullscreenView subject={full.subject} onClose={() => setFull(null)} />}
+    </div>
     </div>
   );
 }

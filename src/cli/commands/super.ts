@@ -162,9 +162,10 @@ export function registerSuperCommand(program: Command): void {
     .action((targets: string[]) => run('ungroup', { targets }));
 
   s.command('brief <child> <line>')
-    .description('Set the job row\'s line (doing / next) its card shows too')
+    .description('Set the job\'s line in the owner\'s agenda (one plain sentence: what it is doing now); its card shows it too')
     .option('--task <slug>', 'Link the row to this task (state/<slug>.md)')
-    .action((child: string, line: string, o: { task?: string }) => run('brief', { child, line, task: o.task }));
+    .option('--eta <minutes>', 'When you expect it done, in minutes from now (0..1440; 0 clears; the agenda shows "~N min")')
+    .action((child: string, line: string, o: { task?: string; eta?: string }) => run('brief', { child, line, task: o.task, eta: o.eta }));
 
   s.command('read <child>')
     .description('A child\'s last reply, whole (tool calls skipped), fenced as the child\'s text. An event line that ends in "…" is cut: this prints the rest')

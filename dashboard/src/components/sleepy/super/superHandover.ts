@@ -471,9 +471,11 @@ export function modelChip(model: string | undefined | null, effort: string | und
   return e ? `${family} · ${e}` : family;
 }
 
-// ─── The job list (plan r4 §2: one data source) ───────────────────────────────────
+// ─── The agenda (task super-agent-ajandasi-…; plan r4 §2: one data source) ──────────
 
-export type JobSection = 'waiting' | 'working' | 'pool' | 'done';
+/** The agenda's four sections, in the order the owner reads them. */
+export type JobSection = 'waiting' | 'now' | 'done' | 'next';
+export const JOB_SECTIONS: readonly JobSection[] = ['waiting', 'now', 'done', 'next'];
 export type JobChip = 'permission' | 'question' | 'ask' | 'queued' | 'settling' | 'asking' | 'stuck' | 'held' | 'maybeStarted' | 'gone';
 export interface JobRow {
   key: string;
@@ -482,7 +484,9 @@ export interface JobRow {
   sid?: string;
   item?: string;
   pool?: string;
+  /** The job's NAME (the child's tab title, else its brief). */
   title: string;
+  /** What it is doing now (its brief); empty when it would repeat the name. */
   line: string;
   chip: JobChip | null;
   tone: StatusTone | null;
@@ -490,11 +494,19 @@ export interface JobRow {
   task?: string;
   branch?: string;
   model?: string | null;
+  /** A Now row: when the super agent expects it done (`super brief --eta`). */
+  etaAt?: number;
+  /** A Done row: the finish key it shows (what `/api/super/seen` is told), and whether the
+   *  owner has not seen this finish yet. */
+  finishAt?: number;
+  fresh?: boolean;
 }
 export interface JobLook {
   /** The child's live status kind in this window, or null when it has no session here. */
   live: (sid: string) => string | null;
   titleFor: (sid: string) => string;
+  /** The job's name: the child's tab title (falls back to `titleFor`). */
+  nameFor?: (sid: string) => string;
   modelFor?: (sid: string) => string | null;
   superTitle: string;
 }
@@ -508,21 +520,55 @@ export function rowOf(child: Pick<SuperChild, 'row'>, live: string | null): Chil
   return 'done';
 }
 
+/** When a finished child's job finished (its Done order): the server's stamp, else its last row
+ *  move, else its start. */
+export function finishKeyOf(child: Pick<SuperChild, 'finishedAt' | 'rowAt' | 'startedAt'>): number {
+  return child.finishedAt ?? child.rowAt ?? child.startedAt;
+}
+
+/** The owner has not seen this finish yet. Only a finish the server stamped can be new: a child
+ *  that finished before the agenda existed (no `finishedAt`) reads as seen, so the first load is
+ *  not a wall of old results; it is new again once it works and finishes again. */
+export function isFreshDone(child: Pick<SuperChild, 'finishedAt' | 'seenAt'>): boolean {
+  return child.finishedAt !== undefined && !(child.seenAt !== undefined && child.seenAt >= child.finishedAt);
+}
+
+/** Time left to a job's estimate: whole minutes under an hour, else rounded hours; `over` past
+ *  it; null without an estimate. Pure (the agenda words it: "~12 min", "~2 h", "overdue"). */
+export function etaLabel(etaAt: number | undefined, now: number): { over: boolean; n: number; unit: 'min' | 'h' } | null {
+  if (etaAt === undefined || !Number.isFinite(etaAt)) return null;
+  const left = etaAt - now;
+  if (left <= 0) return { over: true, n: 0, unit: 'min' };
+  const min = Math.ceil(left / 60_000);
+  return min < 60 ? { over: false, n: min, unit: 'min' } : { over: false, n: Math.round(min / 60), unit: 'h' };
+}
+
+/** A job's name as the owner reads it: a delegated brief's run suffix (" · develop opus/high",
+ *  the orchestration guide's `<job> · <mode> <model>/<effort>`) is the agent's bookkeeping. */
+export function plainJobName(name: string): string {
+  return name.replace(/\s+·\s+(basic|plan|develop)\b[^·]*$/i, '').trim() || name;
+}
+
 function isQuestionOpen(state: Pick<SuperState, 'queue'>): boolean {
   return state.queue.some((q) => (q.kind === 'question' || q.kind === 'ask') && q.state === 'escalated');
 }
 
-/** The four sections of the job list, composed from the record (never copied). Pure. */
-export function superJobs(state: Pick<SuperState, 'queue' | 'children' | 'pool'>, look: JobLook): Record<JobSection, JobRow[]> {
-  const out: Record<JobSection, JobRow[]> = { waiting: [], working: [], pool: [], done: [] };
+/** The agenda's four sections, composed from the record (never copied). Pure. Waiting on you is
+ *  built ONLY from the queue's owner items (`needsOwner`, the one source a richer question pool
+ *  feeds later); a child waiting there is not also in Now. Done: unseen first, then newest. */
+export function superAgenda(state: Pick<SuperState, 'queue' | 'children' | 'pool'>, look: JobLook): Record<JobSection, JobRow[]> {
+  const out: Record<JobSection, JobRow[]> = { waiting: [], now: [], done: [], next: [] };
   const head = queueHead(state);
   const owner = state.queue.filter(needsOwner).sort((a, b) => (a.id === head?.id ? -1 : b.id === head?.id ? 1 : a.createdAt - b.createdAt));
   const chipOf = (k: QueueKind): JobChip => (k === 'permission' ? 'permission' : k === 'ask' ? 'ask' : 'question');
+  const nameOf = (sid: string) => plainJobName(look.nameFor?.(sid) || look.titleFor(sid));
+  const waitingChildren = new Set<string>();
   for (const q of owner) {
-    const isAsk = q.kind === 'ask';
+    const own = q.kind === 'ask' || q.kind === 'approval';
+    if (!own) waitingChildren.add(q.sessionId);
     out.waiting.push({
-      key: `q:${q.id}`, section: 'waiting', item: q.id, ...(isAsk ? {} : { sid: q.sessionId }),
-      title: isAsk ? look.superTitle : look.titleFor(q.sessionId),
+      key: `q:${q.id}`, section: 'waiting', item: q.id, ...(own ? {} : { sid: q.sessionId }),
+      title: own ? look.superTitle : nameOf(q.sessionId),
       // A permission row shows only the child's own request (the bar draws it); never the super's words.
       line: q.kind === 'permission' ? '' : (q.ownerText ?? ''),
       chip: chipOf(q.kind), tone: 'asking', since: q.createdAt,
@@ -530,27 +576,34 @@ export function superJobs(state: Pick<SuperState, 'queue' | 'children' | 'pool'>
   }
   if (isQuestionOpen(state)) {
     for (const q of state.queue.filter((x) => x.kind === 'question' && x.state === 'pending').sort((a, b) => a.createdAt - b.createdAt)) {
-      out.waiting.push({ key: `q:${q.id}`, section: 'waiting', item: q.id, sid: q.sessionId, title: look.titleFor(q.sessionId), line: '', chip: 'queued', tone: null, since: q.createdAt });
+      waitingChildren.add(q.sessionId);
+      out.waiting.push({ key: `q:${q.id}`, section: 'waiting', item: q.id, sid: q.sessionId, title: nameOf(q.sessionId), line: '', chip: 'queued', tone: null, since: q.createdAt });
     }
   }
   const done: JobRow[] = [];
   for (const [sid, ch] of Object.entries(state.children)) {
     const row = rowOf(ch, look.live(sid));
+    const title = nameOf(sid) || ch.brief || sid.slice(0, 8);
+    const brief = ch.brief ?? '';
     const base = {
-      key: `c:${sid}`, sid, title: look.titleFor(sid) || ch.brief || sid.slice(0, 8), line: ch.brief ?? '',
+      key: `c:${sid}`, sid, title, line: brief && brief !== title ? brief : '',
       tone: toneOfRow(row), since: ch.rowAt ?? ch.startedAt,
       ...(ch.task ? { task: ch.task } : {}), ...(ch.branch ? { branch: ch.branch } : {}),
       model: look.modelFor ? look.modelFor(sid) : null,
     };
-    if (row === 'done' || row === 'gone') { done.push({ ...base, section: 'done', chip: row === 'gone' ? 'gone' : null }); continue; }
+    if (row === 'done' || row === 'gone') {
+      done.push({ ...base, section: 'done', chip: row === 'gone' ? 'gone' : null, finishAt: finishKeyOf(ch), fresh: isFreshDone(ch) });
+      continue;
+    }
+    if (waitingChildren.has(sid)) continue;
     const chip: JobChip | null = row === 'asking' ? 'asking' : row === 'stuck' ? 'stuck' : ch.settling ? 'settling' : null;
-    out.working.push({ ...base, section: 'working', chip });
+    out.now.push({ ...base, section: 'now', chip, ...(ch.etaAt !== undefined ? { etaAt: ch.etaAt } : {}) });
   }
-  out.working.sort((a, b) => (a.since ?? 0) - (b.since ?? 0));
-  out.done = done.sort((a, b) => (b.since ?? 0) - (a.since ?? 0));
+  out.now.sort((a, b) => (a.since ?? 0) - (b.since ?? 0));
+  out.done = done.sort((a, b) => (a.fresh === b.fresh ? (b.finishAt ?? 0) - (a.finishAt ?? 0) : a.fresh ? -1 : 1));
   for (const p of state.pool as SuperPoolItem[]) {
-    out.pool.push({
-      key: `p:${p.id}`, section: 'pool', pool: p.id, title: p.title, line: p.note ?? '',
+    out.next.push({
+      key: `p:${p.id}`, section: 'next', pool: p.id, title: p.title, line: p.note ?? '',
       chip: p.maybeStarted ? 'maybeStarted' : p.held ? 'held' : null, tone: null, since: p.createdAt,
       ...(p.task ? { task: p.task } : {}),
     });
@@ -558,7 +611,7 @@ export function superJobs(state: Pick<SuperState, 'queue' | 'children' | 'pool'>
   return out;
 }
 
-/** The Bitti section shows the newest 10 and a "+N". */
+/** Done shows every unseen result and the newest seen ones up to this many in all, then "+N". */
 export const DONE_SHOWN = 10;
 
 // ─── Layout of the panes while handed over ─────────────────────────────────────

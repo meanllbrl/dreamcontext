@@ -1,0 +1,173 @@
+/* ── The agenda (task super-agent-ajandasi-…) ─────────────────────────────────────
+   An always-visible column left of the stage, read like a notebook: Waiting on you, Now, Done,
+   Up next. One dot per row in the row's meaning (superTone.css `--tone` for Now; waiting pink,
+   new accent, seen hollow); the state word always travels with it. Tokens only, no motion. */
+.super-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  background-color: var(--color-bg);
+}
+.super-shell > .super-surface { min-width: 0; }
+
+.super-agenda {
+  flex: none;
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 12px 16px 16px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.super-agenda-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 4px 8px; }
+.super-agenda-title { font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); }
+.super-agenda-sub { font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; }
+
+.super-agenda-sec { margin-top: 10px; }
+.super-agenda-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 4px 4px;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.super-agenda-n { font-family: var(--font-mono); color: var(--color-text-secondary); }
+.super-agenda-sec[data-section='waiting'] .super-agenda-n { color: var(--mood-waiting); }
+.super-agenda-mark {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-accent-text);
+  cursor: pointer;
+}
+.super-agenda-mark:hover { text-decoration: underline; }
+.super-agenda-mark:disabled { opacity: 0.5; cursor: default; }
+.super-agenda-empty { padding: 2px 6px 4px; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.super-agenda-more { padding: 2px 6px; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+
+.super-agenda-row { border-radius: var(--radius-md); }
+.super-agenda-row[data-focus='true'] { background: var(--color-accent-soft); }
+.super-agenda-row-btn {
+  box-sizing: border-box;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: baseline;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+button.super-agenda-row-btn { cursor: pointer; }
+button.super-agenda-row-btn:hover { background: var(--color-bg-secondary); }
+button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.super-agenda-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--tone, var(--color-text-tertiary));
+  transform: translateY(-1px);
+}
+.super-agenda-name {
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.super-agenda-meta { display: inline-flex; align-items: baseline; }
+.super-agenda-line {
+  grid-column: 2 / 4;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.super-agenda-when { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; }
+.super-agenda-when[data-over='true'] { color: var(--color-warning-ink); }
+.super-agenda-chip {
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+.super-agenda-chip[data-kind='new'] { color: var(--color-accent-text); background: var(--color-accent-strong); }
+.super-agenda-chip[data-kind='stuck'] { color: var(--color-error-ink); background: var(--color-error-subtle); }
+.super-agenda-chip[data-kind='permission'],
+.super-agenda-chip[data-kind='question'],
+.super-agenda-chip[data-kind='ask'] { color: var(--color-warning-ink); background: var(--color-warning-subtle); }
+
+/* Each section's dot, in its meaning. */
+.super-agenda-row[data-state='waiting'] .super-agenda-dot { background: var(--mood-waiting); }
+.super-agenda-row[data-state='new'] .super-agenda-dot { background: var(--color-accent); }
+.super-agenda-row[data-state='seen'] .super-agenda-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--color-text-tertiary); }
+.super-agenda-row[data-state='seen'] .super-agenda-name { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); }
+.super-agenda-row[data-state='next'] .super-agenda-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--color-text-tertiary); }
+.super-agenda-row[data-chip='queued'] { opacity: 0.6; }
+
+/* The rail (the stage would be narrow with the full column): four counts, one button; the full
+   agenda opens as a panel over the stage's left edge. */
+.super-shell { position: relative; }
+.super-agenda--rail { position: relative; overflow: visible; padding: 12px 4px; align-items: center; }
+.super-agenda-rail-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.super-agenda-rail-btn:hover { background: var(--color-bg-secondary); }
+.super-agenda-rail-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.super-agenda-rail-n {
+  min-width: 24px;
+  padding: 0 var(--space-1);
+  line-height: 20px;
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+}
+.super-agenda-rail-n[data-section='waiting'][data-on='true'] { color: var(--color-warning-ink); background: var(--color-warning-subtle); }
+.super-agenda-rail-n[data-section='now'][data-on='true'] { color: var(--color-success-ink); background: var(--color-success-subtle); }
+.super-agenda-rail-n[data-section='done'][data-on='true'] { color: var(--color-accent-text); background: var(--color-accent-strong); }
+.super-agenda-pop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 400;
+  box-shadow: var(--shadow-lg);
+}

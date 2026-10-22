@@ -3,19 +3,19 @@ import type { SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 
 /**
- * The one channel between the centre chat's event lines and the job bar (plan r4 D8): a name in
- * an event line opens the list at that row. Module state in this window only; no request, no
- * timer. The bar listens while it is mounted; with no bar nothing happens.
+ * The one channel between the centre chat's event lines and the agenda (plan r4 D8): a name in
+ * an event line scrolls the agenda to that row and lights it. Module state in this window only;
+ * no request, no timer. The agenda listens while it is mounted; with none nothing happens.
  */
 type Listener = (row: string) => void;
 const listeners = new Set<Listener>();
 
-/** Open the job list at `row` (a JobRow key, e.g. `c:<child session id>`). */
+/** Point the agenda at `row` (a JobRow key, e.g. `c:<child session id>`). */
 export function openJobRow(row: string): void {
   for (const fn of [...listeners]) fn(row);
 }
 
-/** The bar's subscription; returns the unsubscribe. */
+/** The agenda's subscription; returns the unsubscribe. */
 export function onOpenJobRow(fn: Listener): () => void {
   listeners.add(fn);
   return () => { listeners.delete(fn); };

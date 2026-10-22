@@ -124,6 +124,14 @@ export function ensureChatContainer(s: SuperState, sessionId: string, title?: st
 /** Move a child's row (and stamp when). */
 export function setRow(ch: SuperChild, row: ChildRow, reason?: StuckReason, now = Date.now()): boolean {
   if (ch.row === row && (row !== 'stuck' || ch.stuckReason === reason)) return false;
+  // The agenda (task super-agent-ajandasi-…): a job FINISHES only from a not-finished row, so a
+  // seen result stays seen when its chat closes (done -> gone) or comes back (gone -> done; the
+  // reconcile clears a gone row first, so a row-less child that already finished keeps its stamp).
+  const finished = (r: ChildRow | undefined) => r === 'done' || r === 'gone';
+  if (finished(row)) {
+    if (ch.row === undefined ? ch.finishedAt === undefined : !finished(ch.row)) ch.finishedAt = now;
+    delete ch.etaAt;
+  }
   ch.row = row;
   ch.rowAt = now;
   if (row === 'stuck' && reason) ch.stuckReason = reason; else delete ch.stuckReason;

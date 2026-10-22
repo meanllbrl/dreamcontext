@@ -3084,13 +3084,14 @@
     },
     {
       "path": "super brief",
-      "desc": "Set the job row's line (doing / next) its card shows too",
+      "desc": "Set the job's line in the owner's agenda (one plain sentence: what it is doing now); its card shows it too",
       "args": [
         "<child>",
         "<line>"
       ],
       "valueFlags": [
-        "--task"
+        "--task",
+        "--eta"
       ]
     },
     {

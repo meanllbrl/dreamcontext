@@ -212,6 +212,12 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (typeof c.task === 'string' && TASK_SLUG_RE.test(c.task)) child.task = c.task;
     if (child.row === 'stuck' && oneOf(STUCK_REASONS, c.stuckReason)) child.stuckReason = c.stuckReason;
     if (c.awaited === true) child.awaited = true;
+    // The agenda's three stamps (epoch ms): a non-finite or negative value is dropped.
+    for (const k of ['finishedAt', 'seenAt', 'etaAt'] as const) {
+      const v = finite(c[k]);
+      // A "seen" from the future would hide every later finish: never past now (as the route clamps).
+      if (v !== undefined && v >= 0) child[k] = k === 'seenAt' ? Math.min(v, Date.now()) : v;
+    }
     out[key] = child;
   }
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that

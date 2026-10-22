@@ -1,22 +1,22 @@
 /**
- * The window side of the job list, the event line, the status tone and the model chip (plan r4
- * §2, D2, D7, D8, D14; owner 2026-10-21), pure and by source:
- *  - superJobs: four sections from one record (a v1 record with no rows still fills them), the
+ * The window side of the agenda, the event line, the status tone and the model chip (plan r4
+ * §2, D2, D7, D8, D14; owner 2026-10-21; agenda task super-agent-ajandasi-…), pure and by source:
+ *  - superAgenda: four sections from one record (a v1 record with no rows still fills them), the
  *    chips (bitiyor, soruyor, takıldı, sırada, kapasite, başlamış olabilir), a permission row
- *    showing only the child's own request, Bitti newest first;
+ *    showing only the child's own request, a child waiting on the owner never also in Now, Done
+ *    unseen first, the finish key and "new until seen", the estimate's words;
  *  - groupSuperEventTurns: each event turn folds into its anchor, a batch in ownerBatches or an
  *    expanded one keeps everything, an owner message (steered or not) ends the group, "ran N
  *    commands" never counts `dreamcontext super`; the live chip and a replay parse the same;
  *  - the ONE tone map, read by every consumer; the model chip from real values only;
- *  - the batch frame on the wire; the job list's rect; the centre's larger font.
+ *  - the batch frame on the wire; the centre's larger font.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  eventLine, groupSuperEventTurns, modelChip, rowOf, superBatchOf, superEventText, superJobs, toneOfRow, toneOfStatus, type JobLook,
+  etaLabel, eventLine, finishKeyOf, groupSuperEventTurns, isFreshDone, modelChip, plainJobName, rowOf, superAgenda, superBatchOf, superEventText, toneOfRow, toneOfStatus, type JobLook,
 } from '../../dashboard/src/components/sleepy/super/superHandover.js';
-import { jobListRect, planStage, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import { toChatEvent } from '../../dashboard/src/lib/chatProtocol.js';
 import type { SuperState } from '../../dashboard/src/lib/superTypes.js';
 
@@ -33,9 +33,9 @@ const look = (live: Record<string, string> = {}): JobLook => ({
 const base = (o: Partial<SuperState>): Pick<SuperState, 'queue' | 'children' | 'pool'> => ({ queue: [], children: {}, pool: [], ...o });
 const ch = (sid: string, o: Record<string, unknown> = {}) => ({ sessionId: sid, brief: `brief ${sid}`, adopted: true, startedAt: 1, ...o });
 
-describe('superJobs: one record, four sections', () => {
+describe('superAgenda: one record, four sections', () => {
   it('rows land in their sections with their chips; Bitti is newest first', () => {
-    const s = superJobs(base({
+    const s = superAgenda(base({
       children: {
         c1: ch('c1', { row: 'working', settling: true, rowAt: 5, task: 'a-task', branch: 'super/x' }),
         c2: ch('c2', { row: 'asking', rowAt: 6 }),
@@ -48,15 +48,15 @@ describe('superJobs: one record, four sections', () => {
         { id: 'p-2', title: 'maybe', createdAt: 2, maybeStarted: true, note: 'check first' },
       ],
     }), look());
-    expect(s.working.map((r) => [r.sid, r.chip])).toEqual([['c1', 'settling'], ['c2', 'asking'], ['c3', 'stuck']]);
-    expect(s.working[0]).toMatchObject({ task: 'a-task', branch: 'super/x', line: 'brief c1', title: 'title c1', model: 'Opus · medium', tone: 'working' });
+    expect(s.now.map((r) => [r.sid, r.chip])).toEqual([['c1', 'settling'], ['c2', 'asking'], ['c3', 'stuck']]);
+    expect(s.now[0]).toMatchObject({ task: 'a-task', branch: 'super/x', line: 'brief c1', title: 'title c1', model: 'Opus · medium', tone: 'working' });
     expect(s.done.map((r) => [r.sid, r.chip])).toEqual([['c5', 'gone'], ['c4', null]]);
-    expect(s.pool.map((r) => [r.pool, r.chip, r.line])).toEqual([['p-1', 'held', ''], ['p-2', 'maybeStarted', 'check first']]);
+    expect(s.next.map((r) => [r.pool, r.chip, r.line])).toEqual([['p-1', 'held', ''], ['p-2', 'maybeStarted', 'check first']]);
     expect(s.waiting).toEqual([]);
   });
 
   it('Senden bekliyor: the head first; a permission row has no line of the super\'s words; held questions are "sırada"', () => {
-    const s = superJobs(base({
+    const s = superAgenda(base({
       children: { c1: ch('c1', { row: 'asking' }), c2: ch('c2', { row: 'asking' }) } as SuperState['children'],
       queue: [
         { id: 'q-e', sessionId: 'c1', kind: 'question', state: 'escalated', ownerText: 'Which db?', createdAt: 1 },
@@ -69,7 +69,7 @@ describe('superJobs: one record, four sections', () => {
   });
 
   it('the super agent\'s own ask is a waiting row under its name', () => {
-    const s = superJobs(base({ queue: [{ id: 'q-a', sessionId: 'sup', kind: 'ask', state: 'escalated', ownerText: 'Ship it?', createdAt: 1 }] }), look());
+    const s = superAgenda(base({ queue: [{ id: 'q-a', sessionId: 'sup', kind: 'ask', state: 'escalated', ownerText: 'Ship it?', createdAt: 1 }] }), look());
     expect(s.waiting).toEqual([expect.objectContaining({ item: 'q-a', title: 'Claude', chip: 'ask', line: 'Ship it?' })]);
     expect(s.waiting[0].sid).toBeUndefined();
   });
@@ -81,9 +81,63 @@ describe('superJobs: one record, four sections', () => {
     expect(rowOf({}, 'ended')).toBe('gone');
     expect(rowOf({}, 'ready')).toBe('done');
     expect(rowOf({}, null)).toBe('done');
-    const s = superJobs(base({ children: { a: ch('a'), b: ch('b') } as SuperState['children'] }), look({ a: 'working', b: 'ready' }));
-    expect(s.working.map((r) => r.sid)).toEqual(['a']);
+    const s = superAgenda(base({ children: { a: ch('a'), b: ch('b') } as SuperState['children'] }), look({ a: 'working', b: 'ready' }));
+    expect(s.now.map((r) => r.sid)).toEqual(['a']);
     expect(s.done.map((r) => r.sid)).toEqual(['b']);
+  });
+
+  it('a child waiting on the owner is in Waiting only, never also in Now; one the super handles stays in Now as "asking"', () => {
+    const s = superAgenda(base({
+      children: { c1: ch('c1', { row: 'asking' }), c2: ch('c2', { row: 'asking' }), c3: ch('c3', { row: 'working' }), c4: ch('c4', { row: 'asking' }) } as SuperState['children'],
+      queue: [
+        { id: 'q-e', sessionId: 'c1', kind: 'question', state: 'escalated', ownerText: 'Which db?', createdAt: 1 },
+        { id: 'q-p', sessionId: 'c2', kind: 'permission', state: 'pending', createdAt: 2 },
+        { id: 'q-d', sessionId: 'c4', kind: 'question', state: 'delivered', createdAt: 3 },
+      ],
+    }), look());
+    expect(s.waiting.map((r) => r.sid)).toEqual(['c2', 'c1']);
+    expect(s.now.map((r) => [r.sid, r.chip])).toEqual([['c3', null], ['c4', 'asking']]);
+  });
+
+  it('a row is named by the job\'s name (tab title) with its brief as the line, never the same text twice', () => {
+    const named: JobLook = { ...look(), nameFor: (sid) => (sid === 'a' ? 'Promo video' : '') };
+    const s = superAgenda(base({ children: { a: ch('a', { row: 'working', brief: 'rendering the second half' }), b: ch('b', { row: 'working', brief: 'title b' }) } as SuperState['children'] }), named);
+    expect(s.now.map((r) => [r.title, r.line])).toEqual([['Promo video', 'rendering the second half'], ['title b', '']]);
+    // A delegated brief's run suffix is the agent's bookkeeping, not the job's name.
+    expect(plainJobName('Promo video · develop opus/high')).toBe('Promo video');
+    expect(plainJobName('Pricing copy · basic sonnet/medium')).toBe('Pricing copy');
+    expect(plainJobName('A · B notes')).toBe('A · B notes');
+  });
+
+  it('Done: new until the owner saw THIS finish; unseen first, then newest; the finish key falls back to rowAt, then startedAt', () => {
+    expect(finishKeyOf({ finishedAt: 50, rowAt: 60, startedAt: 1 })).toBe(50);
+    expect(finishKeyOf({ rowAt: 60, startedAt: 1 })).toBe(60);
+    expect(finishKeyOf({ startedAt: 7 })).toBe(7);
+    expect(isFreshDone({ finishedAt: 50 })).toBe(true);
+    expect(isFreshDone({ finishedAt: 50, seenAt: 50 })).toBe(false);
+    expect(isFreshDone({ finishedAt: 90, seenAt: 50 })).toBe(true);
+    // A child that finished before the agenda existed (no stamp) reads as seen: no wall of old "new".
+    expect(isFreshDone({})).toBe(false);
+    expect(isFreshDone({ seenAt: 7 })).toBe(false);
+    const s = superAgenda(base({
+      children: {
+        a: ch('a', { row: 'done', finishedAt: 10, seenAt: 10 }),
+        b: ch('b', { row: 'done', finishedAt: 20 }),
+        c: ch('c', { row: 'gone', finishedAt: 30, seenAt: 30, rowAt: 99 }),
+        d: ch('d', { row: 'done', finishedAt: 5 }),
+        e: ch('e', { row: 'gone', rowAt: 40 }),
+      } as SuperState['children'],
+    }), look());
+    expect(s.done.map((r) => [r.sid, r.fresh, r.finishAt])).toEqual([['b', true, 20], ['d', true, 5], ['e', false, 40], ['c', false, 30], ['a', false, 10]]);
+  });
+
+  it('the estimate: minutes under an hour, rounded hours above, overdue past it, nothing without one', () => {
+    expect(etaLabel(undefined, 0)).toBeNull();
+    expect(etaLabel(12 * 60_000 - 1, 0)).toEqual({ over: false, n: 12, unit: 'min' });
+    expect(etaLabel(150 * 60_000, 0)).toEqual({ over: false, n: 3, unit: 'h' });
+    expect(etaLabel(1000, 1000)).toEqual({ over: true, n: 0, unit: 'min' });
+    const s = superAgenda(base({ children: { a: ch('a', { row: 'working', etaAt: 123 }) } as SuperState['children'] }), look());
+    expect(s.now[0].etaAt).toBe(123);
   });
 });
 
@@ -183,14 +237,14 @@ describe('the ONE status tone (owner 2026-10-21)', () => {
     expect(css).toMatch(/--c: var\(--tone, var\(--color-accent\)\);/);
     expect(css).toMatch(/0 0 28px 4px color-mix\(in srgb, var\(--tone, var\(--color-accent\)\) 38%, transparent\)/);
     expect(css).toMatch(/\.super-panel-tile:is\(\[data-status='working'\], \[data-status='asking'\]\) \.super-panel-clip \{ box-shadow: [^}]*var\(--tone\)/);
-    expect(read(`${SUPER}/JobBar.css`)).toMatch(/\.super-job-dot \{[^}]*background: var\(--tone,/);
+    expect(read(`${SUPER}/SuperAgenda.css`)).toMatch(/\.super-agenda-dot \{[^}]*background: var\(--tone,/);
     const card = read(`${SUPER}/AgentCard.tsx`);
     expect(card).toMatch(/className="super-tile" data-tile="chat" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}/);
     expect(card).toMatch(/<svg className="super-ring" data-kind=\{kind\} data-super-tone=\{toneOfStatus\(kind\)\}/);
     // The state word stays beside the colour (orthogonal channels).
     expect(card).toMatch(/<span className="super-tile-state">\{state\}<\/span>/);
-    expect(read(`${SUPER}/JobList.tsx`)).toMatch(/data-super-tone=\{r\.tone \?\? undefined\}/);
-    expect(read(`${SUPER}/JobList.tsx`)).toMatch(/t\(`super\.jobs\.chip\.\$\{r\.chip\}`\)/);
+    expect(read(`${SUPER}/SuperAgenda.tsx`)).toMatch(/data-super-tone=\{r\.section === 'now' \? r\.tone \?\? undefined : undefined\}/);
+    expect(read(`${SUPER}/SuperAgenda.tsx`)).toMatch(/t\(`super\.jobs\.chip\.\$\{r\.chip\}`\)/);
   });
 
   it('a chat tile\'s title wraps to three lines and its doing-line takes one', () => {
@@ -225,12 +279,6 @@ describe('the bar answers no question itself (owner 2026-10-22: one way to ask)'
 });
 
 describe('geometry and font', () => {
-  it('the list opens under the band at the centre\'s width, at most 60 % of its height; the plan is unchanged', () => {
-    const plan = planStage(stageItems([], [], { mode: 'float' }), { mode: 'float' }, { width: 1384, height: 814 });
-    const r = jobListRect(plan);
-    expect(r).toEqual({ x: plan.centre.x, y: plan.queue.y + plan.queue.height, width: plan.centre.width, height: Math.round(plan.centre.height * 0.6) });
-  });
-
   it('the centre chat reads 17 px and its composer 15 px, times the zoom, in the centre only', () => {
     const css = read(`${SUPER}/superCentre.css`).replace(/\/\*[\s\S]*?\*\//g, '');
     expect(css.trim()).toBe("[data-super-slot='centre'] .chat-pane {\n  --chat-text: calc(17px * var(--zoom, 1));\n  --font-size-md: calc(15px * var(--zoom, 1));\n}");
@@ -271,12 +319,13 @@ describe('a working tile\'s border ring (owner 2026-10-21)', () => {
   });
 });
 
-describe('Esc closes the list, never the stage (verify finding)', () => {
-  it('the surface\'s Esc yields to an open job list, as it does to a group panel', () => {
+describe('one list: the agenda replaces the job bar\'s counts and its list', () => {
+  it('no list overlay is left for Esc to yield to; the bar draws only the question head', () => {
     const surface = read('dashboard/src/components/sleepy/AgentSurface.tsx');
-    const at = surface.indexOf("if (document.querySelector('.super-group-panel')) return;");
-    expect(at).toBeGreaterThan(0);
-    expect(surface.slice(at, at + 400)).toMatch(/if \(document\.querySelector\('\.super-job-list'\)\) return;/);
-    expect(read(`${SUPER}/JobList.tsx`)).toMatch(/className="super-job-list"/);
+    expect(surface).not.toMatch(/super-job-list/);
+    const bar = read(`${SUPER}/JobBar.tsx`);
+    expect(bar).not.toMatch(/super-job-count|JobList/);
+    expect(bar).toMatch(/if \(!head\) return null;/);
+    expect(read(`${SUPER}/SuperSurface.tsx`)).toMatch(/<SuperAgenda\b/);
   });
 });

@@ -182,6 +182,16 @@ export interface SuperChild {
    *  not in an event turn. Its done/stuck/gone event asks the super to tell him; spent when that
    *  turn ends. */
   awaited?: true;
+  /** When its job last FINISHED (epoch ms): stamped by `setRow` only when the row moves from
+   *  not finished (working, asking, stuck, none) to done or gone, never on done <-> gone. The
+   *  agenda's "new until seen" compares against it (task super-agent-ajandasi-…). */
+  finishedAt?: number;
+  /** The owner saw that result in the agenda: the finish key the window showed when he clicked
+   *  (`POST /api/super/seen`, the owner's door only). New while `!(seenAt >= finishedAt)`. */
+  seenAt?: number;
+  /** When the super agent expects the job to be done (`super brief --eta <minutes>`): cleared
+   *  by `setRow` when the row becomes done or gone. */
+  etaAt?: number;
   /** What it runs with (`super delegate`, then `super update --mode/--model/--effort`), so
    *  `super resume` reopens it the same way. Absent = basic, the default model and effort. */
   mode?: string;

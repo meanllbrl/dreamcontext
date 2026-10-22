@@ -1397,15 +1397,9 @@ async function motion(engineName, browserType, base) {
               if (withOptions) for (const o of fx.options) actions.append(el('button', 'super-queue-btn super-queue-btn--option', o));
               actions.append(el('button', 'super-queue-btn super-queue-btn--reply', fx.reply));
               head.append(el('span', 'super-queue-who', fx.who), el('span', 'super-queue-text', fx.text), actions, el('span', 'super-queue-more', fx.more));
-              // The job bar beside it: with a head, its counts fold into one "Job list" button (JobBar).
+              // The band holds only the head now (the counts moved into the agenda).
               strip.classList.add('super-job-bar');
-              const counts = el('div', 'super-job-counts');
-              // The folded "Job list" button as drawn: its glyph and a count.
-              const all = el('button', 'super-job-count');
-              all.dataset.section = 'all';
-              all.append(el('span', 'super-job-count-glyph', '☰'), el('span', 'super-job-count-n', '3'));
-              counts.append(all);
-              strip.append(head, counts);
+              strip.append(head);
               surface.append(strip);
               const hr = head.getBoundingClientRect();
               const right = Math.max(...[...head.querySelectorAll('button, .super-queue-more')].map((b) => b.getBoundingClientRect().right));
@@ -1564,10 +1558,8 @@ async function board(engineName, browserType, base, full) {
       const early = superTurns(tEnd - 15000, tEnd + 20000).filter((f) => /event=done/.test(f.blocks[0]));
       ok(`children ending 3 turns each (${t3?.ids?.length ?? 0} children) open 0 super turns inside the 30 s settle window`, early.length === 0, JSON.stringify(early.map((f) => f.blocks[0].slice(0, 120))));
       // The rows say so meanwhile: working with the "bitiyor" chip, or still working.
-      await page.getByTestId('super-job-count-working').click().catch(() => {});
-      const settlingRows = await page.locator('[data-testid="super-job-row"][data-chip="settling"]').count().catch(() => 0);
-      ok('…the list shows them settling ("bitiyor") meanwhile', settlingRows >= 1, `${settlingRows}`);
-      await page.keyboard.press('Escape');
+      const settlingRows = await page.locator('[data-testid="super-agenda-row"][data-chip="settling"]').count().catch(() => 0);
+      ok('…the agenda shows them settling ("finishing") meanwhile', settlingRows >= 1, `${settlingRows}`);
       // A slow next event turn: the owner writes into it three times, fast.
       writeFileSync(join(SCRATCH, 'slow-events'), '1');
       ok('30 s settled, the done rows reach the super agent batched', await until(page, async () => superTurns(tEnd, Date.now()).some((f) => /event=done/.test(f.blocks[0])), 60000));
@@ -1591,9 +1583,8 @@ async function board(engineName, browserType, base, full) {
       const name = page.locator('[data-super-slot="centre"] .super-event-line-name').first();
       if (await name.count()) {
         await name.click();
-        ok('…a name in the line opens the list at its row', await until(page, async () => (await page.locator('[data-testid="super-job-list"] [data-focus="true"]').count()) === 1, 5000));
-        await page.keyboard.press('Escape');
-      } else ok('…a name in the line opens the list at its row', false, 'no name in any event line');
+        ok('…a name in the line lights its agenda row', await until(page, async () => (await page.locator('[data-testid="super-agenda"] [data-focus="true"]').count()) === 1, 5000));
+      } else ok('…a name in the line lights its agenda row', false, 'no name in any event line');
       const toggle = page.locator('[data-super-slot="centre"] [data-testid="super-event-line-toggle"]').first();
       if (await toggle.count()) {
         await toggle.click();
@@ -1608,7 +1599,7 @@ async function board(engineName, browserType, base, full) {
       await sayToSuper(page, 'GO-ASKOWNER');
       const answerBtn = page.getByTestId('super-queue-answer');
       ok('the super agent\'s own ask heads the bar with its Answer button', await until(page, async () => (await answerBtn.count()) === 1, 40000), await page.getByTestId('super-queue-head').innerText().catch(() => 'no head'));
-      ok('…with a question at the head, the counts fold into one "Job list" button', (await page.getByTestId('super-job-count-all').count()) === 1 && (await page.getByTestId('super-job-count-working').count()) === 0);
+      ok('…the band holds only the question (no counts beside it)', (await page.locator('[data-testid^="super-job-count-"]').count()) === 0);
       const tAsk = Date.now();
       await answerBtn.click();
       const askCard = page.locator('[data-testid="super-question-card"][data-kind="ask"] .chat-surveycard');
@@ -1616,43 +1607,29 @@ async function board(engineName, browserType, base, full) {
       await askCard.locator('.chat-btn.primary').click();
       ok('…the card sends ONE `[super answer]` message into the super chat', await until(page, async () => frames().some((f) => f.role === 'super' && f.t >= tAsk && /^\[super answer\] item=\S+\n[\s\S]*="Ship it"/.test(f.blocks[0] ?? '')), 15000));
       ok('…and closes the ask', await until(page, async () => !(record().queue ?? []).some((q) => q.kind === 'ask' && q.state !== 'done'), 15000), JSON.stringify((record().queue ?? []).filter((q) => q.kind === 'ask')));
-      await until(page, async () => (await page.getByTestId('super-job-count-working').count()) === 1, 15000);
+      await until(page, async () => (await page.getByTestId('super-queue-head').count()) === 0, 15000);
     }
 
-    // AC7: the bar and the list, over the centre, without moving it and without a request.
-    ok(`${engineName}: the bar shows its four counts`, (await page.locator('[data-testid^="super-job-count-"]').count()) === 4);
-    // The page settles first (the centre's history pages, the first state): the list is
-    // measured against a quiet page, not the page's own load.
+    // The agenda (task super-agent-ajandasi-…): always drawn left of the stage, four sections,
+    // the band above the centre has no counts; it reads the pushed record (no request of its own).
+    ok(`${engineName}: the agenda is drawn with its four sections`, (await page.locator('[data-testid="super-agenda"] [data-testid^="super-agenda-section-"]').count()) === 4);
+    ok(`${engineName}: the band holds no counts and there is no list overlay`, (await page.locator('[data-testid^="super-job-count-"], [data-testid="super-job-list"]').count()) === 0);
     await until(page, async () => { const n = apiReqs.length; await page.waitForTimeout(2500); return apiReqs.length === n; }, 30000);
-    const centreBefore = (await geo(page)).c;
     const r0 = apiReqs.length;
-    await page.getByTestId('super-job-count-working').click();
-    ok(`${engineName}: a count opens the list with all four sections`, await until(page, async () => (await page.locator('[data-testid="super-job-list"] [data-testid^="super-job-section-"]').count()) === 4, 5000));
     await page.waitForTimeout(1500);
-    const centreOpen = (await geo(page)).c;
-    ok(`${engineName}: the centre moves <= 1 px when it opens`, near1(centreBefore, centreOpen), JSON.stringify({ centreBefore, centreOpen }));
-    // The list reads the pushed record: no super route and nothing about a child while it is open
-    // (the app's own polls and focus refetches are not the list's).
     const kids = Object.keys(record().children ?? {});
     const during = apiReqs.slice(r0).filter((x) => (x.path.startsWith('/api/super/') && !x.path.startsWith('/api/super/activity')) || kids.some((k) => x.path.includes(k)));
-    ok(`${engineName}: 0 requests from the list while it is open`, during.length === 0, JSON.stringify(during.slice(0, 5)));
+    ok(`${engineName}: 0 requests from the agenda while it shows`, during.length === 0, JSON.stringify(during.slice(0, 5)));
     if (engineName === 'chromium') {
       for (const [w, h] of [[1280, 800], [1920, 1080]]) for (const scheme of ['light', 'dark']) {
         await page.setViewportSize({ width: w, height: h });
         await page.emulateMedia({ colorScheme: scheme });
         await page.waitForTimeout(600);
-        await page.screenshot({ path: join(OUT, `board-list-open-${w}-${scheme}.png`) });
+        await page.screenshot({ path: join(OUT, `board-agenda-${w}-${scheme}.png`) });
       }
       await page.setViewportSize({ width: 1600, height: 1000 });
       await page.emulateMedia({ colorScheme: 'dark' });
-    } else await page.screenshot({ path: join(OUT, `board-list-open-${engineName}.png`) });
-    await page.keyboard.press('Escape');
-    ok(`${engineName}: Esc closes the list`, await until(page, async () => (await page.getByTestId('super-job-list').count()) === 0, 3000));
-    await page.getByTestId('super-job-count-done').click();
-    await until(page, async () => (await page.getByTestId('super-job-list').count()) === 1, 3000);
-    const sb = (await geo(page)).s;
-    await page.mouse.click(sb.x + 20, sb.y + sb.h - 20);
-    ok(`${engineName}: an outside click closes it`, await until(page, async () => (await page.getByTestId('super-job-list').count()) === 0, 3000));
+    } else await page.screenshot({ path: join(OUT, `board-agenda-${engineName}.png`) });
 
     // D14: the centre reads 17 px, its composer 15 px; any other chat 15 px.
     const fonts = await page.evaluate(() => {
@@ -1741,13 +1718,11 @@ async function board(engineName, browserType, base, full) {
       await page.setViewportSize({ width: 1600, height: 1000 });
       await page.emulateMedia({ colorScheme: 'dark' });
       // A child row asks for side by side.
-      await page.getByTestId('super-job-count-working').click();
-      const link = page.locator('[data-testid="super-job-list"] .super-job-title--link').first();
+      const link = page.locator('[data-testid="super-agenda-section-now"] button.super-agenda-row-btn').first();
       if (await link.count()) {
         await link.click();
-        ok('a child row in the list opens it side by side', await until(page, async () => record().view?.mode === 'half', 8000), JSON.stringify(record().view));
-      } else ok('a child row in the list opens it side by side', false, 'no child row link');
-      await page.keyboard.press('Escape').catch(() => {});
+        ok('a child row in the agenda opens it side by side', await until(page, async () => record().view?.mode === 'half', 8000), JSON.stringify(record().view));
+      } else ok('a child row in the agenda opens it side by side', false, 'no child row in Now');
       // Leave the stage as the next sections expect it: floating, nothing side by side.
       await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
       await until(page, async () => record().view?.mode === 'float', 8000);

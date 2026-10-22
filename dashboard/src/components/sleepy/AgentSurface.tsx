@@ -101,7 +101,7 @@ import {
   linkOpensSuperStage, presenceChatId, leanMcpFor,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap, postSuperSeen } from './super/superApi';
 import { applyLayoutPatch, patchEchoed, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
@@ -3280,6 +3280,16 @@ export function AgentSurface() {
     if (brief) return brief;
     return sessionListRef.current.find((m) => m.claudeId === claudeId)?.title ?? claudeId.slice(0, 8);
   }, []);
+  // The agenda names a job by its tab title (the brief, what it does now, is its second line).
+  const superNameFor = useCallback((claudeId: string): string => (
+    sessionListRef.current.find((m) => m.claudeId === claudeId)?.title ?? ''
+  ), []);
+  // The owner looked at finished jobs in the agenda: the server's answer is the new record; a
+  // refusal rejects and the rows stay new (no optimistic flip).
+  const markSuperSeen = async (rows: ReadonlyArray<{ id: string; at: number }>) => {
+    const st = await postSuperSeen(scopedApi, rows);
+    if (st) setSuperState(withPendingEdits(st));
+  };
 
   // ── First paint after a reload: the record, once. Afterwards only pushes. ──────────
   const capsLoaded = caps !== null;
@@ -4323,9 +4333,6 @@ export function AgentSurface() {
       // An open group (or Others) on the Super Agent's stage owns Esc: it closes the panel and
       // gives focus back to its tile (GroupPanel). Same presence test, same registration order.
       if (document.querySelector('.super-group-panel')) return;
-      // The job list open under the bar owns Esc the same way: it closes the list (JobList), never
-      // the stage, and its listener is added when it opens, after this one (plan r4 AC7).
-      if (document.querySelector('.super-job-list')) return;
       // A card's size menu owns Esc the same way: it closes the menu (SuperContainer), never the stage.
       if (document.querySelector('.super-size-menu')) return;
       // A card held on that stage owns Esc too: the drag's own listener cancels it, but it is
@@ -4867,6 +4874,8 @@ export function AgentSurface() {
             vault={vault ?? ''}
             sessionFor={chatByClaudeId}
             titleFor={superTitleFor}
+            nameFor={superNameFor}
+            onSeen={markSuperSeen}
             terminals={superTerminals}
             onLayout={editSuperLayout}
             onTerminal={openTerminalFromSuper}
