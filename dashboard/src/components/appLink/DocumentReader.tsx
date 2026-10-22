@@ -9,6 +9,9 @@ import { isValidAppLinkPath } from '../../lib/appLink';
 import { agentFileKind } from '../../lib/agentFileKind';
 import { resolveWikilinkTarget, type WikilinkCandidate } from '../../lib/wikilinks';
 import { buildSandboxSrcdoc, SANDBOX_ALLOW } from '../../lib/sandboxHtml';
+import {
+  findLocalAssets, inlineLocalAssets, LINK_GUARD, MAX_ASSET_BYTES, MAX_TOTAL_BYTES,
+} from '../../lib/htmlLocalAssets';
 import { MarkdownPreview } from '../core/MarkdownPreview';
 import {
   CHAT_HTML_KIT_CSS, CHAT_HTML_SANDBOX, HEIGHT_BRIDGE, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
@@ -271,6 +274,106 @@ export function useFileContent(path: string, vaultReads = false) {
   return state;
 }
 
+/**
+ * A picture's bytes as a `data:` URL, or null when it is not a picture or larger than `cap`.
+ * The body is read as a stream and the read is cut the moment it passes the cap (or `signal`
+ * aborts), so a page naming a 2 GB export never buffers more than `cap` of it.
+ */
+async function readAsDataUrl(url: string, cap: number, signal: AbortSignal): Promise<string | null> {
+  const res = await fetch(url, { signal });
+  if (!res.ok || !res.body) return null;
+  const type = res.headers.get('content-type') ?? '';
+  const declared = Number(res.headers.get('content-length'));
+  if (!type.startsWith('image/') || declared > cap) { void res.body.cancel(); return null; }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > cap) { void reader.cancel(); return null; }
+    chunks.push(value);
+  }
+  const blob = new Blob(chunks as BlobPart[], { type: type.split(';')[0] });
+  return new Promise((resolve) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(typeof fr.result === 'string' ? fr.result : null);
+    fr.onerror = () => resolve(null);
+    fr.readAsDataURL(blob);
+  });
+}
+
+/** Run `jobs` with at most `limit` in flight, results in order. */
+async function inTurn<T>(jobs: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const out: T[] = new Array(jobs.length);
+  let next = 0;
+  const lane = async () => { while (next < jobs.length) { const i = next++; out[i] = await jobs[i](); } };
+  await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, lane));
+  return out;
+}
+
+/**
+ * A project web page with its own pictures and stylesheets written in (lib/htmlLocalAssets.ts),
+ * ready for the network-less sandbox: `html` stays null until every file the page names has
+ * been read or refused. Each file goes through the SAME route a picture opened on its own does
+ * (`/graph/content` for a vault file under `vaultReads`, else the project-scoped `/agent/file`),
+ * so the project boundary and the one-file consent rules are the server's, unchanged. Shared
+ * with the full-screen page viewer (layout/FrameViewer.tsx).
+ */
+export function useProjectHtml(path: string, vaultReads = false) {
+  const api = useApi();
+  const { vault } = useVault();
+  const state = useFileContent(path, vaultReads);
+  const raw = state.data && state.data.type !== 'dir' && typeof state.data.content === 'string'
+    ? state.data.content : null;
+  const [html, setHtml] = useState<{ raw: string; html: string } | null>(null);
+  useEffect(() => {
+    if (raw === null) return;
+    const abort = new AbortController();
+    const { images, styles } = findLocalAssets(raw, path);
+    // Bytes still allowed for this page. Reads run a few at a time and each is capped at what
+    // is left, so the whole page never holds more than the budget, however many files it names.
+    let budget = MAX_TOTAL_BYTES;
+    const take = (value: string | null): string | null => {
+      if (value === null || value.length > budget) return null;
+      budget -= value.length;
+      return value;
+    };
+    const readText = (p: string): Promise<string | null> => {
+      const inVault = vaultPath(p, vaultReads);
+      const req = inVault
+        ? api.get<VaultContent>(`/graph/content?path=${encodeURIComponent(inVault)}`)
+        : api.get<FileContent>(`/agent/file?path=${encodeURIComponent(p)}`);
+      return req.then((r) => ('content' in r && typeof r.content === 'string' ? r.content : null), () => null);
+    };
+    const readImage = (p: string): Promise<string | null> => {
+      if (abort.signal.aborted || budget <= 0) return Promise.resolve(null);
+      // The vault route never hands over an SVG as bytes (see graph.ts); its text is the picture.
+      if (p.toLowerCase().endsWith('.svg')) {
+        return readText(p).then((svg) => (svg === null ? null : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`));
+      }
+      const inVault = vaultPath(p, vaultReads);
+      const url = inVault ? graphContentUrl(vault, inVault, { raw: true }) : agentFileUrl(vault, p, { raw: true });
+      // base64 is 4/3 of the bytes: cap the read so its data URL can still fit what is left.
+      return readAsDataUrl(url, Math.min(MAX_ASSET_BYTES, Math.floor((budget * 3) / 4)), abort.signal).catch(() => null);
+    };
+    type Read = { kind: 'style' | 'image'; p: string; v: string | null };
+    void inTurn<Read>([
+      ...styles.map((p) => async (): Promise<Read> => ({ kind: 'style', p, v: take(abort.signal.aborted ? null : await readText(p)) })),
+      ...images.map((p) => async (): Promise<Read> => ({ kind: 'image', p, v: take(await readImage(p)) })),
+    ], 4).then((results) => {
+      if (abort.signal.aborted) return;
+      const loaded = { images: new Map<string, string>(), styles: new Map<string, string>() };
+      for (const r of results) if (r.v !== null) (r.kind === 'image' ? loaded.images : loaded.styles).set(r.p, r.v);
+      setHtml({ raw, html: inlineLocalAssets(raw, path, loaded) });
+    });
+    return () => { abort.abort(); };
+  }, [api, vault, raw, path, vaultReads]);
+  const ready = raw !== null && html?.raw === raw ? html.html : null;
+  return { ...state, loading: state.loading || (raw !== null && ready === null), html: ready };
+}
+
 /** Marks a reference this window has already resolved against the document's folder. */
 const RESOLVED_ATTR = 'data-viewer-resolved';
 
@@ -347,8 +450,10 @@ function ViewerDocument({
  * network, navigation, popups and forms no (CSP `default-src 'none'`). Built the way the board's
  * HTML block builds it (whiteboard/htmlWidgetFrame.ts): the shared srcdoc builder with the kit
  * CSS and the height bridge, and WITHOUT the chat's reach bridge — nothing in the page can post
- * a keystroke or a click into the host. A page's own `<link>` stylesheets and `<img src>` are
- * blocked by that CSP, which the line under the frame says.
+ * a keystroke or a click into the host. The page's own project-local pictures and stylesheets
+ * are written INTO the document by the host ({@link useProjectHtml}), so they show while the CSP
+ * still blocks every fetch; a link click does nothing (LINK_GUARD), which the line under the
+ * frame says.
  */
 function HtmlPage({
   path, vaultReads, fileActions, zoomBridge = false,
@@ -356,17 +461,17 @@ function HtmlPage({
   const tx = useText();
   const { t } = useI18n();
   const { resolved: theme } = useTheme();
-  const state = useFileContent(path, vaultReads);
+  const state = useProjectHtml(path, vaultReads);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const loads = useRef(0);
   const [height, setHeight] = useState<number | null>(null);
   const [torn, setTorn] = useState(false);
-  const html = state.data && state.data.type !== 'dir' && typeof state.data.content === 'string'
-    ? state.data.content : null;
+  const html = state.html;
 
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, headScript: zoomBridge ? `${HEIGHT_BRIDGE}\n${ZOOM_BRIDGE}` : HEIGHT_BRIDGE,
+      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme,
+      headScript: [HEIGHT_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE] : [])].join('\n'),
     })),
     [html, theme, zoomBridge],
   );
@@ -419,7 +524,7 @@ function HtmlPage({
       {srcDoc !== null && (
         <div className="doc-reader-html-foot">
           <span className="doc-reader-html-note">
-            {tx('reader.htmlSandboxNote', 'Shown in a sandbox: external stylesheets, images and scripts are not loaded.')}
+            {tx('reader.htmlSandboxNote', 'Shown in a sandbox: pictures and stylesheets from this project are shown; nothing is loaded from the web, and links do not open.')}
           </span>
           {/* The window's bar already carries these; a popup or pane may not. */}
           {fileActions && <FileActions path={path} compact />}
