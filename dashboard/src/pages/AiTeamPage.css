@@ -233,7 +233,7 @@
 .aiteam-working .chat-working { margin-top: var(--space-1); }
 
 /* ── a notification landed here: the message is marked for a moment ── */
-.aiteam-col [data-flash] { border-radius: var(--radius-lg); animation: aiteam-flash 2.4s ease-out; }
+.aiteam-col [data-flash] { border-radius: var(--radius-lg); animation: aiteam-flash var(--motion-flash) ease-out; }
 @keyframes aiteam-flash {
   0%, 35% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-accent) 22%, transparent); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
   100% { box-shadow: 0 0 0 6px transparent; background: transparent; }
