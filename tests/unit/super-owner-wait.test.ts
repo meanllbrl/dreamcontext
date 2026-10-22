@@ -45,7 +45,7 @@ import { superBriefing } from '../../src/server/chat-modes.js';
 import { buildRunReport } from '../../dashboard/src/components/sleepy/chat/runReport.js';
 import { buildSubmitMarkdown } from '../../dashboard/src/lib/checklistMarkdown.js';
 import { secretReceipt } from '../../src/lib/env-secrets.js';
-import { needsOwner, ownerQueueCount, queueHead, superAgenda } from '../../dashboard/src/components/sleepy/super/superHandover.js';
+import { needsOwner, ownerQueueCount, queueHead, superNotepad } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 
 const SUPER = 'sup-1';
 let dir: string;
@@ -327,7 +327,7 @@ describe('a child waiting on the owner is never done', { timeout: 60_000 }, () =
     expect(queueHead(s)?.id).toBe(item.id);
     expect(ownerQueueCount(s)).toBe(1);
     const look = { live: () => 'ready', titleFor: (sid: string) => `job ${sid}`, superTitle: 'Claude' };
-    const agenda = superAgenda(s, look);
+    const agenda = superNotepad(s, look);
     expect(agenda.waiting).toEqual([expect.objectContaining({ sid: 'c1', chip: 'needsYou', line: RUN.why })]);
     expect(agenda.done).toEqual([]);
     expect(agenda.now).toEqual([]);
