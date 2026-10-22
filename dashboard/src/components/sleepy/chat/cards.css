@@ -617,6 +617,10 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-opt:hover { border-color: var(--color-border-hover); }
 .chat-surveycard-opt:active { transform: scale(0.99); }
 .chat-surveycard-opt.on { background: var(--color-accent-soft); border-color: var(--color-accent); }
+/* The Super Agent's question card (super/SuperQuestionCard.tsx): once answered from it or from the
+   job bar, its options stay readable but take no second click. */
+.chat-surveycard-opt:disabled { cursor: not-allowed; opacity: 0.5; }
+.chat-surveycard-opt:disabled:active { transform: none; }
 /* "Other" is quieter than a real option until it is picked — it is the way out, not a choice
    the agent offered. The board draws it under its tiles, so it takes the page's spacing. */
 .chat-surveycard-opt.other:not(.on) { border-style: dashed; }

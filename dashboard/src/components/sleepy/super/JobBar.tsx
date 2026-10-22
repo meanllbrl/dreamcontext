@@ -4,10 +4,14 @@ import { useAgent } from '../../../hooks/useAgents';
 import { raiseAskAttention } from '../../../lib/attention';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import type { SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
-import type { ChatSession, PendingPermission, PendingQuestion } from '../chatSession';
+import type { ChatSession, PendingPermission } from '../chatSession';
 import {
-  OPEN_LATCH, headAlarmOnce, latchClick, latchSeen, optionsFit, permissionSummary, superAnswerPicks, superJobs, type AnswerLatch, type JobLook, type JobSection, type OptionsFit,
+  headAlarmOnce, optionsFit, permissionSummary, superJobs, type JobLook, type JobSection, type OptionsFit,
 } from './superHandover';
+import {
+  claimOwnerAnswer, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerOptionsOf, ownerPendingPresent,
+  recordOwnerAnswer, releaseOwnerAnswer, sendOwnerAnswer, useOwnerAnswerVersion,
+} from './superQuestions';
 import type { Rect } from './superLayout';
 import { JobList, JOB_SECTIONS } from './JobList';
 import { onOpenJobRow } from './superJobsStore';
@@ -41,7 +45,8 @@ import './JobBar.css';
  *
  * ONE answer per head item: the first click on Allow, Deny or an option latches that item, so a
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
- * request re-sent by the server (the answer never landed), reopens it.
+ * request re-sent by the server (the answer never landed), reopens it. The latch is the one the
+ * super chat's question card shares (superQuestions.ts): a pick in either place locks both.
  */
 export function JobBar({ state, head, waiting, vault, rect, listRect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild, canShowChild, onOpenTask }: {
   state: SuperStateView;
@@ -69,35 +74,26 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   // Follow the head's child only: its pending request is what the strip draws.
   useEffect(() => (child ? child.subscribe(() => force()) : undefined), [child]);
 
-  // One answer per head item (`latchSeen` / `latchClick`). A ref, not state: the second click of
-  // a double-click must see the first one's latch before any re-render.
-  const latch = useRef<AnswerLatch>(OPEN_LATCH);
-  const answerKey = head ? `${head.id}:${head.requestId ?? ''}` : null;
-  const requestId = head?.requestId;
-  const pendingPresent = !!child && !!requestId && child.getModel().pending.some((p) => p.requestId === requestId);
-  latch.current = latchSeen(latch.current, answerKey, pendingPresent);
-  const locked = answerKey !== null && latch.current.key === answerKey;
-  const answerOnce = (send: () => void) => {
-    if (!answerKey) return;
+  // One answer per head item, shared with the super chat's question card (superQuestions.ts:
+  // `latchSeen` / `latchClick` per key in a module store, read synchronously, so the second click
+  // of a double-click sees the first one's latch before any re-render). Noted first, then read.
+  useOwnerAnswerVersion();
+  const answerKey = head ? ownerAnswerKey(head) : null;
+  if (head && answerKey) noteOwnerPending(answerKey, ownerPendingPresent(head, child, openOwnerQuestions(state.queue)));
+  const locked = answerKey !== null && ownerAnswerLocked(answerKey);
+  const answerOnce = (send: () => boolean | void) => {
+    if (!answerKey || !head) return;
     // The socket that carries the answer: the child's, or for the super agent's own `ask` its own.
-    const carrier = head?.kind === 'ask' ? superSession : child;
-    const next = latchClick(latch.current, answerKey, carrier?.status === 'open');
-    latch.current = next.latch;
-    if (!next.send) return;
-    send();
-    force();
+    const carrier = head.kind === 'ask' ? superSession : child;
+    if (!claimOwnerAnswer(answerKey, head.id, state.session ?? '', carrier?.status === 'open')) return;
+    if (send() === false) releaseOwnerAnswer(answerKey);
   };
 
   // Option buttons at full width or not at all (`optionsFit`), never decided on hover. The fit is
   // keyed on everything the row holds (the head, the who, the "n more", the option labels, the
   // locale), so a content change inside a full-width pill, which resizes no box, starts shown
   // and is measured again; measured in a layout effect on every show/hide too, before paint.
-  const pendingQuestion = head && head.kind !== 'permission'
-    ? child?.getModel().pending.find((p): p is PendingQuestion => p.kind === 'question' && p.requestId === head.requestId)
-    : undefined;
-  const optionLabels = pendingQuestion && pendingQuestion.questions.length === 1 && !pendingQuestion.questions[0].multiSelect
-    ? pendingQuestion.questions[0].options.slice(0, 4).map((o) => o.label)
-    : [];
+  const optionLabels = head && head.kind === 'question' ? ownerOptionsOf(head, child) : [];
   const fitKey = answerKey === null ? null
     : [answerKey, titleFor(head?.sessionId ?? ''), waiting > 1 ? waiting - 1 : 0, t('super.queue.reply'), ...optionLabels, ...(head?.kind === 'ask' ? head.options ?? [] : [])].join('\u0001');
   const headRef = useRef<HTMLDivElement | null>(null);
@@ -222,10 +218,8 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   );
 }
 
-/** The answer an `ask` option sends, exactly as drawn and framed (plan r4 D7). */
-export function askAnswerText(label: string): string {
-  return `Answer to your question: ${label}`;
-}
+/** The answer an `ask` option sends: one definition, shared with the chat card. */
+export { askAnswerText } from './superQuestions';
 
 /**
  * The super agent's OWN question (`super ask`, D7): its text, its validated options as buttons
@@ -237,7 +231,7 @@ function AskHead({ item, superSession, locked, answerOnce, onReplyToSuper, showO
   item: SuperQueueItem;
   superSession: ChatSession | undefined;
   locked: boolean;
-  answerOnce: (send: () => void) => void;
+  answerOnce: (send: () => boolean | void) => void;
   onReplyToSuper: () => void;
   showOptions: boolean;
 }) {
@@ -248,11 +242,11 @@ function AskHead({ item, superSession, locked, answerOnce, onReplyToSuper, showO
   useLayoutEffect(() => {
     setCut(btns.current.some((b) => !!b && b.scrollWidth > b.clientWidth + 1));
   }, [options.join('\u0001'), showOptions]);
+  // The framed label into the super chat, never a child (sendOwnerAnswer: a running turn steers).
   const send = (label: string) => {
-    const s = superSession;
-    if (!s) return;
-    const text = askAnswerText(label);
-    if (s.busy) { if (!s.steer(text)) s.send(text); } else s.send(text);
+    const sent = sendOwnerAnswer(item, label, { superSession, child: undefined });
+    if (sent) recordOwnerAnswer(item.id, label);
+    return sent;
   };
   return (
     <>
@@ -309,7 +303,7 @@ function PermissionHead({ item, child, locked, answerOnce }: {
   item: SuperQueueItem;
   child: ChatSession | undefined;
   locked: boolean;
-  answerOnce: (send: () => void) => void;
+  answerOnce: (send: () => boolean | void) => void;
 }) {
   const { t } = useI18n();
   const pending = child?.getModel().pending.find(
@@ -378,34 +372,33 @@ function EscalatedHead({ item, child, locked, answerOnce, onReplyToSuper, showOp
   item: SuperQueueItem;
   child: ChatSession | undefined;
   locked: boolean;
-  answerOnce: (send: () => void) => void;
+  answerOnce: (send: () => boolean | void) => void;
   onReplyToSuper: () => void;
   /** False when the options do not all fit at full width: Reply only (`optionsFit`). */
   showOptions: boolean;
 }) {
   const { t } = useI18n();
-  const question = child?.getModel().pending.find(
-    (p): p is PendingQuestion => p.kind === 'question' && p.requestId === item.requestId,
-  );
   // A single-choice single question gets its options as buttons: one click answers the child
-  // exactly as its own card would. Anything richer is answered by talking to the Super Agent.
-  const q = question && question.questions.length === 1 && !question.questions[0].multiSelect ? question.questions[0] : null;
+  // exactly as its own card would (sendOwnerAnswer). Anything richer is answered by talking to
+  // the Super Agent.
+  const options = ownerOptionsOf(item, child);
   return (
     <>
       <QueueText full={item.ownerText ?? t('super.queue.escalatedAlarm')}>{item.ownerText ?? t('super.queue.escalatedAlarm')}</QueueText>
       <span className="super-queue-actions">
-        {showOptions && child && question && q && q.options.slice(0, 4).map((o) => (
+        {showOptions && child && options.map((label) => (
           <button
-            key={o.label}
+            key={label}
             type="button"
             className="super-queue-btn super-queue-btn--option"
-            title={o.label}
+            title={label}
             disabled={locked}
-            onClick={() => {
-              const picks = superAnswerPicks(question.questions, [o.label]);
-              if (picks.ok) answerOnce(() => child.answerQuestion(question.requestId, question.questions, picks.picked, picks.notes));
-            }}
-          >{o.label}</button>
+            onClick={() => answerOnce(() => {
+              const sent = sendOwnerAnswer(item, label, { superSession: undefined, child });
+              if (sent) recordOwnerAnswer(item.id, label);
+              return sent;
+            })}
+          >{label}</button>
         ))}
         <button type="button" className="super-queue-btn super-queue-btn--reply" onClick={onReplyToSuper}>
           {t('super.queue.reply')}

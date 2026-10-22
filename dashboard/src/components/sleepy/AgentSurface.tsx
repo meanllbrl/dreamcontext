@@ -12,7 +12,8 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
-import { publishSuperEventContext } from './super/superJobsStore';
+import { publishSuperEventContext, publishSuperQuestions } from './super/superJobsStore';
+import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -94,7 +95,7 @@ import { SuperSurface, prefersReducedMotion, runFlights, type FlightRun } from '
 import type { TerminalRowItem } from './super/TerminalsRow';
 import {
   actionGeneration, adoptionBody, cardReference, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
-  homedSessions, isSuperSession, markedChildren, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
+  homedSessions, isSuperSession, markedChildren, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
   linkOpensSuperStage, presenceChatId, leanMcpFor,
 } from './super/superHandover';
@@ -3206,6 +3207,35 @@ export function AgentSurface() {
     const entry = sessionListRef.current.find((m) => m.claudeId === claudeId && !m.dormant);
     const s = entry ? sessions.current.get(entry.id) : undefined;
     return s && s.kind === 'chat' ? s as ChatSession : undefined;
+  }, []);
+  // The super chat draws the Super Agent's questions to the owner as cards (superQuestions.ts,
+  // owner 2026-10-21 "soruyu hep chatta sorsun"). They read the record's open questions from
+  // here, where the record lives whether or not the stage is up; no live record = static cards.
+  const superQuestionSid = superState?.enabled ? superState.session : null;
+  const superQueue = superState?.queue;
+  const openSuperQuestions = useMemo(() => openOwnerQuestions(superQueue ?? []), [superQueue]);
+  // Keyed on what a card draws, including whether a child's chat is live here (its options
+  // come from it): the super chat's pane is memoised, so only a key change re-renders a card.
+  const superQuestionKey = openSuperQuestions
+    .map((q) => [q.id, q.state, q.requestId ?? '', q.ownerText ?? '', (q.options ?? []).join('\u0002'), q.kind === 'question' ? chatByClaudeId(q.sessionId)?.id ?? '' : ''].join('\u0003'))
+    .join('\u0001');
+  const publishedQuestionSid = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = publishedQuestionSid.current;
+    if (prev && prev !== superQuestionSid) publishSuperQuestions(prev, null);
+    publishedQuestionSid.current = superQuestionSid;
+    // Forget the answer latches of items the record no longer asks for (never during a render).
+    if (superQueue && superState?.session) trimOwnerAnswers(superState.session, new Set(superQueue.filter(needsOwner).map((q) => q.id)));
+    if (!superQuestionSid) return;
+    publishSuperQuestions(
+      superQuestionSid,
+      { open: openSuperQuestions, superSession: superChatSession, sessionFor: chatByClaudeId },
+      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}`,
+    );
+  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId]);
+  // Withdrawn with this surface (a project going cold): no card keeps a dead session.
+  useEffect(() => () => {
+    if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
   }, []);
   const superTitleFor = useCallback((claudeId: string): string => {
     const st = superStateRef.current;
