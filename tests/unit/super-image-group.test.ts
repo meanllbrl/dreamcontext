@@ -227,4 +227,45 @@ describe('super open image groups pictures by itself', () => {
     expect((await verb('open', { kind: 'knowledge', refs: ['alpha', 'beta'] })).status).toBe(200);
     expect((await state()).groups).toHaveLength(0);
   });
+
+  // End review (2026-10-22): re-opening must never break up a group, and the room check counts net.
+  it('re-opening grouped pictures keeps their group; a new picture named with them joins it', async () => {
+    makeVault({ containers: [] });
+    await open(['tmp/mockups/a.png', 'tmp/mockups/b.png', 'tmp/mockups/c.png'], { group: 'Final picks' });
+    tick(IMAGE_CHAIN_MS + 1);
+    const again = await open(['tmp/mockups/a.png', 'tmp/mockups/b.png']);
+    expect(again.status).toBe(200);
+    let s = await state();
+    expect(s.groups.map((g) => [g.name, g.cards.length])).toEqual([['Final picks', 3]]);
+    tick(IMAGE_CHAIN_MS + 1);
+    await open(['tmp/mockups/a.png']);
+    expect((await state()).groups.map((g) => [g.name, g.cards.length])).toEqual([['Final picks', 3]]);
+    tick(IMAGE_CHAIN_MS + 1);
+    await open(['tmp/mockups/c.png', 'tmp/mockups/d.png']);
+    s = await state();
+    expect(s.groups.map((g) => [g.name, g.cards.length])).toEqual([['Final picks', 4]]);
+    // A single picture right after a re-opened grouped one joins that group.
+    tick(1_000);
+    await open(['tmp/mockups/e.png']);
+    expect((await state()).groups.map((g) => [g.name, g.cards.length])).toEqual([['Final picks', 5]]);
+  });
+
+  it('a full stage still groups two loose pictures (net: one item fewer)', async () => {
+    makeVault({ containers: Array.from({ length: 10 }, (_, i) => card(`chat-f${i}`)) });
+    expect((await open(['p/a.png', 'p/b.png'], { group: false })).status).toBe(200);
+    // 12 floating items: the stage is full.
+    expect((await state()).containers.filter((k) => k.place === 'float')).toHaveLength(12);
+    expect((await open(['p/z.png'])).status).toBe(409);
+    tick(IMAGE_CHAIN_MS + 1);
+    const r = await open(['p/a.png', 'p/b.png']);
+    expect(r.status).toBe(200);
+    const s = await state();
+    expect(s.groups).toHaveLength(1);
+    expect(s.groups[0].cards).toHaveLength(2);
+    // A third new picture on the full stage (11 items) joins the group: still fits.
+    tick(1_000);
+    expect((await open(['p/c.png'])).status).toBe(200);
+    expect((await state()).groups[0].cards).toHaveLength(3);
+  });
 });
+

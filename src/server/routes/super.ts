@@ -667,14 +667,20 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const plan = (s: SuperState): { fits: boolean; groupId: string | null; name: string; cards: string[] } => {
       const fresh = ids.filter((id) => !s.containers.some((k) => k.id === id)).length;
       const a = auto(s);
-      const named = groupName ? s.groups.find((g) => g.name === groupName) : a && 'join' in a ? s.groups.find((g) => g.id === a.join) : undefined;
-      // A named group resting in Others comes back to the stage: one more floating item. A new
-      // picture group that takes in the previous lone picture stands in its place: none.
-      const chainedLone = !!a && 'make' in a && a.make.cards.length > ids.length;
-      const addFloat = groupName || (a && 'join' in a) ? (named && named.place === 'float' ? 0 : 1) : a ? (chainedLone ? 0 : 1) : fresh;
-      const fits = (addFloat === 0 || floatCount(s) + addFloat <= MAX_FLOAT) && s.containers.length + fresh <= MAX_CONTAINERS;
-      if (groupName) return { fits, groupId: named?.id ?? newGroupId(), name: groupName, cards: ids };
-      if (a && 'join' in a) return { fits, groupId: a.join, name: '', cards: ids };
+      const target = groupName ? s.groups.find((g) => g.name === groupName) : a && 'join' in a ? s.groups.find((g) => g.id === a.join) : undefined;
+      // A named group resting in Others comes back to the stage: one more floating item.
+      let addFloat = groupName ? (target && target.place === 'float' ? 0 : 1) : fresh;
+      if (a) {
+        // A picture group counts net: the group (unless it already floats) minus each picked card
+        // that floated on its own until now (the lone previous picture, a re-opened one).
+        const grouped = new Set(s.groups.flatMap((g) => g.cards));
+        const loose = ('join' in a ? a.cards : a.make.cards)
+          .filter((id) => !grouped.has(id) && s.containers.some((k) => k.id === id && k.place === 'float')).length;
+        addFloat = ('join' in a && target?.place === 'float' ? 0 : 1) - loose;
+      }
+      const fits = (addFloat <= 0 || floatCount(s) + addFloat <= MAX_FLOAT) && s.containers.length + fresh <= MAX_CONTAINERS;
+      if (groupName) return { fits, groupId: target?.id ?? newGroupId(), name: groupName, cards: ids };
+      if (a && 'join' in a) return { fits, groupId: a.join, name: '', cards: a.cards };
       if (a) return { fits, groupId: newGroupId(), name: a.make.name, cards: a.make.cards };
       return { fits, groupId: null, name: '', cards: ids };
     };
@@ -734,7 +740,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // The picture chain: the next image open within the window joins where this one went.
       if (kind === 'image') {
         if (noGroup) imageChains.delete(root);
-        else imageChains.set(root, { at: now, card: ids[0], group: groupId });
+        else imageChains.set(root, { at: now, card: ids[0], group: s.groups.find((g) => g.cards.includes(ids[0]))?.id ?? null });
       }
     });
     if (refused) { tooMany(res, state); return; }

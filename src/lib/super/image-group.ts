@@ -43,26 +43,40 @@ export function freshGroupName(groups: readonly Pick<SuperGroup, 'name'>[], base
   for (let n = 2; ; n++) if (!used.has(`${base} ${n}`)) return `${base} ${n}`;
 }
 
+/** `join`: put `cards` in that existing group. `make`: a new group of `cards`. null: stand alone. */
 export type ImageGroupPlan =
-  | { join: string }
+  | { join: string; cards: string[] }
   | { make: { cards: string[]; name: string } }
   | null;
 
 /**
  * Where `super open image` puts `ids` (refs `refs`) when the agent named no group. `prev` is the
  * chain the route kept; `now` the clock. null: the card(s) stand alone.
+ *
+ * A picture already in a group stays where it is: re-opening never breaks up a group the owner
+ * (or an earlier open) made. Only the pictures in no group are placed: with the group the other
+ * named pictures share, else as a new group of them (2+), else by the chain (one).
  */
 export function planImageGroup(
   s: { containers: readonly SuperContainer[]; groups: readonly SuperGroup[]; view: SuperView },
   ids: readonly string[], refs: readonly string[], prev: ImageChain | undefined, now: number,
 ): ImageGroupPlan {
-  if (ids.length >= 2) return { make: { cards: [...ids], name: freshGroupName(s.groups, imageGroupBase(refs)) } };
+  const groupOf = (id: string) => s.groups.find((g) => g.cards.includes(id));
+  const free = ids.filter((id) => !groupOf(id));
+  const freeRefs = refs.filter((_, i) => free.includes(ids[i]));
+  if (!free.length) return null;
+  if (ids.length >= 2) {
+    const homes = new Set(ids.filter((id) => !free.includes(id)).map((id) => groupOf(id)!.id));
+    if (homes.size === 1) return { join: [...homes][0], cards: free };
+    if (homes.size === 0 && free.length >= 2) return { make: { cards: free, name: freshGroupName(s.groups, imageGroupBase(freeRefs)) } };
+    return null;
+  }
   const chained = prev && now - prev.at >= 0 && now - prev.at <= IMAGE_CHAIN_MS ? chainTarget(s, prev) : null;
   if (!chained) return null;
-  if ('join' in chained) return chained;
-  if (ids.includes(chained.card)) return null;
+  if ('join' in chained) return { join: chained.join, cards: free };
+  if (free.includes(chained.card)) return null;
   const card = s.containers.find((k) => k.id === chained.card);
-  return { make: { cards: [chained.card, ...ids], name: freshGroupName(s.groups, imageGroupBase([card?.ref ?? '', ...refs].filter(Boolean))) } };
+  return { make: { cards: [chained.card, ...free], name: freshGroupName(s.groups, imageGroupBase([card?.ref ?? '', ...freeRefs].filter(Boolean))) } };
 }
 
 /** The previous image's group to join, or its lone card to group with; null: the chain broke. */
