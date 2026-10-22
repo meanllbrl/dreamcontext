@@ -379,6 +379,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-switch-policy-',
   'dc-sync-engine-',
   'dc-t6-',
+  'dc-task-assets-api-',
   'dc-task-assign-',
   'dc-task-assign-home-',
   'dc-task-memo-',

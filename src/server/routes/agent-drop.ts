@@ -1,9 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join } from 'node:path';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
+import { sanitizeDropFilename } from '../../lib/filename.js';
 import { sniffImageType as sniffImage, EXT_BY_IMAGE_TYPE, type ImageMimeType } from '../../lib/image-sniff.js';
 
 /**
@@ -43,21 +43,8 @@ export function sniffImageType(buf: Buffer): DropImageType | null {
   return sniffImage(buf);
 }
 
-/**
- * Reduce an arbitrary, possibly-hostile filename to a safe basename written inside the
- * drop dir. Strips any path (separators / `../`), drops leading dots, keeps only
- * `[\w.\-]`, and falls back to a random name when nothing usable survives. Always
- * carries an extension (the magic-byte-derived `ext` when the original lacks one).
- */
-export function sanitizeDropFilename(raw: string, ext: string): string {
-  let base = '';
-  try { base = basename(String(raw ?? '').replace(/\\/g, '/').trim()); } catch { base = ''; }
-  base = base.replace(/^\.+/, '');            // no leading dots → no hidden/dotfiles, no '..'
-  const safe = base.replace(/[^\w.\-]/g, '_'); // collapse anything outside the allow-list
-  if (!safe || !/[A-Za-z0-9]/.test(safe)) return `${randomUUID()}${ext}`;
-  // Guarantee a sensible extension so the written file is openable by type.
-  return /\.[A-Za-z0-9]+$/.test(safe) ? safe : `${safe}${ext}`;
-}
+/** Moved to `src/lib/filename.ts` (shared with task attachments); re-exported for callers/tests. */
+export { sanitizeDropFilename };
 
 /** Decode the URI-encoded filename header (the client encodes to keep it ASCII-safe). */
 function decodeFilenameHeader(h: string | string[] | undefined): string {
