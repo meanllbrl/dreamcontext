@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
-import { isLoopback } from './agent-spawn-shared.js';
+import { isLoopback, isSameOriginStrict } from './agent-spawn-shared.js';
 import {
   ASSISTANT_VAULT, assistantContextRoot, assistantExists, assistantProjectRoot, isAssistantVault,
   readAssistantConfig, writeAssistantConfig, sanitizeConfigPatch, notchOnlyPatch,
@@ -70,6 +70,18 @@ function ownerGate(req: IncomingMessage, res: ServerResponse): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * The route that GRANTS a permission (`/api/assistant/answer`) asks more than loopback: a
+ * permission is the owner's to give, never an agent's, and any process here can reach loopback —
+ * an agent's `curl` included, the Super Agent's too, which knows its children's request ids. The
+ * app's own page (the notch) sends its Origin on every POST; a bare client sends none. Header
+ * forgery still passes, as it does on the chat socket: a secret only the shell holds is the
+ * stronger fix (separate task).
+ */
+function fromOwnerPage(req: IncomingMessage): boolean {
+  return typeof req.headers.origin === 'string' && isSameOriginStrict(req);
 }
 
 /** Named refusals, in the words the assistant will repeat to the owner. */
@@ -924,6 +936,10 @@ export async function handleAssistantDelegationDismiss(req: IncomingMessage, res
  */
 export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!ownerGate(req, res)) return;
+  if (!fromOwnerPage(req)) {
+    sendError(res, 403, 'owner_page_only', 'Only the app\'s own page answers a permission prompt for the owner.');
+    return;
+  }
   holdOpen(req);
   const b = (await parseJsonBody(req)) ?? {};
   const sessionId = typeof b.sessionId === 'string' && b.sessionId.length <= 100 ? b.sessionId : '';

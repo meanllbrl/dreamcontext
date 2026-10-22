@@ -42,7 +42,8 @@ function makeRes() {
 function req(url: string, body: unknown): IncomingMessage {
   return Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
     method: 'POST', url,
-    headers: { host: '127.0.0.1:4173', 'content-type': 'application/json' },
+    // The notch page's own POST: same origin, as the owner route requires.
+    headers: { host: '127.0.0.1:4173', origin: 'http://127.0.0.1:4173', 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
     socket: { remoteAddress: '127.0.0.1', setTimeout() {} },
     setTimeout() {},
   }) as unknown as IncomingMessage;

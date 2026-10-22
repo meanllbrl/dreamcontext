@@ -282,6 +282,9 @@ async function main() {
       if (await nowTab.count()) await nowTab.click().catch(() => {});
     };
 
+    // ONLY_B=1: the B legs alone (a clean before/after on a build where the A legs fail and
+    // would leave a permission at the queue's head, in front of the question).
+    if (!process.env.ONLY_B) {
     console.log('\n── A1: the notch\'s Allow button on a handed-over child\'s permission');
     ok('the child asks for a Bash permission; the notch glance lists it as a super row', await childAsks('one'));
     await openNow();
@@ -324,11 +327,15 @@ async function main() {
     ok('the Assistant ran its answer verb', await until(notch, async () => reports().some((r) => r.kind === 'assistant-answer'), 30000));
     const aa = reports().find((r) => r.kind === 'assistant-answer')?.r;
     ok('…and it is refused: super_handed_over', aa?.status !== 0 && /super_handed_over/.test(aa?.out ?? ''), aa?.out);
+    // What an agent with Bash would try next: the owner's own route, as a bare loopback client.
+    const curl = await post('/api/assistant/answer', { sessionId: child, question: q4, choice: 'allow' });
+    ok('an agent\'s curl to the owner route is refused (403 owner_page_only)', curl.status === 403 && /owner_page_only/.test(await curl.text()));
     ok('…and the child is still waiting', answeredWith('four') === undefined);
     await openNow();
     const allow4 = notch.locator('.dc-glance__btn--primary:visible').filter({ hasText: /^\s*Allow/ }).first();
     if (await until(notch, async () => (await allow4.count()) > 0, 10000)) await allow4.click();
     ok('the owner\'s Allow then lets it go', await until(page, async () => answeredWith('four') === 'allow', 25000));
+    }
 
     console.log('\n── B: the Super Agent asks the owner a question (super ask)');
     await page.evaluate(() => { window.__calls.length = 0; window.__osc = 0; });
@@ -356,7 +363,7 @@ async function main() {
     ok('B4 folded, the dock shows the Super Agent\'s question as a "?" chip with no close button', await until(page, async () => (await askChip.count()) === 1
       && (await askChip.locator('.agent-dock-chip-q').count()) === 1 && (await askChip.locator('.agent-dock-chip-close').count()) === 0, 10000));
     await page.screenshot({ path: join(OUT, 'B4-dock-folded.png') });
-    await askChip.click();
+    await askChip.click({ timeout: 5000 }).catch(() => {});
     ok('…clicking it opens the Super stage', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0, 10000));
     const option = page.getByTestId('super-ask-option').filter({ hasText: 'Ship it' }).first();
     await until(page, async () => (await option.count()) > 0, 10000);
