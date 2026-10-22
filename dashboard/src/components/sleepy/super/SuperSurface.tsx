@@ -24,7 +24,8 @@ import { anchoredPos, fitsNow, isGroupId, jobListRect, planStage, sizeOf, stageI
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import type { CardFullscreen } from './SuperContainer';
-import { hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
+import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
+import { NewSessionButton } from './NewSessionButton';
 import { MAX_LIVE_BROWSERS, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { useWindowActivity } from '../../../lib/windowActivity';
 import { useStageCues, withGhosts } from './useStageCues';
@@ -54,6 +55,8 @@ export interface SuperSurfaceProps {
   onLayout: (patch: LayoutPatch) => void;
   onTerminal: (sid: string) => void;
   onReplyToSuper: () => void;
+  /** The owner's "New session" (POST /api/super/fresh): true = queued; a refusal throws. */
+  onNewSession: () => Promise<boolean>;
   onOpenPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
   /** The slots the surface homes sessions into were (re)created: re-run the placement. */
   onSlotsChanged: () => void;
@@ -400,6 +403,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               <SleepyMascot size={28} compact mood={status.mood} mode="super" capeOn={capeOn} />
               <span className="super-centre-name">{t('super.centre.name')}</span>
               <span className="super-centre-sub">{t('super.centre.sub')}</span>
+              <NewSessionButton pending={freshPending(state)} onPress={props.onNewSession} />
             </div>
             <div className="super-slot" data-super-slot="centre" />
           </div>

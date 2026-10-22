@@ -24,10 +24,8 @@ import { writeBrainLocal } from '../../lib/setup-config.js';
 import {
   handoffKey,
   writeHandoffRecord,
-  lastMainChainContext,
   type HandoffRecord,
 } from '../../lib/context-watch.js';
-import { liveTranscriptPath, findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import {
   HANDOFF_FIELDS,
   contextHandoffGaps,
@@ -36,14 +34,11 @@ import {
   formatGaps,
   type HandoffFields,
 } from '../../lib/handoff-readiness.js';
-import { distillTranscript } from './transcript.js';
+import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
+import { superHandoffCommand, superHandoffContext } from '../../lib/super/handoff-task.js';
 import { commitAssignment, logAssignmentResult, prepareAssignment } from '../../lib/agents/task-assignment.js';
 import { runAutomation } from '../../lib/automations/runner.js';
 import { AGENT_SELF_ENV } from '../../lib/automations/types.js';
-import { buildDigest, writeDigest } from '../../lib/session-digest.js';
-import { appendCompactionRecord } from '../../lib/sleep-consolidation.js';
-import { readSleepState, writeSleepState } from './sleep.js';
-import { withSleepStateLock } from '../../lib/sleep-state-lock.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
@@ -1755,6 +1750,14 @@ export function registerTasksCommand(program: Command): void {
   for (const f of HANDOFF_FIELDS) handoffCmd.option(`${f.flag} <text>`, `${f.label}: ${f.hint}`);
   handoffCmd
     .action(async (name: string, noteParts: string[], opts: HandoffFields) => {
+      // The Super Agent hands off into its OWN file, never a task (super/handoff-file.ts).
+      // Its sub-agents share its pane env and are routed the same way.
+      if (superHandoffContext(ensureContextRoot(), [process.env.DREAMCONTEXT_TAB_SESSION, process.env.CLAUDE_CODE_SESSION_ID])) {
+        error('Handoff refused: you are the Super Agent — your handoff goes into your own file, never a task.');
+        info(`Run instead:\n  ${superHandoffCommand(HANDOFF_FIELDS)}`);
+        process.exitCode = 1;
+        return;
+      }
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
@@ -1792,11 +1795,8 @@ export function registerTasksCommand(program: Command): void {
       //    Pane first (it survives a rotation via the session map), conversation id
       //    second. Null is fine everywhere downstream: a session whose transcript has
       //    not flushed yet still hands off, just without a measured size.
-      const tab = process.env.DREAMCONTEXT_TAB_SESSION ?? '';
-      const sessionId = process.env.CLAUDE_CODE_SESSION_ID ?? '';
-      const transcript = (tab ? liveTranscriptPath(root, tab) : null)
-        ?? (sessionId ? findTranscriptBySessionId([sessionId]) : null);
-      const contextTokens = transcript ? lastMainChainContext(transcript) : null;
+      const session = locateHandoffSession(root);
+      const { tab, sessionId, contextTokens } = session;
 
       // 4. The record the fresh session (and the Chat server) reads. Keyed by pane
       //    when there is one, so a second pane's handoff can never be mistaken for
@@ -1812,32 +1812,11 @@ export function registerTasksCommand(program: Command): void {
       const key = handoffKey();
       writeHandoffRecord(root, key, record);
 
-      // 5. A PARTIAL digest, exactly as pre-compact writes one. Same reason: the
-      //    session is about to end with its decisions un-captured, and the Stop-hook
-      //    path is hours away. Marked partial so the SessionStart catch-up re-digests
-      //    the full transcript over it. Best-effort — never block the handoff.
-      try {
-        if (transcript && sessionId) {
-          writeDigest(root, sessionId, buildDigest(distillTranscript(transcript)), { partial: true });
-        }
-      } catch { /* the digest is a safety net, not the handoff itself */ }
-
-      // 6. The compaction log finally records handoffs alongside compactions, with
-      //    the size that triggered them — the number the whole context-ceiling
-      //    research is about. Locked like every other writer of sleep state.
-      try {
-        withSleepStateLock(root, () => {
-          const state = readSleepState(root);
-          writeSleepState(root, appendCompactionRecord(state, {
-            timestamp: new Date().toISOString(),
-            trigger: 'handoff',
-            debt_at_compaction: state.debt,
-            sessions_count: state.sessions.length,
-            bookmarks_count: state.bookmarks.length,
-            ...(contextTokens !== null ? { context_tokens: contextTokens } : {}),
-          }));
-        });
-      } catch { /* the log is a record, never a gate on the handoff */ }
+      // 5 + 6. A PARTIAL digest, exactly as pre-compact writes one (the session is about to
+      //    end with its decisions un-captured; marked partial so the SessionStart catch-up
+      //    re-digests the full transcript over it), and the compaction log's `handoff` entry
+      //    with the size that triggered it. Both best-effort (handoff-artifacts.ts).
+      writeHandoffArtifacts(root, session);
 
       success(`Handoff recorded for ${slug}${contextTokens !== null ? ` at ~${Math.round(contextTokens / 1000)}k tokens` : ''}.`);
       // The two surfaces differ in ONE way that matters to the agent: whether

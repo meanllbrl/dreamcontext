@@ -66,6 +66,12 @@ describe('superBriefing', () => {
     expect(brief).toContain('never change another chat\'s permission mode');
   });
 
+  it('sends the handoff to the super\'s own file, never a task', () => {
+    expect(brief).toContain('`dreamcontext super handoff --done … --next …`');
+    expect(brief).toContain('`_dream_context/state/.super/handoff.md`');
+    expect(brief).toContain('Your handoff is a FILE, never a task');
+  });
+
   it('reads back as the super mode from a system prompt', () => {
     expect(modeFromSystemPrompt(`# Surface: dreamcontext Chat\n\n${brief}`)).toBe('super');
   });
@@ -90,10 +96,13 @@ describe('superBriefing', () => {
   const CHILD_EFFORT_2026_10_22 = 150; // xhigh only for the few jobs that earn it; the server's default effort
   // Card sizes (owner 2026-10-22): the one Sizes line under "Arrange the screen yourself".
   const CARD_SIZES_2026_10_22 = 200;
+  // The owner, 2026-10-22: the Super Agent's handoff is its own FILE (`super handoff`), never a
+  // task; a fresh session reads it first (one bullet, ~215 characters).
+  const SUPER_HANDOFF_FILE_2026_10_22 = 230;
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22);
       expect(b).toContain('small|medium|large|wide');
       expect(b).toContain('409 owner_sized');
     }

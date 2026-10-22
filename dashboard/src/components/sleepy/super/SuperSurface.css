@@ -114,6 +114,41 @@
   min-width: 0;
 }
 .super-centre-name { font-weight: 700; color: var(--color-text); }
+/* "Yeni oturum" (task super-agent-devrini-…): the head's last item, pushed right. On a narrow
+   centre the sub line goes first, then the button keeps only its glyph (label in aria/title). */
+.super-centre-clip { container-type: inline-size; container-name: super-centre; }
+.super-fresh { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
+.super-fresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px 0 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex: none;
+  transition: background 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out, transform 120ms ease-out;
+}
+.super-fresh-btn:hover:not([aria-disabled='true']) { background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg)); border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); color: var(--color-text); }
+.super-fresh-btn:active:not([aria-disabled='true']) { transform: scale(0.97); }
+.super-fresh-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-fresh-btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
+.super-fresh-glyph { flex: none; }
+.super-fresh-error { font-size: var(--font-size-xs); color: var(--color-error-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+@container super-centre (max-width: 420px) {
+  .super-centre-sub { display: none; }
+}
+@container super-centre (max-width: 320px) {
+  .super-fresh-btn { padding: 0 4px; }
+  .super-fresh-btn-label { display: none; }
+}
+
 .super-centre-sub,
 .super-card-large-note { font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .super-card-large-title { font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }

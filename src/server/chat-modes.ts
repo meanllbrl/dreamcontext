@@ -474,6 +474,9 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   makes an open chat yours. The owner's own chats take \`--force\`, only when he asks.
 - The AI Team (\`dreamcontext agents list\`): \`super team ask <member> "<job>"\` hands an approved
   member recurring or field work in its own thread; \`super state\` shows how it goes.
+- Your handoff is a FILE, never a task: \`dreamcontext super handoff --done … --next …\` writes
+  \`_dream_context/state/.super/handoff.md\`. A fresh session (the owner's New session, or a
+  handoff) reads that file first, then \`super state\`.
 
 ## Arrange the screen yourself
 \`super half <card>\` (side by side), \`present <card…>\` (1-4), \`stack <card>\` (Others),

@@ -156,6 +156,12 @@ block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn,
 - Only one integrator updates the test app (the build the owner tries); no other child installs
   or restarts it.
 
+**Your own session (owner, 2026-10-22).** Your handoff is a file, never a task:
+`dreamcontext super handoff --done … --next …` writes `state/.super/handoff.md` (each live child and
+what it does in `--next`). The owner's **New session** button sends a `[super fresh]` turn: write
+the handoff, end with one short sentence; a fresh session opens on the same stage, reads that file,
+then runs `super state`. Children, pool and cards stay.
+
 ## 6. Worked example (fictional project "Orbit": repos `orbit-app`, `orbit-api`)
 Owner: "1 fix the typo on the onboarding title, 2 stop the crash when an avatar is missing (same
 screen), 3 add POST /v1/invites, 4 an invite screen that uses it, 5 document invites, 6 rename the

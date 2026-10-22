@@ -18,7 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { resetSuperIndex, SUPER_STATE_REL } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
-import { handleSuperEnable, handleSuperStateGet, handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperEnable, handleSuperFresh, handleSuperStateGet, handleSuperVerb } from '../../src/server/routes/super.js';
 import { handleWindowCommand } from '../../src/server/routes/window-control.js';
 import { markPhoneSocket } from '../../src/server/phone-origin.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
@@ -173,19 +173,23 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
     expect((await owner(handleSuperEnable, { remote: '192.168.1.9' })).status).toBe(403);
     expect((await owner(handleSuperEnable, { headers: { host: 'rebound.example:4173' } })).status).toBe(403);
     expect((await owner(handleSuperEnable, { phone: true })).status).toBe(403);
+    // The owner's New session goes through the same door.
+    expect((await owner(handleSuperFresh, { headers: { origin: 'https://evil.example' } })).status).toBe(403);
+    expect((await owner(handleSuperFresh, { phone: true })).status).toBe(403);
   });
 
   it('every super route is denied on the phone/tunnel surface, on the server and in the page', () => {
     const rows = Object.entries(ROUTE_POLICY).filter(([k]) => k.includes('/api/super/'));
     expect(rows.map(([k]) => k).sort()).toEqual([
       'GET /api/super/state', 'POST /api/super/activity', 'POST /api/super/disable', 'POST /api/super/enable',
-      'POST /api/super/end', 'POST /api/super/layout', 'POST /api/super/recap', 'POST /api/super/v/:verb',
+      'POST /api/super/end', 'POST /api/super/fresh', 'POST /api/super/layout', 'POST /api/super/recap', 'POST /api/super/v/:verb',
     ]);
     for (const [k, row] of rows) expect(row.allow, k).toBe(false);
     setPhoneSurfaceForTests('mac');
     try {
       expect(phoneAllows('POST', '/api/super/enable')).toBe(false);
       expect(phoneAllows('GET', '/api/super/state')).toBe(false);
+      expect(phoneAllows('POST', '/api/super/fresh')).toBe(false);
       expect(phoneAllows('POST', '/api/super/v/state')).toBe(false);
     } finally { setPhoneSurfaceForTests(null); }
   });

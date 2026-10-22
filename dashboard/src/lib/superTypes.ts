@@ -118,7 +118,7 @@ export const STUCK_REASONS = ['error', 'stale'] as const;
 export type StuckReason = typeof STUCK_REASONS[number];
 
 /** `approval`: an AI Team member the Super Agent chose is not approved here (server-written). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -209,14 +209,16 @@ export interface SuperStateView extends SuperState {
   /** Queue items whose banner the server posted (lib/super/owner-question.ts): the job bar posts
    *  no second one. Absent: none. */
   bannered?: string[];
+  /** The super's pane is rotating into a fresh session ("New session"). Absent: false. */
+  rotating?: boolean;
 }
 
 export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]'] as const;
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]'] as const;
 
-export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover', 'batch'] as const;
+export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover', 'batch', 'fresh'] as const;
 export type SuperEventKind = typeof SUPER_EVENT_KINDS[number];
 
 // ─── Groups (MIRRORED from the server, behaviour pinned by super-types-mirror.test.ts) ──
@@ -401,5 +403,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     team,
     ...(teamLive ? { teamLive } : {}),
     ...(Array.isArray(v.bannered) ? { bannered: v.bannered.filter((b): b is string => typeof b === 'string') } : {}),
+    // The pane is rotating into a fresh session ("New session"): absent or not `true` = false.
+    ...(v.rotating === true ? { rotating: true } : {}),
   };
 }
