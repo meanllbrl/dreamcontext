@@ -1,6 +1,6 @@
 ## Building with the dreamcontext design system
 
-These are real, compiled components from the dreamcontext dashboard (a productivity/agent-memory UI on a "Canvas White / Deep Violet" ClickUp-style palette). They are exported on `window.DreamContextDS.*` (e.g. `DreamContextDS.TaskCard`, `DreamContextDS.StatusBadge`). Compose them; don't reimplement them.
+These are real, compiled components from the dreamcontext dashboard (a productivity/agent-memory UI on a "Canvas White / Deep Violet" ClickUp-style palette). They are exported on `window.DreamContextDS.*` (e.g. `DreamContextDS.SearchableSelect`, `DreamContextDS.StatusBadge`). Compose them; don't reimplement them.
 
 ### Setup — no provider needed, just the stylesheet
 - These components are presentational. There is **no theme/context provider to wrap** — the entire system (tokens, fonts, and every component's styles) ships in `styles.css`. Load it once at your app root and the components are styled.
@@ -8,7 +8,7 @@ These are real, compiled components from the dreamcontext dashboard (a productiv
 - **Theme:** the default is the light theme. A dark theme is available by setting `data-theme="dark"` on an ancestor (e.g. `<html data-theme="dark">`); all colors are token-driven, so the whole tree switches automatically. Don't hardcode colors — that breaks theming.
 
 ### Styling idiom — design tokens (CSS custom properties)
-This is a **CSS-variable token system**, not a utility-class framework (no `bg-surface` classes) and not a prop-based style system. Each component already carries its own semantic classNames (`task-card`, `council-status`, `filter-chip`, …) styled by `styles.css` — you don't restyle them. For any layout/spacing/color **glue you add around** the components, use the tokens via `var(--…)`. Never hardcode px/hex values.
+This is a **CSS-variable token system**, not a utility-class framework (no `bg-surface` classes) and not a prop-based style system. Each component already carries its own semantic classNames (`council-status`, `filter-chip`, …) styled by `styles.css` — you don't restyle them. For any layout/spacing/color **glue you add around** the components, use the tokens via `var(--…)`. Never hardcode px/hex values.
 
 Token vocabulary (all defined in `styles.css`'s `:root`):
 - **Spacing** (4px grid): `--space-1` (4px), `--space-2` (8), `--space-3` (12), `--space-4` (16), `--space-6` (24), `--space-8` (32) … up to `--space-28`.
@@ -23,7 +23,7 @@ Token vocabulary (all defined in `styles.css`'s `:root`):
 
 ### Where the truth lives (read before composing)
 - **Tokens + classes:** read `styles.css` and its `@import` target `_ds_bundle.css` — the `:root { --… }` block is the complete token list, and the component CSS shows the real class vocabulary.
-- **Per component:** read `components/<group>/<Name>/<Name>.d.ts` (the `<Name>Props` API contract) and `<Name>.prompt.md` (usage). Components are grouped `council/*` (debate UI: StatusBadge, ModelBadge, StatTile, PersonaAvatar) and `tasks/*` (TaskCard, KanbanColumn, EisenhowerMatrix, RiceScatter, ActivityHeatmap, MiniCalendar, the filter controls, …).
+- **Per component:** read `components/<group>/<Name>/<Name>.d.ts` (the `<Name>Props` API contract) and `<Name>.prompt.md` (usage). Components are grouped `council/*` (debate UI: StatusBadge, ModelBadge, StatTile, PersonaAvatar) and `tasks/*` (SearchableSelect, FilterPopover, CustomFieldInput).
 
 ### Idiomatic example — real components + token-based glue
 ```tsx

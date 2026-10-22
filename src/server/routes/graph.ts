@@ -48,7 +48,7 @@ export async function handleGraphGet(
  * real and removes the whole class. An `.svg` falls through to the text arm below and is
  * returned as source, which is inert.
  */
-export const GRAPH_RAW_CONTENT_TYPE: Readonly<Record<string, string>> = {
+export const GRAPH_RAW_CONTENT_TYPE: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',

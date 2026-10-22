@@ -69,9 +69,8 @@ export interface BoardState {
   setMinRice: (v: number) => void;
   clearField: (key: keyof BoardFilters) => void;
   clearAllFilters: () => void;
-  setGroupBy: (d: Dim) => void;
-  setSubGroupBy: (d: Dim | 'none') => void;
-  setLayout: (l: Layout) => void;
+  /** Replace a field filter's include list (the toolbar's single-pick chips). */
+  setFieldInc: (key: keyof BoardFilters, values: string[]) => void;
   setSort: (by: SortKey) => void;
   toggleSortDir: () => void;
   // card properties (always local)
@@ -178,9 +177,10 @@ export function useBoardState(): BoardState {
   }, [patchFilters]);
   const clearAllFilters = useCallback(() => patchWorking({ filters: emptyFilters(), search: '' }), [patchWorking]);
 
-  const setGroupBy = useCallback((d: Dim) => setWorking((w) => ({ ...w, groupBy: d, subGroupBy: w.subGroupBy === d ? 'none' : w.subGroupBy })), []);
-  const setSubGroupBy = useCallback((d: Dim | 'none') => patchWorking({ subGroupBy: d }), [patchWorking]);
-  const setLayout = useCallback((l: Layout) => patchWorking({ layout: l }), [patchWorking]);
+  const setFieldInc = useCallback(
+    (key: keyof BoardFilters, values: string[]) => patchFilters({ [key]: { inc: values, exc: [] } } as Partial<BoardFilters>),
+    [patchFilters],
+  );
   const setSort = useCallback((by: SortKey) => patchWorking({ sortBy: by }), [patchWorking]);
   const toggleSortDir = useCallback(() => setWorking((w) => ({ ...w, sortDir: w.sortDir === 'asc' ? 'desc' : 'asc' })), []);
 
@@ -311,7 +311,7 @@ export function useBoardState(): BoardState {
     filters: working.filters, groupBy: working.groupBy, subGroupBy: working.subGroupBy,
     layout: working.layout, sortBy: working.sortBy, sortDir: working.sortDir, search: working.search,
     setSearch, cycleFilter, setDue, setMinRice, clearField, clearAllFilters,
-    setGroupBy, setSubGroupBy, setLayout, setSort, toggleSortDir,
+    setFieldInc, setSort, toggleSortDir,
     toggleCardProp, addVersion, removeVersion,
     applyView, resetView, saveView, createView, createBlankView, renameView, duplicateView, deleteView,
   };

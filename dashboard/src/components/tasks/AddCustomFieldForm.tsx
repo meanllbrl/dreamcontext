@@ -16,6 +16,10 @@ interface AddCustomFieldFormProps {
   initial?: CustomFieldDef | null;
   /** Called after a successful add/save or a cancel — lets the parent dismiss edit mode. */
   onClose?: () => void;
+  /** The closed form's button text. */
+  triggerLabel?: string;
+  /** A line at the top of the open form saying how far the field reaches. */
+  scopeHint?: string;
 }
 
 /**
@@ -26,7 +30,7 @@ interface AddCustomFieldFormProps {
  * edits that field instead (the server upserts by id). The raw task-template is
  * intentionally NOT editable here — only structured custom fields are.
  */
-export function AddCustomFieldForm({ initial = null, onClose }: AddCustomFieldFormProps) {
+export function AddCustomFieldForm({ initial = null, onClose, triggerLabel = '+ Add custom field', scopeHint }: AddCustomFieldFormProps) {
   const isEdit = initial !== null;
   const addField = useAddCustomFieldDef();
   const [open, setOpen] = useState(isEdit);
@@ -82,13 +86,14 @@ export function AddCustomFieldForm({ initial = null, onClose }: AddCustomFieldFo
   if (!open) {
     return (
       <button type="button" className="acf-add-btn" onClick={() => setOpen(true)}>
-        + Add custom field
+        {triggerLabel}
       </button>
     );
   }
 
   return (
     <div className="acf-form">
+      {scopeHint && <p className="acf-scope-hint">{scopeHint}</p>}
       <div className="acf-row">
         <span className="acf-label">Name</span>
         <input

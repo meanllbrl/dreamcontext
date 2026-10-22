@@ -31,6 +31,14 @@ interface BoardColumnProps {
   isDropTarget?: boolean;
   showDropSilhouette?: boolean;
   assigneeName?: (slug: string) => string;
+  /** A parent's children (empty for a non-parent). */
+  childrenOf?: (slug: string) => Task[];
+  /** The '↑ parent' line for a child drawn as its own card, else null. */
+  parentNameOf?: (t: Task) => string | null;
+  showVersionChip?: boolean;
+  subtasksOpen?: Record<string, boolean>;
+  onToggleSubtasks?: (slug: string) => void;
+  onOpenTask?: (t: Task) => void;
   onToggleCollapse: () => void;
   onAddTask: () => void;
   onCardClick: (task: Task) => void;
@@ -44,11 +52,13 @@ interface BoardColumnProps {
 
 export function BoardColumn({
   col, cardProps, dragId, draggable, isDropTarget, showDropSilhouette, assigneeName,
+  childrenOf, parentNameOf, showVersionChip, subtasksOpen, onToggleSubtasks, onOpenTask,
   onToggleCollapse, onAddTask, onCardClick, onCardContextMenu, onCardDragStart, onCardDragEnd, onColumnDragOver, onColumnDragLeave, onColumnDrop,
 }: BoardColumnProps) {
   return (
     <div
       className={isDropTarget ? 'bd-col-droptarget' : undefined}
+      data-column={col.key}
       onDragOver={onColumnDragOver}
       onDragLeave={onColumnDragLeave}
       onDrop={onColumnDrop}
@@ -61,12 +71,12 @@ export function BoardColumn({
       }}
     >
       <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 9, padding: '4px 6px 12px' }}>
-        <span onClick={onToggleCollapse} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1, minWidth: 0 }}>
+        <span onClick={onToggleCollapse} className="bd-col-head" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1, minWidth: 0 }}>
           <span style={{ width: 9, height: 9, borderRadius: 3, background: col.color, flex: '0 0 auto' }} />
           <span style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 13.5, color: 'var(--color-text)', letterSpacing: '0.01em', whiteSpace: 'nowrap', flex: '0 1 auto' }}>{col.label}</span>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--color-text-tertiary)', background: 'var(--color-bg-tertiary)', padding: '1px 7px', borderRadius: 20 }}>{col.count}</span>
+          <span className="bd-col-count" style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--color-text-tertiary)', background: 'var(--color-bg-tertiary)', padding: '1px 7px', borderRadius: 20 }}>{col.count}</span>
         </span>
-        <span className="bd-hover bd-hover-text" onClick={onAddTask} title="Add task" style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: 'pointer', color: 'var(--color-text-tertiary)', fontSize: 15, flex: '0 0 auto' }}>+</span>
+        <button type="button" className="bd-btnreset bd-hover bd-hover-text" onClick={onAddTask} title="Add task" aria-label={`Add task to ${col.label}`} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, color: 'var(--color-text-tertiary)', fontSize: 15, flex: '0 0 auto' }}>+</button>
       </div>
 
       {!col.collapsed && (
@@ -94,6 +104,12 @@ export function BoardColumn({
                       cardProps={cardProps}
                       dragging={dragId === t.id}
                       assigneeName={assigneeName}
+                      subtasks={childrenOf?.(t.slug) ?? []}
+                      subtasksOpen={!!subtasksOpen?.[t.slug]}
+                      onToggleSubtasks={() => onToggleSubtasks?.(t.slug)}
+                      parentName={parentNameOf?.(t) ?? null}
+                      showVersionChip={showVersionChip}
+                      onOpenTask={onOpenTask}
                       onClick={() => onCardClick(t)}
                       onContextMenu={onCardContextMenu ? (e) => onCardContextMenu(e, t) : undefined}
                       onDragStart={draggable ? (e) => onCardDragStart(e, t.id) : undefined}

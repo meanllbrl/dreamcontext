@@ -144,8 +144,10 @@ try {
     await openBoard();
     await page.locator('.bd-card', { hasText: 'Other task' }).first().click();
     await page.waitForTimeout(1400);
-    const labels = page.locator('.task-section-header, .task-section', { hasText: 'Labels' }).first();
-    if (await labels.count()) { await labels.click().catch(() => {}); await page.waitForTimeout(500); }
+    // The drawer keeps Tags under Properties › More (closed by default, remembered).
+    const more = page.locator('[data-testid="props-more"]').first();
+    await more.waitFor({ state: 'visible', timeout: 8000 });
+    if ((await more.getAttribute('aria-expanded')) !== 'true') { await more.click(); await page.waitForTimeout(400); }
     const picker = page.locator('.task-tag-picker .ss-trigger').first();
     await picker.waitFor({ state: 'visible', timeout: 8000 });
     await picker.click();

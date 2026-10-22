@@ -75,7 +75,7 @@ interface CreateTaskInput {
   parent_task?: string | null;
 }
 
-interface UpdateTaskInput {
+export interface UpdateTaskInput {
   slug: string;
   updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'start_date' | 'assignee' | 'agent' | 'objectives' | 'body' | 'parent_task'>> & {
     rice?: RiceInput | null;

@@ -16,7 +16,9 @@ import { DEFAULT_STATUS_MODEL, type StatusModel } from '../../lib/statusModel';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────────
 
-export type Layout = 'board' | 'list' | 'eisenhower' | 'scatter' | 'timeline' | 'calendar' | 'heatmap';
+/** The board is the only Tasks view (owner 2026-10-22). A saved view stored with any older
+ *  layout (list, eisenhower, scatter, timeline, calendar, heatmap) reads as the board. */
+export type Layout = 'board';
 export type Dim = 'status' | 'priority' | 'urgency' | 'version' | 'assignee';
 export type SortKey = 'manual' | 'priority' | 'urgency' | 'due' | 'rice' | 'updated' | 'created' | 'name';
 export type SortDir = 'asc' | 'desc';
@@ -48,7 +50,7 @@ const LEVEL_META: Record<string, { label: string; prio: string; urg: string }> =
 };
 
 export const DIM_LABEL: Record<Dim, string> = {
-  status: 'Status', priority: 'Priority', urgency: 'Urgency', version: 'Version', assignee: 'Assignee',
+  status: 'Status', priority: 'Priority', urgency: 'Urgency', version: 'Versions & Sprints', assignee: 'Assignee',
 };
 export const SORT_LABEL: Record<SortKey, string> = {
   manual: 'Manual', priority: 'Priority', urgency: 'Urgency', due: 'Due date',
@@ -61,6 +63,8 @@ export interface FieldFilter { inc: string[]; exc: string[]; }
 export interface BoardFilters {
   status: FieldFilter; priority: FieldFilter; urgency: FieldFilter;
   tags: FieldFilter; version: FieldFilter; assignee: FieldFilter;
+  /** `related_feature` slugs; `none` = a task with no feature. */
+  feature: FieldFilter;
   due: DueFilter; minRice: number;
 }
 export interface ViewConfig {
@@ -85,6 +89,10 @@ export interface BoardView {
 export interface CardProps {
   description: boolean; tags: boolean; priority: boolean; urgency: boolean;
   due: boolean; rice: boolean; assignee: boolean; version: boolean;
+  /** The `n/m` subtask chip + its inline list. */
+  subtasks: boolean;
+  /** The attachment clip (count + first-image thumbnail). */
+  attachments: boolean;
 }
 
 export interface SharedBoard {
@@ -104,20 +112,29 @@ export interface LocalBoard {
 
 // ─── Defaults ────────────────────────────────────────────────────────────────────
 
-export const FILTER_FIELDS: (keyof BoardFilters)[] = ['status', 'priority', 'urgency', 'tags', 'version', 'assignee'];
+export const FILTER_FIELDS: (keyof BoardFilters)[] = ['status', 'priority', 'urgency', 'tags', 'version', 'assignee', 'feature'];
 
 export function emptyFieldFilter(): FieldFilter { return { inc: [], exc: [] }; }
 export function emptyFilters(): BoardFilters {
   return {
     status: emptyFieldFilter(), priority: emptyFieldFilter(), urgency: emptyFieldFilter(),
     tags: emptyFieldFilter(), version: emptyFieldFilter(), assignee: emptyFieldFilter(),
+    feature: emptyFieldFilter(),
     due: 'all', minRice: 0,
   };
 }
+/** The approved v4 card: title, feature, criteria count, priority and version chips, subtasks, clip. */
 export const DEFAULT_CARD_PROPS: CardProps = {
+  description: false, tags: false, priority: true, urgency: false,
+  due: false, rice: false, assignee: true, version: true,
+  subtasks: true, attachments: true,
+};
+/** The card defaults before 2026-10-22. A stored object equal to these was never customised,
+ *  so it reads as the new defaults; anything else is the user's choice and is kept. */
+export const OLD_DEFAULT_CARD_PROPS = {
   description: true, tags: true, priority: true, urgency: true,
   due: true, rice: false, assignee: true, version: false,
-};
+} as const;
 
 export function emptyConfig(over: Partial<ViewConfig> = {}): ViewConfig {
   return {
@@ -135,7 +152,7 @@ export function defaultViews(): BoardView[] {
     { id: 'all', name: 'All Tasks', removable: false, config: emptyConfig() },
     {
       id: 'atrisk', name: 'At Risk', removable: true,
-      config: emptyConfig({ filters: { ...emptyFilters(), due: 'risk' }, groupBy: 'priority', sortBy: 'due', sortDir: 'asc' }),
+      config: emptyConfig({ filters: { ...emptyFilters(), due: 'risk' }, sortBy: 'due', sortDir: 'asc' }),
     },
   ];
 }
@@ -182,17 +199,23 @@ function normFilters(v: unknown): BoardFilters {
   return {
     status: asFieldFilter(o.status), priority: asFieldFilter(o.priority), urgency: asFieldFilter(o.urgency),
     tags: asFieldFilter(o.tags), version: normVersionFilter(asFieldFilter(o.version)), assignee: asFieldFilter(o.assignee),
+    feature: asFieldFilter(o.feature),
     due: (typeof o.due === 'string' ? o.due : 'all') as DueFilter,
     minRice: typeof o.minRice === 'number' ? o.minRice : 0,
   };
 }
-function normConfig(v: unknown): ViewConfig {
+/**
+ * Read a stored view config. The board is the only layout and its columns are always Status
+ * with no sub-groups, so whatever a saved view carries for `layout` / `groupBy` / `subGroupBy`
+ * is coerced HERE, at read: the file is never rewritten just because it was opened.
+ */
+export function normConfig(v: unknown): ViewConfig {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   return emptyConfig({
     filters: normFilters(o.filters),
-    groupBy: (DIMS.includes(o.groupBy as Dim) ? o.groupBy : 'status') as Dim,
-    subGroupBy: (o.subGroupBy === 'none' || DIMS.includes(o.subGroupBy as Dim) ? o.subGroupBy : 'none') as Dim | 'none',
-    layout: (typeof o.layout === 'string' ? o.layout : 'board') as Layout,
+    groupBy: 'status',
+    subGroupBy: 'none',
+    layout: 'board',
     sortBy: (typeof o.sortBy === 'string' ? o.sortBy : 'manual') as SortKey,
     sortDir: (o.sortDir === 'asc' ? 'asc' : 'desc') as SortDir,
     search: typeof o.search === 'string' ? o.search : '',
@@ -203,9 +226,15 @@ function normView(v: unknown): BoardView | null {
   if (!o || typeof o.id !== 'string' || typeof o.name !== 'string') return null;
   return { id: o.id, name: o.name, removable: o.removable !== false, config: normConfig(o.config) };
 }
-function normCardProps(v: unknown): CardProps | null {
+export function normCardProps(v: unknown): CardProps | null {
   if (!v || typeof v !== 'object') return null;
   const o = v as Record<string, unknown>;
+  const oldKeys = Object.keys(OLD_DEFAULT_CARD_PROPS) as (keyof typeof OLD_DEFAULT_CARD_PROPS)[];
+  // Never customised (every old key at its old default, no new key set): the new defaults.
+  const untouched = oldKeys.every((k) => o[k] === undefined || o[k] === OLD_DEFAULT_CARD_PROPS[k])
+    && o.subtasks === undefined && o.attachments === undefined;
+  if (untouched) return { ...DEFAULT_CARD_PROPS };
+  // Customised: kept as stored; a key it predates takes its new default.
   const out = { ...DEFAULT_CARD_PROPS };
   (Object.keys(out) as (keyof CardProps)[]).forEach((k) => { if (typeof o[k] === 'boolean') out[k] = o[k] as boolean; });
   return out;
@@ -306,6 +335,63 @@ export function taskAgent(t: Task): string | null {
   return slug || null;
 }
 export function taskVersion(t: Task): string { return t.version && t.version.trim() ? t.version : 'none'; }
+/** The task's feature slug, or `'none'`. */
+export function taskFeature(t: Task): string { return t.related_feature && t.related_feature.trim() ? t.related_feature : 'none'; }
+
+// ─── Subtasks ───────────────────────────────────────────────────────────────────
+
+export interface NestedTasks {
+  /** What the board draws as cards. */
+  top: Task[];
+  /** Children drawn INSIDE their parent's card, by parent slug (only parents in `top`). */
+  childrenByParent: Map<string, Task[]>;
+}
+
+/**
+ * Fold subtasks into their parents. A child is nested only when its parent is in the SAME
+ * list (the filtered set); a child whose parent is filtered out stays a card of its own.
+ * Two levels max: a "child" whose parent is itself nested is drawn as a card too, never lost.
+ */
+export function nestChildren(tasks: Task[]): NestedTasks {
+  const slugs = new Set(tasks.map((t) => t.slug));
+  const isTop = (t: Task): boolean => !t.parent_task || !slugs.has(t.parent_task) || t.parent_task === t.slug;
+  const topSlugs = new Set(tasks.filter(isTop).map((t) => t.slug));
+  const childrenByParent = new Map<string, Task[]>();
+  const top: Task[] = [];
+  for (const t of tasks) {
+    const p = t.parent_task;
+    if (p && p !== t.slug && topSlugs.has(p)) {
+      const list = childrenByParent.get(p) ?? [];
+      list.push(t);
+      childrenByParent.set(p, list);
+    } else {
+      top.push(t);
+    }
+  }
+  return { top, childrenByParent };
+}
+
+/** `n/m` for a parent: n = done-kind children, m = children that are not cancelled. */
+export function subtaskProgress(children: Task[], sm: StatusModel = DEFAULT_STATUS_MODEL): { done: number; total: number } {
+  const live = children.filter((c) => !sm.isCancelled(c.status));
+  return { done: live.filter((c) => sm.isDone(c.status)).length, total: live.length };
+}
+
+/** `- [x]` / `- [ ]` counts in the Acceptance Criteria section (fenced code skipped). */
+export function criteriaCount(t: Task): { done: number; total: number } {
+  let done = 0;
+  let total = 0;
+  let fence = false;
+  for (const line of (t.acceptance_criteria || '').split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;
+    const m = /^\s*[-*+]\s+\[( |x|X)\]\s/.exec(line);
+    if (!m) continue;
+    total++;
+    if (m[1] !== ' ') done++;
+  }
+  return { done, total };
+}
 
 export function levelLabel(k: string): string { return LEVEL_META[k]?.label ?? k; }
 export function prioColor(k: string): string { return LEVEL_META[k]?.prio ?? 'var(--color-text-tertiary)'; }
@@ -477,6 +563,7 @@ export function filterTasks(tasks: Task[], f: BoardFilters, search: string, vers
     if (!matchField(t.urgency, f.urgency)) return false;
     if (!matchAssignee(t, f.assignee)) return false;
     if (!matchVersionField(taskVersion(t), f.version, versionMeta)) return false;
+    if (!matchField(taskFeature(t), f.feature)) return false;
     if (f.tags.inc.length && !f.tags.inc.some((tg) => t.tags.includes(tg))) return false;
     if (f.tags.exc.length && f.tags.exc.some((tg) => t.tags.includes(tg))) return false;
     if (f.minRice) { const r = taskRice(t); if (!(r != null && r >= f.minRice)) return false; }

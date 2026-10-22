@@ -27,7 +27,7 @@ import { revealPath } from './chatEntities';
  * opened behind the window (owner report 07-28).
  */
 export function FileActions({
-  path, extra, className, compact,
+  path, extra, className, compact, openMode = 'auto',
 }: {
   /** The file, as the transcript named it. Resolved server-side — see `resolveChatReference`. */
   path: string;
@@ -36,6 +36,10 @@ export function FileActions({
   className?: string;
   /** Icon-and-short-label form, for a viewer's chrome rather than a panel's toolbar. */
   compact?: boolean;
+  /** What "Open on computer" asks the route for. A caller showing a file it must never LAUNCH
+   *  (a task attachment that is not media or a PDF: .html, .svg, a script) passes 'reveal', so
+   *  the button only ever shows the file in Finder. The route can narrow, never widen. */
+  openMode?: 'auto' | 'reveal';
 }) {
   const api = useApi();
   const [note, setNote] = useState<string | null>(null);
@@ -61,7 +65,7 @@ export function FileActions({
     <div className={`chat-fileactions${compact ? ' compact' : ''}${className ? ` ${className}` : ''}`}>
       <div className="chat-fileactions-row">
         {extra}
-        <button type="button" className="chat-btn" onClick={() => handoff('auto')} disabled={busy !== null}>
+        <button type="button" className="chat-btn" onClick={() => handoff(openMode)} disabled={busy !== null}>
           <span aria-hidden>↗</span> {busy === 'open' ? 'Opening…' : 'Open on computer'}
         </button>
         <button type="button" className="chat-btn" onClick={() => handoff('reveal')} disabled={busy !== null}>

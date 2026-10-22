@@ -8,8 +8,7 @@
  * tasks including a CANCELLED one with a long-past due date, then drives the built
  * dashboard with Playwright and screenshots:
  *   01 Kanban — Planned + Cancelled columns; the cancelled task shows NO overdue badge and the
- *      at-risk banner counts only the live overdue task
- *   02 Eisenhower — the cancelled task is absent
+ *      overdue chip counts only the live overdue task
  *   03 Task detail — the status dropdown lists all six keys
  *   04 Settings › Task Format — the Statuses editor with the live column preview
  *   05 CLI — `tasks statuses`, `tasks list`, `doctor` (terminal render)
@@ -104,31 +103,26 @@ try {
   const cancelledCard = page.locator('.bd-card', { hasText: 'Old idea' }).first();
   const cancelledText = ((await cancelledCard.innerText().catch(() => '')) || '').replace(/\s+/g, ' ');
   check('01 the cancelled task (due 2026-08-01) shows NO overdue badge', !/Overdue/i.test(cancelledText), cancelledText.slice(0, 80));
+  // The due badge is off on cards by default (2026-10-22); switch it on under Properties.
+  await page.locator('[data-testid="props-chip"]').click().catch(() => {});
+  await page.locator('[role=menu] button', { hasText: 'Due date' }).first().click().catch(() => {});
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
   const liveCard = page.locator('.bd-card', { hasText: 'Ship onboarding' }).first();
-  check('01 the live overdue task DOES show an overdue badge', /Overdue/i.test(((await liveCard.innerText().catch(() => '')) || '')));
+  check('01 the live overdue task DOES show an overdue badge (Due shown on cards)', /Overdue/i.test(((await liveCard.innerText().catch(() => '')) || '')));
+  const cancelledWithDue = ((await page.locator('.bd-card', { hasText: 'Old idea' }).first().innerText().catch(() => '')) || '');
+  check('01 …and the cancelled task still shows none', !/Overdue/i.test(cancelledWithDue));
   const banner = (await page.locator('body').innerText()).match(/(\d+) overdue/i);
-  check('01 the at-risk banner counts exactly 1 overdue (not the cancelled one)', banner?.[1] === '1', banner?.[0]);
+  check('01 the overdue chip counts exactly 1 overdue (not the cancelled one)', banner?.[1] === '1', banner?.[0]);
   await shot('01-kanban-declared-columns');
   await page.setViewportSize({ width: 1440, height: 940 });
-
-  // 02 — Eisenhower
-  const viewChip = page.locator('.bd-chip, .bd-hover', { hasText: /^Board$|Kanban/ }).first();
-  if (await viewChip.count()) {
-    await viewChip.click(); await page.waitForTimeout(500);
-    const row = page.locator('.bd-row', { hasText: 'Eisenhower' }).first();
-    if (await row.count()) { await row.click(); await page.waitForTimeout(1200); }
-  }
-  const eis = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
-  const inMatrix = /Do first|Urgent|Eliminate/i.test(eis);
-  check('02 Eisenhower matrix omits the cancelled task but keeps the live ones', inMatrix && !/Old idea/.test(eis) && /Fix login bug/.test(eis), inMatrix ? 'matrix rendered' : 'could not switch layout');
-  await shot('02-eisenhower-no-cancelled');
 
   // 03 — task detail status dropdown
   await openBoard();
   await page.locator('.bd-card', { hasText: 'Q4 roadmap' }).first().click();
   await page.waitForTimeout(1200);
-  const wf = page.locator('.task-section-head', { hasText: 'Workflow' }).first();
-  if (await wf.count()) { const open = await page.locator('#tf-status').count(); if (!open) { await wf.click(); await page.waitForTimeout(500); } }
+  // Status is always visible in the drawer's Properties column (no section to open).
+  check('03 the status select sits in the Properties column', (await page.locator('.props-col #tf-status').count()) === 1);
   const opts = await page.locator('#tf-status option').allTextContents().catch(() => []);
   check('03 the detail status dropdown lists all six statuses in order', opts.join('|') === 'To Do|Planned|In Progress|In Review|Completed|Cancelled', opts.join('|'));
   await page.locator('#tf-status').scrollIntoViewIfNeeded().catch(() => {});

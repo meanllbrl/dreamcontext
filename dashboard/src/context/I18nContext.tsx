@@ -2418,7 +2418,7 @@ const translations: Record<string, Record<string, string>> = {
     'automations.runsAs': 'Runs as {name}',
     'automations.openAgent': 'Open {name}',
     // Assign to agent (lane T10): the task composer, the refusal, the agent's face on a card.
-    'tasks.assignToAgent': 'Assign to agent',
+    'tasks.assignToAgent': 'Give to agent',
     'tasks.assignPickAgent': 'Pick an agent',
     'tasks.assignNoAgents': 'No agents yet. Create one on the AI Team page.',
     'tasks.assignNote': 'Note (optional)',
@@ -3925,7 +3925,7 @@ const TR_PARTIAL: Record<string, string> = {
   'automations.jobPlaceholder': 'Her hafta içi dünkü değişiklikleri oku ve kısa bir özet paylaş.',
   'automations.runsAs': '{name} olarak çalışır',
   'automations.openAgent': '{name} profilini aç',
-  'tasks.assignToAgent': 'Ajana ata',
+  'tasks.assignToAgent': 'Ajana ver',
   'tasks.assignPickAgent': 'Bir ajan seç',
   'tasks.assignNoAgents': 'Henüz ajan yok. AI Team sayfasında bir tane oluştur.',
   'tasks.assignNote': 'Not (isteğe bağlı)',

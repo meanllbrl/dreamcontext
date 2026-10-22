@@ -166,7 +166,11 @@ try {
     // Resolving to false here IS the dead-button bug: the click was swallowed
     // and nothing was ever asked.
     const clickDelete = async () => {
-      const btn = page.locator('button', { hasText: /^Delete task$/ }).first();
+      // Delete task lives under Properties › More › System (closed by default, remembered).
+      const more = page.locator('[data-testid="props-more"]').first();
+      await more.waitFor({ state: 'visible', timeout: 8000 });
+      if ((await more.getAttribute('aria-expanded')) !== 'true') { await more.click(); await page.waitForTimeout(400); }
+      const btn = page.locator('[data-testid="task-delete"]').first();
       await btn.waitFor({ state: 'visible', timeout: 8000 });
       await btn.click();
       try {
@@ -250,7 +254,10 @@ try {
     await stale.waitForTimeout(1200);
     await stale.locator('.bd-card', { hasText: 'Stale shell task' }).first().click();
     await stale.waitForTimeout(1200);
-    const staleBtn = stale.locator('button', { hasText: /^Delete task$/ }).first();
+    const staleMore = stale.locator('[data-testid="props-more"]').first();
+    await staleMore.waitFor({ state: 'visible', timeout: 8000 });
+    if ((await staleMore.getAttribute('aria-expanded')) !== 'true') { await staleMore.click(); await stale.waitForTimeout(400); }
+    const staleBtn = stale.locator('[data-testid="task-delete"]').first();
     await staleBtn.waitFor({ state: 'visible', timeout: 8000 });
     await staleBtn.click();
     const staleDialog = stale.locator('[data-confirm-dialog]');

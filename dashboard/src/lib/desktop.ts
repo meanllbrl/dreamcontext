@@ -55,7 +55,7 @@ export function warmWindowApi(): void {
  * Start dragging the current window from a title-bar mousedown.
  *
  * Why this exists instead of `data-tauri-drag-region`: our windows are created
- * with `dragDropEnabled: false` (so the Kanban / Eisenhower HTML5 drag-and-drop
+ * with `dragDropEnabled: false` (so the Kanban HTML5 drag-and-drop
  * works — see `openVaultWindow`). On Tauri v2 / wry that same flag also disables
  * the built-in `data-tauri-drag-region` handler, so the custom title bar became
  * un-draggable. We re-implement dragging manually: a left-button mousedown on
@@ -504,7 +504,7 @@ export async function openVaultWindow(
       hiddenTitle: true,
       // Off by default Tauri turns on an OS-level drag/drop handler that
       // swallows the webview's HTML5 dragover/drop events — which breaks the
-      // Kanban / Eisenhower task drag-and-drop. Disable it so DnD works.
+      // Kanban task drag-and-drop. Disable it so DnD works.
       dragDropEnabled: false,
     });
     await awaitWindowCreated(win, `vault "${name}"`);
