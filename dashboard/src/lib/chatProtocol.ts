@@ -146,6 +146,8 @@ export interface HandoffProgress {
   contextTokens?: number;
   postTokens?: number;
   message?: string;
+  /** `super`: the Super Agent's handoff, written to its own file — the card names no task. */
+  kind?: 'super';
 }
 
 export interface ContextHandoffState {
@@ -1121,6 +1123,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
         ...(contextTokens === undefined ? {} : { contextTokens }),
         ...(postTokens === undefined ? {} : { postTokens }),
         ...(str(obj.message) ? { message: str(obj.message)! } : {}),
+        ...(obj.kind === 'super' ? { kind: 'super' as const } : {}),
       },
     };
   }

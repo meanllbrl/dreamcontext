@@ -554,8 +554,9 @@ function SuperEventChip({ text }: { text: string }) {
   const ev = superEventOf(text);
   const kind = ev?.prefix === '[super recap]' ? 'recap'
     : ev?.prefix === '[super handover]' ? 'handover'
-      : (ev?.rest.split(/\s+/)[0] ?? '');
-  const key = `super.event.${['question', 'idle', 'gone', 'recap', 'handover'].includes(kind) ? kind : 'other'}`;
+      : ev?.prefix === '[super fresh]' ? 'fresh'
+        : (ev?.rest.split(/\s+/)[0] ?? '');
+  const key = `super.event.${['question', 'idle', 'gone', 'recap', 'handover', 'fresh'].includes(kind) ? kind : 'other'}`;
   return (
     <div className="super-event-chip" role="note" data-testid="super-event-chip" data-kind={kind || 'other'}>
       <span className="super-event-chip-mark" aria-hidden>◆</span>

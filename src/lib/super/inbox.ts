@@ -12,6 +12,8 @@ import {
 } from '../assistant/chat-registry.js';
 import { pushFrame, tokenOfSession } from '../window-control.js';
 import { announceOwnerHead, seedOwnerHead, serverBannered } from './owner-question.js';
+import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fresh-session.js';
+import { readHandoffRecord } from '../context-watch.js';
 import {
   isSuperChild, primeSuperIndex, readSuperState, superIndex, superRootOfChild, superRootOfEnded, superRootOfSession,
   updateSuperState, type SanitizeOpts,
@@ -85,7 +87,11 @@ export function superVaultName(contextRoot: string): string {
 export function superView(contextRoot: string, state: SuperState): SuperStateView {
   const teamLive = teamLiveRows(contextRoot, state);
   const bannered = serverBannered(state.queue);
-  return { ...state, vault: superVaultName(contextRoot), ...(teamLive ? { teamLive } : {}), ...(bannered.length ? { bannered } : {}) };
+  const rotating = isRotating(state.session);
+  return {
+    ...state, vault: superVaultName(contextRoot), ...(teamLive ? { teamLive } : {}), ...(bannered.length ? { bannered } : {}),
+    ...(rotating ? { rotating: true } : {}),
+  };
 }
 
 export function newQueueId(): string {
@@ -246,6 +252,8 @@ export function attachSuperInbox(inbox: SuperInbox): () => void {
     if (inboxes.get(inbox.sessionId)?.id === inbox.id) inboxes.delete(inbox.sessionId);
     // The process is gone: no turn-end will ever come for what it carried. Its exit IS the end
     // of that turn, and an exit puts what it carried back for the successor (plan r4 D10).
+    // A "New session" turn it carried never rotates now (fresh-session.ts).
+    clearFresh(inbox.sessionId);
     endTurn(inbox.sessionId, inbox.id, true);
   };
 }
@@ -255,13 +263,47 @@ export function attachSuperInbox(inbox: SuperInbox): () => void {
 export function superSocketAttached(sessionId: string): void {
   const root = superRootOfSession(sessionId);
   if (!root) return;
-  void track(readSuperState(root, superSanitizeOpts()).then((s) => {
-    noteHead(root, s);
-    pushSuperState(root, s);
+  void track(readSuperState(root, superSanitizeOpts()).then(async (s) => {
+    const swept = await sweepOrphanFresh(root, s).catch(() => s);
+    noteHead(root, swept);
+    pushSuperState(root, swept);
     void track(reconcileRows(root));
     void pumpSuper(root);
   }).catch(() => { /* a refused record: the mode is off there */ }));
 }
+
+/**
+ * A `fresh` item left `delivered` by a turn nobody will settle — the server restarted between
+ * its delivery and its result (the carried list and the latch live in memory). It is done: the
+ * button frees and a new press queues. Never touches an item a carried entry or the latch still
+ * owns (settleCarried settles those). Returns the record as written (or as read when unchanged).
+ */
+export async function sweepOrphanFresh(contextRoot: string, state: SuperState): Promise<SuperState> {
+  const key = keyOf(contextRoot);
+  const owned = new Set((carried.get(key) ?? []).map((c) => c.itemId));
+  const orphan = (q: SuperQueueItem) => q.kind === 'fresh' && q.state === 'delivered' && !owned.has(q.id)
+    && !(state.session && hasFreshLatch(state.session));
+  if (!state.queue.some(orphan)) return state;
+  return writeSuper(contextRoot, (s) => { for (const q of s.queue) if (orphan(q)) q.state = 'done'; });
+}
+
+/** A `fresh` item still on its way: pending, or delivered and owned by a live turn. */
+export function freshInFlight(contextRoot: string, state: SuperState): boolean {
+  const key = keyOf(contextRoot);
+  const owned = new Set((carried.get(key) ?? []).map((c) => c.itemId));
+  return state.queue.some((q) => q.kind === 'fresh'
+    && (q.state === 'pending' || (q.state === 'delivered' && (owned.has(q.id) || (!!state.session && hasFreshLatch(state.session))))));
+}
+
+// Every rotating change reaches the window at once (it never polls) and lets the pump go.
+onRotatingChanged((session) => {
+  const root = superRootOfSession(session);
+  if (!root) return;
+  void track(readSuperState(root, superSanitizeOpts()).then((s) => {
+    pushSuperState(root, s);
+    void pumpSuper(root);
+  }).catch(() => { /* a refused record: nothing to push */ }));
+});
 
 /**
  * The super chat's bridge closed a turn (its own `turnsInFlight` is back to 0). The registry's
@@ -339,6 +381,13 @@ async function settleCarried(key: string): Promise<boolean> {
         const it = s.queue.find((q) => q.id === c.itemId);
         if (!it || it.state !== 'delivered') continue;
         const pureExit = ends(c).every((e) => e.exited);
+        if (pureExit && it.kind === 'fresh') {
+          // A "New session" turn whose process died never rotates and is never re-sent to the
+          // successor: the owner presses again if he still wants one.
+          it.state = 'done';
+          clearFresh(it.sessionId);
+          continue;
+        }
         if (pureExit) {
           const exits = (it.exits ?? 0) + 1;
           it.exits = exits;
@@ -557,6 +606,18 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
       `The owner handed the Chat screen over to you; every chat above is a card around you and a row in the job list. Write EVERY child's row line now with \`dreamcontext super brief <child> "<doing / next>"\`, arrange the cards if it helps, then tell the owner what is running (${OWNER_VOICE}). End your turn.`,
     ].join('\n');
   }
+  if (item.kind === 'fresh') {
+    const ids = Object.keys(state.children);
+    const ownAsk = state.queue.filter((q) => q.kind === 'ask' && q.state === 'escalated' && q.ownerText);
+    const childAsks = state.queue.filter((q) => q.kind === 'question' && q.state === 'escalated');
+    return [
+      `[super fresh] item=${item.id} children=${ids.length}`,
+      ...ids.flatMap((sid) => childLine(vault, state, sid, now)),
+      ...ownAsk.map((q) => wrapUntrusted(vault, `Your own open question to the owner (it closes now; carry it in --next): ${q.ownerText}`)),
+      ...childAsks.map((q) => wrapUntrusted(vault, `A child's question still open with the owner (it stays open; carry it in --next), child ${q.sessionId}: ${q.ownerText ?? childQuestionText(q.sessionId)}`)),
+      'The owner pressed New session. Write your handoff now, in ONE command: `dreamcontext super handoff --done "…" --next "…" --decisions "…" --learned "…" --style "…" --files "…"` (each live child above and what it does in --next). Then end your turn with one short sentence; a fresh session opens on the same stage after it and reads that file first.',
+    ].join('\n');
+  }
   if (item.kind === 'recap') {
     const ids = Object.keys(state.children);
     return [
@@ -583,7 +644,7 @@ function scheduleRetry(key: string, at: number): void {
   retry.set(key, { at, t });
 }
 
-const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, recap: 1 };
+const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, recap: 2 };
 const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck']);
 
 /**
@@ -617,6 +678,9 @@ export function deliveryBlocker(contextRoot: string, now = Date.now(), state?: P
   const key = keyOf(contextRoot);
   const idx = superIndex(key);
   if (!idx.enabled || !idx.session) return 'off';
+  // Between `/clear` and the fresh session's first finished turn nothing is delivered: a child
+  // event must reach a session that has read its handoff (fresh-session.ts).
+  if (isRotating(idx.session)) return 'rotating';
   const inbox = inboxes.get(idx.session);
   if (!inbox || !inbox.attached()) return 'no_socket';
   const chat = getChat(idx.session);
@@ -723,9 +787,17 @@ async function pumpOnce(key: string): Promise<void> {
     if (closeStaleEscalations({ ...state, queue: state.queue.map((q) => ({ ...q })) })) {
       state = await writeSuper(key, (s) => { closeStaleEscalations(s); });
     }
+    // A "New session" asked before a rotation that already happened (a nudge-driven handoff):
+    // the session it wanted is the one running now.
+    const acted = Date.parse(readHandoffRecord(key, session)?.actedAt ?? '');
+    if (Number.isFinite(acted) && state.queue.some((q) => q.kind === 'fresh' && q.state === 'pending' && q.createdAt < acted)) {
+      state = await writeSuper(key, (s) => { for (const q of s.queue) if (q.kind === 'fresh' && q.state === 'pending' && q.createdAt < acted) q.state = 'done'; });
+    }
     // The single-question rule (D16): while the owner has a question open, the super agent takes
-    // no turn on its own; what piles up meanwhile goes in one batch when it closes.
-    if (ownerQuestionOpen(state)) return;
+    // no turn on its own; what piles up meanwhile goes in one batch when it closes. The owner's
+    // own "New session" press is the exception: it goes, and the questions travel in its text.
+    const freshNext = nextBatch(state).items.some((q) => q.kind === 'fresh');
+    if (!freshNext && ownerQuestionOpen(state)) return;
     let { items, drop } = nextBatch(state);
     if (drop.length) {
       state = await writeSuper(key, (s) => { for (const q of s.queue) if (drop.includes(q.id) && q.state === 'pending') q.state = 'done'; });
@@ -751,8 +823,11 @@ async function pumpOnce(key: string): Promise<void> {
     carried.set(key, [...(carried.get(key) ?? []), ...items.map((q) => ({ itemId: q.id, inboxId: inbox.id, seq, batch }))]);
     const ids = new Set(items.map((q) => q.id));
     const tells = !solo && items.some((q) => awaitedItem(state, q));
+    const fresh = solo && items[0].kind === 'fresh';
     await writeSuper(key, (s) => {
       for (const it of s.queue) if (ids.has(it.id) && it.state === 'pending') { it.state = 'delivered'; it.batch = batch; }
+      // The super's own question closes with its session; its text rode the fresh turn.
+      if (fresh) for (const it of s.queue) if (it.kind === 'ask' && it.state === 'escalated') it.state = 'done';
       // The super tells the owner a result he waits on: that turn renders in full.
       if (tells) noteOwnerBatch(s, batch);
     });

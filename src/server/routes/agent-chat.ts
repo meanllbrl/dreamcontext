@@ -22,9 +22,11 @@ import { HOLDER_PROBE_MS, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
-import { readHandoffRecord, stampHandoffRecord, writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, shouldRotateForHandoff, contextTokensFromUsage } from '../../lib/context-watch.js';
+import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage } from '../../lib/context-watch.js';
+import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
+import { clearFresh, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
 import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
-import { startHandoffRun, advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRun } from '../../lib/handoff-progress.js';
+import { advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRun } from '../../lib/handoff-progress.js';
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
@@ -2086,6 +2088,11 @@ export function startChatSession(
   let turnProgressed = false;
   /** This turn was refused for sign-in: its `result` must not clear the record. */
   let authFailedTurn = false;
+  /** A limit refusal was read in this turn (any frame, a sub-agent's too): its main `result`
+   *  must not rotate the pane — the turn did not run, and the pane is about to be switched.
+   *  Reset only at the very end of the main result's handling, after that frame's own refusal
+   *  was read (task super-agent-devrini-…). */
+  let limitHitThisTurn = false;
   let interruptWatchdog: ReturnType<typeof setTimeout> | null = null;
   let interruptKillTimer: ReturnType<typeof setTimeout> | null = null;
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2308,6 +2315,13 @@ export function startChatSession(
   const settleAfterInterrupt = (): void => {
     interruptSettleTimer = null;
     if (!alive) return;
+    // Stop with no `result`: a "New session" turn never rotates now, and a rotation that will
+    // never see its continue result stops holding the Super Agent's inbox (fresh-session.ts).
+    if (isSuper) {
+      clearFresh(chatRegistryId);
+      if (handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed') setHandoffRun(failHandoffRun(handoffRun, 'stopped'));
+      stopRotating(chatRegistryId);
+    }
     if (turnsInFlight > 0) closeTurn();
     sendMeta({ subtype: 'turn_state', busy: false });
   };
@@ -2819,13 +2833,22 @@ export function startChatSession(
       // A rotation in progress moves through its stages on these same frames. Read BEFORE the
       // result block below, which may START a run: the frame that triggers a rotation must
       // not also advance it, and `turnsInFlight` must be the count before this frame closes one.
+      const stageBefore = handoffRun?.stage;
+      const turnsBefore = turnsInFlight;
       if (handoffRun) setHandoffRun(advanceHandoffRun(handoffRun, obj, turnsInFlight));
       if (obj.type === 'assistant' && !obj.parent_tool_use_id) {
         const used = contextTokensFromUsage((obj.message as { usage?: Record<string, unknown> } | undefined)?.usage);
         if (used > 0) lastMainContext = used;
       }
 
-      if (obj.type === 'result' && obj.parent_tool_use_id === undefined) {
+      // The API REFUSED this turn. Read ONCE, here, before the result block: the rotation below
+      // must see a refusal that arrives on this very `result` frame (the dispatch further down
+      // uses the same read).
+      const limit = readLimitSignal(obj);
+      /** The ONE main-result predicate this frame uses (rotation, and the latch reset below). */
+      const mainResult = obj.type === 'result' && obj.parent_tool_use_id === undefined;
+
+      if (mainResult) {
         closeTurn();
         // An autonomy change waited for this boundary.
         // Through scheduleRespawn, never straight to respawnInPlace: a message may still be
@@ -2833,47 +2856,34 @@ export function startChatSession(
         // it would lose it.
         if (respawnTo !== null && turnsInFlight === 0) setImmediate(scheduleRespawn);
 
+        // The rotated Super Agent's fresh session finished its first turn: it has read its
+        // handoff, so the inbox may deliver again (handoff-rotation.ts).
+        if (isSuper && isRotating(chatRegistryId) && rotationFinished(stageBefore, turnsBefore)) stopRotating(chatRegistryId);
+
         // ── Context handoff: rotate this pane into a fresh session ────────────
         //
-        // The agent ran `dreamcontext tasks handoff <slug>`, which wrote a record
-        // keyed by THIS pane. A turn boundary is the only safe place to act on it:
-        // `/clear` mid-turn would discard work the agent is still producing.
-        //
-        // `actedAt` is the idempotency latch and this is the ONLY writer of it (the
-        // SessionStart hook owns `consumedAt`, and neither touches the other's
-        // field). Without it, every subsequent result frame in the pane would see
-        // the same record and clear again — an infinite rotation loop.
-        //
-        // The STEP 0 spike verified the mechanism on CLI 2.1.261: `/clear` sent as a
-        // stream-json USER frame rotates the conversation in-process and fires
-        // SessionStart with `source=clear` and a new transcript. So no respawn is
-        // needed, and the pane's websocket, pinned id and tab env all survive.
+        // The agent ran `dreamcontext tasks handoff <slug>` (or the Super Agent `super handoff`),
+        // which wrote a record keyed by THIS pane; or the super's "New session" turn ended with
+        // none, and the fallback runs. A turn boundary is the only safe place to act on it:
+        // `/clear` mid-turn would discard work the agent is still producing. One decision per
+        // frame, in handoff-rotation.ts.
         try {
-          const handoffPane = pinId;
-          const pending = handoffPane ? readHandoffRecord(contextRoot, handoffPane) : null;
-          if (shouldRotateForHandoff(pending) && pending) {
-            stampHandoffRecord(contextRoot, handoffPane, { actedAt: new Date().toISOString() });
-
-            // Both are USER frames, so both open turns — counted for the same reason
-            // the opening prompt and `/effort` are (see turnsInFlight's header).
-            openTurn();
-            writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/clear' }] } });
-
-            const continuePrompt = `Handoff: continue task ${pending.title} (${pending.task}). `
-              + `Read _dream_context/state/${pending.task}.md first, then carry on from its latest changelog entry.`;
-            openTurn();
-            writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: continuePrompt }] } });
-
+          handleRotationAtResult({
+            contextRoot,
+            pane: pinId,
+            isSuper,
+            frame: obj,
+            isLimit: limitHitThisTurn || !!limit,
+            observedConversation,
+            lastMainContext,
+            writeUserTurn: (text) => {
+              openTurn();
+              writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+            },
             // Its own frame, not the branch notice's one-liner: the chat draws the run as it
-            // happens (handoff-progress.ts), so "it is happening" is on screen from now on
-            // rather than a sentence sent after it was over.
-            setHandoffRun(startHandoffRun({
-              task: pending.task,
-              title: pending.title,
-              contextTokens: pending.contextTokens ?? lastMainContext,
-              fromSession: observedConversation,
-            }));
-          }
+            // happens (handoff-progress.ts), so "it is happening" is on screen from now on.
+            startRun: (run) => setHandoffRun(run),
+          });
         } catch (handoffErr) {
           // A failed rotation must leave the pane exactly as it was — still usable,
           // just not rotated. The agent can always hand off again.
@@ -2881,6 +2891,7 @@ export function startChatSession(
           const failed = handoffRun ? failHandoffRun(handoffRun, message) : null;
           if (failed) setHandoffRun(failed);
           else sendMeta(handoffProgressFrame({ id: Date.now(), stage: 'failed', task: '', title: '', message }));
+          if (isSuper) stopRotating(chatRegistryId);
         }
       }
 
@@ -2891,8 +2902,8 @@ export function startChatSession(
       // nothing at all when there is nowhere to move it to.
       //
       // A SUB-AGENT's rejection counts too, and deliberately so: it drew on the same account
-      // quota, and the main turn it belongs to is about to fail for the same reason.
-      const limit = readLimitSignal(obj);
+      // quota, and the main turn it belongs to is about to fail for the same reason. (`limit`
+      // was read once, above the result block.)
       // Every turn states this account's usage exactly; kept, so the panel and the chooser read
       // what the account said a moment ago rather than a cache up to an hour old.
       if (obj.type === 'rate_limit_event') noteTurnUsage(obj);
@@ -2904,6 +2915,8 @@ export function startChatSession(
         if (!authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
         authFailedTurn = false;
       }
+      // After this frame's own refusal was dispatched (it may set the latch again): the turn is over.
+      if (mainResult) limitHitThisTurn = false;
       // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
       // turn's end the text has been answered, so a LATER refusal (a background task's turn,
       // which no user frame of ours opened) must not resubmit it.
@@ -2971,6 +2984,9 @@ export function startChatSession(
 
   child.on('close', (code) => {
     teardown();
+    // Before the respawn's early return too: a successor starts with no handoff run, so nothing
+    // would ever end this process's rotation hold but the 120 s cap.
+    if (isSuper) { clearFresh(chatRegistryId); stopRotating(chatRegistryId); }
     if (handedOff) { spawnSuccessor(); return; }
     if (handoffRun) setHandoffRun(failHandoffRun(handoffRun, 'The session exited before the fresh one answered.'));
     sendMeta({ subtype: 'exit', code });
@@ -3333,6 +3349,9 @@ export function startChatSession(
    * visible half; the memory is the half that makes it stay fixed.
    */
   const onLimitRejected = (signal: LimitSignal): void => {
+    // Before any early return: a refusal anywhere in the turn holds its rotation (only while a
+    // turn of ours is open — a background task's late refusal belongs to no turn).
+    if (turnsInFlight > 0) limitHitThisTurn = true;
     if (switchPending) return;
     const recorded = recordAccountRejection(activeAccountId, signal);
     // A restart this pane could not perform: the refusal is on screen as the CLI wrote it, and
@@ -3578,6 +3597,9 @@ export function startChatSession(
             registry?.userSent('');
             const wrote = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
             if (!wrote) superEventTurnOpen = false;
+            // The owner's "New session" turn is out: its result rotates the pane even when the
+            // super writes no handoff (handoff-rotation.ts). Only after a write that landed.
+            else if (event.kind === 'fresh' && event.batch) markFreshDelivered(chatRegistryId, event.batch);
             resolve(wrote);
           }));
       }),

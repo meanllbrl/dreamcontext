@@ -163,7 +163,9 @@ export function HandoffCard({ run, onDismiss, onOpenTask }: {
     );
   }
 
-  const taskChip = run.task ? (
+  // The Super Agent's handoff goes into its own file, never a task: no task chip, file wording.
+  const superRun = run.kind === 'super';
+  const taskChip = run.task && !superRun ? (
     <button type="button" className="chat-notice-chip is-task" onClick={() => onOpenTask?.(run.task)} title="Open the task">
       <Glyph.task /><span className="chat-notice-chip-name">{run.title || run.task}</span>
     </button>
@@ -181,10 +183,10 @@ export function HandoffCard({ run, onDismiss, onOpenTask }: {
         testId="handoff-card"
       >
         <Steps steps={[
-          { label: 'State saved to task', state: 'done' },
+          { label: superRun ? 'Handoff written to the file' : 'State saved to task', state: 'done' },
           { label: 'Digest written', state: 'done' },
           { label: from ? `Clearing ${fmtTokens(from)}` : 'Clearing context', state: clearing },
-          { label: 'Resuming task', state: resuming },
+          { label: superRun ? 'Opening a fresh session' : 'Resuming task', state: resuming },
         ]} />
         {from !== undefined && (
           <ContextShrink from={from} left="context" right={<><b>{fmtTokens(from)}</b> → …</>} />

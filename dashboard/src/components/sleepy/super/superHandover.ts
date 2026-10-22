@@ -285,12 +285,21 @@ export function optionsFit(prev: OptionsFit | null, key: string, width: number, 
   return known ? { show: width >= known.need, fit: known } : { show: true, fit: null };
 }
 
+// ─── New session ───────────────────────────────────────────────────────────────
+
+/** Is the owner's "New session" on its way? A fresh item still pending or delivered (the server
+ *  sweeps one a restart left behind), or the pane rotating. The button greys while it is. */
+export function freshPending(state: Pick<SuperState, 'queue'> & { rotating?: boolean }): boolean {
+  return state.rotating === true || state.queue.some((q) => q.kind === 'fresh' && (q.state === 'pending' || q.state === 'delivered'));
+}
+
 // ─── Injected turns ────────────────────────────────────────────────────────────
 
 /** Which prefix an injected super turn starts with, per the `super_event` kind. */
 export function superEventPrefix(kind: string): typeof SUPER_EVENT_PREFIXES[number] {
   if (kind === 'recap') return '[super recap]';
   if (kind === 'handover') return '[super handover]';
+  if (kind === 'fresh') return '[super fresh]';
   if (kind === 'batch') return '[super events]';
   return '[super event]';
 }
@@ -323,7 +332,7 @@ export function superEventOf(text: string): { prefix: string; rest: string } | n
 
 /** The event kinds the window accepts on a `super_event` frame. */
 export function knownEventKind(kind: string): kind is SuperEventKind {
-  return kind === 'question' || kind === 'idle' || kind === 'gone' || kind === 'recap' || kind === 'handover' || kind === 'batch';
+  return kind === 'question' || kind === 'idle' || kind === 'gone' || kind === 'recap' || kind === 'handover' || kind === 'batch' || kind === 'fresh';
 }
 
 /** A `super_event` batch frame's payload (plan r4 D10): the batch id and what it carries. */
@@ -341,6 +350,7 @@ export function superBatchOf(text: string): { kind: string; batch: string | null
   if (!ev) return null;
   if (ev.prefix === '[super recap]') return { kind: 'recap', batch: null, items: [] };
   if (ev.prefix === '[super handover]') return { kind: 'handover', batch: null, items: [] };
+  if (ev.prefix === '[super fresh]') return { kind: 'fresh', batch: null, items: [] };
   if (ev.prefix === '[super event]') {
     const [k, c] = ev.rest.split(/\s+/);
     // A replay of the server's old text (`item=… child=… status=…`) or the live chip (`kind child`).

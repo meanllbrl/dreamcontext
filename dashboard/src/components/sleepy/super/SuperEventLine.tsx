@@ -3,7 +3,7 @@ import { eventLine, type SuperEventGroup } from './superHandover';
 import { openJobRow } from './superJobsStore';
 import './superEventLine.css';
 
-const KNOWN = ['question', 'done', 'gone', 'stuck', 'recap', 'handover', 'idle'];
+const KNOWN = ['question', 'done', 'gone', 'stuck', 'recap', 'handover', 'idle', 'fresh'];
 
 /**
  * One event turn in the centre chat as ONE line (plan r4 D2, D8): which job(s) and what

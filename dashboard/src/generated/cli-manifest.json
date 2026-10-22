@@ -3151,6 +3151,21 @@
       ]
     },
     {
+      "path": "super handoff",
+      "desc": "Hand YOUR session off: write your whole state into your own handoff file (state/.super/handoff.md, never a task) and let a fresh session continue on the same stage. Refuses while any part is missing. Your sub-agents share your pane and are routed here too",
+      "args": [
+        "[note...]"
+      ],
+      "valueFlags": [
+        "--done",
+        "--next",
+        "--decisions",
+        "--learned",
+        "--style",
+        "--files"
+      ]
+    },
+    {
       "path": "super merge",
       "desc": "Merge the branch each child's worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)",
       "args": [

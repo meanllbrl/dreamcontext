@@ -351,13 +351,13 @@ Status: `todo → in_progress → in_review → completed` by default. A project
 
 ## Context handoff — ECO mode (opt-in, and it escalates)
 
-When a vault or pane has it on, a long session gets an injected `[context handoff]` note that gets louder: at **300k–650k** it is firm (hand off unless the task is nearly done; "I'm mid-task" is not a reason), at **650k+** severe (finish the turn, then hand off, or tell the user why you keep going). A handoff is ONE command, every part required:
+When on, a long session gets a `[context handoff]` note that gets louder: at **300k–650k** it is firm (hand off unless the task is nearly done; "I'm mid-task" is not a reason), at **650k+** severe (finish the turn, then hand off or tell the user why not). A handoff is ONE command, every part required:
 
 ```bash
 dreamcontext tasks handoff <slug> --done "…" --next "…" --decisions "…" --learned "…" --style "…" --files "…"
 ```
 
-It refuses while a part is missing. Details → [tasks-and-features.md](references/tasks-and-features.md) § Context handoff.
+It refuses while a part is missing. Details → [tasks-and-features.md](references/tasks-and-features.md) § Context handoff. Super Agent: `super handoff`, into its own file.
 
 ---
 

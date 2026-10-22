@@ -25,7 +25,8 @@ import {
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
-import { isSuperEventTurn } from '../../lib/super/inbox.js';
+import { freshInFlight, isSuperEventTurn, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { isRotating } from '../../lib/super/fresh-session.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
@@ -1695,7 +1696,7 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>) => Promise<void>;
 
 /** The owner's verbs (D17 hand-over/take-back, D9 layout, D7 lease, D13 recap). */
@@ -1790,6 +1791,35 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     if (queued) void pumpSuper(contextRoot);
     sendJson(res, 200, { queued });
   },
+  fresh: async (_req, res, contextRoot) => {
+    // The owner's "New session": ONE solo `[super fresh]` turn in which the super writes its
+    // handoff file; its pane then rotates into a fresh session on the same stage (inbox.ts,
+    // agent-chat.ts, super/fresh-session.ts). Children, pool, cards and queue stay.
+    let current = await readSuperState(contextRoot, superSanitizeOpts());
+    const session = current.session;
+    if (!current.enabled || !session || !findLiveChat(session)) {
+      sendError(res, 409, 'off', 'the Super Agent is not running here');
+      return;
+    }
+    if (isRotating(session)) {
+      sendError(res, 409, 'rotating', 'a fresh session is already opening');
+      return;
+    }
+    // A leftover from before a restart frees the button; one still on its way refuses a second.
+    current = await sweepOrphanFresh(contextRoot, current);
+    if (freshInFlight(contextRoot, current)) {
+      sendError(res, 409, 'rotating', 'a fresh session is already on its way');
+      return;
+    }
+    let queued = false;
+    await writeSuper(contextRoot, (s) => {
+      if (!s.enabled || s.session !== session || s.queue.some((q) => q.kind === 'fresh' && q.state === 'pending')) return;
+      s.queue.push({ id: newQueueId(), sessionId: session, kind: 'fresh', state: 'pending', createdAt: Date.now() });
+      queued = true;
+    });
+    if (queued) void pumpSuper(contextRoot);
+    sendJson(res, 200, { queued });
+  },
 };
 
 function ownerRoute(verb: SuperOwnerVerb) {
@@ -1810,3 +1840,4 @@ export const handleSuperLayout = ownerRoute('layout');
 export const handleSuperActivity = ownerRoute('activity');
 export const handleSuperRecap = ownerRoute('recap');
 export const handleSuperEnd = ownerRoute('end');
+export const handleSuperFresh = ownerRoute('fresh');

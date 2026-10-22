@@ -165,9 +165,11 @@ export type StuckReason = typeof STUCK_REASONS[number];
  * its last brief, never delivered as a turn. `approval`: an AI Team member the super gave a job to
  * is not approved on this machine. The server writes it (never the super agent's words, like a
  * permission) and the owner settles it in AI Team; it closes once the member is approved, turned
- * off or gone, or by `super queue done`.
+ * off or gone, or by `super queue done`. `fresh`: the owner pressed "New session" — one solo
+`[super fresh]` turn in which the super writes its handoff file, after which its pane rotates into
+a fresh session (super/fresh-session.ts). Its `sessionId` is the super's own.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -175,7 +177,7 @@ export type QueueState = typeof QUEUE_STATES[number];
 
 export interface SuperQueueItem {
   id: string;
-  /** The child it is about (`recap`/`handover` items name the super session itself). */
+  /** The child it is about (`recap`/`handover`/`fresh` items name the super session itself). */
   sessionId: string;
   kind: QueueKind;
   /** The pending AskUserQuestion / permission request it answers. */
@@ -504,11 +506,11 @@ export const SUPER_FRAME_CUE = 'super_cue' as const;
 
 /** The prefixes an injected super turn starts with; history replay renders them as event lines.
  *  `[super event]` stays for a transcript written before plan r4. */
-export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]'] as const;
+export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]'] as const;
 
 /** What a `super_event` frame says about the turn it opened: `batch` since plan r4 (the other
  *  kinds stay for replay of older transcripts). */
-export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover', 'batch'] as const;
+export const SUPER_EVENT_KINDS = ['question', 'idle', 'gone', 'recap', 'handover', 'batch', 'fresh'] as const;
 export type SuperEventKind = typeof SUPER_EVENT_KINDS[number];
 
 // ─── Server-side constants (wave 2; not mirrored: the window never needs them) ───
@@ -532,7 +534,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 3;
+export const SUPER_BRIEF_REV = 4;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -589,4 +591,7 @@ export interface SuperStateView extends SuperState {
   /** Queue items whose banner the server posted (lib/super/owner-question.ts): the job bar posts
    *  no second one. Absent: none. */
   bannered?: string[];
+  /** The super's pane is rotating into a fresh session ("New session"): the window greys the
+   *  button and nothing is delivered until it has answered. Absent: false. */
+  rotating?: boolean;
 }

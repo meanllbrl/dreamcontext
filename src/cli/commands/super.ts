@@ -2,6 +2,13 @@ import { Command } from 'commander';
 import { request } from 'node:http';
 import { windowEnv } from './window.js';
 import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
+import { ensureContextRoot } from '../../lib/context-path.js';
+import { error, info, success } from '../../lib/format.js';
+import { HANDOFF_FIELDS, contextHandoffGaps, formatGaps, type HandoffFields } from '../../lib/handoff-readiness.js';
+import { handoffKey, writeHandoffRecord, type HandoffRecord } from '../../lib/context-watch.js';
+import { superHandoffContext } from '../../lib/super/handoff-task.js';
+import { SUPER_HANDOFF_REL, SUPER_HANDOFF_TASK, renderSuperHandoffEntry, writeSuperHandoff } from '../../lib/super/handoff-file.js';
+import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
 
 /**
  * `dreamcontext super …` — the project's Super Agent drives the hand-over screen: its child
@@ -255,6 +262,14 @@ export function registerSuperCommand(program: Command): void {
     .option('--dry-run', 'Only list what would go, with sizes')
     .action((o: { dryRun?: boolean }) => run('clean', { dryRun: o.dryRun === true }));
 
+  // The Super Agent's own handoff: a LOCAL write, like `tasks handoff` (no server round trip),
+  // into its file — never a task (super/handoff-file.ts).
+  const handoff = s.command('handoff')
+    .argument('[note...]', 'Optional extra note, written as the entry\'s last line')
+    .description('Hand YOUR session off: write your whole state into your own handoff file (state/.super/handoff.md, never a task) and let a fresh session continue on the same stage. Refuses while any part is missing. Your sub-agents share your pane and are routed here too');
+  for (const f of HANDOFF_FIELDS) handoff.option(`${f.flag} <text>`, `${f.label}: ${f.hint}`);
+  handoff.action((noteParts: string[], opts: HandoffFields) => { superHandoff(noteParts, opts); });
+
   const w = s.command('worktree').description('Your children\'s worktrees');
   w.command('list')
     .description('Each child\'s worktree, branch, dirty or clean, merged or not')
@@ -262,4 +277,51 @@ export function registerSuperCommand(program: Command): void {
   w.command('remove <child>')
     .description('Remove a child\'s worktree; refuses one that is dirty or unmerged')
     .action((child: string) => run('worktree-remove', { child }));
+}
+
+/** `super handoff`: the gate, then the file, the record, the digest and the log — in that order,
+ *  and nothing at all while a part is missing or this is not the handed-over super session. */
+export function superHandoff(noteParts: string[], opts: HandoffFields, env: NodeJS.ProcessEnv = process.env): void {
+  const root = ensureContextRoot();
+  const ctx = superHandoffContext(root, [env.DREAMCONTEXT_TAB_SESSION, env.CLAUDE_CODE_SESSION_ID]);
+  if (!ctx) {
+    error('Handoff refused: only the project\'s handed-over Super Agent session writes the super handoff. Anywhere else, use `dreamcontext tasks handoff <task>`.');
+    process.exitCode = 1;
+    return;
+  }
+  const gaps = contextHandoffGaps(opts);
+  if (gaps.length > 0) {
+    error(`Handoff refused: a fresh Super Agent session would start without everything it needs.\n${formatGaps(gaps)}`);
+    info(`Re-run with every part answered ("none" is a valid answer except for --done / --next):\n  dreamcontext super handoff ${HANDOFF_FIELDS.map((f) => `${f.flag} "…"`).join(' ')}`);
+    process.exitCode = 1;
+    return;
+  }
+  const now = new Date();
+  try {
+    writeSuperHandoff(root, [renderSuperHandoffEntry(now.toISOString(), opts, noteParts.join(' '))], now);
+  } catch (err) {
+    error(`Handoff refused: the handoff file could not be written (${(err as Error).message}). Retry in a moment.`);
+    process.exitCode = 1;
+    return;
+  }
+  const session = locateHandoffSession(root, env);
+  const record: HandoffRecord = {
+    task: SUPER_HANDOFF_TASK,
+    title: 'Super Agent',
+    at: now.toISOString(),
+    contextTokens: session.contextTokens,
+    fromSession: session.sessionId,
+    tab: session.tab || null,
+    kind: 'super',
+  };
+  if (!writeHandoffRecord(root, handoffKey(env), record)) {
+    error('The handoff file is written, but the record that opens the fresh session could not be: no rotation will happen. Retry `dreamcontext super handoff`.');
+    process.exitCode = 1;
+    return;
+  }
+  writeHandoffArtifacts(root, session);
+  success(`Handoff written to _dream_context/${SUPER_HANDOFF_REL}${session.contextTokens !== null ? ` at ~${Math.round(session.contextTokens / 1000)}k tokens` : ''}.`);
+  info(session.tab
+    ? 'A fresh session opens on the same stage after this turn — finish your sentence and stop.'
+    : 'Run /clear in this session to continue from the handoff file.');
 }

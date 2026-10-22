@@ -58,6 +58,13 @@ export async function postSuperRecap(api: ApiClient): Promise<boolean> {
   return r?.queued === true;
 }
 
+/** `POST /api/super/fresh` — the owner pressed "New session". Throws the server's refusal
+ *  (409 `off` / `rotating`) as a RequestError; true = a fresh turn was queued. */
+export async function postSuperFresh(api: ApiClient): Promise<boolean> {
+  const r = await api.post<{ queued?: unknown }>('/super/fresh', {});
+  return r?.queued === true;
+}
+
 /** The owner-activity lease is posted at most this often (the server holds it 15 s). */
 export const ACTIVITY_POST_GAP_MS = 5_000;
 

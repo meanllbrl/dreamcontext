@@ -99,7 +99,7 @@ import {
   linkOpensSuperStage, presenceChatId, leanMcpFor,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperLayout, postSuperRecap } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap } from './super/superApi';
 import { applyLayoutPatch, patchEchoed, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
@@ -4792,6 +4792,7 @@ export function AgentSurface() {
             onLayout={editSuperLayout}
             onTerminal={openTerminalFromSuper}
             onReplyToSuper={() => superChatSession?.focus()}
+            onNewSession={() => postSuperFresh(scopedApi)}
             onOpenPage={onOpenAppPage}
             onSlotsChanged={bumpSuperSlots}
             onStageReady={onStageReady}
