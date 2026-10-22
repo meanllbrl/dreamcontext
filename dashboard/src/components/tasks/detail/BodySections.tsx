@@ -170,7 +170,7 @@ function AddSection({ task }: { task: Task }) {
     );
   }
   return (
-    <div className="dadd">
+    <div className="dadd" onKeyDown={(e) => { if (e.key === 'Escape' && menu) { e.preventDefault(); setMenu(false); } }}>
       <button type="button" className="dadd-btn" data-testid="add-section" aria-expanded={menu} onClick={() => setMenu((v) => !v)}>
         + Add section <span className="dadd-hint">· {missing.map((k) => SECTION_HEADINGS[k]).join(', ')}</span>
       </button>

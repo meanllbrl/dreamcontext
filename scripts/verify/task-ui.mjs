@@ -141,6 +141,7 @@ The search index drifts after imports.
 ## Technical Details
 
 \`\`\`mermaid
+%%{init: {"themeCSS": "background-image:url(/api/health)"}}%%
 flowchart TD
   r1[Rebuild in background]:::todo
   r2[Show progress]:::todo
@@ -416,15 +417,23 @@ try {
   // The race the serialization exists for: every PATCH invalidates the task list, and a slow
   // refetch carrying an OLDER body lands in the middle of a burst of ticks.
   await until(async () => (await box(0).isChecked()), 4000);
+  // Both directions slowed: every PATCH is held (so later ticks QUEUE behind it) and every list
+  // refetch is held (so an older body lands mid-burst). A property edit is made mid-burst too —
+  // it must not detach the queued body writes.
   await page.route('**/api/tasks', async (route) => { if (route.request().method() === 'GET') await new Promise((r) => setTimeout(r, 900)); await route.continue(); });
+  await page.route(`**/api/tasks/${PARENT}`, async (route) => { if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 700)); await route.continue(); });
   await box(1).click();
-  await wait(350);
+  await wait(150);
   await box(2).click();
-  await wait(1100);
+  await wait(150);
+  await page.locator('#tf-priority').selectOption('critical');
+  await wait(1200);
   check('AC11 a tick does not visibly undo itself when an older refetch lands', await box(2).isChecked().catch(() => false));
   await box(4).click();
-  const rapid = await until(async () => /- \[x\] AC2 /.test(taskFile(PARENT)) && /- \[x\] AC3 /.test(taskFile(PARENT)) && /- \[x\] AC5 /.test(taskFile(PARENT)), 12000);
+  const rapid = await until(async () => /- \[x\] AC2 /.test(taskFile(PARENT)) && /- \[x\] AC3 /.test(taskFile(PARENT)) && /- \[x\] AC5 /.test(taskFile(PARENT)), 15000);
+  check('AC11 the property edit made mid-burst landed too', await until(async () => /priority: critical/.test(taskFile(PARENT)), 6000));
   await page.unroute('**/api/tasks');
+  await page.unroute(`**/api/tasks/${PARENT}`);
   check('AC11 rapid toggles across a mid-burst refetch are serialized (no lost update)', rapid && /- \[x\] AC1 /.test(taskFile(PARENT)), taskFile(PARENT).split('\n').filter((l) => /AC\d /.test(l)).join(' | '));
   check('AC11 User Stories and the fenced lines were not touched', /- \[ \] As a shopper I see the total/.test(taskFile(PARENT)));
   await until(async () => (await wfSvg.count()) === 1, 8000);
@@ -448,6 +457,8 @@ try {
   await openTask(MERMAID);
   await page.locator('[data-section="technical_details"] .dfold-toggle').click();
   check('AC16 a mermaid block in Technical Details renders too', await until(async () => (await page.locator('[data-section="technical_details"] .mermaid-stage > svg').count()) === 1, 10000));
+  const themeCss = await page.locator('[data-section="technical_details"] .mermaid-stage > svg').evaluate((svg) => [...svg.querySelectorAll('style')].map((st) => st.textContent).join(' ')).catch(() => '');
+  check('AC10 a diagram\'s themeCSS cannot load /api/ (url() neutralised in the SVG style)', !/\/api\//.test(themeCss), themeCss.match(/background-image:[^;}]*/)?.[0] ?? 'no background-image');
   await closeDrawer();
 
   // ── AC12 / AC13 / AC14 — media ──────────────────────────────────────────────

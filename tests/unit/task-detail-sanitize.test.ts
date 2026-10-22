@@ -59,3 +59,13 @@ describe('every URL attribute is checked', () => {
     expect(src).toMatch(/'xlink:href'/);
   });
 });
+
+describe('mermaid output', () => {
+  it('stripBlockedUrls neutralises an external url() in an SVG <style> (themeCSS) but keeps #marker refs', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'tasks', 'detail', 'sanitize.ts'), 'utf-8');
+    const re = /url\\\(\\s\*\(\?!\['"\]\?#\)\[\^\)\]\*\\\)/;
+    expect(src).toMatch(re);
+    const rule = /url\(\s*(?!['"]?#)[^)]*\)/gi;
+    expect('a{background:url(/api/launcher/discover)} b{marker-end:url(#arrow)}'.replace(rule, 'none')).toBe('a{background:none} b{marker-end:url(#arrow)}');
+  });
+});

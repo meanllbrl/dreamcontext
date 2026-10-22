@@ -44,6 +44,11 @@ export function stripBlockedUrls(root: Element): void {
   for (const el of [root, ...Array.from(root.querySelectorAll('*'))]) {
     for (const attr of URL_ATTRS) if (attrHasBlockedUrl(attr, el.getAttribute(attr))) el.removeAttribute(attr);
     if (el.hasAttribute('style') && /url\s*\(/i.test(el.getAttribute('style') ?? '')) el.removeAttribute('style');
+    // Mermaid's own <style> takes a diagram's `themeCSS` directive verbatim: a url() there would
+    // load on open. Only in-document references (`url(#marker)`) survive.
+    if (el.tagName.toLowerCase() === 'style' && el.textContent) {
+      el.textContent = el.textContent.replace(/url\(\s*(?!['"]?#)[^)]*\)/gi, 'none');
+    }
   }
 }
 

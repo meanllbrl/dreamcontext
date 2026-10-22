@@ -382,7 +382,11 @@ export function criteriaCount(t: Task): { done: number; total: number } {
   let done = 0;
   let total = 0;
   let fence = false;
+  let comment = false;
   for (const line of (t.acceptance_criteria || '').split('\n')) {
+    // Same reading as the drawer (detail/sectionModel.ts): fenced code and HTML comments hold no boxes.
+    if (comment) { if (line.includes('-->')) comment = false; continue; }
+    if (!fence && /^\s*<!--/.test(line)) { if (!line.includes('-->')) comment = true; continue; }
     if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue; }
     if (fence) continue;
     const m = /^\s*(?:[-*+]|\d+[.)])\s+\[( |x|X)\]\s/.exec(line);

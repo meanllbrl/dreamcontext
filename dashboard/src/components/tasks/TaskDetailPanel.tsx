@@ -34,6 +34,9 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
   const { resolved: theme } = useTheme();
   const sm = useStatusModel();
   const updateTask = useUpdateTask();
+  // Body writes get their OWN mutation observer: a property edit through `updateTask` must never
+  // detach the in-flight body write (TanStack keeps per-call callbacks for the latest call only).
+  const bodyWrite = useUpdateTask();
   const deleteTask = useDeleteTask();
   const { data: featureOptions } = useFeatureOptions();
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -73,22 +76,20 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
     inflightRef.current = true;
     queuedRef.current = false;
     const sent = pendingBodyRef.current;
-    updateTask.mutate(
-      { slug: task.slug, updates: { body: sent } },
-      {
-        onSuccess: () => { bodySourceRef.current = sent; },
-        onError: (err: Error) => {
-          queuedRef.current = false;
-          pendingBodyRef.current = bodySourceRef.current;
-          setShownBody(bodySourceRef.current);
-          onMutationError(err);
-        },
-        onSettled: () => {
-          inflightRef.current = false;
-          if (queuedRef.current) flushBody();
-        },
-      },
-    );
+    // Driven by the PROMISE, which settles whatever else is called meanwhile and even after the
+    // drawer closes, so a queued tick still goes out instead of the chain stalling.
+    bodyWrite.mutateAsync({ slug: task.slug, updates: { body: sent } })
+      .then(() => { bodySourceRef.current = sent; })
+      .catch((err: Error) => {
+        queuedRef.current = false;
+        pendingBodyRef.current = bodySourceRef.current;
+        setShownBody(bodySourceRef.current);
+        onMutationError(err);
+      })
+      .finally(() => {
+        inflightRef.current = false;
+        if (queuedRef.current) flushBody();
+      });
   };
   const writeBody = (next: string) => {
     pendingBodyRef.current = next;
@@ -129,7 +130,7 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       const el = e.target as HTMLElement | null;
-      if (el?.closest?.('input, textarea, select, [contenteditable="true"], [role="listbox"], [role="menu"], .ss-pop')) return;
+      if (el?.closest?.('input:not([type="checkbox"]):not([type="file"]), textarea, select, [contenteditable="true"], [role="listbox"], [role="menu"], .ss-pop')) return;
       onClose();
     };
     window.addEventListener('keydown', onKey);
