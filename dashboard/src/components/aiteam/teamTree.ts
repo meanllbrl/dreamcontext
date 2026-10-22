@@ -109,6 +109,28 @@ export function writeRosterView(storage: Pick<Storage, 'setItem'> | null, view: 
   try { storage?.setItem(ROSTER_VIEW_KEY, view); } catch { /* private mode: not remembered */ }
 }
 
+export type PageView = 'conversations' | 'org';
+const PAGE_VIEW_KEY = 'dreamcontext.aiteam.pageView';
+
+export function readPageView(storage: Pick<Storage, 'getItem'> | null): PageView {
+  try {
+    return storage?.getItem(PAGE_VIEW_KEY) === 'org' ? 'org' : 'conversations';
+  } catch {
+    return 'conversations';
+  }
+}
+
+export function writePageView(storage: Pick<Storage, 'setItem'> | null, view: PageView): void {
+  try { storage?.setItem(PAGE_VIEW_KEY, view); } catch { /* private mode: not remembered */ }
+}
+
+/** How many teams the tree holds: leads that carry a team name. */
+export function teamCount(tree: TeamTree): number {
+  let n = 0;
+  for (const node of tree.nodes.values()) if (node.ownTeam) n += 1;
+  return n;
+}
+
 /** The local storage, or null where there is none (tests, a locked-down webview). */
 export function pageStorage(): Storage | null {
   try {

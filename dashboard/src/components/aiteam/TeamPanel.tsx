@@ -13,12 +13,15 @@ import { runDuration } from '../agents/agentRunState';
 import type { TeamAutomation } from './teamModel';
 import { TeamIcon } from './TeamIcons';
 import { PlaceInTeam } from './PlaceInTeam';
+import { TeamTab } from './TeamTab';
+import type { TeamTree } from '../../../../src/lib/agents/tree.js';
+import type { TeamRow } from './teamModel';
 import '../agents/AutomationDialog.css';
 import '../agents/AgentMemberCard.css';
 import '../agents/AgentProfilePanel.css';
 import '../automations/AutomationDetailPanel.css';
 
-export type PanelTab = 'profile' | 'routines' | 'files';
+export type PanelTab = 'profile' | 'team' | 'routines' | 'files';
 
 /**
  * THE RIGHT PANEL: who this teammate is (Profile, with its review), what it does on its own
@@ -38,6 +41,7 @@ export function TeamPanel({
   onOpenFile,
   onToast,
   onSelectAgent,
+  team,
 }: {
   slug: string;
   title: string;
@@ -52,10 +56,14 @@ export function TeamPanel({
   onToast: (msg: string) => void;
   /** Open another teammate (a chip in "Place in team"). */
   onSelectAgent?: (slug: string) => void;
+  /** The Team tab's data: every row, the tree, and how to open a conversation. */
+  team?: { rows: TeamRow[]; tree: TeamTree; onTalk: (slug: string) => void };
 }) {
   const { t } = useI18n();
+  const reports = team?.tree.nodes.get(slug)?.children.length ?? 0;
   const tabs: { id: PanelTab; label: string; count?: number }[] = [
     { id: 'profile', label: t('aiteam.panel.profile') },
+    ...(team ? [{ id: 'team' as const, label: t('aiteam.panel.team'), count: reports }] : []),
     { id: 'routines', label: t('aiteam.panel.routines'), count: routines.length },
     { id: 'files', label: t('aiteam.panel.files') },
   ];
@@ -71,6 +79,7 @@ export function TeamPanel({
               aria-selected={tab === x.id}
               className={`agents-switch-opt${tab === x.id ? ' agents-switch-opt--on' : ''}`}
               onClick={() => onTab(x.id)}
+              data-panel-tab={x.id}
             >
               {x.label}
               {x.count !== undefined && x.count > 0 && <span className="agents-switch-count">{x.count}</span>}
@@ -85,6 +94,16 @@ export function TeamPanel({
       {tab === 'profile' && (
         <AgentProfilePanel slug={slug} onClose={onClose} onEdit={onEdit} onDeleted={onDeleted} onToast={onToast}
           placement={<PlaceInTeam slug={slug} onOpen={onSelectAgent} onToast={onToast} />} />
+      )}
+      {tab === 'team' && team && (
+        <TeamTab
+          slug={slug}
+          rows={team.rows}
+          tree={team.tree}
+          onOpen={(s) => onSelectAgent?.(s)}
+          onTalk={team.onTalk}
+          onToast={onToast}
+        />
       )}
       {tab === 'routines' && (
         <div className="aiteam-panel-body">

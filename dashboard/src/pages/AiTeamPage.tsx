@@ -4,7 +4,10 @@ import { TeamConversation } from '../components/aiteam/TeamConversation';
 import { TeamPanel, type PanelTab } from '../components/aiteam/TeamPanel';
 import { NewTeammate, TEAM_STARTERS, type TeamStarter } from '../components/aiteam/NewTeammate';
 import { buildRoster, messagesOf, type TeamAgent } from '../components/aiteam/teamModel';
-import { pageStorage, readRosterView, teamTreeOf, writeRosterView, type RosterView } from '../components/aiteam/teamTree';
+import {
+  pageStorage, readPageView, readRosterView, teamTreeOf, writePageView, writeRosterView, type PageView, type RosterView,
+} from '../components/aiteam/teamTree';
+import { OrgView } from '../components/aiteam/OrgChart';
 import { chainOf } from '../../../src/lib/agents/tree.js';
 import { AgentIdentityDialog } from '../components/agents/AgentIdentityDialog';
 import { dropThreadScratch } from '../components/agents/agentsChannelHost';
@@ -75,6 +78,12 @@ export function AiTeamPage({
   const pickRosterView = useCallback((v: RosterView) => {
     setRosterView(v);
     writeRosterView(pageStorage(), v);
+  }, []);
+  /** Conversations (list, conversation, panel) or the Org chart (chart, panel). */
+  const [pageView, setPageView] = useState<PageView>(() => readPageView(pageStorage()));
+  const pickPageView = useCallback((v: PageView) => {
+    setPageView(v);
+    writePageView(pageStorage(), v);
   }, []);
 
   const [selected, setSelected] = useState<string | null>(null);
@@ -153,11 +162,27 @@ export function AiTeamPage({
     setCreating(null);
     setMobileShow('convo');
   }, []);
+  /** Org chart: a click opens the teammate's Team tab beside the chart. */
+  const selectInOrg = useCallback((slug: string) => {
+    setSelected(slug);
+    setCreating(null);
+    setPanel((p) => (p === 'team' || p === null ? 'team' : p));
+  }, []);
+  /** Org chart: a double-click (or Talk to it) opens its conversation. */
+  const talkTo = useCallback((slug: string) => {
+    pickPageView('conversations');
+    setSelected(slug);
+    setLanding(null);
+    setCreating(null);
+    setPanel(null);
+    setMobileShow('convo');
+  }, [pickPageView]);
   const startNew = useCallback((start: TeamStarter = 'blank') => {
+    pickPageView('conversations');
     setCreating({ start, title: '' });
     setPanel(null);
     setMobileShow('convo');
-  }, []);
+  }, [pickPageView]);
   const onDraftTitle = useCallback((title: string) => {
     setCreating((c) => (c && c.title !== title ? { ...c, title } : c));
   }, []);
@@ -192,9 +217,10 @@ export function AiTeamPage({
     }));
   }, [current, tree, rows]);
 
-  const showList = !narrow || mobileShow === 'list';
-  const showMain = !narrow || mobileShow === 'convo';
-  const panelShown = !!(panel && current && agent && !creating && showMain);
+  const org = pageView === 'org' && rows.length > 0 && !creating;
+  const showList = !org && (!narrow || mobileShow === 'list');
+  const showMain = !org && (!narrow || mobileShow === 'convo');
+  const panelShown = !!(panel && current && agent && !creating && (showMain || org));
 
   const panelEl = panelShown && current && agent ? (
     <TeamPanel
@@ -209,16 +235,30 @@ export function AiTeamPage({
       onDeleted={() => { setPanel(null); setSelected(null); }}
       onOpenFile={setOpenFile}
       onToast={setToast}
-      onSelectAgent={select}
+      onSelectAgent={org ? selectInOrg : select}
+      team={{ rows, tree, onTalk: talkTo }}
     />
   ) : null;
 
   return (
     <div
       ref={setPageEl}
-      className={`aiteam${panelShown && !panelOverlay ? ' aiteam--panel' : ''}${narrow ? ' aiteam--narrow' : ''}`}
-      data-aiteam-view={narrow ? mobileShow : 'split'}
+      className={`aiteam${panelShown && !panelOverlay ? ' aiteam--panel' : ''}${narrow ? ' aiteam--narrow' : ''}${org ? ' aiteam--org' : ''}`}
+      data-aiteam-view={org ? 'org' : narrow ? mobileShow : 'split'}
     >
+      {org && (
+        <OrgView
+          tree={tree}
+          rows={rows}
+          selected={panelShown ? current?.slug ?? null : null}
+          onSelect={selectInOrg}
+          onTalk={talkTo}
+          onConversations={() => pickPageView('conversations')}
+          onNew={() => startNew()}
+          onToast={setToast}
+          nextRun={nextRun}
+        />
+      )}
       {showList && (
         <TeamRoster
           rows={rows}
@@ -231,6 +271,7 @@ export function AiTeamPage({
           tree={tree}
           view={rosterView}
           onView={pickRosterView}
+          onOrgChart={() => { pickPageView('org'); setPanel((p) => (p ? 'team' : p)); }}
         />
       )}
 

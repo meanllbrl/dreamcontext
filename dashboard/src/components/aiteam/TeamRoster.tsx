@@ -31,6 +31,7 @@ export function TeamRoster({
   tree: treeIn,
   view = 'list',
   onView,
+  onOrgChart,
 }: {
   rows: TeamRow[];
   selected: string | null;
@@ -45,6 +46,8 @@ export function TeamRoster({
   tree?: TeamTree;
   view?: RosterView;
   onView?: (view: RosterView) => void;
+  /** Switch the page to the Org chart. */
+  onOrgChart?: () => void;
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
@@ -77,6 +80,18 @@ export function TeamRoster({
           </span>
         )}
         <span className="aiteam-spacer" />
+        {onOrgChart && !empty && (
+          <button
+            type="button"
+            className="aiteam-iconbtn"
+            onClick={onOrgChart}
+            aria-label={t('aiteam.page.org')}
+            title={t('aiteam.page.org')}
+            data-page-view="org"
+          >
+            <TeamIcon name="tree" size={16} />
+          </button>
+        )}
         <button type="button" className="aiteam-newbtn" onClick={onNew}>
           <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
         </button>
