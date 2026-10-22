@@ -3,6 +3,7 @@ import { promises as fsp } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { activityOf, getChat, onChatChange } from '../assistant/chat-registry.js';
+import { noteSuperSend } from './owner-wait.js';
 import { liveTranscriptPath } from '../transcript-locate.js';
 import { sendWindowCommand, tokenOfSession } from '../window-control.js';
 import { superIndex, superRootOfChild, superRootOfSession } from './store.js';
@@ -213,6 +214,8 @@ const defaultDeps: OutboxDeps = {
   },
   transcript: (root, sid) => liveTranscriptPath(root, sid),
   send: async (token, child, text) => {
+    // The Super's words, not the owner's: they answer no wait he owes (owner-wait.ts).
+    noteSuperSend(child, text);
     const r = await sendWindowCommand(token, 'send', { tab: child, text });
     const how = r.ok ? (r.result as { delivered?: unknown } | undefined)?.delivered : undefined;
     return typeof how === 'string' ? how : null;

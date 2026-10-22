@@ -8,6 +8,11 @@ import { useSpinSlot } from './spinSlots';
 import { useLiveSession } from './liveSession';
 import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, modelChip, toneOfStatus, type DoingLine } from './superHandover';
 
+/** What a child's card says it waits on the owner for: a question it asks (`ask`), or something
+ *  only he can do (`owner`: a command to run himself, a key, a checklist, a sign-in). */
+export type AsksOwner = false | 'ask' | 'owner';
+const asksKey = (a: AsksOwner) => (a === 'owner' ? 'super.card.needsYou' : 'super.card.asksYou');
+
 /**
  * A child chat's card (plan-r8 F11, owner decision O10): its TITLE, ONE line of what it is
  * doing now (the tool in flight while busy, else the last thing it wrote), its live state with
@@ -24,7 +29,7 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
   child: SuperChild | undefined;
   title: string;
   /** The queue holds an item about this child that the OWNER must answer. */
-  asksOwner: boolean;
+  asksOwner: AsksOwner;
   status: SessionStatusInfo;
   /** Drawn taller than wide: room for the last few lines under the doing-line. */
   tall: boolean;
@@ -61,7 +66,7 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
       <div className="super-card-foot">
         {(asksOwner || child?.branch || chip) && (
           <div className="super-card-tags">
-            {asksOwner && <span className="super-card-asks">{t('super.card.asksYou')}</span>}
+            {asksOwner && <span className="super-card-asks" data-asks={asksOwner}>{t(asksKey(asksOwner))}</span>}
             {chip && <span className="super-tile-model" data-testid="super-card-model">{chip}</span>}
             {child?.branch && <span className="super-card-branch" title={child.worktree}>{child.branch}</span>}
           </div>
@@ -88,7 +93,7 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
   session: ChatSession | undefined;
   child: SuperChild | undefined;
   title: string;
-  asksOwner: boolean;
+  asksOwner: AsksOwner;
   status: SessionStatusInfo;
 }) {
   const { t } = useI18n();
@@ -126,7 +131,7 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
       <div className="super-tile-line" data-testid="super-card-doing">{line || state}</div>
       <div className="super-tile-foot">
         {/* What the owner must answer takes the state word's place: the same word, once. */}
-        {asksOwner ? <span className="super-tile-asks">{t('super.card.asksYou')}</span> : <span className="super-tile-state">{state}</span>}
+        {asksOwner ? <span className="super-tile-asks" data-asks={asksOwner} data-testid="super-tile-asks">{t(asksKey(asksOwner))}</span> : <span className="super-tile-state">{state}</span>}
         {since ? <span>· {elapsedLabel(Date.now() - since)}</span> : null}
         {bgCount > 0 && (
           <span className="super-tile-chip" data-testid="super-card-bg" title={backgroundText(t, bg)} aria-label={backgroundText(t, bg)}>⧉ {bgCount}</span>

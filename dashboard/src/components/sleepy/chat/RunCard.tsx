@@ -82,7 +82,7 @@ export function RunCard({ spec, report }: {
       : <span className="chat-runcard-exit is-bad">exit {outcome.code}</span>);
 
   return (
-    <div className="chat-viewcard chat-runcard" data-phase={phase}>
+    <div className="chat-viewcard chat-runcard" data-phase={phase} data-view-kind="run" data-view-id={spec.id}>
       <CardHeader
         glyph={phase === 'running' ? '▸' : '>_'}
         title={phase === 'running' ? 'Running in chat' : phase === 'done' ? 'Ran in chat' : 'Run this yourself'}

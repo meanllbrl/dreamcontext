@@ -194,11 +194,12 @@ export function latchSeen(latch: AnswerLatch, key: string | null, pendingPresent
 
 // ─── The queue strip ───────────────────────────────────────────────────────────
 
-/** An item that is the OWNER's to answer: a permission (never the agent's), or a question the
- *  Super Agent escalated with words of its own. */
+/** An item that is the OWNER's to answer: a permission (never the agent's), a child waiting on
+ *  something only he can do (`owner`: his from birth), or a question the Super Agent escalated
+ *  with words of its own. */
 export function needsOwner(item: SuperQueueItem): boolean {
   if (item.state === 'done') return false;
-  return item.kind === 'permission' || item.state === 'escalated';
+  return item.kind === 'permission' || item.kind === 'owner' || item.state === 'escalated';
 }
 
 /**
@@ -456,7 +457,7 @@ export function toneOfStatus(kind: string): StatusTone {
 }
 export function toneOfRow(row: ChildRow): StatusTone {
   if (row === 'working') return 'working';
-  if (row === 'asking') return 'asking';
+  if (row === 'asking' || row === 'waiting') return 'asking';
   if (row === 'stuck' || row === 'gone') return 'ended';
   return 'idle';
 }
@@ -476,7 +477,8 @@ export function modelChip(model: string | undefined | null, effort: string | und
 /** The agenda's three sections, in the order the owner reads them. */
 export type AgendaSection = 'waiting' | 'now' | 'done';
 export const AGENDA_SECTIONS: readonly AgendaSection[] = ['waiting', 'now', 'done'];
-export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued';
+/** `needsYou`: a child waiting on something only the owner can do (an unrun run card, a secret, a checklist). */
+export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued' | 'needsYou';
 export interface AgendaRow {
   key: string;
   section: AgendaSection;
@@ -532,7 +534,7 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
   const out: Record<AgendaSection, AgendaRow[]> = { waiting: [], now: [], done: [] };
   const head = queueHead(state);
   const owner = state.queue.filter(needsOwner).sort((a, b) => (a.id === head?.id ? -1 : b.id === head?.id ? 1 : a.createdAt - b.createdAt));
-  const chipOf = (k: QueueKind): AgendaChip => (k === 'permission' ? 'permission' : k === 'ask' ? 'ask' : 'question');
+  const chipOf = (k: QueueKind): AgendaChip => (k === 'permission' ? 'permission' : k === 'ask' ? 'ask' : k === 'owner' ? 'needsYou' : 'question');
   const nameOf = (sid: string) => plainJobName(look.nameFor?.(sid) || look.titleFor(sid));
   for (const q of owner) {
     const own = q.kind === 'ask' || q.kind === 'approval';

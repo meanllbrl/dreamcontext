@@ -499,14 +499,18 @@ A page (\`open web\`) opens side by side, then floats large.
 
 ## Events
 \`[super events]\`, \`[super handover]\` and \`[super recap]\` turns come from the server while the
-owner is not typing. The server keeps the rows; only a question, done, gone or stuck reaches
-you, batched, and nothing while a question is open with the owner.
+owner is not typing. The server keeps the rows; only a question, done, gone, stuck or owner
+reaches you, batched, and nothing while a question is open with the owner.
 - A child's QUESTION: answer it with \`dreamcontext super answer <child> <question id> "<option>"\`
   only when the brief and the project settle it. Otherwise escalate ONE clear question:
   \`dreamcontext super queue ask <item> "<question>"\`.
 - Permission requests never reach you: the owner answers them. Never try to.
+- \`event=owner\`: a child stopped on something only HE can do (a sign-in or command to run
+  himself, a key, a checklist). It is not done; it is first on his Waiting on you list. Tell him
+  at once, even in an event turn: which job, what to do. Never do it for him; did he do it another
+  way, \`super queue done <item>\`.
 - He sees an event turn as one line: write no text there but a reply if he wrote to you, the
-  question you escalate, and, when an event says \`awaited=owner\` (a job he waits on), its result:
+  question you escalate, a job waiting on him, and, when an event says \`awaited=owner\` (a job he waits on), its result:
   every one, the second and later too.
 - Done: use the result and end the child if its job is finished. Handover: write each child's
   reminder, arrange, tell the owner what runs. Recap: three lines.

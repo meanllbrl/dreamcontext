@@ -8,6 +8,8 @@
  * one, change the other; `tests/unit/super-types-mirror.test.ts` pins the pair.
  */
 
+import type { OwnerWaitKind } from './owner-wait.js';
+
 export const SUPER_STATE_VERSION = 1 as const;
 
 /** What a container can show. `chat` is a child chat's card; `agenda` the super's own agenda
@@ -219,8 +221,10 @@ export interface SuperChild {
  *  still owns a worktree (it leaves when `super worktree remove` clears it). */
 export const MAX_ENDED_CHILDREN = 30;
 
-/** A child's row in the job list. `asking` = the super agent is handling its question. */
-export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone'] as const;
+/** A child's row in the job list. `asking` = the super agent is handling its question.
+ *  `waiting` = its turn ended on something only the OWNER can do (an `owner` item is open for
+ *  it): never done, never settled, until he does it (task a-super-child-waiting-on-the-owner-…). */
+export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone', 'waiting'] as const;
 export type ChildRow = typeof CHILD_ROWS[number];
 export const STUCK_REASONS = ['error', 'stale'] as const;
 export type StuckReason = typeof STUCK_REASONS[number];
@@ -236,8 +240,13 @@ export type StuckReason = typeof STUCK_REASONS[number];
  * off or gone, or by `super queue done`. `fresh`: the owner pressed "New session" — one solo
 `[super fresh]` turn in which the super writes its handoff file, after which its pane rotates into
 a fresh session (super/fresh-session.ts). Its `sessionId` is the super's own.
+`owner`: a child left something only the owner can do (an unrun `run` card, an unsubmitted
+`secret` or `checklist`; super/owner-wait.ts). The server writes it
+the moment the card appears in the child's stream; it is the owner's (Waiting on you, the bar)
+from birth, reaches the super as an event that says the child waits on him, stays open
+(`escalated`) after that turn, and closes when his answer reaches the child.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -271,6 +280,9 @@ export interface SuperQueueItem {
   brief?: string;
   /** An `approval` item's AI Team member (its agent slug). Its `sessionId` is the super's own. */
   member?: string;
+  /** An `owner` item's wait: which card of the child he must act on. Its `ownerText`
+   *  is the server's plain line of what he is asked to do (from the child's card: untrusted). */
+  wait?: { kind: OwnerWaitKind; id: string; key?: string };
 }
 
 /**
@@ -429,7 +441,7 @@ export interface SuperHeldEvent {
   item: string;
   /** The child it is about. */
   child: string;
-  kind: 'question' | 'done' | 'stuck' | 'gone';
+  kind: 'question' | 'done' | 'stuck' | 'gone' | 'owner';
   at: number;
 }
 export const MAX_HELD = 40;
@@ -577,6 +589,9 @@ export const MAX_ASK_OPTIONS = 4;
 export const MAX_ASK_OPTION = 24;
 /** A child's turn end is "done" once it has stayed idle this long (plan r4 D5). */
 export const DONE_SETTLE_MS = 30_000;
+/** The longest card subject (a run card's command, a title) an owner item keeps to match his
+ *  receipt by after a restart; longer ones match by kind alone. */
+export const MAX_WAIT_KEY = 300;
 /** How often the stale sweep looks at working rows (plan r4 D17). */
 export const STALE_SWEEP_MS = 60_000;
 /** At most this many events go in one `[super events]` turn (plan r4 D10). */

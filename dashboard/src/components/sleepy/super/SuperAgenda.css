@@ -89,7 +89,8 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 }
 .super-agenda-chip[data-kind='permission'],
 .super-agenda-chip[data-kind='question'],
-.super-agenda-chip[data-kind='ask'] { color: var(--color-warning-ink); background: var(--color-warning-subtle); }
+.super-agenda-chip[data-kind='ask'],
+.super-agenda-chip[data-kind='needsYou'] { color: var(--color-warning-ink); background: var(--color-warning-subtle); }
 
 /* Each section's dot, in its meaning: waiting pink, now green, done hollow. */
 .super-agenda-row[data-state='waiting'] .super-agenda-dot { background: var(--mood-waiting); }

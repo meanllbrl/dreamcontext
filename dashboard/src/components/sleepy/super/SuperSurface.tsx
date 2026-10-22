@@ -14,11 +14,11 @@ import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from '
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
 import { OrbitPath, PanelChatTile } from './StageParts';
-import { JobBar, showQuestionCard } from './JobBar';
+import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
 import { AgendaButton } from './AgendaButton';
-import { childModelChip } from './AgentCard';
+import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
@@ -347,7 +347,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const c = byId.get(id);
     if (!c) return null;
     if (c.kind === 'chat') {
-      return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.has(c.ref)} />;
+      return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.get(c.ref) ?? false} />;
     }
     const team = teamCardOf(c);
     if (team) return <div className="super-panel-tile"><div className="super-panel-clip"><TeamTile card={team} /></div></div>;
@@ -371,7 +371,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const [capeOn] = useState(() => motion === 'running' && !prefersReducedMotion() && !isLightMode());
 
   const head = queueHead(state);
-  const asking = useMemo(() => new Set(state.queue.filter(needsOwner).map((q) => q.sessionId)), [state.queue]);
+  // What each child's card says it waits on the owner for: a question it asks, or something only he can do.
+  const asking = useMemo(() => {
+    const m = new Map<string, AsksOwner>();
+    for (const q of state.queue.filter(needsOwner)) if (m.get(q.sessionId) !== 'owner') m.set(q.sessionId, q.kind === 'owner' ? 'owner' : 'ask');
+    return m;
+  }, [state.queue]);
   // The centre's event lines read the children's titles and which batches render full: published
   // for the super session, notified only when one of them changes (superJobsStore).
   const superId = superSession?.claudeId ?? null;
@@ -400,10 +405,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const showChild = (sid: string) => {
     const c = state.containers.find((k) => k.kind === 'chat' && k.ref === sid);
     if (!c) return;
+    // A child waiting on the owner: the card it waits on comes into view with it.
+    const wait = state.queue.find((q) => q.sessionId === sid && q.kind === 'owner' && q.state !== 'done');
     const agenda = state.containers.find((k) => k.kind === 'agenda');
     const agendaShown = !!agenda && !!plan.cards[agenda.id] && plan.cards[agenda.id].where !== 'others';
-    if (!agenda || !agendaShown) { actions.onSideBySide(c.id); return; }
-    onLayout({ ...(c.place === 'others' ? { cards: [{ id: c.id, place: 'float' as const }] } : {}), view: { mode: 'present', cards: [c.id, agenda.id] } });
+    if (!agenda || !agendaShown) actions.onSideBySide(c.id);
+    else onLayout({ ...(c.place === 'others' ? { cards: [{ id: c.id, place: 'float' as const }] } : {}), view: { mode: 'present', cards: [c.id, agenda.id] } });
+    if (wait) showOwnerCard(wait.wait);
   };
   // The super's own question (or an approval) in the agenda: its card in the centre chat.
   const showQuestion = (item: string) => {
@@ -520,7 +528,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               browserSessionId={c.kind === 'browser' ? props.sessionFor(c.ref)?.id : undefined}
               browserLive={liveBrowser.has(c.id)}
               viewReady={viewsReady}
-              asksOwner={c.kind === 'chat' && asking.has(c.ref)}
+              asksOwner={c.kind === 'chat' ? asking.get(c.ref) ?? false : false}
               shownSlot={shownCard?.id === c.id}
               onPress={onPressCard}
               dropTarget={target === c.id}
@@ -578,6 +586,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         sessionFor={props.sessionFor}
         titleFor={props.titleFor}
         onReplyToSuper={props.onReplyToSuper}
+        onShowChild={showChild}
       />
       {state.containers.length === 0 && props.terminals.length === 0 && (
         <div className="super-empty-hint" data-testid="super-empty-hint" style={{ left: plan.centre.x, top: plan.dock.y, width: plan.centre.width, height: plan.dock.height }}>

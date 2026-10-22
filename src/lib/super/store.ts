@@ -3,13 +3,14 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
-  AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
+  AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_PRESENT, MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, MAX_HELD,
   SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
   type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
+import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
 import { parseMcpNames } from './lean-mcp.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 
@@ -250,6 +251,9 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // An approval item exists only for its member; one naming none (or a hostile one) is dropped.
     const member = q.kind === 'approval' && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
     if (q.kind === 'approval' && !member) continue;
+    // An owner item exists only for its wait (which card of the child he must act on).
+    const wait = q.kind === 'owner' ? cleanOwnerWait(q.wait) : undefined;
+    if (q.kind === 'owner' && !wait) continue;
     const rawText = q.kind === 'permission' ? undefined : cap(q.ownerText, MAX_OWNER_TEXT);
     const ownerText = rawText && isAsk ? askLine(rawText) : rawText;
     // An ask's options are re-validated whole: one refused option drops them all (the bar then
@@ -265,6 +269,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     out.push({
       id: q.id, sessionId: q.sessionId, kind: q.kind, state: q.state, createdAt,
       ...(member ? { member } : {}),
+      ...(wait ? { wait } : {}),
       ...(requestId ? { requestId } : {}),
       ...(ownerText ? { ownerText } : {}),
       ...(q.kind === 'ended' && typeof q.brief === 'string' ? { brief: stripControls(cap(q.brief, MAX_BRIEF) ?? '') } : {}),
@@ -283,6 +288,14 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     out.splice(done >= 0 ? done : 0, 1);
   }
   return out;
+}
+
+/** An owner item's wait, re-validated: a known kind and a card id of the chat's own shape. */
+function cleanOwnerWait(raw: unknown): { kind: OwnerWaitKind; id: string; key?: string } | undefined {
+  if (!isRecord(raw) || !oneOf(OWNER_WAIT_KINDS, raw.kind)) return undefined;
+  if (typeof raw.id !== 'string' || !/^[a-zA-Z0-9._-]{1,64}$/.test(raw.id)) return undefined;
+  const key = typeof raw.key === 'string' && raw.key.length <= MAX_WAIT_KEY && !/[\r\n]/.test(raw.key) ? raw.key : undefined;
+  return { kind: raw.kind, id: raw.id, ...(key ? { key } : {}) };
 }
 
 /** An AI Team member's agent slug, as the automation store accepts it (a path segment there). */
@@ -403,7 +416,7 @@ function sanitizeHeld(raw: unknown, queue: readonly SuperQueueItem[]): SuperHeld
   for (const h of raw) {
     if (!isRecord(h) || typeof h.item !== 'string' || !ids.has(h.item) || out.some((x) => x.item === h.item)) continue;
     if (typeof h.child !== 'string' || !okSessionId(h.child)) continue;
-    if (h.kind !== 'question' && h.kind !== 'done' && h.kind !== 'stuck' && h.kind !== 'gone') continue;
+    if (h.kind !== 'question' && h.kind !== 'done' && h.kind !== 'stuck' && h.kind !== 'gone' && h.kind !== 'owner') continue;
     const at = finite(h.at);
     if (at === undefined) continue;
     out.push({ item: h.item, child: h.child, kind: h.kind, at });

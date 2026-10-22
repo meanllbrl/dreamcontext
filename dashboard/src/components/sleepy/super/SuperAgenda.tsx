@@ -47,13 +47,15 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   }
 
   // A question opens its card in the centre chat (where the band's Answer takes him too); a
-  // child's permission shows that child beside the centre. A note is only read.
+  // child's permission, or a child waiting on something only he can do (`needsYou`), shows that
+  // child beside the centre, its card in view (SuperSurface.showChild). A note is only read.
+  const showsChild = (r: AgendaRow) => r.chip === 'permission' || r.chip === 'queued' || r.chip === 'needsYou';
   const press = (r: AgendaRow) => {
     if (!r.item) return;
-    if (r.chip === 'permission' || r.chip === 'queued') { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }
+    if (showsChild(r)) { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }
     onShowQuestion(r.item);
   };
-  const clickable = (r: AgendaRow) => !!r.item && (r.chip === 'permission' || r.chip === 'queued' ? !!r.sid && canShowChild(r.sid) : true);
+  const clickable = (r: AgendaRow) => !!r.item && (showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
 
   return (
     <div className="super-agenda" data-testid="super-agenda" data-variant="full" role="region" aria-label={t('super.agenda.label')}>
