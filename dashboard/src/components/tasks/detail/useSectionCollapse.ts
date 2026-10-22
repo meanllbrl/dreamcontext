@@ -45,10 +45,9 @@ function read(vault: string | null): CollapseMap {
 /**
  * Default-open set — and the single registry of section ids.
  *
- * Earned by what a task view is FOR, not by taste: you open a task to see where it stands
- * (Workflow), when it is due (Timeline), and whose it is (Ownership). Scoring, Labels and System
- * are reference — real, but consulted rather than read. Custom fields default open only because
- * a project that defined them did so deliberately.
+ * The Properties column shows Status, Priority, Versions & Sprints and Feature always; the rest
+ * sits under "More", CLOSED by default (you open a task to read where it stands, not its
+ * scoring). Inside More, every group is open: opening More is already the ask.
  *
  * `satisfies` (not `:`) is what keeps the keys literal, so {@link SectionId} is the exact set of
  * ids and a section that isn't listed here cannot be rendered. That matters: this map is read
@@ -57,14 +56,11 @@ function read(vault: string | null): CollapseMap {
  * failure anyone would think to look for — so it is a compile error instead.
  */
 export const DEFAULTS = {
-  identity: true,
-  workflow: true,
-  timeline: true,
-  ownership: true,
+  more: false,
+  prioritization: true,
+  plan: true,
   custom: true,
-  scoring: false,
-  labels: false,
-  system: false,
+  system: true,
 } satisfies Record<string, boolean>;
 
 export type SectionId = keyof typeof DEFAULTS;

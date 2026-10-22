@@ -8,7 +8,7 @@
  * pure helpers (`readOpenAgentsDetail`, `focusIntent`, `createForm`) are driven directly.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 vi.mock('../../dashboard/src/context/VaultContext', () => ({
@@ -58,6 +58,11 @@ const W5_KEYS = [
   'tasks.unassignAgentFailed',
 ] as const;
 
+/** The task drawer's parts (detail/*.tsx): the agent hand-off moved there from TaskDetailPanel. */
+const DETAIL_FILES = readdirSync(join(import.meta.dirname, '..', '..', 'dashboard', 'src', 'components', 'tasks', 'detail'))
+  .filter((f) => f.endsWith('.tsx'))
+  .map((f) => `dashboard/src/components/tasks/detail/${f}`);
+
 describe('the wave 4 fallback strings now have keys', () => {
   it('every key is in English and in Turkish, and the Turkish is not the English', () => {
     for (const key of W5_KEYS) {
@@ -77,6 +82,7 @@ describe('the wave 4 fallback strings now have keys', () => {
       'dashboard/src/pages/AiTeamPage.tsx',
       'dashboard/src/components/tasks/AssignToAgentComposer.tsx',
       'dashboard/src/components/tasks/TaskDetailPanel.tsx',
+      ...DETAIL_FILES,
       'dashboard/src/lib/assignToAgent.ts',
     ].map(read).join('\n').replace(/\s+/g, ' ');
     for (const key of W5_KEYS) {
@@ -101,6 +107,7 @@ describe('the wave 4 fallback strings now have keys', () => {
       'dashboard/src/components/agents/AutomationDialog.tsx',
       'dashboard/src/components/tasks/AssignToAgentComposer.tsx',
       'dashboard/src/components/tasks/TaskDetailPanel.tsx',
+      ...DETAIL_FILES,
       'dashboard/src/lib/assignToAgent.ts',
     ];
     for (const f of files) {

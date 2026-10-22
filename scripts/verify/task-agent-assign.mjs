@@ -192,11 +192,12 @@ async function openPage(browser, theme, base) {
     await until(async () => (await page.locator('.bd-card').count()) > 0, 15000);
   };
   const card = (t) => page.locator('.bd-card', { hasText: t.name }).first();
-  /** Open a task's detail, then its "Assign to agent" composer. */
+  /** Open a task's detail, then "Give to agent" → an AI Team agent (the assign composer). */
   const openComposer = async (t) => {
     await toBoard();
     await card(t).click();
-    await page.locator('.detail-icon-btn[aria-label="Assign to agent"]').first().click({ timeout: 10000 });
+    await page.locator('[data-testid="give-to-agent"]').first().click({ timeout: 10000 });
+    await page.locator('.gta-menu [data-testid^="give-agent-"]').first().click({ timeout: 8000 });
     return until(async () => (await page.locator('.modal.ata').count()) === 1, 8000);
   };
   const composer = page.locator('.modal.ata');
@@ -211,7 +212,7 @@ async function functional(browser, base) {
   try {
     // ── T1/T2: an approved agent, a To Do task ────────────────────────────────────────────
     console.log('\n═══ T1 / T2. Assign a To Do task to an approved agent ═══');
-    check('the task detail offers "Assign to agent", which opens the composer', await ui.openComposer(TASKS.todo));
+    check('the task detail\'s "Give to agent" menu opens the assign composer', await ui.openComposer(TASKS.todo));
     const disclosure = await composer.locator('.ata-disclosure').innerText().catch(() => '');
     // Guards a composer that hides what syncs: the owner must read it before assigning.
     check('the composer discloses what reaches the task and that it syncs to ClickUp or GitHub',

@@ -4576,7 +4576,7 @@ export function AgentSurface() {
       }
     };
     // `files.length === 0` is the collision guard: internal tab DnD (and board Kanban/
-    // Eisenhower DnD) carry no OS files, so we leave those drops untouched. A dropped file
+    // task DnD) carry no OS files, so we leave those drops untouched. A dropped file
     // goes to the pane UNDER THE CURSOR (not the last-focused one), resolved from the pane
     // slot's `data-pane` at the drop point; any file type is accepted.
     const onDrop = (e: DragEvent) => {

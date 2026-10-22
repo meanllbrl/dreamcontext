@@ -51,6 +51,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/handsfree/mac/uninstall',
   'POST /api/admin/shutdown',
   'POST /api/tasks/token',
+  'POST /api/tasks/:slug/assets',
   'POST /api/embeddings/download',
   'POST /api/recall/prompt',
   'GET /api/recall/options',

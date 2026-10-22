@@ -96,6 +96,7 @@
     "verify:agents-page": "node scripts/verify/agents-page.mjs",
     "verify:agents-migration": "node scripts/verify/agents-migration.mjs",
     "verify:agents-soul": "node scripts/verify/agents-soul.mjs",
+    "verify:task-ui": "node scripts/verify/task-ui.mjs",
     "verify:task-agent-assign": "node scripts/verify/task-agent-assign.mjs",
     "verify:chat-agent-picker": "node scripts/verify/chat-agent-picker.mjs",
     "verify:sidebar-rail": "node scripts/verify/sidebar-rail.mjs",

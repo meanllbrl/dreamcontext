@@ -92,7 +92,7 @@ export function TaskCreateModal({ onClose }: TaskCreateModalProps) {
             </select>
           </label>
           <label className="field">
-            <span className="field-label">Version</span>
+            <span className="field-label">Versions &amp; Sprints</span>
             <select className="field-select" value={version} onChange={e => setVersion(e.target.value)}>
               <option value="">No version</option>
               {(versions ?? []).map(v => (

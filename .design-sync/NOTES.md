@@ -12,21 +12,20 @@ Repo-specific gotchas for syncing this design system to claude.ai/design. Read t
 - It MUST live under `dashboard/` (not under `.design-sync/`) for two reasons:
   1. `PKG_DIR` is derived by walking up from `--entry` to the nearest named `package.json` → must land on `dashboard/package.json` (name `dreamcontext-dashboard`), which makes `srcDir`/`componentSrcMap` resolve correctly.
   2. esbuild's tsconfig auto-discovery (the converter passes no `tsconfig` esbuild option) finds `dashboard/tsconfig.json` (`jsx: "react-jsx"`) → automatic JSX runtime → the converter's reactShim handles `react/jsx-runtime`. Move the entry out of `dashboard/` and JSX breaks.
-- The synth entry the converter would auto-generate is NOT used (it `export *`s the ENTIRE `src/` tree, pulling in pages + `api/client` + Tauri side-effects). The custom entry keeps the bundle to the 16 components + their minimal deps.
+- The synth entry the converter would auto-generate is NOT used (it `export *`s the ENTIRE `src/` tree, pulling in pages + `api/client` + Tauri side-effects). The custom entry keeps the bundle to the 7 components + their minimal deps (9 task components were removed with the board-only Tasks screen, 2026-10-22).
 
 ## CSS architecture
 - The entry imports, in order: `_ds_fonts.css` → `src/styles/tokens.css` → `src/styles/reset.css` → `src/components/council/_ds-council-primitives.css`. esbuild bundles these (+ each component's own co-located `import './X.css'`) into `_ds_bundle.css`; `styles.css` `@import`s only `_ds_bundle.css`, so designs get the whole closure.
 - `global.css` is **deliberately NOT imported** — it carries app-shell rules that shouldn't leak into designs (`body { overflow: hidden }`, mermaid `!important` overrides, scrollbar styling, stagger animations). Only its tokens+reset (which the entry imports directly) are wanted.
 - Two **extraction** sync artifacts hold styles that synced components reference but don't co-locate (the rules live in page/parent stylesheets that aren't otherwise bundled). The entry imports both:
   - `src/components/council/_ds-council-primitives.css` — `.council-*` badge styles for StatusBadge/ModelBadge/StatTile/PersonaAvatar, extracted from `src/pages/CouncilPage.css`.
-  - `src/components/tasks/_ds-task-controls.css` — `.filter-chip*` trigger styles (from `TaskFilters.css`, needed by MultiSelectFilter & VersionFilter) + `.field-input`/`.field-select` form-control styles (from `TaskCreateModal.css`, needed by CustomFieldInput).
+  - `src/components/tasks/_ds-task-controls.css` — `.filter-chip*` trigger styles (originally from the since-deleted `TaskFilters.css`; the FilterPopover preview uses them) + `.field-input`/`.field-select` form-control styles (from `TaskCreateModal.css`, needed by CustomFieldInput).
   If any of those classes change upstream, re-extract. (We extract scoped rule-blocks rather than importing the whole 500-line page stylesheets, to keep the design closure from filling with selectors for non-synced components.)
 
 ## Component authoring notes (for re-authoring previews)
-- **Render clock is ~1 month behind the shell** and is NOT the fictional project date. Date-windowed viz (ActivityHeatmap; also any gantt/calendar/timeline) must generate dates as **day-offsets from `new Date()` evaluated in the preview module** (esbuild doesn't run top-level `new Date()` at build time, so it resolves to the render runtime). Absolute ISO dates render an empty heatmap. MiniCalendar's empty-range cell likewise defaults its view month to the render clock.
+- **Render clock is ~1 month behind the shell** and is NOT the fictional project date. Any date-windowed preview must generate dates as **day-offsets from `new Date()` evaluated in the preview module** (esbuild doesn't run top-level `new Date()` at build time, so it resolves to the render runtime).
 - **ModelBadge** `modelHue()` only varies on names containing `opus`/`sonnet`/`haiku`; everything else collapses to violet 280. Use those names so the hue axis visibly varies.
-- **RiceScatter** needs `task.rice = {reach,impact,confidence,effort,score}` all non-null (else the task drops to the "Unscored" tray); completed tasks are filtered out. Encoding: X=effort (low-effort RIGHT), Y=impact, radius=reach, opacity=confidence, color=status.
-- **SearchableSelect** open state is INTERNAL (no `isOpen` prop) — previews can only show the closed trigger; the dropdown can't render statically. MultiSelectFilter/VersionFilter/FilterPopover take `isOpen` as a prop, so their open popovers DO render (and fit their card cells — no cardMode override needed).
+- **SearchableSelect** open state is INTERNAL (no `isOpen` prop) — previews can only show the closed trigger; the dropdown can't render statically. FilterPopover takes `isOpen` as a prop, so its open popover DOES render (and fits its card cell — no cardMode override needed).
 
 ## Fonts
 - The dashboard loads Inter / Plus Jakarta Sans / JetBrains Mono from **Google Fonts at runtime** (a `<link>` in `dashboard/index.html`). `dashboard/_ds_fonts.css` carries the equivalent `@import url(...)`, imported first so esbuild hoists it to the top of `_ds_bundle.css` (a remote `@import` must precede other rules — verified it lands at line 1).
@@ -36,9 +35,9 @@ Repo-specific gotchas for syncing this design system to claude.ai/design. Read t
 ## SearchableSelect regex (app source was edited — intentional, user-approved)
 - `dashboard/src/components/tasks/SearchableSelect.tsx` `fold()` had accent-folding regexes written with **literal combining-mark / Turkish bytes** (`/[̀-ͯ]/g` etc.). That made the whole compiled bundle crash ("Range out of order in character class") whenever it wasn't served as UTF-8 (the bundle was the ONLY non-ASCII in the build). Fixed in source to escaped code points (`̀-ͯ`, `ı`, ...) — byte-identical behavior, ASCII-clean bundle. This is a real latent portability fix, kept in the app source.
 
-## dtsPropsFor (all 16 hand-written)
-- Synth-entry mode couldn't extract per-component prop types — every `.d.ts` came out as `[key: string]: unknown`. `cfg.dtsPropsFor` supplies the real prop bodies for all 16, pulled from each component's source interface.
-- Task-consuming components inline the full `Task` shape (from `src/hooks/useTasks.ts`) once for their primary `task`/`tasks` prop, and use TS indexed-access self-refs (`<Name>Props['tasks'][number]`) for callback params to stay DRY. If the real `Task`/`CustomFieldDef`/`VersionFilterItem` interfaces change, update the matching `dtsPropsFor` entry.
+## dtsPropsFor (all 7 hand-written)
+- Synth-entry mode couldn't extract per-component prop types — every `.d.ts` came out as `[key: string]: unknown`. `cfg.dtsPropsFor` supplies the real prop bodies for all 7, pulled from each component's source interface.
+- Task-consuming components inline the full `Task` shape (from `src/hooks/useTasks.ts`) once for their primary `task`/`tasks` prop, and use TS indexed-access self-refs (`<Name>Props['tasks'][number]`) for callback params to stay DRY. If the real `CustomFieldDef` interface changes, update the matching `dtsPropsFor` entry.
 
 ## Build / validate commands
 ```

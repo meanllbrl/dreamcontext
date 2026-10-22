@@ -17,6 +17,10 @@ interface BoardViewTabsProps {
   onRename: (id: string, name: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Open tasks past their due date. Drawn as the "N overdue" chip on the right (0 = no chip). */
+  overdue?: number;
+  /** Clicking the overdue chip applies the at-risk filter. */
+  onOverdue?: () => void;
 }
 
 export function BoardViewTabs(p: BoardViewTabsProps) {
@@ -116,6 +120,19 @@ export function BoardViewTabs(p: BoardViewTabsProps) {
       <div className="bd-hover bd-hover-text" onClick={startCreate} title="Create a new blank view (Kanban, no filters)" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', color: 'var(--color-text-tertiary)', fontSize: 12.5, fontWeight: 500, flex: '0 0 auto' }}>+ New view</div>
 
       <div style={{ flex: 1, minWidth: 8 }} />
+
+      {!!p.overdue && p.onOverdue && (
+        <button
+          type="button"
+          className="bd-overdue-chip"
+          data-testid="overdue-chip"
+          onClick={p.onOverdue}
+          title="Show the tasks that are overdue or due soon"
+        >
+          <span className="bd-overdue-dot" aria-hidden />
+          {p.overdue} overdue
+        </button>
+      )}
 
       {p.isDirty && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: '0 0 auto' }}>

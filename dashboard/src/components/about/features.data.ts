@@ -127,11 +127,11 @@ const BRAIN_FLOW: FlowSpec = {
 const TASKS_FLOW: FlowSpec = {
   viewBox: MINI_VB,
   ariaLabel:
-    'Task management: each task carries a LIFO changelog viewable as a Kanban board, an Eisenhower matrix, or RICE-scored.',
+    'Task management: each task carries a LIFO changelog, lives on a Kanban board with its subtasks, and can be RICE-scored.',
   nodes: [
     { id: 'task', x: 16, y: 50, w: 130, h: 70, title: 'task .md', sub: 'LIFO changelog', variant: 'hook' },
     { id: 'views', x: 200, y: 24, w: 144, h: 44, title: 'Kanban', variant: 'region', breathe: true },
-    { id: 'eis', x: 200, y: 74, w: 144, h: 40, title: 'Eisenhower', variant: 'region', breathe: true, breatheDelay: 0.2 },
+    { id: 'eis', x: 200, y: 74, w: 144, h: 40, title: 'Subtasks', variant: 'region', breathe: true, breatheDelay: 0.2 },
     { id: 'rice', x: 200, y: 120, w: 144, h: 40, title: 'RICE score', variant: 'region', breathe: true, breatheDelay: 0.4 },
   ],
   edges: [
@@ -296,8 +296,8 @@ export const FEATURES: FeatureItem[] = [
   {
     id: 'task-management',
     title: 'Task management',
-    tagline: 'LIFO changelogs, viewable as Kanban, Eisenhower or RICE.',
-    body: 'Each task is a Markdown file with a LIFO changelog, so any session reads where the last one left off. View the backlog as a Kanban board, triage it on an Eisenhower matrix, or rank it numerically with RICE — Reach × Impact × Confidence ÷ Effort.',
+    tagline: 'LIFO changelogs on a Kanban board, with subtasks and RICE.',
+    body: 'Each task is a Markdown file with a LIFO changelog, so any session reads where the last one left off. Work it on a Kanban board where subtasks fold into their parent card, attach screenshots and clips to a task, and rank it numerically with RICE — Reach × Impact × Confidence ÷ Effort.',
     defaultOpen: true,
     tag: 'Tasks',
     flow: TASKS_FLOW,
@@ -371,7 +371,7 @@ export const FEATURES: FeatureItem[] = [
     id: 'versions-releases',
     title: 'Versions & releases',
     tagline: 'Changelog and release readiness tracked in the brain.',
-    body: 'A structured changelog and release notes live alongside the context, so version history and release readiness are part of the brain the agent reads — not an afterthought scattered across commits.',
+    body: 'A structured changelog and release notes live alongside the context, so version history and release readiness are part of the brain the agent reads — not an afterthought scattered across commits. On the Tasks board the same versions plan the work as Versions & Sprints.',
     defaultOpen: false,
     tag: 'Knowledge',
     glyph: '⎇',

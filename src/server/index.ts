@@ -32,6 +32,7 @@ import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSupe
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleTaskAssetsList, handleTaskAssetRaw, handleTaskAssetUpload } from './routes/task-assets.js';
 import { handleSleepEvalLabelsGet, handleSleepEvalLabelsPost } from './routes/sleep-eval.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
@@ -329,6 +330,10 @@ export function buildRouter(): Router {
   router.delete('/api/task-overrides/fields/:key', handleTaskOverrideRemoveField);
   router.post('/api/task-overrides/statuses', handleTaskOverrideAddStatus);
   router.delete('/api/task-overrides/statuses/:key', handleTaskOverrideRemoveStatus);
+  // Attachments (state/assets/<slug>/, local): before the generic :slug matchers.
+  router.get('/api/tasks/:slug/assets', handleTaskAssetsList);
+  router.get('/api/tasks/:slug/assets/raw', handleTaskAssetRaw);
+  router.post('/api/tasks/:slug/assets', handleTaskAssetUpload);
   router.get('/api/tasks/:slug', handleTasksGet);
   router.get('/api/tasks/:slug/readiness', handleTasksReadiness);
   router.delete('/api/tasks/:slug', handleTasksDelete);

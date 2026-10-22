@@ -43,6 +43,8 @@ interface AssignToAgentComposerProps {
   onClose: () => void;
   /** Called once the run has started, with the confirmation line (a board can flash it). */
   onAssigned?: (message: string) => void;
+  /** Start with this agent picked (the "Give to agent" menu names one). */
+  initialAgent?: string;
 }
 
 /**
@@ -54,12 +56,12 @@ interface AssignToAgentComposerProps {
  * decisions themselves (who is offered, what a refusal says, approve-then-assign) live in
  * `lib/assignToAgent.ts`.
  */
-export function AssignToAgentComposer({ task, onClose, onAssigned }: AssignToAgentComposerProps) {
+export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent }: AssignToAgentComposerProps) {
   const { t } = useI18n();
   const { data: agents, isLoading } = useAgents();
   const offered = useMemo(() => offeredAgents(agents), [agents]);
   const [picked, setPicked] = useState<string | null>(null);
-  const slug = picked ?? initialAgentSlug(offered, task.agent);
+  const slug = picked ?? (initialAgent && offered.some((a) => a.slug === initialAgent) ? initialAgent : initialAgentSlug(offered, task.agent));
   const agent = findAgent(offered, slug);
   const name = agent?.title ?? slug ?? '';
 

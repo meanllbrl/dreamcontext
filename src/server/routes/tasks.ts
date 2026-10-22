@@ -41,6 +41,9 @@ import {
   type StatusKind,
 } from '../../lib/task-status.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
+import { childrenOf, validateParentLink, type ParentLinkTask } from '../../lib/task-parent.js';
+import { summarizeAssets } from '../../lib/task-assets.js';
+import { TASK_SLUG_RE } from '../../lib/task-slug.js';
 import {
   getTaskBackend,
   getTaskSyncStatus,
@@ -59,6 +62,18 @@ function toApiTask(task: TaskData): Omit<TaskData, 'raw' | 'rawBody'> {
 
 function backendFor(contextRoot: string): TaskBackend {
   return getTaskBackend(contextRoot);
+}
+
+/** The slug + parent of every task, for the sub-task link rules (lib/task-parent.ts). */
+async function parentLinkTasks(backend: TaskBackend): Promise<ParentLinkTask[]> {
+  return (await backend.list()).map((s) => ({ slug: s.name, parent_task: s.parent_task }));
+}
+
+/** `parent_task` as a request carries it: a task slug, null, or (anything else) invalid. */
+function parseParentField(raw: unknown): { ok: true; value: string | null } | { ok: false } {
+  if (raw === null || raw === '') return { ok: true, value: null };
+  if (typeof raw === 'string' && TASK_SLUG_RE.test(raw)) return { ok: true, value: raw };
+  return { ok: false };
 }
 
 /**
@@ -335,10 +350,11 @@ export async function handleTasksList(
 ): Promise<void> {
   const backend = backendFor(contextRoot);
   const summaries = await backend.list();
-  const tasks: ReturnType<typeof toApiTask>[] = [];
+  const tasks: (ReturnType<typeof toApiTask> & { attachments: { count: number; cover: string | null } })[] = [];
   for (const s of summaries) {
     const task = await backend.get(s.name);
-    if (task) tasks.push(toApiTask(task));
+    // The card's clip: one top-level directory read per task with a folder, none without.
+    if (task) tasks.push({ ...toApiTask(task), attachments: summarizeAssets(contextRoot, task.slug) });
   }
   sendJson(res, 200, { tasks });
 }
@@ -368,14 +384,45 @@ export async function handleTasksCreate(
   const priority = (body.priority as string) ?? 'medium';
   const urgency = (body.urgency as string) ?? 'medium';
   const tags = Array.isArray(body.tags) ? body.tags as string[] : [];
+
+  // A subtask (`parent_task`) is created under an existing top-level task. It inherits the
+  // parent's version and feature when the request names none, and its Why may be omitted:
+  // being part of the parent IS why it exists.
+  const backend = backendFor(contextRoot);
+  let parent: TaskData | null = null;
+  if (body.parent_task !== undefined && body.parent_task !== null && body.parent_task !== '') {
+    const parsed = parseParentField(body.parent_task);
+    if (!parsed.ok || parsed.value === null) {
+      sendError(res, 400, 'invalid_parent_task', 'parent_task must be a task slug or null.');
+      return;
+    }
+    const verdict = validateParentLink(await parentLinkTasks(backend), slugify(name.trim()), parsed.value);
+    if (!verdict.ok) { sendError(res, 400, verdict.code, verdict.message); return; }
+    parent = await backend.get(parsed.value);
+    if (!parent) { sendError(res, 400, 'parent_missing', `Parent task not found: ${parsed.value}`); return; }
+  }
+
   // Every task records why it exists (created_at covers the "when") — reject
   // empty scaffolds from the dashboard the same way the CLI does.
-  const why = typeof body.why === 'string' ? body.why.trim() : '';
+  let why = typeof body.why === 'string' ? body.why.trim() : '';
+  if (!why && parent) why = `Part of ${parent.name} (\`${parent.slug}\`).`;
   if (!why) {
     sendError(res, 400, 'missing_why', 'Every task must say why it exists — provide a non-empty "why".');
     return;
   }
-  const version = (body.version as string) ?? null;
+  const version = body.version !== undefined ? ((body.version as string) ?? null) : (parent?.version ?? null);
+  const relatedFeature = typeof body.related_feature === 'string' && body.related_feature
+    ? body.related_feature
+    : (body.related_feature === undefined ? (parent?.related_feature ?? null) : null);
+  let featureLink: { slug: string } | null = null;
+  if (relatedFeature) {
+    const resolved = resolveFeature(contextRoot, relatedFeature);
+    if (!resolved.ok) {
+      sendError(res, 400, 'invalid_related_feature', `Unknown feature: "${relatedFeature}"`);
+      return;
+    }
+    featureLink = { slug: resolved.slug };
+  }
 
   const validPriorities = ['critical', 'high', 'medium', 'low'];
   if (!validPriorities.includes(priority)) {
@@ -454,7 +501,6 @@ export async function handleTasksCreate(
     return;
   }
 
-  const backend = backendFor(contextRoot);
   let task: TaskData;
   try {
     task = await backend.create({
@@ -480,6 +526,16 @@ export async function handleTasksCreate(
   }
 
   if (verdict.underBar) recordCycleTaskFiled(contextRoot, task.slug);
+
+  // The link and the feature are written right after the create (CreateTaskInput carries
+  // neither): parent_task is local-only, related_feature keeps its bidirectional link.
+  if (parent || featureLink) {
+    task = await backend.updateFields(task.slug, {
+      ...(parent ? { parent_task: parent.slug } : {}),
+      ...(featureLink ? { related_feature: featureLink.slug } : {}),
+    });
+    if (featureLink) applyTaskFeatureLink(contextRoot, task.slug, featureLink);
+  }
 
   recordDashboardChange(contextRoot, {
     entity: 'task',
@@ -807,6 +863,12 @@ export async function handleTasksDelete(
     return;
   }
 
+  // A parent's children are never deleted with it: their link is cleared first, so each
+  // becomes a top-level task.
+  for (const child of childrenOf(await parentLinkTasks(backend), slug)) {
+    await backend.updateFields(child.slug, { parent_task: null, updated_at: today() });
+  }
+
   await backend.delete(slug);
 
   // Consolidation must see deletions too — recorded into the sleep state's
@@ -950,7 +1012,15 @@ export async function handleTasksUpdate(
       return;
     }
   }
-  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'objectives', 'assignee', 'agent'];
+  // `parent_task` (local-only, two levels max): a task slug, or null to clear.
+  if (body.parent_task !== undefined) {
+    const parsed = parseParentField(body.parent_task);
+    if (!parsed.ok) { sendError(res, 400, 'invalid_parent_task', 'parent_task must be a task slug or null.'); return; }
+    const verdict = validateParentLink(await parentLinkTasks(backend), slug, parsed.value);
+    if (!verdict.ok) { sendError(res, 400, verdict.code, verdict.message); return; }
+    body.parent_task = parsed.value;
+  }
+  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'objectives', 'assignee', 'agent', 'parent_task'];
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       const oldVal = (oldData[field] ?? null) as FieldChange['from'];
@@ -1221,7 +1291,8 @@ export async function handleTasksChangelog(
   const logContent = `### ${today()} - Dashboard Update\n- ${(body.content as string).trim()}`;
 
   try {
-    await backend.addChangelog(slug, logContent);
+    // A task without `## Changelog` gets one, rather than the entry failing.
+    await backend.addChangelog(slug, logContent, { createIfMissing: true });
   } catch {
     sendError(res, 500, 'write_error', 'Failed to write changelog entry.');
     return;
@@ -1285,6 +1356,7 @@ export async function handleTasksInsert(
     user_stories: 'User Stories',
     acceptance_criteria: 'Acceptance Criteria',
     why: 'Why',
+    workflow: 'Workflow',
   };
 
   const sectionKey = section.toLowerCase();

@@ -152,9 +152,10 @@ export function VersionsPopover({ tasks, style }: VersionsPopoverProps) {
       onClick={(e) => e.stopPropagation()}
       style={{ position: 'absolute', top: 42, right: 0, width: 320, maxHeight: 'min(520px, 72vh)', overflowY: 'auto', background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', borderRadius: 11, boxShadow: 'var(--shadow-lg)', padding: 6, zIndex: 40, ...style }}
     >
+      <div style={{ padding: '6px 9px 2px', fontSize: 12.5, fontWeight: 700, color: 'var(--color-text)' }}>Versions &amp; Sprints</div>
       {/* Create */}
       <div style={{ padding: '2px 4px 8px', borderBottom: '1px solid var(--color-border)', marginBottom: 4 }}>
-        <div style={sectionLabel}>New version</div>
+        <div style={sectionLabel}>New version or sprint</div>
         <div style={{ display: 'flex', gap: 6, padding: '0 5px' }}>
           <input className="bd-input" value={newVer} onChange={(e) => setNewVer(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onCreate(); }} placeholder="e.g. v0.2.0" spellCheck={false}
             style={{ flex: '0 0 110px', minWidth: 0, height: 30, padding: '0 10px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text)', fontSize: 12.5, fontFamily: 'var(--font-mono)', outline: 'none' }} />
@@ -177,7 +178,7 @@ export function VersionsPopover({ tasks, style }: VersionsPopoverProps) {
       {releasedRows.map(renderRow)}
 
       {versions.length === 0 && unregistered.length === 0 && !active && (
-        <div style={{ padding: '6px 9px 4px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>No versions yet. Add one above.</div>
+        <div style={{ padding: '6px 9px 4px', fontSize: 12, color: 'var(--color-text-tertiary)' }}>No versions or sprints yet. Add one above.</div>
       )}
     </div>
   );
