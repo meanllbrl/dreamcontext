@@ -15,9 +15,9 @@ import { targetPath } from '../../whiteboard/pagePopupModel';
 import '../../whiteboard/widgets/widgets.css';
 import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
-import { AgentCard, ChatTile } from './AgentCard';
+import { AgentCard, ChatTile, type AsksOwner } from './AgentCard';
 import { InsightCard } from './InsightCard';
-import { toneOfStatus } from './superHandover';
+import { backgroundOf, toneOfStatus } from './superHandover';
 import { KindTile, ResolvedTitle, TaskPageHead } from './SuperTiles';
 import { LAYOUT } from './handoverMotion';
 import { useLiveSession } from './liveSession';
@@ -66,8 +66,15 @@ export function frameKeyOf(session: ChatSession | undefined): string {
 export function chatStatus(session: ChatSession | undefined): SessionStatusInfo {
   return deriveSessionStatus({
     dormant: !session, status: session?.status, busy: session?.busy, asking: session?.asking,
-    agentsWorking: session?.agentsWorking,
+    // A shell it left running in the background is work still under way: its turn ended, its
+    // job did not (field 2026-10-22: "done" over a 10-minute script with its own ⧉ 1 chip).
+    agentsWorking: !!session?.agentsWorking || backgroundShellsRunning(session),
   });
+}
+
+function backgroundShellsRunning(session: ChatSession | undefined): boolean {
+  const model = session?.getModel();
+  return !!model && backgroundOf(model.subAgents).shells > 0;
 }
 
 /** The Super Agent's centre: its chat's status, `asking` while a question it put to the owner
@@ -117,7 +124,7 @@ export interface SuperContainerProps extends SuperCardActions {
   cue?: StageCue;
   /** The hand-over has landed: a non-chat card may mount its view (SuperSurface). */
   viewReady: boolean;
-  asksOwner: boolean;
+  asksOwner: AsksOwner;
   /** This card hosts the shown chat's slot (the half card, or the first presented chat). */
   shownSlot: boolean;
   /** A press on a FLOATING card arms its drag (the card is one grab handle; F6, FE1). */

@@ -120,7 +120,8 @@ export function SuperAgenda({ state, look, compact = false, canShowChild, onShow
 
   // A question waiting on the owner (the super's own, a child's it escalated) opens its card in the
   // centre chat, where the band's Answer takes him too: the child shown beside it is read-only.
-  const isQuestion = (r: JobRow) => r.section === 'waiting' && !!r.item && r.chip !== 'permission' && r.chip !== 'queued';
+  // A child waiting on something only he can do opens that child, its card in view (SuperSurface.showChild).
+  const isQuestion = (r: JobRow) => r.section === 'waiting' && !!r.item && r.chip !== 'permission' && r.chip !== 'queued' && r.chip !== 'needsYou';
   const press = (r: JobRow) => {
     if (r.section === 'next') return;
     if (isQuestion(r)) onShowQuestion(r.item as string);

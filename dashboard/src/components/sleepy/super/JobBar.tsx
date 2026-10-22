@@ -13,6 +13,7 @@ import {
 } from './superQuestions';
 import type { Rect } from './superLayout';
 import { SuperAgentIcon } from '../../layout/NavIcons';
+import { cssEsc } from './StageMotion';
 import './JobBar.css';
 
 /**
@@ -50,7 +51,7 @@ import './JobBar.css';
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
  * request re-sent by the server (the answer never landed), reopens it.
  */
-export function JobBar({ state, head, waiting, rect, look, superSession, sessionFor, titleFor, onReplyToSuper }: {
+export function JobBar({ state, head, waiting, rect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild }: {
   state: SuperStateView;
   head: SuperQueueItem | null;
   /** The top band above the centre (planStage's `queue`). */
@@ -64,6 +65,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
   sessionFor: (claudeId: string) => ChatSession | undefined;
   titleFor: (claudeId: string) => string;
   onReplyToSuper: () => void;
+  /** Bring a child beside the centre (and its open owner card into view). */
+  onShowChild: (sid: string) => void;
 }) {
   const { t } = useI18n();
   // An `ask` is the super agent's own question: there is no child behind it.
@@ -138,6 +141,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
               ? <QuestionHead item={head} text={head.ownerText ?? ''} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'approval'
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
+              : head.kind === 'owner'
+                ? <OwnerHead text={head.ownerText ?? ''} onOpen={() => onShowChild(head.sessionId)} />
               : <QuestionHead item={head} text={head.ownerText ?? t('super.queue.escalatedAlarm')} onReplyToSuper={onReplyToSuper} />}
           {waiting > 1 && <span className="super-queue-more">{t('super.queue.more').replace('{n}', String(waiting - 1))}</span>}
       </div>
@@ -166,6 +171,55 @@ function QuestionHead({ item, text, onReplyToSuper }: { item: SuperQueueItem; te
       </span>
     </>
   );
+}
+
+/**
+ * A child waiting on something only the owner can do (an `owner` item: a command to run himself,
+ * a key to type, a checklist, a sign-in): what it needs, and ONE button that brings the child
+ * beside the centre with that card in view. The card itself does it; the bar draws no copy.
+ */
+function OwnerHead({ text, onOpen }: { text: string; onOpen: () => void }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <span className="super-queue-needs" data-testid="super-queue-needs">{t('super.card.needsYou')}</span>
+      <QueueText full={text}>{text}</QueueText>
+      <span className="super-queue-actions">
+        <button type="button" className="super-queue-btn super-queue-btn--option" data-testid="super-queue-open-owner" onClick={onOpen}>
+          {t('super.queue.openCard')}
+        </button>
+      </span>
+    </>
+  );
+}
+
+/** The reveal in flight: a newer one (another click) supersedes it. */
+let revealSeq = 0;
+
+/**
+ * Bring a child's owner card (`run`, `secret`, `checklist`) into view in the child shown beside
+ * the centre, once it has mounted there (side by side renders on the next frames). The newest
+ * card with that id wins. Gives up quietly after ~1.5 s: the child is in view either way. The
+ * keyboard follows only if it has not moved since the click (he may already be typing elsewhere).
+ */
+export function showOwnerCard(wait: { kind: string; id: string } | undefined): void {
+  if (!wait) return;
+  const seq = ++revealSeq;
+  const from = document.activeElement;
+  let tries = 0;
+  const find = () => {
+    if (seq !== revealSeq) return;
+    const sel = `[data-super-slot="shown"] .chat-viewcard[data-view-kind="${cssEsc(wait.kind)}"][data-view-id="${cssEsc(wait.id)}"]`;
+    const cards = document.querySelectorAll<HTMLElement>(sel);
+    const card = cards[cards.length - 1];
+    if (!card) { if (++tries < 30) window.setTimeout(find, 50); return; }
+    const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+    if (document.activeElement === from || document.activeElement === document.body) {
+      card.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true });
+    }
+  };
+  window.requestAnimationFrame(find);
 }
 
 /** Bring the question's card in the super chat into view and put the keyboard on it. False when

@@ -889,7 +889,8 @@
   pointer-events: auto;
   animation: super-pill-in 200ms ease-out;
 }
-.super-queue-head[data-kind='permission'] { --queue-tone: var(--mood-waiting); }
+.super-queue-head[data-kind='permission'],
+.super-queue-head[data-kind='owner'] { --queue-tone: var(--mood-waiting); }
 /* The Super Agent's own question carries its glyph (NavIcons SuperAgentIcon) before its name;
    the head's tone stays the colour channel. */
 .super-queue-super { flex: none; display: inline-flex; color: var(--color-text-secondary); margin-right: -6px; }
@@ -899,6 +900,27 @@
 .super-queue-tool { color: var(--color-text); margin-right: 8px; }
 .super-queue-input { font-family: var(--font-mono); font-size: var(--font-size-xs); }
 .super-queue-actions { flex: none; display: flex; flex-wrap: nowrap; gap: 6px; }
+/* A child waiting on something only the owner can do: the same badge its card wears. It gives
+   way before the head's one button does: it shrinks, and a narrow bar drops it (the tone stays). */
+.super-queue-needs {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+  height: 20px;
+  line-height: 20px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--mood-waiting) 18%, transparent);
+  color: var(--mood-waiting);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.super-queue-head[data-kind='owner'] .super-queue-text { min-width: 0; }
+@media (max-width: 640px) {
+  .super-queue-head[data-kind='owner'] .super-queue-needs { display: none; }
+}
 .super-queue-more { flex: none; font-size: var(--font-size-xs); color: var(--color-text-tertiary); padding-right: 8px; white-space: nowrap; }
 .super-queue-full {
   display: none;

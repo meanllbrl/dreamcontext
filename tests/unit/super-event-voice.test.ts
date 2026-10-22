@@ -43,9 +43,9 @@ let root: string;
 
 const reg = (sid: string, mode = 'basic'): ChatHandle => registerChat({ sessionId: sid, conversationId: null, vault: 'acme', mode });
 const child = (sid: string, extra: Record<string, unknown> = {}) => ({ sessionId: sid, brief: `brief of ${sid}`, adopted: false, startedAt: 1, row: 'working', ...extra });
-const roster = (h: ChatHandle, n: number) => h.observe({
+const roster = (h: ChatHandle, n: number, desc = 'job') => h.observe({
   type: 'system', subtype: 'background_tasks_changed',
-  tasks: Array.from({ length: n }, (_, i) => ({ task_id: `bg${i}`, task_type: 'local_bash', description: `job ${i}` })),
+  tasks: Array.from({ length: n }, (_, i) => ({ task_id: `bg${i}`, task_type: 'local_bash', description: `${desc} ${i}` })),
 });
 
 async function drain(): Promise<void> {
@@ -175,7 +175,8 @@ describe('background work that never ends (a dev server, a persistent Monitor)',
 
   it('holds the row only until BACKGROUND_QUIET_MS of silence; then the job is done (and an awaited one tells him)', async () => {
     const { hs, delivered } = await boot({ dev: { awaited: true } });
-    roster(hs[0], 1);
+    // A server left running (a job with an end holds the row longer: super-owner-wait.test.ts).
+    roster(hs[0], 1, 'Start the dev server');
     hs[0].observe({ type: 'result' });
     await advance(BACKGROUND_QUIET_MS - 60_000, 30_000);
     expect(await items('done', 'dev')).toHaveLength(0);

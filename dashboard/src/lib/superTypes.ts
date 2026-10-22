@@ -137,13 +137,16 @@ export interface SuperChild {
   etaAt?: number;
 }
 
-export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone'] as const;
+/** `waiting`: its turn ended on something only the owner can do (an `owner` item is open). */
+export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone', 'waiting'] as const;
 export type ChildRow = typeof CHILD_ROWS[number];
 export const STUCK_REASONS = ['error', 'stale'] as const;
 export type StuckReason = typeof STUCK_REASONS[number];
 
 /** `approval`: an AI Team member the Super Agent chose is not approved here (server-written). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh'] as const;
+/** `owner`: a child left something only the owner can do (a `run` card, a `secret`, a
+ *  `checklist`): his from birth, closed when his answer reaches the child. */
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -168,7 +171,13 @@ export interface SuperQueueItem {
   brief?: string;
   /** An `approval` item's AI Team member (agent slug). */
   member?: string;
+  /** An `owner` item's wait: the child's card he must act on. */
+  wait?: { kind: OwnerWaitKind; id: string };
 }
+
+/** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`). */
+export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist'] as const;
+export type OwnerWaitKind = typeof OWNER_WAIT_KINDS[number];
 
 /** `super ask` in AskUserQuestion's shape (MIRROR of src/lib/super/types.ts). */
 export interface SuperAskOption { label: string; description?: string; preview?: string }
@@ -178,7 +187,7 @@ export interface SuperAskSpec { title?: string; questions: SuperAskQuestion[]; s
 /** One event that arrived while a question was open with the owner, held for the super agent
  *  and told with his answer (MIRROR of src/lib/super/types.ts `SuperHeldEvent`). The ajanda's
  *  "while you were asked" reads these from the record. */
-export interface SuperHeldEvent { item: string; child: string; kind: 'question' | 'done' | 'stuck' | 'gone'; at: number }
+export interface SuperHeldEvent { item: string; child: string; kind: 'question' | 'done' | 'stuck' | 'gone' | 'owner'; at: number }
 
 /** A job the Super Agent gave an AI Team member (`super team ask`); status is read from its thread. */
 export interface SuperTeamJob {

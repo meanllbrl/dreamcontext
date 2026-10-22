@@ -88,6 +88,7 @@ function remember(id: string, reach: OwnerQuestionReach): void {
 
 /** Does the owner answer this item (not a permission: the window rings that one)? */
 function announces(item: SuperQueueItem | null): item is SuperQueueItem {
+  if (item?.kind === 'owner') return item.state !== 'done';
   return !!item && item.state === 'escalated' && (item.kind === 'question' || item.kind === 'ask' || item.kind === 'approval');
 }
 
@@ -98,6 +99,7 @@ function clip(s: string): string {
 
 function bodyOf(item: SuperQueueItem): string {
   if (item.kind === 'approval') return `An AI Team member needs your approval${item.member ? `: ${item.member}` : ''}.`;
+  if (item.kind === 'owner') return clip(`A job needs you: ${item.ownerText ?? 'something only you can do'}`);
   return clip(item.ownerText ?? '') || 'A question is waiting for your answer.';
 }
 
@@ -137,7 +139,7 @@ export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState,
   const here = looking.vault === vault;
   if (here && looking.session === session) via.push('screen');
   if (Date.now() - notchPolledAt <= NOTCH_LIVE_MS) via.push('notch');
-  const title = `Super Agent asks · ${vault}`;
+  const title = head.kind === 'owner' ? `A job needs you · ${vault}` : `Super Agent asks · ${vault}`;
   const body = bodyOf(head);
   if (!here) {
     let link: string | null = null;

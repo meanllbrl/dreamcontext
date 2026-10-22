@@ -46,7 +46,8 @@ import { ownedLoopbackPorts } from '../owned-ports.js';
 import { existsSync } from 'node:fs';
 import { insightPath } from '../../lib/lab/store.js';
 import { noteDismissed } from '../../lib/super/proactive.js';
-import { activityOf, getChat, onChatChange } from '../../lib/assistant/chat-registry.js';
+import { activityOf, dropOwnerWait, getChat, onChatChange } from '../../lib/assistant/chat-registry.js';
+import { noteSuperSend } from '../../lib/super/owner-wait.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
@@ -995,7 +996,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       woke = true;
     }
     // Through the window, as an owner message into the child's own tab (so it reaches the
-    // child's `writeOwnerTurn`, and its hand-over note rides with it).
+    // child's `writeOwnerTurn`, and its hand-over note rides with it). Noted as the Super's own:
+    // it answers no wait the child has on the owner (owner-wait.ts).
+    noteSuperSend(child, text);
     let r = await sendWindowCommand(c.token, 'send', { tab: child, text });
     // The window still draws the tab as parked, or the resumed process is not up yet: it answers
     // "not running" until it is. Wake it (once) and ask again for a few seconds.
@@ -1061,6 +1064,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const item = id ? c.state.queue.find((q) => q.id === id) : undefined;
     if (!item) { refuse(res, 404, 'unknown_item', 'no such queue item (`dreamcontext super queue list`)'); return; }
     if (item.kind === 'permission') { refuse(res, 403, 'permission_item', 'a permission is closed only by the owner\'s answer'); return; }
+    // An owner wait the Super closes (he did it another way) is answered: it never comes back.
+    if (item.kind === 'owner' && item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id);
     await writeSuper(c.who.contextRoot, (s) => { const q = s.queue.find((x) => x.id === id); if (q && q.kind !== 'permission') q.state = 'done'; });
     void pumpSuper(c.who.contextRoot);
     ok(res, { item: id, done: true });
@@ -1668,6 +1673,7 @@ async function retirePredecessor(c: SuperCaller, sid: string): Promise<{ child: 
   if (r.ended) return { child: sid, ended: true };
   // The owner's own chat, or one he is looking at, is never told to stop by the agent.
   if (!isLiveChat(sid) || r.reason === 'adopted' || r.reason === 'focused') return { child: sid, ended: false, reason: r.reason };
+  noteSuperSend(sid, SUCCESSOR_STOP_TEXT);
   const sent = await sendWindowCommand(c.token, 'send', { tab: sid, text: SUCCESSOR_STOP_TEXT }).catch(() => null);
   const how = sent?.ok ? (sent.result as { delivered?: unknown } | undefined)?.delivered : undefined;
   return { child: sid, ended: false, reason: r.reason, told: typeof how === 'string' ? how : !!sent?.ok };

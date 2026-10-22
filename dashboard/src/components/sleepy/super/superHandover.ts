@@ -194,11 +194,12 @@ export function latchSeen(latch: AnswerLatch, key: string | null, pendingPresent
 
 // ─── The queue strip ───────────────────────────────────────────────────────────
 
-/** An item that is the OWNER's to answer: a permission (never the agent's), or a question the
- *  Super Agent escalated with words of its own. */
+/** An item that is the OWNER's to answer: a permission (never the agent's), a child waiting on
+ *  something only he can do (`owner`: his from birth), or a question the Super Agent escalated
+ *  with words of its own. */
 export function needsOwner(item: SuperQueueItem): boolean {
   if (item.state === 'done') return false;
-  return item.kind === 'permission' || item.state === 'escalated';
+  return item.kind === 'permission' || item.kind === 'owner' || item.state === 'escalated';
 }
 
 /**
@@ -456,7 +457,7 @@ export function toneOfStatus(kind: string): StatusTone {
 }
 export function toneOfRow(row: ChildRow): StatusTone {
   if (row === 'working') return 'working';
-  if (row === 'asking') return 'asking';
+  if (row === 'asking' || row === 'waiting') return 'asking';
   if (row === 'stuck' || row === 'gone') return 'ended';
   return 'idle';
 }
@@ -476,7 +477,7 @@ export function modelChip(model: string | undefined | null, effort: string | und
 /** The agenda's four sections, in the order the owner reads them. */
 export type JobSection = 'waiting' | 'now' | 'done' | 'next';
 export const JOB_SECTIONS: readonly JobSection[] = ['waiting', 'now', 'done', 'next'];
-export type JobChip = 'permission' | 'question' | 'ask' | 'queued' | 'settling' | 'asking' | 'stuck' | 'held' | 'maybeStarted' | 'gone';
+export type JobChip = 'permission' | 'question' | 'ask' | 'queued' | 'settling' | 'asking' | 'stuck' | 'held' | 'maybeStarted' | 'gone' | 'needsYou';
 export interface JobRow {
   key: string;
   section: JobSection;
@@ -560,7 +561,7 @@ export function superAgenda(state: Pick<SuperState, 'queue' | 'children' | 'pool
   const out: Record<JobSection, JobRow[]> = { waiting: [], now: [], done: [], next: [] };
   const head = queueHead(state);
   const owner = state.queue.filter(needsOwner).sort((a, b) => (a.id === head?.id ? -1 : b.id === head?.id ? 1 : a.createdAt - b.createdAt));
-  const chipOf = (k: QueueKind): JobChip => (k === 'permission' ? 'permission' : k === 'ask' ? 'ask' : 'question');
+  const chipOf = (k: QueueKind): JobChip => (k === 'permission' ? 'permission' : k === 'ask' ? 'ask' : k === 'owner' ? 'needsYou' : 'question');
   const nameOf = (sid: string) => plainJobName(look.nameFor?.(sid) || look.titleFor(sid));
   const waitingChildren = new Set<string>();
   for (const q of owner) {
@@ -596,7 +597,7 @@ export function superAgenda(state: Pick<SuperState, 'queue' | 'children' | 'pool
       continue;
     }
     if (waitingChildren.has(sid)) continue;
-    const chip: JobChip | null = row === 'asking' ? 'asking' : row === 'stuck' ? 'stuck' : ch.settling ? 'settling' : null;
+    const chip: JobChip | null = row === 'asking' ? 'asking' : row === 'waiting' ? 'needsYou' : row === 'stuck' ? 'stuck' : ch.settling ? 'settling' : null;
     out.now.push({ ...base, section: 'now', chip, ...(ch.etaAt !== undefined ? { etaAt: ch.etaAt } : {}) });
   }
   out.now.sort((a, b) => (a.since ?? 0) - (b.since ?? 0));

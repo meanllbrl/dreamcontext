@@ -34,6 +34,8 @@
  * The assistant's OWN session is never registered — it would be watching itself.
  */
 
+import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
+
 export const CHAT_STATUSES = ['starting', 'working', 'asking', 'idle', 'gone'] as const;
 export type ChatStatus = typeof CHAT_STATUSES[number];
 
@@ -90,6 +92,18 @@ export interface ChatEntry {
    *  first roster frame. */
   backgroundTasks?: number;
   backgroundAt?: string;
+  /** Of that roster, the entries that read as a JOB with an end (a script, a test run, a
+   *  background agent), not a server or a watch left running (`persistentBackground`). A job
+   *  holds a child's row as working for as long as the CLI says it runs. Absent = 0. */
+  backgroundJobs?: number;
+  /** What the child left for the OWNER to do and he has not done yet: an unrun `run` card, an
+   *  unsubmitted `secret` or `checklist` (super/owner-wait.ts).
+   *  Read from its own stream as it arrives; cleared by his answer written back into the chat. */
+  ownerWaits?: OwnerWait[];
+  /** Waits this process saw ANSWERED (`kind:id`): his receipt or his own message, or the Super
+   *  closing it (`dropOwnerWait`). Only these close an owner item; a wait the registry merely
+   *  does not hold (a respawn, a restart) is re-adopted from the record, never inferred answered. */
+  ownerAnswered?: string[];
   /** Set when the Assistant started this chat (a delegation). Rides the entry's own lifetime:
    *  a respawn of the same conversation inherits it via {@link isDelegatedConversation}. */
   origin?: 'assistant';
@@ -139,6 +153,42 @@ const deathTimers = new Map<string, ReturnType<typeof setTimeout>>();
  *  the status stays `asking` (then `from` is `asking` too). */
 export interface ChatChange { entry: ChatEntry; from: ChatStatus }
 const listeners = new Set<(c: ChatChange) => void>();
+/** Owner waits moved (a card appeared, his answer cleared one): its own channel, so a status
+ *  listener never mistakes it for a status change. */
+const ownerListeners = new Set<(e: ChatEntry) => void>();
+
+/** Be told when a chat's {@link ChatEntry.ownerWaits} change. Returns the unsubscribe. */
+export function onOwnerWaitChange(fn: (e: ChatEntry) => void): () => void {
+  ownerListeners.add(fn);
+  return () => { ownerListeners.delete(fn); };
+}
+
+function emitOwner(e: ChatEntry): void {
+  for (const fn of [...ownerListeners]) {
+    try { fn(clone(e)); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+/** Replace the chat's owner waits; tell the owner listeners only when they changed. */
+function setOwnerWaits(e: ChatEntry, next: OwnerWait[]): void {
+  const cur = e.ownerWaits ?? [];
+  const key = (ws: OwnerWait[]) => ws.map((w) => `${w.kind}:${w.id}:${w.line}`).join('\n');
+  if (key(cur) === key(next)) return;
+  if (next.length) e.ownerWaits = next.slice(-MAX_OWNER_WAITS); else delete e.ownerWaits;
+  emitOwner(e);
+}
+
+/**
+ * A background roster entry that reads as a server or a watch left running (a dev server, a
+ * Monitor, a tail, a tunnel): it has no end the child waits for, so it does not hold the row
+ * past the quiet bar. Everything else (a script, a test run, a background agent) is a job.
+ */
+export function persistentBackground(t: { task_type?: unknown; description?: unknown }): boolean {
+  const type = typeof t.task_type === 'string' ? t.task_type : '';
+  const desc = typeof t.description === 'string' ? t.description : '';
+  if (/monitor|watch/i.test(type)) return true;
+  return /\b(?:dev[- ]?server|server|serve|serving|watch(?:er|ing)?|monitor(?:ing)?|tail|preview|listen(?:er|ing)?|daemon|tunnel|localhost|port \d+|npm (?:run )?(?:dev|start)|vite|next dev|keep[- ]alive)\b/i.test(desc);
+}
 
 /** Be told of every {@link ChatChange}. Returns the unsubscribe. A listener that throws is
  *  isolated — it never stops the registry or the other listeners. */
@@ -154,7 +204,79 @@ function emit(e: ChatEntry, from: ChatStatus): void {
 }
 
 const cap = (s: string, n = TEXT_CAP) => (s.length > n ? `${s.slice(0, n)}…` : s);
-const clone = (e: ChatEntry): ChatEntry => ({ ...e, lastAssistantText: [...e.lastAssistantText], pendingQuestion: e.pendingQuestion ? { ...e.pendingQuestion, options: [...e.pendingQuestion.options] } : null });
+const clone = (e: ChatEntry): ChatEntry => ({
+  ...e, lastAssistantText: [...e.lastAssistantText],
+  pendingQuestion: e.pendingQuestion ? { ...e.pendingQuestion, options: [...e.pendingQuestion.options] } : null,
+  ...(e.ownerWaits ? { ownerWaits: e.ownerWaits.map((w) => ({ ...w })) } : {}),
+  ...(e.ownerAnswered ? { ownerAnswered: [...e.ownerAnswered] } : {}),
+});
+
+const waitKey = (w: { kind: string; id: string }) => `${w.kind}:${w.id}`;
+const MAX_ANSWERED = 16;
+
+/** Mark waits answered (they leave `ownerWaits`), and tell the owner listeners. */
+function answerWaits(e: ChatEntry, done: readonly OwnerWait[]): void {
+  if (!done.length) return;
+  const keys = new Set(done.map(waitKey));
+  e.ownerAnswered = [...(e.ownerAnswered ?? []).filter((k) => !keys.has(k)), ...keys].slice(-MAX_ANSWERED);
+  setOwnerWaits(e, (e.ownerWaits ?? []).filter((w) => !keys.has(waitKey(w))));
+  // setOwnerWaits emits only on a change of waits; an answer always is one.
+}
+
+/** Is this wait one the process saw answered? */
+export function ownerWaitAnswered(sessionId: string, kind: string, id: string): boolean {
+  return !!entries.get(sessionId)?.ownerAnswered?.includes(`${kind}:${id}`);
+}
+
+/** His messages to a chat that arrived while it held no wait (head of each, when, newest last). */
+const unheard = new Map<string, Array<{ text: string; at: number }>>();
+const UNHEARD_MAX = 4;
+const UNHEARD_CHARS = 1000;
+
+/**
+ * The record still holds open waits this process does not (a respawn, a server restart): hold
+ * them again, so his receipt still finds them. Unless he ALREADY answered one in this process
+ * (his run report can be a respawned child's very first frame, before the record is read): those
+ * come back as answered and the caller closes their items. The waits are matched as ONE set, as
+ * the live path does (with two run cards open, only the one whose command ran is answered), each
+ * only by his words from after it was asked (`since`); a text that answered is used up. Quiet (no
+ * emit): the record already says it.
+ */
+export function adoptOwnerWaits(sessionId: string, waits: ReadonlyArray<{ wait: OwnerWait; since: number }>): Set<string> {
+  const answered = new Set<string>();
+  const e = entries.get(sessionId);
+  if (!e || e.status === 'gone') return answered;
+  const fresh = waits.filter(({ wait }) => {
+    const k = waitKey(wait);
+    if (e.ownerAnswered?.includes(k)) { answered.add(k); return false; }
+    return !(e.ownerWaits ?? []).some((x) => waitKey(x) === k);
+  });
+  const texts = unheard.get(sessionId) ?? [];
+  const used = new Set<number>();
+  texts.forEach((t, i) => {
+    const open = fresh.filter(({ wait, since }) => since <= t.at && !answered.has(waitKey(wait))).map(({ wait }) => wait);
+    const hit = answeredBy(t.text, open);
+    if (hit.length) used.add(i);
+    for (const w of hit) answered.add(waitKey(w));
+  });
+  if (used.size) unheard.set(sessionId, texts.filter((_, i) => !used.has(i)));
+  const newly = fresh.filter(({ wait }) => answered.has(waitKey(wait))).map(({ wait }) => waitKey(wait));
+  if (newly.length) e.ownerAnswered = [...(e.ownerAnswered ?? []), ...newly].slice(-MAX_ANSWERED);
+  const held = fresh.filter(({ wait }) => !answered.has(waitKey(wait))).map(({ wait }) => ({ ...wait }));
+  if (held.length) e.ownerWaits = [...(e.ownerWaits ?? []), ...held].slice(-MAX_OWNER_WAITS);
+  return answered;
+}
+
+/** The Super Agent closed an owner item (`super queue done`: he did it another way): the wait
+ *  is answered, so it never comes back from the registry. */
+export function dropOwnerWait(sessionId: string, kind: OwnerWaitKind, id: string): void {
+  const e = entries.get(sessionId);
+  if (!e) return;
+  const k = `${kind}:${id}`;
+  const held = (e.ownerWaits ?? []).filter((w) => waitKey(w) === k);
+  if (held.length) { answerWaits(e, held); return; }
+  if (!e.ownerAnswered?.includes(k)) e.ownerAnswered = [...(e.ownerAnswered ?? []), k].slice(-MAX_ANSWERED);
+}
 
 function satisfies(until: WatchUntil, from: ChatStatus, now: ChatStatus): boolean {
   if (until === 'any') return now !== from;
@@ -266,6 +388,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     ...(init.origin === 'assistant' ? { origin: 'assistant' as const } : {}),
   };
   entries.set(init.sessionId, e);
+  unheard.delete(init.sessionId);
   let dead = false;
   let interruptAsked = false;
   let limitAsked = false;
@@ -282,11 +405,14 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         e.conversationId = frame.session_id;
       }
       if (frame.type === 'system' && frame.subtype === 'background_tasks_changed') {
-        const n = Array.isArray(frame.tasks) ? frame.tasks.length : 0;
+        const tasks = Array.isArray(frame.tasks) ? frame.tasks as unknown[] : [];
+        const n = tasks.length;
+        const jobs = tasks.filter((t) => !t || typeof t !== 'object' || !persistentBackground(t as Record<string, unknown>)).length;
         if (n !== (e.backgroundTasks ?? 0) || e.backgroundAt === undefined) {
           e.backgroundTasks = n;
           e.backgroundAt = new Date().toISOString();
         }
+        if (jobs > 0) e.backgroundJobs = jobs; else delete e.backgroundJobs;
         return;
       }
       const q = readPendingQuestion(frame);
@@ -316,6 +442,14 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         syncTools();
         const text = assistantText(frame);
         if (text) {
+          // Read the whole text, before the cap: a card at the end of a long reply still counts.
+          const cards = ownerCardsIn(text);
+          if (cards.length) {
+            const keep = (e.ownerWaits ?? []).filter((w) => !cards.some((c) => c.kind === w.kind && c.id === w.id));
+            // A card posted again is a new ask, even under an id he answered before.
+            if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !cards.some((c) => waitKey(c) === k));
+            setOwnerWaits(e, [...keep, ...cards]);
+          }
           e.lastAssistantText.push(cap(text));
           if (e.lastAssistantText.length > TEXT_RING) e.lastAssistantText.splice(0, e.lastAssistantText.length - TEXT_RING);
           e.updatedAt = new Date().toISOString();
@@ -342,6 +476,14 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       // A new turn: an interrupt asked for while nothing ran belongs to no turn.
       if (e.status !== 'working' && e.status !== 'asking') { interruptAsked = false; limitAsked = false; }
       if (!e.title && text.trim()) e.title = cap(text.trim().replace(/\s+/g, ' '), 80);
+      // HIS answer (a card's receipt, or his own words to the child) clears what it answers; the
+      // Super Agent steering the child (a send the server noted for it) clears nothing.
+      if (!takeSuperSend(e.sessionId, text)) {
+        if (e.ownerWaits?.length) answerWaits(e, answeredBy(text, e.ownerWaits));
+        // His words with no wait held here yet: a respawned child's wait still lives only in the
+        // record, and his run report may be the very first frame (adoptOwnerWait reads these).
+        else if (text.trim()) unheard.set(e.sessionId, [...(unheard.get(e.sessionId) ?? []), { text: text.slice(0, UNHEARD_CHARS), at: Date.now() }].slice(-UNHEARD_MAX));
+      }
       setStatus(e, 'working');
     },
     interrupted() {
@@ -367,7 +509,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       setStatus(e, 'gone');
       const t = setTimeout(() => {
         deathTimers.delete(init.sessionId);
-        if (entries.get(init.sessionId) === e) entries.delete(init.sessionId);
+        if (entries.get(init.sessionId) === e) { entries.delete(init.sessionId); unheard.delete(init.sessionId); }
       }, GONE_TTL_MS);
       t.unref?.();
       deathTimers.set(init.sessionId, t);
@@ -437,4 +579,6 @@ export function _resetChatRegistry(): void {
   waiters.clear();
   deathTimers.clear();
   listeners.clear();
+  ownerListeners.clear();
+  unheard.clear();
 }
