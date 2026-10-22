@@ -1,118 +1,85 @@
-import { useEffect, useReducer } from 'react';
-import { useI18n } from '../../../context/I18nContext';
+import { useEffect, useReducer, useState } from 'react';
 import type { SuperQueueItem } from '../../../lib/superTypes';
-import type { ChatItem, ChatSession } from '../chatSession';
+import type { ChatSession, PendingQuestion } from '../chatSession';
+import { SurveyCard, SurveyReceipt, type SurveyHost } from '../chat/SurveyCard';
 import { useSuperQuestions } from './superJobsStore';
 import {
-  answerLabelOf, cardState, claimOwnerAnswer, clickedOwnerAnswer, noteOwnerPending, ownerAnswerKey, ownerAnswerLocked,
-  ownerOptionsOf, ownerPendingPresent, recordOwnerAnswer, releaseOwnerAnswer, sendOwnerAnswer, useOwnerAnswerVersion,
+  askPendingOf, cardState, childQuestionOf, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText,
   type AskRef,
 } from './superQuestions';
 
 /**
- * The Super Agent's question as a card in its own chat (superQuestions.ts): under the turn that
- * asked it, its options as buttons, answered where the job bar answers it and through the same
- * latch, so a pick here locks the bar and back. Nothing waits on it: the super's turn is over.
- * Drawn like the chat's own question card (`chat-surveycard`), so it reads as a question to him.
+ * The Super Agent's question in its chat: the chat's OWN AskUserQuestion card (`SurveyCard`),
+ * not a look-alike (owner 2026-10-22, superQuestions.ts). Same context strip, question, why line,
+ * lettered options with descriptions, preview board, several picks, swipe deck, the note field,
+ * "Unclear — ask again", paging, keys. What differs is only where the answer goes (`SurveyHost`):
+ *
+ *   • its own `super ask` → ONE message into the super chat (`superAnswerText`), a running turn
+ *     steered; nothing waits on it, the super's turn ended when it asked;
+ *   • a child's question it escalated → the child's own session, exactly as the child's card
+ *     would; a child not in this window → the super, told to pass it on.
+ *
+ * A card shows while its item is open on the record; once answered it leaves, like any answered
+ * question, and the answer stands in the transcript as the card's receipt (`SuperAnswerReceipt`).
+ * A send that wrote nothing remounts the card, so it can be answered again.
  */
-export function SuperQuestionCard({ ask, session, transcript }: {
+export function SuperQuestionCard({ ask, session }: {
   ask: AskRef & { live: boolean };
-  /** The super chat this card is drawn in (Reply focuses its composer). */
+  /** The super chat this card is drawn in. */
   session: ChatSession;
-  /** The whole transcript, read only for an answered card's label. */
-  transcript: () => readonly ChatItem[];
 }) {
-  const { t } = useI18n();
   const view = useSuperQuestions(session.claudeId);
-  useOwnerAnswerVersion();
-  const state = cardState(ask.item, ask.live, view);
-  const item = state === 'open' ? view?.open.find((q) => q.id === ask.item) : undefined;
-  const child = item && item.kind === 'question' ? view?.sessionFor(item.sessionId) : undefined;
-  // The child's pending question is what its options are drawn from: follow it (as the bar does).
-  const [, force] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => (child ? child.subscribe(() => force()) : undefined), [child]);
-  const text = item?.ownerText || ask.text;
-
-  if (!item || !view) {
-    const answer = state === 'answered' ? answerLabelOf(ask, transcript(), clickedOwnerAnswer(ask.item)) : null;
-    return (
-      <div className="chat-surveycard super-question-card" data-testid="super-question-card" data-state={state} data-item={ask.item} data-kind={ask.kind}>
-        <div className="chat-surveycard-head">
-          <span className="chat-surveycard-pill"><span aria-hidden>❓</span> {t('super.question.pill')}</span>
-        </div>
-        {text && <p className="chat-surveycard-title">{text}</p>}
-        {answer && (
-          <div className="chat-surveycard-receipt" data-testid="super-question-receipt">
-            {answer === 'closed'
-              ? <span>{t('super.question.closed')}</span>
-              : <>
-                <span className="chat-surveycard-receipt-check" aria-hidden>✓</span>
-                <span>{typeof answer === 'object' ? t('super.question.answered').replace('{label}', () => answer.label) : t('super.question.answeredPlain')}</span>
-              </>}
-          </div>
-        )}
-      </div>
-    );
-  }
-  return <OpenQuestion item={item} child={child} open={view.open} superSession={view.superSession ?? session} session={session} text={text} />;
+  if (cardState(ask.item, ask.live, view) !== 'open' || !view) return null;
+  const item = view.open.find((q) => q.id === ask.item);
+  if (!item) return null;
+  return (
+    <OpenQuestion
+      item={item}
+      superSession={view.superSession ?? session}
+      child={item.kind === 'question' ? view.sessionFor(item.sessionId) : undefined}
+    />
+  );
 }
 
-function OpenQuestion({ item, child, open, superSession, session, text }: {
+function OpenQuestion({ item, superSession, child }: {
   item: SuperQueueItem;
-  child: ChatSession | undefined;
-  open: readonly SuperQueueItem[];
   superSession: ChatSession;
-  session: ChatSession;
-  text: string;
+  child: ChatSession | undefined;
 }) {
-  const { t } = useI18n();
-  // Noted first, then read (the latch is silent during a render).
-  const key = ownerAnswerKey(item);
-  noteOwnerPending(key, ownerPendingPresent(item, child, open));
-  const locked = ownerAnswerLocked(key);
-  const options = ownerOptionsOf(item, child);
-  // The socket the answer rides: the super's own for an `ask`, the child's for its question.
-  // Not open (a reconnect after a reload) = nothing to click yet, and the card says to write.
-  const carrier = item.kind === 'ask' ? superSession : child;
-  const canSend = carrier?.status === 'open';
-  const picked = locked ? clickedOwnerAnswer(item.id) : undefined;
-  const pick = (label: string) => {
-    if (!claimOwnerAnswer(key, item.id, session.claudeId, canSend)) return;
-    if (sendOwnerAnswer(item, label, { superSession, child })) recordOwnerAnswer(item.id, label);
-    else releaseOwnerAnswer(key);
-  };
-  return (
-    <div className="chat-surveycard super-question-card" data-testid="super-question-card" data-state="open" data-item={item.id} data-kind={item.kind}>
-      <div className="chat-surveycard-head">
-        <span className="chat-surveycard-pill"><span aria-hidden>❓</span> {t('super.question.pill')}</span>
-      </div>
-      {text && <p className="chat-surveycard-title">{text}</p>}
-      {options.length > 0 && (
-        <div className="chat-surveycard-options" role="group" aria-label={text}>
-          {options.map((label) => (
-            <button
-              key={label}
-              type="button"
-              className={`chat-surveycard-opt${picked === label ? ' on' : ''}`}
-              data-testid="super-question-option"
-              aria-pressed={picked === label}
-              disabled={locked || !canSend}
-              onClick={() => pick(label)}
-            >
-              <span className="chat-surveycard-opt-mark radio" aria-hidden>{picked === label ? '●' : ''}</span>
-              <span className="chat-surveycard-opt-body"><span className="chat-surveycard-opt-title">{label}</span></span>
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="chat-surveycard-actions">
-        {(options.length === 0 || locked || !canSend) && <span className="chat-surveycard-count">{t('super.question.writeBelow')}</span>}
-        <button type="button" className="chat-surveycard-unclear" data-testid="super-question-reply" onClick={() => session.focus()}>
-          {t('super.queue.reply')}
-        </button>
-      </div>
+  // A child's pending question is what its card is: follow it.
+  const [, force] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => (child ? child.subscribe(() => force()) : undefined), [child]);
+  /** Bumped when a send to the super wrote nothing: a fresh card, answerable again. */
+  const [attempt, setAttempt] = useState(0);
+
+  const own = childQuestionOf(item, child);
+  const wrap = (card: React.ReactNode) => (
+    <div data-testid="super-question-card" data-state="open" data-item={item.id} data-kind={item.kind}>
+      {card}
     </div>
   );
+
+  if (own && child && child.status === 'open') {
+    // The child's own AskUserQuestion, answered through the child's own session. The super's
+    // words lead as the context strip when the child gave none.
+    const pending: PendingQuestion = own.title || !item.ownerText ? own : { ...own, title: item.ownerText };
+    return wrap(<SurveyCard key={own.requestId} item={pending} session={child} />);
+  }
+  // The child is here but no longer asks this (its answer just went out; the record follows):
+  // nothing to draw, never a second way to answer it.
+  if (item.kind === 'question' && child) return null;
+
+  const pending: PendingQuestion = item.kind === 'ask'
+    ? askPendingOf(item)
+    : { kind: 'question', requestId: item.id, toolName: 'AskUserQuestion', questions: [{ question: item.ownerText ?? '', options: [], kind: 'text' }] };
+  const send = (text: string) => {
+    if (!sendToSuper(superSession, text)) setAttempt((a) => a + 1);
+  };
+  const host: SurveyHost = {
+    answerQuestion: (_requestId, questions, picked, notes) => send(superAnswerText(item, questions, picked, notes)),
+    answer: (_requestId, opts) => send(superUnclearText(item, opts.message ?? '')),
+  };
+  return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} />);
 }
 
 /**
@@ -120,11 +87,10 @@ function OpenQuestion({ item, child, open, superSession, session, text }: {
  * "Show earlier messages", compacted away, or asked in a way the transcript cannot read): at the
  * chat's end, so the question is always in the chat.
  */
-export function SuperQuestionTail({ session, anchored, transcript }: {
+export function SuperQuestionTail({ session, anchored }: {
   session: ChatSession;
   /** The item ids that already have a live card in the rendered transcript. */
   anchored: ReadonlySet<string>;
-  transcript: () => readonly ChatItem[];
 }) {
   const view = useSuperQuestions(session.claudeId);
   if (!view) return null;
@@ -135,11 +101,22 @@ export function SuperQuestionTail({ session, anchored, transcript }: {
       {rest.map((q) => (
         <SuperQuestionCard
           key={`tail-${q.id}`}
-          ask={{ item: q.id, kind: q.kind === 'ask' ? 'ask' : 'question', text: q.ownerText ?? '', options: q.options ?? [], toolItemId: '', live: true }}
+          ask={{ item: q.id, kind: q.kind === 'ask' ? 'ask' : 'question', toolItemId: '', live: true }}
           session={session}
-          transcript={transcript}
         />
       ))}
     </>
+  );
+}
+
+/** The owner's answer to a question card, where it sits in the super chat: the card's own
+ *  receipt ("You chose: …"), never a bubble he seems to have typed. Null for any other text. */
+export function SuperAnswerReceipt({ text }: { text: string }) {
+  const answer = parseSuperAnswer(text);
+  if (!answer) return null;
+  return (
+    <div data-testid="super-answer-receipt" data-item={answer.item}>
+      <SurveyReceipt unclear={answer.unclear} values={answer.values} />
+    </div>
   );
 }

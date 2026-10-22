@@ -67,8 +67,8 @@ import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
 import { groupSuperEventTurns, superEventOf, type SuperEventGroup } from './super/superHandover';
-import { placeQuestionCards, type AskRef } from './super/superQuestions';
-import { SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
+import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
+import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
 import { useSuperEventContext } from './super/superJobsStore';
 import './super/SuperSurface.css';
@@ -1699,6 +1699,10 @@ export function ChatPane({
       }
       return <SuperEventChip key={item.id} text={item.text} />;
     }
+    // The owner's answer to a question card in the super chat: the card's receipt, never a bubble.
+    if (item.kind === 'user' && session.mode === 'super' && parseSuperAnswer(item.text)) {
+      return <SuperAnswerReceipt key={item.id} text={item.text} />;
+    }
     const shape = shapeOf(item);
     switch (shape.draw) {
       case 'nothing': return null;
@@ -1899,12 +1903,11 @@ export function ChatPane({
   };
   const questionProbes = (seg: RunSegment<ChatItem>): StretchProbe[] => cardsOf(seg)
     .map((c) => ({ key: `question:${c.toolItemId}`, step: false, invisible: false, actor: 'lead', running: false }));
-  const transcriptOf = () => [...conv.history, ...conv.items];
   /** The items that got a LIVE card above; every other open question goes to the tail. */
   const anchoredQuestions = new Set<string>();
   const questionNodes = (seg: RunSegment<ChatItem>): React.ReactNode[] => cardsOf(seg).map((c) => {
     if (c.live) anchoredQuestions.add(c.item);
-    return <SuperQuestionCard key={`question-${c.toolItemId}`} ask={c} session={session} transcript={transcriptOf} />;
+    return <SuperQuestionCard key={`question-${c.toolItemId}`} ask={c} session={session} />;
   });
   // The accruing tail is the last segment that SHOWS something, not the last segment. An
   // empty thinking block is re-emitted after the run it sat inside (see `segmentToolRuns`),
@@ -2173,7 +2176,7 @@ export function ChatPane({
             {conv.pending
               .filter((p): p is PendingPlan => p.kind === 'plan')
               .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}
-            {session.mode === 'super' && <SuperQuestionTail session={session} anchored={anchoredQuestions} transcript={transcriptOf} />}
+            {session.mode === 'super' && <SuperQuestionTail session={session} anchored={anchoredQuestions} />}
             {askRouting?.phase === 'preparing' && <PreparingQuestionCard item={askRouting.item} />}
             {askRouting?.phase === 'degraded' && (
               <DegradedQuestionCard item={askRouting.item} onContinueInTerminal={onContinueInTerminal} />

@@ -115,5 +115,3 @@
 .super-job-tag--task:hover { border-color: var(--color-border-hover); color: var(--color-text); }
 .super-job-since { font-family: var(--font-mono); font-size: var(--font-size-2xs); color: var(--color-text-tertiary); white-space: nowrap; }
 .super-job-more { padding: 4px 8px; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
-/* An `ask` option is drawn whole or not at all: it measures its own overflow, no ellipsis. */
-.super-job-option { flex: none; white-space: nowrap; }

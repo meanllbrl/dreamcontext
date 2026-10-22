@@ -5,9 +5,9 @@ import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_PRESENT, MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
-  CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, defaultShape,
+  CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, MAX_HELD,
   SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
-  type SuperChild, type SuperContainer, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView,
+  type SuperChild, type SuperContainer, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
 import { parseMcpNames } from './lean-mcp.js';
@@ -247,6 +247,10 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // An ask's options are re-validated whole: one refused option drops them all (the bar then
     // offers Reply only), never a cut one.
     const options = isAsk ? cleanAskOptions(q.options) ?? [] : [];
+    // Its AskUserQuestion-shaped spec, re-validated whole: a refused one is dropped (the card
+    // then draws the question from its text and options). Kept only while the question is open:
+    // nothing draws a closed one, and its previews (up to 32 KB) would ride every write and push.
+    const askSpec = isAsk && q.ask !== undefined && q.state !== 'done' ? cleanAskSpec(q.ask) : null;
     const batch = typeof q.batch === 'string' && QUEUE_ID_RE.test(q.batch) ? q.batch : undefined;
     const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? Math.min(v, 9) : 0);
     ids.add(q.id);
@@ -262,6 +266,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(count(q.exits) ? { exits: count(q.exits) } : {}),
       ...(batch ? { batch } : {}),
       ...(options.length ? { options } : {}),
+      ...(askSpec && askSpec.ok ? { ask: askSpec.spec } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest.
@@ -364,6 +369,22 @@ function sanitizeOwnerBatches(raw: unknown): string[] {
   return out.slice(-MAX_OWNER_BATCHES);
 }
 
+/** The held ledger: well-formed entries of items still on the queue, unique, newest MAX_HELD. */
+function sanitizeHeld(raw: unknown, queue: readonly SuperQueueItem[]): SuperHeldEvent[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = new Set(queue.map((q) => q.id));
+  const out: SuperHeldEvent[] = [];
+  for (const h of raw) {
+    if (!isRecord(h) || typeof h.item !== 'string' || !ids.has(h.item) || out.some((x) => x.item === h.item)) continue;
+    if (typeof h.child !== 'string' || !okSessionId(h.child)) continue;
+    if (h.kind !== 'question' && h.kind !== 'done' && h.kind !== 'stuck' && h.kind !== 'gone') continue;
+    const at = finite(h.at);
+    if (at === undefined) continue;
+    out.push({ item: h.item, child: h.child, kind: h.kind, at });
+  }
+  return out.slice(-MAX_HELD);
+}
+
 /** A record read from disk (or built by a caller), with everything hostile dropped. */
 export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): SuperState {
   const base = emptySuperState();
@@ -382,6 +403,8 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     }
   }
   const away = isRecord(raw.away) ? raw.away : {};
+  const queue = sanitizeQueue(raw.queue, session);
+  const held = sanitizeHeld(raw.held, queue);
   const since = finite(away.since);
   const events = finite(away.events);
   return {
@@ -392,13 +415,14 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     groups,
     view: sanitizeView(raw.view, containers),
     children,
-    queue: sanitizeQueue(raw.queue, session),
+    queue,
     notes,
     away: { since: since ?? null, events: events !== undefined && events > 0 ? Math.floor(events) : 0 },
     dismissed: sanitizeDismissed(raw.dismissed, opts.now ?? Date.now()),
     pool: sanitizePool(raw.pool, opts),
     ownerBatches: sanitizeOwnerBatches(raw.ownerBatches),
     team,
+    ...(held.length ? { held } : {}),
   };
 }
 

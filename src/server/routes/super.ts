@@ -11,9 +11,9 @@ import { SuperStoreRefused, isReservedId, okMember, readSuperState, superRootOfC
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
-  MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, cleanAskOptions, cleanGroupName,
+  MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   atLeastSize, defaultShape, dissolveGroups, floatCount, isPageKind, leaveGroups, minSizeFor, viewWithout,
-  type ContainerKind, type ContainerShape, type ContainerSize, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
+  type ContainerKind, type ContainerShape, type ContainerSize, type SuperAskSpec, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
 } from '../../lib/super/types.js';
 import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, setTeamLiveSource, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
 import { sayToAgent } from './automations.js';
@@ -1080,21 +1080,31 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 409, 'ask_open', 'you already have a question open with the owner; wait for his answer');
       return;
     }
-    const raw = typeof b.text === 'string' ? askLine(b.text) : '';
-    if (!raw) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
-    if (raw.length > MAX_OWNER_TEXT) { refuse(res, 400, 'invalid_args', `the question is at most ${MAX_OWNER_TEXT} characters`); return; }
-    const options = cleanAskOptions(b.options);
-    if (!options) {
-      refuse(res, 400, 'invalid_options', `at most ${MAX_ASK_OPTIONS} options, each one line of 1-${MAX_ASK_OPTION} characters, no duplicates (a longer label is refused, never cut)`);
-      return;
+    // AskUserQuestion's own shape (`super ask --json`, the flags), or the old text + options.
+    let spec: SuperAskSpec;
+    if (b.ask !== undefined) {
+      const r = cleanAskSpec(b.ask);
+      if (!r.ok) { refuse(res, 400, 'invalid_ask', r.error); return; }
+      spec = r.spec;
+    } else {
+      const raw = typeof b.text === 'string' ? askLine(b.text) : '';
+      if (!raw) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
+      if (raw.length > MAX_OWNER_TEXT) { refuse(res, 400, 'invalid_args', `the question is at most ${MAX_OWNER_TEXT} characters`); return; }
+      const legacy = cleanAskOptions(b.options);
+      if (!legacy) {
+        refuse(res, 400, 'invalid_options', `at most ${MAX_ASK_OPTIONS} options, each one line of 1-${MAX_ASK_OPTION} characters, no duplicates (a longer label is refused, never cut)`);
+        return;
+      }
+      spec = askSpecFromLegacy(raw, legacy);
     }
+    const { ownerText: raw, options } = askSummary(spec);
     const batch = superOpenBatch(session);
     const id = newQueueId();
     const state = await writeSuper(c.who.contextRoot, (s) => {
       if (s.queue.some((q) => q.kind === 'ask' && q.state !== 'done')) return;
       s.queue.push({
         id, sessionId: session, kind: 'ask', state: 'escalated', ownerText: raw, createdAt: Date.now(),
-        ...(options.length ? { options } : {}), ...(batch ? { batch } : {}),
+        ...(options.length ? { options } : {}), ...(batch ? { batch } : {}), ask: spec,
       });
       noteOwnerBatch(s, batch ?? undefined);
     });

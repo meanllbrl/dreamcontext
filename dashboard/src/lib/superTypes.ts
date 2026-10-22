@@ -156,11 +156,24 @@ export interface SuperQueueItem {
   batch?: string;
   /** An `ask`'s answers, validated by the server: drawn whole or not at all. */
   options?: string[];
+  /** An `ask` in AskUserQuestion's own shape (server `cleanAskSpec`): drawn with the same card a
+   *  normal agent's question gets. An older record has only `ownerText`/`options`. */
+  ask?: SuperAskSpec;
   /** An `ended` item's last brief of the child. */
   brief?: string;
   /** An `approval` item's AI Team member (agent slug). */
   member?: string;
 }
+
+/** `super ask` in AskUserQuestion's shape (MIRROR of src/lib/super/types.ts). */
+export interface SuperAskOption { label: string; description?: string; preview?: string }
+export interface SuperAskQuestion { question: string; header?: string; description?: string; multiSelect?: boolean; options: SuperAskOption[] }
+export interface SuperAskSpec { title?: string; questions: SuperAskQuestion[]; source?: string }
+
+/** One event that arrived while a question was open with the owner, held for the super agent
+ *  and told with his answer (MIRROR of src/lib/super/types.ts `SuperHeldEvent`). The ajanda's
+ *  "while you were asked" reads these from the record. */
+export interface SuperHeldEvent { item: string; child: string; kind: 'question' | 'done' | 'stuck' | 'gone'; at: number }
 
 /** A job the Super Agent gave an AI Team member (`super team ask`); status is read from its thread. */
 export interface SuperTeamJob {
@@ -219,6 +232,8 @@ export interface SuperState {
   ownerBatches: string[];
   /** Jobs given to AI Team members, newest first. */
   team: SuperTeamJob[];
+  /** What piled up while the owner had a question open (absent = none). */
+  held?: SuperHeldEvent[];
 }
 
 export interface SuperStateView extends SuperState {
@@ -406,6 +421,8 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
   const pool = Array.isArray(v.pool) ? v.pool.filter((p): p is SuperPoolItem =>
     isRecord(p) && typeof p.id === 'string' && typeof p.title === 'string' && typeof p.createdAt === 'number') : [];
   const ownerBatches = Array.isArray(v.ownerBatches) ? v.ownerBatches.filter((b): b is string => typeof b === 'string') : [];
+  const held = Array.isArray(v.held) ? v.held.filter((h): h is SuperHeldEvent => isRecord(h) && typeof h.item === 'string'
+    && typeof h.child === 'string' && typeof h.at === 'number' && (h.kind === 'question' || h.kind === 'done' || h.kind === 'stuck' || h.kind === 'gone')) : [];
   return {
     v: SUPER_STATE_VERSION,
     vault: v.vault,
@@ -423,6 +440,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
       : [],
     pool,
     ownerBatches,
+    ...(held.length ? { held } : {}),
     team,
     ...(teamLive ? { teamLive } : {}),
     ...(Array.isArray(v.bannered) ? { bannered: v.bannered.filter((b): b is string => typeof b === 'string') } : {}),

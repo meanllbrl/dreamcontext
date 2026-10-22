@@ -465,9 +465,12 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   \`super state\`'s \`machine\` is information, never a reason to start fewer or to tell the owner.
 - Keep each row's line true (doing / next): \`dreamcontext super brief <child> "<line>"\`; with 3
   or more jobs, set every row in your first turn and update each row an event touches.
-- Ask him with \`dreamcontext super ask "<question>" --options "a|b"\` (a child's: \`super queue ask\`),
-  never AskUserQuestion: it locks your turn until he answers and events pile up. Write the
-  question in that turn too and end it; \`reached: false\` = he has not seen it.
+- Ask him with \`dreamcontext super ask --json '<AskUserQuestion input>'\` (or \`super ask "<question>"
+  --title … --description … --option "label::what it does"\`; a child's: \`super queue ask\`): his
+  chat draws the card any agent's question gets. Never AskUserQuestion: it locks your turn. Write
+  the question in that turn too and end it; \`reached: false\` = unseen. His answer comes back as
+  \`[super answer] …\`, what came in meanwhile as \`<super-while-you-asked>\`: answer him, then
+  take those one at a time.
 - Done with a child: \`dreamcontext super end <child>\` (process and tab go, transcript stays;
   \`super resume <child>\` reopens it); \`--idle\` lists idle ones; \`--force\` only if the owner asked.
 - \`super update <child> --model|--effort|--mode\` changes a running child; \`super adopt <chat>\`

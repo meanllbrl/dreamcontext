@@ -44,7 +44,9 @@ describe('superBriefing', () => {
     expect(brief).toContain('super delegate --from <id>');
     expect(brief).toContain('check\n  `super state` first');
     expect(brief).toContain('--task <slug>');
-    expect(brief).toContain('dreamcontext super ask "<question>" --options "a|b"');
+    expect(brief).toContain("dreamcontext super ask --json '<AskUserQuestion input>'");
+    expect(brief).toContain('[super answer]');
+    expect(brief).toContain('<super-while-you-asked>');
   });
 
   it('names capacity and worktrees: the cap, held, the machine as information only, merge, never push', () => {
@@ -99,10 +101,14 @@ describe('superBriefing', () => {
   // The owner, 2026-10-22: the Super Agent's handoff is its own FILE (`super handoff`), never a
   // task; a fresh session reads it first (one bullet, ~215 characters).
   const SUPER_HANDOFF_FILE_2026_10_22 = 230;
+  // The owner, 2026-10-22: the Super Agent asks the way any agent asks (`super ask --json`, the
+  // AskUserQuestion shape), its answer comes back as `[super answer]`, and what came in meanwhile
+  // as `<super-while-you-asked>` (the ask bullet grew from ~270 to ~560 characters).
+  const ASK_AS_ANY_AGENT_2026_10_22 = 320;
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22);
       expect(b).toContain('small|medium|large|wide');
       expect(b).toContain('409 owner_sized');
     }

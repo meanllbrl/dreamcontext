@@ -83,7 +83,7 @@ import { clearSuperNote, delegatedChildMcp, peekSuperNote, superIndex, superRoot
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
 import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, superOwnerSpoke, superSocketAttached, superTurnEnded,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, superAnswerDigest, superOwnerSpoke, superSocketAttached, superTurnEnded,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -2395,12 +2395,17 @@ export function startChatSession(
     // only what streams between `voice_turn` and `voice_turn_end`; an event turn never arms it.
     const voice = isSuper && spokenTexts.delete(text);
     if (voice) content.push({ type: 'text', text: OWNER_VOICE_TEXT });
+    // The Super Agent's own question is open: this message answers it, and everything held
+    // back while it was open rides in the SAME message (inbox.ts `superAnswerDigest`), a block
+    // starting with `<` the replay drops.
+    const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId) : null;
+    if (held) content.push({ type: 'text', text: held.text });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
-    // steered, an open `ask` answered (plan r4 D4, D7, D18).
-    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId);
+    // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
+    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? []);
     if (note && wrote) {
       void clearSuperNote(superRootOfChild(chatRegistryId) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }

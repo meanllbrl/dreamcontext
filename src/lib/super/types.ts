@@ -241,8 +241,12 @@ export interface SuperQueueItem {
   attempts?: number;
   /** The `[super events]` turn that carried it (or, on an `ask`, the turn it was asked in). */
   batch?: string;
-  /** An `ask`'s answers, each one line of at most MAX_ASK_OPTION characters (never cut). */
+  /** An `ask`'s answers, each one line of at most MAX_ASK_OPTION characters (never cut). Derived
+   *  from `ask` when that is one single-choice question with short labels (the notch's buttons). */
   options?: string[];
+  /** An `ask` in AskUserQuestion's own shape (`cleanAskSpec`): the chat draws it with the same
+   *  card a normal agent's question gets. An older record has only `ownerText`/`options`. */
+  ask?: SuperAskSpec;
   /** Process exits that ended a turn carrying it (server-only, plan r4 D10). */
   exits?: number;
   /** An `ended` item's record of the child's last brief (who and when are `sessionId` and
@@ -351,7 +355,26 @@ export interface SuperState {
   ownerBatches: string[];
   /** Jobs given to AI Team members (`super team ask`), newest first. Absent in an older record = none. */
   team: SuperTeamJob[];
+  /** What piled up while the owner had a question open (`SuperHeldEvent`): told to the super agent
+   *  with his answer, never dropped silently. Absent = none. */
+  held?: SuperHeldEvent[];
 }
+
+/**
+ * One event that arrived while a question was open with the owner (the single-question rule
+ * holds every event turn back). The ledger outlives the queue item's own life: an item the pump
+ * later finds stale (the child moved on) is still told, as moved on, never dropped unseen.
+ * The Super ajanda reads it from the record as "while you were asked".
+ */
+export interface SuperHeldEvent {
+  /** The queue item. */
+  item: string;
+  /** The child it is about. */
+  child: string;
+  kind: 'question' | 'done' | 'stuck' | 'gone';
+  at: number;
+}
+export const MAX_HELD = 40;
 
 export function emptySuperState(): SuperState {
   return { v: SUPER_STATE_VERSION, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children: {}, queue: [], notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [], team: [] };
@@ -531,6 +554,117 @@ export function cleanAskOptions(raw: unknown): string[] | null {
   return out;
 }
 
+// ─── `super ask` in AskUserQuestion's shape (MIRRORED in the window's superTypes.ts) ──
+
+export interface SuperAskOption { label: string; description?: string; preview?: string }
+export interface SuperAskQuestion {
+  question: string;
+  header?: string;
+  description?: string;
+  multiSelect?: boolean;
+  /** None = a question answered in words (the card's text box). */
+  options: SuperAskOption[];
+}
+/** AskUserQuestion's input: `title`, `questions[]`, `metadata.source` (stored as `source`). */
+export interface SuperAskSpec { title?: string; questions: SuperAskQuestion[]; source?: string }
+
+export const MAX_ASK_QUESTIONS = 4;
+export const MAX_ASK_LABEL = 60;
+export const MAX_ASK_HEADER = 24;
+export const MAX_ASK_TITLE = 160;
+export const MAX_ASK_DESCRIPTION = 600;
+export const MAX_ASK_PREVIEW = 16_384;
+export const MAX_ASK_PREVIEWS = 32_768;
+
+const askObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** An optional one-line field: absent/empty = undefined; over `max` characters = refused. */
+function askField(raw: unknown, max: number, what: string): { v?: string; err?: string } {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== 'string') return { err: `${what} must be text` };
+  const v = askLine(raw);
+  if (!v) return {};
+  return [...v].length <= max ? { v } : { err: `${what} is at most ${max} characters (never cut)` };
+}
+
+/**
+ * A `super ask` in AskUserQuestion's own input shape — `{title, questions: [{question, header,
+ * description, multiSelect, options: [{label, description, preview}]}], metadata: {source}}` —
+ * or the reason it is refused. Every line is one clean line (`askLine`); a preview is HTML the
+ * card draws in its sandbox, kept whole. Anything too long is refused, never cut.
+ */
+export function cleanAskSpec(raw: unknown): { ok: true; spec: SuperAskSpec } | { ok: false; error: string } {
+  if (!askObj(raw)) return { ok: false, error: 'the question must be an object: {"questions":[…]}' };
+  const title = askField(raw.title, MAX_ASK_TITLE, 'title');
+  if (title.err) return { ok: false, error: title.err };
+  if (!Array.isArray(raw.questions) || raw.questions.length < 1 || raw.questions.length > MAX_ASK_QUESTIONS) {
+    return { ok: false, error: `1-${MAX_ASK_QUESTIONS} questions` };
+  }
+  const questions: SuperAskQuestion[] = [];
+  const asked = new Set<string>();
+  let previews = 0;
+  for (const rq of raw.questions as unknown[]) {
+    if (!askObj(rq)) return { ok: false, error: 'each question is an object' };
+    const q = typeof rq.question === 'string' ? askLine(rq.question) : '';
+    if (!q) return { ok: false, error: 'each question needs its `question` text' };
+    if (q.length > MAX_OWNER_TEXT) return { ok: false, error: `a question is at most ${MAX_OWNER_TEXT} characters` };
+    if (asked.has(q)) return { ok: false, error: 'two questions with the same text' };
+    asked.add(q);
+    const header = askField(rq.header, MAX_ASK_HEADER, 'header');
+    const description = askField(rq.description, MAX_ASK_DESCRIPTION, 'description');
+    if (header.err || description.err) return { ok: false, error: (header.err ?? description.err) as string };
+    const rawOpts = rq.options === undefined ? [] : rq.options;
+    if (!Array.isArray(rawOpts) || rawOpts.length > MAX_ASK_OPTIONS) return { ok: false, error: `at most ${MAX_ASK_OPTIONS} options a question` };
+    const options: SuperAskOption[] = [];
+    for (const ro of rawOpts as unknown[]) {
+      const o = typeof ro === 'string' ? { label: ro } : ro;
+      if (!askObj(o)) return { ok: false, error: 'each option is an object with a `label`' };
+      const label = typeof o.label === 'string' ? askLine(o.label) : '';
+      if (!label || [...label].length > MAX_ASK_LABEL) return { ok: false, error: `each option label is one line of 1-${MAX_ASK_LABEL} characters (never cut)` };
+      if (options.some((x) => x.label === label)) return { ok: false, error: 'two options with the same label' };
+      const od = askField(o.description, MAX_ASK_DESCRIPTION, 'option description');
+      if (od.err) return { ok: false, error: od.err };
+      let preview: string | undefined;
+      if (o.preview !== undefined && o.preview !== null) {
+        if (typeof o.preview !== 'string') return { ok: false, error: 'a preview is HTML text' };
+        if (o.preview.length > MAX_ASK_PREVIEW) return { ok: false, error: `a preview is at most ${MAX_ASK_PREVIEW} characters` };
+        previews += o.preview.length;
+        if (o.preview.trim()) preview = o.preview;
+      }
+      options.push({ label, ...(od.v ? { description: od.v } : {}), ...(preview ? { preview } : {}) });
+    }
+    if (previews > MAX_ASK_PREVIEWS) return { ok: false, error: `the previews together are at most ${MAX_ASK_PREVIEWS} characters` };
+    questions.push({
+      question: q,
+      ...(header.v ? { header: header.v } : {}),
+      ...(description.v ? { description: description.v } : {}),
+      ...(rq.multiSelect === true && options.length > 1 ? { multiSelect: true } : {}),
+      options,
+    });
+  }
+  const meta = askObj(raw.metadata) ? raw.metadata : {};
+  const rawSource = typeof raw.source === 'string' ? raw.source : meta.source;
+  const source = typeof rawSource === 'string' && /^[a-z][a-z0-9-]{0,23}$/.test(rawSource) ? rawSource : undefined;
+  return { ok: true, spec: { ...(title.v ? { title: title.v } : {}), questions, ...(source ? { source } : {}) } };
+}
+
+/** The old `super ask "<text>" --options a|b`, in the same shape. */
+export function askSpecFromLegacy(text: string, options: readonly string[]): SuperAskSpec {
+  return { questions: [{ question: text, options: options.map((label) => ({ label })) }] };
+}
+
+/** What the notch, a banner, a phone push and the event texts show of an `ask`: its first
+ *  question (one line), and its labels as buttons when they are one short single choice. */
+export function askSummary(spec: SuperAskSpec): { ownerText: string; options: string[] } {
+  const [first] = spec.questions;
+  const more = spec.questions.length - 1;
+  const ownerText = more > 0 ? `${first.question} (+${more})` : first.question;
+  const labels = first.options.map((o) => o.label);
+  const short = spec.questions.length === 1 && !first.multiSelect && labels.length > 0
+    && labels.every((l) => [...l].length <= MAX_ASK_OPTION);
+  return { ownerText, options: short ? labels : [] };
+}
+
 // ─── The agent's verbs (`dreamcontext super <verb>` → POST /api/super/v/:verb) ────
 
 export const SUPER_VERBS = [
@@ -602,7 +736,8 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   many did not.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
 - The owner has to decide something visual (a mockup, a layout): open the options as cards
-  (png, svg, html, a board), \`super present <card…>\`, then ask with \`super ask\`; after his
+  (png, svg, html, a board), \`super present <card…>\`, then ask with \`super ask --json\` (an option
+  \`preview\` draws each choice in the card itself); after his
   answer, \`super present --off\`.
 - Your answer would describe something he can look at: open it and write one line.
 - The server opens a child's dev-server site and its live browser as cards by itself; you see

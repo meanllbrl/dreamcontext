@@ -215,16 +215,12 @@ describe('the model chip (owner 2026-10-21)', () => {
   });
 });
 
-describe('the bar\'s ask options are drawn whole or not at all (D7, r2-S)', () => {
-  it('each option measures its own overflow; no max-width ellipsis; the click sends the framed label', () => {
+describe('the bar answers no question itself (owner 2026-10-22: one way to ask)', () => {
+  it('a question row is its words and ONE Answer button that shows the chat\'s card; no option buttons, no style for them', () => {
     const bar = read(`${SUPER}/JobBar.tsx`);
-    expect(bar).toMatch(/setCut\(btns\.current\.some\(\(b\) => !!b && b\.scrollWidth > b\.clientWidth \+ 1\)\)/);
-    expect(bar).toMatch(/\{showOptions && !cut && superSession && options\.map/);
-    // One framing for the bar and the chat card (superQuestions.ts), re-exported by the bar.
-    expect(read(`${SUPER}/superQuestions.ts`)).toMatch(/return `Answer to your question: \$\{label\}`;/);
-    expect(bar).toMatch(/export \{ askAnswerText \} from '\.\/superQuestions';/);
-    const rule = read(`${SUPER}/JobBar.css`).match(/\.super-job-option \{([^}]*)\}/)?.[1] ?? '';
-    expect(rule).not.toMatch(/max-width|text-overflow|ellipsis/);
+    expect(bar).not.toMatch(/askAnswerText|super-ask-option|super-job-option/);
+    expect(bar).toMatch(/\? <QuestionHead item=\{head\} text=\{head\.ownerText \?\? ''\} onReplyToSuper=\{onReplyToSuper\} \/>/);
+    expect(read(`${SUPER}/JobBar.css`)).not.toMatch(/super-job-option/);
   });
 });
 

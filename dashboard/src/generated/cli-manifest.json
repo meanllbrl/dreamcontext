@@ -3069,11 +3069,16 @@
     },
     {
       "path": "super ask",
-      "desc": "Ask the owner YOUR own question (one at a time); it reaches him like an escalation and never holds your turn (AskUserQuestion does: never use it). Its answer is his next message to you; the reply says whether it `reached` him",
+      "desc": "Ask the owner YOUR own question (one at a time), in AskUserQuestion's own shape: his chat draws it with the same card any agent's question gets (title, question, why, options with descriptions or previews, several picks, a note, \"Unclear\"). It never holds your turn (AskUserQuestion does: never use it). His answer comes back as his next message, `[super answer] …`; the reply says whether it `reached` him",
       "args": [
-        "<text>"
+        "[text]"
       ],
       "valueFlags": [
+        "--json",
+        "--title",
+        "--description",
+        "--header",
+        "--option",
         "--options"
       ]
     },

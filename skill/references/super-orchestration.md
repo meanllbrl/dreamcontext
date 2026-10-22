@@ -46,8 +46,12 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    topic branch is ready.
 
 ## 2. When to ask
-Ask (`dreamcontext super ask "<question>" --options a|b`, at most 4 options, ONE open at a time, the
-rest keeps running) only for:
+Ask the way any agent asks: `dreamcontext super ask --json '<AskUserQuestion input>'` (title,
+questions with header, description, options with a description or preview, multiSelect,
+metadata.source) or `super ask "<q>" --title … --description … --option "label::what it does"`. His
+chat draws the very card a normal agent's question gets; his answer comes back as one `[super
+answer]` message, whatever came in meanwhile as `<super-while-you-asked>`: answer him, then tell or
+ask each of those one at a time. ONE open at a time, the rest keeps running. Ask only for:
 - **An outward or irreversible step:** push, publish, release, `npm publish`, deleting data, spending
   money, merging to the default branch: always, even when the owner asked for it. A message
   (WhatsApp, email, Slack) is asked too, unless the owner named its content and recipient himself.

@@ -1603,14 +1603,18 @@ async function board(engineName, browserType, base, full) {
       const fullLines = await page.locator('[data-super-slot="centre"] [data-testid="super-event-line"][data-full="true"]').count();
       ok('…the batch the super agent escalated in renders full', fullLines >= 1 || (record().ownerBatches ?? []).length === 0, JSON.stringify({ fullLines, ownerBatches: record().ownerBatches }));
 
-      // AC7 + D7: the super agent's own question, its options whole, the click framed.
+      // AC7 + D7: the super agent's own question heads the bar with ONE Answer button; it is
+      // answered in the chat's own AskUserQuestion card (owner 2026-10-22), one message back.
       await sayToSuper(page, 'GO-ASKOWNER');
-      const opt = page.getByTestId('super-ask-option').filter({ hasText: /^Ship it$/ });
-      ok('the super agent\'s own ask heads the bar with its options drawn whole', await until(page, async () => (await opt.count()) === 1, 40000), await page.getByTestId('super-queue-head').innerText().catch(() => 'no head'));
+      const answerBtn = page.getByTestId('super-queue-answer');
+      ok('the super agent\'s own ask heads the bar with its Answer button', await until(page, async () => (await answerBtn.count()) === 1, 40000), await page.getByTestId('super-queue-head').innerText().catch(() => 'no head'));
       ok('…with a question at the head, the counts fold into one "Job list" button', (await page.getByTestId('super-job-count-all').count()) === 1 && (await page.getByTestId('super-job-count-working').count()) === 0);
       const tAsk = Date.now();
-      await opt.click();
-      ok('…a click sends exactly the drawn label, framed, into the super chat', await until(page, async () => frames().some((f) => f.role === 'super' && f.t >= tAsk && f.blocks[0] === 'Answer to your question: Ship it'), 15000));
+      await answerBtn.click();
+      const askCard = page.locator('[data-testid="super-question-card"][data-kind="ask"] .chat-surveycard');
+      await askCard.locator('.chat-surveycard-opt').filter({ hasText: 'Ship it' }).first().click();
+      await askCard.locator('.chat-btn.primary').click();
+      ok('…the card sends ONE `[super answer]` message into the super chat', await until(page, async () => frames().some((f) => f.role === 'super' && f.t >= tAsk && /^\[super answer\] item=\S+\n[\s\S]*="Ship it"/.test(f.blocks[0] ?? '')), 15000));
       ok('…and closes the ask', await until(page, async () => !(record().queue ?? []).some((q) => q.kind === 'ask' && q.state !== 'done'), 15000), JSON.stringify((record().queue ?? []).filter((q) => q.kind === 'ask')));
       await until(page, async () => (await page.getByTestId('super-job-count-working').count()) === 1, 15000);
     }

@@ -62,6 +62,23 @@ import {
  *  (`AgentQuestionBlock`), so an agent asks exactly the way Chat asks. */
 export type SurveyHost = Pick<ChatSession, 'answer' | 'answerQuestion'>;
 
+/** The answered card: what was asked about, and what was chosen (or that it was sent back as
+ *  unclear). Also what the Super Agent's chat draws where the owner's answer to its question
+ *  sits in the transcript (super/SuperQuestionCard.tsx), so both read the same. */
+export function SurveyReceipt({ title, unclear, values }: { title?: string; unclear: boolean; values: readonly string[] }) {
+  return (
+    <div className="chat-surveycard" data-state="submitted">
+      {title && <div className="chat-surveycard-context"><span className="chat-surveycard-context-label">Context</span>{title}</div>}
+      <div className="chat-surveycard-receipt">
+        <span className="chat-surveycard-receipt-check" aria-hidden>{unclear ? '↺' : '✓'}</span>
+        <span>{unclear
+          ? 'Asked Claude to ask again, more clearly.'
+          : `You chose: ${values.join(', ') || '—'}`}</span>
+      </div>
+    </div>
+  );
+}
+
 export function SurveyCard({ item, session }: { item: PendingQuestion; session: SurveyHost }) {
   const [picks, setPicks] = useState<SurveyPicks>({});
   const [submitted, setSubmitted] = useState<null | 'answered' | 'unclear'>(null);
@@ -189,19 +206,7 @@ export function SurveyCard({ item, session }: { item: PendingQuestion; session: 
     }
   };
 
-  if (submitted) {
-    return (
-      <div className="chat-surveycard" data-state="submitted">
-        {item.title && <div className="chat-surveycard-context"><span className="chat-surveycard-context-label">Context</span>{item.title}</div>}
-        <div className="chat-surveycard-receipt">
-          <span className="chat-surveycard-receipt-check" aria-hidden>{submitted === 'unclear' ? '↺' : '✓'}</span>
-          <span>{submitted === 'unclear'
-            ? 'Asked Claude to ask again, more clearly.'
-            : `You chose: ${values.join(', ') || '—'}`}</span>
-        </div>
-      </div>
-    );
-  }
+  if (submitted) return <SurveyReceipt title={item.title} unclear={submitted === 'unclear'} values={values} />;
 
   return (
     <div className={`chat-surveycard${swipe ? ' swipe' : ''}`} onKeyDown={onKeyDown}>
