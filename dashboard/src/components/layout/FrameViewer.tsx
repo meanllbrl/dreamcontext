@@ -7,7 +7,8 @@ import {
   CHAT_HTML_KIT_CSS, CHAT_HTML_SANDBOX, HEIGHT_BRIDGE, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
   readHeightMessage, resolveChatKitTokens,
 } from '../sleepy/chat/chatHtmlKit';
-import { useFileContent } from '../appLink/DocumentReader';
+import { useProjectHtml } from '../appLink/DocumentReader';
+import { LINK_GUARD } from '../../lib/htmlLocalAssets';
 import { fileNameOf } from '../appLink/viewerPaths';
 import { WEB_WIDGET_SANDBOX } from '../whiteboard/widgets/WebWidget';
 import { ZOOM_BRIDGE, readZoomMessage } from './frameZoomBridge';
@@ -224,13 +225,13 @@ function HtmlFrame({ path, frameRef, onHeightRequest }: {
 }) {
   const { t } = useI18n();
   const { resolved: theme } = useTheme();
-  const state = useFileContent(path);
+  const state = useProjectHtml(path);
   const [torn, setTorn] = useState(false);
   const loads = useRef(0);
-  const html = state.data && state.data.type !== 'dir' && typeof state.data.content === 'string' ? state.data.content : null;
+  const html = state.html;
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, headScript: `${HEIGHT_BRIDGE}\n${ZOOM_BRIDGE}`,
+      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, headScript: `${HEIGHT_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}`,
     })),
     [html, theme],
   );
