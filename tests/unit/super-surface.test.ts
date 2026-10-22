@@ -256,7 +256,8 @@ describe('quiet children (D16, AC6 client half)', () => {
     expect(head).toMatchObject({ waiting: 1, worst: 'asking' });
     // An unmarked chat still rings as before.
     expect(rollupProject([asking('c')])).toMatchObject({ waiting: 1, asking: 1 });
-    expect(surface).toMatch(/rollupProject\(dockRows, \{ superQueueHead: !!superState\?\.enabled && !!queueHead\(superState\) \}\)/);
+    expect(surface).toMatch(/const superHead = superState\?\.enabled \? queueHead\(superState\) : null;/);
+    expect(surface).toMatch(/rollupProject\(dockRows, \{ superQueueHead: superHead \? \{ asker: superHead\.sessionId \} : false \}\)/);
   });
 });
 

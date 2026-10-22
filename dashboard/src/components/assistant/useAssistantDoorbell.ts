@@ -18,6 +18,9 @@ export interface AssistantDoorbellDeps {
   vault: string | null;
   /** The live chat with this conversation id in this project, or null. */
   findChat: (claudeId: string) => ChatSession | null;
+  /** The same lookup for the OWNER's own answer (`by: 'owner'`, a notch Allow / Deny): it also
+   *  reaches the Super Agent and its children, which {@link findChat} keeps from the Assistant. */
+  findOwnerChat: (claudeId: string) => ChatSession | null;
   /** Spawn a new chat with the prepared prompt in `mode`, give it a pane and reveal it. */
   openChat: (inlinePrompt: string, promptToken: string, mode: ChatMode) => ChatSession;
   /** Bring this project's chat surface to the front (chip + overlay). */
@@ -82,7 +85,9 @@ export async function runVerb(
     return { ok: true, result: { sessionId: args.sessionId } };
   }
   if (verb === 'answer') {
-    const chat = typeof args.sessionId === 'string' ? deps.findChat(args.sessionId) : null;
+    // Only the server's owner route sets `by` (the claimed args are the server's, never the bell's).
+    const find = args.by === 'owner' ? deps.findOwnerChat : deps.findChat;
+    const chat = typeof args.sessionId === 'string' ? find(args.sessionId) : null;
     if (!chat) return { ok: false, error: 'that chat is not open in this project any more' };
     const pending = chat.getModel().pending.find((p) => p.requestId === args.question);
     if (!pending) return { ok: false, error: 'that question is no longer waiting' };
@@ -99,7 +104,7 @@ export async function runVerb(
     if (!allow && !DENY_RE.test(said)) return { ok: false, error: 'answer a permission or plan prompt with allow or deny' };
     chat.answer(pending.requestId, allow
       ? { behavior: 'allow', updatedInput: pending.input }
-      : { behavior: 'deny', message: 'Declined by the owner through the Assistant.' });
+      : { behavior: 'deny', message: args.by === 'owner' ? 'Declined by the owner.' : 'Declined by the owner through the Assistant.' });
     return { ok: true, result: { answered: allow ? 'allow' : 'deny' } };
   }
   if (verb === 'close') {

@@ -18,7 +18,7 @@ import { ListeningOverlay } from './ListeningOverlay';
 import { NOTCH_GROW_EASE, drawsOpen, islandClip, planMotion, type IslandRect, type MotionPhase, type MotionRequest } from './notchMotion';
 import {
   EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
-  PEEK_TTL_MS, noticeKey, offScreenAsks, peekTtlMs, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
+  PEEK_TTL_MS, noticeKey, offScreenAsks, peekTtlMs, permissionWord, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
   type ActivityItem, type GlanceChat, type Handoff, type Inbox, type Rollup,
   createRawGate, startsFresh,
 } from './notchModel';
@@ -1201,6 +1201,35 @@ export function Notch() {
     }
   }, [busy]);
   useEffect(() => () => { if (foldTimer.current) window.clearTimeout(foldTimer.current); }, []);
+
+  // "Allow" / "deny" SAID (or typed) while a project's permission waits is the Y / N key in words
+  // (owner, 2026-10-22: the Super Agent's child never got it). Answered on the owner's own route,
+  // the one the Allow button rides; the Assistant never sees the word, so it can neither answer
+  // it for him nor be refused for a chat handed to the Super Agent. Failed: the request is still
+  // waiting, so the panel stays open on "Now" with its buttons.
+  const glanceRef = useRef(glance);
+  glanceRef.current = glance;
+  useEffect(() => {
+    if (!session) return;
+    session.setOwnerWordsHook((text) => {
+      const choice = permissionWord(text);
+      const ask = choice ? glanceRef.current.find((c) => c.ask?.kind === 'permission') : undefined;
+      if (!choice || !ask) return false;
+      const folds = voiceSummonRef.current && !engagedRef.current;
+      void answerPermission(ask, choice).then((ok) => {
+        if (ok) {
+          dropRow(ask.sessionId);
+          if (folds && expandedRef.current && seatRef.current === 'notch') collapseRef.current();
+          return;
+        }
+        voiceSummonRef.current = false;
+        setTab('now');
+      });
+      voiceSummonRef.current = false;
+      return true;
+    });
+    return () => session.setOwnerWordsHook(null);
+  }, [session, dropRow]);
 
   // The turn and its speech are over: a panel a presentation opened folds, unless it said
   // `stay` or the owner took it over. Unspoken, it stays long enough to be read.

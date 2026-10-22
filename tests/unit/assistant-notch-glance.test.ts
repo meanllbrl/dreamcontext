@@ -75,11 +75,23 @@ describe('GET /api/assistant/glance', () => {
 
 describe('POST /api/assistant/answer (the owner\'s Allow / Deny)', () => {
   beforeEach(() => registry._resetChatRegistry());
-  const answer = async (body: unknown, remote?: string) => {
+  // The app's own page: it sends its Origin on every POST (the notch's fetch).
+  const answer = async (body: unknown, remote?: string, origin: string | null = 'http://127.0.0.1:4173') => {
     const r = makeRes();
-    await routes.handleAssistantOwnerAnswer(req('POST', '/api/assistant/answer', body, remote), r.res);
+    const rq = req('POST', '/api/assistant/answer', body, remote);
+    if (origin !== null) (rq.headers as Record<string, string>).origin = origin;
+    await routes.handleAssistantOwnerAnswer(rq, r.res);
     return r;
   };
+
+  it('refuses a caller that is not the app\'s own page: no Origin (an agent\'s curl) or another origin', async () => {
+    const a = chat(); askBash(a, 'r1');
+    const bare = await answer({ sessionId: a.sessionId, question: 'r1', choice: 'allow' }, undefined, null);
+    expect(bare.status()).toBe(403);
+    expect(bare.body()).toMatchObject({ error: 'owner_page_only' });
+    expect((await answer({ sessionId: a.sessionId, question: 'r1', choice: 'allow' }, undefined, 'http://127.0.0.1:5173')).status()).toBe(403);
+    expect((await answer({ sessionId: a.sessionId, question: 'r1', choice: 'allow' }, undefined, 'https://evil.test')).status()).toBe(403);
+  });
 
   it('refuses a missing choice, an unknown chat and a prompt that is no longer waiting', async () => {
     const a = chat(); askBash(a, 'r1');

@@ -22,6 +22,7 @@ describe('a project closing one of its chats (runVerb close)', () => {
     deps = {
       vault: 'acme',
       findChat: vi.fn((id: string) => (id === 'c-1' ? { claudeId: 'c-1' } as never : null)),
+      findOwnerChat: vi.fn(() => null),
       openChat: vi.fn(() => ({ claudeId: 'new-1' }) as never),
       reveal: vi.fn(),
       openPage: vi.fn(),

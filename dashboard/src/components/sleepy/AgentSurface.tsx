@@ -203,6 +203,8 @@ interface PaneState {
 
 let paneSeq = 0;
 const nextPaneId = () => `pane-${++paneSeq}`;
+/** The folded dock's chip for the handed-over Super Agent's own open question (no tab of its own). */
+const SUPER_ASK_ROW = 'super-asks';
 
 /** Default title for a fresh session: "Terminal N" for a shell, "Agent N" for an agent,
  *  "Chat N" for a chat (BETA). Terminal sessions (agent + shell) share one `agent-N` id
@@ -2832,16 +2834,22 @@ export function AgentSurface() {
     return claudeId === st.session || (st.enabled && hasOwnKey(st.children, claudeId))
       || sessionListRef.current.some((m) => m.claudeId === claudeId && m.mode === 'super');
   };
+  const liveChatByClaudeId = (claudeId: string): ChatSession | null => {
+    const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === claudeId);
+    const session = entry ? sessions.current.get(entry.id) : undefined;
+    return session && session.kind === 'chat' ? session as ChatSession : null;
+  };
   useAssistantDoorbell({
     vault,
     findChat: (claudeId) => {
       // The Assistant never reaches into the Super Agent or, while handed over, its children
       // (plan-r7 D16: the server refuses too; this is the window's own re-check).
       if (claudeIdIsSuperGuarded(claudeId)) return null;
-      const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === claudeId);
-      const session = entry ? sessions.current.get(entry.id) : undefined;
-      return session && session.kind === 'chat' ? session as ChatSession : null;
+      return liveChatByClaudeId(claudeId);
     },
+    // The owner's own Allow / Deny from the notch: a child's permission is his to give, never
+    // the Super Agent's, so the guard above is not his (2026-10-22: "Couldn't reach").
+    findOwnerChat: liveChatByClaudeId,
     openChat: (inline, token, mode) => {
       const s = spawn(false, undefined, false, 'chat', inline, '', true, token, false, '', false, mode, '', 'assistant');
       setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId, mode }]);
@@ -4720,8 +4728,16 @@ export function AgentSurface() {
    * the ceiling rule cannot tolerate.
    */
   // Handed over, the marked children never bounce the chip; only the queue head the OWNER must
-  // answer (a permission, an escalation) does (plan-r7 D16).
-  const rollup: ProjectRollup = rollupProject(dockRows, { superQueueHead: !!superState?.enabled && !!queueHead(superState) });
+  // answer (a permission, an escalation, the Super Agent's own question) does (plan-r7 D16), and
+  // it reads as a question like any chat's: magenta, nudging, until answered (owner, 2026-10-22).
+  const superHead = superState?.enabled ? queueHead(superState) : null;
+  const rollup: ProjectRollup = rollupProject(dockRows, { superQueueHead: superHead ? { asker: superHead.sessionId } : false });
+  // …and in the folded dock: the Super Agent is no tab, so its question gets a chip of its own
+  // (a child's question already has the child's chip). Opening it opens the stage.
+  const superAskRow: SessionRow | null = superHead && !dockRows.some((r) => r.claudeId === superHead.sessionId)
+    ? { id: SUPER_ASK_ROW, title: t('super.centre.name'), kind: 'chat', info: { kind: 'asking', label: 'needs you', mood: 'asking' }, attention: false, mode: 'super', pinned: true }
+    : null;
+  const dockShown = superAskRow ? [superAskRow, ...dockRows] : dockRows;
   const {
     worst: rollupWorst, live: rollupLive, waiting: rollupWaiting, alive: rollupAlive,
     asking: rollupAsking, working: rollupWorking, idle: rollupIdle, flagged: rollupFlagged,
@@ -5258,8 +5274,9 @@ export function AgentSurface() {
           OWN state; collapsible to a handle), click a chip to open + focus. With zero
           sessions: a single "Chat" FAB. */}
       {caps?.desktop && agentSettings.enabled && !expanded && (
-        // `dockRows`, not the roster: a parked Super Agent alone is no session the dock shows.
-        dockRows.length === 0 ? (
+        // `dockRows`, not the roster: a parked Super Agent alone is no session the dock shows
+        // (its open question is: `superAskRow`).
+        dockShown.length === 0 ? (
           <AgentFab
             status="idle"
             mood="idle"
@@ -5270,10 +5287,13 @@ export function AgentSurface() {
           />
         ) : (
           <AgentDock
-            rows={dockRows}
+            rows={dockShown}
             focusedId={focusedSessionId}
-            onOpen={(id) => { setExpanded(true); if (minimizedIds.includes(id)) restoreMinimized(id); else focusSession(id); }}
-            onClose={closeSessionById}
+            onOpen={(id) => {
+              if (id === SUPER_ASK_ROW) { setSuperView('super'); setExpanded(true); return; }
+              setExpanded(true); if (minimizedIds.includes(id)) restoreMinimized(id); else focusSession(id);
+            }}
+            onClose={(id) => { if (id !== SUPER_ASK_ROW) closeSessionById(id); }}
           />
         )
       )}
