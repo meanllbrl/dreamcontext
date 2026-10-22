@@ -1231,3 +1231,50 @@
   pointer-events: none;
   z-index: 200;
 }
+
+/* ── Zoom in place (owner 2026-10-22: a picture or a page side by side or presented zooms where
+      it is: pinch or ⌘/Ctrl + scroll, drag once zoomed, double click to fit) ───────────── */
+.super-zoom { position: relative; flex: 1 1 auto; min-height: 0; height: 100%; overflow: hidden; }
+.super-zoom-content { position: absolute; inset: 0; display: flex; flex-direction: column; transform-origin: center; will-change: transform; }
+.super-zoom-content > * { flex: 1 1 auto; min-height: 0; }
+.super-zoom[data-zoomed] { cursor: grab; touch-action: none; }
+.super-zoom[data-zoomed][data-grabbing] { cursor: grabbing; }
+/* Zoomed, a drag pans the view: the content's own clicks and selection wait until it fits again. */
+.super-zoom[data-zoomed]:not([data-inspect]) .super-zoom-content { pointer-events: none; user-select: none; }
+.super-zoom-shield { position: absolute; inset: 0; z-index: 1; cursor: grab; }
+.super-zoom[data-grabbing] .super-zoom-shield { cursor: grabbing; }
+.super-zoom-bar {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-bg-elevated, var(--color-bg)) 92%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+.super-zoom-btn {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.super-zoom-btn--text { font-size: var(--font-size-xs); }
+.super-zoom-btn:hover:not(:disabled) { background: var(--color-bg-tertiary); color: var(--color-text); }
+.super-zoom-btn:disabled { opacity: 0.4; cursor: default; }
+.super-zoom-btn[aria-pressed='true'] { background: var(--color-bg-tertiary); color: var(--color-text); }
+.super-zoom-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.super-zoom-level { min-width: 44px; text-align: center; font-family: var(--font-mono); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
+/* A picture zoomed in place is the whole card, fitted and centred: the pointer finds it wherever
+   it points (at the card's top it left the card's lower half empty, and zooming there showed nothing). */
+.super-zoom-content > .super-card-view > .doc-reader:has(> img.viewer-media) { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.super-zoom-content img.viewer-media { max-width: 100%; max-height: 100%; margin: 0; }

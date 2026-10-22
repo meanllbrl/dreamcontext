@@ -39,16 +39,27 @@ export function zoomAbout(v: View, scale: number, dx = 0, dy = 0): View {
   return { scale, x: dx - k * (dx - v.x), y: dy - k * (dy - v.y) };
 }
 
+/** How a plain wheel reads: `zoom` a picture (there is nothing else a scroll could mean), `pan`
+ *  a page, `pinch` a view zoomed in place inside a card (only ctrl/cmd + wheel and a pinch zoom;
+ *  a plain wheel pans once zoomed and, at the fitted scale, is left to the content to scroll). */
+export type WheelMode = 'zoom' | 'pan' | 'pinch';
+
 /** What one wheel event means. A trackpad pinch arrives as ctrl+wheel (cmd+wheel on a mouse
- *  with the key held): always a zoom. A plain wheel zooms a picture (`wheel: 'zoom'`, there is
- *  nothing else a scroll could mean) and scrolls a page (`wheel: 'pan'`). */
+ *  with the key held): always a zoom. A plain wheel zooms a picture (`wheel: 'zoom'`) and
+ *  scrolls a page (`wheel: 'pan'` and `'pinch'`). */
 export function wheelAction(
   e: { deltaX: number; deltaY: number; ctrlKey: boolean; metaKey: boolean },
-  mode: 'zoom' | 'pan',
+  mode: WheelMode,
 ): { kind: 'zoom'; factor: number } | { kind: 'pan'; dx: number; dy: number } {
   if (e.ctrlKey || e.metaKey) return { kind: 'zoom', factor: Math.exp(-e.deltaY * 0.01) };
   if (mode === 'zoom') return { kind: 'zoom', factor: Math.exp(-e.deltaY * 0.0025) };
   return { kind: 'pan', dx: -e.deltaX, dy: -e.deltaY };
+}
+
+/** Whether the viewer takes this wheel event (and stops the page behind scrolling). In `pinch`
+ *  mode a plain wheel at the fitted scale is not taken: the content under it scrolls itself. */
+export function takesWheel(e: { ctrlKey: boolean; metaKey: boolean }, mode: WheelMode, scale: number, minScale: number): boolean {
+  return mode !== 'pinch' || e.ctrlKey || e.metaKey || scale > minScale + 1e-3;
 }
 
 /** A WebKit gesture's scale is relative to its start: the zoom it asks for, from the view's scale
@@ -64,7 +75,7 @@ export interface PanZoomOptions {
   stage: Size | null;
   minScale: number;
   maxScale: number;
-  wheel: 'zoom' | 'pan';
+  wheel: WheelMode;
   /** Where "fit" is: the view a new subject opens at and the 0 key returns to. */
   fit: View;
   /** Off (a failed picture): no wheel, no gestures, no drag. */
@@ -130,6 +141,7 @@ export function usePanZoom({ stageRef, content, stage, minScale, maxScale, wheel
     const el = stageRef.current;
     if (!el || !enabled) return undefined;
     const onWheel = (e: WheelEvent) => {
+      if (!takesWheel(e, wheel, viewRef.current.scale, minScale)) return;
       e.preventDefault();
       applyWheel(e);
     };
@@ -156,7 +168,7 @@ export function usePanZoom({ stageRef, content, stage, minScale, maxScale, wheel
       el.removeEventListener('gesturechange', onGestureChange);
       el.removeEventListener('gestureend', onGestureEnd);
     };
-  }, [applyWheel, enabled, stageRef, zoomAround]);
+  }, [applyWheel, enabled, minScale, stageRef, wheel, zoomAround]);
 
   const twoPointerSpan = () => {
     const [a, b] = [...pointers.current.values()];

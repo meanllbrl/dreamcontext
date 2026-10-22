@@ -112,7 +112,7 @@ export function registerSuperCommand(program: Command): void {
     .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once`)
     .option('--group <name>', 'Put every card opened here in ONE group of this name (a set the owner asked to see)')
     .option('--shape <shape>', 'small | medium | large | wide (the card\'s size, 1x1 2x1 2x2 3x2 tiles; a size the owner chose is kept), or square | tall (recorded only)')
-    .option('--size <size>', 'small | medium | large | wide: the same as --shape with a size')
+    .option('--size <size>', 'small | medium | large | wide: the same as --shape with a size (a web or browser card is never under large, and opens side by side)')
     .option('--title <text>', 'Its label (one ref only)')
     .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; group?: string }) =>
       run('open', refs.length === 1

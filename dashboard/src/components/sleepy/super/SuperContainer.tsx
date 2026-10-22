@@ -23,6 +23,7 @@ import { LAYOUT } from './handoverMotion';
 import { useLiveSession } from './liveSession';
 import { sizeOf, type CardPlan } from './superLayout';
 import { inlineMediaKind } from '../chat/chatEntities';
+import { ZoomPane } from './ZoomPane';
 
 /** What a card opens full screen (owner 2026-10-22): a picture, a project web page, a page on the
  *  web or this computer (only once its frame is allowed), or a board. */
@@ -134,7 +135,8 @@ export interface SuperContainerProps extends SuperCardActions {
  * the plan and carries the motion transform, the two glow layers (accent while working, the
  * waiting colour while asking, each fading its own opacity) and the lift shadow; the inner CLIP
  * rounds and clips the content. A floating card is one grab handle: its body is inert, a click
- * shows it side by side; content is interactive only in half and present.
+ * shows it side by side; content is interactive only in half and present, where a picture or a
+ * page also zooms in place (ZoomPane).
  */
 export function SuperContainer(props: SuperContainerProps) {
   const { container: c, plan, pending, session } = props;
@@ -477,7 +479,10 @@ function LargeBody(p: BodyProps): ReactNode {
       <div className="super-card-large-body">
         {c.kind === 'chat'
           ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
-          : viewFor(p)}
+          : zoomsInPlace(c)
+            // A picture, a page or a live browser zooms where it is (owner 2026-10-22).
+            ? <ZoomPane key={c.id} live={isLivePage(c)}>{viewFor(p, true)}</ZoomPane>
+            : viewFor(p)}
       </div>
     </div>
   );
@@ -492,7 +497,18 @@ function CardHead({ kind, title, container }: { kind: Container['kind']; title: 
   );
 }
 
-function viewFor(p: BodyProps): ReactNode {
+/** The cards whose large view zooms in place: a picture, a web page or file, a live browser. */
+export function zoomsInPlace(c: Container): boolean {
+  return c.kind === 'image' || c.kind === 'web' || c.kind === 'browser';
+}
+
+/** A page served by a server (a site, a dev server): its frame cannot carry the zoom bridge. */
+export function isLivePage(c: Container): boolean {
+  return c.kind === 'web' && /^https?:\/\//i.test(c.ref);
+}
+
+/** `zoomBridge`: the view sits in a ZoomPane, so a project page posts its pinch and wheel. */
+function viewFor(p: BodyProps, zoomBridge = false): ReactNode {
   const c = p.container;
   if (!p.viewReady) return null;
   const size = widgetSize(p.plan);
@@ -521,7 +537,7 @@ function viewFor(p: BodyProps): ReactNode {
     }
     case 'web':
       return p.webLive
-        ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={size} onFrameAllowed={p.onFrameAllowed} /></div>
+        ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={size} onFrameAllowed={p.onFrameAllowed} zoomBridge={zoomBridge} /></div>
         : <WebPlaceholder title={c.title || c.ref} onLoad={() => p.onLoadWeb(c.id)} />;
     case 'image':
       return <div className="super-card-view"><DocumentReader path={c.ref} onOpen={() => { /* read-only: links stay closed */ }} embedded /></div>;

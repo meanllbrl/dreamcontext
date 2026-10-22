@@ -167,10 +167,10 @@ describe('sizes: the agent\'s verbs', () => {
     let r = await verb('open', { kind: 'web', ref: 'https://example.com/a', size: 'wide' });
     expect(r.status).toBe(200);
     expect(((r.json.result as Record<string, unknown>).container as SuperContainer).size).toBe('wide');
-    r = await verb('open', { kind: 'web', ref: 'https://example.com/b', shape: 'medium' });
+    r = await verb('open', { kind: 'task', ref: 'ship-it', shape: 'medium' });
     expect(((r.json.result as Record<string, unknown>).container as SuperContainer).size).toBe('medium');
     // An old shape still opens a 1:1 card.
-    r = await verb('open', { kind: 'web', ref: 'https://example.com/c', shape: 'tall' });
+    r = await verb('open', { kind: 'task', ref: 'write-docs', shape: 'tall' });
     expect(((r.json.result as Record<string, unknown>).container as SuperContainer).size).toBeUndefined();
     r = await verb('open', { kind: 'web', ref: 'https://example.com/d', shape: 'large', size: 'wide' });
     expect(r.status).toBe(400);
@@ -262,5 +262,111 @@ describe('sizes: the owner\'s choice wins', () => {
     await agent;
     expect(r.status).toBe(409);
     expect(cardOf('task-a')).toMatchObject({ size: 'medium', sizeBy: 'owner' });
+  });
+});
+
+describe('owner 2026-10-22: a page the agent opens is shown, never a small tile', () => {
+  const result = (r: { json: Record<string, unknown> }) => r.json.result as Record<string, unknown>;
+
+  it('`open web` makes the card large (a smaller size is raised) and puts it side by side', async () => {
+    makeVault();
+    let r = await verb('open', { kind: 'web', ref: 'http://localhost:5173/' });
+    expect(r.status).toBe(200);
+    const id = (result(r).container as SuperContainer).id;
+    expect(cardOf(id)!.size).toBe('large');
+    expect(onDisk().view).toEqual({ mode: 'half', card: id });
+    expect(result(r).view).toEqual({ mode: 'half', card: id });
+    r = await verb('open', { kind: 'web', ref: 'mockups/a.html', size: 'medium' });
+    const id2 = (result(r).container as SuperContainer).id;
+    expect(cardOf(id2)!.size).toBe('large');
+    // The newer page takes the half place from the older page.
+    expect(onDisk().view).toEqual({ mode: 'half', card: id2 });
+    // Wide stays wide.
+    r = await verb('open', { kind: 'web', ref: 'https://example.com/w', size: 'wide' });
+    expect(cardOf((result(r).container as SuperContainer).id)!.size).toBe('wide');
+  });
+
+  it('other kinds open as before: no size, the view untouched', async () => {
+    makeVault();
+    const r = await verb('open', { kind: 'task', ref: 'ship-it' });
+    expect((result(r).container as SuperContainer).size).toBeUndefined();
+    expect(onDisk().view).toEqual({ mode: 'float' });
+  });
+
+  it('a half page showing something else (a chat, a task) and a presentation are left alone; a group never goes half', async () => {
+    makeVault({ view: { mode: 'half', card: 'task-a' } });
+    let r = await verb('open', { kind: 'web', ref: 'https://example.com/a' });
+    expect(r.status).toBe(200);
+    expect(onDisk().view).toEqual({ mode: 'half', card: 'task-a' });
+    expect(cardOf((result(r).container as SuperContainer).id)!.size).toBe('large');
+    makeVault({ view: { mode: 'present', cards: ['task-a', 'task-b'] } });
+    await verb('open', { kind: 'web', ref: 'https://example.com/b' });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a', 'task-b'] });
+    makeVault();
+    r = await verb('open', { kind: 'web', refs: ['https://example.com/c', 'https://example.com/d'], group: 'Pages' });
+    expect(r.status).toBe(200);
+    expect(onDisk().view).toEqual({ mode: 'float' });
+  });
+
+  it('a page he sized keeps his size, even small; re-opening an agent-sized one raises it', async () => {
+    makeVault();
+    let r = await verb('open', { kind: 'web', ref: 'https://example.com/a' });
+    const id = (result(r).container as SuperContainer).id;
+    await layout({ cards: [{ id, size: 'small' }], view: { mode: 'float' } });
+    expect(cardOf(id)).toMatchObject({ sizeBy: 'owner' });
+    expect(cardOf(id)!.size).toBeUndefined();
+    await verb('open', { kind: 'web', ref: 'https://example.com/a' });
+    expect(cardOf(id)!.size).toBeUndefined();
+    expect(cardOf(id)!.sizeBy).toBe('owner');
+    r = await verb('open', { kind: 'web', ref: 'https://example.com/a', size: 'wide' });
+    expect(result(r).kept).toEqual([id]);
+  });
+
+  it('`shape <page> small` writes large and says so', async () => {
+    makeVault();
+    const o = await verb('open', { kind: 'web', ref: 'https://example.com/a' });
+    const id = (result(o).container as SuperContainer).id;
+    const r = await verb('shape', { container: id, shape: 'small' });
+    expect(r.status).toBe(200);
+    expect(result(r).size).toBe('large');
+    expect(cardOf(id)!.size).toBe('large');
+  });
+
+  it('the owner\'s view never carries the server\'s auto mark', async () => {
+    makeVault();
+    await layout({ view: { mode: 'half', card: 'task-a', auto: true } });
+    expect(onDisk().view).toEqual({ mode: 'half', card: 'task-a' });
+  });
+});
+
+describe('the window reads the server\'s auto mark, and holds that view while the owner types or drags', () => {
+  it('readSuperStateView keeps `auto` on a half page only as a real true', () => {
+    const wire = { ...emptySuperState(), vault: 'acme', session: SUPER, enabled: true, containers: [card('web-a', { kind: 'web', ref: 'https://example.com/' })] };
+    expect(client.readSuperStateView({ ...wire, view: { mode: 'half', card: 'web-a', auto: true } })?.view).toEqual({ mode: 'half', card: 'web-a', auto: true });
+    expect(client.readSuperStateView({ ...wire, view: { mode: 'half', card: 'web-a', auto: 'yes' } })?.view).toEqual({ mode: 'half', card: 'web-a' });
+  });
+
+  it('the surface plans a held page or a held automatic half as float (source pin)', () => {
+    const ROOT = new URL('../../', import.meta.url).pathname;
+    const surface = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
+    const cues = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/useStageCues.ts'), 'utf-8');
+    expect(surface).toMatch(/const autoHalf = state\.view\.mode === 'half' && state\.view\.auto && state\.view\.card \? state\.view\.card : null;/);
+    expect(surface).toMatch(/stageCues\.held\.has\(state\.view\.card\) \|\| stageCues\.autoHalfHeld/);
+    expect(surface).toMatch(/halfHeld \? heldFallback\(drawnView\.current, state\.view, state\.containers\) : state\.view/);
+    // The automatic half waits on the same rule as a new card: typing or a drag.
+    expect(cues).toMatch(/autoHalf !== null && autoHalf !== shownAuto\.current\s*\n\s*&& holdsNewCards\(\{ dragging, typedAt: typedAt\(\), now: Date\.now\(\) \}\)/);
+  });
+});
+
+describe('a held half page keeps the view already drawn (second review)', () => {
+  it('another page side by side stays; a presentation stays; a gone card or the waiting one floats', async () => {
+    const { heldFallback } = await import('../../dashboard/src/components/sleepy/super/SuperSurface.js');
+    const cards = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    const wanted = { mode: 'half' as const, card: 'b', auto: true as const };
+    expect(heldFallback({ mode: 'half', card: 'a' }, wanted, cards)).toEqual({ mode: 'half', card: 'a' });
+    expect(heldFallback({ mode: 'present', cards: ['a', 'c', 'b'] }, wanted, cards)).toEqual({ mode: 'present', cards: ['a', 'c'] });
+    expect(heldFallback({ mode: 'half', card: 'b' }, wanted, cards)).toEqual({ mode: 'float' });
+    expect(heldFallback({ mode: 'half', card: 'gone' }, wanted, cards)).toEqual({ mode: 'float' });
+    expect(heldFallback({ mode: 'float' }, wanted, cards)).toEqual({ mode: 'float' });
   });
 });

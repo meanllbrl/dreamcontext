@@ -17,8 +17,10 @@ describe('applySignal', () => {
     const s = state();
     expect(applySignal(s, 'k1', web('http://localhost:5173/'), 0)).toBe(true);
     expect(applySignal(s, 'k1', web('http://localhost:5173/'), 0)).toBe(false);
-    expect(s.containers).toEqual([{ id: autoContainerId('web', 'http://localhost:5173/'), kind: 'web', ref: 'http://localhost:5173/', shape: 'tall', place: 'float', by: 'auto', of: 'k1', title: 'localhost:5173' }]);
-    expect(s.view).toEqual({ mode: 'float' });
+    const id = autoContainerId('web', 'http://localhost:5173/');
+    expect(s.containers).toEqual([{ id, kind: 'web', ref: 'http://localhost:5173/', shape: 'tall', size: 'large', place: 'float', by: 'auto', of: 'k1', title: 'localhost:5173' }]);
+    // Owner 2026-10-22: a page shows side by side at once, marked as the server's own view.
+    expect(s.view).toEqual({ mode: 'half', card: id, auto: true });
   });
 
   it('S2: a browser call opens one browser card per child', () => {
@@ -42,7 +44,7 @@ describe('applySignal', () => {
     expect(s.containers[0].place).toBe('others');
   });
 
-  it('G2/G6: the owner\'s dropped card and a viewed card are never pushed out; the view never changes', () => {
+  it('G2/G6: the owner\'s dropped card and a viewed card are never pushed out; his view never changes', () => {
     const s = state();
     applySignal(s, 'k1', { kind: 'browser' }, 0);
     applySignal(s, 'k2', { kind: 'browser' }, 0);
@@ -95,5 +97,67 @@ describe('settleChild', () => {
     const s = state({ containers: [{ id: 'chat-a', kind: 'chat', ref: 'k1', shape: 'tall', place: 'float', pos: { x: 0.5, y: 0.5 } }] });
     expect(settleChild(s, 'k1', 'gone', 0)).toBe(false);
     expect(s.containers[0].place).toBe('float');
+  });
+});
+
+describe('owner 2026-10-22: an automatic page shows side by side, and gives the view back', () => {
+  it('a browser card is large; a newer automatic page takes the automatic half place', () => {
+    const s = state();
+    applySignal(s, 'k1', { kind: 'browser' }, 0);
+    const b = autoContainerId('browser', 'k1');
+    expect(s.containers[0].size).toBe('large');
+    expect(s.view).toEqual({ mode: 'half', card: b, auto: true });
+    applySignal(s, 'k1', web('http://localhost:5173/'), 0);
+    expect(s.view).toEqual({ mode: 'half', card: autoContainerId('web', 'http://localhost:5173/'), auto: true });
+  });
+
+  it('a view the owner or the agent set is never taken: the page only floats, large', () => {
+    const s = state({ containers: [{ id: 'chat-a', kind: 'chat', ref: 'k1', shape: 'tall', place: 'float' }] });
+    s.view = { mode: 'half', card: 'chat-a' };
+    applySignal(s, 'k1', web('http://localhost:5173/'), 0);
+    expect(s.view).toEqual({ mode: 'half', card: 'chat-a' });
+    expect(s.containers[1]).toMatchObject({ size: 'large', place: 'float' });
+    s.view = { mode: 'present', cards: ['chat-a'] };
+    applySignal(s, 'k2', { kind: 'browser' }, 0);
+    expect(s.view).toEqual({ mode: 'present', cards: ['chat-a'] });
+  });
+
+  it('a page the owner sized keeps his size when it comes back from Others', () => {
+    const s = state();
+    applySignal(s, 'k1', web('http://localhost:5173/'), 0);
+    const c = s.containers[0];
+    delete c.size;
+    c.sizeBy = 'owner';
+    c.place = 'others';
+    s.view = { mode: 'float' };
+    expect(applySignal(s, 'k1', web('http://localhost:5173/'), 0)).toBe(true);
+    expect(c.size).toBeUndefined();
+    expect(c.place).toBe('float');
+  });
+
+  it('idle, gone and a withdrawn pin send the automatic half page away and float the stage again', () => {
+    const s = state();
+    applySignal(s, 'k1', { kind: 'browser' }, 0);
+    expect(settleChild(s, 'k1', 'idle', 0)).toBe(true);
+    expect(s.containers[0].place).toBe('others');
+    expect(s.view).toEqual({ mode: 'float' });
+    const t = state();
+    applySignal(t, 'k1', web('http://localhost:5173/'), 0);
+    applySignal(t, 'k1', { kind: 'devserver-drop' }, 0);
+    expect(t.containers[0].place).toBe('others');
+    expect(t.view).toEqual({ mode: 'float' });
+    const u = state();
+    applySignal(u, 'k1', { kind: 'browser' }, 0);
+    expect(settleChild(u, 'k1', 'gone', 0)).toBe(true);
+    expect(u.containers).toEqual([]);
+    expect(u.view).toEqual({ mode: 'float' });
+  });
+
+  it('the same page put side by side by the owner (no mark) stays when it settles', () => {
+    const s = state();
+    applySignal(s, 'k1', { kind: 'browser' }, 0);
+    s.view = { mode: 'half', card: s.containers[0].id };
+    expect(settleChild(s, 'k1', 'idle', 0)).toBe(false);
+    expect(s.view).toEqual({ mode: 'half', card: s.containers[0].id });
   });
 });

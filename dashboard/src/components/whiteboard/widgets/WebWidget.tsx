@@ -33,10 +33,12 @@ import type { WidgetProps } from './types';
  */
 export const WEB_WIDGET_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
-export function WebWidget({ elementId, payload, active, size, onFrameAllowed }: WidgetProps & {
+export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge }: WidgetProps & {
   /** A PAGE's frame is allowed and shown (its trust gate passed): the Super Agent's card offers
    *  it full screen only from then on. Never called for a file. */
   onFrameAllowed?: (href: string) => void;
+  /** A project web page posts its wheel and pinch to the host (DocumentReader `zoomBridge`). */
+  zoomBridge?: boolean;
 }) {
   const tx = useWbText();
   const check = validateWebUrl(payload.url, window.location.origin);
@@ -49,7 +51,7 @@ export function WebWidget({ elementId, payload, active, size, onFrameAllowed }: 
     );
   }
   if (check.kind === 'file') {
-    return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} />;
+    return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} zoomBridge={zoomBridge} />;
   }
   return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} />;
 }
@@ -218,7 +220,7 @@ function useFileAccess(src: string, attempt: number): FileAccess {
   return access;
 }
 
-function WebFile({ elementId, file, title, active, size }: FrameProps & { elementId: string; file: FileCheck }) {
+function WebFile({ elementId, file, title, active, size, zoomBridge }: FrameProps & { elementId: string; file: FileCheck; zoomBridge?: boolean }) {
   const tx = useWbText();
   const api = useApi();
   const { vault } = useVault();
@@ -298,6 +300,7 @@ function WebFile({ elementId, file, title, active, size }: FrameProps & { elemen
           hostFileActions
           variant="page"
           allowAbsolute={file.absolute}
+          zoomBridge={zoomBridge}
         />
       </div>
     );

@@ -22,6 +22,7 @@ import { PdfViewer } from '../sleepy/chat/PdfViewer';
 import { BoardEmbed, BoardFullscreen } from '../sleepy/chat/BoardEmbed';
 import { CloseIcon } from '../whiteboard/PanelIcons';
 import { fileNameOf, resolveDocumentRef, stripFrontmatter } from './viewerPaths';
+import { ZOOM_BRIDGE } from '../layout/frameZoomBridge';
 import '../sleepy/chat/cards.css';
 import '../sleepy/chat/overlays.css';
 import './ViewerWindow.css';
@@ -86,6 +87,12 @@ export interface DocumentReaderProps {
    * card use it; the viewer window does not pass it and keeps its look.
    */
   variant?: 'default' | 'page';
+  /**
+   * A web page posts its wheel and its pinch to the parent (the zoom bridge, `frameZoomBridge`):
+   * a host that zooms the page in place (the Super stage's ZoomPane) still hears them while the
+   * pointer is inside the page. Off by default: no other host listens.
+   */
+  zoomBridge?: boolean;
 }
 
 const CONTEXT_PREFIX = '_dream_context/';
@@ -125,7 +132,7 @@ function useText(): (key: string, fallback: string) => string {
 
 export function DocumentReader({
   path, onOpen, onClose, embedded = false, onWikilink, vaultReads = false, hostFileActions = false,
-  variant = 'default', allowAbsolute = false,
+  variant = 'default', allowAbsolute = false, zoomBridge = false,
 }: DocumentReaderProps) {
   const api = useApi();
   const { vault } = useVault();
@@ -196,7 +203,7 @@ export function DocumentReader({
       )}
       {media ? <ViewerMedia key={path} path={path} kind={media} vaultReads={vaultReads} />
         : kind === 'html' ? (
-          <HtmlPage key={path} path={path} embedded={embedded} vaultReads={vaultReads} fileActions={embedded && !hostFileActions} />
+          <HtmlPage key={path} path={path} embedded={embedded} vaultReads={vaultReads} fileActions={embedded && !hostFileActions} zoomBridge={zoomBridge} />
         ) : (
           <ViewerDocument key={path} path={path} onOpen={onOpen} onWikilink={onWikilink ?? resolveWikilink} vaultReads={vaultReads} />
         )}
@@ -344,8 +351,8 @@ function ViewerDocument({
  * blocked by that CSP, which the line under the frame says.
  */
 function HtmlPage({
-  path, vaultReads, fileActions,
-}: { path: string; embedded: boolean; vaultReads: boolean; fileActions: boolean }) {
+  path, vaultReads, fileActions, zoomBridge = false,
+}: { path: string; embedded: boolean; vaultReads: boolean; fileActions: boolean; zoomBridge?: boolean }) {
   const tx = useText();
   const { t } = useI18n();
   const { resolved: theme } = useTheme();
@@ -359,9 +366,9 @@ function HtmlPage({
 
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, headScript: HEIGHT_BRIDGE,
+      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, headScript: zoomBridge ? `${HEIGHT_BRIDGE}\n${ZOOM_BRIDGE}` : HEIGHT_BRIDGE,
     })),
-    [html, theme],
+    [html, theme, zoomBridge],
   );
 
   // The only message accepted: a height, from THIS frame's window (identity is the gate).

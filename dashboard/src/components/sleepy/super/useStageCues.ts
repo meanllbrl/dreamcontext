@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import type { SuperContainer } from '../../../lib/superTypes';
 import { getWindowActivity } from '../../../lib/windowActivity';
 import { playSuperCue } from '../../../lib/superSfx';
@@ -40,13 +40,17 @@ export function withGhosts<T extends { id: string }>(cards: readonly T[], ghosts
  */
 export function useStageCues(opts: {
   containers: readonly SuperContainer[];
-  plan: StagePlan;
+  /** The plan this render draws, and the web cards holding a live frame in it. Refs, filled by
+   *  the surface once its plan exists: the plan itself waits on `held` (a half page that has not
+   *  appeared yet keeps the stage floating), so this hook runs before it is computed. */
+  planRef: { readonly current: StagePlan | null };
+  liveWebRef: { readonly current: ReadonlySet<string> };
   superSession: ChatSession | undefined;
   dragging: boolean;
-  /** The web cards holding a live frame in the last drawn stage. */
-  liveWeb: ReadonlySet<string>;
-}): { held: ReadonlySet<string>; cueFor: (id: string) => StageCue | undefined; leaving: readonly LeavingCard[] } {
-  const { containers, plan, superSession, dragging, liveWeb } = opts;
+  /** The card the SERVER put side by side on its own (`view.auto`), or null. */
+  autoHalf: string | null;
+}): { held: ReadonlySet<string>; autoHalfHeld: boolean; cueFor: (id: string) => StageCue | undefined; leaving: readonly LeavingCard[] } {
+  const { containers, planRef, liveWebRef, superSession, dragging, autoHalf } = opts;
   const [cues, setCues] = useState<ReadonlyMap<string, StageCue>>(new Map());
   const [held, setHeld] = useState<string[]>([]);
   const [leaving, setLeaving] = useState<LeavingCard[]>([]);
@@ -75,8 +79,6 @@ export function useStageCues(opts: {
     const t = setTimeout(() => setLeaving((prev) => prev.filter((g) => Date.now() - g.at < CUE_MS)), CUE_MS);
     return () => clearTimeout(t);
   }, [leaving]);
-  const planRef = useRef(plan);
-  planRef.current = plan;
   const lastReveal = useRef(0);
   const speaking = useRef(false);
   /** A verb's cue for a card that is still held: played when it appears. */
@@ -129,12 +131,15 @@ export function useStageCues(opts: {
     });
   }, [containers, dragging, typedAt, cue, sound]);
 
+  // Every render: the refs carry this render's plan by the time layout effects run.
   useLayoutEffect(() => {
+    const plan = planRef.current;
+    if (!plan) return;
     const next: Record<string, CardPlan> = {};
     for (const [id, cp] of Object.entries(plan.cards)) next[id] = cp;
     lastPlans.current = next;
-    lastLiveWeb.current = liveWeb;
-  }, [plan, liveWeb]);
+    lastLiveWeb.current = liveWebRef.current;
+  });
 
   // The gate opens: one held card at a time, REVEAL_GAP_MS apart.
   useEffect(() => {
@@ -176,6 +181,28 @@ export function useStageCues(opts: {
   const heldRef = useRef(held);
   heldRef.current = held;
 
-  const heldSet = new Set(held);
-  return { held: heldSet, cueFor: (id) => cues.get(id), leaving };
+  // A card new in THIS render is held now, by the same rule the layout effect above applies a
+  // moment later: the surface plans on it (a page put side by side while the owner types waits,
+  // with the stage still floating), and no frame is laid out for a card that is not there yet.
+  const before = known.current;
+  const fresh = before ? containers.filter((c) => !before.has(c.id) && !held.includes(c.id)).map((c) => c.id) : [];
+  const holdFresh = fresh.length > 0 && (held.length > 0 || holdsNewCards({ dragging, typedAt: typedAt(), now: Date.now() }));
+  const heldSet = new Set(holdFresh ? [...held, ...fresh] : held);
+
+  // A page the server puts side by side on its own (a dev server, a child's browser, also one
+  // coming back from Others, which is not new to the record) waits the same way: while the owner
+  // types or drags, the stage stays floating; it switches once he pauses (G1). The owner's and
+  // the agent's own views are never held.
+  const shownAuto = useRef<string | null>(autoHalf);
+  const [, recheck] = useReducer((n: number) => n + 1, 0);
+  const autoHalfHeld = autoHalf !== null && autoHalf !== shownAuto.current
+    && holdsNewCards({ dragging, typedAt: typedAt(), now: Date.now() });
+  useEffect(() => {
+    if (autoHalf === null) { shownAuto.current = null; return undefined; }
+    if (autoHalf === shownAuto.current) return undefined;
+    if (!autoHalfHeld) { shownAuto.current = autoHalf; return undefined; }
+    const t = setTimeout(recheck, 250);
+    return () => clearTimeout(t);
+  });
+  return { held: heldSet, autoHalfHeld, cueFor: (id) => cues.get(id), leaving };
 }

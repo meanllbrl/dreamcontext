@@ -161,7 +161,8 @@ export function sanitizeView(raw: unknown, containers: readonly SuperContainer[]
   if (!isRecord(raw) || !oneOf(VIEW_MODES, raw.mode)) return { mode: 'float' };
   const ids = new Set(containers.map((c) => c.id));
   if (raw.mode === 'half') {
-    return typeof raw.card === 'string' && ids.has(raw.card) ? { mode: 'half', card: raw.card } : { mode: 'float' };
+    if (typeof raw.card !== 'string' || !ids.has(raw.card)) return { mode: 'float' };
+    return raw.auto === true ? { mode: 'half', card: raw.card, auto: true } : { mode: 'half', card: raw.card };
   }
   if (raw.mode === 'present') {
     const cards: string[] = [];

@@ -4,6 +4,7 @@
  * document, out of the viewer's reach. This script, run in the sandboxed page, posts them to the
  * parent so the viewer still scrolls and zooms; it stops the page itself zooming on ctrl+wheel.
  * Esc pressed inside the page (its focus is in the page after a click) closes the viewer too.
+ * A double click is posted as well: a card zoomed in place (the Super stage's ZoomPane) fits on it.
  *
  * The page's own scripts can read this script and post the same messages, so the parent trusts
  * none of it beyond "a zoom or a scroll was asked": it accepts only messages from that frame's
@@ -20,6 +21,9 @@ export const ZOOM_BRIDGE = `(function () {
   window.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') post({ kind: 'escape' });
   });
+  window.addEventListener('dblclick', function (e) {
+    post({ kind: 'dblclick', x: e.clientX, y: e.clientY });
+  });
   ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (t) {
     window.addEventListener(t, function (e) {
       e.preventDefault();
@@ -30,6 +34,7 @@ export const ZOOM_BRIDGE = `(function () {
 
 export type ZoomMessage =
   | { kind: 'escape' }
+  | { kind: 'dblclick'; x: number; y: number }
   | { kind: 'wheel'; dx: number; dy: number; ctrl: boolean; x: number; y: number }
   | { kind: 'gesture'; phase: 'start' | 'change' | 'end'; scale: number; x: number; y: number };
 
@@ -47,6 +52,7 @@ export function readZoomMessage(data: unknown): ZoomMessage | null {
   const x = num(r.x, -BIG, BIG);
   const y = num(r.y, -BIG, BIG);
   if (x === null || y === null) return null;
+  if (r.kind === 'dblclick') return { kind: 'dblclick', x, y };
   if (r.kind === 'wheel') {
     const dx = num(r.dx, -BIG, BIG);
     const dy = num(r.dy, -BIG, BIG);

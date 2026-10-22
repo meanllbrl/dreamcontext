@@ -483,6 +483,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 \`group <card…>\`; \`--off\` / \`float\` undo. \`@card:<id>\` names a card he dropped on you.
 Sizes: \`super shape <card> small|medium|large|wide\` (or \`open … --size\`); large/wide for
 something read at a glance (a picture, a chart). A 409 owner_sized means he chose it: leave it.
+A page (\`open web\`) opens side by side, then floats large.
 
 ## Events
 \`[super events]\`, \`[super handover]\` and \`[super recap]\` turns come from the server while the

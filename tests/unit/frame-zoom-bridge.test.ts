@@ -20,6 +20,12 @@ describe('readZoomMessage', () => {
     expect(ZOOM_BRIDGE).toContain("if (e.key === 'Escape') post({ kind: 'escape' });");
   });
 
+  it('reads a double click inside the page (a card zoomed in place fits on it)', () => {
+    expect(readZoomMessage(msg({ kind: 'dblclick', x: 4, y: 5 }))).toEqual({ kind: 'dblclick', x: 4, y: 5 });
+    expect(readZoomMessage(msg({ kind: 'dblclick', x: 'a', y: 5 }))).toBeNull();
+    expect(ZOOM_BRIDGE).toContain("post({ kind: 'dblclick', x: e.clientX, y: e.clientY });");
+  });
+
   it('clamps what it reads', () => {
     expect(readZoomMessage(msg({ kind: 'gesture', phase: 'change', scale: 1e9, x: 0, y: 0 }))).toMatchObject({ scale: 10 });
     expect(readZoomMessage(msg({ kind: 'wheel', dx: -1e12, dy: 1e12, ctrl: true, x: 0, y: 0 }))).toMatchObject({ dx: -100000, dy: 100000 });

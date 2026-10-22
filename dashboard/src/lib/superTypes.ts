@@ -87,6 +87,9 @@ export interface SuperView {
   mode: ViewMode;
   card?: string;
   cards?: string[];
+  /** `half` only: the server put this page side by side on its own; the stage waits to show it
+   *  while the owner types or drags (useStageCues). */
+  auto?: true;
 }
 
 export interface SuperChild {
@@ -331,7 +334,10 @@ const isUnit = (n: unknown): n is number => typeof n === 'number' && Number.isFi
 /** A pushed view, or `float` when it names no card this state holds. */
 function readView(v: unknown, ids: ReadonlySet<string>): SuperView {
   if (!isRecord(v) || !oneOf(VIEW_MODES, v.mode)) return { mode: 'float' };
-  if (v.mode === 'half') return typeof v.card === 'string' && ids.has(v.card) ? { mode: 'half', card: v.card } : { mode: 'float' };
+  if (v.mode === 'half') {
+    if (typeof v.card !== 'string' || !ids.has(v.card)) return { mode: 'float' };
+    return v.auto === true ? { mode: 'half', card: v.card, auto: true } : { mode: 'half', card: v.card };
+  }
   if (v.mode === 'present') {
     const cards = Array.isArray(v.cards) ? v.cards.filter((x): x is string => typeof x === 'string' && ids.has(x)).slice(0, MAX_PRESENT) : [];
     return cards.length ? { mode: 'present', cards } : { mode: 'float' };
