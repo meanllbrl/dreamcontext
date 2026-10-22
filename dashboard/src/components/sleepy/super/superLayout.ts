@@ -842,14 +842,3 @@ function sameView(a: SuperView, b: SuperView): boolean {
   if (a.mode === 'present') return (a.cards ?? []).join('\n') === (b.cards ?? []).join('\n');
   return true;
 }
-
-/** Where the job list opens (plan r4 §3): under the top band, at the centre's width, at most 60 %
- *  of its height, over the centre's top. An overlay: the plan's geometry does not change. */
-export function jobListRect(plan: Pick<StagePlan, 'centre' | 'queue'>): Rect {
-  return {
-    x: plan.centre.x,
-    y: plan.queue.y + plan.queue.height,
-    width: plan.centre.width,
-    height: Math.max(0, Math.round(plan.centre.height * 0.6)),
-  };
-}

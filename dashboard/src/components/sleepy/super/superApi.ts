@@ -52,6 +52,14 @@ export async function postSuperEnd(api: ApiClient, child: string): Promise<Super
   return readSuperStateView(r?.state);
 }
 
+/** `POST /api/super/seen` — the owner looked at these finished jobs in the agenda: each with the
+ *  finish key the row SHOWED, so a job that finished again since stays new. Throws on refusal
+ *  (the caller leaves the rows new: no optimistic flip). */
+export async function postSuperSeen(api: ApiClient, children: ReadonlyArray<{ id: string; at: number }>): Promise<SuperStateView | null> {
+  const r = await api.post<{ state?: unknown }>('/super/seen', { children });
+  return readSuperStateView(r?.state);
+}
+
 /** `POST /api/super/recap` — the window came back after a long absence. */
 export async function postSuperRecap(api: ApiClient): Promise<boolean> {
   const r = await api.post<{ queued?: unknown }>('/super/recap', {});

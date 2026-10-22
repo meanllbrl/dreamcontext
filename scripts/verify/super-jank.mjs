@@ -604,13 +604,12 @@ async function typeLoop(page) {
   await composer.fill('');
 }
 
+// The job list is the agenda now, always drawn: "opening" it is reading its rows.
 async function openList(page) {
-  const btn = page.locator('[data-testid="super-job-count-all"], [data-testid="super-job-count-working"]').first();
-  await btn.click().catch(() => {});
   await page.waitForTimeout(800);
-  return page.evaluate(() => document.querySelectorAll('[data-testid="super-job-row"]').length);
+  return page.evaluate(() => document.querySelectorAll('[data-testid="super-agenda-row"]').length);
 }
-async function closeList(page) { await page.keyboard.press('Escape'); await page.waitForTimeout(500); }
+async function closeList(page) { await page.waitForTimeout(500); }
 
 async function superStream(page) {
   rmSync(join(HOME, 'stop-super-stream'), { force: true });

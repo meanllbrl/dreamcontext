@@ -89,6 +89,15 @@ const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
 const DELEGATE_TIMEOUT_MS = 30_000;
 /** `super open <kind> <ref…>` takes at most this many refs at once. */
 const MAX_OPEN_REFS = 12;
+/** `super brief --eta` takes at most a day, in whole minutes. */
+export const MAX_ETA_MIN = 1440;
+
+/** `--eta` as the brief verb takes it: absent (undefined), whole minutes 0..MAX_ETA_MIN, or 'bad'. */
+export function etaMinutes(raw: unknown): number | undefined | 'bad' {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d{1,5}$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+  return Number.isInteger(n) && n >= 0 && n <= MAX_ETA_MIN ? n : 'bad';
+}
 /** How long past the frame's `deadline` the server still waits for the window's answer. */
 const DELEGATE_GRACE_MS = 5_000;
 
@@ -846,8 +855,21 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // `--task <slug>` links the row to a task (it never replaces the task).
     const task = str(b.task);
     if (task && !(await taskFileOk(c.who.contextRoot, task))) { refuse(res, 404, 'unknown_task', `no task "${task}" in this project (state/<slug>.md)`); return; }
-    await writeSuper(c.who.contextRoot, (s) => { const ch = s.children[child]; if (ch) { ch.brief = line; if (task) ch.task = task; } });
-    ok(res, { child, brief: line, ...(task ? { task } : {}) });
+    // `--eta <minutes>`: when the owner's agenda says the job will be done (0 clears it; absent
+    // keeps it). Whole minutes, at most a day.
+    const eta = etaMinutes(b.eta);
+    if (eta === 'bad') { refuse(res, 400, 'invalid_args', `--eta is whole minutes from 0 to ${MAX_ETA_MIN} (0 clears it)`); return; }
+    const etaAt = typeof eta === 'number' && eta > 0 ? Date.now() + eta * 60_000 : undefined;
+    await writeSuper(c.who.contextRoot, (s) => {
+      const ch = s.children[child];
+      if (!ch) return;
+      ch.brief = line;
+      if (task) ch.task = task;
+      // A finished job has no estimate: one set now would read "overdue" on its next run.
+      const finished = ch.row === 'done' || ch.row === 'gone';
+      if (eta === 0 || finished) delete ch.etaAt; else if (etaAt !== undefined) ch.etaAt = etaAt;
+    });
+    ok(res, { child, brief: line, ...(task ? { task } : {}), ...(eta !== undefined ? { etaAt: etaAt ?? null } : {}) });
   },
 
   read: async (c, b, res) => {
@@ -1741,7 +1763,7 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>) => Promise<void>;
 
 /** The owner's verbs (D17 hand-over/take-back, D9 layout, D7 lease, D13 recap). */
@@ -1828,6 +1850,33 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     await recordEnded(contextRoot, child);
     sendJson(res, 200, { state: superStateView(contextRoot, await readSuperState(contextRoot, superSanitizeOpts())) });
   },
+  seen: async (_req, res, contextRoot, body) => {
+    // The owner looked at finished jobs in the agenda (task super-agent-ajandasi-…): each entry
+    // names a child and the finish key his window SHOWED (`at`), so a result that finished again
+    // after that frame stays new. Only ever raises `seenAt`; unknown children are ignored.
+    const raw = body.children;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_CONTAINERS) {
+      sendError(res, 400, 'invalid_body', `children must be a list of 1 to ${MAX_CONTAINERS} { id, at }`);
+      return;
+    }
+    const marks: Array<{ id: string; at: number }> = [];
+    for (const x of raw as unknown[]) {
+      const o = x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : null;
+      const at = o && typeof o.at === 'number' && Number.isFinite(o.at) && o.at >= 0 ? o.at : NaN;
+      if (!o || typeof o.id !== 'string' || !SESSION_ID_RE.test(o.id) || !Number.isFinite(at)) {
+        sendError(res, 400, 'invalid_body', 'each entry is { id: <child session id>, at: <the finish time shown> }');
+        return;
+      }
+      marks.push({ id: o.id, at: Math.min(at, Date.now()) });
+    }
+    const state = await writeSuper(contextRoot, (s) => {
+      for (const m of marks) {
+        const ch = hasChild(s, m.id) ? s.children[m.id] : undefined;
+        if (ch && !(ch.seenAt !== undefined && ch.seenAt >= m.at)) ch.seenAt = m.at;
+      }
+    });
+    sendJson(res, 200, { state: superStateView(contextRoot, state) });
+  },
   recap: async (_req, res, contextRoot) => {
     const current = await readSuperState(contextRoot, superSanitizeOpts());
     if (!current.enabled || !current.session || current.away.events < 1) { sendJson(res, 200, { queued: false }); return; }
@@ -1893,3 +1942,4 @@ export const handleSuperActivity = ownerRoute('activity');
 export const handleSuperRecap = ownerRoute('recap');
 export const handleSuperEnd = ownerRoute('end');
 export const handleSuperFresh = ownerRoute('fresh');
+export const handleSuperSeen = ownerRoute('seen');
