@@ -3182,11 +3182,46 @@
       ]
     },
     {
+      "path": "super note",
+      "desc": "The owner's agenda: your notepad of what you do now, what you wait on him for, and what is done (plain words, high level)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super note add",
+      "desc": "Write one line: now (what you are doing) | waiting (what you need from the owner) | done (what finished); returns its id (n1, n2, ...)",
+      "args": [
+        "<section>",
+        "<text...>"
+      ]
+    },
+    {
+      "path": "super note clear",
+      "desc": "Empty the agenda (or one section): a new day or a new piece of work starts",
+      "args": [
+        "[section]"
+      ]
+    },
+    {
+      "path": "super note done",
+      "desc": "Move a line to Done (it finished, or the owner gave what you waited for)",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "super note drop",
+      "desc": "Remove a line that no longer holds",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
       "path": "super open",
-      "desc": "Open floating cards: chat | insight | task | knowledge | whiteboard | board | web | image | browser | team. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once",
+      "desc": "Open floating cards: chat | insight | task | knowledge | whiteboard | board | web | image | browser | team | agenda. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once. `open agenda` (no ref) brings back the owner's agenda card (Waiting on you, Now, Done, Up next)",
       "args": [
         "<kind>",
-        "<refs...>"
+        "[refs...]"
       ],
       "valueFlags": [
         "--group",

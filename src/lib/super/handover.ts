@@ -4,7 +4,7 @@ import { isReservedId, peekSuperNote, superIndex } from './store.js';
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
-  clearOwnerLease, ensureChatContainer, newQueueId, pumpSuper, reconcileRows, resolveAnswered, stopSweep, superVaultName, writeSuper,
+  clearOwnerLease, ensureAgendaCard, ensureChatContainer, newQueueId, pumpSuper, reconcileRows, resolveAnswered, stopSweep, superVaultName, writeSuper,
 } from './inbox.js';
 
 /**
@@ -80,6 +80,8 @@ export async function enableSuper(contextRoot: string, body: Record<string, unkn
     for (const q of s.queue) if (q.sessionId !== session && !Object.prototype.hasOwnProperty.call(kept, q.sessionId)) q.state = 'done';
     s.containers = s.containers.filter((c) => c.kind !== 'chat' || !!kept[c.ref]);
     for (const sid of Object.keys(kept)) ensureChatContainer(s, sid, kept[sid].brief.slice(0, 120));
+    // The agenda opens with every hand-over (closed last time, it is back; in Others, it stays).
+    ensureAgendaCard(s, { first: true });
     for (const sid of adopt) s.notes[sid] = 'handover';
     s.enabled = true;
     s.away = { since: null, events: 0 };

@@ -1280,3 +1280,7 @@
    it points (at the card's top it left the card's lower half empty, and zooming there showed nothing). */
 .super-zoom-content > .super-card-view > .doc-reader:has(> img.viewer-media) { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .super-zoom-content img.viewer-media { max-width: 100%; max-height: 100%; margin: 0; }
+
+/* The agenda's list is live on a floating card (owner 2026-10-22: the agenda is a card): its
+   rows are buttons and it scrolls; the card around it is still the grab handle. */
+.super-card-frame[data-where='float'][data-kind='agenda'] .super-card-large .super-agenda { pointer-events: auto; }

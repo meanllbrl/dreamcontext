@@ -12,8 +12,8 @@ import {
   CONTAINER_KINDS, CONTAINER_SHAPES, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
-  atLeastSize, defaultShape, dissolveGroups, floatCount, isPageKind, leaveGroups, minSizeFor, viewWithout,
-  type ContainerKind, type ContainerShape, type ContainerSize, type SuperAskSpec, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
+  AGENDA_REF, AGENDA_SIZE, MAX_PAD, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, dissolveGroups, floatCount, isPageKind, leaveGroups, minSizeFor, viewWithout,
+  type ContainerKind, type ContainerShape, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
 } from '../../lib/super/types.js';
 import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, setTeamLiveSource, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
 import { sayToAgent } from './automations.js';
@@ -21,7 +21,7 @@ import { currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles
 import { getAutomation } from '../../lib/automations/store.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
-  containerIdFor, ensureChatContainer, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
+  containerIdFor, ensureAgendaCard, ensureChatContainer, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
@@ -182,6 +182,8 @@ export function refForState(state: SuperState, kind: ContainerKind, raw: unknown
 
 function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown): { ref: string } | { error: string } {
   const ref = typeof raw === 'string' ? raw.trim() : '';
+  // The agenda is one card: its ref is implied (`super open agenda`).
+  if (kind === 'agenda') return !ref || ref === AGENDA_REF ? { ref: AGENDA_REF } : { error: `the agenda is one card: open it with no ref (or "${AGENDA_REF}")` };
   if (!ref) return { error: 'ref is required' };
   switch (kind) {
     case 'chat':
@@ -685,7 +687,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
           if (title) have.title = title;
           return;
         }
-        const size = atLeastSize(sizeArg ?? 'small', minSizeFor(kind as ContainerKind));
+        // The agenda opens at the size that holds its four sections, unless a size is named.
+        const size = atLeastSize(sizeArg ?? (kind === 'agenda' ? AGENDA_SIZE : 'small'), minSizeFor(kind as ContainerKind));
         s.containers.push({
           id: ids[i], kind: kind as ContainerKind, ref,
           shape: shapeArg ?? defaultShape(kind as ContainerKind),
@@ -1091,6 +1094,69 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
 
   'pool-list': async (c, _b, res) => {
     ok(res, { pool: poolRows(vaultNameOf(c.who.contextRoot), c.state.pool) });
+  },
+
+  // ── The owner's agenda: the super's own notepad (owner 2026-10-22 19:15) ──
+  'note-add': async (c, b, res) => {
+    const section = str(b.section);
+    if (!section || !(PAD_SECTIONS as readonly string[]).includes(section)) { refuse(res, 400, 'invalid_args', `section must be one of ${PAD_SECTIONS.join(' | ')}`); return; }
+    const text = cleanPadText(b.text);
+    if (!text) { refuse(res, 400, 'invalid_args', 'a note is one line of text'); return; }
+    let note: SuperPadItem | null = null;
+    let full = false;
+    await writeSuper(c.who.contextRoot, (s) => {
+      const pad = [...(s.pad ?? [])];
+      // The same line in the same section is the same note (a retried call writes nothing).
+      const same = pad.find((p) => p.section === section && p.text === text);
+      if (same) { note = same; return; }
+      if (pad.length >= MAX_PAD) {
+        // A full pad gives up its oldest finished line first; with none, nothing is dropped.
+        const oldest = pad.findIndex((p) => p.section === 'done');
+        if (oldest < 0) { full = true; return; }
+        pad.splice(oldest, 1);
+      }
+      const next = nextPadId(pad, s.padSeq);
+      note = { id: next.id, section: section as PadSection, text, at: Date.now() };
+      s.pad = [...pad, note];
+      s.padSeq = next.seq;
+    });
+    if (full) { refuse(res, 409, 'pad_full', `the agenda holds ${MAX_PAD} notes: \`super note done|drop <id>\` or \`super note clear\` first`); return; }
+    ok(res, { note });
+  },
+
+  'note-done': async (c, b, res) => {
+    const id = str(b.id);
+    if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    let note: SuperPadItem | null = null;
+    await writeSuper(c.who.contextRoot, (s) => {
+      const have = (s.pad ?? []).find((p) => p.id === id);
+      if (!have) return;
+      // Done goes to the end of the pad (the newest finished line), stamped now.
+      note = have.section === 'done' ? have : { ...have, section: 'done', at: Date.now() };
+      s.pad = [...(s.pad ?? []).filter((p) => p.id !== id), note];
+    });
+    if (!note) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    ok(res, { note });
+  },
+
+  'note-drop': async (c, b, res) => {
+    const id = str(b.id);
+    if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    await writeSuper(c.who.contextRoot, (s) => { s.pad = (s.pad ?? []).filter((p) => p.id !== id); });
+    ok(res, { dropped: id });
+  },
+
+  'note-clear': async (c, b, res) => {
+    const section = str(b.section);
+    if (section && !(PAD_SECTIONS as readonly string[]).includes(section)) { refuse(res, 400, 'invalid_args', `section must be one of ${PAD_SECTIONS.join(' | ')}`); return; }
+    let cleared = 0;
+    await writeSuper(c.who.contextRoot, (s) => {
+      const pad = s.pad ?? [];
+      const keep = section ? pad.filter((p) => p.section !== section) : [];
+      cleared = pad.length - keep.length;
+      s.pad = keep;
+    });
+    ok(res, { cleared, ...(section ? { section } : {}) });
   },
 
   ask: async (c, b, res) => {
@@ -1878,6 +1944,10 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
         if (p.order === 'last' && 'kind' in k) s.containers = [...s.containers.filter((x) => x !== k), k];
       }
       if (groupOp) { applyGroupOp(s, groupOp); for (const id of groupOp.cards) unshown.add(id); }
+      // The one card the owner may (re)open here: the super's agenda (owner 2026-10-22), from
+      // the centre's head after he closed it, put it in Others or grouped it: out of its group,
+      // floating (his ask; MAX_FLOAT binds only what an agent opens).
+      if (body.agenda === 'open') ensureAgendaCard(s, { bring: true, owner: true });
       if (ungroup.length) dissolveGroups(s, ungroup);
       const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
       for (const id of gone) unshown.add(id);

@@ -101,7 +101,7 @@ import {
   linkOpensSuperStage, presenceChatId, leanMcpFor,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap, postSuperSeen } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap } from './super/superApi';
 import { applyLayoutPatch, patchEchoed, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
@@ -3286,11 +3286,6 @@ export function AgentSurface() {
   ), []);
   // The owner looked at finished jobs in the agenda: the server's answer is the new record; a
   // refusal rejects and the rows stay new (no optimistic flip).
-  const markSuperSeen = async (rows: ReadonlyArray<{ id: string; at: number }>) => {
-    const st = await postSuperSeen(scopedApi, rows);
-    if (st) setSuperState(withPendingEdits(st));
-  };
-
   // ── First paint after a reload: the record, once. Afterwards only pushes. ──────────
   const capsLoaded = caps !== null;
   useEffect(() => {
@@ -4875,7 +4870,6 @@ export function AgentSurface() {
             sessionFor={chatByClaudeId}
             titleFor={superTitleFor}
             nameFor={superNameFor}
-            onSeen={markSuperSeen}
             terminals={superTerminals}
             onLayout={editSuperLayout}
             onTerminal={openTerminalFromSuper}

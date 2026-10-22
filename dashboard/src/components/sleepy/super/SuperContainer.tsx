@@ -47,7 +47,7 @@ export function fullscreenOf(c: Container, title: string, allowedHref: string | 
 }
 
 export const KIND_GLYPH: Record<Container['kind'], string> = {
-  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', browser: '◉', team: '◈',
+  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', browser: '◉', team: '◈', agenda: '☰',
 };
 
 /** A whiteboard's board file, from its slug (`whiteboards/<slug>/<slug>.excalidraw.md`). */
@@ -136,6 +136,8 @@ export interface SuperContainerProps extends SuperCardActions {
   canFit?: (size: ContainerSize) => boolean;
   /** The corner handle pressed (useStageDrag). */
   onPressResize?: (e: PointerEvent<HTMLElement>, id: string) => void;
+  /** `agenda`: the super's agenda as this card draws it (SuperAgenda), the counts tile or the list. */
+  agenda?: (variant: 'tile' | 'full', wide: boolean) => ReactNode;
 }
 
 /**
@@ -183,6 +185,9 @@ export function SuperContainer(props: SuperContainerProps) {
   // member in AI Team (where the job is), any other card shows side by side.
   const openCard = () => {
     if (c.kind === 'team') { if (props.team) requestOpenAgents({ slug: props.team.job.member }); return; }
+    // The agenda's list is live on its card (its rows are the buttons): a click between them is
+    // no "show side by side". Its counts tile opens like any card.
+    if (c.kind === 'agenda' && !small && drawnSize !== 'medium') return;
     props.onSideBySide(c.id);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -358,9 +363,17 @@ const widgetSize = (p: CardPlan): WidgetSize => {
 function FloatBody(p: BodyProps): ReactNode {
   const c = p.container;
   const size = p.plan.size ?? 'small';
+  if (c.kind === 'agenda' && SIZE_UNITS[size].h === 1) {
+    return (
+      <div className="super-card-body" data-inert="true">
+        <CardHead kind={c.kind} title={p.title} />
+        {p.agenda?.('tile', size === 'medium')}
+      </div>
+    );
+  }
   if (SIZE_UNITS[size].h > 1 && c.kind !== 'chat') {
     return (
-      <div className="super-card-body super-card-large" data-inert="true">
+      <div className="super-card-body super-card-large" data-inert={c.kind === 'agenda' ? undefined : 'true'}>
         <CardHead kind={c.kind} title={p.title} container={c} />
         <div className="super-card-large-body">{viewFor(p)}</div>
       </div>
@@ -519,6 +532,8 @@ export function isLivePage(c: Container): boolean {
 /** `zoomBridge`: the view sits in a ZoomPane, so a project page posts its pinch and wheel. */
 function viewFor(p: BodyProps, zoomBridge = false): ReactNode {
   const c = p.container;
+  // The agenda reads the pushed record only (no fetch, no layout of its own): it draws at once.
+  if (c.kind === 'agenda') return p.agenda?.('full', false) ?? null;
   if (!p.viewReady) return null;
   const size = widgetSize(p.plan);
   switch (c.kind) {

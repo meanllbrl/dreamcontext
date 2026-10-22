@@ -10,9 +10,16 @@
 
 export const SUPER_STATE_VERSION = 1 as const;
 
-/** What a container can show. `chat` is a child chat's card; the rest are read-only views. */
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser', 'team'] as const;
+/** What a container can show. `chat` is a child chat's card; `agenda` the super's own agenda
+ *  (Waiting on you / Now / Done / Up next, one per stage); the rest are read-only views. */
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser', 'team', 'agenda'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
+
+/** The agenda card's one ref: there is one agenda per stage (owner 2026-10-22: "a card, not a
+ *  column"). The hand-over opens it; the owner reopens it from the centre's head. */
+export const AGENDA_REF = 'agenda';
+/** The size the agenda opens at: a 2x2 tile holds its four sections. */
+export const AGENDA_SIZE: ContainerSize = 'large';
 
 /** A card's recorded shape, square (1:1) or tall (3:4): plan-r8 F1 and stage v2. Since the
  *  2026-10-20 redesign every FLOATING card is drawn as one 1:1 tile whatever its shape; the field
@@ -368,6 +375,47 @@ export interface SuperState {
   /** What piled up while the owner had a question open (`SuperHeldEvent`): told to the super agent
    *  with his answer, never dropped silently. Absent = none. */
   held?: SuperHeldEvent[];
+  /** The owner's agenda: the super agent's own notepad (`super note`), oldest first. Absent = empty. */
+  pad?: SuperPadItem[];
+  /** The last pad id handed out (`n<padSeq>`): ids are never reused, so a stale id names nothing. */
+  padSeq?: number;
+}
+
+/**
+ * The agenda is a NOTEPAD the super agent writes itself (owner 2026-10-22 19:15: "like a
+ * person's sticky notepad: what is being done now, what finished, for this session or today;
+ * the agent knows when to reset it"), never a mirror of its children: the owner sees those in
+ * ten other places. Plain, high-level lines in the owner's words, in three sections:
+ * - `now`: what it is doing ("Fixing how pictures group on the stage");
+ * - `waiting`: what it expects from the owner ("Your pick between the two paywall designs");
+ * - `done`: what finished this session or today.
+ * The super keeps it true (`super note add|done|drop|clear`) and clears it when a new day or a
+ * new piece of work starts. Only the server writes the record; the window draws it.
+ */
+export const PAD_SECTIONS = ['now', 'waiting', 'done'] as const;
+export type PadSection = typeof PAD_SECTIONS[number];
+export interface SuperPadItem {
+  /** `n<k>`: short, so the agent can name it (`super note done n3`). */
+  id: string;
+  section: PadSection;
+  text: string;
+  /** When it was written, or moved to its section (ms). */
+  at: number;
+}
+export const PAD_ID_RE = /^n[1-9][0-9]{0,5}$/;
+export const MAX_PAD = 40;
+export const MAX_PAD_TEXT = 160;
+
+/** A pad line as stored: one line, no control characters, at most MAX_PAD_TEXT. */
+export function cleanPadText(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_PAD_TEXT).trim();
+}
+
+/** The next pad id: one past the last handed out and past every id the pad holds. */
+export function nextPadId(pad: readonly Pick<SuperPadItem, 'id'>[], seq = 0): { id: string; seq: number } {
+  const top = pad.reduce((m, p) => Math.max(m, Number(p.id.slice(1)) || 0), Math.max(0, Math.floor(seq)));
+  return { id: `n${top + 1}`, seq: top + 1 };
 }
 
 /**
@@ -683,6 +731,7 @@ export const SUPER_VERBS = [
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask',
+  'note-add', 'note-done', 'note-drop', 'note-clear',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 
@@ -729,7 +778,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 6;
+export const SUPER_BRIEF_REV = 7;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

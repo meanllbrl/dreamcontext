@@ -11,8 +11,12 @@
 
 export const SUPER_STATE_VERSION = 1 as const;
 
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser', 'team'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser', 'team', 'agenda'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
+
+/** The agenda card's one ref (one agenda per stage) and the size it opens at. */
+export const AGENDA_REF = 'agenda';
+export const AGENDA_SIZE: ContainerSize = 'large';
 
 export const CONTAINER_SHAPES = ['square', 'tall'] as const;
 export type ContainerShape = typeof CONTAINER_SHAPES[number];
@@ -239,7 +243,18 @@ export interface SuperState {
   team: SuperTeamJob[];
   /** What piled up while the owner had a question open (absent = none). */
   held?: SuperHeldEvent[];
+  /** The owner's agenda: the super agent's own notepad (`super note`), oldest first. */
+  pad?: SuperPadItem[];
+  padSeq?: number;
 }
+
+/** The agenda notepad (owner 2026-10-22 19:15): lines the super agent writes itself, in three
+ *  sections. Not a mirror of its children. */
+export const PAD_SECTIONS = ['now', 'waiting', 'done'] as const;
+export type PadSection = typeof PAD_SECTIONS[number];
+export interface SuperPadItem { id: string; section: PadSection; text: string; at: number }
+export const MAX_PAD = 40;
+export const MAX_PAD_TEXT = 160;
 
 export interface SuperStateView extends SuperState {
   vault: string;
@@ -428,6 +443,9 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
   const ownerBatches = Array.isArray(v.ownerBatches) ? v.ownerBatches.filter((b): b is string => typeof b === 'string') : [];
   const held = Array.isArray(v.held) ? v.held.filter((h): h is SuperHeldEvent => isRecord(h) && typeof h.item === 'string'
     && typeof h.child === 'string' && typeof h.at === 'number' && (h.kind === 'question' || h.kind === 'done' || h.kind === 'stuck' || h.kind === 'gone')) : [];
+  // The agenda notepad: a known section, a string line, a number time (absent in an older push).
+  const pad = Array.isArray(v.pad) ? v.pad.filter((p): p is SuperPadItem => isRecord(p) && typeof p.id === 'string'
+    && oneOf(PAD_SECTIONS, p.section) && typeof p.text === 'string' && p.text !== '' && typeof p.at === 'number') : [];
   return {
     v: SUPER_STATE_VERSION,
     vault: v.vault,
@@ -446,6 +464,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     pool,
     ownerBatches,
     ...(held.length ? { held } : {}),
+    ...(pad.length ? { pad } : {}),
     team,
     ...(teamLive ? { teamLive } : {}),
     ...(Array.isArray(v.bannered) ? { bannered: v.bannered.filter((b): b is string => typeof b === 'string') } : {}),

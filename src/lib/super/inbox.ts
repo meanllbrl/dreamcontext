@@ -20,7 +20,7 @@ import {
 } from './store.js';
 import {
   DONE_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS,
-  SUPER_FRAME_STATE, floatCount,
+  SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE,
   type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, type SuperHeldEvent, type SuperQueueItem, type SuperState, type SuperStateView,
 } from './types.js';
@@ -118,6 +118,33 @@ export function ensureChatContainer(s: SuperState, sessionId: string, title?: st
   const id = containerIdFor('chat', sessionId);
   const place = floatCount(s) < MAX_FLOAT ? 'float' : 'others';
   s.containers.push({ id, kind: 'chat', ref: sessionId, shape: 'tall', place, ...(title ? { title } : {}) });
+  return id;
+}
+
+/**
+ * The super's agenda card (owner 2026-10-22: the agenda is a card on the stage, not a column).
+ * One per stage, floating where the stage has room, else in Others. `first` puts a new one at
+ * the head of the record (the hand-over: it lands on the left, where the owner reads first);
+ * the owner's reopen appends it. An agenda already in Others is brought back only when `bring`
+ * (the owner's reopen), never by the hand-over: there it is where he put it. The OWNER's reopen
+ * (`owner`) is his explicit ask: it takes the card out of any group (a grouped agenda is drawn
+ * as the group's tile, not as the list) and floats it whatever the stage holds (MAX_FLOAT binds
+ * what an agent opens). Returns its id (null: the record is full).
+ */
+export function ensureAgendaCard(s: SuperState, opts: { first?: boolean; bring?: boolean; owner?: boolean } = {}): string | null {
+  const id = containerIdFor('agenda', AGENDA_REF);
+  const room = () => opts.owner === true || floatCount(s) < MAX_FLOAT;
+  const have = s.containers.find((c) => c.id === id);
+  if (have) {
+    if (opts.bring) {
+      if (opts.owner) leaveGroups(s, [id]);
+      if (have.place !== 'float' && room()) have.place = 'float';
+    }
+    return id;
+  }
+  if (s.containers.length >= MAX_CONTAINERS) return null;
+  const card = { id, kind: 'agenda' as const, ref: AGENDA_REF, shape: 'square' as const, size: AGENDA_SIZE, place: room() ? 'float' as const : 'others' as const };
+  if (opts.first) s.containers.unshift(card); else s.containers.push(card);
   return id;
 }
 

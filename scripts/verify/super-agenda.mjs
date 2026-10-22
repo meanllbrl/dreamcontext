@@ -6,13 +6,18 @@
  *
  *   npm run build && node scripts/verify/super-agenda.mjs
  *
- * The owner hands five chats over; the stand-in super briefs two working jobs with `--eta`, one
- * child asks the owner a question, two finish, two jobs are pooled. Checks: the agenda column is
- * there with its four sections and counts, the job bar has no counts and no list; a working row
- * shows its name, its line and "~N min"; the asking child is in Waiting only; Up next lists the
- * pool; a finished row is "new", a click makes it "seen", and it is still seen after a reload; an
- * event line's name lights its agenda row; every floating card lies right of the agenda. Then
- * screenshots at 1440x900 light, 1800x1130 dark and 1280x800 light, zero page errors.
+ * The owner hands five chats over; one child asks the owner a question. The agenda is a CARD on
+ * the stage (owner 2026-10-22 18:56) and the super agent's own NOTEPAD (19:15), never a list of
+ * its children: the stand-in super writes it with `super note add` at the hand-over (two Now
+ * lines, one Waiting line, one Done line), moves a line to Done (`note done`) and clears it for
+ * a new day (`note clear`). Checks: the card opens with the hand-over (large, card chrome), no
+ * column or rail and the stage its full width; three sections; Now and Done show only the
+ * super's lines (no child names, no estimates, no Up next); Waiting on you shows the open
+ * question and the super's waiting line; a question row brings its card in the centre into
+ * view (the super's own too); an event line's child name shows that child side by side; the
+ * notepad updates live and survives a reload; the card sizes (small = the counts tile), goes to
+ * Others and back, closes, and the centre's Agenda button brings it back. Screenshots at
+ * 1440x900 light, 1800x1130 dark and 1280x800 light; zero page errors.
  *
  * Collect, don't fail fast: every check prints ✓/✗. Exit 0 iff all pass.
  */
@@ -121,6 +126,12 @@ async function childTurn(text) {
     title(first.title);
     return null;
   }
+  if (/IZIN-ISTE/.test(text)) {
+    // A tool permission the owner must answer (it never reaches the super agent).
+    const r = await ask({ tool_name: 'Bash', display_name: 'Bash', input: { command: 'rm -rf build', description: 'Clean the build folder' } });
+    report({ kind: 'permission-answered', response: r });
+    return 'Tamam.';
+  }
   if (/indirim/i.test(text)) {
     const r = await ask({ tool_name: 'AskUserQuestion', display_name: 'AskUserQuestion', input: { questions: [{ question: 'Yıllık planda indirim yüzde kaç olsun?', header: 'İndirim', multiSelect: false, options: [{ label: '%15', description: 'mevcut' }, { label: '%20', description: 'daha çekici' }] }] } });
     report({ kind: 'answered', response: r });
@@ -149,20 +160,35 @@ async function superTurn(text) {
     if (fiy) cli('super', 'send', fiy, 'Yıllık indirim oranını sahibe sor.');
     if (not) cli('super', 'brief', not, 'Biten iş artık zil çalıyor');
     if (fat) cli('super', 'brief', fat, "Yeni ledger API'ye taşındı");
-    cli('super', 'pool', 'add', '--prompt', 'Insight kartlarının görünümünü düzelt.', '--brief', 'Insight kartı görünümü');
-    cli('super', 'pool', 'add', '--prompt', 'Biten worktree klasörlerini temizle.', '--brief', 'Worktree temizliği');
-    report({ kind: 'handover', children: Object.keys(children()) });
+    // The agenda is the super's own notepad: plain, high-level lines, never its children's names.
+    const notes = [
+      cli('super', 'note', 'add', 'now', 'Tanıtım videosunun ikinci yarısını bitiriyoruz'),
+      cli('super', 'note', 'add', 'now', 'Oturum devrinde yarım kalan dosyayı düzeltiyoruz'),
+      cli('super', 'note', 'add', 'waiting', 'Yıllık plan indirimi için kararın: %15 mi %20 mi'),
+      cli('super', 'note', 'add', 'done', 'Fatura toplamları yeni ledger API üstünde, testler geçti'),
+    ];
+    report({ kind: 'handover', children: Object.keys(children()), notes: notes.map((n) => ({ st: n.status, o: n.out.slice(0, 160) })) });
     return 'Beş işi devraldım. Video ve devir sorunu çalışıyor, fiyat sayfası sana bir şey soracak.';
   }
   if (text.startsWith('[super')) { report({ kind: 'event', text: text.slice(0, 300) }); return null; }
-  if (/DURUM-GOSTER/.test(text)) {
-    // The states the agenda words: a job that errors (stuck), one settling (finishing), one past its estimate (overdue).
-    const vid = byBrief('İkinci yarı render ediliyor'); const fat = byBrief("Yeni ledger API'ye taşındı"); const not = byBrief('Biten iş artık zil çalıyor');
-    if (vid) cli('super', 'brief', vid, 'İkinci yarı render ediliyor', '--eta', '1');
-    if (fat) cli('super', 'send', fat, 'HATA-VER');
-    if (not) cli('super', 'send', not, 'kısa bir kontrol yap');
-    report({ kind: 'states', vid, fat, not });
-    return 'Tamam.';
+  if (/IZIN-GONDER/.test(text)) {
+    const not = byBrief('Biten iş artık zil çalıyor') ?? byBrief('Bildirim düzeltmesi');
+    const r = not ? cli('super', 'send', not, 'IZIN-ISTE: build klasörünü temizle') : null;
+    report({ kind: 'permission-sent', child: not, status: r?.status });
+    return 'Bildirim işine temizlik yaptırıyorum.';
+  }
+  if (/NOT-BITTI/.test(text)) {
+    // The video finished: its Now line moves to Done.
+    const r = cli('super', 'note', 'done', 'n1');
+    report({ kind: 'note-done', status: r.status, out: r.out.slice(0, 160) });
+    return 'Video bitti, ajandaya yazdım.';
+  }
+  if (/NOT-TEMIZLE/.test(text)) {
+    // A new day: the super clears its notepad and writes what still holds.
+    const c = cli('super', 'note', 'clear');
+    const a = cli('super', 'note', 'add', 'now', 'Yeni gün: fiyat sayfası metnini bitiriyoruz');
+    report({ kind: 'note-clear', status: [c.status, a.status], out: a.out.slice(0, 160) });
+    return 'Ajandayı yeni güne göre temizledim.';
   }
   if (/SORU-SOR/.test(text)) {
     const r = cli('super', 'ask', 'Videoyu bu akşam yayına alalım mı?', '--options', 'Evet|Yarın');
@@ -367,11 +393,11 @@ async function backToStage(page) {
   await page.waitForTimeout(2500);
   for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(150); }
   await clean(page);
-  if (!(await page.getByTestId('super-agenda').isVisible().catch(() => false))) {
+  if (!(await page.getByTestId('super-surface').isVisible().catch(() => false))) {
     const nav = page.locator('aside a, aside button, nav a, nav button').filter({ hasText: /^\s*Chat\s*\d*\s*$/ }).first();
     if (await nav.count()) await nav.click().catch(() => {});
   }
-  await until(page, async () => page.getByTestId('super-agenda').isVisible(), 30000);
+  await until(page, async () => page.getByTestId('super-surface').isVisible(), 30000);
   await motionIdle(page);
 }
 async function agendaShot(page, name, theme, w, h) {
@@ -382,16 +408,27 @@ async function agendaShot(page, name, theme, w, h) {
   await page.mouse.move(5, 5);
   ok(`${name}: the stage settled before the shot`, await stageSettled(page));
   await shot(page, name);
-  // Nothing drawn under the agenda, every card and the centre inside the window.
+  // No column: the stage has the surface's full width; every card and the centre inside the
+  // window, the stage's cards (the agenda among them) never over the centre.
   const geo = await page.evaluate(() => {
-    const a = document.querySelector('[data-testid="super-agenda"]').getBoundingClientRect();
-    const boxes = [...document.querySelectorAll('[data-testid="super-container"], [data-testid="super-group"], .super-centre, [data-testid="super-others"], .super-others-stack')]
+    const stage = document.querySelector('[data-testid="super-surface"]').getBoundingClientRect();
+    const host = document.querySelector('[data-testid="super-surface"]').parentElement.getBoundingClientRect();
+    const c = document.querySelector('.super-centre').getBoundingClientRect();
+    const boxes = [...document.querySelectorAll('[data-testid="super-container"], [data-testid="super-group"], .super-centre, .super-others-stack')]
       .map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
-    return { right: a.right, w: innerWidth, h: innerHeight, boxes: boxes.map((r) => ({ l: r.left, r: r.right, t: r.top, b: r.bottom })) };
+    const cards = [...document.querySelectorAll('[data-testid="super-container"][data-where="float"], [data-testid="super-group"]')].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0);
+    return {
+      column: document.querySelectorAll('.super-shell, [data-testid="super-agenda-rail"], aside.super-agenda').length,
+      stageW: stage.width, hostW: host.width, w: innerWidth, h: innerHeight,
+      boxes: boxes.map((r) => ({ l: r.left, r: r.right, t: r.top, b: r.bottom })),
+      over: cards.filter((r) => r.left < c.right - 1 && r.right > c.left + 1 && r.top < c.bottom - 1 && r.bottom > c.top + 1).length,
+    };
   });
-  const bad = geo.boxes.filter((b) => b.l < geo.right - 0.5 || b.r > geo.w + 0.5 || b.b > geo.h + 0.5);
-  ok(`${name}: the centre and every card lie right of the agenda, inside ${w}x${h}`, geo.boxes.length > 0 && bad.length === 0, JSON.stringify(bad).slice(0, 200));
+  ok(`${name}: no agenda column or rail; the stage has the full width`, geo.column === 0 && Math.abs(geo.stageW - geo.hostW) < 1, JSON.stringify({ column: geo.column, stageW: geo.stageW, hostW: geo.hostW }));
+  const bad = geo.boxes.filter((b) => b.l < -0.5 || b.r > geo.w + 0.5 || b.b > geo.h + 0.5);
+  ok(`${name}: the centre and every card inside ${w}x${h}, no floating card over the centre`, geo.boxes.length > 0 && bad.length === 0 && geo.over === 0, JSON.stringify({ bad, over: geo.over }).slice(0, 200));
 }
+const agendaCard = (page) => page.locator('[data-testid="super-container"][data-kind="agenda"]');
 
 async function main() {
   setupScratch();
@@ -429,61 +466,53 @@ async function main() {
     await motionIdle(page);
     await until(page, async () => reports().some((r) => r.kind === 'handover'), 90000);
 
-    ok('the agenda column is drawn', await until(page, async () => (await page.getByTestId('super-agenda').count()) === 1, 15000));
-    ok('four sections in order', (await page.locator('[data-testid^="super-agenda-section-"]').evaluateAll((els) => els.map((e) => e.dataset.section))).join(',') === 'waiting,now,done,next');
+    ok('the agenda opens as a card on the stage with the hand-over', await until(page, async () => (await agendaCard(page).count()) === 1
+      && (await agendaCard(page).getAttribute('data-where')) === 'float' && (await agendaCard(page).locator('[data-testid="super-agenda"][data-variant="full"]').count()) === 1, 15000));
+    ok('…a stage card like the others: one record card of kind agenda, sized large', (record().containers ?? []).filter((c) => c.kind === 'agenda' && c.ref === 'agenda' && c.size === 'large').length === 1, JSON.stringify((record().containers ?? []).filter((c) => c.kind === 'agenda')));
+    ok('…with the card chrome (size, close)', (await agendaCard(page).locator('[data-testid="super-card-size-btn"], [data-testid="super-card-close"]').count()) === 2);
+    ok('no agenda column and no rail', (await page.locator('.super-shell, aside.super-agenda, [data-testid="super-agenda-rail"]').count()) === 0);
+    ok('three sections in order: Waiting on you, Now, Done', (await page.locator('[data-testid^="super-agenda-section-"]').evaluateAll((els) => els.map((e) => e.dataset.section))).join(',') === 'waiting,now,done');
     ok('the job bar has no counts and there is no list overlay', (await page.locator('[data-testid^="super-job-count-"], .super-job-counts, [data-testid="super-job-list"]').count()) === 0);
-    // The question reaches Waiting once the owner's 15 s lease is over.
-    ok('Waiting on you: the asking child', await until(page, async () => (await rowsOf(page, 'waiting').filter({ hasText: 'Fiyat sayfası' }).count()) === 1, 45000));
-    ok('…and it is not also in Now', (await rowsOf(page, 'now').filter({ hasText: 'Fiyat sayfası' }).count()) === 0);
-    const vid = rowsOf(page, 'now').filter({ hasText: 'Tanıtım videosu' });
-    ok('Now: the video row by its name, its plain line and its estimate', await until(page, async () => (await vid.count()) === 1
-      && /İkinci yarı render ediliyor/.test(await vid.innerText()) && /~(19|20) min/.test(await vid.innerText()), 20000), await vid.innerText().catch(() => ''));
-    ok('Now: the second job shows hours', /~(1|2) h/.test(await rowsOf(page, 'now').filter({ hasText: 'Super devir sorunu' }).innerText().catch(() => '')));
-    ok('Up next: the two pooled jobs', (await rowsOf(page, 'next').count()) === 2);
-    ok('the counts match the rows', (await page.getByTestId('super-agenda-count-next').innerText()) === '2');
-    // Done: finished jobs stay new until the owner clicks them.
-    ok('Done: finished jobs are "new"', await until(page, async () => (await page.locator('[data-testid="super-agenda-section-done"] [data-state="new"]').count()) >= 1, 60000));
+    // The notepad: the super's own lines, written with `super note`.
+    ok('the super wrote its notepad (`super note add`)', await until(page, async () => (record().pad ?? []).length === 4, 30000), JSON.stringify(reports().filter((r) => r.kind === 'handover')));
+    const noteRows = (sec) => rowsOf(page, sec).and(page.locator('[data-kind="note"]'));
+    ok('Now: the super\'s own lines, in its words', await until(page, async () => (await noteRows('now').count()) === 2
+      && /Tanıtım videosunun ikinci yarısını bitiriyoruz/.test(await rowsOf(page, 'now').first().innerText()), 15000));
+    ok('Done: what finished, in its words', /Fatura toplamları yeni ledger API üstünde/.test(await rowsOf(page, 'done').first().innerText().catch(() => '')));
+    const agendaText = await agendaCard(page).innerText();
+    ok('no child session is listed (no job names, no estimates, no "Up next")', !/Bildirim düzeltmesi|Super devir sorunu|~\d+ min|Up next/.test(agendaText), agendaText.slice(0, 300));
+    ok('the counts match the lines', (await page.getByTestId('super-agenda-count-now').innerText()) === '2' && (await page.getByTestId('super-agenda-count-done').innerText()) === '1');
+    // Waiting on you: the question open with him, then what the super noted it needs from him.
+    ok('Waiting on you: the open question (the lease is over) and the super\'s own waiting line', await until(page, async () => (await rowsOf(page, 'waiting').filter({ hasText: 'Fiyat sayfası' }).count()) === 1
+      && (await noteRows('waiting').filter({ hasText: 'Yıllık plan indirimi için kararın' }).count()) === 1, 45000));
     await page.mouse.move(5, 5);
+    await stageSettled(page);
     await shot(page, '01-agenda-1440-light.png');
-    // An event line's name points the agenda at its row.
+    // An event line's child name shows that child beside the centre (the agenda lists no children).
     const name = page.locator('[data-super-slot="centre"] .super-event-line-name').first();
     if (await name.count()) {
       await name.click();
-      ok('an event line\'s name lights its agenda row', await until(page, async () => (await page.locator('[data-testid="super-agenda-row"][data-focus="true"]').count()) === 1, 3000));
+      ok('an event line\'s child name shows that child side by side', await until(page, async () => record().view?.mode === 'half', 5000), JSON.stringify(record().view));
+      await motionIdle(page);
       await stageSettled(page);
-    await shot(page, '05-event-line-lights-row.png');
-    } else ok('an event line\'s name lights its agenda row', false, 'no event line name in the centre');
-    // Waiting on you: a child's question opens its card in the centre chat, as the band's Answer
-    // does (soru-atomik: the child's own AskUserQuestion card, answered through the child).
+      await shot(page, '05-event-line-shows-child.png');
+      await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+      await until(page, async () => record().view?.mode === 'float' && (await agendaCard(page).count()) === 1, 8000);
+      await motionIdle(page);
+    } else ok('an event line\'s child name shows that child side by side', false, 'no event line name in the centre');
+    // A child's question waiting on him opens its card in the centre chat, as the band's Answer does.
     await page.locator('[data-super-slot="centre"] .chat-scroll, [data-super-slot="centre"] [data-chat-scroll]').first().evaluate((el) => { el.scrollTop = 0; }).catch(() => {});
     await rowsOf(page, 'waiting').filter({ hasText: 'Fiyat sayfası' }).locator('.super-agenda-row-btn').click();
-    ok('a waiting child\'s question row brings its card in the centre into view', await until(page, async () => page.evaluate(() => {
+    ok('a waiting question row brings its card in the centre into view', await until(page, async () => page.evaluate(() => {
       const card = [...document.querySelectorAll('[data-super-slot="centre"] [data-testid="super-question-card"][data-kind="question"]')].pop();
       if (!card) return false;
       const r = card.getBoundingClientRect();
       return r.height > 0 && r.top >= 0 && r.bottom <= innerHeight;
     }), 8000));
+    ok('…and the agenda stays on the stage', (await agendaCard(page).count()) === 1);
     await page.mouse.move(5, 5);
     await stageSettled(page);
-    await shot(page, '06-waiting-child-question-card.png');
-    await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
-    await until(page, async () => record().view?.mode === 'float', 8000);
-    await motionIdle(page);
-    const fresh = page.locator('[data-testid="super-agenda-section-done"] [data-state="new"]').first();
-    const key = await fresh.getAttribute('data-row');
-    await fresh.locator('.super-agenda-row-btn').click();
-    const row = page.locator(`[data-testid="super-agenda-row"][data-row="${key}"]`);
-    ok('a click marks it seen', await until(page, async () => (await row.getAttribute('data-state')) === 'seen', 10000));
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await backToStage(page);
-    ok('…and it is still seen after a reload', await until(page, async () => (await row.getAttribute('data-state').catch(() => null)) === 'seen', 15000));
-    const left = await page.locator('[data-testid="super-agenda-section-done"] [data-state="new"]').count();
-    if (left > 0) {
-      await motionIdle(page);
-      await shot(page, '01b-before-mark-seen.png');
-      await page.getByTestId('super-agenda-mark-seen').click({ timeout: 10000 });
-      ok('"Mark N seen" clears the rest', await until(page, async () => (await page.locator('[data-testid="super-agenda-section-done"] [data-state="new"]').count()) === 0, 10000));
-    }
+    await shot(page, '06-waiting-question-card.png');
     // The super agent's own question: a Waiting row under its name; a click brings its card into view.
     await sayCentre(page, 'SORU-SOR');
     const askRow = rowsOf(page, 'waiting').filter({ hasText: 'Videoyu bu akşam' });
@@ -498,26 +527,25 @@ async function main() {
         return r.height > 0 && r.top >= 0 && r.bottom <= innerHeight;
       }), 5000));
     }
-    // Stuck, finishing and overdue, as the owner reads them.
-    await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
-    await sayCentre(page, 'DURUM-GOSTER');
-    const nowRow = (txt) => rowsOf(page, 'now').filter({ hasText: txt });
-    // "finishing" is drawn from the record's `settling` flag (unit-tested in super-jobs.test.ts).
-    // Observed when the server sets it; in this stand-in flow (a turn that ends at once) it may
-    // not, so it is reported, not gated.
-    const settled = await until(page, async () => (await nowRow('Bildirim düzeltmesi').getAttribute('data-chip').catch(() => null)) === 'settling', 25000);
-    log(`  note: "finishing" ${settled ? 'observed' : 'not observed (the record never set settling in this flow)'}`);
-    await page.mouse.move(5, 5);
-    await shot(page, '07a-finishing.png');
-    ok('an erroring job reads "stuck" in Now', await until(page, async () => (await nowRow('Fatura toplamları').getAttribute('data-chip').catch(() => null)) === 'stuck', 45000), JSON.stringify(reports().filter((r) => r.kind === 'states')));
-    await motionIdle(page);
+    // The super keeps it true: a finished line moves to Done, live.
+    await sayCentre(page, 'NOT-BITTI');
+    ok('`super note done` moves the line to Done, live', await until(page, async () => (await noteRows('now').count()) === 1 && (await noteRows('done').count()) === 2
+      && /Tanıtım videosunun ikinci yarısını bitiriyoruz/.test(await rowsOf(page, 'done').first().innerText().catch(() => '')), 30000), JSON.stringify(reports().filter((r) => r.kind === 'note-done')));
     await page.mouse.move(5, 5);
     await stageSettled(page);
-    await shot(page, '07-stuck.png');
-    ok('a job past its estimate reads "overdue"', await until(page, async () => /overdue/.test(await nowRow('Tanıtım videosu').innerText().catch(() => '')), 75000));
+    await shot(page, '07-note-done.png');
+    // A new day: the super clears it and writes what still holds.
+    await sayCentre(page, 'NOT-TEMIZLE');
+    ok('`super note clear` empties it; the new line shows', await until(page, async () => (await noteRows('done').count()) === 0 && (await noteRows('now').count()) === 1
+      && /Yeni gün/.test(await rowsOf(page, 'now').first().innerText().catch(() => '')), 30000), JSON.stringify(reports().filter((r) => r.kind === 'note-clear')));
+    ok('…after a reload the notepad is still there (the record keeps it)', await (async () => {
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await backToStage(page);
+      return until(page, async () => /Yeni gün/.test(await rowsOf(page, 'now').first().innerText().catch(() => '')), 15000);
+    })());
     await page.mouse.move(5, 5);
     await stageSettled(page);
-    await shot(page, '08-overdue.png');
+    await shot(page, '08-note-cleared.png');
     await agendaShot(page, '02-agenda-1440-light.png', 'light', 1440, 900);
     await agendaShot(page, '03-agenda-1800-dark.png', 'dark', 1800, 1130);
     // At 1280 with a card side by side: it must sit beside the centre, never over it.
@@ -527,20 +555,112 @@ async function main() {
       await until(page, async () => record().view?.mode === 'half', 8000);
     }
     await agendaShot(page, '04-agenda-1280-light.png', 'light', 1280, 800);
-    ok('1280: the agenda folds to its rail and the stage is not narrow', (await page.getByTestId('super-agenda').getAttribute('data-compact')) === 'true'
-      && (await page.getByTestId('super-surface').getAttribute('data-narrow')) === null);
+    ok('1280: the stage is not narrow (no column takes its width)', (await page.getByTestId('super-surface').getAttribute('data-narrow')) === null);
     const half = await page.evaluate(() => {
       const c = document.querySelector('.super-centre')?.getBoundingClientRect();
       const cards = [...document.querySelectorAll('[data-testid="super-container"]')].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0);
       return { c: c && { l: c.left, r: c.right }, over: cards.filter((r) => c && r.left < c.right - 1 && r.right > c.left + 1 && r.top < c.bottom && r.bottom > c.top).length };
     });
-    ok('1280: no card covers the centre', half.over === 0, JSON.stringify(half));
-    await page.getByTestId('super-agenda-rail').click();
-    ok('1280: the rail opens the full agenda over the stage', await until(page, async () => (await page.locator('[data-testid="super-agenda-pop"] [data-testid^="super-agenda-section-"]').count()) === 4, 3000));
-    await page.mouse.move(640, 5);
-    await shot(page, '09-agenda-1280-rail-open.png');
-    await page.keyboard.press('Escape');
-    ok('1280: Esc closes it', await until(page, async () => (await page.getByTestId('super-agenda-pop').count()) === 0, 3000));
+    ok('1280: side by side sits beside the centre, no card covers it', half.over === 0, JSON.stringify(half));
+    // Side by side, the agenda waits in Others like every card; the centre's Agenda button
+    // brings the floating stage back with it.
+    ok('1280 side by side: the agenda waits in Others, the centre offers it', (await agendaCard(page).count()) === 0 && (await page.getByTestId('super-agenda-open').count()) === 1);
+    ok('…its badge counts what waits on him', /^\d+$/.test((await page.getByTestId('super-agenda-open').locator('.super-agenda-open-n').innerText().catch(() => '')).trim()));
+    await page.mouse.move(5, 5);
+    await shot(page, '09a-agenda-button-1280.png');
+    await page.getByTestId('super-agenda-open').click();
+    ok('…its Agenda button brings it back (the floating stage)', await until(page, async () => (await agendaCard(page).getAttribute('data-where').catch(() => null)) === 'float' && record().view?.mode === 'float', 8000));
+    await motionIdle(page);
+    await stageSettled(page);
+    await page.mouse.move(5, 5);
+    await shot(page, '09-agenda-1280-float.png');
+    // Sizes: small is the counts tile.
+    const agendaId = (record().containers ?? []).find((c) => c.kind === 'agenda')?.id;
+    await agendaCard(page).hover();
+    await agendaCard(page).locator('[data-testid="super-card-size-btn"]').click();
+    await page.getByTestId('super-size-small').click();
+    ok('sized small, the agenda is its counts tile', await until(page, async () => (await agendaCard(page).getAttribute('data-size')) === 'small'
+      && (await agendaCard(page).locator('[data-testid="super-agenda"][data-variant="tile"] [data-testid^="super-agenda-tile-"]').count()) === 3, 8000));
+    ok('…recorded as the owner\'s size', await until(page, async () => (record().containers ?? []).some((c) => c.id === agendaId && c.sizeBy === 'owner' && !c.size), 8000), JSON.stringify((record().containers ?? []).find((c) => c.id === agendaId)));
+    await motionIdle(page);
+    await stageSettled(page);
+    await page.mouse.move(5, 5);
+    await shot(page, '10-agenda-small-tile.png');
+    for (const [size, variant, file] of [['medium', 'tile', '10b-agenda-medium.png'], ['wide', 'full', '10c-agenda-wide-1440.png']]) {
+      // Wide (3x2 tiles) needs a wider window than 1280 (the menu says so): sized at 1440.
+      if (size === 'wide') { await page.setViewportSize({ width: 1440, height: 900 }); await motionIdle(page); await stageSettled(page); }
+      await agendaCard(page).hover();
+      await agendaCard(page).locator('[data-testid="super-card-size-btn"], [data-testid="super-card-more"]').first().click();
+      await page.getByTestId(`super-size-${size}`).click();
+      ok(`sized ${size}, the agenda draws ${variant === 'tile' ? 'its counts in one row' : 'the notepad'}`, await until(page, async () => (await agendaCard(page).getAttribute('data-size')) === size
+        && (await agendaCard(page).locator(`[data-testid="super-agenda"][data-variant="${variant}"]`).count()) === 1, 8000));
+      await motionIdle(page);
+      await stageSettled(page);
+      await page.mouse.move(5, 5);
+      await shot(page, file);
+    }
+    // Others and back, like any card.
+    await agendaCard(page).hover();
+    await agendaCard(page).getByRole('button', { name: /^(To Others|Diğerlerine)$/ }).click();
+    ok('Move to Others: the agenda rests in Others', await until(page, async () => (record().containers ?? []).some((c) => c.id === agendaId && c.place === 'others') && (await agendaCard(page).count()) === 0, 8000));
+    await page.getByTestId('super-agenda-open').click();
+    ok('…the Agenda button brings it back from Others', await until(page, async () => (record().containers ?? []).some((c) => c.id === agendaId && c.place === 'float') && (await agendaCard(page).count()) === 1, 8000));
+    // Closed, then reopened: a new card, the record's own.
+    await motionIdle(page);
+    await agendaCard(page).hover();
+    await agendaCard(page).locator('[data-testid="super-card-close"]').click();
+    ok('closed, the agenda card leaves the record', await until(page, async () => !(record().containers ?? []).some((c) => c.kind === 'agenda') && (await agendaCard(page).count()) === 0, 8000));
+    await page.getByTestId('super-agenda-open').click();
+    ok('…and the Agenda button opens it again, large', await until(page, async () => (record().containers ?? []).some((c) => c.kind === 'agenda' && c.place === 'float' && c.size === 'large') && (await agendaCard(page).locator('[data-testid="super-agenda"][data-variant="full"]').count()) === 1, 8000));
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await motionIdle(page);
+    await stageSettled(page);
+    await page.mouse.move(5, 5);
+    await shot(page, '11-agenda-reopened-1440.png');
+    // Grouped with a card, the agenda is drawn as the group's tile: the centre offers it, and a
+    // press brings it out of the group, floating (end review r1).
+    const chatId = (record().containers ?? []).find((c) => c.kind === 'chat' && c.place === 'float')?.id;
+    const agendaNow = (record().containers ?? []).find((c) => c.kind === 'agenda')?.id;
+    if (chatId && agendaNow) {
+      await page.evaluate(async (ids) => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ group: { id: 'grp-verify', cards: ids } }) }), [chatId, agendaNow]);
+      ok('grouped, the agenda is no card of its own and the centre offers it', await until(page, async () => (record().groups ?? []).length === 1 && (await agendaCard(page).count()) === 0 && (await page.getByTestId('super-agenda-open').count()) === 1, 8000));
+      await page.getByTestId('super-agenda-open').click();
+      ok('…a press brings it out of the group, floating', await until(page, async () => !(record().groups ?? []).some((g) => g.cards.includes(agendaNow)) && (await agendaCard(page).getAttribute('data-where').catch(() => null)) === 'float', 8000), JSON.stringify(record().groups));
+      await motionIdle(page);
+    }
+    // A stage too narrow to float cards: every card waits in Others; the press opens the agenda
+    // side by side (a sheet) instead of doing nothing (end review r1).
+    await page.setViewportSize({ width: 1024, height: 720 });
+    await until(page, async () => (await page.getByTestId('super-surface').getAttribute('data-narrow')) === 'true', 8000);
+    ok('narrow stage: the centre offers the agenda', await until(page, async () => (await page.getByTestId('super-agenda-open').count()) === 1, 8000));
+    await page.getByTestId('super-agenda-open').click();
+    ok('…a press opens it as a sheet with the notepad', await until(page, async () => (await agendaCard(page).getAttribute('data-where').catch(() => null)) === 'sheet'
+      && (await agendaCard(page).locator('[data-testid="super-agenda"][data-variant="full"]').count()) === 1, 8000));
+    await motionIdle(page);
+    await stageSettled(page);
+    await page.mouse.move(5, 5);
+    await shot(page, '13-agenda-narrow-sheet.png');
+    await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await until(page, async () => record().view?.mode === 'float' && (await agendaCard(page).getAttribute('data-where').catch(() => null)) === 'float', 8000);
+    await motionIdle(page);
+    // A child's permission waiting on him: its row shows that child beside the centre, the agenda
+    // presented next to it (the agenda stays in view).
+    await sayCentre(page, 'IZIN-GONDER');
+    const perm = rowsOf(page, 'waiting').and(page.locator('[data-chip="permission"]'));
+    ok('a child\'s permission is a Waiting row (no words of the super)', await until(page, async () => (await perm.count()) === 1, 45000), JSON.stringify(reports().filter((r) => r.kind === 'permission-sent')));
+    if (await perm.count()) {
+      await perm.locator('.super-agenda-row-btn').click();
+      ok('…its row shows that child beside the centre with the agenda presented next to it', await until(page, async () => {
+        const v = record().view;
+        return v?.mode === 'present' && v.cards?.length === 2 && v.cards[1] === agendaNow
+          && (await agendaCard(page).getAttribute('data-where').catch(() => null)) === 'present' && (await page.locator('[data-testid="super-shown"]').count()) === 1;
+      }, 8000), JSON.stringify(record().view));
+      await motionIdle(page);
+      await stageSettled(page);
+      await page.mouse.move(5, 5);
+      await shot(page, '12-permission-row-present.png');
+    }
     const errs = errors.filter((e) => !/favicon|WebSocket|ERR_CONNECTION_REFUSED/i.test(e));
     ok('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
   } catch (e) {

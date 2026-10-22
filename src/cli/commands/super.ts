@@ -73,7 +73,7 @@ function print(r: CallResult): void {
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
 const usage = (message: string) => print({ status: 400, body: { error: 'invalid_args', message } });
 
-const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | browser | team';
+const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | browser | team | agenda';
 
 export function registerSuperCommand(program: Command): void {
   const s = program
@@ -109,15 +109,15 @@ export function registerSuperCommand(program: Command): void {
       return run('delegate', { ...jobBody(o), succeeds: o.succeeds });
     });
 
-  s.command('open <kind> <refs...>')
-    .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once`)
+  s.command('open <kind> [refs...]')
+    .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once. \`open agenda\` (no ref) brings back the owner's agenda card (Waiting on you, Now, Done, Up next)`)
     .option('--group <name>', 'Put every card opened here in ONE group of this name (a set the owner asked to see)')
     .option('--shape <shape>', 'small | medium | large | wide (the card\'s size, 1x1 2x1 2x2 3x2 tiles; a size the owner chose is kept), or square | tall (recorded only)')
     .option('--size <size>', 'small | medium | large | wide: the same as --shape with a size (a web or browser card is never under large, and opens side by side)')
     .option('--title <text>', 'Its label (one ref only)')
     .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; group?: string }) =>
-      run('open', refs.length === 1
-        ? { kind, ref: refs[0], shape: o.shape, size: o.size, title: o.title, group: o.group }
+      kind !== 'agenda' && !refs.length ? usage('name at least one ref') : run('open', refs.length <= 1
+        ? { kind, ref: refs[0] ?? '', shape: o.shape, size: o.size, title: o.title, group: o.group }
         : { kind, refs, shape: o.shape, size: o.size, group: o.group }));
 
   s.command('shape <card> <shape>')
@@ -164,7 +164,7 @@ export function registerSuperCommand(program: Command): void {
   s.command('brief <child> <line>')
     .description('Set the job\'s line in the owner\'s agenda (one plain sentence: what it is doing now); its card shows it too')
     .option('--task <slug>', 'Link the row to this task (state/<slug>.md)')
-    .option('--eta <minutes>', 'When you expect it done, in minutes from now (0..1440; 0 clears; the agenda shows "~N min")')
+    .option('--eta <minutes>', 'When you expect it done, in minutes from now (0..1440; 0 clears; recorded on the child, \`super state\` shows it)')
     .action((child: string, line: string, o: { task?: string; eta?: string }) => run('brief', { child, line, task: o.task, eta: o.eta }));
 
   s.command('read <child>')
@@ -248,6 +248,20 @@ export function registerSuperCommand(program: Command): void {
   p.command('list')
     .description('The pooled jobs (title, note, task, held, maybe started)')
     .action(() => run('pool-list', {}));
+
+  const n = s.command('note').description('The owner\'s agenda: your notepad of what you do now, what you wait on him for, and what is done (plain words, high level)');
+  n.command('add <section> <text...>')
+    .description('Write one line: now (what you are doing) | waiting (what you need from the owner) | done (what finished); returns its id (n1, n2, ...)')
+    .action((section: string, text: string[]) => run('note-add', { section, text: text.join(' ') }));
+  n.command('done <id>')
+    .description('Move a line to Done (it finished, or the owner gave what you waited for)')
+    .action((id: string) => run('note-done', { id }));
+  n.command('drop <id>')
+    .description('Remove a line that no longer holds')
+    .action((id: string) => run('note-drop', { id }));
+  n.command('clear [section]')
+    .description('Empty the agenda (or one section): a new day or a new piece of work starts')
+    .action((section?: string) => run('note-clear', section ? { section } : {}));
 
   s.command('ask [text]')
     .description('Ask the owner YOUR own question (one at a time), in AskUserQuestion\'s own shape: his chat draws it with the same card any agent\'s question gets (title, question, why, options with descriptions or previews, several picks, a note, "Unclear"). It never holds your turn (AskUserQuestion does: never use it). His answer comes back as his next message, `[super answer] …`; the reply says whether it `reached` him')
