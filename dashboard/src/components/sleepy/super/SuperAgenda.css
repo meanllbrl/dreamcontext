@@ -64,9 +64,10 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
   min-width: 0;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Every line is read whole (owner 2026-10-23: a cut line cannot be read): it wraps as many
+     lines as it needs and the card body scrolls (.super-agenda). Never clamped, never "…". */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .super-agenda-meta { display: inline-flex; align-items: baseline; }
 .super-agenda-line {
@@ -74,9 +75,8 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
   min-width: 0;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .super-agenda-chip {
   padding: 1px 6px;
@@ -97,15 +97,8 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .super-agenda-row[data-state='done'] .super-agenda-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--color-text-tertiary); }
 .super-agenda-row[data-state='done'] .super-agenda-name { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); }
 .super-agenda-row[data-chip='queued'] { opacity: 0.6; }
-/* A note is the super's own sentence: it wraps (two lines at most) instead of being cut. */
-.super-agenda-row[data-kind='note'] .super-agenda-name {
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  font-weight: var(--font-weight-medium);
-}
+/* A note is the super's own sentence, in its own weight; it wraps whole like every line. */
+.super-agenda-row[data-kind='note'] .super-agenda-name { font-weight: var(--font-weight-medium); }
 
 /* The counts tile (a small or medium agenda card): what waits on him, what runs, what is done.
    Waiting is the waiting colour (--mood-waiting) here too, as a tint behind ordinary text. */
@@ -151,3 +144,7 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
   color: var(--color-text);
   background: color-mix(in srgb, var(--mood-waiting) 16%, var(--color-bg-elevated));
 }
+
+/* The minimised agenda's pill, bottom-left (owner 2026-10-22 23:44): the Others stack's look. */
+.super-agenda-pill-glyph { flex: none; color: var(--color-text-secondary); }
+.super-agenda-pill-btn:not([data-asking]) .super-others-count { opacity: 0.7; }

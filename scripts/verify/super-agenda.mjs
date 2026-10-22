@@ -16,8 +16,13 @@
  * question and the super's waiting line; a question row brings its card in the centre into
  * view (the super's own too); an event line's child name shows that child side by side; the
  * notepad updates live and survives a reload; the card sizes (small = the counts tile), goes to
- * Others and back, closes, and the centre's Agenda button brings it back. Screenshots at
- * 1440x900 light, 1800x1130 dark and 1280x800 light; zero page errors.
+ * Others and back, and the centre's Agenda button brings it back. The agenda is ALWAYS on the
+ * stage (owner 2026-10-22 23:44): its close minimises it to a pill docked bottom-left (the mirror
+ * of Others) showing the Waiting-on-you count, a click restores it where it stood, a reload keeps
+ * it minimised; after a server restart (the app's start) it is on the stage again, a record with
+ * no agenda gets it at its default place, and the stage tidy (a short idle clock on the restarted
+ * server) never moves it. Screenshots at 1440x900 light and dark, 1800x1130 dark and 1280x800
+ * light; zero page errors.
  *
  * Collect, don't fail fast: every check prints ✓/✗. Exit 0 iff all pass.
  */
@@ -190,6 +195,13 @@ async function superTurn(text) {
     report({ kind: 'note-clear', status: [c.status, a.status], out: a.out.slice(0, 160) });
     return 'Ajandayı yeni güne göre temizledim.';
   }
+  if (/NOT-UZUN/.test(text)) {
+    // A long line (owner 2026-10-23: a cut line cannot be read): 200 characters asked for.
+    const long = 'Web kartı için oturum kalıcı olacak, önbellek temizleme düğmesi gelecek, Inspect seçimi mesaja eklenecek ve sunum düzenleri tahtada geniş site ile küçük Super seçenekleriyle çizilip sana gösterilecek bugün';
+    const r = cli('super', 'note', 'add', 'now', long.slice(0, 200));
+    report({ kind: 'note-long', status: r.status, asked: long.slice(0, 200).length, out: r.out.slice(0, 200) });
+    return 'Uzun notu yazdım.';
+  }
   if (/SORU-SOR/.test(text)) {
     const r = cli('super', 'ask', 'Videoyu bu akşam yayına alalım mı?', '--options', 'Evet|Yarın');
     report({ kind: 'asked', status: r.status, out: r.out.slice(0, 200) });
@@ -268,10 +280,10 @@ function setupScratch() {
   if (r.status !== 0) throw new Error(`vaults add failed: ${r.stderr || r.stdout}`);
 }
 const freePort = () => new Promise((res, rej) => { const s = createServer(); s.on('error', rej); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)); }); });
-async function startServer(port) {
+async function startServer(port, extraEnv = {}, logName = 'server.log') {
   const PATH = [join(HOME, '.local', 'bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
-  const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], { cwd: PROJ, env: { ...env(), PATH }, stdio: ['ignore', 'pipe', 'pipe'] });
-  const log = createWriteStream(join(LOGS, 'server.log'));
+  const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], { cwd: PROJ, env: { ...env(), PATH, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const log = createWriteStream(join(LOGS, logName));
   srv.stdout.pipe(log); srv.stderr.pipe(log);
   for (const end = Date.now() + 30_000; Date.now() < end;) {
     try { if ((await fetch(`http://127.0.0.1:${port}/`)).ok) return srv; } catch { /* not up */ }
@@ -434,7 +446,7 @@ async function main() {
   setupScratch();
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
-  const srv = await startServer(port);
+  let srv = await startServer(port);
   log(`server on ${base}, scratch ${SCRATCH}`);
   const browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1, colorScheme: 'light', locale: 'tr-TR' });
@@ -469,7 +481,8 @@ async function main() {
     ok('the agenda opens as a card on the stage with the hand-over', await until(page, async () => (await agendaCard(page).count()) === 1
       && (await agendaCard(page).getAttribute('data-where')) === 'float' && (await agendaCard(page).locator('[data-testid="super-agenda"][data-variant="full"]').count()) === 1, 15000));
     ok('…a stage card like the others: one record card of kind agenda, sized large', (record().containers ?? []).filter((c) => c.kind === 'agenda' && c.ref === 'agenda' && c.size === 'large').length === 1, JSON.stringify((record().containers ?? []).filter((c) => c.kind === 'agenda')));
-    ok('…with the card chrome (size, close)', (await agendaCard(page).locator('[data-testid="super-card-size-btn"], [data-testid="super-card-close"]').count()) === 2);
+    ok('…with the card chrome (size, and minimise to the corner instead of close)', (await agendaCard(page).locator('[data-testid="super-card-size-btn"], [data-testid="super-agenda-minimize"]').count()) === 2
+      && (await agendaCard(page).locator('[data-testid="super-card-close"]').count()) === 0);
     ok('no agenda column and no rail', (await page.locator('.super-shell, aside.super-agenda, [data-testid="super-agenda-rail"]').count()) === 0);
     ok('three sections in order: Waiting on you, Now, Done', (await page.locator('[data-testid^="super-agenda-section-"]').evaluateAll((els) => els.map((e) => e.dataset.section))).join(',') === 'waiting,now,done');
     ok('the job bar has no counts and there is no list overlay', (await page.locator('[data-testid^="super-job-count-"], .super-job-counts, [data-testid="super-job-list"]').count()) === 0);
@@ -546,6 +559,22 @@ async function main() {
     await page.mouse.move(5, 5);
     await stageSettled(page);
     await shot(page, '08-note-cleared.png');
+    // Every line is read whole (owner 2026-10-23): a long note wraps as many lines as it needs,
+    // never clamped, never "…"; the card body scrolls.
+    await sayCentre(page, 'NOT-UZUN');
+    const longText = async () => (record().pad ?? []).find((p) => p.text.startsWith('Web kartı için oturum'))?.text;
+    ok('a long note is written (asked 200 characters; the notepad keeps a line to 160)', await until(page, async () => (await longText())?.length === 160, 30000), JSON.stringify(reports().filter((r) => r.kind === 'note-long')));
+    const longRow = noteRows('now').filter({ hasText: 'Web kartı için oturum' });
+    ok('…it renders whole: its full text, scrollHeight == clientHeight, no ellipsis, no line clamp', await until(page, async () => {
+      if (!(await longRow.count())) return false;
+      const m = await longRow.locator('.super-agenda-name').evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { text: el.textContent, sh: el.scrollHeight, ch: el.clientHeight, to: cs.textOverflow, clamp: cs.webkitLineClamp || cs.getPropertyValue('-webkit-line-clamp'), ws: cs.whiteSpace, lines: Math.round(el.getBoundingClientRect().height / parseFloat(cs.lineHeight || '20')) };
+      });
+      log(`  long note: ${JSON.stringify({ ...m, text: m.text.length })}`);
+      return m.text === await longText() && Math.abs(m.sh - m.ch) <= 1 && m.to !== 'ellipsis' && (m.clamp === 'none' || m.clamp === '') && m.ws === 'normal' && m.lines >= 3;
+    }, 10000));
+    await elShot(page, agendaCard(page), '08b-agenda-long-note.png', { pad: 8 });
     await agendaShot(page, '02-agenda-1440-light.png', 'light', 1440, 900);
     await agendaShot(page, '03-agenda-1800-dark.png', 'dark', 1800, 1130);
     // At 1280 with a card side by side: it must sit beside the centre, never over it.
@@ -605,18 +634,131 @@ async function main() {
     ok('Move to Others: the agenda rests in Others', await until(page, async () => (record().containers ?? []).some((c) => c.id === agendaId && c.place === 'others') && (await agendaCard(page).count()) === 0, 8000));
     await page.getByTestId('super-agenda-open').click();
     ok('…the Agenda button brings it back from Others', await until(page, async () => (record().containers ?? []).some((c) => c.id === agendaId && c.place === 'float') && (await agendaCard(page).count()) === 1, 8000));
-    // Closed, then reopened: a new card, the record's own.
-    await motionIdle(page);
-    await agendaCard(page).hover();
-    await agendaCard(page).locator('[data-testid="super-card-close"]').click();
-    ok('closed, the agenda card leaves the record', await until(page, async () => !(record().containers ?? []).some((c) => c.kind === 'agenda') && (await agendaCard(page).count()) === 0, 8000));
-    await page.getByTestId('super-agenda-open').click();
-    ok('…and the Agenda button opens it again, large', await until(page, async () => (record().containers ?? []).some((c) => c.kind === 'agenda' && c.place === 'float' && c.size === 'large') && (await agendaCard(page).locator('[data-testid="super-agenda"][data-variant="full"]').count()) === 1, 8000));
+    // Minimised, never closed (owner 2026-10-22 23:44): a pill docked bottom-left, the mirror of
+    // Others; a click restores the card where it stood.
     await page.setViewportSize({ width: 1440, height: 900 });
     await motionIdle(page);
     await stageSettled(page);
+    const before = await agendaCard(page).boundingBox();
+    await agendaCard(page).hover();
+    // Filmed slowed: the card flies into its corner pill (as a card flies into Others).
+    await filmstrip(page, 'film-minimise', () => agendaCard(page).locator('[data-testid="super-agenda-minimize"]').click(),
+      { rate: 0.1, step: 90, maxMs: 900, settle: async () => (await page.locator('.super-stage-layer').evaluate((e) => e.childElementCount)) === 0 });
+    ok('minimised, the agenda stays in the record (min), off the stage, never dismissed', await until(page, async () => (record().containers ?? []).some((c) => c.kind === 'agenda' && c.min === true && c.place === 'float')
+      && (await agendaCard(page).count()) === 0 && !(record().dismissed ?? []).some((d) => d.kind === 'agenda'), 8000), JSON.stringify((record().containers ?? []).find((c) => c.kind === 'agenda')));
+    const pillGeo = async () => page.evaluate(() => {
+      const stage = document.querySelector('[data-testid="super-surface"]').getBoundingClientRect();
+      const pill = document.querySelector('[data-testid="super-agenda-pill"]')?.getBoundingClientRect();
+      const others = document.querySelector('[data-testid="super-others"]')?.getBoundingClientRect();
+      const cards = [...document.querySelectorAll('[data-testid="super-container"], [data-testid="super-group"], .super-centre, .super-terminal-chip')].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0);
+      return pill && {
+        dl: pill.left - stage.left, db: stage.bottom - pill.bottom, w: pill.width, h: pill.height,
+        others: others ? { db: stage.bottom - others.bottom, dr: stage.right - others.right } : null,
+        over: cards.filter((r) => r.left < pill.right && r.right > pill.left && r.top < pill.bottom && r.bottom > pill.top).length,
+        n: document.querySelector('[data-testid="super-agenda-pill-n"]')?.textContent?.trim(),
+        badge: document.querySelector('[data-testid="super-agenda-open"] .super-agenda-open-n')?.textContent?.trim() ?? '0',
+      };
+    });
+    const pg = await pillGeo();
+    ok('…a pill docked at the stage\'s bottom-left corner, nothing over it', !!pg && Math.abs(pg.dl - 24) <= 1 && pg.db >= 8 && pg.db <= 16 && pg.over === 0, JSON.stringify(pg));
+    ok('…mirroring Others (the same band, opposite corners)', !!pg && (!pg.others || (Math.abs(pg.others.db - pg.db) <= 1 && Math.abs(pg.others.dr - pg.dl) <= 1)), JSON.stringify(pg));
+    ok('…showing the Waiting-on-you count (the header Agenda button is a second way back)', !!pg && /^\d+$/.test(pg.n ?? '') && pg.n === pg.badge && (await page.getByTestId('super-agenda-open').count()) === 1, JSON.stringify(pg));
     await page.mouse.move(5, 5);
-    await shot(page, '11-agenda-reopened-1440.png');
+    ok('…the stage settled before the shot', await stageSettled(page));
+    await shot(page, '14-agenda-pill-1440-light.png');
+    await elShot(page, '[data-testid="super-agenda-pill"]', '14b-agenda-pill-closeup-light.png', { pad: 24 });
+    // Dark, after a reload: still minimised (the stage load only makes a missing agenda).
+    await page.evaluate(() => localStorage.setItem('dreamcontext-theme', 'dark'));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await backToStage(page);
+    ok('a reload keeps it minimised (the pill, no card)', await until(page, async () => (await page.getByTestId('super-agenda-pill').count()) === 1 && (await agendaCard(page).count()) === 0, 10000));
+    await stageSettled(page);
+    await page.mouse.move(5, 5);
+    await shot(page, '15-agenda-pill-1440-dark.png');
+    await elShot(page, '[data-testid="super-agenda-pill"]', '15b-agenda-pill-closeup-dark.png', { pad: 24 });
+    await page.getByTestId('super-agenda-pill-btn').click();
+    ok('a click on the pill restores the card where it stood', await until(page, async () => {
+      const b = await agendaCard(page).boundingBox().catch(() => null);
+      return !!b && !!before && Math.abs(b.x - before.x) <= 2 && Math.abs(b.y - before.y) <= 2 && Math.abs(b.width - before.width) <= 2
+        && (await page.getByTestId('super-agenda-pill').count()) === 0 && !(record().containers ?? []).some((c) => c.kind === 'agenda' && c.min);
+    }, 8000), JSON.stringify({ before, after: await agendaCard(page).boundingBox().catch(() => null) }));
+    await motionIdle(page);
+    await stageSettled(page);
+    await page.mouse.move(5, 5);
+    await shot(page, '16-agenda-restored-1440-dark.png');
+    await page.evaluate(() => localStorage.setItem('dreamcontext-theme', 'light'));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await backToStage(page);
+    // One stacking order (owner 2026-10-23: the agenda covered an opened group): the agenda the
+    // owner dragged last (placed and lifted on top, the bug's precondition) still paints UNDER an
+    // opened group's panel. A real drag, a group of two floating chats, the panel opened by a click.
+    {
+      await motionIdle(page);
+      await stageSettled(page);
+      const ab = await agendaCard(page).boundingBox().catch(() => null);
+      ok('the agenda is on the stage before the z-order check', !!ab, JSON.stringify((record().containers ?? []).find((c) => c.kind === 'agenda')));
+      if (!ab) throw new Error('no agenda card for the z-order check');
+      await page.mouse.move(ab.x + 70, ab.y + 16);
+      await page.mouse.down();
+      await page.mouse.move(ab.x + 85, ab.y + 22, { steps: 4 });
+      await page.mouse.move(ab.x + 100, ab.y + 28, { steps: 4 });
+      await page.mouse.up();
+      ok('the owner dragged the agenda (placed by him)', await until(page, async () => (record().containers ?? []).some((c) => c.kind === 'agenda' && c.pos), 8000), JSON.stringify((record().containers ?? []).find((c) => c.kind === 'agenda')));
+      await motionIdle(page);
+      await stageSettled(page);
+      const chats = (record().containers ?? []).filter((c) => c.kind === 'chat' && c.place === 'float' && !(record().groups ?? []).some((g) => g.cards.includes(c.id))).slice(0, 2).map((c) => c.id);
+      await page.evaluate(async (ids) => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ group: { id: 'grp-zorder', cards: ids } }) }), chats);
+      await until(page, async () => (await page.locator('[data-testid="super-group"]').count()) === 1, 8000);
+      await motionIdle(page);
+      await stageSettled(page);
+      await page.locator('[data-testid="super-group"] .super-group-name, [data-testid="super-group"]').first().click({ position: { x: 40, y: 60 } });
+      const opened = await until(page, async () => (await page.getByTestId('super-group-panel').count()) === 1, 8000);
+      await page.waitForTimeout(600);
+      const z = await page.evaluate(() => {
+        const panel = document.querySelector('[data-testid="super-group-panel"]');
+        const agenda = document.querySelector('[data-testid="super-container"][data-kind="agenda"]');
+        if (!panel || !agenda) return { missing: !panel ? 'panel' : 'agenda' };
+        const a = agenda.getBoundingClientRect();
+        let p = panel.getBoundingClientRect();
+        let moved = false;
+        const inter = () => ({ l: Math.max(a.left, p.left), r: Math.min(a.right, p.right), t: Math.max(a.top, p.top), b: Math.min(a.bottom, p.bottom) });
+        let i = inter();
+        if (i.r - i.l < 20 || i.b - i.t < 20) {
+          // No natural overlap at this size: shift the panel onto the agenda (paint order does not
+          // depend on where it stands).
+          panel.style.translate = `${a.left + a.width / 2 - (p.left + 40)}px ${a.top + a.height / 2 - (p.top + 40)}px`;
+          p = panel.getBoundingClientRect(); moved = true; i = inter();
+        }
+        const x = (i.l + i.r) / 2; const y = (i.t + i.b) / 2;
+        const hit = document.elementFromPoint(x, y);
+        const res = { moved, x: Math.round(x), y: Math.round(y), inPanel: !!hit?.closest('[data-testid="super-group-panel"]'), inAgenda: !!hit?.closest('[data-kind="agenda"]'), hit: hit?.className?.toString().slice(0, 60),
+          zAgenda: getComputedStyle(agenda).zIndex, zPanel: getComputedStyle(panel).zIndex, zScrim: getComputedStyle(document.querySelector('[data-testid="super-panel-scrim"]')).zIndex };
+        return res;
+      });
+      log(`  z-order: ${JSON.stringify(z)}`);
+
+      ok('an opened group paints above the agenda the owner moved last (elementFromPoint over the overlap hits the panel)', opened && z.inPanel === true && z.inAgenda === false, JSON.stringify(z));
+      await page.mouse.move(5, 5);
+      await shot(page, '11b-group-open-over-agenda.png');
+      await page.evaluate(() => { const p = document.querySelector('[data-testid="super-group-panel"]'); if (p) p.style.translate = ''; });
+      await page.keyboard.press('Escape');
+      await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ ungroup: ['grp-zorder'] }) }));
+      await until(page, async () => !(record().groups ?? []).some((g) => g.id === 'grp-zorder'), 8000);
+      await motionIdle(page);
+      // A card with its size menu open lifts over the agenda (what it opened is never under it).
+      await stageSettled(page);
+      const menuCard = page.locator('[data-testid="super-container"][data-where="float"]:not([data-kind="agenda"])').first();
+      await menuCard.hover();
+      await menuCard.locator('[data-testid="super-card-size-btn"], [data-testid="super-card-more"]').first().click();
+      const lift = await until(page, async () => (await menuCard.evaluate((el) => getComputedStyle(el.closest('.super-card-frame') ?? el).zIndex)) === '302'
+        && (await page.locator('[data-testid="super-container"][data-kind="agenda"]').evaluate((el) => getComputedStyle(el.closest('.super-card-frame') ?? el).zIndex)) === '298', 4000);
+      ok('a card with its menu open paints above the agenda (302 over 298)', lift, JSON.stringify(await menuCard.evaluate((el) => getComputedStyle(el.closest('.super-card-frame') ?? el).zIndex)));
+      await page.keyboard.press('Escape');
+      await until(page, async () => (await page.getByTestId('super-card-size').count()) === 0, 4000);
+      await page.mouse.move(5, 5);
+      await motionIdle(page);
+      await stageSettled(page);
+    }
     // Grouped with a card, the agenda is drawn as the group's tile: the centre offers it, and a
     // press brings it out of the group, floating (end review r1).
     const chatId = (record().containers ?? []).find((c) => c.kind === 'chat' && c.place === 'float')?.id;
@@ -661,6 +803,50 @@ async function main() {
       await page.mouse.move(5, 5);
       await shot(page, '12-permission-row-present.png');
     }
+    // The app's start (owner 2026-10-22 23:44: "it should be open by itself"): minimised before
+    // the restart, the agenda is on the stage again after it; a record with no agenda at all (the
+    // 0.34.2 owner's, who closed it) gets it at its default place.
+    await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ view: { mode: 'float' }, agenda: 'min' }) }));
+    ok('minimised before the restart', await until(page, async () => (record().containers ?? []).some((c) => c.kind === 'agenda' && c.min) && (await page.getByTestId('super-agenda-pill').count()) === 1, 8000));
+    const restart = async (tag, edit, extraEnv = {}) => {
+      srv.kill('SIGTERM');
+      await new Promise((r) => (srv.exitCode !== null ? r() : srv.once('exit', r)));
+      if (edit) { const rec = record(); edit(rec); writeFileSync(RECORD, JSON.stringify(rec)); }
+      srv = await startServer(port, extraEnv, `server-${tag}.log`);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await backToStage(page);
+    };
+    await restart('restart1');
+    ok('after a restart the agenda is on the stage (restored from its pill, floating)', await until(page, async () => (await agendaCard(page).getAttribute('data-where').catch(() => null)) === 'float'
+      && (await page.getByTestId('super-agenda-pill').count()) === 0 && (record().containers ?? []).some((c) => c.kind === 'agenda' && !c.min && c.place === 'float'), 20000), JSON.stringify((record().containers ?? []).find((c) => c.kind === 'agenda')));
+    await stageSettled(page);
+    await page.mouse.move(5, 5);
+    await shot(page, '17-after-restart-1440-light.png');
+    // No agenda in the record (closed under 0.34.2), and a short tidy clock: the agenda appears at
+    // its default place, and the tidy puts untouched cards in Others but never the agenda.
+    const IDLE = 6000;
+    await restart('restart2', (rec) => { rec.containers = (rec.containers ?? []).filter((c) => c.kind !== 'agenda'); rec.view = { mode: 'float' }; },
+      { DREAMCONTEXT_SUPER_TIDY_IDLE_MS: String(IDLE), DREAMCONTEXT_SUPER_TIDY_TICK_MS: '1000' });
+    ok('a record with no agenda gets it on the stage load: first in the record, large, floating', await until(page, async () => {
+      const cs = record().containers ?? [];
+      return cs[0]?.kind === 'agenda' && cs[0].size === 'large' && cs[0].place === 'float' && (await agendaCard(page).getAttribute('data-where').catch(() => null)) === 'float';
+    }, 20000), JSON.stringify((record().containers ?? []).map((c) => [c.kind, c.place, c.size])));
+    const floatBefore = (record().containers ?? []).filter((c) => c.kind !== 'agenda' && c.place === 'float').length;
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(IDLE + 4000);
+    const afterTidy = record().containers ?? [];
+    const tidied = afterTidy.filter((c) => c.kind !== 'agenda' && c.place === 'others').length;
+    ok('the tidy ran (untouched cards went to Others)', tidied > 0, JSON.stringify({ floatBefore, after: afterTidy.map((c) => [c.kind, c.place]) }));
+    ok('…and never moved the agenda (floating, on the stage)', afterTidy.some((c) => c.kind === 'agenda' && c.place === 'float' && !c.min) && (await agendaCard(page).getAttribute('data-where').catch(() => null)) === 'float');
+    await stageSettled(page);
+    await page.mouse.move(5, 5);
+    await shot(page, '18-after-tidy-1440-light.png');
+    await page.evaluate(() => localStorage.setItem('dreamcontext-theme', 'dark'));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await backToStage(page);
+    await stageSettled(page);
+    await page.mouse.move(5, 5);
+    await shot(page, '19-after-tidy-1440-dark.png');
     const errs = errors.filter((e) => !/favicon|WebSocket|ERR_CONNECTION_REFUSED/i.test(e));
     ok('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
   } catch (e) {

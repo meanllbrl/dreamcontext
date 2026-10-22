@@ -516,6 +516,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'slugs-',
   'sudoers-',
   'super-agenda-',
+  'super-agenda-always-',
   'super-answer-',
   'super-answer-home-',
   'super-auth-',

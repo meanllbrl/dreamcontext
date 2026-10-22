@@ -136,6 +136,7 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
       ...(title ? { title: stripControls(title) } : {}),
       ...(c.by === 'auto' ? { by: 'auto' as const } : {}),
       ...(c.by === 'auto' && typeof c.of === 'string' && Object.prototype.hasOwnProperty.call(children, c.of) ? { of: c.of } : {}),
+      ...(c.kind === 'agenda' && c.min === true ? { min: true as const } : {}),
     });
   }
   return out;

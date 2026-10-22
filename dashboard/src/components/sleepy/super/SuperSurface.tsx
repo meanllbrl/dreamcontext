@@ -17,7 +17,7 @@ import { OrbitPath, PanelChatTile } from './StageParts';
 import { JobBar, showQuestionCard } from './JobBar';
 import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
-import { AgendaButton } from './AgendaButton';
+import { AgendaButton, AgendaPill } from './AgendaButton';
 import { childModelChip } from './AgentCard';
 import { SuperContainer, chatStatus, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
@@ -154,9 +154,15 @@ export function SuperSurface(props: SuperSurfaceProps) {
 
   // ── The plan ──
   const items = useMemo(() => stageItems(state.containers, state.groups, view), [state.containers, state.groups, view]);
+  // The agenda minimised to its corner pill (owner 2026-10-22 23:44): not a card on the stage
+  // (stageItems leaves it out) unless the view shows it side by side or presented.
+  const agendaPill = useMemo(() => {
+    const a = state.containers.find((c) => c.kind === 'agenda');
+    return a?.min && !items.some((i) => i.id === a.id) ? a.id : null;
+  }, [state.containers, items]);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length }),
-    [items, view, size, pinned, props.terminals.length],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill }),
+    [items, view, size, pinned, props.terminals.length, agendaPill],
   );
   cuesPlanRef.current = plan;
   const planRef = useRef(plan);
@@ -281,7 +287,15 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (c) props.onAskAbout(id, titleOf(c));
       else if (g) props.onAskAbout(id, g.name);
     },
-    onClose: (id: string) => { setLru((prev) => dropFromLru(prev, id)); onLayout({ closed: [id] }); focusAfter(id); },
+    onClose: (id: string) => {
+      // The agenda's close collapses it to its corner pill (owner 2026-10-22 23:44); never removed.
+      if (byId.get(id)?.kind === 'agenda') {
+        onLayout({ agenda: 'min' });
+        requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>('[data-testid="super-agenda-pill-btn"]')?.focus());
+        return;
+      }
+      setLru((prev) => dropFromLru(prev, id)); onLayout({ closed: [id] }); focusAfter(id);
+    },
     onEndSession: (id: string, whenDone: boolean) => {
       const c = byId.get(id);
       if (c?.kind !== 'chat') return;
@@ -422,11 +436,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const viewMode = state.view.mode;
   const agendaGrouped = !!agendaCard && state.groups.some((g) => g.cards.includes(agendaCard.id));
   const openAgenda = () => {
-    if (agendaCard && (plan.narrow || (agendaCard.place === 'float' && !agendaGrouped && viewMode === 'float'))) {
+    // Floating already but not drawn (a stage too full): side by side. Minimised: restored where it stood.
+    if (agendaCard && (plan.narrow || (agendaCard.place === 'float' && !agendaCard.min && !agendaGrouped && viewMode === 'float'))) {
       actions.onSideBySide(agendaCard.id);
       return;
     }
     onLayout(viewMode === 'float' ? { agenda: 'open' } : { agenda: 'open', view: { mode: 'float' } });
+    // Focus follows the card back (the pill that held it is gone).
+    if (agendaCard) requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(agendaCard.id)}"]`)?.focus());
   };
   // A child's name in an event line: that child side by side.
   const showChildRef = useRef(actions.onSideBySide);
@@ -594,6 +611,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           aria-hidden
         />
       )}
+      {agendaPill && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
       <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={() => setOpenGroup((o) => (o === 'others' ? null : 'others'))} stackRef={stackRef} />
       {openGroup && (() => {
         const system = openGroup === 'others';

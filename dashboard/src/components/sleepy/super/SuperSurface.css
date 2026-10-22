@@ -48,6 +48,30 @@
   position: relative;
   overflow: hidden;
   background-color: var(--color-bg);
+  /* The stage's ONE stacking order, low to high (owner 2026-10-23: the agenda card covered an
+     opened group). Every stage-level layer names one of these; no other number. Floating cards
+     and group tiles share the band [--sz-cards, --sz-dock): the window places each card in it
+     (superLayout.ts cardZIndex, drift-tested against these values), the agenda just under the
+     Others drop corner and over every other card,
+     so a card the owner placed or moved last can never climb over what opens above the band.
+     Isolated: the whole stage stays under the app's own full-screen viewers. */
+  isolation: isolate;
+  --sz-under: 1;
+  --sz-orbit: 2;
+  --sz-centre: 5;
+  --sz-cards: 10;
+  --sz-dock-zone: 299;
+  --sz-dock: 300;
+  --sz-card-open: 302;
+  --sz-handover: 305;
+  --sz-queue: 310;
+  --sz-flight: 320;
+  --sz-sheet: 330;
+  --sz-scrim: 340;
+  --sz-panel: 350;
+  --sz-panel-stack: 352;
+  --sz-lifted: 400;
+  --sz-lifted-label: 401;
 }
 /* The stage (2026-10-20, "Cam HUD"): a faint dot grid on the 24 px rhythm and a quiet accent
    haze behind the centre. Static, on its OWN compositor layer: painted as the surface's own
@@ -72,13 +96,13 @@
   inset: 0;
   pointer-events: none;
 }
-.super-stage-under { z-index: 1; }
-.super-stage-layer { z-index: 60; }
+.super-stage-under { z-index: var(--sz-under); }
+.super-stage-layer { z-index: var(--sz-flight); }
 
 /* ── The centre: Claude in the cape (O1). A FRAME (glows, background) around a CLIP. ── */
 .super-centre {
   position: absolute;
-  z-index: 5;
+  z-index: var(--sz-centre);
   isolation: isolate;
   transform-origin: 0 0;
 }
@@ -232,8 +256,11 @@
   outline: none;
 }
 .super-card-frame[data-where='float'] { cursor: grab; touch-action: none; }
-.super-card-frame[data-lifted] { z-index: 1000 !important; cursor: grabbing; }
-.super-card-frame[data-where='sheet'] { z-index: 70 !important; }
+.super-card-frame[data-lifted] { z-index: var(--sz-lifted) !important; cursor: grabbing; }
+.super-card-frame[data-where='sheet'] { z-index: var(--sz-sheet) !important; }
+/* A card with a menu or a question open lifts out of the band: what it opened paints above the
+   agenda and every floating card (owner 2026-10-23), never under its neighbour. */
+.super-card-frame:not([data-lifted]):not([data-where='sheet']):has(.super-size-menu, .super-close-choice) { z-index: var(--sz-card-open) !important; }
 .super-card-frame:focus-visible .super-card-clip { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 /* The lift: a shadow layer whose opacity follows the hand (F6). */
 .super-card-lift {
@@ -439,8 +466,8 @@
 .super-web-title { font-size: var(--font-size-sm); color: var(--color-text-secondary); word-break: break-all; }
 
 /* ── Others (O4-O6, 2026-10-20): the stage's own group, docked bottom-right; it opens the panel ── */
-.super-others { position: absolute; z-index: 40; }
-.super-others[data-open] { z-index: 92; }
+.super-others { position: absolute; z-index: var(--sz-dock); }
+.super-others[data-open] { z-index: var(--sz-panel-stack); }
 .super-others-stack {
   position: relative;
   display: flex;
@@ -494,7 +521,7 @@
 /* The corner a dragged card is dropped into (lit while the pointer is over it). */
 .super-others-zone {
   position: absolute;
-  z-index: 30;
+  z-index: var(--sz-dock-zone);
   border-top-left-radius: var(--radius-2xl);
   border: 2px dashed color-mix(in srgb, var(--color-accent) 35%, transparent);
   border-right: 0;
@@ -768,7 +795,7 @@
 .super-card-frame[data-drop-target] .super-drop-ring { opacity: 1; }
 .super-drop-label {
   position: absolute;
-  z-index: 1001;
+  z-index: var(--sz-lifted-label);
   transform: translate(-50%, -100%);
   height: 24px;
   padding: 0 12px;
@@ -785,12 +812,12 @@
 .super-card-frame[data-lifted] .super-card-clip { background: var(--color-bg-elevated); }
 
 /* ── An open group, or Others: a scrim and the panel the tile grows into ─── */
-.super-panel-scrim { position: absolute; inset: 0; z-index: 80; background: color-mix(in srgb, var(--color-bg) 62%, transparent); }
+.super-panel-scrim { position: absolute; inset: 0; z-index: var(--sz-scrim); background: color-mix(in srgb, var(--color-bg) 62%, transparent); }
 /* A card being dragged out: the panel stays mounted (its item holds the pointer), not drawn. */
 :is(.super-panel-scrim, .super-group-panel)[data-hidden] { opacity: 0; pointer-events: none; }
 .super-group-panel {
   position: absolute;
-  z-index: 90;
+  z-index: var(--sz-panel);
   display: flex;
   flex-direction: column;
   transform-origin: 0 0;
@@ -852,13 +879,13 @@
 .super-page-progress { display: inline-flex; align-items: center; gap: 8px; width: 160px; }
 
 /* ── The orbit: a faint, static arc through each side's tiles, under the centre ── */
-.super-orbit { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none; overflow: visible; }
+.super-orbit { position: absolute; left: 0; top: 0; z-index: var(--sz-orbit); pointer-events: none; overflow: visible; }
 .super-orbit-stop { stop-color: var(--color-accent); }
 
 /* ── The queue pill (F7): centred in the top band, grows downward as an overlay ── */
 .super-queue-strip {
   position: absolute;
-  z-index: 50;
+  z-index: var(--sz-queue);
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -949,7 +976,7 @@
 /* ── The terminals dock (F12): small pills in the bottom band's left side ── */
 .super-terminals-row {
   position: absolute;
-  z-index: 40;
+  z-index: var(--sz-dock);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -983,7 +1010,7 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 40;
+  z-index: var(--sz-handover);
   overflow: hidden;
 }
 .super-standin {
@@ -1231,7 +1258,7 @@
   border-radius: var(--radius-lg, 12px);
   background: color-mix(in oklab, var(--color-accent) 8%, transparent);
   pointer-events: none;
-  z-index: 200;
+  z-index: var(--sz-lifted);
 }
 
 /* ── Zoom in place (owner 2026-10-22: a picture or a page side by side or presented zooms where

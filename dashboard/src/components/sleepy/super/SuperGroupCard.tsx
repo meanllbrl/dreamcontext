@@ -5,7 +5,7 @@ import type { ChatSession } from '../chatSession';
 import { IconButton, chatStatus } from './SuperContainer';
 import { useLiveSessions } from './liveSession';
 import { GroupTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
-import type { CardPlan } from './superLayout';
+import { cardZIndex, type CardPlan } from './superLayout';
 
 /**
  * A group on the stage (owner decision 2026-10-20): ONE tile standing on a deck of sheets, placed
@@ -56,7 +56,7 @@ export function SuperGroupCard({ group, plan, members, sessions, pending, dropTa
       aria-haspopup="dialog"
       aria-label={label}
       tabIndex={0}
-      style={{ left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: 10 + plan.z }}
+      style={{ left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: cardZIndex(plan.z) }}
       onPointerDown={(e) => onPress(e, group.id)}
       onClick={(e) => { if (!(e.target as HTMLElement).closest('button')) onOpen(group.id); }}
       onKeyDown={onKeyDown}

@@ -104,6 +104,10 @@ export interface SuperContainer {
   /** The child an automatic card belongs to (its dev server, its browser): the card goes to
    *  Others when the child withdraws the pin or ends. Server-written, like `by`. */
   of?: string;
+  /** The agenda only: minimised to the pill in the stage's bottom-left corner (owner 2026-10-22
+   *  23:44: its close collapses it there, it never leaves the stage). Its place, drop and size
+   *  stay as they were, so a restore puts it back where it stood. */
+  min?: true;
 }
 
 /** The owner closed an automatic card: the same (kind, ref) is not opened again automatically
@@ -512,6 +516,8 @@ export function applyGroupOp(state: { containers: SuperContainer[]; groups: Supe
   if (!GROUP_ID_RE.test(op.id)) return;
   const live = new Set(state.containers.map((c) => c.id));
   const cards = [...new Set(op.cards)].filter((id) => live.has(id));
+  // A card in a group is drawn as the group's tile, never also as the agenda's pill.
+  for (const c of state.containers) if (cards.includes(c.id)) delete c.min;
   const name = cleanGroupName(op.name);
   for (const g of state.groups) if (g.id !== op.id) g.cards = g.cards.filter((c) => !cards.includes(c));
   const have = state.groups.find((g) => g.id === op.id);
@@ -545,7 +551,7 @@ export function dissolveGroups(state: { containers: SuperContainer[]; groups: Su
  *  group is ONE item). Others is not counted. Pure. */
 export function floatCount(state: { containers: readonly SuperContainer[]; groups: readonly SuperGroup[] }): number {
   const grouped = new Set(state.groups.flatMap((g) => g.cards));
-  return state.containers.filter((c) => c.place === 'float' && !grouped.has(c.id)).length
+  return state.containers.filter((c) => c.place === 'float' && !c.min && !grouped.has(c.id)).length
     + state.groups.filter((g) => g.place === 'float').length;
 }
 
