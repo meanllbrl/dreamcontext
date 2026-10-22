@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { isLightMode } from '../../../lib/lightMode';
-import { MAX_CONTAINERS, type SuperContainer as Container, type SuperGroup, type SuperStateView } from '../../../lib/superTypes';
+import { MAX_CONTAINERS, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
 import { SleepyMascot } from '../SleepyMascot';
 import type { ChatSession } from '../chatSession';
 import { prefersReducedMotion } from './motionRunner';
@@ -132,12 +132,27 @@ export function SuperSurface(props: SuperSurfaceProps) {
     [drag, state.containers],
   );
 
+  // ── Cues and the reveal gate (G1, AC16): new cards wait while the owner drags or types,
+  //    every verb's cards play their one-time cue, closed cards fade out. Before the plan: a
+  //    page put side by side that is still held keeps the stage floating until it appears. ──
+  const cuesPlanRef = useRef<StagePlan | null>(null);
+  const cuesLiveWebRef = useRef<ReadonlySet<string>>(new Set());
+  const autoHalf = state.view.mode === 'half' && state.view.auto && state.view.card ? state.view.card : null;
+  const stageCues = useStageCues({ containers: state.containers, planRef: cuesPlanRef, liveWebRef: cuesLiveWebRef, superSession, dragging: !!drag, autoHalf });
+  const halfHeld = state.view.mode === 'half' && !!state.view.card && (stageCues.held.has(state.view.card) || stageCues.autoHalfHeld);
+  // While held, the stage keeps the view it last drew (another page side by side stays there),
+  // or floats when that view names no card any more: nothing moves until the gate opens.
+  const drawnView = useRef<SuperView>(state.view);
+  const view = useMemo<SuperView>(() => (halfHeld ? heldFallback(drawnView.current, state.view, state.containers) : state.view), [halfHeld, state.view, state.containers]);
+  useLayoutEffect(() => { drawnView.current = view; });
+
   // ── The plan ──
-  const items = useMemo(() => stageItems(state.containers, state.groups, state.view), [state.containers, state.groups, state.view]);
+  const items = useMemo(() => stageItems(state.containers, state.groups, view), [state.containers, state.groups, view]);
   const plan = useMemo(
-    () => planStage(items, state.view, size, { dragging: pinned, terminals: props.terminals.length }),
-    [items, state.view, size, pinned, props.terminals.length],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length }),
+    [items, view, size, pinned, props.terminals.length],
   );
+  cuesPlanRef.current = plan;
   const planRef = useRef(plan);
   planRef.current = plan;
 
@@ -211,9 +226,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     }).map((c) => c.id)
     : [];
   const liveWeb = liveWebIds(lru, webOnScreen);
-  // ── Cues and the reveal gate (G1, AC16): new cards wait while the owner drags or types,
-  //    every verb's cards play their one-time cue, closed cards fade out. ──
-  const stageCues = useStageCues({ containers: state.containers, plan, superSession, dragging: !!drag, liveWeb });
+  cuesLiveWebRef.current = liveWeb;
 
   // ── The live browser budget: at most two cards re-render on frames, only while this window is
   //    visible and focused; the rest keep their last frame (AC7). ──
@@ -283,7 +296,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     },
     onFullscreen: (id: string, subject: CardFullscreen) => setFull({ id, subject }),
   };
-  const canFit = (id: string, next: ContainerSize) => fitsNow(items, state.view, size, id, next, { terminals: props.terminals.length });
+  const canFit = (id: string, next: ContainerSize) => fitsNow(items, view, size, id, next, { terminals: props.terminals.length });
   // A card closed meanwhile takes its full-screen view with it.
   useEffect(() => { if (full && !byId.has(full.id)) setFull(null); }, [byId, full]);
 
@@ -554,4 +567,16 @@ export function SuperSurface(props: SuperSurfaceProps) {
 export function useNonce(): [number, () => void] {
   const [n, bump] = useReducer((x: number) => x + 1, 0);
   return [n, bump];
+}
+
+/** The view drawn while a new half page waits (SuperSurface): the one drawn before it when its
+ *  cards are still there (never the waiting card itself), else float. Pure. */
+export function heldFallback(drawn: SuperView, wanted: SuperView, containers: readonly { id: string }[]): SuperView {
+  const live = new Set(containers.map((c) => c.id));
+  if (drawn.mode === 'half' && drawn.card && drawn.card !== wanted.card && live.has(drawn.card)) return { mode: 'half', card: drawn.card };
+  if (drawn.mode === 'present') {
+    const cards = (drawn.cards ?? []).filter((id) => live.has(id) && id !== wanted.card);
+    if (cards.length) return { mode: 'present', cards };
+  }
+  return { mode: 'float' };
 }

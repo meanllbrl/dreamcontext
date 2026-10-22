@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { MAX_CONTAINERS, MAX_FLOAT, floatCount, type ContainerKind, type SuperContainer, type SuperState } from './types.js';
+import { MAX_CONTAINERS, MAX_FLOAT, atLeastSize, floatCount, isPageKind, minSizeFor, type ContainerKind, type SuperContainer, type SuperState } from './types.js';
 import type { SuperSignal } from './signals.js';
 
 /**
@@ -8,7 +8,10 @@ import type { SuperSignal } from './signals.js';
  * (`agent-chat.ts` for a frame, `inbox.ts` for idle/gone) runs them inside the locked write.
  *
  *  - G2: an automatic card never touches the owner's dropped card (`pos`) or a card the view
- *    shows (half / present), and never changes the view.
+ *    shows (half / present). The one view it sets is its own (owner 2026-10-22, "it should have
+ *    shown it directly"): a new page (a dev server, a child's browser) goes side by side when
+ *    the stage floats or shows another automatic page, marked `auto`; only such a view may be
+ *    taken back by automation, when its page settles. The owner's or the agent's view stays.
  *  - G3: at most AUTO_FLOAT_BUDGET automatic cards float at once; a third sends the oldest to
  *    Others. A full stage puts the new card straight into Others; a full record skips it.
  *  - G4: one `browser` card per child, one `web` card per url: a repeat is the same card.
@@ -27,7 +30,25 @@ export function autoContainerId(kind: ContainerKind, ref: string): string {
 }
 
 const inView = (s: SuperState, id: string): boolean =>
-  (s.view.mode === 'half' && s.view.card === id) || (s.view.mode === 'present' && (s.view.cards ?? []).includes(id));
+  (s.view.mode === 'half' && s.view.card === id && !s.view.auto) || (s.view.mode === 'present' && (s.view.cards ?? []).includes(id));
+
+/** The page automation put side by side leaves it: the stage floats again. */
+function releaseAutoView(s: SuperState, id: string): void {
+  if (s.view.mode === 'half' && s.view.card === id && s.view.auto) s.view = { mode: 'float' };
+}
+
+/** A new or returning page goes side by side, unless the owner or the agent set the view. */
+function showAuto(s: SuperState, c: SuperContainer): void {
+  if (c.place !== 'float' || !isPageKind(c.kind)) return;
+  if (s.view.mode === 'float' || (s.view.mode === 'half' && s.view.auto)) s.view = { mode: 'half', card: c.id, auto: true };
+}
+
+/** A page is never smaller than large, unless the owner sized it. */
+function sizeAuto(c: SuperContainer): void {
+  if (c.sizeBy === 'owner') return;
+  const next = atLeastSize(c.size ?? 'small', minSizeFor(c.kind));
+  if (next !== 'small') c.size = next;
+}
 
 const grouped = (s: SuperState): Set<string> => new Set(s.groups.flatMap((g) => g.cards));
 
@@ -47,6 +68,7 @@ function enforceBudget(s: SuperState, keep: string): void {
   for (const c of floating) {
     if (over <= 0) break;
     if (c.id === keep || !movable(s, c)) continue;
+    releaseAutoView(s, c.id);
     c.place = 'others';
     over -= 1;
   }
@@ -61,6 +83,8 @@ function openAuto(s: SuperState, kind: ContainerKind, ref: string, child: string
     if (have.by !== 'auto' || have.place === 'float' || grouped(s).has(id) || dismissed(s, kind, ref, now)) return false;
     if (floatCount(s) >= MAX_FLOAT) return false;
     have.place = 'float';
+    sizeAuto(have);
+    showAuto(s, have);
     enforceBudget(s, id);
     return true;
   }
@@ -70,7 +94,10 @@ function openAuto(s: SuperState, kind: ContainerKind, ref: string, child: string
   // A site card is titled by its host and port (`localhost:5173`): a full URL breaks in a 1:1 tile.
   let title: string | undefined;
   if (kind === 'web') { try { title = new URL(ref).host; } catch { title = undefined; } }
-  s.containers.push({ id, kind, ref, shape: kind === 'web' ? 'tall' : 'square', place, by: 'auto', of: child, ...(title ? { title } : {}) });
+  const card: SuperContainer = { id, kind, ref, shape: kind === 'web' ? 'tall' : 'square', place, by: 'auto', of: child, ...(title ? { title } : {}) };
+  sizeAuto(card);
+  s.containers.push(card);
+  showAuto(s, card);
   if (place === 'float') enforceBudget(s, id);
   return true;
 }
@@ -89,7 +116,7 @@ export function applySignal(s: SuperState, child: string, signal: SuperSignal, n
     case 'devserver-drop': {
       let changed = false;
       for (const c of s.containers) {
-        if (c.by === 'auto' && c.kind === 'web' && c.of === child && c.place === 'float' && movable(s, c)) { c.place = 'others'; changed = true; }
+        if (c.by === 'auto' && c.kind === 'web' && c.of === child && c.place === 'float' && movable(s, c)) { releaseAutoView(s, c.id); c.place = 'others'; changed = true; }
       }
       return changed;
     }
@@ -106,17 +133,18 @@ export function settleChild(s: SuperState, child: string, how: 'idle' | 'gone', 
   const browserId = autoContainerId('browser', child);
   if (how === 'idle') {
     const b = s.containers.find((c) => c.id === browserId);
-    if (b && b.place === 'float' && movable(s, b)) { b.place = 'others'; changed = true; }
+    if (b && b.place === 'float' && movable(s, b)) { releaseAutoView(s, b.id); b.place = 'others'; changed = true; }
     return changed;
   }
   const b = s.containers.find((c) => c.id === browserId);
   if (b && movable(s, b)) {
+    releaseAutoView(s, b.id);
     s.containers = s.containers.filter((c) => c.id !== browserId);
     changed = true;
   }
   for (const c of s.containers) {
     const mine = (c.kind === 'chat' && c.ref === child) || (c.by === 'auto' && c.of === child);
-    if (mine && c.place === 'float' && movable(s, c)) { c.place = 'others'; changed = true; }
+    if (mine && c.place === 'float' && movable(s, c)) { releaseAutoView(s, c.id); c.place = 'others'; changed = true; }
   }
   return changed;
 }

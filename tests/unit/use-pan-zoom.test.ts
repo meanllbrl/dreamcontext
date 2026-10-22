@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { clampPan, gestureScale, wheelAction, zoomAbout } from '../../dashboard/src/components/layout/usePanZoom.js';
+import { clampPan, gestureScale, takesWheel, wheelAction, zoomAbout } from '../../dashboard/src/components/layout/usePanZoom.js';
 import { snapSize } from '../../dashboard/src/components/sleepy/super/useStageDrag.js';
 
 const ROOT = new URL('../../', import.meta.url).pathname;
@@ -35,6 +35,17 @@ describe('usePanZoom\'s arithmetic', () => {
     expect(pinch.kind).toBe('zoom');
     expect(pinch.kind === 'zoom' && pinch.factor).toBeGreaterThan(1);
     expect(wheelAction({ deltaX: 0, deltaY: 10, ctrlKey: false, metaKey: true }, 'pan').kind).toBe('zoom');
+  });
+
+  it('in place (`pinch`, owner 2026-10-22): only ctrl/cmd and a pinch zoom; a plain wheel scrolls the content until zoomed, then pans', () => {
+    const plain = { deltaX: 2, deltaY: 50, ctrlKey: false, metaKey: false };
+    expect(takesWheel(plain, 'pinch', 1, 1)).toBe(false);
+    expect(takesWheel(plain, 'pinch', 1.5, 1)).toBe(true);
+    expect(wheelAction(plain, 'pinch')).toEqual({ kind: 'pan', dx: -2, dy: -50 });
+    expect(takesWheel({ ...plain, ctrlKey: true }, 'pinch', 1, 1)).toBe(true);
+    expect(wheelAction({ ...plain, metaKey: true }, 'pinch').kind).toBe('zoom');
+    // The full-screen viewers take every wheel, as before.
+    for (const mode of ['zoom', 'pan'] as const) expect(takesWheel(plain, mode, 1, 1)).toBe(true);
   });
 
   it('a gesture\'s scale is from its start; nonsense asks for nothing', () => {
@@ -89,5 +100,22 @@ describe('the corner handle snaps to a preset (useStageDrag snapSize)', () => {
   it('never offers a preset that does not fit: the nearest one that does', () => {
     expect(snapSize(tile, 368, 184, 'right', (s) => s !== 'wide')).toBe('large');
     expect(snapSize(tile, 368, 184, 'right', () => false)).toBe('small');
+  });
+});
+
+describe('the card zoom (super/ZoomPane.tsx)', () => {
+  const pane = read('dashboard/src/components/sleepy/super/ZoomPane.tsx');
+  const card = read('dashboard/src/components/sleepy/super/SuperContainer.tsx');
+  it('zooms in place 100-500 %, a plain wheel left to the content at fit, and owns its pinch', () => {
+    expect(pane).toMatch(/usePanZoom\(\{ stageRef, content, stage, minScale: MIN_SCALE, maxScale: MAX_SCALE, wheel: 'pinch', fit: FIT \}\)/);
+    expect(pane).toMatch(/const MIN_SCALE = 1;/);
+    expect(pane).toMatch(/const MAX_SCALE = 5;/);
+    expect(pane.match(/data-pinch-owner="true"/g)?.length).toBe(1);
+    // A bridge message counts only from a frame inside this pane.
+    expect(pane).toMatch(/querySelectorAll\('iframe'\)\]\.find\(\(f\) => f\.contentWindow === event\.source\)/);
+  });
+  it('wraps a picture, a page and a live browser shown large; a page served by a server gets Inspect', () => {
+    expect(card).toMatch(/c\.kind === 'image' \|\| c\.kind === 'web' \|\| c\.kind === 'browser'/);
+    expect(card).toMatch(/<ZoomPane key=\{c\.id\} live=\{isLivePage\(c\)\}>\{viewFor\(p, true\)\}<\/ZoomPane>/);
   });
 });

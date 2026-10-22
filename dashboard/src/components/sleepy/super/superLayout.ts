@@ -16,11 +16,12 @@
  * Card sizes (owner 2026-10-22, "like Apple widgets"): a floating card may be medium (2×1 tiles),
  * large (2×2) or wide (3×2). A stage of small cards only is laid out exactly as before (pinned
  * by a snapshot); one sized card switches the float pass to `solveSized`, where each side takes
- * the width its widest card needs and the centre narrows for it, never under CENTRE_MIN. A size
+ * the width its widest card needs and the centre narrows for it, staying in the middle while it
+ * can, never under CENTRE_MIN. A size
  * that does not fit is DRAWN smaller (the plan's `size`), the record is never touched.
  */
 import {
-  CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, SIZE_UNITS, applyGroupOp, dissolveGroups, leaveGroups, normalizeGroups,
+  CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, SIZE_UNITS, applyGroupOp, dissolveGroups, leaveGroups, normalizeGroups, viewWithout,
   type ContainerShape, type ContainerSize, type GroupOp, type SuperContainer, type SuperGroup, type SuperView,
 } from '../../../lib/superTypes';
 
@@ -287,8 +288,9 @@ interface SizedSolution extends FloatSolution {
 
 /**
  * Both sides around the centre when a card is sized. Each side is as wide as its widest card
- * (in tiles) and the centre takes what is left, between CENTRE_MIN and its preferred width: the
- * chat narrows only as far as a card needs. Too wide even then: the wider side (on a tie, the one
+ * (in tiles) and the centre takes what is left, between CENTRE_MIN and its preferred width,
+ * narrowing evenly so it stays in the middle; off the middle only when that would take it under
+ * CENTRE_MIN. Too wide even then: the wider side (on a tie, the one
  * whose widest card comes later in the record) is capped one tile narrower and its cards are
  * drawn at the largest size that fits it. Within a side, cards run top to bottom in record order
  * against the inner (centre) edge: a sized card is a block of its own, a run of small cards fills
@@ -366,11 +368,14 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
       overflow.add(last.id);
     }
   }
-  // The centre: what the sides leave, never over its preferred width; centred when both sides
-  // fit beside a centred centre, else right after the left side.
-  const centreW = Math.max(STAGE.CENTRE_MIN, Math.min(preferred, avail()));
-  const symmetricRoom = (W - centreW) / 2 - GAP - MARGIN;
-  const x = symmetricRoom >= Math.max(unitsPx(cols.left), unitsPx(cols.right)) - 1e-9
+  // The centre stays IN THE MIDDLE while it can (owner 2026-10-22: "I made a card bigger and the
+  // agent in the centre was no longer centred; no need, there is room"): it narrows evenly on
+  // both sides for the wider side, never over its preferred width. Only when even that would
+  // take it under CENTRE_MIN does it move off the middle, right after the left side.
+  const need = Math.max(unitsPx(cols.left) + (cols.left ? GAP : 0), unitsPx(cols.right) + (cols.right ? GAP : 0));
+  const centred = Math.min(preferred, W - 2 * MARGIN - 2 * need);
+  const centreW = centred >= STAGE.CENTRE_MIN - 1e-9 ? centred : Math.max(STAGE.CENTRE_MIN, Math.min(preferred, avail()));
+  const x = centred >= STAGE.CENTRE_MIN - 1e-9
     ? (W - centreW) / 2
     : MARGIN + unitsPx(cols.left) + (cols.left ? GAP : 0) + Math.max(0, (avail() - centreW) / 2);
   const centre: Rect = { x, y: f.content.y, width: centreW, height: f.content.height };
@@ -777,10 +782,14 @@ type Staged = { containers: SuperContainer[]; groups?: SuperGroup[]; view: Super
  */
 export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch): S {
   const st = { containers: state.containers.map((c) => ({ ...c })), groups: (state.groups ?? []).map((g) => ({ ...g, cards: [...g.cards] })) };
+  // Cards that leave what the view shows (the server's rule): to Others, resized, grouped, closed.
+  const unshown = new Set<string>();
   if (patch.leave?.length) leaveGroups(st, patch.leave);
   for (const p of patch.cards ?? []) {
     const k: SuperContainer | SuperGroup | undefined = st.containers.find((x) => x.id === p.id) ?? st.groups.find((x) => x.id === p.id);
     if (!k) continue;
+    if (p.place === 'others') for (const id of 'kind' in k ? [k.id] : k.cards) unshown.add(id);
+    if ('kind' in k && p.size !== undefined) unshown.add(k.id);
     if (p.place === 'float' || p.place === 'others') k.place = p.place;
     if (p.pos === null) delete k.pos;
     else if (p.pos && Number.isFinite(p.pos.x) && Number.isFinite(p.pos.y)) k.pos = { x: clamp01(p.pos.x), y: clamp01(p.pos.y) };
@@ -791,13 +800,14 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
     }
     if (p.order === 'last' && 'kind' in k) st.containers = [...st.containers.filter((x) => x !== k), k];
   }
-  if (patch.group) applyGroupOp(st, patch.group);
+  if (patch.group) { applyGroupOp(st, patch.group); for (const id of patch.group.cards) unshown.add(id); }
   if (patch.ungroup?.length) dissolveGroups(st, patch.ungroup);
   const gone = new Set(patch.closed ?? []);
+  for (const id of gone) unshown.add(id);
   if (gone.size) st.containers = st.containers.filter((x) => !gone.has(x.id));
   const { containers, groups } = normalizeGroups(st.containers, st.groups);
   const live = new Set(containers.map((c) => c.id));
-  const v = patch.view ?? state.view;
+  const v = patch.view ?? viewWithout(state.view, unshown);
   let view: SuperView = { mode: 'float' };
   if (v.mode === 'half' && v.card && live.has(v.card)) view = { mode: 'half', card: v.card };
   else if (v.mode === 'present') {

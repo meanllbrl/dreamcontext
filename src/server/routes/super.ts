@@ -12,7 +12,7 @@ import {
   CONTAINER_KINDS, CONTAINER_SHAPES, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, cleanAskOptions, cleanGroupName,
-  defaultShape, dissolveGroups, floatCount, leaveGroups,
+  atLeastSize, defaultShape, dissolveGroups, floatCount, isPageKind, leaveGroups, minSizeFor, viewWithout,
   type ContainerKind, type ContainerShape, type ContainerSize, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
 } from '../../lib/super/types.js';
 import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, setTeamLiveSource, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
@@ -666,18 +666,33 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (have) {
           // Re-opening brings it back from Others and keeps the owner's drop position.
           if (shapeArg) have.shape = shapeArg;
-          if (sizeArg) { if (have.sizeBy === 'owner') kept.push(have.id); else have.size = sizeArg; }
+          if (have.sizeBy === 'owner') { if (sizeArg) kept.push(have.id); }
+          else {
+            // A page is never sized under large by an agent (owner 2026-10-22).
+            const next = atLeastSize(sizeArg ?? have.size ?? 'small', minSizeFor(have.kind));
+            if (next === 'small') delete have.size; else have.size = next;
+          }
           have.place = 'float';
           if (title) have.title = title;
           return;
         }
+        const size = atLeastSize(sizeArg ?? 'small', minSizeFor(kind as ContainerKind));
         s.containers.push({
           id: ids[i], kind: kind as ContainerKind, ref,
           shape: shapeArg ?? defaultShape(kind as ContainerKind),
-          ...(sizeArg && sizeArg !== 'small' ? { size: sizeArg } : {}),
+          ...(size !== 'small' ? { size } : {}),
           place: 'float', ...(title ? { title } : {}),
         });
       });
+      // A page the agent opens is shown side by side at once (owner 2026-10-22: "if it adds a
+      // web page as a card it should show it side by side, directly"): the first one named,
+      // never inside a group, never over a presentation, and over a half page only when that
+      // shows another page (a chat or a picture he looks at stays).
+      const shownNow = s.view.mode === 'half' ? s.containers.find((k) => k.id === s.view.card) : undefined;
+      if (!groupId && isPageKind(kind as ContainerKind)
+        && (s.view.mode === 'float' || (s.view.mode === 'half' && (!shownNow || isPageKind(shownNow.kind))))) {
+        s.view = { mode: 'half', card: ids[0] };
+      }
       // The cards design's own group mutation: a card leaves any other group (a group left
       // with one card dissolves when the record is settled).
       if (groupId) {
@@ -691,7 +706,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
     if (made.length !== ids.length) { tooMany(res, state); return; }
     const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
-    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(kept.length ? { kept } : {}) });
+    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(kept.length ? { kept } : {}), view: state.view });
   },
 
   shape: async (c, b, res) => {
@@ -702,15 +717,21 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!look.shape && !look.size) { refuse(res, 400, 'invalid_args', `shape must be one of ${[...CONTAINER_SIZES, ...CONTAINER_SHAPES].join(' | ')}`); return; }
     // The owner's size wins: decided inside the locked write, never against the snapshot.
     let ownerSized = false;
+    let drawn: ContainerSize | undefined;
     await writeSuper(c.who.contextRoot, (s) => {
       const k = s.containers.find((x) => x.id === id);
       if (!k) return;
       if (look.size && k.sizeBy === 'owner') { ownerSized = true; return; }
       if (look.shape) k.shape = look.shape;
-      if (look.size) { if (look.size === 'small') delete k.size; else k.size = look.size; }
+      if (look.size) {
+        const next = atLeastSize(look.size, minSizeFor(k.kind));
+        if (next === 'small') delete k.size; else k.size = next;
+        drawn = next;
+      }
     });
     if (ownerSized) { refuse(res, 409, 'owner_sized', 'the owner chose this card\'s size; leave it as it is'); return; }
-    ok(res, { container: id, ...(look.shape ? { shape: look.shape } : {}), ...(look.size ? { size: look.size } : {}) });
+    // The size written: a page is never under large (it says so rather than pretending).
+    ok(res, { container: id, ...(look.shape ? { shape: look.shape } : {}), ...(drawn ? { size: drawn } : {}) });
   },
 
   half: async (c, b, res) => {
@@ -760,7 +781,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!t) return;
     const id = t.id;
     if (t.group) {
-      await writeSuper(c.who.contextRoot, (s) => { const g = s.groups.find((x) => x.id === id); if (g) g.place = 'others'; });
+      await writeSuper(c.who.contextRoot, (s) => {
+        const g = s.groups.find((x) => x.id === id);
+        if (!g) return;
+        g.place = 'others';
+        s.view = viewWithout(s.view, new Set(g.cards));
+      });
       ok(res, { group: id, place: 'others' });
       return;
     }
@@ -770,8 +796,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const k = s.containers.find((x) => x.id === id);
       if (k) k.place = 'others';
       // A stacked card leaves the half page or the presentation it was in.
-      if (s.view.mode === 'half' && s.view.card === id) s.view = { mode: 'float' };
-      if (s.view.mode === 'present' && s.view.cards) s.view = { mode: 'present', cards: s.view.cards.filter((x) => x !== id) };
+      s.view = viewWithout(s.view, new Set([id]));
     });
     ok(res, { container: id, place: 'others' });
   },
@@ -827,7 +852,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (cards.length < MIN_GROUP_CARDS) { refuse(res, 400, 'invalid_args', `a group needs at least ${MIN_GROUP_CARDS} cards`); return; }
       id = newGroupId();
     } else if (!cards.length && !name) { refuse(res, 400, 'invalid_args', 'name cards to add to the group, or --name to rename it'); return; }
-    const state = await writeSuper(c.who.contextRoot, (s) => applyGroupOp(s, { id, cards, name }));
+    const state = await writeSuper(c.who.contextRoot, (s) => { applyGroupOp(s, { id, cards, name }); s.view = viewWithout(s.view, new Set(cards)); });
     const made = state.groups.find((g) => g.id === id);
     if (!made) { refuse(res, 409, 'not_grouped', 'the cards could not be grouped (closed meanwhile?)'); return; }
     ok(res, { group: made });
@@ -1797,11 +1822,16 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       ? { id: g.id, cards: (g.cards as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS), name: typeof g.name === 'string' ? g.name : undefined }
       : null;
     const state = await writeSuper(contextRoot, (s) => {
+      // Cards that leave what the view shows: to Others (a group's cards with it), closed,
+      // grouped or resized (owner 2026-10-22: a presented card moved to Others stayed presented).
+      const unshown = new Set<string>();
       if (leave.length) leaveGroups(s, leave);
       for (const raw of cards as unknown[]) {
         const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
         const k = p && typeof p.id === 'string' ? (s.containers.find((x) => x.id === p.id) ?? s.groups.find((x) => x.id === p.id)) : undefined;
         if (!p || !k) continue;
+        if (p.place === 'others') for (const id of 'kind' in k ? [k.id] : k.cards) unshown.add(id);
+        if ('kind' in k && p.size !== undefined) unshown.add(k.id);
         if (p.place === 'float' || p.place === 'others') k.place = p.place;
         if (p.pos === null) delete k.pos;
         else if (p.pos && typeof p.pos === 'object') k.pos = p.pos as { x: number; y: number };
@@ -1815,16 +1845,22 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
         // The card the owner moved last is drawn on top: it goes to the end of the list.
         if (p.order === 'last' && 'kind' in k) s.containers = [...s.containers.filter((x) => x !== k), k];
       }
-      if (groupOp) applyGroupOp(s, groupOp);
+      if (groupOp) { applyGroupOp(s, groupOp); for (const id of groupOp.cards) unshown.add(id); }
       if (ungroup.length) dissolveGroups(s, ungroup);
       const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
+      for (const id of gone) unshown.add(id);
+      s.view = viewWithout(s.view, unshown);
       if (gone.size) {
         // The owner's "no" to an automatic card: not reopened automatically for a while (G5).
         noteDismissed(s, s.containers.filter((x) => gone.has(x.id)), Date.now());
         s.containers = s.containers.filter((x) => !gone.has(x.id));
       }
       // The store sanitizes what this produced: positions clamped, a view naming no card → float.
-      if (view !== undefined) s.view = view as SuperState['view'];
+      // The owner's view is his: it never carries the server's "put here on its own" mark.
+      if (view !== undefined) {
+        s.view = view as SuperState['view'];
+        if (s.view && typeof s.view === 'object') delete (s.view as { auto?: unknown }).auto;
+      }
     });
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },

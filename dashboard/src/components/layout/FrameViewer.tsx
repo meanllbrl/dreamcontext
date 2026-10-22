@@ -135,6 +135,7 @@ export function FrameViewer({ subject, onClose }: { subject: FrameSubject; onClo
       const m = readZoomMessage(event.data);
       if (!m) return;
       if (m.kind === 'escape') { onClose(); return; }
+      if (m.kind === 'dblclick') return;
       // The frame's coordinates, on the screen: its box is already transformed.
       const r = frameRef.current!.getBoundingClientRect();
       const s = viewRef.current.scale;

@@ -57,6 +57,23 @@ export function defaultShape(kind: ContainerKind): ContainerShape {
   return kind === 'chat' || kind === 'web' ? 'tall' : 'square';
 }
 
+/** A page (a site, a project web page, a child's live browser) is opened to be LOOKED AT (owner
+ *  2026-10-22: "it opened as a small card; it should have shown it directly"): an agent or the
+ *  server never sizes one under this. The owner's own size is his and is never raised. */
+export function minSizeFor(kind: ContainerKind): ContainerSize {
+  return kind === 'web' || kind === 'browser' ? 'large' : 'small';
+}
+
+/** The larger of two sizes (the list runs small → wide). */
+export function atLeastSize(size: ContainerSize, min: ContainerSize): ContainerSize {
+  return CONTAINER_SIZES.indexOf(size) >= CONTAINER_SIZES.indexOf(min) ? size : min;
+}
+
+/** A page card: opening one shows it side by side (`isPageKind`), see `super open`. */
+export function isPageKind(kind: ContainerKind): boolean {
+  return kind === 'web' || kind === 'browser';
+}
+
 export interface SuperContainer {
   /** Stable id, `[a-z0-9-]{1,40}`. */
   id: string;
@@ -114,6 +131,27 @@ export interface SuperView {
   mode: ViewMode;
   card?: string;
   cards?: string[];
+  /** `half` only: the SERVER put this page side by side on its own (a dev server or a child's
+   *  browser appeared), so automation may take it back when that page settles. Any view the
+   *  owner or the agent sets carries no mark. */
+  auto?: true;
+}
+
+/**
+ * The view once these cards leave it (owner 2026-10-22: "Move to Others on a presented card did
+ * not leave the presentation"): a card the owner or the agent moves to Others, closes, groups or
+ * resizes is no longer shown. A half page on one floats again; a presentation goes on with the
+ * cards it has left, and floats once it has none.
+ */
+export function viewWithout(view: SuperView, ids: ReadonlySet<string>): SuperView {
+  if (!ids.size) return view;
+  if (view.mode === 'half') return view.card && ids.has(view.card) ? { mode: 'float' } : view;
+  if (view.mode === 'present') {
+    const cards = (view.cards ?? []).filter((id) => !ids.has(id));
+    if (!cards.length) return { mode: 'float' };
+    return cards.length === (view.cards ?? []).length ? view : { mode: 'present', cards };
+  }
+  return view;
 }
 
 export interface SuperChild {
