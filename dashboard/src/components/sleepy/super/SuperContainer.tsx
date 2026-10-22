@@ -69,6 +69,15 @@ export function chatStatus(session: ChatSession | undefined): SessionStatusInfo 
   });
 }
 
+/** The Super Agent's centre: its chat's status, `asking` while a question it put to the owner
+ *  waits (deriveSessionStatus ranks asking over busy, exactly as for a chat's own card). */
+export function superCentreStatus(session: ChatSession | undefined, ownerAsk: boolean): SessionStatusInfo {
+  return deriveSessionStatus({
+    dormant: !session, status: session?.status, busy: session?.busy, asking: !!session?.asking || ownerAsk,
+    agentsWorking: session?.agentsWorking,
+  });
+}
+
 export interface SuperCardActions {
   onSideBySide: (id: string) => void;
   onToOthers: (id: string) => void;

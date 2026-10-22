@@ -17,7 +17,7 @@ import { OrbitPath, PanelChatTile } from './StageParts';
 import { JobBar } from './JobBar';
 import { publishSuperEventContext } from './superJobsStore';
 import { childModelChip } from './AgentCard';
-import { SuperContainer, chatStatus } from './SuperContainer';
+import { SuperContainer, chatStatus, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { anchoredPos, fitsNow, isGroupId, jobListRect, planStage, sizeOf, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
@@ -329,7 +329,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // The stage follows the Super Agent's STATUS (the centre's glow and the mascot), never its every
   // token: its transcript re-renders itself (liveSession.ts).
   useLiveSession(superSession, () => { const s = chatStatus(superSession); return `${s.kind}|${s.mood}`; });
-  const status = chatStatus(superSession);
+  // A question the Super Agent put to the owner (its own `ask`, a child's question it escalated,
+  // an AI Team approval) is ITS question while it waits, like an AskUserQuestion is a chat's: the
+  // centre asks, not spins (owner, 2026-10-22). A child's permission stays on the child's card.
+  const ownerAsk = state.queue.some((q) => needsOwner(q) && q.kind !== 'permission');
+  const status = superCentreStatus(superSession, ownerAsk);
   // The cape goes on WITH the hand-over (D18, AC13): the face mounts with the surface — inside
   // the centre, still at opacity 0 while its stand-in grows in — so the 400 ms entrance starts
   // on the choreography's first frame and is over before its end (≥ 440 ms). Decided once, at

@@ -115,14 +115,14 @@ export function AgentDock({ rows, focusedId, onOpen, onClose, className }: {
                     rollupProject) — one function, so the tile and the strip above it can never
                     disagree about whether this session has something unseen. */}
                 {wantsALook(row) && <span className="agent-dock-chip-badge" aria-label="Waiting for you" />}
-                <button
+                {!row.pinned && <button
                   type="button"
                   className="agent-dock-chip-close"
                   aria-label={`Close ${row.title}`}
                   title="Close session"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); onClose(row.id); }}
-                >✕</button>
+                >✕</button>}
               </div>
             );
           })}

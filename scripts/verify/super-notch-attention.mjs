@@ -11,6 +11,11 @@
  *    project window claim → the child's own chat), and the words never reach the Assistant.
  *    The Assistant's own `answer` verb is still refused for the child.
  *
+ * B. "Super Agent diğer agent'lar gibi soru sormalı": the Super Agent's own `super ask` reads as
+ *    a question like a chat's AskUserQuestion — the stage's centre asks (not a spinner), the
+ *    project chip carries the magenta "needs you" bubble and its nudge, the window chimes, the
+ *    folded dock has a "?" chip for it that opens the stage — and all of it clears once answered.
+ *
  * The real dashboard server (scratch HOME, DREAMCONTEXT_DESKTOP=1), the real notch page and the
  * real project page in Chromium, each on a mocked Tauri bus; the doorbell the notch emits to the
  * project window (`emitTo`) is carried across by this script, the one thing two browser pages
@@ -61,6 +66,8 @@ const ask = (request) => new Promise((resolve) => {
 });
 async function superTurn(text) {
   if (text.startsWith('[super handover]')) { report({ kind: 'handover', children: Object.keys(cli('super', 'state').json?.children ?? {}) }); return 'arranged'; }
+  if (text.includes('GO-ASKOWNER')) { const r = cli('super', 'ask', 'Ship the login fix now?', '--options', 'Ship it|Wait'); report({ kind: 'asked', r }); return 'Ship the login fix now?'; }
+  if (text.startsWith('Answer to your question:')) { report({ kind: 'answer', text }); return 'noted'; }
   const go = text.match(/GO-CHILDBASH (\\S+) (\\S+)/);
   if (go) { report({ kind: 'sent', r: cli('super', 'send', go[1], 'ASK-BASH ' + go[2]) }); return 'asked the child'; }
   report({ kind: 'owner', text });
@@ -119,6 +126,11 @@ const tauriStub = (label) => {
   const handlers = new Map();
   let seq = 0;
   window.__emits = [];
+  window.__calls = [];
+  // The ask chime is two oscillator notes (lib/chime.ts): counted, never heard.
+  window.__osc = 0;
+  const createOsc = AudioContext.prototype.createOscillator;
+  AudioContext.prototype.createOscillator = function (...a) { window.__osc += 1; return createOsc.apply(this, a); };
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (event, id) => { handlers.get(event)?.delete(id); } };
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label }, currentWebview: { windowLabel: label, label } },
@@ -131,6 +143,7 @@ const tauriStub = (label) => {
         return args.handler;
       }
       if (cmd === 'plugin:event|unlisten') { handlers.get(args.event)?.delete(args.eventId); return null; }
+      window.__calls.push(cmd);
       if (cmd === 'plugin:event|emit_to') { window.__emits.push(JSON.parse(JSON.stringify(args))); return null; }
       if (cmd === 'plugin:webview|get_all_windows' || cmd === 'plugin:window|get_all_windows') return [label];
       if (cmd.startsWith('mic_take_')) throw new Error(`Command ${cmd} not found`);
@@ -316,6 +329,44 @@ async function main() {
     const allow4 = notch.locator('.dc-glance__btn--primary:visible').filter({ hasText: /^\s*Allow/ }).first();
     if (await until(notch, async () => (await allow4.count()) > 0, 10000)) await allow4.click();
     ok('the owner\'s Allow then lets it go', await until(page, async () => answeredWith('four') === 'allow', 25000));
+
+    console.log('\n── B: the Super Agent asks the owner a question (super ask)');
+    await page.evaluate(() => { window.__calls.length = 0; window.__osc = 0; });
+    const chip = page.locator('.project-tab[data-vault="acme-app"]');
+    const centreBox = page.locator('.super-centre');
+    ok('before: the centre does not ask, the chip has no "needs you" bubble', (await centreBox.getAttribute('data-status')) !== 'asking'
+      && (await chip.locator('.project-tab-bubble[data-state="asking"]').count()) === 0);
+    await centre.locator('.chat-cmp-input').first().click();
+    await centre.locator('.chat-cmp-input').first().fill('GO-ASKOWNER');
+    await page.keyboard.press('Enter');
+    ok('super ask ran', await until(page, async () => reports().some((r) => r.kind === 'asked' && r.r?.status === 0), 30000), JSON.stringify(reports().slice(-2)));
+    ok('the super agent\'s turn ended (it does not wait on the answer)', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'turn-end' && r.said === 'Ship the login fix now?'), 15000));
+    ok('B1 the stage\'s centre ASKS (data-status asking), not working', await until(page, async () => (await centreBox.getAttribute('data-status')) === 'asking', 15000), await centreBox.getAttribute('data-status'));
+    const chips = await page.locator('.project-tab').count();
+    ok('B2 the project chip asks: "needs you" bubble + the repeating nudge', chips > 0 && await until(page, async () => (await chip.getAttribute('data-asking')) === 'true'
+      && (await chip.locator('.project-tab-bubble[data-state="asking"]').count()) === 1, 15000), `chips=${chips} ${chips ? await chip.getAttribute('aria-label') : ''}`);
+    ok('B3 the window chimed (the job bar\'s one alarm)', await until(page, async () => (await page.evaluate(() => window.__osc)) >= 2, 10000), await page.evaluate(() => window.__osc));
+    const focused = await page.evaluate(() => document.visibilityState === 'visible' && document.hasFocus());
+    const bounced = (await page.evaluate(() => window.__calls)).some((c) => /request_user_attention/.test(c));
+    ok(`…and the Dock bounce follows the attention rule (owner ${focused ? 'watching: the chip nudges instead' : 'away: bounced'})`, focused ? true : bounced, JSON.stringify(await page.evaluate(() => window.__calls)));
+    await page.screenshot({ path: join(OUT, 'B1-super-asks-stage.png') });
+    await chip.screenshot({ path: join(OUT, 'B2-project-chip-asking.png') }).catch(() => {});
+    await page.getByRole('button', { name: 'Collapse agent' }).first().click().catch(() => {});
+    const askChip = page.locator('.agent-dock-chip[data-kind="asking"]').filter({ hasText: 'Claude' });
+    ok('B4 folded, the dock shows the Super Agent\'s question as a "?" chip with no close button', await until(page, async () => (await askChip.count()) === 1
+      && (await askChip.locator('.agent-dock-chip-q').count()) === 1 && (await askChip.locator('.agent-dock-chip-close').count()) === 0, 10000));
+    await page.screenshot({ path: join(OUT, 'B4-dock-folded.png') });
+    await askChip.click();
+    ok('…clicking it opens the Super stage', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0, 10000));
+    const option = page.getByTestId('super-ask-option').filter({ hasText: 'Ship it' }).first();
+    await until(page, async () => (await option.count()) > 0, 10000);
+    await option.click();
+    ok('the owner answers from the job bar: the super gets "Answer to your question: Ship it"', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'answer' && r.text.startsWith('Answer to your question: Ship it')), 20000));
+    ok('B5 answered: the centre stops asking, the chip\'s "needs you" bubble and nudge go', await until(page, async () => (await centreBox.getAttribute('data-status')) !== 'asking'
+      && (await chip.getAttribute('data-asking')) !== 'true' && (await chip.locator('.project-tab-bubble[data-state="asking"]').count()) === 0, 20000), `${await centreBox.getAttribute('data-status')} ${await chip.getAttribute('aria-label')}`);
+    await page.getByRole('button', { name: 'Collapse agent' }).first().click().catch(() => {});
+    ok('…and the folded dock has no Super chip any more', await until(page, async () => (await page.locator('.agent-dock-chip').filter({ hasText: 'Claude' }).count()) === 0, 10000));
+    await page.screenshot({ path: join(OUT, 'B5-answered-folded.png') });
 
     const real = errors.filter((e) => !/favicon|ERR_CONNECTION|WebSocket|Failed to load resource/i.test(e));
     ok('no console errors', real.length === 0, real.join('\n'));
