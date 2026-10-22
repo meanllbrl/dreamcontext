@@ -31,14 +31,33 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * Not the Lab's `force`: the Super Agent's park request (`super end --force`, 667ffa57) carries
+ * its own boolean `force` over the chat socket, one pass-through each in the reader and the
+ * session. Exempt BY COUNT, not by file: a second `force: true` in either file still fails, and
+ * an exemption whose occurrence is gone fails too, so the list cannot rot into a blind spot.
+ */
+const NOT_LAB_FORCE: Record<string, number> = {
+  'dashboard/src/lib/chatProtocol.ts': 1,
+  'dashboard/src/components/sleepy/chatSession.ts': 1,
+};
+
 describe('dashboard source', () => {
   it('never sends a bare `force: true` (user actions say \'user\', automatic callers send nothing)', () => {
     const files = walk(join(ROOT, 'dashboard/src'));
     expect(files.length).toBeGreaterThan(100);
-    const offenders = files
-      .filter((f) => /\bforce\s*:\s*true\b/.test(readFileSync(f, 'utf-8')))
-      .map((f) => relative(ROOT, f));
+    const offenders: string[] = [];
+    const seen: Record<string, number> = {};
+    for (const f of files) {
+      const rel = relative(ROOT, f);
+      const n = (readFileSync(f, 'utf-8').match(/\bforce\s*:\s*true\b/g) ?? []).length;
+      seen[rel] = n;
+      if (n > (NOT_LAB_FORCE[rel] ?? 0)) offenders.push(rel);
+    }
     expect(offenders).toEqual([]);
+    for (const [rel, n] of Object.entries(NOT_LAB_FORCE)) {
+      expect(seen[rel], `${rel}: the park-request exemption no longer matches its source`).toBe(n);
+    }
   });
 
   it('the start-job hook sends force only when the caller passes one (no `!== false` default)', () => {
