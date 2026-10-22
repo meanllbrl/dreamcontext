@@ -9,10 +9,16 @@ import {
   listAgents,
   listAgentTargets,
   removeAgent,
+  setAgentPlacement,
   updateAgent,
   withRestamp,
 } from '../../lib/agents/store.js';
-import { DEFAULT_CALL_SETTINGS, type AgentIdentityPatch, type AgentManifest } from '../../lib/agents/types.js';
+import {
+  DEFAULT_CALL_SETTINGS,
+  type AgentIdentityPatch,
+  type AgentManifest,
+  type AgentPlacementPatch,
+} from '../../lib/agents/types.js';
 import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
 import { getRunTarget, parsePattern, resolveAutomationPhoto } from '../../lib/automations/store.js';
 import { roleLineOf, soulExcerpt } from '../../lib/agents/soul.js';
@@ -71,6 +77,10 @@ export interface AgentSummary {
   effort: EffortLevel | null;
   whiteboard: string | null;
   shared: boolean;
+  /** `reports_to` as written (the dashboard's tree applies the read rules). Unhashed. */
+  reportsTo: string | null;
+  /** `team` as written; drawn only on a lead. Unhashed. */
+  team: string | null;
   approvedForChat: boolean;
   approvedToRun: boolean;
   /** Why it may not run, when it may not (`approvedToRun` false). */
@@ -129,6 +139,8 @@ export function summarizeAgent(
     effort: target.effort,
     whiteboard: target.whiteboard ?? null,
     shared: agent?.shared ?? false,
+    reportsTo: agent?.reportsTo ?? null,
+    team: agent?.team ?? null,
     approvedForChat: forChat.approved,
     approvedToRun: toRun.approved,
     approvalReason: toRun.approved ? null : toRun.reason,
@@ -349,6 +361,48 @@ export async function handleAgentsUpdate(
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
     sendWriteError(res, err, 'update_failed', 'Failed to save the agent.');
+  }
+}
+
+/** A placement value from a request body: absent passes through, null or '' clears, anything
+ *  not text is refused. The store validates the value itself. */
+function readPlacementValue(v: unknown, what: string): string | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null || v === '') return null;
+  if (typeof v !== 'string') throw new AutomationError(`Invalid ${what}: expected text.`);
+  return v;
+}
+
+/**
+ * POST /api/agents/:slug/place {reportsTo?, team?} — where the agent sits in the team. Both
+ * keys are unhashed, so this never re-approves and never blocks anything; a loop, an unknown
+ * manager or an agent not yet split is refused (400).
+ */
+export async function handleAgentsPlace(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'bad_body', 'Expected a JSON body.');
+    return;
+  }
+  if (!isSafeAutomationSlug(params.slug) || !getAgent(contextRoot, params.slug)) {
+    sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+    return;
+  }
+  try {
+    const patch: AgentPlacementPatch = {};
+    const reportsTo = readPlacementValue(body.reportsTo, 'manager');
+    if (reportsTo !== undefined) patch.reportsTo = reportsTo;
+    const team = readPlacementValue(body.team, 'team');
+    if (team !== undefined) patch.team = team;
+    setAgentPlacement(contextRoot, params.slug, patch);
+    sendSummary(res, contextRoot, params.slug);
+  } catch (err) {
+    sendWriteError(res, err, 'place_failed', 'Failed to place the agent in the team.');
   }
 }
 

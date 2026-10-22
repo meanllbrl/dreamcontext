@@ -11,10 +11,12 @@ import {
   getAgent,
   listAgents,
   removeAgent,
+  setAgentPlacement,
   setAgentShared,
   withRestamp,
 } from '../../lib/agents/store.js';
-import type { AgentIdentityPatch } from '../../lib/agents/types.js';
+import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/types.js';
+import { buildTree, flattenTree } from '../../lib/agents/tree.js';
 import { getRunTarget, parsePattern, setAutomationShared } from '../../lib/automations/store.js';
 import { SOUL_TEMPLATE_IDS, soulTemplate } from '../../lib/agents/soul-templates.js';
 import { shareAgent, shareAutomation, unshareAgent, unshareAutomation } from '../../lib/automations/sharing.js';
@@ -116,7 +118,8 @@ export function registerAgentsCommand(program: Command): void {
     .command('list')
     .description('List every agent, with whether it may chat and whether it may run on this machine')
     .option('--json', 'Emit as JSON')
-    .action((opts: { json?: boolean }) => {
+    .option('--tree', 'Draw the team as a tree: who reports to whom, and each lead\'s team')
+    .action((opts: { json?: boolean; tree?: boolean }) => {
       const root = ensureContextRoot();
       const rows = listAgents(root).map((a) => {
         const v = verdicts(root, a.slug);
@@ -126,6 +129,8 @@ export function registerAgentsCommand(program: Command): void {
           approvedForChat: v?.chat ?? false,
           approvedToRun: v?.run ?? false,
           implicit: a.implicit,
+          reportsTo: a.reportsTo,
+          team: a.team,
           automations: agentUsage(root, a.slug).automations,
         };
       });
@@ -138,10 +143,30 @@ export function registerAgentsCommand(program: Command): void {
         return;
       }
       console.log(header('Agents'));
-      for (const r of rows) {
+      const line = (r: (typeof rows)[number]) => {
         const state = r.approvedToRun ? chalk.green('may run') : r.approvedForChat ? chalk.yellow('chat only') : chalk.red('needs approval');
         const used = r.automations.length > 0 ? chalk.dim(` · runs ${r.automations.join(', ')}`) : '';
-        console.log(`  ${chalk.bold(r.slug)}  ${r.title}  ${state}${used}`);
+        return `${chalk.bold(r.slug)}  ${r.title}  ${state}${used}`;
+      };
+      if (!opts.tree) {
+        for (const r of rows) console.log(`  ${line(r)}`);
+        return;
+      }
+      const bySlug = new Map(rows.map((r) => [r.slug, r]));
+      const tree = buildTree(rows);
+      console.log(chalk.dim('  You'));
+      let rootLast = false;
+      for (const l of flattenTree(tree, new Set())) {
+        const n = tree.nodes.get(l.slug)!;
+        if (l.depth === 0) rootLast = l.last;
+        const rootRail = l.depth === 0 ? '' : rootLast ? '   ' : '│  ';
+        const indent = rootRail + l.guides.map((g) => (g ? '│  ' : '   ')).join('');
+        const elbow = l.last ? '└─ ' : '├─ ';
+        const team = n.ownTeam ? chalk.cyan(` [${n.ownTeam}]`) : '';
+        const note = n.missingManager
+          ? chalk.dim(` (reports to ${n.missingManager}, not on this machine)`)
+          : n.cycle ? chalk.dim(' (reporting loop: shown at the top)') : '';
+        console.log(`  ${indent}${elbow}${line(bySlug.get(l.slug)!)}${team}${note}`);
       }
     });
 
@@ -166,6 +191,7 @@ export function registerAgentsCommand(program: Command): void {
           agent: {
             slug: agent.slug, title: agent.title, prompt: agent.prompt, soul: agent.soul, pattern, model: agent.model, effort: agent.effort,
             learning: agent.learning, whiteboard: agent.whiteboard, shared: agent.shared, implicit: agent.implicit,
+            reportsTo: agent.reportsTo, team: agent.team,
             approvedForChat: v.chat, approvedToRun: v.run, usedBy: usage,
           },
         }, null, 2));
@@ -174,6 +200,7 @@ export function registerAgentsCommand(program: Command): void {
       console.log(header(`${agent.title} (${agent.slug})`));
       console.log(`  model: ${agent.model ?? 'default'}  effort: ${agent.effort ?? 'default'}  learning: ${agent.learning ? 'on' : 'off'}`);
       if (agent.whiteboard) console.log(`  home board: ${agent.whiteboard}`);
+      console.log(`  reports to: ${agent.reportsTo ?? 'you'}${agent.team ? `  team: ${agent.team}` : ''}`);
       console.log(`  chat: ${v.chat ? 'approved' : 'not approved'}  run: ${v.run ? 'approved' : 'not approved'}`);
       if (usage.automations.length > 0) console.log(`  automations: ${usage.automations.join(', ')}`);
       if (usage.boards.length > 0) console.log(`  boards: ${usage.boards.join(', ')}`);
@@ -234,7 +261,9 @@ export function registerAgentsCommand(program: Command): void {
     .option('--whiteboard <board>', 'Home board ("" for none)')
     .option('--learning', 'Keep a pattern of lessons')
     .option('--no-learning', 'Stop keeping a pattern of lessons')
-    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; learning?: boolean }) => {
+    .option('--reports-to <agent>', 'The agent it reports to ("none" = straight to you). Unhashed: changes only how the team is drawn')
+    .option('--team <name>', 'Its team\'s name, carried by a lead and inherited by its reports ("none" removes it). Unhashed')
+    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; learning?: boolean; reportsTo?: string; team?: string }) => {
       const root = ensureContextRoot();
       try {
         const patch: AgentIdentityPatch = {};
@@ -247,11 +276,22 @@ export function registerAgentsCommand(program: Command): void {
         if (effort !== undefined) patch.effort = effort;
         if (opts.whiteboard !== undefined) patch.whiteboard = opts.whiteboard || null;
         if (opts.learning !== undefined) patch.learning = opts.learning;
-        if (Object.keys(patch).length === 0) {
+        const place: AgentPlacementPatch = {};
+        if (opts.reportsTo !== undefined) place.reportsTo = opts.reportsTo === 'none' ? null : opts.reportsTo;
+        if (opts.team !== undefined) place.team = opts.team;
+        if (Object.keys(patch).length === 0 && Object.keys(place).length === 0) {
           warn('Nothing to change.');
           return;
         }
-        withRestamp(root, dirname(root), slug, patch);
+        // The placement first: it is checked against the team (a loop, an unknown manager) and
+        // refused before any identity change lands.
+        if (Object.keys(place).length > 0) {
+          const placed = setAgentPlacement(root, slug, place);
+          if (place.team && !listAgents(root).some((a) => a.reportsTo === slug)) {
+            warn(`"${slug}" has no reports yet: its team "${placed.team}" shows once someone reports to it.`);
+          }
+        }
+        if (Object.keys(patch).length > 0) withRestamp(root, dirname(root), slug, patch);
         success(`Saved "${slug}".`);
       } catch (err) {
         fail(err);

@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import type { TeamTree, TreeLine } from '../../../../src/lib/agents/tree.js';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { AutomationsDispatcherBar } from '../automations/AutomationsDispatcherBar';
 import { runDuration, useNow } from '../agents/agentRunState';
 import { useI18n } from '../../context/I18nContext';
 import { filterRoster, rosterTime, type TeamRow } from './teamModel';
+import { rollupOf, teamTreeOf, treeSections, visibleTreeLines, type RosterView, type TeamRollup } from './teamTree';
 import { TeamIcon } from './TeamIcons';
 
 /**
@@ -12,6 +14,11 @@ import { TeamIcon } from './TeamIcons';
  * A row is a conversation, like a messenger's: face (with a status dot), name, the last thing
  * said, when, how many unread, and one tag for the state that stops it (a question, a paused
  * routine, an approval). A draft row stands at the top while a new teammate is being written.
+ *
+ * TREE (the List | Tree switch under the search): the same rows, indented under the agent each
+ * reports to, one section per lead's team and a last "Reports to you" for the agents with
+ * nobody above or below them. A lead folds; folded, it says what its team holds (how many
+ * reports, who needs you, who waits for approval), so a fold never hides a question.
  */
 export function TeamRoster({
   rows,
@@ -21,6 +28,10 @@ export function TeamRoster({
   onNew,
   onToast,
   nextRun,
+  tree: treeIn,
+  view = 'list',
+  onView,
+  onOrgChart,
 }: {
   rows: TeamRow[];
   selected: string | null;
@@ -31,10 +42,29 @@ export function TeamRoster({
   onToast: (msg: string) => void;
   /** The scheduler's next fire, said under the list. */
   nextRun: string;
+  /** Who reports to whom (`teamTreeOf`). Absent: nobody is placed, everyone reports to you. */
+  tree?: TeamTree;
+  view?: RosterView;
+  onView?: (view: RosterView) => void;
+  /** Switch the page to the Org chart. */
+  onOrgChart?: () => void;
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const shown = filterRoster(rows, query);
+  const rowBySlug = useMemo(() => new Map(rows.map((r) => [r.slug, r])), [rows]);
+  const tree = useMemo(() => treeIn ?? teamTreeOf(rows, []), [treeIn, rows]);
+  const sections = useMemo(
+    () => treeSections(tree, (slug) => rowBySlug.get(slug)?.title ?? slug),
+    [tree, rowBySlug],
+  );
+  const toggle = (slug: string) => setCollapsed((cur) => {
+    const next = new Set(cur);
+    if (next.has(slug)) next.delete(slug);
+    else next.add(slug);
+    return next;
+  });
   const needs = shown.filter((r) => r.section === 'needs');
   const team = shown.filter((r) => r.section === 'team');
   const empty = rows.length === 0 && !draft;
@@ -50,6 +80,18 @@ export function TeamRoster({
           </span>
         )}
         <span className="aiteam-spacer" />
+        {onOrgChart && !empty && (
+          <button
+            type="button"
+            className="aiteam-iconbtn"
+            onClick={onOrgChart}
+            aria-label={t('aiteam.page.org')}
+            title={t('aiteam.page.org')}
+            data-page-view="org"
+          >
+            <TeamIcon name="tree" size={16} />
+          </button>
+        )}
         <button type="button" className="aiteam-newbtn" onClick={onNew}>
           <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
         </button>
@@ -65,6 +107,24 @@ export function TeamRoster({
             aria-label={t('aiteam.search')}
           />
         </label>
+      )}
+      {!empty && (
+        <div className="aiteam-viewswitch agents-switch" role="tablist" aria-label={t('aiteam.view.label')}>
+          {(['list', 'tree'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={view === v}
+              className={`agents-switch-opt${view === v ? ' agents-switch-opt--on' : ''}`}
+              onClick={() => onView?.(v)}
+              data-roster-view={v}
+            >
+              <TeamIcon name={v === 'list' ? 'list' : 'tree'} size={14} />
+              {t(`aiteam.view.${v}`)}
+            </button>
+          ))}
+        </div>
       )}
       <div className="aiteam-list">
         {empty && <p className="aiteam-roster-empty">{t('aiteam.roster.empty')}</p>}
@@ -82,14 +142,49 @@ export function TeamRoster({
             <span className="aiteam-row-end" />
           </button>
         )}
-        {needs.length > 0 && <div className="aiteam-section">{t('aiteam.section.needs')}</div>}
-        {needs.map((r) => (
-          <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
-        ))}
-        {team.length > 0 && <div className="aiteam-section">{t('aiteam.section.team')}</div>}
-        {team.map((r) => (
-          <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
-        ))}
+        {view === 'list' && (
+          <>
+            {needs.length > 0 && <div className="aiteam-section">{t('aiteam.section.needs')}</div>}
+            {needs.map((r) => (
+              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
+            ))}
+            {team.length > 0 && <div className="aiteam-section">{t('aiteam.section.team')}</div>}
+            {team.map((r) => (
+              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
+            ))}
+          </>
+        )}
+        {view === 'tree' && sections.map((sec) => {
+          const lines = visibleTreeLines(tree, rows, collapsed, sec.roots, query);
+          if (lines.length === 0) return null;
+          return (
+            <div key={sec.key} className="aiteam-treesec" data-tree-section={sec.key}>
+              <div className="aiteam-section">
+                {sec.label ?? t('aiteam.tree.you')}
+                <span className="aiteam-section-count"> · {sec.count}</span>
+              </div>
+              {lines.map((l) => {
+                const row = rowBySlug.get(l.slug);
+                if (!row) return null;
+                const node = tree.nodes.get(l.slug)!;
+                return (
+                  <TreeRow
+                    key={l.slug}
+                    line={l}
+                    row={row}
+                    team={node.ownTeam}
+                    rollup={l.collapsed ? rollupOf(tree, (s) => rowBySlug.get(s), l.slug) : null}
+                    note={node.missingManager ? t('aiteam.tree.missing') : node.cycle ? t('aiteam.tree.loop') : null}
+                    on={!draft && selected === l.slug}
+                    onSelect={onSelect}
+                    onToggle={toggle}
+                    now={now}
+                  />
+                );
+              })}
+            </div>
+          );
+        })}
         {!empty && shown.length === 0 && <p className="aiteam-roster-empty">{t('aiteam.search.none')}</p>}
       </div>
       <div className="aiteam-roster-foot">
@@ -100,7 +195,102 @@ export function TeamRoster({
   );
 }
 
-function Row({ row, on, onSelect, now }: { row: TeamRow; on: boolean; onSelect: (slug: string) => void; now: Date }) {
+/** A row of the tree: the guides down from its managers, its fold, then the list's own row. */
+function TreeRow({
+  line, row, team, rollup, note, on, onSelect, onToggle, now,
+}: {
+  line: TreeLine;
+  row: TeamRow;
+  team: string | null;
+  rollup: TeamRollup | null;
+  note: string | null;
+  on: boolean;
+  onSelect: (slug: string) => void;
+  onToggle: (slug: string) => void;
+  now: Date;
+}) {
+  const { t } = useI18n();
+  const d = line.depth;
+  return (
+    <div
+      className={`aiteam-trow${d === 0 ? ' aiteam-trow--root' : ''}`}
+      style={{ paddingLeft: d * TREE_INDENT }}
+      data-tree-row={row.slug}
+      data-depth={d}
+    >
+      {line.guides.map((g, i) => g && <span key={i} className="aiteam-guide" style={{ left: guideX(i) }} aria-hidden="true" />)}
+      {/* Not the last report: its manager's line runs on past it, to the next one. */}
+      {d > 0 && !line.last && <span className="aiteam-guide" style={{ left: guideX(d - 1) }} aria-hidden="true" />}
+      {d > 0 && (
+        <span
+          className="aiteam-elbow"
+          style={{ left: guideX(d - 1), width: line.hasChildren ? TREE_INDENT - CARET / 2 : TREE_INDENT + CARET / 2 + 4 }}
+          aria-hidden="true"
+        />
+      )}
+      {line.hasChildren ? (
+        <button
+          type="button"
+          className="aiteam-caret"
+          onClick={() => onToggle(row.slug)}
+          aria-expanded={!line.collapsed}
+          aria-label={(line.collapsed ? t('aiteam.tree.expand') : t('aiteam.tree.collapse')).replace('{name}', row.title)}
+        >
+          <TeamIcon name={line.collapsed ? 'chevronRight' : 'chevronDown'} size={12} />
+        </button>
+      ) : (
+        <span className="aiteam-caret aiteam-caret--none" aria-hidden="true" />
+      )}
+      {/* Open, a lead's own guide runs down from under its fold to its first report. */}
+      {line.hasChildren && !line.collapsed && <span className="aiteam-guide aiteam-guide--down" style={{ left: guideX(d) }} aria-hidden="true" />}
+      <Row
+        row={row}
+        on={on}
+        onSelect={onSelect}
+        now={now}
+        size={d === 0 ? 40 : 32}
+        team={team}
+        rollup={rollup}
+        note={note}
+      />
+    </div>
+  );
+}
+
+/** One level of indent, and the fold's width: the guide of a level runs under its fold. */
+const TREE_INDENT = 22;
+/** The fold's hit box (a 12px glyph inside): 24px, the pointer-target minimum. */
+const CARET = 24;
+function guideX(level: number): number {
+  return level * TREE_INDENT + CARET / 2;
+}
+
+function rollupWords(r: TeamRollup, t: (k: string) => string): { text: string; warn: boolean }[] {
+  const out: { text: string; warn: boolean }[] = [
+    { text: (r.reports === 1 ? t('aiteam.tree.reports.one') : t('aiteam.tree.reports.many')).replace('{n}', String(r.reports)), warn: false },
+  ];
+  if (r.needs > 0) out.push({ text: t('aiteam.tree.roll.needs').replace('{n}', String(r.needs)), warn: true });
+  if (r.approval > 0) out.push({ text: t('aiteam.tree.roll.approval').replace('{n}', String(r.approval)), warn: true });
+  if (r.working > 0) out.push({ text: t('aiteam.tree.roll.working').replace('{n}', String(r.working)), warn: false });
+  if (r.paused > 0) out.push({ text: t('aiteam.tree.roll.paused').replace('{n}', String(r.paused)), warn: false });
+  return out;
+}
+
+function Row({
+  row, on, onSelect, now, size = 40, team = null, rollup = null, note = null,
+}: {
+  row: TeamRow;
+  on: boolean;
+  onSelect: (slug: string) => void;
+  now: Date;
+  size?: number;
+  /** A lead's team, drawn as a chip before its last line. */
+  team?: string | null;
+  /** A folded lead: what its team holds. */
+  rollup?: TeamRollup | null;
+  /** Why it sits at the top of the tree when it should not (a missing manager, a loop). */
+  note?: string | null;
+}) {
   const { t } = useI18n();
   const working = row.status === 'working';
   const elapsed = working && row.workingSince ? runDuration(now.getTime() - row.workingSince) : null;
@@ -108,13 +298,13 @@ function Row({ row, on, onSelect, now }: { row: TeamRow; on: boolean; onSelect: 
   return (
     <button
       type="button"
-      className={`aiteam-row${on ? ' aiteam-row--on' : ''}`}
+      className={`aiteam-row${on ? ' aiteam-row--on' : ''}${size < 40 ? ' aiteam-row--sm' : ''}`}
       onClick={() => onSelect(row.slug)}
       aria-current={on ? 'true' : undefined}
       data-team-row={row.slug}
     >
       <span className="aiteam-face">
-        <AgentAvatar of="agent" slug={row.slug} title={row.title} hasPhoto={row.hasPhoto} size={40} />
+        <AgentAvatar of="agent" slug={row.slug} title={row.title} hasPhoto={row.hasPhoto} size={size} />
         {dot && <span className={`aiteam-face-dot aiteam-face-dot--${dot}`} aria-hidden="true" />}
       </span>
       <span className="aiteam-row-main">
@@ -122,11 +312,20 @@ function Row({ row, on, onSelect, now }: { row: TeamRow; on: boolean; onSelect: 
           <span className="aiteam-row-name">{row.title}</span>
           <span className="aiteam-row-time">{working ? t('aiteam.time.now') : rosterTime(row.lastAt, now, t)}</span>
         </span>
-        <span className={`aiteam-row-preview${working ? ' aiteam-row-preview--live' : ''}`}>
+        <span className={`aiteam-row-preview${working ? ' aiteam-row-preview--live' : ''}${team ? ' aiteam-row-preview--team' : ''}`}>
+          {team && <span className="aiteam-tag aiteam-tag--accent aiteam-teamchip">{team}</span>}
           {working
             ? t('aiteam.working').replace('{time}', elapsed ?? '')
             : row.preview ?? t('aiteam.row.noMessages')}
         </span>
+        {rollup && (
+          <span className="aiteam-rollup" data-rollup>
+            {rollupWords(rollup, t).map((w, i) => (
+              <span key={i} className={w.warn ? 'aiteam-rollup-warn' : undefined}>{i > 0 ? ' · ' : ''}{w.text}</span>
+            ))}
+          </span>
+        )}
+        {note && <span className="aiteam-rollup">{note}</span>}
         {(row.status === 'needs' || row.status === 'paused' || row.status === 'approval') && (
           <span className="aiteam-row-tags">
             {row.status === 'needs' && <span className="aiteam-tag aiteam-tag--warn">{t('aiteam.tag.needs')}</span>}

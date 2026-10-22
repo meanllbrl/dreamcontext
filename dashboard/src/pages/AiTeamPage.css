@@ -267,3 +267,137 @@
 /* The head's name block already takes the free width (flex: 1): a spacer beside it split that
    width in two and cut the name short, at phone width down to three letters. */
 .aiteam-convo-head > .aiteam-spacer { display: none; }
+
+/* ── the team tree (List | Tree under the search) ──
+   Indent, fold and guide positions are geometry set inline by TeamRoster (one level = 22px, the
+   fold's hit box 24px); the lines and colours are here. */
+.aiteam-viewswitch { display: flex; margin: 0 var(--space-4) var(--space-3); }
+.aiteam-viewswitch .agents-switch-opt { flex: 1; justify-content: center; }
+.aiteam-section-count { font-weight: var(--font-weight-semibold); }
+.aiteam-treesec { display: flex; flex-direction: column; gap: 2px; }
+.aiteam-trow { position: relative; display: flex; align-items: flex-start; }
+.aiteam-trow > .aiteam-row { flex: 1; min-width: 0; }
+.aiteam-guide { position: absolute; top: -2px; bottom: 0; width: 0; border-left: 1px solid var(--color-border-hover); pointer-events: none; }
+.aiteam-guide--down { top: 40px; }
+.aiteam-trow:not(.aiteam-trow--root) .aiteam-guide--down { top: 36px; }
+.aiteam-elbow { position: absolute; top: -2px; height: 26px; border-left: 1px solid var(--color-border-hover); border-bottom: 1px solid var(--color-border-hover); border-bottom-left-radius: var(--radius-sm); pointer-events: none; }
+.aiteam-caret { position: relative; z-index: 1; display: inline-grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; margin-top: 16px; padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-tertiary); cursor: pointer; }
+.aiteam-trow:not(.aiteam-trow--root) .aiteam-caret { margin-top: 12px; }
+.aiteam-caret:hover { color: var(--color-text); background: var(--color-bg-secondary); }
+.aiteam-caret:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
+.aiteam-caret--none { background: transparent; cursor: default; }
+.aiteam-row--sm { grid-template-columns: 32px minmax(0, 1fr) auto; padding-left: var(--space-2); }
+.aiteam-row--sm .aiteam-face { width: 32px; height: 32px; }
+.aiteam-row--sm .aiteam-face-dot { width: 10px; height: 10px; }
+.aiteam-row--sm .aiteam-row-end { padding-top: var(--space-4); }
+.aiteam-trow .aiteam-row-preview { -webkit-line-clamp: 1; }
+.aiteam-row-preview--team { display: block; white-space: nowrap; text-overflow: ellipsis; }
+.aiteam-teamchip { margin-right: var(--space-2); vertical-align: 1px; }
+.aiteam-rollup { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-rollup-warn { color: var(--color-warning-ink); font-weight: var(--font-weight-semibold); }
+.aiteam-convo-path { display: flex; flex-wrap: nowrap; gap: var(--space-1); min-width: 0; overflow: hidden; font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; }
+.aiteam-convo-path-step { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.aiteam-convo-path-step:last-child .aiteam-convo-path-link { color: var(--color-text-secondary); font-weight: var(--font-weight-semibold); }
+.aiteam-convo-path-link { overflow: hidden; text-overflow: ellipsis; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.aiteam-convo-path-link:hover { color: var(--color-text); text-decoration: underline; text-underline-offset: 2px; }
+
+/* ── a teammate's place in the team (Profile, and the Org chart's Team tab) ── */
+.aiteam-place-grid { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-3) var(--space-3); align-items: center; margin: 0; }
+.aiteam-place-grid dt { font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-place-grid dd { margin: 0; min-width: 0; font-size: var(--font-size-sm); }
+.aiteam-place-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.aiteam-place-edit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.aiteam-place-edit .agent-input { flex: 1; min-width: 140px; }
+.aiteam-person { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; height: 28px; padding: 0 var(--space-2) 0 var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-full); background: var(--color-bg); color: var(--color-text); font: inherit; font-size: var(--font-size-sm); white-space: nowrap; }
+button.aiteam-person:not(:disabled) { cursor: pointer; }
+button.aiteam-person:not(:disabled):hover { border-color: var(--color-border-hover); }
+.aiteam-person:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
+.aiteam-person--on { border-color: var(--color-text); }
+.aiteam-person--you { padding: 0 var(--space-3); color: var(--color-text-secondary); }
+.aiteam-person:disabled { color: var(--color-text); }
+.aiteam-person-name { overflow: hidden; text-overflow: ellipsis; }
+.aiteam-person .agent-av { flex-shrink: 0; }
+.aiteam-chain { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); margin-top: var(--space-3); }
+.aiteam-chain-step { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.aiteam-chain-sep { color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+
+/* ── the Org chart (Conversations | Org chart) ──
+   Card, frame and line positions are geometry from orgLayout (set inline); colours here. */
+.aiteam--org { grid-template-columns: minmax(0, 1fr); }
+.aiteam--org.aiteam--panel { grid-template-columns: minmax(0, 1fr) 416px; }
+.aiteam-org { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.aiteam-org-head { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-3); padding: var(--space-5) var(--space-6) var(--space-3); }
+.aiteam-org-head .aiteam-roster-count { padding-top: 2px; }
+.aiteam-org-search { flex: 0 1 240px; min-width: 150px; margin: 0; }
+.aiteam-org-strip { display: flex; align-items: center; gap: var(--space-3); margin: 0 var(--space-6) var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-secondary); font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-org-strip-needs { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0; border: 0; background: transparent; color: var(--color-text-secondary); font: inherit; cursor: pointer; text-align: left; }
+.aiteam-org-strip-needs b { color: var(--color-text); font-weight: var(--font-weight-semibold); white-space: nowrap; }
+.aiteam-org-strip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aiteam-org-strip-facts { flex-shrink: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-org-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--space-4) var(--space-6) var(--space-8); }
+.aiteam-org-canvas { position: relative; margin: 0 auto; }
+.aiteam-org-lines { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.aiteam-org-line { fill: none; stroke: var(--color-border-hover); stroke-width: 1.5; }
+.aiteam-org-line--path { stroke: var(--color-accent); stroke-width: 2; }
+.aiteam-org-you { position: absolute; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border: 1px dashed var(--color-border-hover); border-radius: var(--radius-full); background: var(--color-bg); color: var(--color-text-secondary); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.aiteam-org-frame { position: absolute; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-secondary); }
+.aiteam-org-frame--path { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); }
+.aiteam-org-frame-label { position: absolute; left: var(--space-3); top: var(--space-2); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); letter-spacing: 0.4px; text-transform: uppercase; color: var(--color-text-tertiary); }
+.aiteam-org-frame-count { position: absolute; right: var(--space-3); top: var(--space-2); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); color: var(--color-text-tertiary); }
+.aiteam-org-card { position: absolute; display: flex; flex-direction: column; justify-content: space-between; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg); color: var(--color-text); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast); }
+.aiteam-org-card:hover { border-color: var(--color-border-hover); box-shadow: var(--shadow-sm); }
+.aiteam-org-card:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent); }
+.aiteam-org-card--on { border-color: var(--color-text); box-shadow: var(--shadow-sm); }
+.aiteam-org-card--dim { opacity: 0.35; }
+.aiteam-org-card-top { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.aiteam-org-face { width: 28px; height: 28px; flex-shrink: 0; }
+.aiteam-org-face .aiteam-face-dot { width: 10px; height: 10px; }
+.aiteam-org-card-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.aiteam-org-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.aiteam-org-card-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-org-card-foot { display: flex; align-items: center; gap: var(--space-2); min-height: 20px; }
+.aiteam-org-meta { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-org-live { font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-accent-ink); }
+.aiteam-org-hint { font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; }
+.aiteam-pageswitch { margin-left: var(--space-2); }
+
+/* the Team tab */
+.aiteam-teamtab-head { display: flex; align-items: center; gap: var(--space-3); }
+.aiteam-teamtab-id { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.aiteam-teamtab-name { font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.aiteam-teamtab-chain { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-teamtab-chain b { color: var(--color-text-secondary); font-weight: var(--font-weight-semibold); }
+.aiteam-teamtab-actions { display: flex; gap: var(--space-2); }
+.aiteam-teamtab-you { padding: var(--space-3); border: 1px dashed var(--color-border); border-radius: var(--radius-lg); font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-teamtab-member { display: flex; align-items: flex-start; gap: var(--space-3); width: 100%; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg); color: var(--color-text); font: inherit; text-align: left; cursor: pointer; }
+.aiteam-teamtab-member:hover { border-color: var(--color-border-hover); }
+.aiteam-teamtab-member .aiteam-org-face { width: 32px; height: 32px; }
+.aiteam-teamtab-member-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.aiteam-teamtab-member-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-teamtab-add { width: 100%; height: 40px; border: 1px dashed var(--color-border-hover); border-radius: var(--radius-lg); background: transparent; color: var(--color-text-secondary); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
+.aiteam-teamtab-add:hover { color: var(--color-text); border-color: var(--color-text-tertiary); }
+.aiteam-teamtab-routines { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+.aiteam-teamtab-routine { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-sm); color: var(--color-text); }
+.aiteam-teamtab-routine-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aiteam-teamtab-routine-state { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-teamtab-routine-when { flex-shrink: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-teamtab .aiteam-tip { margin: var(--space-2) 0 0; }
+
+@container (max-width: 759px) {
+  .aiteam-org-head { flex-wrap: wrap; padding: var(--space-4) var(--space-3) var(--space-2); gap: var(--space-2); }
+  .aiteam-org-search { order: 5; width: 100%; }
+  .aiteam-pageswitch { margin-left: 0; }
+  .aiteam-org-strip { margin: 0 var(--space-3) var(--space-2); flex-wrap: wrap; }
+  .aiteam-org-scroll { padding: var(--space-3); }
+  .aiteam-org-hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aiteam-org-card { transition: none; }
+}
+.aiteam-org-head > .aiteam-roster-title, .aiteam-org-head > .aiteam-roster-count, .aiteam-org-head > .aiteam-newbtn, .aiteam-pageswitch { flex-shrink: 0; white-space: nowrap; }
+/* Four tabs on a phone: the switch scrolls, the close button never leaves the head. */
+.aiteam-panel-head .agents-switch { flex-shrink: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.aiteam-panel-close { flex-shrink: 0; }
+/* The head keeps the title on one line; the count gives way first. */
+.aiteam-roster-title { white-space: nowrap; flex-shrink: 0; }
+.aiteam-roster-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

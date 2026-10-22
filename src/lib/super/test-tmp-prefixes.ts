@@ -51,6 +51,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-agents-split-b-',
   'dc-agents-split-home-',
   'dc-agents-store-',
+  'dc-agents-tree-',
+  'dc-agents-tree-home-',
   'dc-announce-',
   'dc-announce-home-',
   'dc-app-dir-',
