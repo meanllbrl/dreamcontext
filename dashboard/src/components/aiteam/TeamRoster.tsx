@@ -224,7 +224,7 @@ function TreeRow({
       {d > 0 && (
         <span
           className="aiteam-elbow"
-          style={{ left: guideX(d - 1), width: line.hasChildren ? TREE_INDENT - CARET / 2 : TREE_INDENT + CARET }}
+          style={{ left: guideX(d - 1), width: line.hasChildren ? TREE_INDENT - CARET / 2 : TREE_INDENT + CARET / 2 + 4 }}
           aria-hidden="true"
         />
       )}
@@ -259,7 +259,8 @@ function TreeRow({
 
 /** One level of indent, and the fold's width: the guide of a level runs under its fold. */
 const TREE_INDENT = 22;
-const CARET = 16;
+/** The fold's hit box (a 12px glyph inside): 24px, the pointer-target minimum. */
+const CARET = 24;
 function guideX(level: number): number {
   return level * TREE_INDENT + CARET / 2;
 }

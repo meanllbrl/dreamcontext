@@ -270,7 +270,7 @@
 
 /* ── the team tree (List | Tree under the search) ──
    Indent, fold and guide positions are geometry set inline by TeamRoster (one level = 22px, the
-   fold 16px); the lines and colours are here. */
+   fold's hit box 24px); the lines and colours are here. */
 .aiteam-viewswitch { display: flex; margin: 0 var(--space-4) var(--space-3); }
 .aiteam-viewswitch .agents-switch-opt { flex: 1; justify-content: center; }
 .aiteam-section-count { font-weight: var(--font-weight-semibold); }
@@ -278,11 +278,11 @@
 .aiteam-trow { position: relative; display: flex; align-items: flex-start; }
 .aiteam-trow > .aiteam-row { flex: 1; min-width: 0; }
 .aiteam-guide { position: absolute; top: -2px; bottom: 0; width: 0; border-left: 1px solid var(--color-border-hover); pointer-events: none; }
-.aiteam-guide--down { top: 36px; }
-.aiteam-trow:not(.aiteam-trow--root) .aiteam-guide--down { top: 32px; }
+.aiteam-guide--down { top: 40px; }
+.aiteam-trow:not(.aiteam-trow--root) .aiteam-guide--down { top: 36px; }
 .aiteam-elbow { position: absolute; top: -2px; height: 26px; border-left: 1px solid var(--color-border-hover); border-bottom: 1px solid var(--color-border-hover); border-bottom-left-radius: var(--radius-sm); pointer-events: none; }
-.aiteam-caret { position: relative; z-index: 1; display: inline-grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; margin-top: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-tertiary); cursor: pointer; }
-.aiteam-trow:not(.aiteam-trow--root) .aiteam-caret { margin-top: 16px; }
+.aiteam-caret { position: relative; z-index: 1; display: inline-grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; margin-top: 16px; padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-tertiary); cursor: pointer; }
+.aiteam-trow:not(.aiteam-trow--root) .aiteam-caret { margin-top: 12px; }
 .aiteam-caret:hover { color: var(--color-text); background: var(--color-bg-secondary); }
 .aiteam-caret:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
 .aiteam-caret--none { background: transparent; cursor: default; }
@@ -395,3 +395,9 @@ button.aiteam-person:not(:disabled):hover { border-color: var(--color-border-hov
   .aiteam-org-card { transition: none; }
 }
 .aiteam-org-head > .aiteam-roster-title, .aiteam-org-head > .aiteam-roster-count, .aiteam-org-head > .aiteam-newbtn, .aiteam-pageswitch { flex-shrink: 0; white-space: nowrap; }
+/* Four tabs on a phone: the switch scrolls, the close button never leaves the head. */
+.aiteam-panel-head .agents-switch { flex-shrink: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.aiteam-panel-close { flex-shrink: 0; }
+/* The head keeps the title on one line; the count gives way first. */
+.aiteam-roster-title { white-space: nowrap; flex-shrink: 0; }
+.aiteam-roster-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

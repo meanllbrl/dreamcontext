@@ -163,6 +163,9 @@ async function shots(base, vault, outArg) {
       if (await hasOrg(phone.page)) {
         await phone.page.locator('[data-page-view="org"]').click();
         await shot(phone.page, `B-390-${theme}-org`);
+        await phone.page.locator('[data-org-card="operasyon-sefi"]').click();
+        await phone.page.locator('[data-panel-tab="team"]').waitFor({ timeout: 10000 });
+        await shot(phone.page, `B-390-${theme}-team-panel`);
       }
       await phone.context.close();
     }

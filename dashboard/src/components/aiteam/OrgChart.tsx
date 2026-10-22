@@ -154,7 +154,10 @@ export function OrgChart({
     if (!selected) return;
     const card = scrollRef.current?.querySelector<HTMLElement>(`[data-org-card="${CSS.escape(selected)}"]`);
     card?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-  }, [selected, layout]);
+    // Only when the selection changes: a feed update rebuilds the layout and must not pull a
+    // reader who panned away back to the selected card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
 
   return (
     <div ref={scrollRef} className="aiteam-org-scroll" data-org-chart>
