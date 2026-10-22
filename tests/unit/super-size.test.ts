@@ -368,7 +368,9 @@ describe('a held half page keeps the view already drawn (second review)', () => 
     expect(heldFallback({ mode: 'half', card: 'b' }, wanted, cards)).toEqual({ mode: 'float' });
     expect(heldFallback({ mode: 'half', card: 'gone' }, wanted, cards)).toEqual({ mode: 'float' });
     expect(heldFallback({ mode: 'float' }, wanted, cards)).toEqual({ mode: 'float' });
-  });
+    // The budget is the cold import, not the assertions: transforming SuperSurface.tsx and its
+    // component tree takes 1.4-4.3s alone (20 runs) and passes 5s under the full suite's load.
+  }, 30_000);
 });
 
 describe('owner 2026-10-22 13:19: a card that leaves the stage leaves the presentation too', () => {
