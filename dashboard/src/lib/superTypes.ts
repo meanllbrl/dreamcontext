@@ -134,11 +134,9 @@ export interface SuperChild {
   mcp?: string[];
   /** `super end` closed it: no process, tab or card; `super resume` clears it. */
   endedAt?: number;
-  /** The agenda (server-written): when its job last finished, what the owner saw, when it is
-   *  expected done (`super brief --eta`). */
+  /** The agenda (server-written): when its job last finished, and what the owner saw. */
   finishedAt?: number;
   seenAt?: number;
-  etaAt?: number;
 }
 
 /** `waiting`: its turn ended on something only the owner can do (an `owner` item is open). */

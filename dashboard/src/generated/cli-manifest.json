@@ -3092,8 +3092,7 @@
         "<line>"
       ],
       "valueFlags": [
-        "--task",
-        "--eta"
+        "--task"
       ]
     },
     {

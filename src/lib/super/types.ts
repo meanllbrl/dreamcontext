@@ -198,9 +198,6 @@ export interface SuperChild {
   /** The owner saw that result in the agenda: the finish key the window showed when he clicked
    *  (`POST /api/super/seen`, the owner's door only). New while `!(seenAt >= finishedAt)`. */
   seenAt?: number;
-  /** When the super agent expects the job to be done (`super brief --eta <minutes>`): cleared
-   *  by `setRow` when the row becomes done or gone. */
-  etaAt?: number;
   /** What it runs with (`super delegate`, then `super update --mode/--model/--effort`), so
    *  `super resume` reopens it the same way. Absent = basic, the default model and effort. */
   mode?: string;
@@ -793,7 +790,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 7;
+export const SUPER_BRIEF_REV = 8;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
