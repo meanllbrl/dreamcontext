@@ -82,7 +82,7 @@ describe('superBriefing', () => {
     expect(modeFromSystemPrompt(`# Surface: dreamcontext Chat\n\n${brief}`)).toBe('super');
   });
 
-  // The owner's field rules of 2026-10-21 (his language, no jargon, an estimate, rows kept from
+  // The owner's field rules of 2026-10-21 (his language, no jargon, no time estimates (2026-10-22), rows kept from
   // the first turn, no reply to a repeat) are an explicit allowance on top of the 15 %, and so is
   // the child lifecycle that came with main (super end/resume/update/adopt, the Done line).
   const OWNER_RULES_2026_10_21 = 400;
@@ -146,14 +146,19 @@ describe('how the super agent talks to the owner', () => {
     ]) expect(brief).toContain(rule);
   });
 
-  it('the owner\'s field rules of 2026-10-21: his language, no jargon, an estimate, rows from the first turn, no reply to a repeat', () => {
+  it('the owner\'s field rules of 2026-10-21: his language, no jargon, no time estimates (2026-10-22), rows from the first turn, no reply to a repeat', () => {
     for (const rule of [
       'Write in his language', 'no inside jargon ("its own copy", not worktree)',
-      'Anything\nstill running gets an estimate of when it is ready', 'Write nothing between tool calls',
+      'Say plainly\nwhat is still running, never with a time', 'Write nothing between tool calls',
       'nothing\nfor an event that only renamed a job or repeats a result he already has',
       'with 3\n  or more jobs, set every row in your first turn and update each row an event touches',
     ]) expect(brief).toContain(rule);
-    for (const rule of ['in the language the owner writes to you in', 'in plain words', 'inside jargon', 'an estimate of when anything still running is ready']) expect(OWNER_VOICE).toContain(rule);
+    for (const rule of ['in the language the owner writes to you in', 'in plain words', 'inside jargon', 'what still runs said plainly, never with a time']) expect(OWNER_VOICE).toContain(rule);
+    // The owner, 2026-10-22: the estimates were always wrong. No note asks the super for one.
+    for (const gone of ['estimate of when', 'when it should be ready', 'when it is ready']) {
+      expect(brief).not.toContain(gone);
+      expect(OWNER_VOICE).not.toContain(gone);
+    }
   });
 
   it('every event last line, the handover and the recap carry the same rules', () => {

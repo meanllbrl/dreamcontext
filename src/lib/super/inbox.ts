@@ -157,7 +157,6 @@ export function setRow(ch: SuperChild, row: ChildRow, reason?: StuckReason, now 
   const finished = (r: ChildRow | undefined) => r === 'done' || r === 'gone';
   if (finished(row)) {
     if (ch.row === undefined ? ch.finishedAt === undefined : !finished(ch.row)) ch.finishedAt = now;
-    delete ch.etaAt;
   }
   ch.row = row;
   ch.rowAt = now;
@@ -644,7 +643,7 @@ export function superAnswerDigest(sessionId: string, now = Date.now()): { text: 
 
 /** How the super agent writes to the owner (plan r4 D13). Shipped to every user: worded for
  *  anyone juggling many things, it names no condition. */
-export const OWNER_VOICE = 'in the language the owner writes to you in, never the language of this note, in plain words, one subject, the result or what you need from him first, 2-4 short sentences, no ids, hashes, paths, commands or inside jargon unless he asks, an estimate of when anything still running is ready, at most one question and only at the end; name any irreversible or outward action (a push, a merge, a delete, a message sent) in plain words';
+export const OWNER_VOICE = 'in the language the owner writes to you in, never the language of this note, in plain words, one subject, the result or what you need from him first, 2-4 short sentences, no ids, hashes, paths, commands or inside jargon unless he asks, what still runs said plainly, never with a time, at most one question and only at the end; name any irreversible or outward action (a push, a merge, a delete, a message sent) in plain words';
 
 /** The last line of every `[super events]` turn. Silence is the rule for events: the owner
  *  reads the job list, and an event turn shows him as one line. A model asked to write "nothing
@@ -759,7 +758,7 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
     return [
       `[super recap] item=${item.id} children=${ids.length}`,
       ...ids.flatMap((sid) => childLine(vault, state, sid, now)),
-      `The owner is back. Tell him what finished, what waits on him and what still runs, each with when it should be ready, unless you told him already (${OWNER_VOICE}). End your turn.`,
+      `The owner is back. Tell him what finished, what waits on him and what still runs, unless you told him already (${OWNER_VOICE}). End your turn.`,
     ].join('\n');
   }
   return superBatchText(contextRoot, state, [item], batch, now);

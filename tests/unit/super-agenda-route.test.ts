@@ -3,12 +3,12 @@
  * tek-bakista, plan r2 D4/D5):
  *  - `setRow` stamps `finishedAt` only when a job FINISHES (a not-finished row, or a row-less
  *    child that never finished, moving to done/gone), never on done <-> gone or on the reconcile's
- *    gone -> (no row) -> done; it clears `etaAt` on done/gone and keeps it on asking/stuck;
+ *    gone -> (no row) -> done;
  *  - `POST /api/super/seen` (the owner's door; auth in super-route-auth.test.ts) raises `seenAt`
  *    to the finish key the window SHOWED, never lowers it, ignores unknown children, refuses a
  *    malformed body, and the record keeps it across a re-read;
- *  - the store keeps finishedAt/seenAt/etaAt and drops non-finite or negative values;
- *  - `super brief --eta` takes whole minutes 0..1440 (0 clears), anything else is refused.
+ *  - the store keeps finishedAt/seenAt and drops non-finite or negative values, and an old record's `etaAt`
+ *    (the `super brief --eta` the owner retired on 2026-10-22) is dropped.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -18,7 +18,7 @@ import type { ServerResponse } from 'node:http';
 import { readSuperState, resetSuperIndex, SUPER_STATE_REL } from '../../src/lib/super/store.js';
 import { _resetSuperInbox, setRow } from '../../src/lib/super/inbox.js';
 import { emptySuperState, type SuperChild } from '../../src/lib/super/types.js';
-import { MAX_ETA_MIN, SUPER_OWNER_HANDLERS, SUPER_VERB_HANDLERS, etaMinutes, type SuperCaller } from '../../src/server/routes/super.js';
+import { SUPER_OWNER_HANDLERS, SUPER_VERB_HANDLERS, type SuperCaller } from '../../src/server/routes/super.js';
 
 let dir: string;
 let root: string;
@@ -59,12 +59,11 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('setRow: a job finishes once, and its estimate goes with it', () => {
-  it('working -> done stamps finishedAt and clears etaAt; done -> gone and gone -> done keep it', () => {
-    const ch = child(A, { row: 'working', etaAt: 500 });
+describe('setRow: a job finishes once', () => {
+  it('working -> done stamps finishedAt; done -> gone and gone -> done keep it', () => {
+    const ch = child(A, { row: 'working' });
     setRow(ch, 'done', undefined, 100);
     expect(ch).toMatchObject({ row: 'done', finishedAt: 100 });
-    expect(ch.etaAt).toBeUndefined();
     setRow(ch, 'gone', undefined, 200);
     expect(ch.finishedAt).toBe(100);
     // The reconcile clears a gone row when the chat is live again, then derives done.
@@ -84,12 +83,10 @@ describe('setRow: a job finishes once, and its estimate goes with it', () => {
     expect(v1.finishedAt).toBe(400);
   });
 
-  it('asking and stuck keep the estimate (the owner answers, the job goes on)', () => {
-    const ch = child(A, { row: 'working', etaAt: 900 });
+  it('asking and stuck are not a finish (the owner answers, the job goes on)', () => {
+    const ch = child(A, { row: 'working' });
     setRow(ch, 'asking', undefined, 100);
-    expect(ch.etaAt).toBe(900);
     setRow(ch, 'stuck', 'stale', 200);
-    expect(ch.etaAt).toBe(900);
     expect(ch.finishedAt).toBeUndefined();
   });
 });
@@ -131,13 +128,13 @@ describe('the record keeps the agenda stamps, and only sane ones', () => {
   it('finite, non-negative values survive a read; junk is dropped', async () => {
     root = makeVault({
       [A]: { ...child(A, { row: 'done' }), finishedAt: 100, seenAt: 90, etaAt: 1234 },
-      [B]: { ...child(B, { row: 'working' }), finishedAt: 'soon', seenAt: -5, etaAt: null },
+      [B]: { ...child(B, { row: 'working' }), finishedAt: 'soon', seenAt: -5 },
     });
     const s = await readSuperState(root);
-    expect(s.children[A]).toMatchObject({ finishedAt: 100, seenAt: 90, etaAt: 1234 });
+    expect(s.children[A]).toMatchObject({ finishedAt: 100, seenAt: 90 });
+    expect(s.children[A]).not.toHaveProperty('etaAt');
     expect(s.children[B].finishedAt).toBeUndefined();
     expect(s.children[B].seenAt).toBeUndefined();
-    expect(s.children[B].etaAt).toBeUndefined();
   });
 
   it('a seenAt from the future is read as now (it could otherwise hide every later finish)', async () => {
@@ -149,39 +146,18 @@ describe('the record keeps the agenda stamps, and only sane ones', () => {
   });
 });
 
-describe('super brief --eta', () => {
-  it('whole minutes 0..1440, absent keeps, anything else is refused', () => {
-    expect(etaMinutes(undefined)).toBeUndefined();
-    expect(etaMinutes('')).toBeUndefined();
-    expect(etaMinutes('0')).toBe(0);
-    expect(etaMinutes('15')).toBe(15);
-    expect(etaMinutes(String(MAX_ETA_MIN))).toBe(MAX_ETA_MIN);
-    for (const bad of [String(MAX_ETA_MIN + 1), '-1', '1.5', '10m', 'soon', 1.5, -3]) expect(etaMinutes(bad), String(bad)).toBe('bad');
-  });
-});
-
-describe('super brief --eta, through the verb', () => {
+describe('super brief, after --eta was retired', () => {
   async function brief(body: Record<string, unknown>) {
     const r = res();
     const caller = { token: 't', who: { contextRoot: root }, state: await readSuperState(root) } as unknown as SuperCaller;
     await SUPER_VERB_HANDLERS.brief(caller, body, r);
     return r;
   }
-  it('sets the estimate on a working job, 0 clears it, a bad value is refused, a finished job gets none', async () => {
-    root = makeVault({ [A]: child(A, { row: 'working' }), [B]: child(B, { row: 'done', finishedAt: 100 }) });
-    const before = Date.now();
+  it('sets the line and ignores a stray eta: no time is ever recorded', async () => {
+    root = makeVault({ [A]: child(A, { row: 'working' }) });
     expect((await brief({ child: A, line: 'rendering', eta: '15' })).status).toBe(200);
-    let s = await readSuperState(root);
-    expect(s.children[A].etaAt).toBeGreaterThanOrEqual(before + 15 * 60_000);
-    expect((await brief({ child: A, line: 'still rendering' })).status).toBe(200);
-    s = await readSuperState(root);
-    expect(s.children[A].etaAt).toBeGreaterThanOrEqual(before + 15 * 60_000);
-    expect((await brief({ child: A, line: 'x', eta: '2000' })).status).toBe(400);
-    expect((await brief({ child: A, line: 'done soon', eta: '0' })).status).toBe(200);
-    s = await readSuperState(root);
-    expect(s.children[A].etaAt).toBeUndefined();
-    expect((await brief({ child: B, line: 'shipped', eta: '30' })).status).toBe(200);
-    s = await readSuperState(root);
-    expect(s.children[B].etaAt).toBeUndefined();
+    const s = await readSuperState(root);
+    expect(s.children[A].brief).toBe('rendering');
+    expect(s.children[A]).not.toHaveProperty('etaAt');
   });
 });

@@ -155,8 +155,8 @@ async function superTurn(text) {
     await sleep(800);
     const vid = byBrief('Tanıtım videosu'); const dev = byBrief('Super devir sorunu'); const fiy = byBrief('Fiyat sayfası');
     const not = byBrief('Bildirim düzeltmesi'); const fat = byBrief('Fatura toplamları');
-    if (vid) { cli('super', 'send', vid, 'keep going: ikinci yarıyı render et.'); cli('super', 'brief', vid, 'İkinci yarı render ediliyor', '--eta', '20'); }
-    if (dev) { cli('super', 'send', dev, 'keep going: düzeltmeyi yaz ve test et.'); cli('super', 'brief', dev, 'Devir dosyasının yarım yazılması düzeltiliyor', '--eta', '90'); }
+    if (vid) { cli('super', 'send', vid, 'keep going: ikinci yarıyı render et.'); cli('super', 'brief', vid, 'İkinci yarı render ediliyor'); }
+    if (dev) { cli('super', 'send', dev, 'keep going: düzeltmeyi yaz ve test et.'); cli('super', 'brief', dev, 'Devir dosyasının yarım yazılması düzeltiliyor'); }
     if (fiy) cli('super', 'send', fiy, 'Yıllık indirim oranını sahibe sor.');
     if (not) cli('super', 'brief', not, 'Biten iş artık zil çalıyor');
     if (fat) cli('super', 'brief', fat, "Yeni ledger API'ye taşındı");
