@@ -111,8 +111,25 @@ function anchorOf(event: GestureLike, el: HTMLElement): { x: number; y: number }
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 }
 
+/** A gesture over something that zooms ITSELF (a full-screen viewer's stage carries
+ *  `data-pinch-owner`; usePanZoom.ts): that element handles the pinch and stops it before it
+ *  bubbles to the document, where every editor's own handler sits. */
+export function isPinchOwnerTarget(node: Node | null | undefined): boolean {
+  const el = node && (node as Element).closest ? node as Element : node?.parentElement ?? null;
+  return !!el?.closest?.('[data-pinch-owner]');
+}
+
 function onGesture(event: Event) {
   const gesture = event as GestureLike;
+  const node = gesture.target as Node | null;
+  // A pinch that starts over a board is the board's, wherever it sits. One that starts over a
+  // pinch owner (and no board) is that owner's: let it through untouched, and drop any stale
+  // board gesture (a missed gestureend) so it cannot steer a board meanwhile.
+  if (gesture.type === 'gesturestart') {
+    if (!resolvePinchTarget(targets, node) && isPinchOwnerTarget(node)) { active = null; return; }
+  } else if (!active && isPinchOwnerTarget(node)) {
+    return;
+  }
   // preventDefault stops WebKit page-zooming the whole app; stopPropagation is the half
   // that matters here — it keeps the event from reaching EVERY editor's document-level
   // handler, which is what coupled the boards.

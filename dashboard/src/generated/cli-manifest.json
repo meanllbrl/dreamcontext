@@ -3170,6 +3170,7 @@
       "valueFlags": [
         "--group",
         "--shape",
+        "--size",
         "--title"
       ]
     },
@@ -3274,7 +3275,7 @@
     },
     {
       "path": "super shape",
-      "desc": "Record a card's shape (square | tall); kept for older scripts: every floating card is drawn as a 1:1 tile",
+      "desc": "Size a card: small | medium | large | wide (1x1 2x1 2x2 3x2 tiles); 409 owner_sized when the owner chose its size. square | tall are recorded only (older scripts)",
       "args": [
         "<card>",
         "<shape>"

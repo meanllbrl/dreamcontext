@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_PRESENT, MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
-  POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, defaultShape,
+  CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, defaultShape,
   SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
   type SuperChild, type SuperContainer, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView,
 } from './types.js';
@@ -125,6 +125,10 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
     out.push({
       id: c.id, kind: c.kind, ref: c.ref,
       shape: oneOf(CONTAINER_SHAPES, c.shape) ? c.shape : defaultShape(c.kind),
+      // A size preset only when it is one (small is the absence of one). The owner's mark stands
+      // with or without a size: he may have chosen small.
+      ...(oneOf(CONTAINER_SIZES, c.size) && c.size !== 'small' ? { size: c.size } : {}),
+      ...(c.sizeBy === 'owner' ? { sizeBy: 'owner' as const } : {}),
       place: oneOf(CONTAINER_PLACES, c.place) ? c.place : 'float',
       ...(pos && pos.x !== undefined && pos.y !== undefined ? { pos: { x: pos.x, y: pos.y } } : {}),
       ...(title ? { title: stripControls(title) } : {}),

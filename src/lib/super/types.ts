@@ -20,6 +20,15 @@ export type ContainerKind = typeof CONTAINER_KINDS[number];
 export const CONTAINER_SHAPES = ['square', 'tall'] as const;
 export type ContainerShape = typeof CONTAINER_SHAPES[number];
 
+/** A floating card's size preset, the way a widget is sized (owner 2026-10-22): units of the
+ *  stage's 1:1 tile, wide by tall. A card with no size is `small`, so every record written
+ *  before sizes reads as the 1:1 tile it was. */
+export const CONTAINER_SIZES = ['small', 'medium', 'large', 'wide'] as const;
+export type ContainerSize = typeof CONTAINER_SIZES[number];
+export const SIZE_UNITS: Readonly<Record<ContainerSize, { w: number; h: number }>> = {
+  small: { w: 1, h: 1 }, medium: { w: 2, h: 1 }, large: { w: 2, h: 2 }, wide: { w: 3, h: 2 },
+};
+
 /** Floating around the centre, or in the bottom-right "Others" stack (plan-r8 F1, O4). */
 export const CONTAINER_PLACES = ['float', 'others'] as const;
 export type ContainerPlace = typeof CONTAINER_PLACES[number];
@@ -56,6 +65,10 @@ export interface SuperContainer {
    *  URL (web) or a project-relative path (image). Validated per kind at `open`. */
   ref: string;
   shape: ContainerShape;
+  /** The size preset it floats at (absent = small). */
+  size?: ContainerSize;
+  /** The owner chose the size: an agent verb never changes it (only the owner's own layout). */
+  sizeBy?: 'owner';
   place: ContainerPlace;
   /** Where the OWNER dropped it: the card's top-left as fractions (0..1) of the stage's free
    *  area. Absent = placed automatically. No agent verb writes it. */
@@ -532,7 +545,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 3;
+export const SUPER_BRIEF_REV = 4;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

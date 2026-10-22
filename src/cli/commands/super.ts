@@ -104,15 +104,16 @@ export function registerSuperCommand(program: Command): void {
   s.command('open <kind> <refs...>')
     .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once`)
     .option('--group <name>', 'Put every card opened here in ONE group of this name (a set the owner asked to see)')
-    .option('--shape <shape>', 'square | tall: recorded only; every floating card is a 1:1 tile')
+    .option('--shape <shape>', 'small | medium | large | wide (the card\'s size, 1x1 2x1 2x2 3x2 tiles; a size the owner chose is kept), or square | tall (recorded only)')
+    .option('--size <size>', 'small | medium | large | wide: the same as --shape with a size')
     .option('--title <text>', 'Its label (one ref only)')
-    .action((kind: string, refs: string[], o: { shape?: string; title?: string; group?: string }) =>
+    .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; group?: string }) =>
       run('open', refs.length === 1
-        ? { kind, ref: refs[0], shape: o.shape, title: o.title, group: o.group }
-        : { kind, refs, shape: o.shape, group: o.group }));
+        ? { kind, ref: refs[0], shape: o.shape, size: o.size, title: o.title, group: o.group }
+        : { kind, refs, shape: o.shape, size: o.size, group: o.group }));
 
   s.command('shape <card> <shape>')
-    .description('Record a card\'s shape (square | tall); kept for older scripts: every floating card is drawn as a 1:1 tile')
+    .description('Size a card: small | medium | large | wide (1x1 2x1 2x2 3x2 tiles); 409 owner_sized when the owner chose its size. square | tall are recorded only (older scripts)')
     .action((container: string, shape: string) => run('shape', { container, shape }));
 
   s.command('half [card]')

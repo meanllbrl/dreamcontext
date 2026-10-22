@@ -4289,9 +4289,13 @@ export function AgentSurface() {
       // The job list open under the bar owns Esc the same way: it closes the list (JobList), never
       // the stage, and its listener is added when it opens, after this one (plan r4 AC7).
       if (document.querySelector('.super-job-list')) return;
+      // A card's size menu owns Esc the same way: it closes the menu (SuperContainer), never the stage.
+      if (document.querySelector('.super-size-menu')) return;
       // A card held on that stage owns Esc too: the drag's own listener cancels it, but it is
       // added at the press, after this one, so its stopPropagation cannot reach us.
       if (document.querySelector('.super-surface[data-dragging]')) return;
+      // A card's corner held for a resize owns Esc the same way (useStageDrag marks the stage).
+      if (document.querySelector('[data-resizing]')) return;
       const ae = document.activeElement as Element | null;
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
       // Any centered command surface on top of us owns Esc — ⌘K palette, ⌘P switcher,

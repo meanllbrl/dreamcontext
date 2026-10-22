@@ -20,12 +20,16 @@ import './superInsight.css';
  * an image shows the picture; a web page or a whiteboard shows its title and opens LIVE only side
  * by side or presented (a live frame or board in a 160 px tile reads as nothing and costs a lot).
  */
-export function KindTile({ container: c, title, viewReady }: { container: Container; title: string; viewReady: boolean }) {
+export function KindTile({ container: c, title, viewReady, wide = false }: {
+  container: Container; title: string; viewReady: boolean;
+  /** A medium (2×1) tile: room for a second line of what it is (owner 2026-10-22, card sizes). */
+  wide?: boolean;
+}) {
   // A tile's data waits for the hand-over to land, like every card view (motion r9): until then
   // it is its kind and its title, which cost no query and no layout of their own.
   if (!viewReady) return <HeadTile container={c} title={title} />;
   switch (c.kind) {
-    case 'task': return <TaskTile container={c} title={title} />;
+    case 'task': return <TaskTile container={c} title={title} wide={wide} />;
     case 'knowledge': return <NoteTile container={c} title={title} />;
     case 'insight': return <InsightTile container={c} title={title} />;
     case 'image': return <ImageTile container={c} title={title} viewReady={viewReady} />;
@@ -52,7 +56,7 @@ function TileTop({ kind }: { kind: Container['kind'] | 'group' }) {
   );
 }
 
-function TaskTile({ container: c, title }: { container: Container; title: string }) {
+function TaskTile({ container: c, title, wide }: { container: Container; title: string; wide: boolean }) {
   const { t } = useI18n();
   const { data } = useTasks();
   const task = data?.find((x) => x.slug === c.ref);
@@ -73,9 +77,13 @@ function TaskTile({ container: c, title }: { container: Container; title: string
             <span className="super-tile-bar" aria-hidden><span className="super-tile-bar-fill" style={{ transform: `scaleX(${crit.done / crit.total})` }} /></span>
             <span className="super-tile-progress-text">{crit.done}/{crit.total}</span>
           </div>
-          <div className="super-tile-line super-tile-next" data-testid="super-tile-next">
-            {crit.next ? `${t('super.tile.task.next')} ${crit.next}` : t('super.tile.task.allDone')}
-          </div>
+          {wide && crit.upcoming.length > 1 ? crit.upcoming.map((line, i) => (
+            <div key={i} className="super-tile-line super-tile-next" data-testid="super-tile-next">{`${i === 0 ? t('super.tile.task.next') + ' ' : '· '}${line}`}</div>
+          )) : (
+            <div className="super-tile-line super-tile-next" data-testid="super-tile-next">
+              {crit.next ? `${t('super.tile.task.next')} ${crit.next}` : t('super.tile.task.allDone')}
+            </div>
+          )}
         </>
       ) : (
         <>

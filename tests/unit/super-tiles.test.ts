@@ -40,14 +40,14 @@ describe('a task tile reads its own criteria', () => {
       'Some prose that is not a criterion: - [ ] inline',
       '- [ ] AC4 [the link](https://example.com) reads as its text',
     ].join('\n');
-    expect(criteriaProgress(md)).toEqual({ done: 2, total: 5, next: 'AC2 Small 1:1 tiles, see the stage' });
+    expect(criteriaProgress(md)).toEqual({ done: 2, total: 5, next: 'AC2 Small 1:1 tiles, see the stage', upcoming: ['AC2 Small 1:1 tiles, see the stage', 'a nested step counts too'] });
     expect(plainCriterion('[the link](https://example.com) and _soft_ *words*')).toBe('the link and soft words');
   });
 
   it('no criteria, or every one ticked, says so', () => {
-    expect(criteriaProgress('')).toEqual({ done: 0, total: 0, next: null });
-    expect(criteriaProgress(undefined)).toEqual({ done: 0, total: 0, next: null });
-    expect(criteriaProgress('- [x] a\n- [x] b')).toEqual({ done: 2, total: 2, next: null });
+    expect(criteriaProgress('')).toEqual({ done: 0, total: 0, next: null, upcoming: [] });
+    expect(criteriaProgress(undefined)).toEqual({ done: 0, total: 0, next: null, upcoming: [] });
+    expect(criteriaProgress('- [x] a\n- [x] b')).toEqual({ done: 2, total: 2, next: null, upcoming: [] });
   });
 });
 
@@ -180,10 +180,14 @@ describe('the surface wiring (source rules)', () => {
     expect(frame).toMatch(/<DocumentReader key=\{path\} path=\{path\} .* embedded vaultReads variant="page" \/>/);
   });
 
-  it('a floating card is a tile; a floating web tile never holds a frame', () => {
-    expect(frame).toMatch(/\? <ChatTile session=\{p\.session\}/);
-    expect(frame).toMatch(/: <KindTile container=\{c\} title=\{p\.title\} viewReady=\{p\.viewReady\} \/>/);
-    expect(surface).toMatch(/plan\.cards\[c\.id\]\.where !== 'others' && plan\.cards\[c\.id\]\.where !== 'float'/);
+  // Card sizes (owner 2026-10-22): a small or medium floating card is a tile; a large or wide one
+  // draws its view, and a web page there holds a frame only within the two-frame budget.
+  it('a small or medium floating card is a tile; only a large or wide floating web card holds a frame', () => {
+    expect(frame).toMatch(/: <ChatTile session=\{p\.session\}/);
+    expect(frame).toMatch(/: <KindTile container=\{c\} title=\{p\.title\} viewReady=\{p\.viewReady\} wide=\{size === 'medium'\} \/>/);
+    expect(frame).toMatch(/if \(SIZE_UNITS\[size\]\.h > 1 && c\.kind !== 'chat'\)/);
+    expect(surface).toMatch(/return cp\.where !== 'float' \|\| cp\.size === 'large' \|\| cp\.size === 'wide';/);
+    expect(surface).toMatch(/const liveWeb = liveWebIds\(lru, webOnScreen\);/);
   });
 
   it('a card released on a tile groups: on a card a new group where it stood, on a group into it', () => {

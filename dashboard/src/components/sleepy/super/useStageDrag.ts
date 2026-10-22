@@ -1,11 +1,32 @@
 import { useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
-import { nextGroupName, type SuperContainer as Container, type SuperGroup, type SuperStateView } from '../../../lib/superTypes';
+import { CONTAINER_SIZES, nextGroupName, type ContainerSize, type SuperContainer as Container, type SuperGroup, type SuperStateView } from '../../../lib/superTypes';
 import { armPointerDrag } from '../tabDrag';
 import type { Rect } from './handoverMotion';
 import {
-  STAGE, dropTargetAt, heightOf, isGroupId, overCentre, overOthersZone, posFromRect, type LayoutPatch, type StagePlan,
+  dropTargetAt, isGroupId, overCentre, overOthersZone, posFromRect, sizeOf, sizePx, type LayoutPatch, type StagePlan,
 } from './superLayout';
+
+/**
+ * The preset a corner drag asks for (owner 2026-10-22): the card's size grown by the pointer's
+ * travel (away from the centre on the left side, so `dx` counts negative there), snapped to the
+ * nearest preset that can be drawn now. Pure, so the gesture and its test agree.
+ */
+export function snapSize(
+  from: { width: number; height: number }, dx: number, dy: number, side: 'left' | 'right', fits: (size: ContainerSize) => boolean,
+): ContainerSize {
+  const w = from.width + (side === 'left' ? -dx : dx);
+  const h = from.height + dy;
+  let best: ContainerSize = 'small';
+  let bestD = Infinity;
+  for (const size of CONTAINER_SIZES) {
+    if (size !== 'small' && !fits(size)) continue;
+    const px = sizePx(size);
+    const d = Math.abs(px.width - w) + Math.abs(px.height - h);
+    if (d < bestD) { bestD = d; best = size; }
+  }
+  return best;
+}
 
 export interface DragState {
   id: string;
@@ -37,6 +58,10 @@ export interface StageDragDeps {
   setOpenGroup: (id: string | null) => void;
   /** "Group" in the owner's language: a new group's default name is "<word> N". */
   groupWord: string;
+  /** The owner's size for a card (the menu and the corner handle). */
+  onSize: (id: string, size: ContainerSize) => void;
+  /** Whether a size can be drawn for this card on the stage now. */
+  canFit: (id: string, size: ContainerSize) => boolean;
 }
 
 /**
@@ -140,7 +165,9 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
     let ghost: HTMLElement | null = null;
     let last: Hot = null;
     let lastTarget: string | null = null;
-    const box = { width: STAGE.TILE, height: heightOf('square', STAGE.TILE) };
+    // The ghost is the card's own drawn size (a sized card dropped from a panel lands where it is
+    // drawn); a group is one tile.
+    const box = sizePx(c ? sizeOf(c) : 'small');
     const at = (x: number, y: number): Rect => ({ x: x - origin.left - box.width / 2, y: y - origin.top - box.height / 2, ...box });
     const targetAt = (x: number, y: number) => {
       const tg = dropTargetAt(planRef.current, x - origin.left, y - origin.top, id);
@@ -191,5 +218,62 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
     });
   };
 
-  return { drag, hot, target, panelDrag, onPressCard, onPressPanelItem };
+  /**
+   * A floating card's corner handle (owner 2026-10-22): drag to a size. An outline at the snapped
+   * preset follows, grown from the card's inner top corner (the one toward the centre); release
+   * writes the size only when it changed. Esc, a cancel or a lost pointer writes nothing.
+   */
+  const onPressResize = (e: ReactPointerEvent<HTMLElement>, id: string) => {
+    const { rootRef, layerRef, planRef, byId, onSize, canFit } = deps();
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const el = e.currentTarget;
+    const root = rootRef.current;
+    const layer = layerRef.current;
+    const card = planRef.current.cards[id];
+    const c = byId.get(id);
+    if (!root || !layer || !c || !card || card.where !== 'float') return;
+    const side: 'left' | 'right' = card.rect.x + card.rect.width / 2 < planRef.current.centre.x + planRef.current.centre.width / 2 ? 'left' : 'right';
+    const from = card.size ?? sizeOf(c);
+    let snapped: ContainerSize = from;
+    let outline: HTMLElement | null = null;
+    // What can be drawn does not change during the gesture: asked once (a plan per size), not
+    // on every pointer frame.
+    let fitting = new Set<ContainerSize>();
+    const place = (size: ContainerSize) => {
+      if (!outline) return;
+      const px = sizePx(size);
+      const x = side === 'left' ? card.rect.x + card.rect.width - px.width : card.rect.x;
+      outline.style.transform = `translate(${x}px, ${card.rect.y}px)`;
+      outline.style.width = `${px.width}px`;
+      outline.style.height = `${px.height}px`;
+      outline.dataset.size = size;
+    };
+    armPointerDrag({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY }, el, {
+      win: window,
+      onBegin: () => {
+        fitting = new Set(CONTAINER_SIZES.filter((size) => size === 'small' || canFit(id, size)));
+        // The surface's own Esc (AgentSurface) yields while a resize is held, as it does to a drag.
+        root.dataset.resizing = 'true';
+        outline = document.createElement('div');
+        outline.className = 'super-resize-outline';
+        outline.setAttribute('data-testid', 'super-resize-outline');
+        layer.appendChild(outline);
+        place(from);
+      },
+      onRemeasure: () => {},
+      onFrame: (_x, _y, dx, dy) => {
+        const next = snapSize(card.rect, dx, dy, side, (size) => fitting.has(size));
+        if (next !== snapped) { snapped = next; place(next); }
+      },
+      onEnd: (drop) => {
+        delete root.dataset.resizing;
+        outline?.remove();
+        outline = null;
+        if (drop && snapped !== from) onSize(id, snapped);
+      },
+    });
+  };
+
+  return { drag, hot, target, panelDrag, onPressCard, onPressPanelItem, onPressResize };
 }

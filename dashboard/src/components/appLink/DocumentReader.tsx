@@ -222,8 +222,8 @@ function ViewerMedia({ path, kind, vaultReads }: { path: string; kind: 'image' |
   return <MediaEmbed kind={kind} className="viewer-media" src={src} onError={() => setFailed(true)} />;
 }
 
-interface DirEntry { name: string; kind: 'dir' | 'file'; size: number | null }
-type FileContent =
+export interface DirEntry { name: string; kind: 'dir' | 'file'; size: number | null }
+export type FileContent =
   | { path: string; type: 'text' | 'markdown'; content: string }
   | { path: string; type: 'dir'; entries: DirEntry[] };
 
@@ -234,11 +234,13 @@ type VaultContent =
   | { path: string; type: 'json'; data?: unknown; raw?: string };
 
 /** The file's text (or folder listing) from `/agent/file`, or from the vault route under
- *  `vaultReads`, refetched when the path changes. */
-function useFileContent(path: string, vaultReads = false) {
+ *  `vaultReads`, refetched when the path changes. `tooLarge`: the server refused it as over its
+ *  cap (413), which a reader says in its own words rather than as "could not be read". Shared
+ *  with the full-screen page viewer (layout/FrameViewer.tsx). */
+export function useFileContent(path: string, vaultReads = false) {
   const api = useApi();
   const { t } = useI18n();
-  const [state, setState] = useState<{ loading: boolean; data: FileContent | null; error: string | null }>(
+  const [state, setState] = useState<{ loading: boolean; data: FileContent | null; error: string | null; tooLarge?: boolean }>(
     { loading: true, data: null, error: null },
   );
   useEffect(() => {
@@ -254,8 +256,8 @@ function useFileContent(path: string, vaultReads = false) {
       : api.get<FileContent>(`/agent/file?path=${encodeURIComponent(path)}`);
     request
       .then((data) => { if (!cancelled) setState({ loading: false, data, error: null }); })
-      .catch((err: Error) => {
-        if (!cancelled) setState({ loading: false, data: null, error: err.message || t('viewer.failed') });
+      .catch((err: Error & { status?: number }) => {
+        if (!cancelled) setState({ loading: false, data: null, error: err.message || t('viewer.failed'), tooLarge: err.status === 413 });
       });
     return () => { cancelled = true; };
   }, [api, path, t, vaultReads]);
@@ -385,7 +387,9 @@ function HtmlPage({
   return (
     <div className="doc-reader-html">
       {state.loading && <p className="viewer-status">{t('viewer.loading')}</p>}
-      {state.error && <p className="viewer-status viewer-status--error">{t('viewer.failed')} {state.error}</p>}
+      {state.error && (state.tooLarge
+        ? <p className="viewer-status viewer-status--error">{tx('reader.tooLarge', 'This page is too large to show here (the limit is 8 MB). Open it on the computer.')}</p>
+        : <p className="viewer-status viewer-status--error">{t('viewer.failed')} {state.error}</p>)}
       {torn && (
         <p className="viewer-status viewer-status--error" role="alert">
           {tx('reader.htmlNavigated', 'This page tried to open another web page, so it was stopped.')}

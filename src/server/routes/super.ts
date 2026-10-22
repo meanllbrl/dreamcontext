@@ -9,11 +9,11 @@ import {
 } from '../../lib/window-control.js';
 import { SuperStoreRefused, isReservedId, okMember, readSuperState, superRootOfChild } from '../../lib/super/store.js';
 import {
-  CONTAINER_KINDS, CONTAINER_SHAPES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
+  CONTAINER_KINDS, CONTAINER_SHAPES, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, cleanAskOptions, cleanGroupName,
   defaultShape, dissolveGroups, floatCount, leaveGroups,
-  type ContainerKind, type ContainerShape, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
+  type ContainerKind, type ContainerShape, type ContainerSize, type SuperChild, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
 } from '../../lib/super/types.js';
 import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, setTeamLiveSource, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
 import { sayToAgent } from './automations.js';
@@ -205,6 +205,30 @@ function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown
       if (!SLUG_REF_RE.test(ref) || ref.split('/').some((s) => s === '..' || s === '.' || s === '')) return { error: `a ${kind} container names its slug` };
       return { ref };
   }
+}
+
+/**
+ * A card's look from a verb: `shape` takes a size preset (small|medium|large|wide) or an old
+ * shape (square|tall, recorded only); `size` is the same preset under its own name. Both given
+ * and naming different sizes is refused rather than guessed.
+ */
+function shapeOrSize(b: Record<string, unknown>): { shape?: ContainerShape; size?: ContainerSize } | { error: string } {
+  const all = [...CONTAINER_SIZES, ...CONTAINER_SHAPES].join(' | ');
+  const raw = str(b.shape);
+  const rawSize = str(b.size);
+  let shape: ContainerShape | undefined;
+  let size: ContainerSize | undefined;
+  if (raw) {
+    if ((CONTAINER_SHAPES as readonly string[]).includes(raw)) shape = raw as ContainerShape;
+    else if ((CONTAINER_SIZES as readonly string[]).includes(raw)) size = raw as ContainerSize;
+    else return { error: `shape must be one of ${all}` };
+  }
+  if (rawSize) {
+    if (!(CONTAINER_SIZES as readonly string[]).includes(rawSize)) return { error: `size must be one of ${CONTAINER_SIZES.join(' | ')}` };
+    if (size && size !== rawSize) return { error: '--shape and --size name different sizes; give one' };
+    size = rawSize as ContainerSize;
+  }
+  return { ...(shape ? { shape } : {}), ...(size ? { size } : {}) };
 }
 
 function containerArg(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse): string | null {
@@ -587,8 +611,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // the same card (brought back from Others), and a group is one floating item.
     const kind = str(b.kind);
     if (!kind || !(CONTAINER_KINDS as readonly string[]).includes(kind)) { refuse(res, 400, 'invalid_args', `kind must be one of ${CONTAINER_KINDS.join(' | ')}`); return; }
-    const shapeArg = str(b.shape);
-    if (shapeArg && !(CONTAINER_SHAPES as readonly string[]).includes(shapeArg)) { refuse(res, 400, 'invalid_args', `shape must be one of ${CONTAINER_SHAPES.join(' | ')}`); return; }
+    const look = shapeOrSize(b);
+    if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
+    const { shape: shapeArg, size: sizeArg } = look;
     const rawRefs: unknown[] = Array.isArray(b.refs) ? b.refs : [b.ref];
     if (!rawRefs.length || rawRefs.length > MAX_OPEN_REFS) { refuse(res, 400, 'invalid_args', `name 1 to ${MAX_OPEN_REFS} refs of one kind`); return; }
     const refs: string[] = [];
@@ -613,22 +638,28 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!plan(c.state).fits) { tooMany(res, c.state); return; }
     let refused = false;
     let groupId: string | null = null;
+    // Cards whose size the owner chose: the agent's size is not written (decided inside the
+    // locked write, so an owner resize landing meanwhile still wins).
+    let kept: string[] = [];
     const state = await writeSuper(c.who.contextRoot, (s) => {
       const p = plan(s);
       if (!p.fits) { refused = true; return; }
       groupId = p.groupId;
+      kept = [];
       refs.forEach((ref, i) => {
         const have = s.containers.find((k) => k.id === ids[i]);
         if (have) {
           // Re-opening brings it back from Others and keeps the owner's drop position.
-          if (shapeArg) have.shape = shapeArg as ContainerShape;
+          if (shapeArg) have.shape = shapeArg;
+          if (sizeArg) { if (have.sizeBy === 'owner') kept.push(have.id); else have.size = sizeArg; }
           have.place = 'float';
           if (title) have.title = title;
           return;
         }
         s.containers.push({
           id: ids[i], kind: kind as ContainerKind, ref,
-          shape: (shapeArg as ContainerShape | undefined) ?? defaultShape(kind as ContainerKind),
+          shape: shapeArg ?? defaultShape(kind as ContainerKind),
+          ...(sizeArg && sizeArg !== 'small' ? { size: sizeArg } : {}),
           place: 'float', ...(title ? { title } : {}),
         });
       });
@@ -645,16 +676,26 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
     if (made.length !== ids.length) { tooMany(res, state); return; }
     const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
-    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}) });
+    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(kept.length ? { kept } : {}) });
   },
 
   shape: async (c, b, res) => {
     const id = containerArg(c, b, res);
     if (!id) return;
-    const shape = str(b.shape);
-    if (!shape || !(CONTAINER_SHAPES as readonly string[]).includes(shape)) { refuse(res, 400, 'invalid_args', `shape must be one of ${CONTAINER_SHAPES.join(' | ')}`); return; }
-    await writeSuper(c.who.contextRoot, (s) => { const k = s.containers.find((x) => x.id === id); if (k) k.shape = shape as ContainerShape; });
-    ok(res, { container: id, shape });
+    const look = shapeOrSize(b);
+    if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
+    if (!look.shape && !look.size) { refuse(res, 400, 'invalid_args', `shape must be one of ${[...CONTAINER_SIZES, ...CONTAINER_SHAPES].join(' | ')}`); return; }
+    // The owner's size wins: decided inside the locked write, never against the snapshot.
+    let ownerSized = false;
+    await writeSuper(c.who.contextRoot, (s) => {
+      const k = s.containers.find((x) => x.id === id);
+      if (!k) return;
+      if (look.size && k.sizeBy === 'owner') { ownerSized = true; return; }
+      if (look.shape) k.shape = look.shape;
+      if (look.size) { if (look.size === 'small') delete k.size; else k.size = look.size; }
+    });
+    if (ownerSized) { refuse(res, 409, 'owner_sized', 'the owner chose this card\'s size; leave it as it is'); return; }
+    ok(res, { container: id, ...(look.shape ? { shape: look.shape } : {}), ...(look.size ? { size: look.size } : {}) });
   },
 
   half: async (c, b, res) => {
@@ -1746,6 +1787,13 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
         if (p.place === 'float' || p.place === 'others') k.place = p.place;
         if (p.pos === null) delete k.pos;
         else if (p.pos && typeof p.pos === 'object') k.pos = p.pos as { x: number; y: number };
+        // The owner's size (a card only; a group is always one tile): his choice, which no agent
+        // verb overrides; `null` hands it back (small, and the agent may size it again).
+        if ('kind' in k && p.size === null) { delete k.size; delete k.sizeBy; }
+        else if ('kind' in k && typeof p.size === 'string' && (CONTAINER_SIZES as readonly string[]).includes(p.size)) {
+          if (p.size === 'small') delete k.size; else k.size = p.size as ContainerSize;
+          k.sizeBy = 'owner';
+        }
         // The card the owner moved last is drawn on top: it goes to the end of the list.
         if (p.order === 'last' && 'kind' in k) s.containers = [...s.containers.filter((x) => x !== k), k];
       }
