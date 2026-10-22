@@ -119,6 +119,16 @@ describe('the notch side', () => {
     expect(unwrapUntrusted('<untrusted-project-output vault="acme">if a ‹ b ‹/live-context></untrusted-project-output>')).toBe('if a < b </live-context>');
   });
 
+  it('keeps the server\'s Super Agent mark, and only a literal true', () => {
+    const rows = readGlance({ chats: [
+      { sessionId: 's1', vault: 'acme', activity: 'asking', title: '', super: true },
+      { sessionId: 's2', vault: 'acme', activity: 'working', title: '', super: 'yes' },
+      { sessionId: 's3', vault: 'acme', activity: 'working', title: '' },
+    ] });
+    expect(rows.map((r) => r.super)).toEqual([true, undefined, undefined]);
+    expect('super' in rows[2]).toBe(false);
+  });
+
   it('the mood ladder: asking > working > done > idle', () => {
     expect(notchMood({ ...EMPTY_ROLLUP, asking: 1, working: 2 }, true)).toBe('asking');
     expect(notchMood({ ...EMPTY_ROLLUP, proposals: 1 }, false)).toBe('asking');

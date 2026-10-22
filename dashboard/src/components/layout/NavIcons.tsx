@@ -20,9 +20,9 @@ import type { Page } from './Sidebar';
  * ── "Literal" is a standard this set had to be held to, not a compliment ──────
  * Four glyphs were redrawn on 2026-09-22 because they depicted a category rather
  * than their page. The worst was Automations: an ALARM CLOCK, drawn when the page
- * was a list of scheduled jobs. That page is now a member list of AGENTS — people
- * with photos who post messages — so the clock described a feature that no longer
- * exists, on the item the product cares most about.
+ * was a list of scheduled jobs. That page is now the AI Team, a roster of AI members,
+ * so the clock described a feature that no longer exists, on the item the product
+ * cares most about.
  */
 const STROKE = {
   fill: 'none',
@@ -32,9 +32,9 @@ const STROKE = {
   strokeLinejoin: 'round' as const,
 };
 
-function Svg({ children }: { children: React.ReactNode }) {
+function Svg({ children, size = 14 }: { children: React.ReactNode; size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" width="14" height="14" {...STROKE} aria-hidden="true">
+    <svg viewBox="0 0 24 24" width={size} height={size} {...STROKE} aria-hidden="true">
       {children}
     </svg>
   );
@@ -209,23 +209,27 @@ function AnnouncementsIcon() {
   );
 }
 
-/** Agents — two overlapping people, the front one with a speech tail.
+/** AI Team — two AI teammates side by side: a rounded head with an antenna and two eyes each,
+ *  over its shoulders.
  *
- * THE PAGE IS A MEMBER LIST: agents have photos, names and modes, and they POST. The
- * previous glyph was an alarm clock, drawn back when the page was a list of scheduled
- * jobs — it depicted a retired feature on the product's most important rail item. Two
- * heads say "these are a roster of someones"; the tail says "they talk to you"; and
- * overlapping them keeps both legible at 14px, where two separate figures would smear.
- * No clock, no gear, no lightning: none of those is what a user comes here to find. */
-function AutomationsIcon() {
+ * THE PAGE IS A ROSTER OF AI MEMBERS who work together (owner pick "A3", 2026-10-22). Two equal
+ * heads say "a team of peers"; the antenna and the two eyes say they are agents, and the eyes
+ * are Sleepy's two-eye mark, the brand's own face. The old glyph's speech tail is gone: Chat and
+ * Council already say "talk", and the rail read three bubbles in a row. Never a clock, gear or
+ * lightning: none of those is what a user comes here to find. */
+function AiTeamIcon() {
   return (
     <Svg>
-      {/* The one behind — head and shoulder only, enough to read as a second member. */}
-      <circle cx="16.4" cy="7.2" r="2.5" />
-      <path d="M13.9 13.2a4.6 4.6 0 0 1 7.6 1.9" />
-      {/* The one in front, carrying the speech tail. */}
-      <circle cx="8.8" cy="8.6" r="3.2" />
-      <path d="M3 18.4a6 6 0 0 1 11.6 0v1.9H6.2l-2.6 2.1v-2.1H3z" />
+      <rect x="2.5" y="5.5" width="8" height="7.5" rx="2.5" />
+      <path d="M6.5 5.5V3.2" />
+      <circle cx="5.1" cy="9.3" r="1" fill="currentColor" stroke="none" />
+      <circle cx="7.9" cy="9.3" r="1" fill="currentColor" stroke="none" />
+      <path d="M2.5 20.5a4 4 0 0 1 8 0" />
+      <rect x="13.5" y="5.5" width="8" height="7.5" rx="2.5" />
+      <path d="M17.5 5.5V3.2" />
+      <circle cx="16.1" cy="9.3" r="1" fill="currentColor" stroke="none" />
+      <circle cx="18.9" cy="9.3" r="1" fill="currentColor" stroke="none" />
+      <path d="M13.5 20.5a4 4 0 0 1 8 0" />
     </Svg>
   );
 }
@@ -255,6 +259,26 @@ export function ChatIcon() {
   );
 }
 
+/** Super Agent — the lead in the centre (Sleepy's two eyes) with the four chats it runs tied
+ *  to it (owner pick "S2", 2026-10-22). Not in {@link ICONS}: the Super Agent is a MODE of Chat,
+ *  never a page or a rail row. It marks the Super Agent itself wherever it shows: the Chat
+ *  header's hand-over button, its stage, its notch rows and its phone row. Sized by the caller
+ *  (16 on a button, 14 in a row) so one drawing serves every place. */
+export function SuperAgentIcon({ size = 16 }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="10.5" cy="11.8" r="0.95" fill="currentColor" stroke="none" />
+      <circle cx="13.5" cy="11.8" r="0.95" fill="currentColor" stroke="none" />
+      <rect x="2" y="2" width="4.5" height="4" rx="1.3" />
+      <rect x="17.5" y="2" width="4.5" height="4" rx="1.3" />
+      <rect x="2" y="18" width="4.5" height="4" rx="1.3" />
+      <rect x="17.5" y="18" width="4.5" height="4" rx="1.3" />
+      <path d="M6.5 6 9.2 9.2M17.5 6l-2.7 3.2M6.5 18l2.7-3.2M17.5 18l-2.7-3.2" />
+    </Svg>
+  );
+}
+
 /**
  * Page → icon. Sleepy is handled separately (its animated eyes mark).
  *
@@ -267,7 +291,7 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   roadmap: RoadmapIcon,
   hypotheses: HypothesesIcon,
   lab: LabIcon,
-  automations: AutomationsIcon,
+  automations: AiTeamIcon,
   whiteboards: WhiteboardsIcon,
   council: CouncilIcon,
   core: CoreIcon,

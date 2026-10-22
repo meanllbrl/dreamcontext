@@ -64,6 +64,9 @@ export interface GlanceChat {
   activity: 'asking' | 'working' | 'starting' | 'stale';
   title: string;
   ask: { id: string; kind: 'permission' | 'question'; tool: string; text: string } | null;
+  /** The row is the Super Agent's (the server's `super: true`, routes/assistant.ts superGlanceRows):
+   *  drawn with its glyph so the owner tells it from an ordinary chat at a glance. */
+  super?: true;
 }
 
 const GLANCE_ACTIVITIES = new Set(['asking', 'working', 'starting', 'stale']);
@@ -97,6 +100,7 @@ export function readGlance(raw: unknown): GlanceChat[] {
       ask: a && typeof a.id === 'string'
         ? { id: a.id, kind: a.kind === 'permission' ? 'permission' : 'question', tool: typeof a.tool === 'string' ? a.tool : '', text: unwrapUntrusted(a.text) }
         : null,
+      ...(o.super === true ? { super: true as const } : {}),
     });
   }
   return out;

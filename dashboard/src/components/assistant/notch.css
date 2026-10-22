@@ -667,6 +667,10 @@ html:has(.dc-notch) #root {
 }
 .dc-glance__row[data-activity='asking'] .dc-glance__dot { background: var(--color-warning); }
 @keyframes dc-glance-breathe { 50% { opacity: 0.35; } }
+/* The Super Agent's row carries its glyph (NavIcons SuperAgentIcon) after the dot: identity in
+   neutral ink, while the dot keeps the colour (colour = mood). */
+.dc-glance__super { flex: none; align-self: center; display: inline-flex; color: var(--color-text-secondary); }
+.dc-glance__super svg { display: block; }
 .dc-glance__vault { font-weight: var(--font-weight-semibold); white-space: nowrap; }
 .dc-glance__status { color: var(--color-text-secondary); white-space: nowrap; }
 .dc-glance__title {
