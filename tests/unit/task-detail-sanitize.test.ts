@@ -69,3 +69,11 @@ describe('mermaid output', () => {
     expect('a{background:url(/api/launcher/discover)} b{marker-end:url(#arrow)}'.replace(rule, 'none')).toBe('a{background:none} b{marker-end:url(#arrow)}');
   });
 });
+
+describe('mermaid directives cannot set CSS', () => {
+  it('every key that becomes CSS is on mermaid\'s secure list, in both theme configs', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'lib', 'mermaidRender.ts'), 'utf-8');
+    for (const k of ['themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily', 'securityLevel']) expect(src).toContain(`'${k}'`);
+    expect(src.match(/secure: MERMAID_SECURE_KEYS,/g)?.length).toBe(2);
+  });
+});

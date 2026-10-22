@@ -141,7 +141,7 @@ The search index drifts after imports.
 ## Technical Details
 
 \`\`\`mermaid
-%%{init: {"themeCSS": "background-image:url(/api/health)"}}%%
+%%{init: {"themeCSS": "background-image:url(/api/task-ui-sentinel)", "fontFamily": "x;background-image:url(/api/task-ui-sentinel-font)"}}%%
 flowchart TD
   r1[Rebuild in background]:::todo
   r2[Show progress]:::todo
@@ -204,6 +204,7 @@ const waitForServer = async () => {
 
 let browser;
 let pageRef = null;
+const sentinelHits = [];
 const consoleErrors = [];
 const failedRequests = [];
 const reveals = [];
@@ -225,6 +226,7 @@ try {
   const page = await context.newPage();
   pageRef = page;
   page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`));
+  page.on('request', (r) => { if (/task-ui-sentinel/.test(r.url())) sentinelHits.push(r.url()); });
   page.on('requestfailed', (r) => { const u = r.url(); if (!/#t=|\.mp4/.test(u)) failedRequests.push(`${r.failure()?.errorText} ${u}`); });
   await page.route('**/api/agent/reveal', async (route) => {
     try { reveals.push(JSON.parse(route.request().postData() || '{}')); } catch { reveals.push({}); }
@@ -457,8 +459,10 @@ try {
   await openTask(MERMAID);
   await page.locator('[data-section="technical_details"] .dfold-toggle').click();
   check('AC16 a mermaid block in Technical Details renders too', await until(async () => (await page.locator('[data-section="technical_details"] .mermaid-stage > svg').count()) === 1, 10000));
-  const themeCss = await page.locator('[data-section="technical_details"] .mermaid-stage > svg').evaluate((svg) => [...svg.querySelectorAll('style')].map((st) => st.textContent).join(' ')).catch(() => '');
-  check('AC10 a diagram\'s themeCSS cannot load /api/ (url() neutralised in the SVG style)', !/\/api\//.test(themeCss), themeCss.match(/background-image:[^;}]*/)?.[0] ?? 'no background-image');
+  await wait(800);
+  check('AC10 a diagram\'s themeCSS / fontFamily directive fires no request to /api/ (network watched)', sentinelHits.length === 0, sentinelHits.join(' | ') || 'no sentinel request');
+  const svgCss = await page.locator('[data-section="technical_details"] .mermaid-stage > svg').evaluate((svg) => [...svg.querySelectorAll('style')].map((st) => st.textContent).join(' ')).catch(() => '');
+  check('AC10 the directive\'s CSS never reaches the diagram at all (mermaid secure keys)', !/background-image/.test(svgCss) && !/task-ui-sentinel/.test(svgCss), svgCss.match(/[^;{}]*background-image[^;{}]*/)?.[0] ?? 'absent');
   await closeDrawer();
 
   // ── AC12 / AC13 / AC14 — media ──────────────────────────────────────────────

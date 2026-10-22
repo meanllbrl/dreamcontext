@@ -3,6 +3,17 @@ import mermaid from 'mermaid';
 
 type ThemeMode = 'light' | 'dark';
 
+/**
+ * Config keys a diagram may NOT override through an `%%{init}%%` directive or front-matter.
+ * Mermaid's defaults plus every key that becomes CSS: a task or note body is untrusted, and a
+ * directive's themeCSS / fontFamily is laid out (its url()s fetched) during render, before any
+ * clean-up of the output could run. The dashboard's own theme still comes through initialize.
+ */
+const MERMAID_SECURE_KEYS = [
+  'secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges',
+  'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily',
+];
+
 let lastTheme: ThemeMode | null = null;
 
 function getMermaidConfig(theme: ThemeMode) {
@@ -11,6 +22,7 @@ function getMermaidConfig(theme: ThemeMode) {
     return {
       startOnLoad: false,
       securityLevel: 'strict' as const,
+      secure: MERMAID_SECURE_KEYS,
       theme: 'base' as const,
       themeVariables: {
         background: '#1c1f2a',
@@ -42,6 +54,7 @@ function getMermaidConfig(theme: ThemeMode) {
   return {
     startOnLoad: false,
     securityLevel: 'strict' as const,
+    secure: MERMAID_SECURE_KEYS,
     theme: 'base' as const,
     themeVariables: {
       background: '#ffffff',
