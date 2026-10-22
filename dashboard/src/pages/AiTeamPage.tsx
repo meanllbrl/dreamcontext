@@ -4,6 +4,8 @@ import { TeamConversation } from '../components/aiteam/TeamConversation';
 import { TeamPanel, type PanelTab } from '../components/aiteam/TeamPanel';
 import { NewTeammate, TEAM_STARTERS, type TeamStarter } from '../components/aiteam/NewTeammate';
 import { buildRoster, messagesOf, type TeamAgent } from '../components/aiteam/teamModel';
+import { pageStorage, readRosterView, teamTreeOf, writeRosterView, type RosterView } from '../components/aiteam/teamTree';
+import { chainOf } from '../../../src/lib/agents/tree.js';
 import { AgentIdentityDialog } from '../components/agents/AgentIdentityDialog';
 import { dropThreadScratch } from '../components/agents/agentsChannelHost';
 import { agentFileKind } from '../components/agents/AgentMessage';
@@ -68,6 +70,12 @@ export function AiTeamPage({
   const agents: TeamAgent[] = useMemo(() => agentsQ.data ?? [], [agentsQ.data]);
   const automations = useMemo(() => automationsQ.data ?? [], [automationsQ.data]);
   const rows = useMemo(() => buildRoster(agents, automations, feed), [agents, automations, feed]);
+  const tree = useMemo(() => teamTreeOf(rows, agentsQ.data ?? []), [rows, agentsQ.data]);
+  const [rosterView, setRosterView] = useState<RosterView>(() => readRosterView(pageStorage()));
+  const pickRosterView = useCallback((v: RosterView) => {
+    setRosterView(v);
+    writeRosterView(pageStorage(), v);
+  }, []);
 
   const [selected, setSelected] = useState<string | null>(null);
   const [panel, setPanel] = useState<PanelTab | null>(null);
@@ -175,6 +183,14 @@ export function AiTeamPage({
     () => (current ? messagesOf(current.slug, automations, feed?.messages ?? []) : []),
     [current, automations, feed],
   );
+  /** Who the open teammate reports through, top first. */
+  const managers = useMemo(() => {
+    if (!current) return [];
+    return chainOf(tree, current.slug).slice(0, -1).map((slug) => ({
+      slug,
+      title: rows.find((r) => r.slug === slug)?.title ?? slug,
+    }));
+  }, [current, tree, rows]);
 
   const showList = !narrow || mobileShow === 'list';
   const showMain = !narrow || mobileShow === 'convo';
@@ -193,6 +209,7 @@ export function AiTeamPage({
       onDeleted={() => { setPanel(null); setSelected(null); }}
       onOpenFile={setOpenFile}
       onToast={setToast}
+      onSelectAgent={select}
     />
   ) : null;
 
@@ -211,6 +228,9 @@ export function AiTeamPage({
           onNew={() => startNew()}
           onToast={setToast}
           nextRun={nextRun}
+          tree={tree}
+          view={rosterView}
+          onView={pickRosterView}
         />
       )}
 
@@ -263,6 +283,8 @@ export function AiTeamPage({
             onOpenFile={setOpenFile}
             onToast={setToast}
             onBack={narrow ? () => setMobileShow('list') : undefined}
+            managers={managers}
+            onSelectAgent={select}
           />
         ) : (
           <section className="aiteam-convo">

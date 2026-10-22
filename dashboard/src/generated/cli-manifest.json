@@ -45,7 +45,9 @@
         "--soul-template",
         "--model",
         "--effort",
-        "--whiteboard"
+        "--whiteboard",
+        "--reports-to",
+        "--team"
       ]
     },
     {

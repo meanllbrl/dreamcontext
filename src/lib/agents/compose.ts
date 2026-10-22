@@ -68,6 +68,9 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     pattern: m.pattern,
     whiteboard: m.whiteboard ?? null,
     shared: m.shared,
+    // A legacy file holds no team placement: it stays a root until it is split.
+    reportsTo: null,
+    team: null,
     call: isCall
       ? {
           timeoutMinutes: m.timeoutMinutes,

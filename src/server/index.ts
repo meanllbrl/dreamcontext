@@ -154,6 +154,7 @@ import {
   handleAgentsUpdate,
   handleAgentsDelete,
   handleAgentsApprove,
+  handleAgentsPlace,
   handleAgentsPhotoGet,
   handleAgentsPhotoUpload,
 } from './routes/agents.js';
@@ -770,6 +771,7 @@ export function buildRouter(): Router {
   router.post('/api/agents/:slug/update', handleAgentsUpdate);
   router.post('/api/agents/:slug/delete', handleAgentsDelete);
   router.post('/api/agents/:slug/approve', handleAgentsApprove);
+  router.post('/api/agents/:slug/place', handleAgentsPlace);
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
   router.post('/api/agents/:slug/photo', handleAgentsPhotoUpload);
   router.get('/api/automations', handleAutomationsList);

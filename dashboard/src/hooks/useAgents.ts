@@ -53,6 +53,11 @@ export interface AgentSummary {
   /** Its home board, or null. */
   whiteboard: string | null;
   shared: boolean;
+  /** `reports_to` as written: the agent it reports to, or null (it reports to the owner). The
+   *  tree's read rules (a missing manager, a loop) live in `src/lib/agents/tree.ts`. Unhashed. */
+  reportsTo: string | null;
+  /** `team` as written; drawn only on a lead (an agent someone reports to). Unhashed. */
+  team: string | null;
   approvedForChat: boolean;
   approvedToRun: boolean;
   /** Why it may not run, when `approvedToRun` is false. */
@@ -203,6 +208,26 @@ export function useApproveAgent() {
       // The approval can lift a blocked automation's gate too.
       queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
     },
+  });
+}
+
+/** Where an agent sits in the team. `null` clears a key, an absent key leaves it. */
+export interface AgentPlacement {
+  reportsTo?: string | null;
+  team?: string | null;
+}
+
+/**
+ * Place an agent in the team (its manager, its team's name). Unhashed on the server: it never
+ * re-approves and never blocks anything; a loop or an unknown manager is refused with a 400.
+ */
+export function usePlaceAgent() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, placement }: { slug: string; placement: AgentPlacement }) =>
+      api.post<{ agent: AgentSummary }>(`/agents/${encodeURIComponent(slug)}/place`, placement).then((r) => r.agent),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agents'] }),
   });
 }
 

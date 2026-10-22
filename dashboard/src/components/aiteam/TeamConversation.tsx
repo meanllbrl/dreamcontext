@@ -80,6 +80,8 @@ export function TeamConversation({
   onBack,
   focus = null,
   onFocusDone,
+  managers = [],
+  onSelectAgent,
 }: {
   row: TeamRow;
   agent: TeamAgent;
@@ -96,6 +98,10 @@ export function TeamConversation({
   focus?: { slug: string; nonce: number } | null;
   /** The landing happened: the page forgets it, so coming back here opens at the newest end. */
   onFocusDone?: () => void;
+  /** Who it reports through, top first (the team tree's chain without itself); [] for a root. */
+  managers?: { slug: string; title: string }[];
+  /** Open another teammate (a manager on the path). */
+  onSelectAgent?: (slug: string) => void;
 }) {
   const { t } = useI18n();
   const api = useApi();
@@ -306,6 +312,16 @@ export function TeamConversation({
         )}
         <AgentAvatar of="agent" slug={slug} title={agent.title} hasPhoto={agent.hasPhoto} size={36} />
         <div className="aiteam-convo-id">
+          {managers.length > 0 && (
+            <nav className="aiteam-convo-path" aria-label={t('aiteam.path.label')} data-convo-path>
+              {managers.map((m) => (
+                <span key={m.slug} className="aiteam-convo-path-step">
+                  <button type="button" className="aiteam-convo-path-link" onClick={() => onSelectAgent?.(m.slug)}>{m.title}</button>
+                  <span aria-hidden="true">›</span>
+                </span>
+              ))}
+            </nav>
+          )}
           <span className="aiteam-convo-name">
             <span className="aiteam-convo-name-text">{agent.title}</span>
             {row.status === 'needs' && <span className="aiteam-tag aiteam-tag--warn">{t('aiteam.tag.needs')}</span>}

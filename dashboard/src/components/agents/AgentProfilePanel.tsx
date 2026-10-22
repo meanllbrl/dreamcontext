@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { RequestError } from '../../api/client';
 import { emitInstance, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
@@ -143,13 +143,15 @@ function automationWhen(a: AgentUsageAutomation, t: (k: string) => string, local
  * no-ops in the desktop app). No Run now and no Telegram on this page.
  */
 export function AgentProfilePanel({
-  slug, onClose, onEdit, onDeleted, onToast,
+  slug, onClose, onEdit, onDeleted, onToast, placement = null,
 }: {
   slug: string;
   onClose: () => void;
   onEdit: (slug: string) => void;
   onDeleted: (slug: string) => void;
   onToast: (message: string) => void;
+  /** A host's section drawn under the actions, before the soul (AI Team: "Place in team"). */
+  placement?: ReactNode;
 }) {
   const { t, locale } = useI18n();
   const { bus } = useVault();
@@ -322,6 +324,8 @@ export function AgentProfilePanel({
         <button type="button" className="agp-btn" onClick={() => onEdit(slug)}>{t('agents.profile.edit')}</button>
       </div>
       {talkError && <p className="agp-error" role="alert">{talkError}</p>}
+
+      {placement}
 
       <section className="agp-section" aria-label={t('agents.profile.soul')} data-section="soul">
         <div className="agp-head">

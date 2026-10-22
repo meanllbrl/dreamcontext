@@ -75,6 +75,11 @@ export interface AgentManifest {
   whiteboard: string | null;
   /** Private unless the literal `true`. Unhashed. */
   shared: boolean;
+  /** `reports_to`: the agent it reports to, or null (it reports to the owner). Unhashed: it
+   *  only shapes how the team is drawn (see `tree.ts`). */
+  reportsTo: string | null;
+  /** `team`: its team's name, read only when someone reports to it. Unhashed. */
+  team: string | null;
   call: AgentCallSettings;
   /** The id of the legacy automation file this agent came from, or null. On an
    *  agent synthesised from a not-yet-split legacy file it is that file's id, so
@@ -108,6 +113,16 @@ export interface AgentInput {
  * only what this patch can express.
  */
 export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'photo'>>;
+
+/**
+ * Where an agent sits in the team: its manager and its team's name. `null` clears a key,
+ * `undefined` leaves it. Never part of an identity patch: neither field is hashed, so a
+ * placement write needs no re-approval and goes through `setAgentPlacement`.
+ */
+export interface AgentPlacementPatch {
+  reportsTo?: string | null;
+  team?: string | null;
+}
 
 /**
  * Private by default: an agent file holds a prompt, so it never reaches the team

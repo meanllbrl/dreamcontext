@@ -10,6 +10,11 @@ const PATHS = {
   pause: <><line x1="9" y1="6" x2="9" y2="18" /><line x1="15" y1="6" x2="15" y2="18" /></>,
   back: <path d="m14.5 6-6 6 6 6" />,
   close: <path d="M6 6l12 12M18 6 6 18" />,
+  list: <path d="M9 7h11M9 12h11M9 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01" />,
+  tree: <><rect x="9" y="3.5" width="6" height="5" rx="1" /><rect x="3.5" y="15.5" width="6" height="5" rx="1" /><rect x="14.5" y="15.5" width="6" height="5" rx="1" /><path d="M12 8.5V12M6.5 15.5V12h11v3.5" /></>,
+  chevronDown: <path d="m6 9 6 6 6-6" />,
+  chevronRight: <path d="m9 6 6 6-6 6" />,
+  user: <><circle cx="12" cy="8.5" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></>,
 } as const;
 
 export type TeamIconName = keyof typeof PATHS;

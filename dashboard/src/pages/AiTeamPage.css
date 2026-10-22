@@ -267,3 +267,56 @@
 /* The head's name block already takes the free width (flex: 1): a spacer beside it split that
    width in two and cut the name short, at phone width down to three letters. */
 .aiteam-convo-head > .aiteam-spacer { display: none; }
+
+/* ── the team tree (List | Tree under the search) ──
+   Indent, fold and guide positions are geometry set inline by TeamRoster (one level = 22px, the
+   fold 16px); the lines and colours are here. */
+.aiteam-viewswitch { display: flex; margin: 0 var(--space-4) var(--space-3); }
+.aiteam-viewswitch .agents-switch-opt { flex: 1; justify-content: center; }
+.aiteam-section-count { font-weight: var(--font-weight-semibold); }
+.aiteam-treesec { display: flex; flex-direction: column; gap: 2px; }
+.aiteam-trow { position: relative; display: flex; align-items: flex-start; }
+.aiteam-trow > .aiteam-row { flex: 1; min-width: 0; }
+.aiteam-guide { position: absolute; top: -2px; bottom: 0; width: 0; border-left: 1px solid var(--color-border-hover); pointer-events: none; }
+.aiteam-guide--down { top: 36px; }
+.aiteam-trow:not(.aiteam-trow--root) .aiteam-guide--down { top: 32px; }
+.aiteam-elbow { position: absolute; top: -2px; height: 26px; border-left: 1px solid var(--color-border-hover); border-bottom: 1px solid var(--color-border-hover); border-bottom-left-radius: var(--radius-sm); pointer-events: none; }
+.aiteam-caret { position: relative; z-index: 1; display: inline-grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; margin-top: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-tertiary); cursor: pointer; }
+.aiteam-trow:not(.aiteam-trow--root) .aiteam-caret { margin-top: 16px; }
+.aiteam-caret:hover { color: var(--color-text); background: var(--color-bg-secondary); }
+.aiteam-caret:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
+.aiteam-caret--none { background: transparent; cursor: default; }
+.aiteam-row--sm { grid-template-columns: 32px minmax(0, 1fr) auto; padding-left: var(--space-2); }
+.aiteam-row--sm .aiteam-face { width: 32px; height: 32px; }
+.aiteam-row--sm .aiteam-face-dot { width: 10px; height: 10px; }
+.aiteam-row--sm .aiteam-row-end { padding-top: var(--space-4); }
+.aiteam-trow .aiteam-row-preview { -webkit-line-clamp: 1; }
+.aiteam-row-preview--team { display: block; white-space: nowrap; text-overflow: ellipsis; }
+.aiteam-teamchip { margin-right: var(--space-2); vertical-align: 1px; }
+.aiteam-rollup { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-rollup-warn { color: var(--color-warning-ink); font-weight: var(--font-weight-semibold); }
+.aiteam-convo-path { display: flex; flex-wrap: nowrap; gap: var(--space-1); min-width: 0; overflow: hidden; font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; }
+.aiteam-convo-path-step { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.aiteam-convo-path-step:last-child .aiteam-convo-path-link { color: var(--color-text-secondary); font-weight: var(--font-weight-semibold); }
+.aiteam-convo-path-link { overflow: hidden; text-overflow: ellipsis; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.aiteam-convo-path-link:hover { color: var(--color-text); text-decoration: underline; text-underline-offset: 2px; }
+
+/* ── a teammate's place in the team (Profile, and the Org chart's Team tab) ── */
+.aiteam-place-grid { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-3) var(--space-3); align-items: center; margin: 0; }
+.aiteam-place-grid dt { font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-place-grid dd { margin: 0; min-width: 0; font-size: var(--font-size-sm); }
+.aiteam-place-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.aiteam-place-edit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.aiteam-place-edit .agent-input { flex: 1; min-width: 140px; }
+.aiteam-person { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; height: 28px; padding: 0 var(--space-2) 0 var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-full); background: var(--color-bg); color: var(--color-text); font: inherit; font-size: var(--font-size-sm); white-space: nowrap; }
+button.aiteam-person:not(:disabled) { cursor: pointer; }
+button.aiteam-person:not(:disabled):hover { border-color: var(--color-border-hover); }
+.aiteam-person:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
+.aiteam-person--on { border-color: var(--color-text); }
+.aiteam-person--you { padding: 0 var(--space-3); color: var(--color-text-secondary); }
+.aiteam-person:disabled { color: var(--color-text); }
+.aiteam-person-name { overflow: hidden; text-overflow: ellipsis; }
+.aiteam-person .agent-av { flex-shrink: 0; }
+.aiteam-chain { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); margin-top: var(--space-3); }
+.aiteam-chain-step { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.aiteam-chain-sep { color: var(--color-text-tertiary); font-size: var(--font-size-xs); }

@@ -50,6 +50,7 @@ import { classifyAutomationSlot, isSafeAutomationSlug, parseManifestFrontmatter,
 import { composeRun, legacyPair } from './compose.js';
 import { normalizeSoul } from './soul-templates.js';
 import { validateSoul } from './soul.js';
+import { normalizeTeamLabel, readTeamLabel, wouldCycle } from './tree.js';
 import {
   AGENTS_DIR,
   AGENTS_GITIGNORE_ENTRIES,
@@ -59,6 +60,7 @@ import {
   type AgentIdentityPatch,
   type AgentInput,
   type AgentManifest,
+  type AgentPlacementPatch,
 } from './types.js';
 
 /**
@@ -143,6 +145,8 @@ export function readAgentFile(filePath: string): AgentManifest {
     pattern: extractSection(content, PATTERN_HEADING),
     whiteboard: typeof data.whiteboard === 'string' && data.whiteboard.trim() ? data.whiteboard.trim() : null,
     shared: data.shared === true,
+    reportsTo: typeof data.reports_to === 'string' && isSafeAutomationSlug(data.reports_to.trim()) ? data.reports_to.trim() : null,
+    team: readTeamLabel(data.team),
     call: callSettings,
     migratedFrom: strOrNull(data.migrated_from),
     implicit: false,
@@ -168,6 +172,8 @@ export function placeholderAgent(slug: string): AgentManifest {
     pattern: '',
     whiteboard: null,
     shared: false,
+    reportsTo: null,
+    team: null,
     call: { ...DEFAULT_CALL_SETTINGS },
     migratedFrom: null,
     implicit: false,
@@ -511,7 +517,76 @@ export function removeAgent(contextRoot: string, slug: string, opts: { home?: st
     }
   }
   revokeAgent(dirname(contextRoot), slug, automationFileTarget(contextRoot, slug), opts.home);
+  reparentReports(contextRoot, slug, agent.reportsTo);
   return { removed: true };
+}
+
+/**
+ * Place an agent in the team: its manager (`reports_to`) and its team's name (`team`).
+ * Frontmatter only, and UNHASHED: nothing is re-approved and nothing is blocked by it.
+ *
+ * Refused: an agent synthesised from an unsplit legacy file (it has no agent file to carry
+ * the keys), a manager that is itself, unknown here, or below it (a cycle), and a team name
+ * that is not one short line. `null` removes a key; the file never carries an empty one.
+ */
+export function setAgentPlacement(contextRoot: string, slug: string, patch: AgentPlacementPatch): AgentManifest {
+  const agent = getAgent(contextRoot, slug);
+  if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  if (agent.implicit) {
+    throw new AutomationError(`"${slug}" still lives in its old automation file, which cannot hold a place in the team: run \`dreamcontext update\` (it splits old files into an agent and its routine), then try again.`);
+  }
+  const fields: Record<string, unknown> = {};
+  if (patch.reportsTo !== undefined) {
+    const manager = patch.reportsTo === null ? null : patch.reportsTo.trim();
+    if (manager === null || manager === '' || manager === 'none') {
+      fields.reports_to = null;
+    } else {
+      if (!isSafeAutomationSlug(manager)) throw new AutomationError(`"${manager}" is not an agent name.`);
+      if (manager === slug) throw new AutomationError('An agent cannot report to itself.');
+      const all = listAgents(contextRoot);
+      if (!all.some((a) => a.slug === manager)) throw new AutomationError(`No agent named "${manager}" in this project.`);
+      if (wouldCycle(all, slug, manager)) {
+        throw new AutomationError(`"${manager}" already reports to "${slug}" (directly or further down): that would make a loop.`);
+      }
+      fields.reports_to = manager;
+    }
+  }
+  if (patch.team !== undefined) {
+    try {
+      fields.team = normalizeTeamLabel(patch.team);
+    } catch (err) {
+      throw new AutomationError((err as Error).message);
+    }
+  }
+  if (Object.keys(fields).length === 0) return agent;
+  writePlacement(agent.path, fields);
+  return getAgent(contextRoot, slug) as AgentManifest;
+}
+
+/** Set or (with null) remove frontmatter keys of an agent file, every other byte kept as the
+ *  frontmatter round-trip keeps it. */
+function writePlacement(path: string, fields: Record<string, unknown>): void {
+  assertRegularFile(path);
+  const { data, content } = parseManifestFrontmatter(readFileSync(path, 'utf-8'));
+  const next: Record<string, unknown> = { ...data };
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === null) delete next[k];
+    else next[k] = v;
+  }
+  rewriteManifestText(path, matter.stringify(content, next));
+}
+
+/** After `slug` is gone: whoever reported to it reports to its manager now (or to the owner),
+ *  so a deleted lead never strands its reports at the top with a dangling link. */
+function reparentReports(contextRoot: string, slug: string, manager: string | null): void {
+  for (const a of listAgents(contextRoot)) {
+    if (a.implicit || a.reportsTo !== slug) continue;
+    try {
+      writePlacement(a.path, { reports_to: manager && manager !== a.slug ? manager : null });
+    } catch {
+      // an unwritable file keeps its dangling link, which the reader draws as a root
+    }
+  }
 }
 
 /** Flip the agent's `shared` flag — frontmatter only. The `.gitignore`

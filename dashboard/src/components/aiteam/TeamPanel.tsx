@@ -12,6 +12,7 @@ import { openTrainChat } from '../../lib/automationRunChat';
 import { runDuration } from '../agents/agentRunState';
 import type { TeamAutomation } from './teamModel';
 import { TeamIcon } from './TeamIcons';
+import { PlaceInTeam } from './PlaceInTeam';
 import '../agents/AutomationDialog.css';
 import '../agents/AgentMemberCard.css';
 import '../agents/AgentProfilePanel.css';
@@ -36,6 +37,7 @@ export function TeamPanel({
   onDeleted,
   onOpenFile,
   onToast,
+  onSelectAgent,
 }: {
   slug: string;
   title: string;
@@ -48,6 +50,8 @@ export function TeamPanel({
   onDeleted: () => void;
   onOpenFile: (path: string) => void;
   onToast: (msg: string) => void;
+  /** Open another teammate (a chip in "Place in team"). */
+  onSelectAgent?: (slug: string) => void;
 }) {
   const { t } = useI18n();
   const tabs: { id: PanelTab; label: string; count?: number }[] = [
@@ -79,7 +83,8 @@ export function TeamPanel({
         </button>
       </div>
       {tab === 'profile' && (
-        <AgentProfilePanel slug={slug} onClose={onClose} onEdit={onEdit} onDeleted={onDeleted} onToast={onToast} />
+        <AgentProfilePanel slug={slug} onClose={onClose} onEdit={onEdit} onDeleted={onDeleted} onToast={onToast}
+          placement={<PlaceInTeam slug={slug} onOpen={onSelectAgent} onToast={onToast} />} />
       )}
       {tab === 'routines' && (
         <div className="aiteam-panel-body">
