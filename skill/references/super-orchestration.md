@@ -155,6 +155,7 @@ block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn,
 - One owner per job: the same job once ran in two sessions and had to be rolled back. A job moving
   to a new child goes through `delegate --succeeds <old child>` (card, brief and task pass on, the old
   child is ended); any other new child for it waits until `super state` shows its old owner ended.
+- A set of pictures is ONE group: `super open image <a> <b> …`, one call.
 - `super read` gives the child's last reply whole; for the state of a long job, read its task and
   its git log as well.
 - Only one integrator updates the test app (the build the owner tries); no other child installs

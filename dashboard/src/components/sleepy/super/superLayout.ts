@@ -768,6 +768,9 @@ export interface LayoutPatch {
   leave?: string[];
   /** Groups dissolved (the panel's Ungroup). */
   ungroup?: string[];
+  /** Cards or groups the owner opened (a group's panel, full screen): the server's tidying
+   *  counts them as touched. Changes nothing on the record. */
+  touch?: string[];
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));

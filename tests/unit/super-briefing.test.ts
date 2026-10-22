@@ -108,10 +108,16 @@ describe('superBriefing', () => {
   // The owner, 2026-10-22 (field d8b7741d): an awaited=owner job's every result reaches him, the
   // second and later too (": every one, the second and later too.", ~40 characters).
   const AWAITED_EVERY_RESULT_2026_10_22 = 40;
+  // The owner, 2026-10-22 (Tilki stage, five scattered mockups): a set of pictures is ONE group
+  // (one bullet under "Show, don't tell", ~250 characters).
+  const IMAGE_GROUP_2026_10_22 = 260;
+  // The owner, 2026-10-22 (19:39): cards carry human names (--title/--titles) and what is decided
+  // or finished goes to Others; the stage tidies the rest (one bullet, ~300 characters).
+  const CARD_NAMES_TIDY_2026_10_22 = 320;
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22);
       expect(b).toContain('small|medium|large|wide');
       expect(b).toContain('409 owner_sized');
     }

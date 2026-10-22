@@ -24,6 +24,8 @@ import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { NARROW_STAGE_PX, anchoredPos, fitsNow, isGroupId, planStage, sizeOf, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
+import { cardTitle } from './superTitles';
+import { useTasks } from '../../../hooks/useTasks';
 import type { CardFullscreen } from './SuperContainer';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
 import { NewSessionButton } from './NewSessionButton';
@@ -199,7 +201,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
 
   const byId = useMemo(() => new Map(state.containers.map((c) => [c.id, c] as const)), [state.containers]);
   const groupsById = useMemo(() => new Map(state.groups.map((g) => [g.id, g] as const)), [state.groups]);
-  const titleOf = useCallback((c: Container) => (c.kind === 'chat' ? props.titleFor(c.ref) : c.kind === 'team' ? state.team.find((j) => j.id === c.ref)?.member ?? c.ref : c.title || c.ref), [props.titleFor, state.team]);
+  // Every card's readable name (superTitles.ts): a task by its title, a file by its name, never a path or slug.
+  const { data: tasks } = useTasks();
+  const titleOf = useCallback((c: Container) => cardTitle(c, {
+    chat: props.titleFor,
+    team: (ref) => state.team.find((j) => j.id === ref)?.member,
+    task: (slug) => tasks?.find((x) => x.slug === slug)?.name,
+  }), [props.titleFor, state.team, tasks]);
   /** A team card's job and its status now (the view's `teamLive`); undefined when the job is gone. */
   const teamCardOf = useCallback((c: Container): TeamCard | undefined => {
     if (c.kind !== 'team') return undefined;
@@ -222,6 +230,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
     if (openGroup === 'others' ? !plan.others.length : plan.cards[openGroup]?.where !== 'float') setOpenGroup(null);
   }, [openGroup, plan]);
   const closePanel = useCallback(() => setOpenGroup(null), []);
+  // The owner opened a group (its panel): touched, so the stage's tidying leaves it (tidy.ts).
+  useEffect(() => { if (openGroup && openGroup !== 'others') onLayout({ touch: [openGroup] }); }, [openGroup]); // eslint-disable-line react-hooks/exhaustive-deps
   // A stage that is no longer on screen (the overlay folded by a click or the hotkey) closes its
   // panel: a hidden panel would keep Escape and focus for the whole app.
   useEffect(() => { if (!props.visible) setOpenGroup(null); }, [props.visible]);
@@ -238,6 +248,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const [lru, setLru] = useState<string[]>([]);
   // What is open full screen (one at a time); its card gives up its own frame meanwhile.
   const [full, setFull] = useState<{ id: string; subject: CardFullscreen } | null>(null);
+  // A card opened full screen is touched too (tidy.ts).
+  useEffect(() => { if (full) onLayout({ touch: [full.id] }); }, [full?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const webOnScreen = props.visible
     // A small or medium floating tile shows a page's title; the frame lives side by side,
     // presented, or in a large/wide floating card (owner 2026-10-22), within the same budget.
