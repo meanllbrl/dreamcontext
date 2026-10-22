@@ -453,19 +453,19 @@ async function main() {
       await stageSettled(page);
     await shot(page, '05-event-line-lights-row.png');
     } else ok('an event line\'s name lights its agenda row', false, 'no event line name in the centre');
-    // Waiting on you: a child's item shows that child side by side.
+    // Waiting on you: a child's question opens its card in the centre chat, as the band's Answer
+    // does (soru-atomik: the child's own AskUserQuestion card, answered through the child).
+    await page.locator('[data-super-slot="centre"] .chat-scroll, [data-super-slot="centre"] [data-chat-scroll]').first().evaluate((el) => { el.scrollTop = 0; }).catch(() => {});
     await rowsOf(page, 'waiting').filter({ hasText: 'Fiyat sayfası' }).locator('.super-agenda-row-btn').click();
-    ok('a waiting child\'s row shows that child side by side', await until(page, async () => {
-      const r = record();
-      const card = (r.containers ?? []).find((c) => c.id === r.view?.card);
-      return r.view?.mode === 'half' && !!card && (r.children?.[card.ref]?.brief ?? '') !== '' && /Fiyat/.test(JSON.stringify(card) + (r.children?.[card.ref]?.brief ?? '') + await page.locator('.super-card-head').allInnerTexts().then((t) => t.join(' ')));
-    }, 8000), JSON.stringify(record().view));
+    ok('a waiting child\'s question row brings its card in the centre into view', await until(page, async () => page.evaluate(() => {
+      const card = [...document.querySelectorAll('[data-super-slot="centre"] [data-testid="super-question-card"][data-kind="question"]')].pop();
+      if (!card) return false;
+      const r = card.getBoundingClientRect();
+      return r.height > 0 && r.top >= 0 && r.bottom <= innerHeight;
+    }), 8000));
     await page.mouse.move(5, 5);
-    ok('…the stage settles with that child beside the centre', await stageSettled(page) && await page.evaluate(() => {
-      const c = document.querySelector('.super-centre')?.getBoundingClientRect();
-      return [...document.querySelectorAll('[data-testid="super-container"]')].some((e) => { const r = e.getBoundingClientRect(); return c && r.width > 200 && r.left >= c.right - 1; });
-    }));
-    await shot(page, '06-waiting-child-side-by-side.png');
+    await stageSettled(page);
+    await shot(page, '06-waiting-child-question-card.png');
     await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
     await until(page, async () => record().view?.mode === 'float', 8000);
     await motionIdle(page);

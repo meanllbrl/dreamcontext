@@ -118,14 +118,18 @@ export function SuperAgenda({ state, look, compact = false, canShowChild, onShow
     return null;
   };
 
+  // A question waiting on the owner (the super's own, a child's it escalated) opens its card in the
+  // centre chat, where the band's Answer takes him too: the child shown beside it is read-only.
+  const isQuestion = (r: JobRow) => r.section === 'waiting' && !!r.item && r.chip !== 'permission' && r.chip !== 'queued';
   const press = (r: JobRow) => {
     if (r.section === 'next') return;
-    if (r.sid && canShowChild(r.sid)) onShowChild(r.sid);
+    if (isQuestion(r)) onShowQuestion(r.item as string);
+    else if (r.sid && canShowChild(r.sid)) onShowChild(r.sid);
     else if (!r.sid && r.item) onShowQuestion(r.item);
     if (r.section === 'done' && r.fresh && r.sid && r.finishAt !== undefined) void post([{ id: r.sid, at: r.finishAt }]);
     if (compact) closePop();
   };
-  const clickable = (r: JobRow) => r.section !== 'next' && (r.sid ? canShowChild(r.sid) || (r.section === 'done' && !!r.fresh) : !!r.item);
+  const clickable = (r: JobRow) => r.section !== 'next' && (isQuestion(r) || (r.sid ? canShowChild(r.sid) || (r.section === 'done' && !!r.fresh) : !!r.item));
 
   const full = (
     <>
