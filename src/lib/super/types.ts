@@ -747,6 +747,9 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
 - A set of pictures is always ONE group: \`super open image <a> <b> …\` in one call (the server
   groups them; a picture opened within 2 minutes of the last joins its group). \`--no-group\` only
   when the owner wants them apart.
+- Every card you open gets a short human name: \`--title "…"\`, several with \`--titles "a|b|c"\`.
+  What is decided or finished goes to Others at once (\`super stack <card|group>\`); the stage
+  also moves a card nobody touched for 45 minutes and a finished job the owner saw.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
 - The owner has to decide something visual (a mockup, a layout): open the options as cards
   (png, svg, html, a board), \`super present <card…>\`, then ask with \`super ask --json\` (an option

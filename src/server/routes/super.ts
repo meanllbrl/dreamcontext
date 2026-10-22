@@ -58,6 +58,7 @@ import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp 
 import { readMachineFacts } from './machine.js';
 import { tmpdir } from 'node:os';
 import { planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
+import { ensureTidy, touchCards, type TidyIo } from '../../lib/super/tidy.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -310,6 +311,9 @@ function mcpRefused(root: string, job: Job, res: ServerResponse): boolean {
   refuse(res, 400, 'unknown_mcp', `no MCP server named ${missing.join(', ')}; this project has: ${[...known.keys()].join(', ') || 'none'}`, { known: [...known.keys()] });
   return true;
 }
+
+/** The stage's own tidying (tidy.ts) reads and writes the record the way every verb does. */
+const TIDY_IO: TidyIo = { read: (root) => readSuperState(root, superSanitizeOpts()), write: (root, fn) => writeSuper(root, fn) };
 
 /** The super's last `open image`, per vault (image-group.ts): the next one within the window
  *  joins its group. In memory: a restart only ends a chain. */
@@ -645,14 +649,21 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const { shape: shapeArg, size: sizeArg } = look;
     const rawRefs: unknown[] = Array.isArray(b.refs) ? b.refs : [b.ref];
     if (!rawRefs.length || rawRefs.length > MAX_OPEN_REFS) { refuse(res, 400, 'invalid_args', `name 1 to ${MAX_OPEN_REFS} refs of one kind`); return; }
+    // `--titles "a|b|c"`: one label per ref, in order (an empty one leaves that card's label).
+    const rawTitles: unknown[] = Array.isArray(b.titles) ? b.titles : [];
+    if (rawTitles.length > rawRefs.length || rawTitles.some((t) => typeof t !== 'string')) { refuse(res, 400, 'invalid_args', 'titles: at most one label per ref, in the refs\' order'); return; }
     const refs: string[] = [];
-    for (const raw of rawRefs) {
+    const titles = new Map<string, string>();
+    for (const [i, raw] of rawRefs.entries()) {
       const r = refFor(c, kind as ContainerKind, raw);
       if ('error' in r) { refuse(res, 400, 'invalid_ref', r.error); return; }
       if (kind === 'insight' && !insightExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_insight', `no insight named ${r.ref} (\`dreamcontext insight list\`)`); return; }
       if (!refs.includes(r.ref)) refs.push(r.ref);
+      const t = oneLine(String(rawTitles[i] ?? '')).slice(0, MAX_TITLE).trim();
+      if (t && !titles.has(r.ref)) titles.set(r.ref, t);
     }
     const title = refs.length === 1 && str(b.title) ? oneLine(str(b.title) as string).slice(0, MAX_TITLE) : undefined;
+    const titleOf = (ref: string): string | undefined => title ?? titles.get(ref);
     const groupName = str(b.group) ? cleanGroupName(b.group) : '';
     if (str(b.group) && !groupName) { refuse(res, 400, 'invalid_args', 'a group needs a name'); return; }
     // `--no-group`: the cards stand alone and the picture chain ends here.
@@ -709,7 +720,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
             if (next === 'small') delete have.size; else have.size = next;
           }
           have.place = 'float';
-          if (title) have.title = title;
+          if (titleOf(ref)) have.title = titleOf(ref);
           return;
         }
         const size = atLeastSize(sizeArg ?? 'small', minSizeFor(kind as ContainerKind));
@@ -717,7 +728,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
           id: ids[i], kind: kind as ContainerKind, ref,
           shape: shapeArg ?? defaultShape(kind as ContainerKind),
           ...(size !== 'small' ? { size } : {}),
-          place: 'float', ...(title ? { title } : {}),
+          place: 'float', ...(titleOf(ref) ? { title: titleOf(ref) } : {}),
         });
       });
       // A page the agent opens is shown side by side at once (owner 2026-10-22: "if it adds a
@@ -746,6 +757,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (refused) { tooMany(res, state); return; }
     const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
     if (made.length !== ids.length) { tooMany(res, state); return; }
+    // Opened by the super: touched now (tidy.ts), the group it went into too.
+    touchCards(root, groupId ? [...ids, groupId] : ids);
     const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
     ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view });
   },
@@ -1776,6 +1789,7 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
   }
   const body = expanded.body;
   const cue = CUED_VERBS.has(verb) ? captureOk(res) : null;
+  ensureTidy(caller.who.contextRoot, TIDY_IO);
   try {
     await SUPER_VERB_HANDLERS[verb](caller, body as Record<string, unknown>, res);
   } catch (err) {
@@ -1841,6 +1855,7 @@ export function requireSuperOwner(req: IncomingMessage, res: ServerResponse): bo
 /** GET /api/super/state — the vault's record, for the window's first paint (pushed after). */
 export async function handleSuperStateGet(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
   if (!requireSuperOwner(req, res)) return;
+  ensureTidy(contextRoot, TIDY_IO);
   try {
     const state = await readSuperState(contextRoot, superSanitizeOpts());
     sendJson(res, 200, superStateView(contextRoot, await settleApprovals(contextRoot, state)));
@@ -1873,6 +1888,14 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     const closed = body.closed === undefined ? [] : body.closed;
     if (!Array.isArray(cards) || !Array.isArray(closed) || cards.length > MAX_CONTAINERS || closed.length > MAX_CONTAINERS) {
       sendError(res, 400, 'invalid_body', `cards and closed must be lists of at most ${MAX_CONTAINERS}`);
+      return;
+    }
+    // The owner opened these (a group's panel, a card full screen): touched now (tidy.ts).
+    const touch = Array.isArray(body.touch) ? (body.touch as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
+    if (touch.length) touchCards(contextRoot, touch);
+    // A touch alone changes nothing on the record: no write.
+    if (Object.keys(body).every((k) => k === 'touch')) {
+      sendJson(res, 200, { state: superStateView(contextRoot, await readSuperState(contextRoot, superSanitizeOpts())) });
       return;
     }
     const view = body.view;
@@ -2022,6 +2045,7 @@ function ownerRoute(verb: SuperOwnerVerb) {
   return async (req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> => {
     if (!requireSuperOwner(req, res)) return;
     const body = (await parseJsonBody(req)) ?? {};
+    ensureTidy(contextRoot, TIDY_IO);
     try {
       await SUPER_OWNER_HANDLERS[verb](req, res, contextRoot, body as Record<string, unknown>);
     } catch (err) {
