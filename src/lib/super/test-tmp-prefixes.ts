@@ -4,6 +4,7 @@
  * named by one of these (plus mkdtemp's 6-character suffix): never anyone else's.
  */
 export const TEST_TMP_PREFIXES: readonly string[] = [
+  'ask-cli-',
   'assistant-aab-home-',
   'assistant-agent-home-',
   'assistant-autonomy-home-',
@@ -535,6 +536,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-groups-home-',
   'super-handover-',
   'super-handover-home-',
+  'super-held-',
+  'super-held-home-',
   'super-hold-home-',
   'super-inbox-',
   'super-inbox-home-',

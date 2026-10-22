@@ -7,6 +7,7 @@ import { error, info, success } from '../../lib/format.js';
 import { HANDOFF_FIELDS, contextHandoffGaps, formatGaps, type HandoffFields } from '../../lib/handoff-readiness.js';
 import { handoffKey, writeHandoffRecord, type HandoffRecord } from '../../lib/context-watch.js';
 import { superHandoffContext } from '../../lib/super/handoff-task.js';
+import { buildAskBody, collectOption, type AskCliOpts } from '../../lib/super/ask-cli.js';
 import { SUPER_HANDOFF_REL, SUPER_HANDOFF_TASK, renderSuperHandoffEntry, writeSuperHandoff } from '../../lib/super/handoff-file.js';
 import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
 
@@ -247,11 +248,20 @@ export function registerSuperCommand(program: Command): void {
     .description('The pooled jobs (title, note, task, held, maybe started)')
     .action(() => run('pool-list', {}));
 
-  s.command('ask <text>')
-    .description('Ask the owner YOUR own question (one at a time); it reaches him like an escalation and never holds your turn (AskUserQuestion does: never use it). Its answer is his next message to you; the reply says whether it `reached` him')
-    .option('--options <a|b>', 'Up to 4 short answers (each at most 24 characters), separated by |')
-    .action((text: string, o: { options?: string }) =>
-      run('ask', { text, ...(o.options ? { options: o.options.split('|').map((x) => x.trim()) } : {}) }));
+  s.command('ask [text]')
+    .description('Ask the owner YOUR own question (one at a time), in AskUserQuestion\'s own shape: his chat draws it with the same card any agent\'s question gets (title, question, why, options with descriptions or previews, several picks, a note, "Unclear"). It never holds your turn (AskUserQuestion does: never use it). His answer comes back as his next message, `[super answer] …`; the reply says whether it `reached` him')
+    .option('--json <spec>', 'The whole question as AskUserQuestion input: {"title":"…","questions":[{"question":"…","header":"…","description":"…","multiSelect":false,"options":[{"label":"…","description":"…","preview":"<html>"}]}],"metadata":{"source":"swipe"}}; inline, @file, or - for stdin')
+    .option('--title <line>', 'The context strip: the work and the decision point')
+    .option('--description <line>', 'Why you ask now and what changes with the answer')
+    .option('--header <chip>', 'A short chip for the question')
+    .option('--multi', 'He may pick several options')
+    .option('--option <label::description>', 'One option (repeatable), its description after ::', collectOption)
+    .option('--options <a|b>', 'Short answers separated by | (the old form; each at most 24 characters)')
+    .action((text: string | undefined, o: AskCliOpts) => {
+      let body: Record<string, unknown>;
+      try { body = buildAskBody(text, o); } catch (err) { usage((err as Error).message); return; }
+      return run('ask', body);
+    });
 
   s.command('merge <children...>')
     .description('Merge the branch each child\'s worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)')

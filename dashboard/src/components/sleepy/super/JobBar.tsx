@@ -1,16 +1,15 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
-import { raiseAskAttention } from '../../../lib/attention';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import type { SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission } from '../chatSession';
 import {
-  headAlarmOnce, optionsFit, permissionSummary, superJobs, type JobLook, type JobSection, type OptionsFit,
+  optionsFit, permissionSummary, superJobs, type JobLook, type JobSection, type OptionsFit,
 } from './superHandover';
 import {
-  claimOwnerAnswer, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerOptionsOf, ownerPendingPresent,
-  recordOwnerAnswer, releaseOwnerAnswer, sendOwnerAnswer, useOwnerAnswerVersion,
+  claimOwnerAnswer, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent,
+  releaseOwnerAnswer, useOwnerAnswerVersion,
 } from './superQuestions';
 import type { Rect } from './superLayout';
 import { JobList, JOB_SECTIONS } from './JobList';
@@ -39,16 +38,20 @@ import './JobBar.css';
  * — no new privileged route, and the Super Agent's words never caption it. The server resolves
  * the item when the child leaves `asking`.
  *
- * The ONE alarm (D16): the first time an item the owner must answer is the head, the strip raises
- * `raiseAskAttention` once (`headAlarmOnce`: a remount does not ring it again); a question's
- * banner is the server's (lib/super/owner-question.ts), so it reaches him off this stage too. Children raise nothing themselves while handed over.
+ * A QUESTION (the super's own `ask`, a child's question it escalated) is its words and one
+ * Answer button that brings its card in the super chat into view: the chat's own AskUserQuestion
+ * card answers it, never a second set of buttons here (owner 2026-10-22).
  *
- * ONE answer per head item: the first click on Allow, Deny or an option latches that item, so a
+ * The ONE alarm (D16) is not raised here: AgentSurface raises it (`superHeadAlarm`), where the
+ * record lives whether or not this stage is up, so a question reaches the owner on any page the
+ * way any agent's question does. A question's banner off this project is the server's
+ * (lib/super/owner-question.ts). Children raise nothing themselves while handed over.
+ *
+ * ONE answer per permission: the first click on Allow or Deny latches that item, so a
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
- * request re-sent by the server (the answer never landed), reopens it. The latch is the one the
- * super chat's question card shares (superQuestions.ts): a pick in either place locks both.
+ * request re-sent by the server (the answer never landed), reopens it.
  */
-export function JobBar({ state, head, waiting, vault, rect, listRect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild, canShowChild, onOpenTask }: {
+export function JobBar({ state, head, waiting, rect, listRect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild, canShowChild, onOpenTask }: {
   state: SuperStateView;
   head: SuperQueueItem | null;
   /** The top band above the centre (planStage's `queue`). */
@@ -62,6 +65,7 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   onOpenTask: (slug: string) => void;
   /** How many items wait on the owner in all (the head included). */
   waiting: number;
+  /** The project (no longer read here: the alarm moved to AgentSurface; kept for the caller). */
   vault: string;
   sessionFor: (claudeId: string) => ChatSession | undefined;
   titleFor: (claudeId: string) => string;
@@ -93,9 +97,8 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   // keyed on everything the row holds (the head, the who, the "n more", the option labels, the
   // locale), so a content change inside a full-width pill, which resizes no box, starts shown
   // and is measured again; measured in a layout effect on every show/hide too, before paint.
-  const optionLabels = head && head.kind === 'question' ? ownerOptionsOf(head, child) : [];
   const fitKey = answerKey === null ? null
-    : [answerKey, titleFor(head?.sessionId ?? ''), waiting > 1 ? waiting - 1 : 0, t('super.queue.reply'), ...optionLabels, ...(head?.kind === 'ask' ? head.options ?? [] : [])].join('\u0001');
+    : [answerKey, titleFor(head?.sessionId ?? ''), waiting > 1 ? waiting - 1 : 0, t('super.queue.reply'), t('super.queue.answer')].join('\u0001');
   const headRef = useRef<HTMLDivElement | null>(null);
   const [showOptions, setShowOptions] = useState(true);
   const showRef = useRef(showOptions);
@@ -121,22 +124,6 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
     return () => { live = false; ro.disconnect(); };
   }, [fitKey, showOptions]);
 
-  const superId = superSession?.claudeId ?? null;
-  const serverBanner = !!head && (state.bannered ?? []).includes(head.id);
-  useEffect(() => {
-    if (!head || !headAlarmOnce(vault, head)) return;
-    // The banner opens the super stage (`linkOpensSuperStage`). One the server posted (it
-    // names it: lib/super/owner-question.ts) is not posted twice.
-    raiseAskAttention({
-      banner: !serverBanner,
-      source: vault,
-      detail: head.kind === 'permission' ? t('super.queue.permissionAlarm')
-        : head.kind === 'approval' ? t('super.queue.approval').replace('{name}', head.member ?? '')
-          : (head.ownerText ?? t('super.queue.escalatedAlarm')),
-      sessionId: superId,
-    });
-  }, [head, vault, superId, t, serverBanner]);
-
   // The list: closed by default; a count, or a name in an event line (superJobsStore), opens it.
   const [open, setOpen] = useState<{ section: JobSection | null; row: string | null } | null>(null);
   useEffect(() => onOpenJobRow((row) => setOpen({ section: null, row })), []);
@@ -158,10 +145,10 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
           {head.kind === 'permission'
             ? <PermissionHead item={head} child={child} locked={locked} answerOnce={answerOnce} />
             : head.kind === 'ask'
-              ? <AskHead item={head} superSession={superSession} locked={locked} answerOnce={answerOnce} onReplyToSuper={onReplyToSuper} showOptions={showOptions} />
+              ? <QuestionHead item={head} text={head.ownerText ?? ''} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'approval'
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
-              : <EscalatedHead item={head} child={child} locked={locked} answerOnce={answerOnce} onReplyToSuper={onReplyToSuper} showOptions={showOptions} />}
+              : <QuestionHead item={head} text={head.ownerText ?? t('super.queue.escalatedAlarm')} onReplyToSuper={onReplyToSuper} />}
           {waiting > 1 && <span className="super-queue-more">{t('super.queue.more').replace('{n}', String(waiting - 1))}</span>}
         </div>
       )}
@@ -218,57 +205,39 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
   );
 }
 
-/** The answer an `ask` option sends: one definition, shared with the chat card. */
-export { askAnswerText } from './superQuestions';
-
 /**
- * The super agent's OWN question (`super ask`, D7): its text, its validated options as buttons
- * and Reply. Each option button measures its own overflow (r2-S): a label that does not fit
- * whole hides every option (Reply only), never a cut label; no `max-width` ellipsis here. A
- * click sends exactly the drawn label, framed, into the super chat (a running turn steers).
+ * A question the owner answers (the super's own `ask`, or a child's question it escalated): its
+ * words, and ONE button that takes him to its card in the super chat, the chat's own
+ * AskUserQuestion card (SuperQuestionCard.tsx). The bar draws no answers of its own: a question
+ * is asked one way, in one place (owner 2026-10-22).
  */
-function AskHead({ item, superSession, locked, answerOnce, onReplyToSuper, showOptions }: {
-  item: SuperQueueItem;
-  superSession: ChatSession | undefined;
-  locked: boolean;
-  answerOnce: (send: () => boolean | void) => void;
-  onReplyToSuper: () => void;
-  showOptions: boolean;
-}) {
+function QuestionHead({ item, text, onReplyToSuper }: { item: SuperQueueItem; text: string; onReplyToSuper: () => void }) {
   const { t } = useI18n();
-  const options = item.options ?? [];
-  const btns = useRef<Array<HTMLButtonElement | null>>([]);
-  const [cut, setCut] = useState(false);
-  useLayoutEffect(() => {
-    setCut(btns.current.some((b) => !!b && b.scrollWidth > b.clientWidth + 1));
-  }, [options.join('\u0001'), showOptions]);
-  // The framed label into the super chat, never a child (sendOwnerAnswer: a running turn steers).
-  const send = (label: string) => {
-    const sent = sendOwnerAnswer(item, label, { superSession, child: undefined });
-    if (sent) recordOwnerAnswer(item.id, label);
-    return sent;
-  };
   return (
     <>
-      <QueueText full={item.ownerText ?? ''}>{item.ownerText ?? ''}</QueueText>
+      <QueueText full={text}>{text}</QueueText>
       <span className="super-queue-actions">
-        {showOptions && !cut && superSession && options.map((label, i) => (
-          <button
-            key={label}
-            ref={(el) => { btns.current[i] = el; }}
-            type="button"
-            className="super-queue-btn super-job-option"
-            data-testid="super-ask-option"
-            disabled={locked}
-            onClick={() => answerOnce(() => send(label))}
-          >{label}</button>
-        ))}
-        <button type="button" className="super-queue-btn super-queue-btn--reply" onClick={onReplyToSuper}>
-          {t('super.queue.reply')}
-        </button>
+        <button
+          type="button"
+          className="super-queue-btn super-queue-btn--option"
+          data-testid="super-queue-answer"
+          onClick={() => { if (!showQuestionCard(item.id)) onReplyToSuper(); }}
+        >{t('super.queue.answer')}</button>
       </span>
     </>
   );
+}
+
+/** Bring the question's card in the super chat into view and put the keyboard on it. False when
+ *  no card is drawn (the chat not on screen): the caller focuses the composer instead. */
+function showQuestionCard(itemId: string): boolean {
+  const card = [...document.querySelectorAll<HTMLElement>('[data-testid="super-question-card"]')].find((el) => el.dataset.item === itemId);
+  if (!card) return false;
+  const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  // The card's page is its focus target (SurveyCard focuses it on paging): its keys work at once.
+  card.querySelector<HTMLElement>('.chat-surveycard-page:not([inert])')?.focus({ preventScroll: true });
+  return true;
 }
 
 /**
@@ -360,46 +329,6 @@ function ApprovalHead({ item, onReplyToSuper }: { item: SuperQueueItem; onReplyT
           disabled={!member}
           onClick={() => requestOpenAgents({ slug: member })}
         >{t('super.queue.openTeam')}</button>
-        <button type="button" className="super-queue-btn super-queue-btn--reply" onClick={onReplyToSuper}>
-          {t('super.queue.reply')}
-        </button>
-      </span>
-    </>
-  );
-}
-
-function EscalatedHead({ item, child, locked, answerOnce, onReplyToSuper, showOptions }: {
-  item: SuperQueueItem;
-  child: ChatSession | undefined;
-  locked: boolean;
-  answerOnce: (send: () => boolean | void) => void;
-  onReplyToSuper: () => void;
-  /** False when the options do not all fit at full width: Reply only (`optionsFit`). */
-  showOptions: boolean;
-}) {
-  const { t } = useI18n();
-  // A single-choice single question gets its options as buttons: one click answers the child
-  // exactly as its own card would (sendOwnerAnswer). Anything richer is answered by talking to
-  // the Super Agent.
-  const options = ownerOptionsOf(item, child);
-  return (
-    <>
-      <QueueText full={item.ownerText ?? t('super.queue.escalatedAlarm')}>{item.ownerText ?? t('super.queue.escalatedAlarm')}</QueueText>
-      <span className="super-queue-actions">
-        {showOptions && child && options.map((label) => (
-          <button
-            key={label}
-            type="button"
-            className="super-queue-btn super-queue-btn--option"
-            title={label}
-            disabled={locked}
-            onClick={() => answerOnce(() => {
-              const sent = sendOwnerAnswer(item, label, { superSession: undefined, child });
-              if (sent) recordOwnerAnswer(item.id, label);
-              return sent;
-            })}
-          >{label}</button>
-        ))}
         <button type="button" className="super-queue-btn super-queue-btn--reply" onClick={onReplyToSuper}>
           {t('super.queue.reply')}
         </button>

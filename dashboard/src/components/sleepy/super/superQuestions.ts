@@ -1,23 +1,29 @@
 import { useSyncExternalStore } from 'react';
-import type { SuperQueueItem } from '../../../lib/superTypes';
+import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
+import type { QuestionSpec } from '../../../lib/chatProtocol';
 import type { ChatItem, ChatSession, ChatToolItem, PendingQuestion } from '../chatSession';
 import { splitShellSegments, tokenizeShell } from '../chat/dreamCommand';
 import { toolResultText } from '../chat/chatEntities';
-import { OPEN_LATCH, latchClick, latchSeen, superAnswerPicks, superEventOf, type AnswerLatch } from './superHandover';
+import { OPEN_LATCH, latchClick, latchSeen, type AnswerLatch } from './superHandover';
 
 /**
- * The Super Agent's question to the owner, IN the super chat (owner 2026-10-21 18:17: "soruyu hep
- * chatta sorsun"). Before this the options were buttons on the job bar only; the chat showed the
- * question as prose and a "Super ask" tool row. Now the question is a card under the turn that
- * asked it, its options buttons, answered exactly where the job bar answers: the super's own
- * `super ask` -> "Answer to your question: <label>" into the super chat; a child's question it
- * escalated with `super queue ask` -> the CHILD (`answerQuestion`). The bar row stays.
+ * The Super Agent's question to the owner, asked EXACTLY the way any agent asks (owner
+ * 2026-10-22: "atomik olarak normal agent nasıl soru soruyorsa Super Agent de öyle sormalı").
+ * There is no super question card: the chat mounts its own AskUserQuestion card (`SurveyCard`)
+ * over the question through a two-method adapter (SuperQuestionCard.tsx), the way the #agents
+ * channel already does for an automation's question.
  *
- * Nothing here waits on anything: `super ask` returned at once and the super's turn ended (the
- * reason it is not AskUserQuestion, which held the super's turn for 82 minutes in the field).
+ *   • the super's own `super ask`: its record item carries AskUserQuestion's input shape
+ *     (`ask`: title, questions, options with descriptions and previews, multiSelect, source);
+ *     `askPendingOf` turns it into the card's `PendingQuestion`. The answer is ONE message into
+ *     the super chat in AskUserQuestion's answer form (`superAnswerText`); "Unclear" is one
+ *     message asking it to ask again (`superUnclearText`). Its turn is never held: `super ask`
+ *     returned at once (AskUserQuestion held the super's turn for 82 minutes in the field).
+ *   • a child's question it escalated (`super queue ask`): the card IS the child's own pending
+ *     AskUserQuestion, answered through the child's own session, exactly as in the child's chat.
  *
- * Pure parts (parse, placement, states, labels) are tested in tests/unit/super-question-card; the
- * latch store below is the ONE answer per question shared by the card and the job bar.
+ * Pure parts (parse, placement, the answer's words) are tested in tests/unit/super-question-card;
+ * the latch store below is what the job bar's permission row answers through.
  */
 
 // ─── The anchor: the call that asked ──────────────────────────────────────────
@@ -27,10 +33,6 @@ export interface AskRef {
   /** The queue item id the server answered with. */
   item: string;
   kind: 'ask' | 'question';
-  /** The words it asked in, read from the command (the live item's text wins while open). */
-  text: string;
-  /** An `ask`'s options as written (`--options a|b`); a child question's come from the child. */
-  options: string[];
   /** The tool row that asked. */
   toolItemId: string;
 }
@@ -110,20 +112,7 @@ function readAskRef(tool: ChatToolItem): AskRef | null {
   for (const call of calls) {
     const block = accepted.find((b) => (call.kind === 'ask' ? b.asked === true : b.escalated === true)
       && (call.kind === 'ask' || call.args[0] === b.item));
-    if (!block) continue;
-    const args = call.args;
-    if (call.kind === 'question') {
-      return { item: block.item as string, kind: 'question', text: args.slice(1).find((a) => !a.startsWith('--')) ?? '', options: [], toolItemId: tool.id };
-    }
-    let text = '';
-    let options: string[] = [];
-    for (let i = 0; i < args.length; i += 1) {
-      const a = args[i];
-      if (a === '--options') { options = (args[i + 1] ?? '').split('|').map((x) => x.trim()).filter(Boolean); i += 1; continue; }
-      if (a.startsWith('--options=')) { options = a.slice('--options='.length).split('|').map((x) => x.trim()).filter(Boolean); continue; }
-      if (!text && !a.startsWith('--')) text = a;
-    }
-    return { item: block.item as string, kind: 'ask', text, options, toolItemId: tool.id };
+    if (block) return { item: block.item as string, kind: call.kind, toolItemId: tool.id };
   }
   return null;
 }
@@ -183,46 +172,6 @@ export function cardState(item: string, live: boolean, view: { open: readonly Su
   return view.open.some((q) => q.id === item) ? 'open' : 'answered';
 }
 
-/**
- * What an answered card shows. The label clicked in this window first. Else, for an `ask`: the
- * server closes it on the owner's NEXT message, whatever it says (inbox.ts closeOpenAsks), so the
- * answer is exactly the first owner-written item after the anchor (super event turns skipped),
- * never one further on. Another `ask` asked before any owner message means this one was closed
- * unanswered (a take-back; the server never holds two open asks): `closed`, and it never borrows
- * the later ask's answer. `closed` too = no owner message at all after it.
- */
-export function answerLabelOf(
-  ref: Pick<AskRef, 'item' | 'kind' | 'toolItemId'>,
-  items: readonly ChatItem[],
-  clicked: string | undefined,
-): { label: string } | 'answered' | 'closed' {
-  if (clicked) return { label: clicked };
-  if (ref.kind !== 'ask') return 'answered';
-  const from = items.findIndex((it) => it.id === ref.toolItemId);
-  if (from < 0) return 'answered';
-  for (let i = from + 1; i < items.length; i += 1) {
-    const it = items[i];
-    if (it.kind === 'tool') {
-      const other = askRefOf(it);
-      // The server holds one open ask at a time (`ask_open`): another one asked before any
-      // owner message means this one closed WITHOUT an answer (a take-back closes asks).
-      if (other && other.kind === 'ask' && other.item !== ref.item) return 'closed';
-      continue;
-    }
-    if (it.kind !== 'user' || it.superEvent || superEventOf(it.text)) continue;
-    const m = /^Answer to your question: (.+)$/s.exec(it.text.trim());
-    return m ? { label: m[1].trim() } : 'answered';
-  }
-  return 'closed';
-}
-
-// ─── One answer, two places (the card and the job bar) ──────────────────────────
-
-/** The answer an `ask` option sends, exactly as drawn and framed (plan r4 D7). */
-export function askAnswerText(label: string): string {
-  return `Answer to your question: ${label}`;
-}
-
 /** The latch key of a question: a re-sent request keeps its request id (the server re-sends the
  *  same one when an answer never landed), so the key holds across it. */
 export function ownerAnswerKey(item: Pick<SuperQueueItem, 'id' | 'requestId'>): string {
@@ -252,9 +201,6 @@ export function ownerPendingPresent(item: SuperQueueItem, child: ChatSession | u
  *  module, and one project's trim must never drop another's latch. */
 interface LatchEntry { item: string; scope: string; latch: AnswerLatch }
 const latches = new Map<string, LatchEntry>();
-/** Clicked labels by item id: kept past the latch (an answered card still shows its answer). */
-const clickedLabels = new Map<string, string>();
-const CLICKED_CAP = 200;
 let version = 0;
 const listeners = new Set<() => void>();
 const emit = () => { version += 1; for (const fn of [...listeners]) fn(); };
@@ -295,16 +241,6 @@ export function releaseOwnerAnswer(key: string): void {
   if (latches.delete(key)) emit();
 }
 
-export function recordOwnerAnswer(item: string, label: string): void {
-  clickedLabels.delete(item);
-  clickedLabels.set(item, label);
-  while (clickedLabels.size > CLICKED_CAP) clickedLabels.delete(clickedLabels.keys().next().value as string);
-}
-
-export function clickedOwnerAnswer(item: string): string | undefined {
-  return clickedLabels.get(item);
-}
-
 /** Drop the latches of THIS super's items it no longer asks for (called from the publish, never
  *  from a render); another project's latches are not its to drop. */
 export function trimOwnerAnswers(scope: string, openIds: ReadonlySet<string>): void {
@@ -326,42 +262,102 @@ export function subscribeOwnerAnswers(fn: () => void): () => void {
 /** Test-only. */
 export function _resetOwnerAnswers(): void {
   latches.clear();
-  clickedLabels.clear();
   version = 0;
 }
 
-/**
- * Send the owner's pick where it belongs. An `ask`: the framed label into the super chat (a
- * running turn steers). A question: the child's own AskUserQuestion, answered as its card would.
- * False = nothing could be sent from here (no session, a closed socket, the child's request not
- * in this window, a pick it would refuse).
- */
-export function sendOwnerAnswer(
-  item: SuperQueueItem,
-  label: string,
-  at: { superSession: ChatSession | undefined; child: ChatSession | undefined },
-): boolean {
-  if (item.kind === 'ask') {
-    const s = at.superSession;
-    if (!s || s.status !== 'open') return false;
-    const text = askAnswerText(label);
-    if (s.busy) { if (!s.steer(text)) s.send(text); } else s.send(text);
-    return true;
-  }
-  const child = at.child;
-  const question = childQuestionOf(item, child);
-  if (!child || child.status !== 'open' || !question) return false;
-  const picks = superAnswerPicks(question.questions, [label]);
-  if (!picks.ok) return false;
-  child.answerQuestion(question.requestId, question.questions, picks.picked, picks.notes);
-  return true;
+// ─── The super's own `ask`, as AskUserQuestion ──────────────────────────────────
+
+/** AskUserQuestion's input from the record: the `ask` spec, or (an older record) its text and
+ *  options. A question with no options is answered in words (the card's text box). */
+export function askSpecOf(item: Pick<SuperQueueItem, 'ask' | 'ownerText' | 'options'>): SuperAskSpec {
+  if (item.ask && item.ask.questions.length) return item.ask;
+  return { questions: [{ question: item.ownerText ?? '', options: (item.options ?? []).map((label) => ({ label })) }] };
 }
 
-/** The option labels a card or the bar can offer for an item: an `ask`'s own, or the child's
- *  single-choice single question's first four (anything richer is answered in words). */
-export function ownerOptionsOf(item: SuperQueueItem, child: ChatSession | undefined): string[] {
-  if (item.kind === 'ask') return item.options ?? [];
-  const q = childQuestionOf(item, child);
-  const one = q && q.questions.length === 1 && !q.questions[0].multiSelect ? q.questions[0] : null;
-  return one ? one.options.slice(0, 4).map((o) => o.label) : [];
+/** The card's question list (chatProtocol's QuestionSpec), one per asked question. */
+export function askQuestionsOf(spec: SuperAskSpec): QuestionSpec[] {
+  return spec.questions.map((q) => ({
+    question: q.question,
+    ...(q.header ? { header: q.header } : {}),
+    ...(q.description ? { description: q.description } : {}),
+    ...(q.multiSelect ? { multiSelect: true } : {}),
+    options: q.options.map((o) => ({ label: o.label, ...(o.description ? { description: o.description } : {}), ...(o.preview ? { preview: o.preview } : {}) })),
+    ...(q.options.length === 0 ? { kind: 'text' as const } : {}),
+  }));
+}
+
+/** The super's own question as the pending AskUserQuestion the chat's card draws. */
+export function askPendingOf(item: SuperQueueItem): PendingQuestion {
+  const spec = askSpecOf(item);
+  return {
+    kind: 'question',
+    requestId: item.id,
+    toolName: 'AskUserQuestion',
+    questions: askQuestionsOf(spec),
+    ...(spec.title ? { title: spec.title } : {}),
+    ...(spec.source ? { source: spec.source } : {}),
+  };
+}
+
+/** The first line of every answer the owner sends the super from a question card. */
+export const SUPER_ANSWER_PREFIX = '[super answer]';
+
+/**
+ * The owner's answer as ONE message, in AskUserQuestion's own answer words (what the CLI hands a
+ * model after a card), headed by the item it answers: `"<question>"="<pick>"`, multi-picks
+ * comma-joined, a note after its pick. A child's question answered here because its own chat is
+ * not in this window also says how to pass it on.
+ */
+export function superAnswerText(
+  item: Pick<SuperQueueItem, 'id' | 'kind' | 'sessionId'>,
+  questions: readonly QuestionSpec[],
+  picked: Record<string, string>,
+  notes?: Record<string, string>,
+): string {
+  const pair = (q: QuestionSpec) => {
+    const a = picked[q.question]?.trim() || '(no answer)';
+    const note = notes?.[q.question]?.trim();
+    return { a, note };
+  };
+  if (item.kind === 'question') {
+    // A CHILD's question: its words are child text, which reaches the super only fenced (its
+    // event turn already carried them). The answer names the item, never repeats the question.
+    const { a, note } = pair(questions[0] ?? { question: '', options: [] });
+    return `${SUPER_ANSWER_PREFIX} item=${item.id}\nThe owner answered the child's question you escalated (child ${item.sessionId}): ${JSON.stringify('answer')}=${JSON.stringify(a)}${note ? ` notes: ${JSON.stringify(note)}` : ''}. Pass it on with \`dreamcontext super answer\`.`;
+  }
+  const parts = questions.map((q) => {
+    const { a, note } = pair(q);
+    return `${JSON.stringify(q.question)}=${JSON.stringify(a)}${note ? ` notes: ${JSON.stringify(note)}` : ''}`;
+  });
+  return `${SUPER_ANSWER_PREFIX} item=${item.id}\nUser has answered your questions: ${parts.join(', ')}. You can now continue with the user's answers in mind.`;
+}
+
+/** "Unclear, ask again": one message, the card's own words re-pointed at `super ask`. */
+export function superUnclearText(item: Pick<SuperQueueItem, 'id'>, message: string): string {
+  const body = message.replace(
+    /Ask again with AskUserQuestion,/,
+    'Ask again with `dreamcontext super ask --json` (AskUserQuestion\'s shape; never AskUserQuestion itself, it would hold your turn),',
+  );
+  return `${SUPER_ANSWER_PREFIX} item=${item.id} unclear\n${body}`;
+}
+
+/** An answer message read back for the transcript: the card's receipt in place of a bubble. */
+export function parseSuperAnswer(text: string): { item: string; unclear: boolean; values: string[] } | null {
+  if (typeof text !== 'string') return null;
+  const m = /^\[super answer\] item=(\S+)( unclear)?\s*(?:\n|$)/.exec(text.trimStart());
+  if (!m) return null;
+  const values: string[] = [];
+  const pair = /"((?:[^"\\]|\\.)*)"="((?:[^"\\]|\\.)*)"/g;
+  for (let p = pair.exec(text); p; p = pair.exec(text)) {
+    try { values.push(JSON.parse(`"${p[2]}"`) as string); } catch { /* not ours: skip */ }
+  }
+  return { item: m[1], unclear: !!m[2], values };
+}
+
+/** Into the super chat: a running turn steers (never waits), an idle one gets a turn. False =
+ *  nothing could be sent from here (no session, a closed socket). */
+export function sendToSuper(s: Pick<ChatSession, 'status' | 'busy' | 'steer' | 'send'> | undefined, text: string): boolean {
+  if (!s || s.status !== 'open') return false;
+  if (s.busy) { if (!s.steer(text)) s.send(text); } else s.send(text);
+  return true;
 }

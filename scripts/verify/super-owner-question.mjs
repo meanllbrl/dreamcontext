@@ -11,12 +11,11 @@
  * the env the server gave them. `claude` is a scripted stand-in (no tokens). It proves:
  *   1. hand over one chat; the owner is ON the Super stage (a presence report, what the desktop
  *      window sends): the Super Agent's own `super ask` answers reached:true via screen; the
- *      glance (the notch) lists it; its option on the job bar sends "Answer to your question: …"
- *      into the SUPER chat;
+ *      glance (the notch) lists it; the job bar shows it with one Answer button;
  *   2. the owner AWAY (no presence) and no notifier on this machine: a child's AskUserQuestion is
  *      escalated with `super queue ask`; the reply says reached:false with a note that forbids
  *      "I asked you"; that turn's end is NOT swallowed (a notch inbox row for the super session);
- *      the job bar's option answers the CHILD.
+ *      the chat card (the child's own AskUserQuestion) answers the CHILD.
  * Run 3 (owner 2026-10-21 "soruyu hep chatta sorsun"): both questions are ALSO a card in the super
  * chat under the turn that asked (the stand-in asks through a real Bash tool call), answered from
  * the card (to the super / to the child), never locking the super's turn; a question asked with no
@@ -94,7 +93,7 @@ async function superTurn(text) {
   if (text.includes('GO-ASKQUIET')) { const r = cli('super', 'ask', 'Rename the app to Acme Go?', '--options', 'Yes|No'); report({ kind: 'askedQuiet', r }); return 'One more question for you.'; }
   const go = text.match(/GO-CHILDASK (\\S+)/);
   if (go) { report({ kind: 'sent', r: cli('super', 'send', go[1], 'ASK-Q') }); return 'asked the child'; }
-  if (text.startsWith('Answer to your question:')) { report({ kind: 'answer', text }); return 'noted'; }
+  if (text.startsWith('[super answer]')) { report({ kind: 'answer', text }); return 'noted'; }
   report({ kind: 'owner', text });
   return 'ok';
 }
@@ -229,14 +228,14 @@ async function main() {
     ok('…its note tells it to end the turn, never to wait', /end your turn; never wait/.test(result(asked).note ?? ''), result(asked).note);
     const glance = await (await fetch(`${base}/api/assistant/glance`)).json();
     ok('the notch glance lists it (SuperAsk row with its options)', (glance.chats ?? []).some((c) => c.super && c.ask?.tool === 'SuperAsk' && /Ship the login fix/.test(c.ask.text) && (c.ask.options ?? []).join('|') === 'Ship it|Wait'), JSON.stringify(glance.chats));
-    ok('the job bar draws it at its head with its options', await until(page, async () => /Ship the login fix/.test(await page.getByTestId('super-queue-head').innerText()) && (await page.getByTestId('super-ask-option').count()) === 2, 15000));
+    ok('the job bar draws it at its head with ONE Answer button (the card answers it)', await until(page, async () => /Ship the login fix/.test(await page.getByTestId('super-queue-head').innerText()) && (await page.getByTestId('super-queue-answer').count()) === 1, 15000));
 
     console.log('\n── the question is IN the super chat, under the turn that asked it');
     const centre = page.locator('[data-super-slot="centre"]');
     const askCard = centre.locator('[data-testid="super-question-card"][data-item]').filter({ hasText: 'Ship the login fix now?' });
     ok('a question card in the super chat, open, with both options', await until(page, async () => (await askCard.count()) === 1
       && (await askCard.getAttribute('data-state')) === 'open'
-      && (await askCard.getByTestId('super-question-option').allInnerTexts()).map((x) => x.trim().replace(/\s*\d$/, '')).join('|') === 'Ship it|Wait', 15000));
+      && (await askCard.locator('.chat-surveycard-opt-title').allInnerTexts()).map((x) => x.trim()).filter((x) => x !== 'Other').join('|') === 'Ship it|Wait', 15000));
     ok('…drawn after the asking turn (its Bash row and its prose come before it)', await askCard.evaluate((card) => {
       const all = [...card.closest('[data-super-slot="centre"]').querySelectorAll('*')];
       const prose = all.filter((el) => el.children.length === 0 && /Ship the login fix now\?/.test(el.textContent ?? '') && !card.contains(el));
@@ -244,14 +243,15 @@ async function main() {
     }));
     ok('the turn is NOT locked: the super\'s turn ended, the composer takes text, no AskUserQuestion card', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'turn-end' && r.said === 'Ship the login fix now?')
       && await centre.locator('.chat-cmp-input').first().isEditable()
-      && (await centre.locator('.chat-surveycard:not(.super-question-card)').count()) === 0, 15000));
+      && (await centre.locator('.chat-surveycard').count()) === 1, 15000));
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.waitForTimeout(600);
     await page.screenshot({ path: join(OUT, '01-ask-card-1440.png') });
-    await askCard.getByTestId('super-question-option').filter({ hasText: 'Ship it' }).click();
-    ok('the card\'s option sends "Answer to your question: Ship it" into the SUPER chat', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'answer' && r.text.startsWith('Answer to your question: Ship it')), 20000), JSON.stringify(frames().slice(-4)));
+    await askCard.locator('.chat-surveycard-opt').filter({ hasText: 'Ship it' }).click();
+    await askCard.locator('.chat-btn.primary').click();
+    ok('the card sends ONE `[super answer]` message ("Ship it") into the SUPER chat', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'answer' && r.text.includes('="Ship it"')), 20000), JSON.stringify(frames().slice(-4)));
     ok('…once: one answer frame only', reports().filter((r) => r.role === 'super' && r.kind === 'answer').length === 1, JSON.stringify(reports().filter((r) => r.kind === 'answer')));
-    ok('…the card shows the answer and closes', await until(page, async () => (await askCard.getAttribute('data-state')) === 'answered' && /You answered: Ship it/.test(await askCard.innerText()) && (await askCard.getByTestId('super-question-option').count()) === 0, 15000));
+    ok('…the card closes; its receipt stands in the transcript', await until(page, async () => (await askCard.count()) === 0 && (await centre.locator('[data-testid="super-answer-receipt"]').filter({ hasText: 'You chose: Ship it' }).count()) === 1, 15000));
     ok('…and the job bar head drops', await until(page, async () => (await page.getByTestId('super-queue-head').count()) === 0, 15000));
     await page.screenshot({ path: join(OUT, '02-ask-answered-1440.png') });
 
@@ -261,7 +261,7 @@ async function main() {
     await page.keyboard.press('Enter');
     ok('super ask (no tool row) ran', await until(page, async () => reports().some((r) => r.kind === 'askedQuiet' && r.r?.status === 0), 30000), JSON.stringify(reports().slice(-3)));
     const quiet = centre.locator('[data-testid="super-question-card"]').filter({ hasText: 'Rename the app to Acme Go?' });
-    ok('…its card is drawn at the chat\'s end, open, with its options', await until(page, async () => (await quiet.count()) === 1 && (await quiet.getAttribute('data-state')) === 'open' && (await quiet.getByTestId('super-question-option').count()) === 2, 15000));
+    ok('…its card is drawn at the chat\'s end, open, with its options', await until(page, async () => (await quiet.count()) === 1 && (await quiet.getAttribute('data-state')) === 'open' && (await quiet.locator('.chat-surveycard-opt').count()) >= 2, 15000));
     await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'turn-end' && r.said === 'One more question for you.'), 15000);
     await centre.locator('.chat-cmp-input').first().click();
     await centre.locator('.chat-cmp-input').first().fill('Not now, keep the name');
@@ -291,16 +291,17 @@ async function main() {
     const escCard = centre.locator('[data-testid="super-question-card"][data-kind="question"]');
     ok('the escalated question is a card in the super chat with the CHILD\'s options', await until(page, async () => (await escCard.count()) === 1
       && /blue or green/.test(await escCard.innerText())
-      && (await escCard.getByTestId('super-question-option').allInnerTexts()).map((x) => x.trim().replace(/\s*\d$/, '')).join('|') === 'Blue|Green', 15000));
+      && (await escCard.locator('.chat-surveycard-opt-title').allInnerTexts()).map((x) => x.trim()).filter((x) => x !== 'Other').join('|') === 'Blue|Green', 15000));
     await page.screenshot({ path: join(OUT, '03-escalated-card-1440.png') });
     await page.setViewportSize({ width: 900, height: 900 });
     await page.waitForTimeout(800);
-    ok('at 900 wide (a narrow desktop window) the card is still in the chat with its options', (await escCard.count()) === 1 && (await escCard.getByTestId('super-question-option').count()) === 2);
+    ok('at 900 wide (a narrow desktop window) the card is still in the chat with its options', (await escCard.count()) === 1 && (await escCard.locator('.chat-surveycard-opt').count()) >= 2);
     await page.screenshot({ path: join(OUT, '04-escalated-card-900.png') });
-    await escCard.getByTestId('super-question-option').filter({ hasText: 'Blue' }).click();
+    await escCard.locator('.chat-surveycard-opt').filter({ hasText: 'Blue' }).click();
+    await escCard.locator('.chat-btn.primary').click();
     ok('the card\'s option answers the CHILD', await until(page, async () => reports().some((r) => r.role === 'child' && r.kind === 'answered' && JSON.stringify(r.response).includes('Blue')), 20000), JSON.stringify(reports().filter((r) => r.kind === 'answered')));
     ok('…never the super (no second answer frame)', reports().filter((r) => r.role === 'super' && r.kind === 'answer').length === 1);
-    ok('…the card shows the answer, the bar head drops', await until(page, async () => (await escCard.getAttribute('data-state')) === 'answered' && /You answered: Blue/.test(await escCard.innerText()) && (await page.getByTestId('super-queue-head').count()) === 0, 15000));
+    ok('…the card closes, the bar head drops', await until(page, async () => (await escCard.count()) === 0 && (await page.getByTestId('super-queue-head').count()) === 0, 15000));
     await page.screenshot({ path: join(OUT, '05-escalated-answered-900.png') });
 
     console.log('\n── a phone (390, touch) has no super chat by design: no card, no errors');

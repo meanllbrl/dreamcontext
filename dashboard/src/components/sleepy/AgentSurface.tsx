@@ -44,6 +44,7 @@ import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } fr
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSession';
 import { setFocusedChat } from '../../lib/focusedChat';
+import { raiseAskAttention } from '../../lib/attention';
 import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
@@ -94,7 +95,7 @@ import { HandoverButton } from './super/HandoverButton';
 import { SuperSurface, prefersReducedMotion, runFlights, type FlightRun } from './super/SuperSurface';
 import type { TerminalRowItem } from './super/TerminalsRow';
 import {
-  actionGeneration, adoptionBody, cardReference, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
+  actionGeneration, adoptionBody, cardReference, headAlarmOnce, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
   homedSessions, isSuperSession, markedChildren, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
   linkOpensSuperStage, presenceChatId, leanMcpFor,
@@ -3237,6 +3238,34 @@ export function AgentSurface() {
   useEffect(() => () => {
     if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
   }, []);
+  // The alarm for what the owner must answer: chime, Dock bounce, banner and the tab's attention,
+  // exactly what any agent's question raises (chatSession.ts), once for EVERY item as it arrives
+  // (`headAlarmOnce`), never only for the queue's head. Owner 2026-10-22: "normal agent sorusu
+  // gibi bildirim MUTLAKA gelir": a normal agent's question rings whatever else is open, while a
+  // super question behind an open child question or permission rang nothing until it reached the
+  // head. Raised HERE, where the record lives whether or not the Super stage is up.
+  const superOwnerItems = useMemo(() => (superState?.enabled ? superState.queue.filter(needsOwner).sort((a, b) => a.createdAt - b.createdAt) : []), [superState]);
+  const superBannered = superState?.bannered;
+  useEffect(() => {
+    if (!vault) return;
+    const fresh = superOwnerItems.filter((q) => headAlarmOnce(vault, q));
+    if (!fresh.length) return;
+    // One ring for what arrived together; the newest item speaks for it.
+    const item = fresh[fresh.length - 1];
+    raiseAskAttention({
+      // A banner the server posted for it (owner-question.ts) is not posted twice.
+      banner: !(superBannered ?? []).includes(item.id),
+      source: vault,
+      detail: item.kind === 'permission' ? t('super.queue.permissionAlarm')
+        : item.kind === 'approval' ? t('super.queue.approval').replace('{name}', item.member ?? '')
+          : (item.ownerText ?? t('super.queue.escalatedAlarm')),
+      sessionId: superChatSession?.claudeId ?? null,
+    });
+    if (superChatSession && !superChatSession.attention && fresh.some((q) => q.kind !== 'permission')) {
+      superChatSession.attention = true;
+      bumpStatus();
+    }
+  }, [superOwnerItems, superBannered, vault, superChatSession, t, bumpStatus]);
   const superTitleFor = useCallback((claudeId: string): string => {
     const st = superStateRef.current;
     const brief = st && hasOwnKey(st.children, claudeId) ? st.children[claudeId].brief : '';

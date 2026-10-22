@@ -226,15 +226,21 @@ describe('quiet children (D16, AC6 client half)', () => {
     expect(surface).toMatch(/const known = superKnownRef\.current \|\| !!superState;[\s\S]{0,200}\(s as ChatSession\)\.setSuperChild\(known \? set\.has\(s\.claudeId\) : null\)/);
   });
 
-  it('the job bar raises ONE alarm per owner item, through headAlarmOnce, linked to the super agent', () => {
+  it('ONE alarm per owner item, EVERY item (not only the head), linked to the super agent, raised where the record lives', () => {
+    // Owner 2026-10-22: a super question rings like any agent's question. A normal agent's
+    // question rings whatever else is open; the job bar rang only for its head, and only while
+    // the stage was mounted. The alarm lives in AgentSurface and walks every owner item.
     const strip = read(`${superDir}/JobBar.tsx`);
-    expect(strip).toMatch(/if \(!head \|\| !headAlarmOnce\(vault, head\)\) return;\s*[\s\S]{0,400}raiseAskAttention\(/);
-    expect(strip).toMatch(/const superId = superSession\?\.claudeId \?\? null;/);
-    expect(strip).toMatch(/sessionId: superId,/);
-    expect((strip.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
+    expect(strip).not.toMatch(/raiseAskAttention|headAlarmOnce/);
+    const effect = surface.slice(surface.indexOf('const superOwnerItems = useMemo('), surface.indexOf('const superTitleFor = useCallback('));
+    expect(effect).toMatch(/superState\.queue\.filter\(needsOwner\)/);
+    expect(effect).toMatch(/const fresh = superOwnerItems\.filter\(\(q\) => headAlarmOnce\(vault, q\)\);\s*if \(!fresh\.length\) return;[\s\S]{0,200}raiseAskAttention\(/);
+    expect(effect).toMatch(/sessionId: superChatSession\?\.claudeId \?\? null,/);
+    expect((surface.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
     // A banner the server posted (owner-question.ts names it in the view) is never posted twice.
-    expect(strip).toMatch(/const serverBanner = !!head && \(state\.bannered \?\? \[\]\)\.includes\(head\.id\);/);
-    expect(strip).toMatch(/banner: !serverBanner,/);
+    expect(effect).toMatch(/banner: !\(superBannered \?\? \[\]\)\.includes\(item\.id\),/);
+    // The super chat's tab gets the attention badge, like any asking chat.
+    expect(effect).toMatch(/superChatSession\.attention = true;\s*bumpStatus\(\);/);
   });
 
   it('a link to the super agent opens its stage before any resume (AC4)', () => {
@@ -263,7 +269,7 @@ describe('quiet children (D16, AC6 client half)', () => {
 describe('the strip answers once; the button\'s dot is in its name; ids never read the prototype', () => {
   const strip = read(`${superDir}/JobBar.tsx`);
 
-  it('Allow, Deny and the option buttons go through one latch and are disabled once answered', () => {
+  it('Allow and Deny go through one latch and are disabled once answered', () => {
     // The latch is the one the super chat's question card shares (superQuestions.ts): noted
     // first from the ONE pending input, then read, per item + request key.
     expect(strip).toMatch(/if \(head && answerKey\) noteOwnerPending\(answerKey, ownerPendingPresent\(head, child, openOwnerQuestions\(state\.queue\)\)\);\s*const locked = answerKey !== null && ownerAnswerLocked\(answerKey\);/);
@@ -271,22 +277,16 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect(strip).toMatch(/const carrier = head\.kind === 'ask' \? superSession : child;\n\s*if \(!claimOwnerAnswer\(answerKey, head\.id, state\.session \?\? '', carrier\?\.status === 'open'\)\) return;\n\s*if \(send\(\) === false\) releaseOwnerAnswer\(answerKey\);/);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'allow'/);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'deny'/);
-    // No answer path bypasses the latch: the permission's two, and every pick through sendOwnerAnswer.
+    // No answer path bypasses the latch: the permission's two. A question is answered in the
+    // chat's own card (SuperQuestionCard.tsx), never from the bar.
     expect((strip.match(/child\.answer(Question)?\(/g) ?? []).length).toBe(2);
-    expect((strip.match(/sendOwnerAnswer\(/g) ?? []).length).toBe(2);
-    expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => \{\s*const sent = sendOwnerAnswer\(item, label, \{ superSession: undefined, child \}\);/);
-    // Allow, Deny, a child's option and the super agent's own `ask` option (plan r4 D7).
-    expect((strip.match(/disabled=\{locked\}/g) ?? []).length).toBe(4);
-    expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => send\(label\)\)\}/);
-    // A `super ask` answer goes to the Super Agent itself, framed (AC11): never to a child.
-    expect(strip).toMatch(/const sent = sendOwnerAnswer\(item, label, \{ superSession, child: undefined \}\);/);
-    // The chat card answers through the same latch and the same sender, never around them.
+    expect((strip.match(/disabled=\{locked\}/g) ?? []).length).toBe(2);
+    expect(strip).not.toMatch(/sendOwnerAnswer|ownerOptionsOf/);
+    // The card answers through the AskUserQuestion card's own host: the child's session, or one
+    // message to the super (sendToSuper), and a failed send remounts the card.
     const card = read(`${superDir}/SuperQuestionCard.tsx`);
-    expect(card).toMatch(/noteOwnerPending\(key, ownerPendingPresent\(item, child, open\)\);\s*const locked = ownerAnswerLocked\(key\);/);
-    expect(card).toMatch(/const canSend = carrier\?\.status === 'open';/);
-    expect(card).toMatch(/if \(!claimOwnerAnswer\(key, item\.id, session\.claudeId, canSend\)\) return;\s*if \(sendOwnerAnswer\(item, label, \{ superSession, child \}\)\) recordOwnerAnswer\(item\.id, label\);\s*else releaseOwnerAnswer\(key\);/);
-    expect(card).not.toMatch(/\.answerQuestion\(|\.answer\(|\.send\(|\.steer\(/);
-    expect((card.match(/disabled=\{locked \|\| !canSend\}/g) ?? []).length).toBe(1);
+    expect(card).toMatch(/if \(!sendToSuper\(superSession, text\)\) setAttempt\(\(a\) => a \+ 1\);/);
+    expect(card).not.toMatch(/\.send\(|\.steer\(/);
   });
 
   it('the pill is one row that never reflows: a cut text opens below it, a button never shrinks (end review r8)', () => {
@@ -304,13 +304,10 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect(strip).toMatch(/const next = optionsFit\(fitRef\.current, fitKey, band\.clientWidth, el\.scrollWidth - el\.clientWidth, showRef\.current\);/);
     // Keyed on the row's content (a change inside a full-width pill resizes no box), and run
     // again on every show/hide, before paint (end review r8, round 5).
-    expect(strip).toMatch(/\[answerKey, titleFor\(head\?\.sessionId \?\? ''\), waiting > 1 \? waiting - 1 : 0, t\('super\.queue\.reply'\), \.\.\.optionLabels, \.\.\.\(head\?\.kind === 'ask' \? head\.options \?\? \[\] : \[\]\)\]\.join\(/);
+    expect(strip).toMatch(/\[answerKey, titleFor\(head\?\.sessionId \?\? ''\), waiting > 1 \? waiting - 1 : 0, t\('super\.queue\.reply'\), t\('super\.queue\.answer'\)\]\.join\(/);
     expect(strip).toMatch(/\}, \[fitKey, showOptions\]\);/);
     expect(strip).toMatch(/useLayoutEffect\(\(\) => \{\n\s*const el = headRef\.current;/);
     expect(strip).toMatch(/ro\.observe\(band\);\n\s*ro\.observe\(el\);/);
-    // The child's single-choice options, at most four (ownerOptionsOf, shared with the chat card).
-    expect(strip).toMatch(/const options = ownerOptionsOf\(item, child\);/);
-    expect(strip).toMatch(/\{showOptions && child && options\.map\(\(label\) => \(/);
     expect(strip).toMatch(/<button type="button" className="super-queue-btn super-queue-btn--reply" onClick=\{onReplyToSuper\}>/);
     expect(css).toMatch(/\.super-queue-head:hover \.super-queue-full,\n\.super-queue-head:focus-within \.super-queue-full \{ display: block; \}/);
     expect(rule('.super-queue-full')).toMatch(/position: absolute;[^}]*top: 100%;/);
@@ -319,7 +316,6 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect((strip.match(/return \(\) => \{ live = false; ro\.disconnect\(\); \};/g) ?? []).length).toBe(2);
     expect((strip.match(/void document\.fonts\?\.ready\.then\(\(\) => \{ if \(live\) measure\(\); \}\);/g) ?? []).length).toBe(2);
     expect(strip).toMatch(/\{cut && <span className="super-queue-full" aria-hidden="true">/);
-    expect(strip).toMatch(/className="super-queue-btn super-queue-btn--option"\n\s*title=\{label\}/);
   });
 
   it('the queue dot is decoration; its meaning rides in the button\'s accessible name', () => {

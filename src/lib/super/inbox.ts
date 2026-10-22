@@ -22,7 +22,7 @@ import {
   DONE_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS,
   SUPER_FRAME_STATE, floatCount,
   type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
-  type SuperQueueItem, type SuperState, type SuperStateView,
+  MAX_HELD, type SuperHeldEvent, type SuperQueueItem, type SuperState, type SuperStateView,
 } from './types.js';
 
 /**
@@ -169,8 +169,12 @@ export function ownerQuestionOpen(state: Pick<SuperState, 'queue'>): boolean {
 
 interface HeadEntry { root: string; vault: string; enabled: boolean; head: SuperQueueItem | null; children: Set<string> }
 const heads = new Map<string, HeadEntry>();
+/** The last record each vault wrote or read here: what an owner message, written synchronously,
+ *  reads the held events from (`superAnswerDigest`). One per vault, replaced on every write. */
+const lastStates = new Map<string, SuperState>();
 
 function noteHead(root: string, state: SuperState): void {
+  lastStates.set(keyOf(root), state);
   heads.set(keyOf(root), {
     root: keyOf(root),
     vault: superVaultName(root),
@@ -206,9 +210,38 @@ export function afterSuperWrite(contextRoot: string, state: SuperState): void {
   syncSweep(keyOf(contextRoot), state);
 }
 
-/** Change the record (locked, sanitized), then push. Every write in wave 2 goes through here. */
+// ─── What piles up while the owner has a question open (the held ledger) ────────────
+
+const HELD_KINDS = new Set<QueueKind>(['question', 'done', 'stuck', 'gone']);
+
+/**
+ * While a question is open with the owner the pump opens no event turn (the single-question
+ * rule), so every event waits. Each one that waits is written to `held`: the ledger the super
+ * agent is told from, with the owner's answer (`superAnswerDigest`) or in the first event turn
+ * after a child's question closes, and never as a silent batch. An item the pump later finds
+ * stale (the child moved on) stays in the ledger and is told as moved on. Mutates `s`.
+ */
+export function noteHeld(s: SuperState): boolean {
+  if (!ownerQuestionOpen(s)) return false;
+  const held = [...(s.held ?? [])];
+  let changed = false;
+  for (const q of s.queue) {
+    if (q.state !== 'pending' || !HELD_KINDS.has(q.kind) || held.some((h) => h.item === q.id)) continue;
+    held.push({ item: q.id, child: q.sessionId, kind: q.kind as SuperHeldEvent['kind'], at: q.createdAt });
+    changed = true;
+  }
+  if (changed) s.held = held.slice(-MAX_HELD);
+  return changed;
+}
+
+/** Change the record (locked, sanitized), then push. Every write in wave 2 goes through here.
+ *  Every write also notes what a question open with the owner holds back (`noteHeld`). */
 export async function writeSuper(contextRoot: string, fn: (draft: SuperState) => SuperState | void): Promise<SuperState> {
-  const next = await updateSuperState(contextRoot, fn, superSanitizeOpts());
+  const next = await updateSuperState(contextRoot, (draft) => {
+    const out = fn(draft) ?? draft;
+    noteHeld(out);
+    return out;
+  }, superSanitizeOpts());
   afterSuperWrite(contextRoot, next);
   return next;
 }
@@ -485,7 +518,7 @@ export function clearOwnerLease(contextRoot: string): void {
  * open batch (an `ask` written after this is about the owner's message, not the events); and an
  * open `ask` is closed: this message is its answer (D7).
  */
-export function superOwnerSpoke(sessionId: string, now = Date.now()): void {
+export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = []): void {
   const root = superRootOfSession(sessionId);
   if (!root) return;
   const key = keyOf(root);
@@ -496,14 +529,80 @@ export function superOwnerSpoke(sessionId: string, now = Date.now()): void {
     for (const c of carried.get(key) ?? []) if (c.batch === ob.batch) c.steered = true;
     openBatch.delete(sessionId);
   }
-  void track(closeOpenAsks(key));
+  void track(closeOpenAsks(key, sessionId, told));
 }
 
-async function closeOpenAsks(key: string): Promise<void> {
+/**
+ * The owner's message closes an open `ask` (it is the answer). The held events that message
+ * carried (`told`, from `superAnswerDigest`) are delivered WITH it: carried by that turn, settled
+ * by its end exactly like an event turn's items (a question still asked comes back once), and out
+ * of the ledger, so no later event turn repeats them silently.
+ */
+async function closeOpenAsks(key: string, sessionId: string, told: readonly string[]): Promise<void> {
   const cur = await readSuperState(key, superSanitizeOpts());
-  if (!cur.queue.some((q) => q.kind === 'ask' && q.state !== 'done')) return;
-  await writeSuper(key, (s) => { for (const q of s.queue) if (q.kind === 'ask') q.state = 'done'; });
+  if (!cur.queue.some((q) => q.kind === 'ask' && q.state !== 'done') && !told.length) return;
+  const inbox = inboxes.get(sessionId);
+  const ids = new Set(told);
+  const batch = newBatchId();
+  if (inbox && ids.size) {
+    carried.set(key, [...(carried.get(key) ?? []), ...[...ids].map((itemId) => ({ itemId, inboxId: inbox.id, seq: endSeq, batch }))]);
+  }
+  await writeSuper(key, (s) => {
+    for (const q of s.queue) {
+      if (q.kind === 'ask') q.state = 'done';
+      else if (ids.has(q.id) && q.state === 'pending') { q.state = inbox ? 'delivered' : 'done'; q.batch = batch; }
+    }
+    if (s.held) s.held = s.held.filter((h) => !ids.has(h.item));
+  });
   void pumpSuper(key);
+}
+
+/** The held block's opening and closing tags (a block starting with `<` is dropped from the
+ *  chat's replay: the owner's bubble keeps his own words). */
+export const HELD_OPEN = '<super-while-you-asked';
+export const HELD_CLOSE = '</super-while-you-asked>';
+
+/** What the super agent does with the held events (one at a time, nothing silent). A function:
+ *  OWNER_VOICE is declared further down. */
+export const heldLastLine = (): string => `These came in while the owner had a question open; they arrive ONLY here, never again as an event turn, so nothing of them reaches him unless you say it. First answer what he just wrote. Then take them ONE AT A TIME, never as one list: every awaited=owner result (tell him); each question (answer it yourself with \`dreamcontext super answer\` only when the brief and the project settle it, otherwise ask him with \`dreamcontext super queue ask\`, one open at a time, the next after he answers); then anything else he must know or decide. A finished job that needs nothing from him: set its row with \`dreamcontext super brief\`, no text. A moved-on line is history: tell him only when it changes what he expects. (${OWNER_VOICE})`;
+
+/** One held event as the super agent reads it: the event's own lines while it still stands, or
+ *  a moved-on line (the child went on, the question was answered elsewhere, the item closed). */
+function heldLines(vault: string, s: SuperState, now: number): string[] {
+  const out: string[] = [];
+  for (const h of s.held ?? []) {
+    const q = s.queue.find((x) => x.id === h.item);
+    if (q && q.state === 'pending' && !staleItem(s, q)) { out.push(...itemLines(vault, s, q, now)); continue; }
+    out.push(`- item=${h.item} child=${h.child} event=${h.kind} moved-on`);
+    const brief = s.children[h.child]?.brief;
+    if (brief) out.push(wrapUntrusted(vault, `Brief: ${brief}`));
+  }
+  return out;
+}
+
+/** The held block, or null when nothing is held. Exported for tests. */
+export function heldBlock(contextRoot: string, s: SuperState, now = Date.now()): { text: string; items: string[] } | null {
+  const held = s.held ?? [];
+  if (!held.length) return null;
+  const vault = superVaultName(contextRoot);
+  return {
+    text: [`${HELD_OPEN} items=${held.length}>`, ...heldLines(vault, s, now), heldLastLine(), HELD_CLOSE].join('\n'),
+    items: held.map((h) => h.item),
+  };
+}
+
+/**
+ * Read synchronously as the owner's message is written into the super chat: when his own
+ * question (`super ask`) is open, that message is its answer, and everything held while it was
+ * open rides in the SAME message, as one more block. `items` go to `superOwnerSpoke`.
+ */
+export function superAnswerDigest(sessionId: string, now = Date.now()): { text: string; items: string[] } | null {
+  const root = superRootOfSession(sessionId);
+  if (!root) return null;
+  const s = lastStates.get(keyOf(root));
+  if (!s || !s.enabled || s.session !== sessionId) return null;
+  if (!s.queue.some((q) => q.kind === 'ask' && q.state === 'escalated')) return null;
+  return heldBlock(root, s, now);
 }
 
 // ─── Event texts (server-authored header and last line; child text fenced) ──────
@@ -585,13 +684,15 @@ function itemLines(vault: string, s: SuperState, item: SuperQueueItem, now: numb
 }
 
 /** The text of a `[super events]` turn carrying `items`. Exported for tests. */
-export function superBatchText(contextRoot: string, state: SuperState, items: readonly SuperQueueItem[], batch: string, now = Date.now()): string {
+export function superBatchText(contextRoot: string, state: SuperState, items: readonly SuperQueueItem[], batch: string, now = Date.now(), held: { text: string; items: string[] } | null = null): string {
   const vault = superVaultName(contextRoot);
   return [
-    `[super events] batch=${batch} items=${items.length}`,
+    `[super events] batch=${batch} items=${items.length + (held?.items.length ?? 0)}`,
     ...items.flatMap((it) => itemLines(vault, state, it, now)),
     ...(items.some((it) => awaitedItem(state, it)) ? [AWAITED_LINE] : []),
     BATCH_LAST_LINE,
+    // Held while a question was open: the exception to the no-text rule above.
+    ...(held ? [held.text] : []),
   ].join('\n');
 }
 
@@ -647,6 +748,16 @@ function scheduleRetry(key: string, at: number): void {
 const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, recap: 2 };
 const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck']);
 
+/** An event no longer true: a question no longer asked, a `done`/`stuck` whose row moved on
+ *  (the child started working again), a `gone` whose child is live. */
+function staleItem(state: SuperState, q: SuperQueueItem): boolean {
+  const row = state.children[q.sessionId]?.row;
+  return (q.kind === 'question' && !stillAsking(q))
+    || (q.kind === 'done' && row !== 'done')
+    || (q.kind === 'stuck' && row !== 'stuck')
+    || (q.kind === 'gone' && isLive(getChat(q.sessionId)));
+}
+
 /**
  * What the next event turn carries (plan r4 D10): a pending handover or recap ALONE (handover
  * first); otherwise up to MAX_BATCH pending question/done/gone/stuck items, oldest first. Items
@@ -661,12 +772,7 @@ export function nextBatch(state: SuperState): { items: SuperQueueItem[]; drop: s
   const drop: string[] = [];
   for (const q of pending) {
     if (!BATCHED.has(q.kind)) continue;
-    const row = state.children[q.sessionId]?.row;
-    const stale = (q.kind === 'question' && !stillAsking(q))
-      || (q.kind === 'done' && row !== 'done')
-      || (q.kind === 'stuck' && row !== 'stuck')
-      || (q.kind === 'gone' && isLive(getChat(q.sessionId)));
-    if (stale) { drop.push(q.id); continue; }
+    if (staleItem(state, q)) { drop.push(q.id); continue; }
     if (items.length < MAX_BATCH) items.push(q);
   }
   return { items, drop };
@@ -803,13 +909,18 @@ async function pumpOnce(key: string): Promise<void> {
       state = await writeSuper(key, (s) => { for (const q of s.queue) if (drop.includes(q.id) && q.state === 'pending') q.state = 'done'; });
       ({ items } = nextBatch(state));
     }
-    if (!items.length) return;
-    const batch = newBatchId();
     const solo = items.length === 1 && SOLO[items[0].kind] !== undefined;
-    const text = solo ? superEventText(key, state, items[0], now, batch) : superBatchText(key, state, items, batch, now);
+    // What a question held back goes in the first event turn after it closes, told (never a
+    // silent line); a solo turn goes first and alone.
+    const held = solo ? null : heldBlock(key, state, now);
+    const heldIds = new Set(held?.items ?? []);
+    if (held) items = [...items.filter((q) => !heldIds.has(q.id)), ...state.queue.filter((q) => heldIds.has(q.id) && q.state === 'pending')];
+    if (!items.length && !held) return;
+    const batch = newBatchId();
+    const text = solo ? superEventText(key, state, items[0], now, batch) : superBatchText(key, state, items.filter((q) => !heldIds.has(q.id)), batch, now, held);
     const event: SuperEventFrame = solo
       ? { kind: items[0].kind as SuperEventKind, child: items[0].sessionId, batch }
-      : { kind: 'batch', child: items[0].sessionId, batch, items: items.map((q) => ({ item: q.id, child: q.sessionId, kind: q.kind })) };
+      : { kind: 'batch', child: items[0]?.sessionId ?? session, batch, items: items.map((q) => ({ item: q.id, child: q.sessionId, kind: q.kind })) };
     let ok = false;
     try { ok = await bounded((cancelled) => inbox.deliver(text, event, cancelled)); } catch { ok = false; }
     if (!ok) return;
@@ -822,12 +933,13 @@ async function pumpOnce(key: string): Promise<void> {
     // carried item the write did not mark `delivered` is skipped when settled.
     carried.set(key, [...(carried.get(key) ?? []), ...items.map((q) => ({ itemId: q.id, inboxId: inbox.id, seq, batch }))]);
     const ids = new Set(items.map((q) => q.id));
-    const tells = !solo && items.some((q) => awaitedItem(state, q));
+    const tells = !solo && (!!held || items.some((q) => awaitedItem(state, q)));
     const fresh = solo && items[0].kind === 'fresh';
     await writeSuper(key, (s) => {
       for (const it of s.queue) if (ids.has(it.id) && it.state === 'pending') { it.state = 'delivered'; it.batch = batch; }
       // The super's own question closes with its session; its text rode the fresh turn.
       if (fresh) for (const it of s.queue) if (it.kind === 'ask' && it.state === 'escalated') it.state = 'done';
+      if (held && s.held) s.held = s.held.filter((h) => !heldIds.has(h.item));
       // The super tells the owner a result he waits on: that turn renders in full.
       if (tells) noteOwnerBatch(s, batch);
     });
