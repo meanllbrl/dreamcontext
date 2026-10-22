@@ -702,6 +702,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // Cards whose size the owner chose: the agent's size is not written (decided inside the
     // locked write, so an owner resize landing meanwhile still wins).
     let kept: string[] = [];
+    // Touched before the write too, so a tidy pass racing it never moves what is being opened.
+    touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
     const state = await writeSuper(c.who.contextRoot, (s) => {
       const p = plan(s);
       if (!p.fits) { refused = true; return; }

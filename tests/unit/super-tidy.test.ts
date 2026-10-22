@@ -121,11 +121,27 @@ describe('planTidy (pure)', () => {
       } as SuperState['children'],
       queue: [{ id: 'q1', sessionId: 'q', kind: 'question', state: 'pending', createdAt: NOW }] as SuperState['queue'],
     });
-    // Touched just now: only the finished job he saw goes (an unseen one is still news).
-    expect(planTidy(s, () => NOW, NOW)).toEqual(['chat-s']);
+    // Touched a moment before he saw it: only the finished job he saw goes (an unseen one is still news).
+    expect(planTidy(s, () => NOW - 2000, NOW)).toEqual(['chat-s']);
     // Long untouched: an unseen finished job goes too, never the working child or the one asking.
     for (const k of ['q', 'u', 's']) (s.children[k] as { rowAt: number }).rowAt = old();
     expect(planTidy(s, old, NOW)).toEqual(['chat-s', 'chat-u']);
+  });
+
+  it('a seen job\'s card the owner brought back stays (touched after he saw it), on the idle clock', () => {
+    const s = base({
+      containers: [card('chat-s', { ref: 's' }), card('chat-t', { ref: 't' }), card('image-x', { kind: 'image' })],
+      groups: [{ id: 'grp-back', name: 'Back', cards: ['chat-t', 'image-x'], place: 'float' }],
+      children: {
+        s: child('s', { row: 'done', rowAt: NOW - 5000, finishedAt: NOW - 5000, seenAt: NOW - 4000 }),
+        t: child('t', { row: 'done', rowAt: NOW - 5000, finishedAt: NOW - 5000, seenAt: NOW - 4000 }),
+      } as SuperState['children'],
+    });
+    // Seen at NOW-4000; the cards and the group were touched before that: they go.
+    const before = (id: string) => (id === 'image-x' ? old() : NOW - 6000);
+    expect(planTidy(s, before, NOW)).toEqual(['chat-s', 'grp-back']);
+    // He brought them back after seeing them: they stay.
+    expect(planTidy(s, (id) => (id === 'image-x' ? old() : NOW - 1000), NOW)).toEqual([]);
   });
 
   it('a group goes only when every card may, and only once the group itself is idle', () => {

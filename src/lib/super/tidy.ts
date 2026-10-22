@@ -89,7 +89,11 @@ export function planTidy(s: SuperState, touched: (id: string) => number | undefi
   const openFor = new Set(s.queue.filter((q) => q.state !== 'done').map((q) => q.sessionId));
   const bar = idleMs();
   const idle = (id: string) => now - (touched(id) ?? now) >= bar;
-  /** undefined: this card holds its place; 'seen': a finished job he saw; 'idle': untouched. */
+  const at = (id: string) => touched(id) ?? now;
+  /** When each 'seen' card's job was seen: a group goes on that path only if untouched since. */
+  const seenWhen = new Map<string, number>();
+  /** undefined: this card holds its place; 'seen': a finished job he saw, and the card not
+   *  touched since (he brought it back: it stays, on the idle clock); 'idle': untouched. */
   const verdict = (id: string): 'seen' | 'idle' | undefined => {
     const c = s.containers.find((k) => k.id === id);
     if (!c || shown.has(id) || c.by === 'auto' || c.sizeBy === 'owner') return undefined;
@@ -98,8 +102,11 @@ export function planTidy(s: SuperState, touched: (id: string) => number | undefi
       if (openFor.has(c.ref)) return undefined;
       if (ch) {
         if (ch.row !== 'done' && ch.row !== 'gone' && ch.endedAt === undefined) return undefined;
-        if (ch.finishedAt !== undefined && (ch.seenAt ?? -1) >= ch.finishedAt) return 'seen';
-        const active = Math.max(touched(id) ?? now, ch.rowAt ?? ch.startedAt);
+        if (ch.finishedAt !== undefined && ch.seenAt !== undefined && ch.seenAt >= ch.finishedAt && at(id) < ch.seenAt) {
+          seenWhen.set(id, ch.seenAt);
+          return 'seen';
+        }
+        const active = Math.max(at(id), ch.rowAt ?? ch.startedAt);
         return now - active >= bar ? 'idle' : undefined;
       }
     }
@@ -113,7 +120,9 @@ export function planTidy(s: SuperState, touched: (id: string) => number | undefi
   for (const g of s.groups) {
     if (g.place !== 'float' || g.pos) continue;
     const vs = g.cards.map(verdict);
-    if (vs.every((v) => v) && (vs.some((v) => v === 'seen') || idle(g.id))) out.push(g.id);
+    if (!vs.every((v) => v)) continue;
+    const seen = g.cards.filter((id) => seenWhen.has(id)).map((id) => seenWhen.get(id)!);
+    if (idle(g.id) || (seen.length && at(g.id) < Math.min(...seen))) out.push(g.id);
   }
   return out;
 }
@@ -149,6 +158,9 @@ export async function tidyOnce(root: string, how: TidyIo, now = Date.now()): Pro
   let moved: string[] = [];
   await how.write(root, (d) => {
     if (!d.enabled) return;
+    // What changed since the read above (a card the owner brought back, one the super opened)
+    // counts as touched before anything moves.
+    refreshMarks(m, d, now);
     moved = planTidy(d, touched, now);
     applyTidy(d, moved);
   });
