@@ -17,9 +17,9 @@ import './JobBar.css';
 
 /**
  * The question band (plan r4 D1): the top band above the centre holds ONLY the head of the one
- * question queue below. The counts and the job list it carried moved into the agenda, the
- * always-visible column left of the stage (SuperAgenda.tsx, task super-agent-ajandasi-…), so
- * there is one list. Nothing here polls: the record is pushed. Empty: nothing is drawn.
+ * question queue below. The counts and the job list it carried are gone: the agenda card on the
+ * stage (SuperAgenda.tsx) is the super's own notepad and lists every question waiting on the
+ * owner. Nothing here polls: the record is pushed. Empty: nothing is drawn.
  *
  * The ONE question queue (plan-r7 D7, D16, owner decision 2), as a pill centred in the top band
  * directly above the centre window (plan-r8 F7): the owner looks at the centre, so what he must
@@ -118,7 +118,7 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
     return () => { live = false; ro.disconnect(); };
   }, [fitKey, showOptions]);
 
-  // Empty: nothing is drawn (the agenda, left of the stage, holds every count and row).
+  // Empty: nothing is drawn (the agenda card holds what waits on the owner).
   if (!head) return null;
 
   return (

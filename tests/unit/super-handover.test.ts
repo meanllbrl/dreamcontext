@@ -89,7 +89,7 @@ describe('hand over', () => {
   it('a second hand-over resumes the same session and keeps the layout', async () => {
     reg('a');
     const one = await enableSuper(root, { adopt: ['a'], titles: {} });
-    await writeSuper(root, (s) => { const c = s.containers[0]; c.shape = 'square'; c.pos = { x: 0.1, y: 0.9 }; s.view = { mode: 'half', card: c.id }; });
+    await writeSuper(root, (s) => { const c = s.containers.find((k) => k.ref === 'a')!; c.shape = 'square'; c.pos = { x: 0.1, y: 0.9 }; s.view = { mode: 'half', card: c.id }; });
     await disableSuper(root);
     reg('b');
     const two = await enableSuper(root, { adopt: ['a', 'b'], titles: {} });
@@ -104,7 +104,9 @@ describe('hand over', () => {
     for (const id of ids) reg(id).userSent('working on it');
     const { state } = await enableSuper(root, { adopt: ids, titles: {} });
     expect(Object.keys(state.children)).toHaveLength(10);
-    expect(state.containers).toHaveLength(10);
+    // Ten chat cards, and the agenda card the hand-over opens.
+    expect(state.containers.filter((c) => c.kind === 'chat')).toHaveLength(10);
+    expect(state.containers.filter((c) => c.kind === 'agenda')).toHaveLength(1);
   });
 
   it('the owner route answers {session, state} with the vault name', async () => {

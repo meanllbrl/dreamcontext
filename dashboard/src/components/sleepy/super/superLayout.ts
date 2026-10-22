@@ -771,6 +771,9 @@ export interface LayoutPatch {
   /** Cards or groups the owner opened (a group's panel, full screen): the server's tidying
    *  counts them as touched. Changes nothing on the record. */
   touch?: string[];
+  /** The owner reopens the super's agenda card (the centre's Agenda button): the server makes it
+   *  if he closed it, or brings it back from Others when the stage has room. */
+  agenda?: 'open';
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
@@ -804,6 +807,12 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
     if (p.order === 'last' && 'kind' in k) st.containers = [...st.containers.filter((x) => x !== k), k];
   }
   if (patch.group) { applyGroupOp(st, patch.group); for (const id of patch.group.cards) unshown.add(id); }
+  // A closed agenda is made by the server (its id is the server's); one in Others or in a group
+  // comes back floating, out of its group (the server's rule for the owner's reopen).
+  if (patch.agenda === 'open') {
+    const agenda = st.containers.find((x) => x.kind === 'agenda');
+    if (agenda) { leaveGroups(st, [agenda.id]); agenda.place = 'float'; }
+  }
   if (patch.ungroup?.length) dissolveGroups(st, patch.ungroup);
   const gone = new Set(patch.closed ?? []);
   for (const id of gone) unshown.add(id);
@@ -835,6 +844,7 @@ export function patchEchoed(state: Staged, patch: LayoutPatch): boolean {
       && (sizeOf(k) !== p.size || k.sizeBy !== 'owner')) return false;
   }
   for (const id of patch.closed ?? []) if (state.containers.some((x) => x.id === id)) return false;
+  if (patch.agenda === 'open' && !state.containers.some((x) => x.kind === 'agenda')) return false;
   for (const id of patch.leave ?? []) if (groups.some((g) => g.cards.includes(id))) return false;
   for (const id of patch.ungroup ?? []) if (groups.some((g) => g.id === id)) return false;
   if (patch.group) {

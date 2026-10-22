@@ -15,13 +15,14 @@ import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
 import { OrbitPath, PanelChatTile } from './StageParts';
 import { JobBar, showQuestionCard } from './JobBar';
-import { AGENDA_RAIL_W, AGENDA_W, SuperAgenda } from './SuperAgenda';
-import { publishSuperEventContext } from './superJobsStore';
+import { SuperAgenda } from './SuperAgenda';
+import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
+import { AgendaButton } from './AgendaButton';
 import { childModelChip } from './AgentCard';
 import { SuperContainer, chatStatus, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { NARROW_STAGE_PX, anchoredPos, fitsNow, isGroupId, planStage, sizeOf, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
+import { anchoredPos, fitsNow, isGroupId, planStage, sizeOf, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
@@ -55,8 +56,6 @@ export interface SuperSurfaceProps {
   titleFor: (claudeId: string) => string;
   /** A child's job NAME for the agenda: its tab title (the brief is its second line). */
   nameFor?: (claudeId: string) => string;
-  /** The owner looked at finished jobs in the agenda (`POST /api/super/seen`); rejects on failure. */
-  onSeen: (rows: ReadonlyArray<{ id: string; at: number }>) => Promise<unknown>;
   terminals: readonly TerminalRowItem[];
   /** The owner's gesture, as the server's patch (F3, §0 C3). */
   onLayout: (patch: LayoutPatch) => void;
@@ -102,24 +101,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   stateRef.current = state;
 
   // ── The stage's size: measured before the first paint; resizes SNAP (FE4) ──
-  // The agenda column takes AGENDA_W of the surface, or folds to its rail where the full column
-  // would leave the stage narrow (cards in Others, side by side as a sheet): the stage plans for
-  // the rest. The shell's width decides; the stage measures itself below as before.
-  const agendaWidth = (shellW: number) => (shellW - AGENDA_W >= NARROW_STAGE_PX ? AGENDA_W : AGENDA_RAIL_W);
-  const shellRef = useRef<HTMLDivElement>(null);
-  const [shellW, setShellW] = useState(props.initialWidth);
-  useLayoutEffect(() => {
-    const el = shellRef.current;
-    if (!el) return undefined;
-    const read = () => { const w = el.clientWidth; if (w > 0) setShellW(w); };
-    read();
-    if (typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(read);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const agendaCompact = agendaWidth(shellW) !== AGENDA_W;
-  const [size, setSize] = useState({ width: Math.max(0, props.initialWidth - agendaWidth(props.initialWidth)), height: props.initialHeight });
+  const [size, setSize] = useState({ width: props.initialWidth, height: props.initialHeight });
   const sizeRef = useRef(size);
   sizeRef.current = size;
   useLayoutEffect(() => {
@@ -203,11 +185,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const groupsById = useMemo(() => new Map(state.groups.map((g) => [g.id, g] as const)), [state.groups]);
   // Every card's readable name (superTitles.ts): a task by its title, a file by its name, never a path or slug.
   const { data: tasks } = useTasks();
-  const titleOf = useCallback((c: Container) => cardTitle(c, {
+  const titleOf = useCallback((c: Container) => c.kind === 'agenda' ? t('super.agenda.label') : cardTitle(c, {
     chat: props.titleFor,
     team: (ref) => state.team.find((j) => j.id === ref)?.member,
     task: (slug) => tasks?.find((x) => x.slug === slug)?.name,
-  }), [props.titleFor, state.team, tasks]);
+  }), [props.titleFor, state.team, tasks, t]);
   /** A team card's job and its status now (the view's `teamLive`); undefined when the job is gone. */
   const teamCardOf = useCallback((c: Container): TeamCard | undefined => {
     if (c.kind !== 'team') return undefined;
@@ -412,16 +394,59 @@ export function SuperSurface(props: SuperSurfaceProps) {
     modelFor: (sid) => childModelChip(props.sessionFor(sid), hasOwnKey(state.children, sid) ? state.children[sid] : undefined),
     superTitle: t('super.centre.name'),
   };
-  // A child row in the list asks for side by side, as the card's own button does.
+  // A child the agenda points at (a permission waiting on the owner) shows beside the centre,
+  // and the agenda stays with it (presented together, the agenda last): a page side by side
+  // would send the agenda to Others, and the owner reads on from it.
   const showChild = (sid: string) => {
     const c = state.containers.find((k) => k.kind === 'chat' && k.ref === sid);
-    if (c) actions.onSideBySide(c.id);
+    if (!c) return;
+    const agenda = state.containers.find((k) => k.kind === 'agenda');
+    const agendaShown = !!agenda && !!plan.cards[agenda.id] && plan.cards[agenda.id].where !== 'others';
+    if (!agenda || !agendaShown) { actions.onSideBySide(c.id); return; }
+    onLayout({ ...(c.place === 'others' ? { cards: [{ id: c.id, place: 'float' as const }] } : {}), view: { mode: 'present', cards: [c.id, agenda.id] } });
   };
   // The super's own question (or an approval) in the agenda: its card in the centre chat.
   const showQuestion = (item: string) => {
     if (showQuestionCard(item)) return;
     document.querySelector<HTMLElement>('[data-testid="super-queue-head"]')?.scrollIntoView({ block: 'center' });
   };
+  // The agenda card (owner 2026-10-22: a card on the stage, not a column; the super's notepad):
+  // drawn by SuperAgenda inside the card's own chrome. Off the stage (closed, in Others, hidden
+  // by a page side by side), the centre's head offers it back.
+  const agendaCard = state.containers.find((k) => k.kind === 'agenda');
+  const agendaOnStage = !!agendaCard && !!plan.cards[agendaCard.id] && plan.cards[agendaCard.id].where !== 'others';
+  // The owner's press always shows it (end review r1): closed, in Others or in a group, the
+  // server brings it back floating, out of its group (and a page side by side or a presentation,
+  // which keeps every other card in Others, gives way to the floating stage); on a stage too
+  // narrow to float cards, or one too full to draw it, it opens side by side instead.
+  const viewMode = state.view.mode;
+  const agendaGrouped = !!agendaCard && state.groups.some((g) => g.cards.includes(agendaCard.id));
+  const openAgenda = () => {
+    if (agendaCard && (plan.narrow || (agendaCard.place === 'float' && !agendaGrouped && viewMode === 'float'))) {
+      actions.onSideBySide(agendaCard.id);
+      return;
+    }
+    onLayout(viewMode === 'float' ? { agenda: 'open' } : { agenda: 'open', view: { mode: 'float' } });
+  };
+  // A child's name in an event line: that child side by side.
+  const showChildRef = useRef(actions.onSideBySide);
+  showChildRef.current = actions.onSideBySide;
+  useEffect(() => onOpenJobRow((row) => {
+    if (!row.startsWith('c:')) return;
+    const c = stateRef.current.containers.find((k) => k.kind === 'chat' && k.ref === row.slice(2));
+    if (c) showChildRef.current(c.id);
+  }), []);
+  const renderAgenda = (variant: 'tile' | 'full', wide: boolean) => (
+    <SuperAgenda
+      state={state}
+      look={jobLook}
+      variant={variant}
+      wide={wide}
+      canShowChild={(sid) => state.containers.some((k) => k.kind === 'chat' && k.ref === sid)}
+      onShowChild={showChild}
+      onShowQuestion={showQuestion}
+    />
+  );
   const othersItems: OthersItem[] = plan.others.map((id) => {
     const g = groupsById.get(id);
     if (g) {
@@ -435,16 +460,6 @@ export function SuperSurface(props: SuperSurfaceProps) {
   });
 
   return (
-    <div ref={shellRef} className="super-shell" data-testid="super-shell">
-    <SuperAgenda
-      state={state}
-      look={jobLook}
-      compact={agendaCompact}
-      canShowChild={(sid) => state.containers.some((k) => k.kind === 'chat' && k.ref === sid)}
-      onShowChild={showChild}
-      onShowQuestion={showQuestion}
-      onSeen={props.onSeen}
-    />
     <div
       ref={rootRef}
       className="super-surface"
@@ -470,6 +485,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               <SleepyMascot size={28} compact mood={status.mood} mode="super" capeOn={capeOn} />
               <span className="super-centre-name">{t('super.centre.name')}</span>
               <span className="super-centre-sub">{t('super.centre.sub')}</span>
+              {!agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
               <NewSessionButton pending={freshPending(state)} onPress={props.onNewSession} />
             </div>
             <div className="super-slot" data-super-slot="centre" />
@@ -514,6 +530,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               side={cp.rect.x + cp.rect.width / 2 < plan.centre.x + plan.centre.width / 2 ? 'left' : 'right'}
               canFit={(next) => canFit(c.id, next)}
               onPressResize={ghost ? undefined : onPressResize}
+              agenda={c.kind === 'agenda' ? renderAgenda : undefined}
               {...actions}
             />
           );
@@ -605,7 +622,6 @@ export function SuperSurface(props: SuperSurfaceProps) {
       })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
       {full && <CardFullscreenView subject={full.subject} onClose={() => setFull(null)} />}
-    </div>
     </div>
   );
 }

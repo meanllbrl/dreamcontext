@@ -3,11 +3,11 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
-  CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
+  AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_PRESENT, MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, MAX_HELD,
   SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
-  type SuperChild, type SuperContainer, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
+  type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
 import { parseMcpNames } from './lean-mcp.js';
@@ -119,6 +119,8 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
     if (c.kind === 'browser' && !(okSessionId(c.ref) && Object.prototype.hasOwnProperty.call(children, c.ref))) continue;
     // A team card shows one of the super's AI Team jobs, by its id.
     if (c.kind === 'team' && !(TEAM_JOB_ID_RE.test(c.ref) && teamIds.has(c.ref))) continue;
+    // The agenda is one card with one ref.
+    if (c.kind === 'agenda' && c.ref !== AGENDA_REF) continue;
     const title = cap(c.title, MAX_TITLE);
     const pos = isRecord(c.pos) ? { x: unit(c.pos.x), y: unit(c.pos.y) } : null;
     ids.add(c.id);
@@ -325,6 +327,24 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
  * rows win: a row past either cap is dropped). A worktree a `--from` may have opened travels
  * with its branch, under the same rule as a child's.
  */
+/** The agenda notepad: known sections, one id each, a non-empty line, a finite time. */
+function sanitizePad(raw: unknown): SuperPadItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SuperPadItem[] = [];
+  const ids = new Set<string>();
+  for (const p of raw) {
+    if (out.length >= MAX_PAD) break;
+    if (!isRecord(p) || typeof p.id !== 'string' || !PAD_ID_RE.test(p.id) || ids.has(p.id)) continue;
+    if (!oneOf(PAD_SECTIONS, p.section)) continue;
+    const text = cleanPadText(p.text);
+    const at = finite(p.at);
+    if (!text || at === undefined || at < 0) continue;
+    ids.add(p.id);
+    out.push({ id: p.id, section: p.section, text, at });
+  }
+  return out;
+}
+
 function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
   if (!Array.isArray(raw)) return [];
   const out: SuperPoolItem[] = [];
@@ -411,6 +431,9 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
   const away = isRecord(raw.away) ? raw.away : {};
   const queue = sanitizeQueue(raw.queue, session);
   const held = sanitizeHeld(raw.held, queue);
+  const pad = sanitizePad(raw.pad);
+  const rawSeq = finite(raw.padSeq);
+  const padSeq = rawSeq !== undefined && rawSeq > 0 && rawSeq < 1e6 ? Math.floor(rawSeq) : 0;
   const since = finite(away.since);
   const events = finite(away.events);
   return {
@@ -429,6 +452,8 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     ownerBatches: sanitizeOwnerBatches(raw.ownerBatches),
     team,
     ...(held.length ? { held } : {}),
+    ...(pad.length ? { pad } : {}),
+    ...(padSeq ? { padSeq } : {}),
   };
 }
 

@@ -110,6 +110,11 @@ describe('planTidy (pure)', () => {
     expect(planTidy(s, at, NOW)).toEqual(['task-a']);
   });
 
+  it('the agenda card is never tidied away, however long it sits untouched', () => {
+    const s = base({ containers: [card('agenda-x', { kind: 'agenda', ref: 'agenda' }), card('task-a', { kind: 'task' })] });
+    expect(planTidy(s, old, NOW)).toEqual(['task-a']);
+  });
+
   it('a chat: never while its child works or has an open question; at once when finished and seen', () => {
     const s = base({
       containers: [card('chat-w', { ref: 'w' }), card('chat-q', { ref: 'q' }), card('chat-s', { ref: 's' }), card('chat-u', { ref: 'u' })],

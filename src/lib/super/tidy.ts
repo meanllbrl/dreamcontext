@@ -7,6 +7,7 @@
  * - what the owner placed (a drop position) or sized himself;
  * - what the view shows (side by side, presented);
  * - a card the server opened on its own (a dev server, a live browser: they follow their child);
+ * - the agenda card (the super's notepad: it lives on the stage until the owner moves it);
  * - a chat whose child works, asks or is stuck, or has any open queue item (a waiting question).
  * A group moves only when every card in it may.
  *
@@ -96,7 +97,7 @@ export function planTidy(s: SuperState, touched: (id: string) => number | undefi
    *  touched since (he brought it back: it stays, on the idle clock); 'idle': untouched. */
   const verdict = (id: string): 'seen' | 'idle' | undefined => {
     const c = s.containers.find((k) => k.id === id);
-    if (!c || shown.has(id) || c.by === 'auto' || c.sizeBy === 'owner') return undefined;
+    if (!c || shown.has(id) || c.by === 'auto' || c.sizeBy === 'owner' || c.kind === 'agenda') return undefined;
     if (c.kind === 'chat' || c.kind === 'browser') {
       const ch = s.children[c.ref];
       if (openFor.has(c.ref)) return undefined;
