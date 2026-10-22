@@ -16,6 +16,8 @@ describe('super types — server record <-> window mirror', () => {
   it('every list and limit matches, in order', () => {
     expect([...client.CONTAINER_KINDS]).toEqual([...server.CONTAINER_KINDS]);
     expect([...client.CONTAINER_SHAPES]).toEqual([...server.CONTAINER_SHAPES]);
+    expect([...client.CONTAINER_SIZES]).toEqual([...server.CONTAINER_SIZES]);
+    expect(client.SIZE_UNITS).toEqual(server.SIZE_UNITS);
     expect([...client.CONTAINER_PLACES]).toEqual([...server.CONTAINER_PLACES]);
     expect([...client.VIEW_MODES]).toEqual([...server.VIEW_MODES]);
     expect(client.MAX_PRESENT).toBe(server.MAX_PRESENT);

@@ -33,7 +33,11 @@ import type { WidgetProps } from './types';
  */
 export const WEB_WIDGET_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
-export function WebWidget({ elementId, payload, active, size }: WidgetProps) {
+export function WebWidget({ elementId, payload, active, size, onFrameAllowed }: WidgetProps & {
+  /** A PAGE's frame is allowed and shown (its trust gate passed): the Super Agent's card offers
+   *  it full screen only from then on. Never called for a file. */
+  onFrameAllowed?: (href: string) => void;
+}) {
   const tx = useWbText();
   const check = validateWebUrl(payload.url, window.location.origin);
 
@@ -47,19 +51,24 @@ export function WebWidget({ elementId, payload, active, size }: WidgetProps) {
   if (check.kind === 'file') {
     return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} />;
   }
-  return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} />;
+  return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} />;
 }
 
 type PageCheck = Extract<WebUrlCheck, { kind: 'url' }>;
 type FileCheck = Extract<WebUrlCheck, { kind: 'file' }>;
-type FrameProps = Pick<WidgetProps, 'active' | 'size'> & { title: string };
+type FrameProps = Pick<WidgetProps, 'active' | 'size'> & { title: string; onFrameAllowed?: (href: string) => void };
+
+/** Tells the card once a page's frame is up (the trust gate passed). */
+function useFrameAllowed(shown: boolean, href: string, onFrameAllowed?: (href: string) => void) {
+  useEffect(() => { if (shown) onFrameAllowed?.(href); }, [shown, href, onFrameAllowed]);
+}
 
 /** A card that appeared on its own (a Super Agent dev-server card) must not take a stray click:
  *  its allow buttons wake this long after it is drawn (T6). */
 export const LOOPBACK_BUTTON_DELAY_MS = 600;
 
 /** The ONE frame a web card ever draws: no popups, no top navigation, no permissions (T8). */
-function PageFrame({ title, href }: { title: string; href: string }) {
+export function PageFrame({ title, href }: { title: string; href: string }) {
   return (
     <iframe
       className="wb-web-frame"
@@ -81,7 +90,7 @@ function WebPage(props: FrameProps & { page: PageCheck }) {
  * (`lib/loopbackGrants.ts`): "Open once" loads it now and remembers nothing; "Always allow
  * localhost:PORT" records the port. The app's own ports are refused whatever is recorded.
  */
-function LoopbackPage({ page, title, active, size }: FrameProps & { page: PageCheck }) {
+function LoopbackPage({ page, title, active, size, onFrameAllowed }: FrameProps & { page: PageCheck }) {
   const tx = useWbText();
   const api = useApi();
   const { vault } = useVault();
@@ -96,6 +105,7 @@ function LoopbackPage({ page, title, active, size }: FrameProps & { page: PageCh
   }, []);
   const owned = !!grants?.ownedPorts.includes(port);
   const granted = !!grants?.grants.includes(port) && !owned;
+  useFrameAllowed(!owned && !denied && (granted || once), page.href, onFrameAllowed);
   // Fail closed: a refused or failed grant, or a port the server owns right now, never loads.
   const always = () => {
     if (!vault) { setDenied(true); return; }
@@ -130,9 +140,10 @@ function LoopbackPage({ page, title, active, size }: FrameProps & { page: PageCh
   );
 }
 
-function RemotePage({ page, title, active, size }: FrameProps & { page: PageCheck }) {
+function RemotePage({ page, title, active, size, onFrameAllowed }: FrameProps & { page: PageCheck }) {
   const tx = useWbText();
   const [loaded, setLoaded] = useState(() => isTrustedHost(page.host));
+  useFrameAllowed(loaded, page.href, onFrameAllowed);
 
   const openInBrowser = (
     <WidgetButton onClick={() => void openExternalUrl(page.href)}>
@@ -173,6 +184,8 @@ type FileAccess =
   | { state: 'blocked'; path: string }
   | { state: 'desktop' }
   | { state: 'missing' }
+  /** Over the server's cap for this file: its size and the cap, in bytes. */
+  | { state: 'tooLarge'; size: number | null; limit: number | null }
   | { state: 'failed' };
 
 function useFileAccess(src: string, attempt: number): FileAccess {
@@ -180,10 +193,17 @@ function useFileAccess(src: string, attempt: number): FileAccess {
   useEffect(() => {
     let cancelled = false;
     setAccess({ state: 'checking' });
-    void fetch(src, { headers: { Range: 'bytes=0-0' } })
+    // `probe=1`: every gate and the cap, answered without the server reading the file (a ranged
+    // GET was ignored by the text branch, which read a whole page just to say yes).
+    void fetch(`${src}&probe=1`)
       .then(async (r): Promise<FileAccess> => {
         if (r.ok || r.status === 206) return { state: 'ok' };
         if (r.status === 404) return { state: 'missing' };
+        if (r.status === 413) {
+          const body = await r.json().catch(() => null) as { size?: unknown; limit?: unknown } | null;
+          const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+          return { state: 'tooLarge', size: n(body?.size), limit: n(body?.limit) };
+        }
         if (r.status === 403) {
           const body = await r.json().catch(() => null) as { path?: unknown; error?: unknown } | null;
           if (body?.error === 'needs_grant' && typeof body.path === 'string') return { state: 'blocked', path: body.path };
@@ -257,6 +277,14 @@ function WebFile({ elementId, file, title, active, size }: FrameProps & { elemen
     body = <WidgetNotice tone="missing">{tx('whiteboard.web.desktopOnly', 'Files open in the desktop app.')}</WidgetNotice>;
   } else if (access.state === 'missing') {
     body = <WidgetNotice tone="missing">{tx('whiteboard.web.fileMissing', 'File not found:')}&nbsp;<code>{file.path}</code></WidgetNotice>;
+  } else if (access.state === 'tooLarge') {
+    const mb = (b: number | null) => (b === null ? '?' : `${Math.max(0.1, Math.round(b / 104857.6) / 10)} MB`);
+    body = (
+      <WidgetNotice tone="error">
+        {tx('whiteboard.web.fileTooLarge', 'This file is too large to show here ({size}; the limit is {limit}).')
+          .replace('{size}', mb(access.size)).replace('{limit}', mb(access.limit))}
+      </WidgetNotice>
+    );
   } else if (access.state === 'failed') {
     body = <WidgetNotice tone="error">{tx('whiteboard.web.fileFailed', 'This file could not be read.')}</WidgetNotice>;
   } else {
@@ -276,7 +304,7 @@ function WebFile({ elementId, file, title, active, size }: FrameProps & { elemen
   }
 
   return (
-    <WidgetFrame kind="web" title={title} active={active} size={size} actions={access.state === 'ok' ? openOnComputer : null}>
+    <WidgetFrame kind="web" title={title} active={active} size={size} actions={access.state === 'ok' || access.state === 'tooLarge' ? openOnComputer : null}>
       {body}
       {note && <p className="wb-web-trust-note" role="status">{note}</p>}
     </WidgetFrame>

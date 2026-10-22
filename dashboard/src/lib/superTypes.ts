@@ -17,6 +17,13 @@ export type ContainerKind = typeof CONTAINER_KINDS[number];
 export const CONTAINER_SHAPES = ['square', 'tall'] as const;
 export type ContainerShape = typeof CONTAINER_SHAPES[number];
 
+/** A floating card's size preset in tile units, wide by tall; absent = small. */
+export const CONTAINER_SIZES = ['small', 'medium', 'large', 'wide'] as const;
+export type ContainerSize = typeof CONTAINER_SIZES[number];
+export const SIZE_UNITS: Readonly<Record<ContainerSize, { w: number; h: number }>> = {
+  small: { w: 1, h: 1 }, medium: { w: 2, h: 1 }, large: { w: 2, h: 2 }, wide: { w: 3, h: 2 },
+};
+
 export const CONTAINER_PLACES = ['float', 'others'] as const;
 export type ContainerPlace = typeof CONTAINER_PLACES[number];
 
@@ -37,6 +44,10 @@ export interface SuperContainer {
   kind: ContainerKind;
   ref: string;
   shape: ContainerShape;
+  /** The size preset it floats at (absent = small). */
+  size?: ContainerSize;
+  /** The owner chose the size: an agent verb never changes it. */
+  sizeBy?: 'owner';
   place: ContainerPlace;
   /** Where the owner dropped it, as fractions (0..1) of the stage's free area. */
   pos?: { x: number; y: number };

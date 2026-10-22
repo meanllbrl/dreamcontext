@@ -12,6 +12,8 @@ export interface CriteriaProgress {
   total: number;
   /** The first open criterion, as plain text (markdown marks dropped); null when none is open. */
   next: string | null;
+  /** The first two open criteria (a medium tile lists them). */
+  upcoming: string[];
 }
 
 /** A criterion's text for one line: no bold/italic/code marks, links read as their text. */
@@ -30,14 +32,19 @@ export function criteriaProgress(md: string | null | undefined): CriteriaProgres
   let done = 0;
   let total = 0;
   let next: string | null = null;
+  const upcoming: string[] = [];
   for (const line of (md ?? '').split('\n')) {
     const m = BOX.exec(line);
     if (!m) continue;
     total += 1;
     if (m[1] !== ' ') done += 1;
-    else if (next === null) next = plainCriterion(m[2]) || null;
+    else {
+      const text = plainCriterion(m[2]);
+      if (next === null) next = text || null;
+      if (text && upcoming.length < 2) upcoming.push(text);
+    }
   }
-  return { done, total, next };
+  return { done, total, next, upcoming };
 }
 
 /**

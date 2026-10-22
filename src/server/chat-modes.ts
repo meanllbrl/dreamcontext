@@ -477,6 +477,8 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 ## Arrange the screen yourself
 \`super half <card>\` (side by side), \`present <card…>\` (1-4), \`stack <card>\` (Others),
 \`group <card…>\`; \`--off\` / \`float\` undo. \`@card:<id>\` names a card he dropped on you.
+Sizes: \`super shape <card> small|medium|large|wide\` (or \`open … --size\`); large/wide for
+something read at a glance (a picture, a chart). A 409 owner_sized means he chose it: leave it.
 
 ## Events
 \`[super events]\`, \`[super handover]\` and \`[super recap]\` turns come from the server while the

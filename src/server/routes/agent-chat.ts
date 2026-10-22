@@ -4151,6 +4151,24 @@ export function computeBackgroundOutput(contextRoot: string, taskId: string, cla
  *  image bytes so a huge PNG can't be requested through this endpoint either. */
 const AGENT_FILE_MAX_BYTES = 512 * 1024;
 
+/** A web page (`.html`/`.htm`) has its own, larger text cap: a mockup carries its pictures
+ *  inline as base64 (one owner file was 596 KB and read as "could not be read", 2026-10-22).
+ *  Still read whole into the JSON body, and still drawn only in the strict, network-less
+ *  sandbox, so the cap stays a ceiling, not a stream. */
+const AGENT_FILE_HTML_MAX_BYTES = 8 * 1024 * 1024;
+
+/** A file over its branch's cap: the size and the limit ride along, so a card can say how big
+ *  it is and what the limit is instead of "could not be read". */
+function sendTooLarge(res: ServerResponse, size: number, limit: number, message: string): void {
+  sendJson(res, 413, { error: 'too_large', message, size, limit });
+}
+
+/** `?probe=1`: everything a read would check has passed and the file fits its branch's cap,
+ *  answered without reading a byte (a card asking "will this load?" before it mounts a reader). */
+function sendProbe(res: ServerResponse, size: number, limit: number): void {
+  sendJson(res, 200, { probe: true, size, limit });
+}
+
 /** Extensions servable as raw image bytes via `?raw=1`. SVG is NOT in this map: it can embed
  *  `<script>`/`foreignObject`, so it has its own arm in `handleAgentFile` — raw bytes for an
  *  `<img>` (which never runs an SVG's script) under a `sandbox` CSP that keeps a direct
@@ -4369,6 +4387,7 @@ export async function handleAgentFile(
   const ext = extname(abs).toLowerCase();
   const rawType = AGENT_FILE_RAW_CONTENT_TYPE[ext];
   const wantsRaw = url.searchParams.get('raw') === '1';
+  const probe = url.searchParams.get('probe') === '1';
 
   // AN SVG, AS AN IMAGE — for the Lightbox's `<img>` (Chat and the Agents page both open an
   // `.svg` there). An `<img>` never executes an SVG's script; `sandbox` plus `default-src
@@ -4376,7 +4395,8 @@ export async function handleAgentFile(
   // origin, nothing fetched); `nosniff` is set above. Capped like a text preview: an SVG is
   // markup, and a huge one is a generated artifact, not a picture.
   if (wantsRaw && ext === '.svg') {
-    if (st.size > AGENT_FILE_MAX_BYTES) { sendError(res, 413, 'too_large', 'File exceeds the preview size cap.'); return; }
+    if (st.size > AGENT_FILE_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_FILE_MAX_BYTES, 'File exceeds the preview size cap.'); return; }
+    if (probe) { sendProbe(res, st.size, AGENT_FILE_MAX_BYTES); return; }
     res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     res.setHeader('Content-Disposition', 'inline');
     serveMedia(req, res, abs, st.size, 'image/svg+xml');
@@ -4384,7 +4404,8 @@ export async function handleAgentFile(
   }
 
   if (wantsRaw && rawType) {
-    if (st.size > AGENT_MEDIA_MAX_BYTES) { sendError(res, 413, 'too_large', 'File is too large to stream.'); return; }
+    if (st.size > AGENT_MEDIA_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_MEDIA_MAX_BYTES, 'File is too large to stream.'); return; }
+    if (probe) { sendProbe(res, st.size, AGENT_MEDIA_MAX_BYTES); return; }
     // A document is DISPLAYED, never downloaded: without this an engine that has no built-in
     // viewer for the type falls back to saving it, which from the user's side reads as "the
     // viewer opened and nothing happened, and now there's a file in Downloads". `nosniff` is
@@ -4394,8 +4415,11 @@ export async function handleAgentFile(
     return;
   }
 
-  // Text preview keeps the tight cap: this branch reads the whole file into a JSON body.
-  if (st.size > AGENT_FILE_MAX_BYTES) { sendError(res, 413, 'too_large', 'File exceeds the preview size cap.'); return; }
+  // Text preview keeps the tight cap: this branch reads the whole file into a JSON body. A web
+  // page gets the larger one (its pictures ride inline).
+  const textCap = ext === '.html' || ext === '.htm' ? AGENT_FILE_HTML_MAX_BYTES : AGENT_FILE_MAX_BYTES;
+  if (st.size > textCap) { sendTooLarge(res, st.size, textCap, 'File exceeds the preview size cap.'); return; }
+  if (probe) { sendProbe(res, st.size, textCap); return; }
   let content: string;
   try { content = readFileSync(abs, 'utf-8'); } catch { sendError(res, 500, 'read_failed', 'Failed to read file.'); return; }
   sendJson(res, 200, { path: rawPath, type: ext === '.md' ? 'markdown' : 'text', content });

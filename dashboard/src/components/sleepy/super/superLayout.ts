@@ -12,10 +12,16 @@
  * its LAST rects from it, so the screen, the motion and these numbers never disagree.
  *
  * Coordinates are the stage's own (origin = its top-left), in CSS px.
+ *
+ * Card sizes (owner 2026-10-22, "like Apple widgets"): a floating card may be medium (2×1 tiles),
+ * large (2×2) or wide (3×2). A stage of small cards only is laid out exactly as before (pinned
+ * by a snapshot); one sized card switches the float pass to `solveSized`, where each side takes
+ * the width its widest card needs and the centre narrows for it, never under CENTRE_MIN. A size
+ * that does not fit is DRAWN smaller (the plan's `size`), the record is never touched.
  */
 import {
-  MAX_CONTAINERS, MAX_PRESENT, applyGroupOp, dissolveGroups, leaveGroups, normalizeGroups,
-  type ContainerShape, type GroupOp, type SuperContainer, type SuperGroup, type SuperView,
+  CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, SIZE_UNITS, applyGroupOp, dissolveGroups, leaveGroups, normalizeGroups,
+  type ContainerShape, type ContainerSize, type GroupOp, type SuperContainer, type SuperGroup, type SuperView,
 } from '../../../lib/superTypes';
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -69,6 +75,8 @@ export interface CardPlan {
   where: CardWhere;
   /** The shape it is DRAWN in: a floating tile is always 'square'; a large view keeps the record's. */
   shape: ContainerShape;
+  /** A floating card: the size it is DRAWN at (its record's, or smaller when that does not fit). */
+  size?: ContainerSize;
   /** Placed by the owner's drop (or held by a running drag), not by the stage. */
   owner: boolean;
   /** Paint order: record order, owner-placed cards above the auto-placed ones (the window lifts
@@ -113,6 +121,19 @@ export interface StageItem {
   place: SuperContainer['place'];
   pos?: { x: number; y: number };
   slot?: number;
+  /** The record's size preset (absent = small; a group is always small). */
+  size?: ContainerSize;
+}
+
+/** A card's size from its record: a preset, or small. */
+export function sizeOf(c: { size?: unknown }): ContainerSize {
+  return (CONTAINER_SIZES as readonly unknown[]).includes(c.size) && c.size !== undefined ? c.size as ContainerSize : 'small';
+}
+
+/** A size in px: units of the tile, one gap between them. */
+export function sizePx(size: ContainerSize): { width: number; height: number } {
+  const u = SIZE_UNITS[size];
+  return { width: u.w * STAGE.TILE + (u.w - 1) * STAGE.GAP, height: u.h * STAGE.TILE + (u.h - 1) * STAGE.GAP };
 }
 
 /**
@@ -129,7 +150,8 @@ export function stageItems(containers: readonly SuperContainer[], groups: readon
   const placed = new Set<string>();
   containers.forEach((c, i) => {
     const g = groupOf.get(c.id);
-    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i });
+    const size = sizeOf(c);
+    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}) });
     if (g && !placed.has(g.id) && g.cards[0] !== undefined && index.has(g.cards[0])) {
       placed.add(g.id);
       out.push({ id: g.id, kind: 'group', shape: 'square', place: g.place, ...(g.pos ? { pos: g.pos } : {}), slot: index.get(g.cards[0])! });
@@ -237,6 +259,170 @@ function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): Fl
     }
   }
   return { centre, u: T, rects, overflow, orbit };
+}
+
+// ─── Sized cards (owner 2026-10-22) ──────────────────────────────────────────────
+
+interface SizedSlot extends Slot { size: ContainerSize; z: number }
+
+/** The largest size, at most `cap` tiles wide, a card of `size` may be drawn at. */
+function shrinkToWidth(size: ContainerSize, cap: number): ContainerSize {
+  const prefs: Record<ContainerSize, ContainerSize[]> = {
+    wide: ['wide', 'large', 'medium', 'small'], large: ['large', 'medium', 'small'], medium: ['medium', 'small'], small: ['small'],
+  };
+  return prefs[size].find((s) => SIZE_UNITS[s].w <= Math.max(1, cap)) ?? 'small';
+}
+
+/** One step lower: a 2-tall card first gives up its height (wide/large → medium), then medium → small. */
+const HEIGHT_STEP: Record<ContainerSize, ContainerSize | null> = { wide: 'medium', large: 'medium', medium: 'small', small: null };
+
+const unitsPx = (n: number) => (n > 0 ? n * STAGE.TILE + (n - 1) * STAGE.GAP : 0);
+
+interface SizedSolution extends FloatSolution {
+  /** Each placed card's drawn size. */
+  drawn: Map<string, ContainerSize>;
+  /** The right side's width (`u` is the left's). */
+  uRight: number;
+}
+
+/**
+ * Both sides around the centre when a card is sized. Each side is as wide as its widest card
+ * (in tiles) and the centre takes what is left, between CENTRE_MIN and its preferred width: the
+ * chat narrows only as far as a card needs. Too wide even then: the wider side (on a tie, the one
+ * whose widest card comes later in the record) is capped one tile narrower and its cards are
+ * drawn at the largest size that fits it. Within a side, cards run top to bottom in record order
+ * against the inner (centre) edge: a sized card is a block of its own, a run of small cards fills
+ * rows of the side's width. A side taller than the stage first widens (when the centre can
+ * spare it and it has small cards to pair); then the auto-placed cards give way, the latest
+ * first (their height: wide/large → medium, medium → small; then their place, to Others, any
+ * card before a chat); only then the owner's own cards, the same way. A one-column side of
+ * small cards keeps its orbit.
+ */
+function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[]): SizedSolution {
+  const { GAP, MARGIN, TILE: T, ORBIT_DEPTH } = STAGE;
+  const W = f.width;
+  const span = f.content.height;
+  const preferred = preferredCentre(W);
+  const drawn = new Map<string, ContainerSize>();
+  for (const s of [...left, ...right]) drawn.set(s.id, s.size);
+  const overflow = new Set<string>();
+  const sides = { left: [...left], right: [...right] };
+  const live = (side: 'left' | 'right') => sides[side].filter((s) => !overflow.has(s.id));
+  const widest = (side: 'left' | 'right') => live(side).reduce((m, s) => Math.max(m, SIZE_UNITS[drawn.get(s.id)!].w), 0);
+  const cols = { left: widest('left'), right: widest('right') };
+  const avail = () => W - 2 * MARGIN - unitsPx(cols.left) - unitsPx(cols.right) - (cols.left ? GAP : 0) - (cols.right ? GAP : 0);
+  const capSide = (side: 'left' | 'right', cap: number) => {
+    cols[side] = cap;
+    for (const s of live(side)) drawn.set(s.id, shrinkToWidth(drawn.get(s.id)!, cap));
+  };
+  // Width: narrow the wider side until the centre keeps its floor.
+  while (avail() < STAGE.CENTRE_MIN && (cols.left > 1 || cols.right > 1)) {
+    const lastWide = (side: 'left' | 'right') => Math.max(-1, ...live(side).filter((s) => SIZE_UNITS[drawn.get(s.id)!].w === cols[side]).map((s) => s.z));
+    const side = cols.left !== cols.right ? (cols.left > cols.right ? 'left' : 'right') : (lastWide('left') > lastWide('right') ? 'left' : 'right');
+    capSide(side, cols[side] - 1);
+  }
+  // Rows of one side at its width.
+  type Row = { h: number; items: SizedSlot[] };
+  const rowsOf = (side: 'left' | 'right'): Row[] => {
+    const rows: Row[] = [];
+    let run: Row | null = null;
+    for (const s of live(side)) {
+      const u = SIZE_UNITS[drawn.get(s.id)!];
+      if (u.w === 1 && u.h === 1) {
+        if (run && run.items.length < Math.max(1, cols[side])) run.items.push(s);
+        else { run = { h: 1, items: [s] }; rows.push(run); }
+      } else {
+        run = null;
+        rows.push({ h: u.h, items: [s] });
+      }
+    }
+    return rows;
+  };
+  const heightOfRows = (rows: Row[]) => rows.reduce((t, r) => t + unitsPx(r.h), 0) + Math.max(0, rows.length - 1) * GAP;
+  for (const side of ['left', 'right'] as const) {
+    for (let guard = 0; guard < 200 && heightOfRows(rowsOf(side)) > span; guard++) {
+      const items = live(side);
+      const smalls = items.filter((s) => drawn.get(s.id) === 'small').length;
+      // 1. Widen, when the centre can spare a tile and there are small cards to pair up.
+      if (cols[side] < STAGE.MAX_COLS + 1 && smalls >= 2 && avail() - T - GAP >= STAGE.CENTRE_MIN && cols[side] >= 1) {
+        cols[side] += 1;
+        continue;
+      }
+      // 2. The auto-placed cards give way first, the latest first: their height, then their place
+      //    (to Others, any card before a chat). Only then does the owner's own card give up
+      //    height, and last its place: he chose its size and where it stands.
+      const latest = [...items].reverse();
+      const shrink = (owner: boolean) => latest.find((s) => s.owner === owner && SIZE_UNITS[drawn.get(s.id)!].h > 1)
+        ?? latest.find((s) => s.owner === owner && drawn.get(s.id) === 'medium' && cols[side] >= 2);
+      const drop = (owner: boolean) => latest.find((s) => s.owner === owner && !s.chat) ?? latest.find((s) => s.owner === owner);
+      const step = shrink(false) ?? null;
+      if (step) { drawn.set(step.id, HEIGHT_STEP[drawn.get(step.id)!]!); continue; }
+      const auto = drop(false);
+      if (auto) { overflow.add(auto.id); continue; }
+      const own = shrink(true);
+      if (own) { drawn.set(own.id, HEIGHT_STEP[drawn.get(own.id)!]!); continue; }
+      const last = drop(true);
+      if (!last) break;
+      overflow.add(last.id);
+    }
+  }
+  // The centre: what the sides leave, never over its preferred width; centred when both sides
+  // fit beside a centred centre, else right after the left side.
+  const centreW = Math.max(STAGE.CENTRE_MIN, Math.min(preferred, avail()));
+  const symmetricRoom = (W - centreW) / 2 - GAP - MARGIN;
+  const x = symmetricRoom >= Math.max(unitsPx(cols.left), unitsPx(cols.right)) - 1e-9
+    ? (W - centreW) / 2
+    : MARGIN + unitsPx(cols.left) + (cols.left ? GAP : 0) + Math.max(0, (avail() - centreW) / 2);
+  const centre: Rect = { x, y: f.content.y, width: centreW, height: f.content.height };
+  const mid = centre.y + centre.height / 2;
+  const rects = new Map<string, Rect>();
+  const orbit: OrbitArc[] = [];
+  for (const side of ['left', 'right'] as const) {
+    const rows = rowsOf(side);
+    if (!rows.length) continue;
+    const total = heightOfRows(rows);
+    const dir = side === 'left' ? -1 : 1;
+    const inner = side === 'left' ? centre.x - GAP : centre.x + centre.width + GAP;
+    // A one-column side of small cards keeps its orbit.
+    const oneColumn = rows.every((r) => r.items.length === 1 && drawn.get(r.items[0].id) === 'small');
+    const room = side === 'left' ? centre.x - GAP - MARGIN : W - MARGIN - inner;
+    const depth = oneColumn && rows.length >= 2 ? Math.max(0, Math.min(ORBIT_DEPTH, room - T)) : 0;
+    const ymax = (total - T) / 2;
+    let y = mid - total / 2;
+    for (const r of rows) {
+      r.items.forEach((s, k) => {
+        const px = sizePx(drawn.get(s.id)!);
+        const dy = y + px.height / 2 - mid;
+        const off = depth > 0 && ymax > 0 ? depth * (1 - (dy / ymax) ** 2) : 0;
+        const at = side === 'left' ? inner - k * (T + GAP) - px.width : inner + k * (T + GAP);
+        rects.set(s.id, { x: at + dir * off, y, width: px.width, height: px.height });
+      });
+      y += unitsPx(r.h) + GAP;
+    }
+    if (depth > 0) orbit.push({ side, x0: inner + dir * (T / 2), cy: mid, ymax, depth, dir });
+  }
+  return { centre, u: unitsPx(cols.left), uRight: unitsPx(cols.right), rects, overflow, orbit, drawn };
+}
+
+/** Whether `id` would be drawn floating at `size` on this stage now: the plan with that size,
+ *  asked (the size menu and the corner handle offer only what this says). */
+export function fitsNow(
+  containers: readonly StageItem[], view: SuperView, stage: { width: number; height: number }, id: string, size: ContainerSize, opts: PlanOptions = {},
+): boolean {
+  const next = containers.map((c) => (c.id === id ? { ...c, ...(size === 'small' ? { size: undefined } : { size }) } : c));
+  const p = planStage(next, view, stage, opts).cards[id];
+  return !!p && p.where === 'float' && (p.size ?? 'small') === size;
+}
+
+/**
+ * The drop position that keeps an owner-placed card's INNER top corner where it is when it
+ * changes size (the corner toward the centre: top-right on the left side, top-left on the right):
+ * the card grows away from the centre and never jumps.
+ */
+export function anchoredPos(free: Rect, rect: Rect, size: ContainerSize, side: 'left' | 'right'): { x: number; y: number } {
+  const px = sizePx(size);
+  const x = side === 'left' ? rect.x + rect.width - px.width : rect.x;
+  return posFromRect(free, { x, y: rect.y, width: px.width, height: px.height });
 }
 
 /** Where a pushed-aside tile goes: the free spot of its own column nearest where it stood. */
@@ -467,15 +653,24 @@ function planWith(
   }
   const slotsOn = (side: 'left' | 'right'): Slot[] =>
     floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, owner: isOwner(c), chat: c.kind === 'chat' || c.kind === 'group' }));
+  const sizeById = new Map(floating.map((c) => [c.id, sizeOf(c)] as const));
+  const withSize = (sl: Slot): SizedSlot => ({ ...sl, size: sizeById.get(sl.id) ?? 'small', z: z.get(sl.id) ?? 0 });
 
   // One pass with every item on its side's orbit, the owner's included where they would stand:
   // it sets the stage. An owner tile is drawn at the one tile size wherever he dropped it.
-  const sol = solveFloat(f, slotsOn('left'), slotsOn('right'));
+  // A stage of small cards keeps the orbit exactly as it was; one sized card packs the sides by
+  // size (solveSized).
+  const sized = floating.some((c) => sizeOf(c) !== 'small');
+  const sol = sized
+    ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize))
+    : { ...solveFloat(f, slotsOn('left'), slotsOn('right')), drawn: new Map<string, ContainerSize>(), uRight: undefined };
+  const drawnOf = (id: string): ContainerSize => sol.drawn.get(id) ?? 'small';
   const centre = sol.centre;
   const ownerRects = new Map<string, Rect>();
   for (const c of owned) {
     if (c.id === drag?.id) { ownerRects.set(c.id, drag.rect); continue; }
-    ownerRects.set(c.id, pushOut(rectFromPos(f.free, c.pos!, STAGE.TILE, STAGE.TILE), centre, f.free));
+    const px = sizePx(drawnOf(c.id));
+    ownerRects.set(c.id, pushOut(rectFromPos(f.free, c.pos!, px.width, px.height), centre, f.free));
   }
 
   // The owner's cards sit where they were dropped. An auto card clear of them keeps its place;
@@ -486,7 +681,7 @@ function planWith(
   const blocks: Rect[] = [...owners];
   const moved: StageItem[] = [];
   const auto = (c: StageItem, rect: Rect) => {
-    cards[c.id] = { id: c.id, rect, where: 'float', shape: drawnShape(rect), owner: false, z: z.get(c.id) ?? 0 };
+    cards[c.id] = { id: c.id, rect, where: 'float', shape: drawnShape(rect), size: drawnOf(c.id), owner: false, z: z.get(c.id) ?? 0 };
   };
   for (const c of floating) {
     if (isOwner(c)) continue;
@@ -504,9 +699,10 @@ function planWith(
   for (const c of owned) {
     const rect = ownerRects.get(c.id) ?? EMPTY;
     // Owner-placed cards paint above the auto-placed ones (they may sit over each other).
-    cards[c.id] = { id: c.id, rect, where: 'float', shape: drawnShape(rect), owner: true, z: MAX_CONTAINERS + (z.get(c.id) ?? 0) };
+    cards[c.id] = { id: c.id, rect, where: 'float', shape: drawnShape(rect), size: drawnOf(c.id), owner: true, z: MAX_CONTAINERS + (z.get(c.id) ?? 0) };
   }
-  const width = (side: 'left' | 'right') => (floating.some((c) => sideOf.get(c.id) === side && cards[c.id]?.where === 'float') ? sol.u : 0);
+  const width = (side: 'left' | 'right') => (floating.some((c) => sideOf.get(c.id) === side && cards[c.id]?.where === 'float')
+    ? (side === 'right' ? sol.uRight ?? sol.u : sol.u) : 0);
   return finish(centre, centre.width, 'float', { left: width('left'), right: width('right') }, sol.orbit);
 }
 
@@ -552,6 +748,8 @@ export interface LayoutPatchCard {
   pos?: { x: number; y: number } | null;
   place?: 'float' | 'others';
   order?: 'last';
+  /** The owner's size for a card (a group is never sized); `null` hands it back. */
+  size?: ContainerSize | null;
 }
 
 export interface LayoutPatch {
@@ -586,6 +784,11 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
     if (p.place === 'float' || p.place === 'others') k.place = p.place;
     if (p.pos === null) delete k.pos;
     else if (p.pos && Number.isFinite(p.pos.x) && Number.isFinite(p.pos.y)) k.pos = { x: clamp01(p.pos.x), y: clamp01(p.pos.y) };
+    if ('kind' in k && p.size === null) { delete k.size; delete k.sizeBy; }
+    else if ('kind' in k && p.size && (CONTAINER_SIZES as readonly string[]).includes(p.size)) {
+      if (p.size === 'small') delete k.size; else k.size = p.size;
+      k.sizeBy = 'owner';
+    }
     if (p.order === 'last' && 'kind' in k) st.containers = [...st.containers.filter((x) => x !== k), k];
   }
   if (patch.group) applyGroupOp(st, patch.group);
@@ -613,6 +816,10 @@ export function patchEchoed(state: Staged, patch: LayoutPatch): boolean {
     if (p.place && k.place !== p.place) return false;
     if (p.pos === null && k.pos) return false;
     if (p.pos && (!k.pos || Math.abs(k.pos.x - clamp01(p.pos.x)) > 1e-6 || Math.abs(k.pos.y - clamp01(p.pos.y)) > 1e-6)) return false;
+    // A size the server ignores (a group's) counts as echoed; a card's echoes as its record.
+    if ('kind' in k && p.size === null && (k.size || k.sizeBy)) return false;
+    if ('kind' in k && p.size && (CONTAINER_SIZES as readonly string[]).includes(p.size)
+      && (sizeOf(k) !== p.size || k.sizeBy !== 'owner')) return false;
   }
   for (const id of patch.closed ?? []) if (state.containers.some((x) => x.id === id)) return false;
   for (const id of patch.leave ?? []) if (groups.some((g) => g.cards.includes(id))) return false;

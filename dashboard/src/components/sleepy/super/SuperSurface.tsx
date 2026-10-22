@@ -20,7 +20,10 @@ import { childModelChip } from './AgentCard';
 import { SuperContainer, chatStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { isGroupId, jobListRect, planStage, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
+import { anchoredPos, fitsNow, isGroupId, jobListRect, planStage, sizeOf, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
+import type { ContainerSize } from '../../../lib/superTypes';
+import { CardFullscreenView } from './CardFullscreenView';
+import type { CardFullscreen } from './SuperContainer';
 import { hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
 import { MAX_LIVE_BROWSERS, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { useWindowActivity } from '../../../lib/windowActivity';
@@ -116,7 +119,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // ── The drag (F6, FE1, D1): the gestures live in useStageDrag; what they read at the moment of
   // the gesture is refreshed below, once everything it names exists. ──
   const dragDeps = useRef<StageDragDeps | null>(null);
-  const { drag, hot, target, panelDrag, onPressCard, onPressPanelItem } = useStageDrag(dragDeps);
+  const { drag, hot, target, panelDrag, onPressCard, onPressPanelItem, onPressResize } = useStageDrag(dragDeps);
   // The card dropped last paints on top of the other dropped cards, for this window's session.
   // (A drop never reorders the record: that would move every other card to the other side.)
   const [topped, setTopped] = useState<string[]>([]);
@@ -127,9 +130,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
   );
 
   // ── The plan ──
+  const items = useMemo(() => stageItems(state.containers, state.groups, state.view), [state.containers, state.groups, state.view]);
   const plan = useMemo(
-    () => planStage(stageItems(state.containers, state.groups, state.view), state.view, size, { dragging: pinned, terminals: props.terminals.length }),
-    [state.containers, state.groups, state.view, size, pinned, props.terminals.length],
+    () => planStage(items, state.view, size, { dragging: pinned, terminals: props.terminals.length }),
+    [items, state.view, size, pinned, props.terminals.length],
   );
   const planRef = useRef(plan);
   planRef.current = plan;
@@ -192,9 +196,16 @@ export function SuperSurface(props: SuperSurfaceProps) {
 
   // ── The web budget: at most two live frames, most recently loaded first ──
   const [lru, setLru] = useState<string[]>([]);
+  // What is open full screen (one at a time); its card gives up its own frame meanwhile.
+  const [full, setFull] = useState<{ id: string; subject: CardFullscreen } | null>(null);
   const webOnScreen = props.visible
-    // A floating tile shows a page's title; the frame lives only side by side or presented.
-    ? state.containers.filter((c) => c.kind === 'web' && plan.cards[c.id] && plan.cards[c.id].where !== 'others' && plan.cards[c.id].where !== 'float').map((c) => c.id)
+    // A small or medium floating tile shows a page's title; the frame lives side by side,
+    // presented, or in a large/wide floating card (owner 2026-10-22), within the same budget.
+    ? state.containers.filter((c) => {
+      const cp = c.kind === 'web' ? plan.cards[c.id] : undefined;
+      if (!cp || cp.where === 'others' || full?.id === c.id) return false;
+      return cp.where !== 'float' || cp.size === 'large' || cp.size === 'wide';
+    }).map((c) => c.id)
     : [];
   const liveWeb = liveWebIds(lru, webOnScreen);
   // ── Cues and the reveal gate (G1, AC16): new cards wait while the owner drags or types,
@@ -255,12 +266,28 @@ export function SuperSurface(props: SuperSurfaceProps) {
     },
     onLoadWeb: (id: string) => setLru((prev) => touchLru(prev, id)),
     onOpenPage: props.onOpenPage,
+    /** The owner's size (the menu, the corner handle): his choice, written once. A card he
+     *  placed keeps its inner top corner (anchoredPos), so it grows away from the centre. */
+    onSize: (id: string, next: ContainerSize) => {
+      const c = byId.get(id);
+      const cp = planRef.current.cards[id];
+      if (!c || !cp) return;
+      if (sizeOf(c) === next && c.sizeBy === 'owner') return;
+      const side = c.pos ? (c.pos.x < 0.5 ? 'left' : 'right') : null;
+      const pos = side && cp.where === 'float' ? anchoredPos(planRef.current.free, cp.rect, next, side) : undefined;
+      if (next === 'large' || next === 'wide') { if (c.kind === 'web') setLru((prev) => touchLru(prev, id)); }
+      onLayout({ cards: [{ id, size: next, ...(pos ? { pos } : {}) }] });
+    },
+    onFullscreen: (id: string, subject: CardFullscreen) => setFull({ id, subject }),
   };
+  const canFit = (id: string, next: ContainerSize) => fitsNow(items, state.view, size, id, next, { terminals: props.terminals.length });
+  // A card closed meanwhile takes its full-screen view with it.
+  useEffect(() => { if (full && !byId.has(full.id)) setFull(null); }, [byId, full]);
 
   const onUngroup = (id: string) => { setOpenGroup(null); onLayout({ ungroup: [id] }); };
   dragDeps.current = {
     rootRef, layerRef, planRef, stateRef, byId, groupsById, titleOf, onLayout, actions, liftOnTop, setOpenGroup,
-    groupWord: t('super.group.word'),
+    groupWord: t('super.group.word'), onSize: actions.onSize, canFit,
   };
   /** A card clicked in a panel: side by side; a group in Others: back on the stage. */
   const openFromPanel = (id: string) => {
@@ -413,6 +440,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
               endPending={c.kind === 'chat' && props.endPending.has(c.ref)}
               endFailed={c.kind === 'chat' && props.endFailed.has(c.ref)}
               team={teamCardOf(c)}
+              side={cp.rect.x + cp.rect.width / 2 < plan.centre.x + plan.centre.width / 2 ? 'left' : 'right'}
+              canFit={(next) => canFit(c.id, next)}
+              onPressResize={ghost ? undefined : onPressResize}
               {...actions}
             />
           );
@@ -507,6 +537,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         );
       })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
+      {full && <CardFullscreenView subject={full.subject} onClose={() => setFull(null)} />}
     </div>
   );
 }
