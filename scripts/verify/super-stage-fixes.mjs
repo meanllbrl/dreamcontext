@@ -440,6 +440,38 @@ try {
     await shot(page, '3-site-inspect-zoomed');
   }
 
+  console.log('\n── 4) a card that leaves a presentation ends it for that card (owner 13:19)');
+  ids.chat = record().containers.find((c) => c.kind === 'chat')?.id;
+  const where = async (id) => (await card(page, id).count()) ? (await rectOf(page, id)).where : 'others';
+  await agent(page, `super present ${ids.chat} ${ids.image} ${ids.html}`);
+  await page.waitForTimeout(1500);
+  ok('three cards are presented (the chat among them)', (await where(ids.chat)) === 'present' && (await where(ids.image)) === 'present');
+  // The owner's case: the presented chat's ✕ → "Move to Others".
+  await clickIn(page, ids.chat, 'super-card-close');
+  await page.locator('[data-testid="super-close-others"]').first().click();
+  await settle(page);
+  ok('Move to Others on the presented chat: it leaves the presentation', record().view?.mode === 'present' && !(record().view.cards ?? []).includes(ids.chat), JSON.stringify(record().view));
+  ok('…and the presentation goes on with the other two', (await where(ids.image)) === 'present' && (await where(ids.html)) === 'present' && (await where(ids.chat)) === 'others');
+  await shot(page, '4-present-after-to-others');
+  // Ask and full screen leave the presentation as it is.
+  await clickIn(page, ids.image, 'super-card-ask');
+  await page.waitForTimeout(400);
+  ok('Ask about a presented card keeps the presentation', record().view?.mode === 'present' && (record().view.cards ?? []).includes(ids.image), JSON.stringify(record().view));
+  // Close a presented card: the presentation goes on with the last one.
+  await clickIn(page, ids.html, 'super-card-close');
+  await settle(page);
+  ok('Close on a presented card: out of the presentation, the last card stays presented', record().view?.mode === 'present' && JSON.stringify(record().view.cards) === JSON.stringify([ids.image]), JSON.stringify(record().view));
+  // The last presented card minimized: the stage floats.
+  await clickIn(page, ids.image, 'super-card-minimize');
+  await settle(page);
+  ok('Minimize on the last presented card: the stage floats', record().view?.mode === 'float' && (await page.locator('[data-testid="super-surface"]').getAttribute('data-mode')) === 'float', JSON.stringify(record().view));
+  // Side by side, then the card's size from the stage: put side by side, then Others from the drag target is
+  // covered by the unit tests; here: a half card moved to Others via the agent's stack.
+  await agent(page, `super half ${ids.image}`);
+  await agent(page, `super stack ${ids.image}`);
+  ok('a side-by-side card stacked to Others: the stage floats', record().view?.mode === 'float', JSON.stringify(record().view));
+  await shot(page, '4-floats-again');
+
   ok('no console errors', errors.length === 0, errors.slice(0, 5).join('\n'));
   await context.close();
 } catch (e) {

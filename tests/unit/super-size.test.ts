@@ -28,7 +28,7 @@ import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
-import { CONTAINER_SIZES, SIZE_UNITS, emptySuperState, type SuperContainer, type SuperState } from '../../src/lib/super/types.js';
+import { CONTAINER_SIZES, SIZE_UNITS, emptySuperState, viewWithout as serverViewWithout, type SuperContainer, type SuperState } from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { handleSuperLayout, handleSuperVerb } from '../../src/server/routes/super.js';
@@ -368,5 +368,80 @@ describe('a held half page keeps the view already drawn (second review)', () => 
     expect(heldFallback({ mode: 'half', card: 'b' }, wanted, cards)).toEqual({ mode: 'float' });
     expect(heldFallback({ mode: 'half', card: 'gone' }, wanted, cards)).toEqual({ mode: 'float' });
     expect(heldFallback({ mode: 'float' }, wanted, cards)).toEqual({ mode: 'float' });
+  });
+});
+
+describe('owner 2026-10-22 13:19: a card that leaves the stage leaves the presentation too', () => {
+  const PRES = { mode: 'present' as const, cards: ['task-a', 'task-b'] };
+
+  it('viewWithout: the same rule on both sides of the wire', () => {
+    const cases: Array<[client.SuperView, string[]]> = [
+      [PRES, ['task-a']], [PRES, ['task-a', 'task-b']], [PRES, ['zzz']], [PRES, []],
+      [{ mode: 'half', card: 'task-a' }, ['task-a']], [{ mode: 'half', card: 'task-a', auto: true }, ['task-b']], [{ mode: 'float' }, ['task-a']],
+    ];
+    for (const [v, ids] of cases) expect(client.viewWithout(v, new Set(ids))).toEqual(serverViewWithout(v, new Set(ids)));
+    expect(client.viewWithout(PRES, new Set(['task-a']))).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(client.viewWithout(PRES, new Set(['task-a', 'task-b']))).toEqual({ mode: 'float' });
+    expect(client.viewWithout({ mode: 'half', card: 'task-a' }, new Set(['task-a']))).toEqual({ mode: 'float' });
+  });
+
+  it('Move to Others on a presented card: the presentation goes on with the rest, then floats', async () => {
+    makeVault({ view: PRES });
+    await layout({ cards: [{ id: 'task-a', place: 'others' }] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    await layout({ cards: [{ id: 'task-b', place: 'others' }] });
+    expect(onDisk().view).toEqual({ mode: 'float' });
+  });
+
+  it('closed, resized or grouped by the owner: out of the presentation; a half page floats', async () => {
+    makeVault({ view: PRES });
+    await layout({ closed: ['task-a'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    makeVault({ view: PRES });
+    await layout({ cards: [{ id: 'task-b', size: 'large' }] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a'] });
+    makeVault({ view: PRES });
+    await layout({ group: { id: 'grp-n', cards: ['task-a', 'task-c'] } });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    makeVault({ view: { mode: 'half', card: 'task-a' } });
+    await layout({ cards: [{ id: 'task-a', place: 'others' }] });
+    expect(onDisk().view).toEqual({ mode: 'float' });
+    // A drop position or a move back to the stage leaves the view alone; an explicit view wins.
+    makeVault({ view: PRES });
+    await layout({ cards: [{ id: 'task-a', pos: { x: 0.2, y: 0.2 } }, { id: 'task-b', place: 'float' }] });
+    expect(onDisk().view).toEqual(PRES);
+    await layout({ cards: [{ id: 'task-a', place: 'others' }], view: { mode: 'half', card: 'task-b' } });
+    expect(onDisk().view).toEqual({ mode: 'half', card: 'task-b' });
+  });
+
+  it('a group moved to Others takes its presented cards out (the owner\'s drop and the agent\'s stack)', async () => {
+    const groups = [{ id: 'grp-1', name: 'Pair', cards: ['task-a', 'task-c'], place: 'float' as const }];
+    makeVault({ groups, view: { mode: 'present', cards: ['task-a', 'task-b'] } });
+    await layout({ cards: [{ id: 'grp-1', place: 'others' }] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    makeVault({ groups, view: { mode: 'present', cards: ['task-a', 'task-b'] } });
+    const r = await verb('stack', { container: 'grp-1' });
+    expect(r.status).toBe(200);
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+  });
+
+  it('the agent\'s group and stack verbs follow the same rule', async () => {
+    makeVault({ view: PRES });
+    await verb('stack', { container: 'task-a' });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    makeVault({ view: PRES });
+    const r = await verb('group', { containers: ['task-b', 'task-c'], name: 'Two' });
+    expect(r.status).toBe(200);
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a'] });
+  });
+
+  it('the window applies the same rule the moment the owner presses (applyLayoutPatch)', async () => {
+    const { applyLayoutPatch } = await import('../../dashboard/src/components/sleepy/super/superLayout.js');
+    const st = { containers: [card('task-a'), card('task-b'), card('task-c')], groups: [], view: PRES as client.SuperView };
+    expect(applyLayoutPatch(st, { cards: [{ id: 'task-a', place: 'others' }] }).view).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(applyLayoutPatch(st, { closed: ['task-a', 'task-b'] }).view).toEqual({ mode: 'float' });
+    expect(applyLayoutPatch(st, { cards: [{ id: 'task-b', size: 'medium' }] }).view).toEqual({ mode: 'present', cards: ['task-a'] });
+    expect(applyLayoutPatch(st, { group: { id: 'grp-z', cards: ['task-a', 'task-c'] } }).view).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(applyLayoutPatch(st, { cards: [{ id: 'task-a', pos: { x: 0.1, y: 0.1 } }] }).view).toEqual(PRES);
   });
 });

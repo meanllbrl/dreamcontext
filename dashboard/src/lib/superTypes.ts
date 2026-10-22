@@ -92,6 +92,23 @@ export interface SuperView {
   auto?: true;
 }
 
+/**
+ * The view once these cards leave it (owner 2026-10-22: "Move to Others on a presented card did
+ * not leave the presentation"): a card the owner or the agent moves to Others, closes, groups or
+ * resizes is no longer shown. A half page on one floats again; a presentation goes on with the
+ * cards it has left, and floats once it has none.
+ */
+export function viewWithout(view: SuperView, ids: ReadonlySet<string>): SuperView {
+  if (!ids.size) return view;
+  if (view.mode === 'half') return view.card && ids.has(view.card) ? { mode: 'float' } : view;
+  if (view.mode === 'present') {
+    const cards = (view.cards ?? []).filter((id) => !ids.has(id));
+    if (!cards.length) return { mode: 'float' };
+    return cards.length === (view.cards ?? []).length ? view : { mode: 'present', cards };
+  }
+  return view;
+}
+
 export interface SuperChild {
   sessionId: string;
   brief: string;

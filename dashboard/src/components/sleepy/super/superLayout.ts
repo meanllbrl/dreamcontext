@@ -21,7 +21,7 @@
  * that does not fit is DRAWN smaller (the plan's `size`), the record is never touched.
  */
 import {
-  CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, SIZE_UNITS, applyGroupOp, dissolveGroups, leaveGroups, normalizeGroups,
+  CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, SIZE_UNITS, applyGroupOp, dissolveGroups, leaveGroups, normalizeGroups, viewWithout,
   type ContainerShape, type ContainerSize, type GroupOp, type SuperContainer, type SuperGroup, type SuperView,
 } from '../../../lib/superTypes';
 
@@ -782,10 +782,14 @@ type Staged = { containers: SuperContainer[]; groups?: SuperGroup[]; view: Super
  */
 export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch): S {
   const st = { containers: state.containers.map((c) => ({ ...c })), groups: (state.groups ?? []).map((g) => ({ ...g, cards: [...g.cards] })) };
+  // Cards that leave what the view shows (the server's rule): to Others, resized, grouped, closed.
+  const unshown = new Set<string>();
   if (patch.leave?.length) leaveGroups(st, patch.leave);
   for (const p of patch.cards ?? []) {
     const k: SuperContainer | SuperGroup | undefined = st.containers.find((x) => x.id === p.id) ?? st.groups.find((x) => x.id === p.id);
     if (!k) continue;
+    if (p.place === 'others') for (const id of 'kind' in k ? [k.id] : k.cards) unshown.add(id);
+    if ('kind' in k && p.size !== undefined) unshown.add(k.id);
     if (p.place === 'float' || p.place === 'others') k.place = p.place;
     if (p.pos === null) delete k.pos;
     else if (p.pos && Number.isFinite(p.pos.x) && Number.isFinite(p.pos.y)) k.pos = { x: clamp01(p.pos.x), y: clamp01(p.pos.y) };
@@ -796,13 +800,14 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
     }
     if (p.order === 'last' && 'kind' in k) st.containers = [...st.containers.filter((x) => x !== k), k];
   }
-  if (patch.group) applyGroupOp(st, patch.group);
+  if (patch.group) { applyGroupOp(st, patch.group); for (const id of patch.group.cards) unshown.add(id); }
   if (patch.ungroup?.length) dissolveGroups(st, patch.ungroup);
   const gone = new Set(patch.closed ?? []);
+  for (const id of gone) unshown.add(id);
   if (gone.size) st.containers = st.containers.filter((x) => !gone.has(x.id));
   const { containers, groups } = normalizeGroups(st.containers, st.groups);
   const live = new Set(containers.map((c) => c.id));
-  const v = patch.view ?? state.view;
+  const v = patch.view ?? viewWithout(state.view, unshown);
   let view: SuperView = { mode: 'float' };
   if (v.mode === 'half' && v.card && live.has(v.card)) view = { mode: 'half', card: v.card };
   else if (v.mode === 'present') {
