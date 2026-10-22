@@ -404,6 +404,22 @@ export function offScreenAsks<T extends { sessionId: string; ask: unknown }>(cha
 }
 
 /**
+ * The owner's spoken (or typed) answer to a waiting permission: the notch's Y / N in words. Only
+ * the WHOLE message, and only words that cannot be a reply to the Assistant itself: "yes",
+ * "evet", "tamam" stay the Assistant's, because a project asking for permission elsewhere must
+ * not swallow a "yes" meant for the conversation. "elov" is how the dictation wrote "allow" for
+ * the owner (2026-10-22). Null = not an answer, the message goes to the Assistant as before.
+ */
+const ALLOW_WORDS = new Set(['allow', 'allow it', 'approve', 'approve it', 'elov', 'izin ver', 'izin veriyorum', 'onayla', 'onaylıyorum', 'onayliyorum']);
+const DENY_WORDS = new Set(['deny', 'deny it', 'reject', 'reject it', 'reddet', 'izin verme', 'onaylama']);
+export function permissionWord(text: string): 'allow' | 'deny' | null {
+  const said = text.replace(/İ/g, 'i').toLowerCase().replace(/[.,!?;:"'“”‘’…]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (ALLOW_WORDS.has(said)) return 'allow';
+  if (DENY_WORDS.has(said)) return 'deny';
+  return null;
+}
+
+/**
  * The key a notice is announced under. A chat's finish keeps one id for its whole life
  * (`fin:<session>`: the server replaces it each turn), so a key of the id alone announced only
  * its FIRST finish and listed every later one silently (owner, 2026-10-18: "hiçbir yerde

@@ -2832,16 +2832,22 @@ export function AgentSurface() {
     return claudeId === st.session || (st.enabled && hasOwnKey(st.children, claudeId))
       || sessionListRef.current.some((m) => m.claudeId === claudeId && m.mode === 'super');
   };
+  const liveChatByClaudeId = (claudeId: string): ChatSession | null => {
+    const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === claudeId);
+    const session = entry ? sessions.current.get(entry.id) : undefined;
+    return session && session.kind === 'chat' ? session as ChatSession : null;
+  };
   useAssistantDoorbell({
     vault,
     findChat: (claudeId) => {
       // The Assistant never reaches into the Super Agent or, while handed over, its children
       // (plan-r7 D16: the server refuses too; this is the window's own re-check).
       if (claudeIdIsSuperGuarded(claudeId)) return null;
-      const entry = sessionList.find((m) => transportKind(m) === 'chat' && m.claudeId === claudeId);
-      const session = entry ? sessions.current.get(entry.id) : undefined;
-      return session && session.kind === 'chat' ? session as ChatSession : null;
+      return liveChatByClaudeId(claudeId);
     },
+    // The owner's own Allow / Deny from the notch: a child's permission is his to give, never
+    // the Super Agent's, so the guard above is not his (2026-10-22: "Couldn't reach").
+    findOwnerChat: liveChatByClaudeId,
     openChat: (inline, token, mode) => {
       const s = spawn(false, undefined, false, 'chat', inline, '', true, token, false, '', false, mode, '', 'assistant');
       setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId, mode }]);

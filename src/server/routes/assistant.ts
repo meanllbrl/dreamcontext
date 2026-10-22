@@ -919,7 +919,8 @@ export async function handleAssistantDelegationDismiss(req: IncomingMessage, res
  * POST /api/assistant/answer {sessionId, question, choice: 'allow'|'deny'} — the owner pressed
  * Allow or Deny on a permission row in the notch. The OWNER decided, so no autonomy gate and no
  * proposal: it rides the same `answer` relay the assistant's verb does (claimed by the project
- * window that holds the chat), and is not recorded as a delegation.
+ * window that holds the chat), and is not recorded as a delegation. Handed over, the chat may be
+ * the Super Agent's or a child's: the Super never answers a permission, the owner always may.
  */
 export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!ownerGate(req, res)) return;
@@ -933,7 +934,10 @@ export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: Serv
   if (!chat) { sendError(res, 404, 'unknown_session', `No live chat "${sessionId}".`); return; }
   // Only the prompt the registry still shows: a stale row must not answer a newer one.
   if (chat.pendingQuestion?.requestId !== question) { sendError(res, 409, 'not_waiting', 'that prompt is no longer waiting'); return; }
-  const r = await relayCommand('answer', { sessionId, question, choice, text: null, vault: chat.vault });
+  // `by: 'owner'` is what lets the window answer a chat the Assistant may not touch (the Super
+  // Agent and, handed over, its children): only this owner-gated route sets it, `pickUiArgs`
+  // never passes it through, and the window claims the args from the server, never the doorbell.
+  const r = await relayCommand('answer', { sessionId, question, choice, text: null, vault: chat.vault, by: 'owner' });
   if (r.ok) sendJson(res, 200, { ok: true, result: r.result });
   else sendJson(res, r.error === 'no_surface' ? 409 : 200, { ok: false, error: r.error });
 }

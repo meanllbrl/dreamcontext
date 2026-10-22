@@ -587,6 +587,13 @@ export interface ChatSession {
    *  will post the result to the server itself), so nothing is sent back from here. Only
    *  meaningful on the `__assistant__` session; the server ignores the frames elsewhere. */
   setCommandHandler: (fn: AssistantCommandHandler | null) => void;
+  /**
+   * The owner's words that the HOST answers itself, before the agent ever sees them: `fn` gets
+   * every message `send`, `steer` and `enqueue` are handed and returns true when it took it (the
+   * notch's "allow" / "deny" for a waiting permission, Notch.tsx). A taken message is not sent,
+   * not drawn and not queued. `null` withdraws it.
+   */
+  setOwnerWordsHook: (fn: ((text: string) => boolean) | null) => void;
   /** The surface that draws this chat runs the window verbs its agent sends
    *  (`dreamcontext window …`). Without one, every verb answers `no_window`. */
   setWindowHandler: (fn: WindowCommandHandler | null) => void;
@@ -1202,6 +1209,7 @@ export function createChatSession(
     answer,
     answerQuestion,
     setCommandHandler,
+    setOwnerWordsHook,
     setWindowHandler,
     setParkHandler,
     markFocus,
@@ -2233,7 +2241,19 @@ export function createChatSession(
     return true;
   }
 
+  /** See {@link ChatSession.setOwnerWordsHook}. */
+  let ownerWordsHook: ((text: string) => boolean) | null = null;
+  function setOwnerWordsHook(fn: ((text: string) => boolean) | null): void {
+    ownerWordsHook = fn;
+  }
+  function ownerWordsTaken(text: string): boolean {
+    const clean = text.trim();
+    if (!clean || !ownerWordsHook) return false;
+    try { return ownerWordsHook(clean) === true; } catch { return false; }
+  }
+
   function send(text: string): boolean {
+    if (ownerWordsTaken(text)) return true;
     return writeUser(text, { steered: false });
   }
 
@@ -2246,6 +2266,7 @@ export function createChatSession(
    * false→true edge never sees.
    */
   function steer(text: string): boolean {
+    if (ownerWordsTaken(text)) return true;
     if (!steerable()) return false;
     // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
     // answer they are talking over.
@@ -2318,6 +2339,7 @@ export function createChatSession(
   // ── Message queue (submitted while a turn was in flight) ──────────────────────────
 
   function enqueue(text: string, opts?: { steerWhenPossible?: boolean }): void {
+    if (ownerWordsTaken(text)) return;
     applyAndNotify(() => {
       const next = queue.appendQueued(conv.queued, text, `q-${id}-${++queuedSeq}`, Date.now(), opts);
       if (next !== conv.queued) conv = { ...conv, queued: next };
