@@ -21,6 +21,8 @@ describe('the briefing carries the jarvis sections and its revision', () => {
       expect(t).toContain('## Voice');
       expect(t).toContain(SUPER_BRIEF_MARKER);
       expect(t).toContain('--group');
+      // Owner, 2026-10-22: a set of pictures is one group, never scattered tiles.
+      expect(t).toContain('A set of pictures is always ONE group');
       // Owner, 2026-10-21 (eval): never name the items, and a full stage is still two sentences.
       expect(t).toContain('never name them in a sentence either, not even\n  three');
       expect(t).toContain('do not tell what you\n  moved to make room');

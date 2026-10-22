@@ -112,10 +112,11 @@ export function registerSuperCommand(program: Command): void {
   s.command('open <kind> <refs...>')
     .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once`)
     .option('--group <name>', 'Put every card opened here in ONE group of this name (a set the owner asked to see)')
+    .option('--no-group', 'Images only: leave them as separate cards (pictures group themselves: 2+ in one call are a new group; one picture within 2 minutes of the last joins its group)')
     .option('--shape <shape>', 'small | medium | large | wide (the card\'s size, 1x1 2x1 2x2 3x2 tiles; a size the owner chose is kept), or square | tall (recorded only)')
     .option('--size <size>', 'small | medium | large | wide: the same as --shape with a size (a web or browser card is never under large, and opens side by side)')
     .option('--title <text>', 'Its label (one ref only)')
-    .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; group?: string }) =>
+    .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; group?: string | false }) =>
       run('open', refs.length === 1
         ? { kind, ref: refs[0], shape: o.shape, size: o.size, title: o.title, group: o.group }
         : { kind, refs, shape: o.shape, size: o.size, group: o.group }));

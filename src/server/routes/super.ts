@@ -57,6 +57,7 @@ import { addToOutbox } from '../../lib/super/outbox.js';
 import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp } from '../../lib/super/disk-leftovers.js';
 import { readMachineFacts } from './machine.js';
 import { tmpdir } from 'node:os';
+import { planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -309,6 +310,10 @@ function mcpRefused(root: string, job: Job, res: ServerResponse): boolean {
   refuse(res, 400, 'unknown_mcp', `no MCP server named ${missing.join(', ')}; this project has: ${[...known.keys()].join(', ') || 'none'}`, { known: [...known.keys()] });
   return true;
 }
+
+/** The super's last `open image`, per vault (image-group.ts): the next one within the window
+ *  joins its group. In memory: a restart only ends a chain. */
+const imageChains = new Map<string, ImageChain>();
 
 /** Pool rows a `delegate --from` is starting right now, per vault: a second claim is refused. */
 const claims = new Map<string, Set<string>>();
@@ -650,18 +655,33 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const title = refs.length === 1 && str(b.title) ? oneLine(str(b.title) as string).slice(0, MAX_TITLE) : undefined;
     const groupName = str(b.group) ? cleanGroupName(b.group) : '';
     if (str(b.group) && !groupName) { refuse(res, 400, 'invalid_args', 'a group needs a name'); return; }
+    // `--no-group`: the cards stand alone and the picture chain ends here.
+    const noGroup = b.group === false;
     const ids = refs.map((ref) => containerIdFor(kind, ref));
-    const plan = (s: SuperState): { fits: boolean; groupId: string | null } => {
+    const root = c.who.contextRoot;
+    const now = Date.now();
+    // Pictures opened together are one group (image-group.ts): 2+ in one call, or one call after
+    // another within IMAGE_CHAIN_MS. Decided against the record inside the locked write.
+    const auto = (s: SuperState): ImageGroupPlan =>
+      kind === 'image' && !groupName && !noGroup ? planImageGroup(s, ids, refs, imageChains.get(root), now) : null;
+    const plan = (s: SuperState): { fits: boolean; groupId: string | null; name: string; cards: string[] } => {
       const fresh = ids.filter((id) => !s.containers.some((k) => k.id === id)).length;
-      const named = groupName ? s.groups.find((g) => g.name === groupName) : undefined;
-      // A named group resting in Others comes back to the stage: one more floating item.
-      const addFloat = groupName ? (named && named.place === 'float' ? 0 : 1) : fresh;
+      const a = auto(s);
+      const named = groupName ? s.groups.find((g) => g.name === groupName) : a && 'join' in a ? s.groups.find((g) => g.id === a.join) : undefined;
+      // A named group resting in Others comes back to the stage: one more floating item. A new
+      // picture group that takes in the previous lone picture stands in its place: none.
+      const chainedLone = !!a && 'make' in a && a.make.cards.length > ids.length;
+      const addFloat = groupName || (a && 'join' in a) ? (named && named.place === 'float' ? 0 : 1) : a ? (chainedLone ? 0 : 1) : fresh;
       const fits = (addFloat === 0 || floatCount(s) + addFloat <= MAX_FLOAT) && s.containers.length + fresh <= MAX_CONTAINERS;
-      return { fits, groupId: groupName ? (named?.id ?? newGroupId()) : null };
+      if (groupName) return { fits, groupId: named?.id ?? newGroupId(), name: groupName, cards: ids };
+      if (a && 'join' in a) return { fits, groupId: a.join, name: '', cards: ids };
+      if (a) return { fits, groupId: newGroupId(), name: a.make.name, cards: a.make.cards };
+      return { fits, groupId: null, name: '', cards: ids };
     };
     if (!plan(c.state).fits) { tooMany(res, c.state); return; }
     let refused = false;
     let groupId: string | null = null;
+    let autoGrouped = false;
     // Cards whose size the owner chose: the agent's size is not written (decided inside the
     // locked write, so an owner resize landing meanwhile still wins).
     let kept: string[] = [];
@@ -669,6 +689,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const p = plan(s);
       if (!p.fits) { refused = true; return; }
       groupId = p.groupId;
+      autoGrouped = !!p.groupId && !groupName;
       kept = [];
       refs.forEach((ref, i) => {
         const have = s.containers.find((k) => k.id === ids[i]);
@@ -705,17 +726,22 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // The cards design's own group mutation: a card leaves any other group (a group left
       // with one card dissolves when the record is settled).
       if (groupId) {
-        applyGroupOp(s, { id: groupId, cards: ids, name: groupName });
+        applyGroupOp(s, { id: groupId, cards: p.cards, name: p.name });
         // The group is what the stage draws: it floats, wherever it rested.
         const g = s.groups.find((x) => x.id === groupId);
         if (g) g.place = 'float';
+      }
+      // The picture chain: the next image open within the window joins where this one went.
+      if (kind === 'image') {
+        if (noGroup) imageChains.delete(root);
+        else imageChains.set(root, { at: now, card: ids[0], group: groupId });
       }
     });
     if (refused) { tooMany(res, state); return; }
     const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
     if (made.length !== ids.length) { tooMany(res, state); return; }
     const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
-    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(kept.length ? { kept } : {}), view: state.view });
+    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view });
   },
 
   shape: async (c, b, res) => {
