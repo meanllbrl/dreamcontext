@@ -13,6 +13,7 @@ import {
   recordOwnerAnswer, releaseOwnerAnswer, sendOwnerAnswer, useOwnerAnswerVersion,
 } from './superQuestions';
 import type { Rect } from './superLayout';
+import { SuperAgentIcon } from '../../layout/NavIcons';
 import { JobList, JOB_SECTIONS } from './JobList';
 import { onOpenJobRow } from './superJobsStore';
 import './JobBar.css';
@@ -154,6 +155,7 @@ export function JobBar({ state, head, waiting, vault, rect, listRect, look, supe
     >
       {!head ? null : (
         <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
+          {head.kind === 'ask' && <span className="super-queue-super" aria-hidden><SuperAgentIcon size={16} /></span>}
           <span className="super-queue-who">{head.kind === 'ask' ? look.superTitle : head.kind === 'approval' ? t('super.queue.team') : titleFor(head.sessionId)}</span>
           {head.kind === 'permission'
             ? <PermissionHead item={head} child={child} locked={locked} answerOnce={answerOnce} />

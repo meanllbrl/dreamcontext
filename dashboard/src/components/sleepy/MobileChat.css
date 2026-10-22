@@ -843,6 +843,10 @@ body[data-phone] .agent-dock { display: none; }
 }
 .mlist-row--closed .mlist-title { font-weight: 500; color: var(--color-text-secondary); }
 .mlist-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The Super Agent's own glyph (NavIcons SuperAgentIcon) before its name: identity, so neutral ink;
+   the state dot before it keeps the colour (colour = mood). */
+.mlist-super-icon { display: inline-flex; flex: none; color: var(--color-text-secondary); }
+.mlist-super-icon svg { display: block; }
 .mlist-mac {
   flex: 0 0 auto;
   padding: 1px var(--space-1);

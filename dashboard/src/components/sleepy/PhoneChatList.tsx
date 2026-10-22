@@ -4,6 +4,7 @@ import './MobileChat.css';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useChrome } from '../layout/WindowChrome';
+import { SuperAgentIcon } from '../layout/NavIcons';
 import { pollMs } from '../../lib/windowActivity';
 import type { LiveChatWire, LiveChatsWire, SuperChatWire } from '../handsfree/macContract';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
@@ -260,7 +261,7 @@ export function PhoneChatList({
               >
                 <span className="agent-tab-dot" data-kind={superRow.live ? (superRow.state === 'asking' ? 'asking' : superRow.state === 'working' ? 'working' : 'idle') : 'idle'} aria-hidden />
                 <span className="mlist-text">
-                  <span className="mlist-title"><span className="mlist-title-text">{t('handsfree.super.title')}</span></span>
+                  <span className="mlist-title"><span className="mlist-super-icon" aria-hidden><SuperAgentIcon size={16} /></span><span className="mlist-title-text">{t('handsfree.super.title')}</span></span>
                   <span className="mlist-sub">
                     <span className="mlist-state" data-testid="super-state">{state}</span>
                     {superRow.lastLine ? ` · ${superRow.lastLine}` : ''}

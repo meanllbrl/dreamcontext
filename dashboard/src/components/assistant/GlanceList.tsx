@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ago, glanceStatus, handoffPhase, type GlanceChat, type Handoff } from './notchModel';
 import { openChat } from './InboxList';
+import { SuperAgentIcon } from '../layout/NavIcons';
 
 /**
  * The open notch's "what is happening" rows (GET /api/assistant/glance): one per chat that is
@@ -44,6 +45,7 @@ function GlanceRow({ c, keyed, onAnswered }: { c: GlanceChat; keyed: boolean; on
     <li className="dc-glance__row" data-activity={c.activity}>
       <button type="button" className="dc-glance__head" onClick={() => openChat(c.vault, c.sessionId)} title={`Open this chat in ${c.vault}`}>
         <span className="dc-glance__dot" aria-hidden />
+        {c.super && <span className="dc-glance__super" title="Super Agent"><SuperAgentIcon size={14} /></span>}
         <span className="dc-glance__vault">{c.vault}</span>
         <span className="dc-glance__status">{glanceStatus(c)}</span>
         {c.title && !c.ask && <span className="dc-glance__title">{c.title}</span>}

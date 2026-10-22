@@ -158,7 +158,7 @@ describe('sidebar rail — the icon family is one hand (C9)', () => {
 
   it('draws Agents as agents, not as a clock (C10)', () => {
     const src = read(NAV_ICONS);
-    const start = src.indexOf('function AutomationsIcon');
+    const start = src.indexOf('function AiTeamIcon');
     const body = src.slice(start, src.indexOf('\n}', start));
     // The clock was a ring plus two hands plus two bells. Two heads is the shape now; the
     // assertion is on the GLYPH's own body so a comment elsewhere cannot satisfy it.

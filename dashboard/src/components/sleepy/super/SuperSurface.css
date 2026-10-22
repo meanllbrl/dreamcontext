@@ -34,10 +34,8 @@
   background: var(--mood-waiting);
   box-shadow: 0 0 0 2px var(--color-bg);
 }
-.super-cape-glyph { flex: none; }
-.super-cape-glyph-cloth { fill: color-mix(in srgb, var(--color-text) 30%, transparent); stroke: var(--color-text); stroke-width: 1.2; stroke-linejoin: round; }
-.super-cape-glyph-gem-top { fill: color-mix(in srgb, var(--color-accent) 62%, var(--color-bg)); stroke: var(--color-accent); stroke-width: 0.8; }
-.super-cape-glyph-gem { fill: var(--color-accent); stroke: var(--color-accent); stroke-width: 0.8; stroke-linejoin: round; }
+.super-handover-btn-icon { display: inline-flex; flex: none; }
+.super-handover-btn-icon svg { display: block; }
 
 /* Handed over, the panes row stays mounted (take-back returns to it) but is not on screen. */
 .agent-panes[hidden] { display: none !important; }
@@ -892,6 +890,10 @@
   animation: super-pill-in 200ms ease-out;
 }
 .super-queue-head[data-kind='permission'] { --queue-tone: var(--mood-waiting); }
+/* The Super Agent's own question carries its glyph (NavIcons SuperAgentIcon) before its name;
+   the head's tone stays the colour channel. */
+.super-queue-super { flex: none; display: inline-flex; color: var(--color-text-secondary); margin-right: -6px; }
+.super-queue-super svg { display: block; }
 .super-queue-who { flex: 0 1 auto; min-width: 6ch; max-width: 24ch; font-weight: 700; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .super-queue-text { flex: 1 1 0; min-width: 10ch; color: var(--color-text-secondary); font-size: var(--font-size-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .super-queue-tool { color: var(--color-text); margin-right: 8px; }
