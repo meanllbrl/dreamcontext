@@ -522,6 +522,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-clean-proj-',
   'super-clean-tmp-',
   'super-disk-base-',
+  'super-effort-',
+  'super-effort-home-',
   'super-end-',
   'super-end-home-',
   'super-eval-shim-',

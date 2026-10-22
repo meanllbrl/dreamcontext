@@ -49,10 +49,11 @@ describe('webBudget', () => {
     const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
     expect(src).toMatch(/const webOnScreen = props\.visible/);
     expect(src).toMatch(/liveWebIds\(lru, webOnScreen\)/);
-    // On screen = drawn on the stage: a web card in Others holds no frame.
-    expect(src).toMatch(/plan\.cards\[c\.id\]\.where !== 'others'/);
-    // …and a floating tile (2026-10-20): a page is live only side by side or presented.
-    expect(src).toMatch(/plan\.cards\[c\.id\]\.where !== 'float'/);
+    // On screen = drawn on the stage: a web card in Others holds no frame, nor one open full screen.
+    expect(src).toMatch(/cp\.where === 'others' \|\| full\?\.id === c\.id\) return false/);
+    // …and a floating tile (2026-10-20): a page is live side by side or presented, and since
+    // 2026-10-22 in a large or wide floating card; a small or medium tile shows its title.
+    expect(src).toMatch(/return cp\.where !== 'float' \|\| cp\.size === 'large' \|\| cp\.size === 'wide'/);
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
     // Past the budget a web container is a title + Load placeholder, never an iframe.
     expect(container).toMatch(/p\.webLive\s*\?\s*<div className="super-card-view super-card-view--web"><WebWidget/);
