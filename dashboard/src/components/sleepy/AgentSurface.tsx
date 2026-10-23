@@ -3500,8 +3500,11 @@ export function AgentSurface() {
       console.warn('[super] the layout was not saved:', why);
       void fetchSuperState(scopedApi).then((st) => { if (st) setSuperState(withPendingEdits(st)); });
     };
+    // A look changes nothing on the stage: its answer (read before the server's lock, every 30 s
+    // while a panel is open) must never paint over a newer push.
+    const lookOnly = Object.keys(patch).every((k) => k === 'touch');
     void postSuperLayout(scopedApi, patch).then(
-      (st) => { if (!st) { notSaved('no state in the answer'); return; } settle(); setSuperState(withPendingEdits(st)); },
+      (st) => { if (!st) { notSaved('no state in the answer'); return; } settle(); if (!lookOnly) setSuperState(withPendingEdits(st)); },
       notSaved,
     );
   }, [scopedApi]);

@@ -556,6 +556,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-owner-wait-',
   'super-owner-wait-home-',
   'super-parked-',
+  'super-picture-job-',
+  'super-picture-job-home-',
   'super-pool-',
   'super-pool-home-',
   'super-queue-',

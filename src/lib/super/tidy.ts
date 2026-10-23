@@ -3,6 +3,18 @@
  * kalabalık oluşturuyor"). A floating card or group nobody touched for TIDY_IDLE_MS, or a
  * finished child's card the owner has seen in the agenda, goes to Others. Never closed.
  *
+ * A picture shown for a child's job (`super open image --for <child>`) goes to Others once that
+ * job moves on after it was shown: the super sends the child new work, ends it or hands it on,
+ * or the owner saw a result it finished later, and LOOK_GRACE_MS has passed since. Only the
+ * OWNER's own look keeps it (owner decisions 2026-10-23); the super's moves and the clock's tick
+ * never do. A look of his that ARRIVES after the move makes it his: his window reports a group's
+ * panel or a card full screen (the group and the cards it shows) when it opens, every
+ * LOOK_RENEW_MS while open and when it closes, so an open one always reports within the grace;
+ * what he arranges, brings back from Others or sets the view to after the move is his too. His =
+ * no longer linked, on the record (`keepOwnerLooked`): the idle clock is its rule, and a restart,
+ * a regroup or a later send cannot undo that. The server keeps no look state that could outlive
+ * a look.
+ *
  * Never moved:
  * - what the owner placed (a drop position) or sized himself;
  * - what the view shows (side by side, presented);
@@ -17,18 +29,19 @@
  * card's clock again, so nothing is swept at once after one.
  */
 import { resolve } from 'node:path';
-import type { SuperState } from './types.js';
+import { DONE_SETTLE_MS, type SuperContainer, type SuperState } from './types.js';
 
 export const TIDY_IDLE_MS = 45 * 60_000;
 export const TIDY_TICK_MS = 60_000;
 
-/** Verify only: a shorter idle bar and tick (scripts/verify/super-image-group.mjs). */
+/** Verify only: a shorter idle bar, tick and grace (scripts/verify/super-image-group.mjs). */
 function envMs(name: string): number | null {
   const v = Number(process.env[name]);
   return Number.isInteger(v) && v > 0 ? v : null;
 }
 const idleMs = () => envMs('DREAMCONTEXT_SUPER_TIDY_IDLE_MS') ?? TIDY_IDLE_MS;
 const tickMs = () => envMs('DREAMCONTEXT_SUPER_TIDY_TICK_MS') ?? TIDY_TICK_MS;
+const graceMs = () => envMs('DREAMCONTEXT_SUPER_TIDY_GRACE_MS') ?? LOOK_GRACE_MS;
 
 interface Mark { sig: string; at: number }
 /** Per vault: each card's and group's last seen signature and when it last changed. */
@@ -44,8 +57,14 @@ function marksOf(root: string): Map<string, Mark> {
   return m;
 }
 
-const shownIds = (s: Pick<SuperState, 'view'>): string[] =>
-  s.view.mode === 'half' && s.view.card ? [s.view.card] : s.view.mode === 'present' ? s.view.cards ?? [] : [];
+/** The cards a view shows; read with any shape (the owner's layout body is one). */
+export function viewShows(view: unknown): string[] {
+  if (!view || typeof view !== 'object') return [];
+  const v = view as { mode?: unknown; card?: unknown; cards?: unknown };
+  if (v.mode === 'half') return typeof v.card === 'string' && v.card ? [v.card] : [];
+  return v.mode === 'present' && Array.isArray(v.cards) ? v.cards.filter((x): x is string => typeof x === 'string') : [];
+}
+const shownIds = (s: Pick<SuperState, 'view'>): string[] => viewShows(s.view);
 
 /** What anyone changing a card or a group changes. */
 function signatures(s: SuperState): Map<string, string> {
@@ -71,6 +90,29 @@ export function refreshMarks(m: Map<string, Mark>, s: SuperState, now: number): 
   return m;
 }
 
+/** How long a picture whose job moved on stays where it is: longer than his window's slowest
+ *  look report (superLayout LOOK_RENEW_MS: 30 s, 60 s in Light mode), so a look that spans the
+ *  move always arrives first. */
+export const LOOK_GRACE_MS = 90_000;
+
+/**
+ * The owner looked at or arranged these (cards or groups: a group names its cards) after their
+ * job moved on: his now, so the link goes (in place: the caller's locked write). Returns the
+ * pictures it unlinked.
+ */
+export function keepOwnerLooked(s: SuperState, ids: Iterable<string>): string[] {
+  const want = new Set(ids);
+  for (const g of s.groups) if (want.has(g.id)) for (const id of g.cards) want.add(id);
+  const out: string[] = [];
+  for (const c of s.containers) {
+    if (c.kind !== 'image' || !want.has(c.id) || jobMovedOn(c, s.children) === undefined) continue;
+    delete c.forChild;
+    delete c.forAt;
+    out.push(c.id);
+  }
+  return out;
+}
+
 /** The super or the owner opened these: touched now. */
 export function touchCards(root: string, ids: readonly string[], now = Date.now()): void {
   const m = marksOf(root);
@@ -78,6 +120,28 @@ export function touchCards(root: string, ids: readonly string[], now = Date.now(
     const had = m.get(id);
     m.set(id, { sig: had?.sig ?? '', at: now });
   }
+}
+
+/**
+ * When the job a picture was shown for moved on (epoch ms), or undefined: it has not, or the
+ * picture is linked to no job. Moved on = after `forAt`, the super handed the child new work
+ * (`sentAt`), ended it (`endedAt`) or handed its job on (`succeededAt`), or the owner saw a result
+ * it finished since (`seenAt`, the finish key he saw: it only rises, so a later finish never undoes
+ * it; dated when he marked it, `seenMarkedAt`). A result stamped within DONE_SETTLE_MS of the
+ * pictures is the one they show (its row settles that long after its turn ended, and the super
+ * may show it meanwhile).
+ */
+export function jobMovedOn(c: Pick<SuperContainer, 'forChild' | 'forAt'>, children: SuperState['children']): number | undefined {
+  if (!c.forChild || c.forAt === undefined) return undefined;
+  const ch = Object.prototype.hasOwnProperty.call(children, c.forChild) ? children[c.forChild] : undefined;
+  if (!ch) return undefined;
+  const shown = c.forAt;
+  const at: number[] = [];
+  if (ch.sentAt !== undefined && ch.sentAt > shown) at.push(ch.sentAt);
+  if (ch.endedAt !== undefined && ch.endedAt > shown) at.push(ch.endedAt);
+  if (ch.succeededAt !== undefined && ch.succeededAt > shown) at.push(ch.succeededAt);
+  if (ch.seenAt !== undefined && ch.seenAt - DONE_SETTLE_MS > shown) at.push(ch.seenMarkedAt ?? ch.seenAt);
+  return at.length ? Math.min(...at) : undefined;
 }
 
 /**
@@ -93,11 +157,20 @@ export function planTidy(s: SuperState, touched: (id: string) => number | undefi
   const at = (id: string) => touched(id) ?? now;
   /** When each 'seen' card's job was seen: a group goes on that path only if untouched since. */
   const seenWhen = new Map<string, number>();
+  /** The pictures whose job moved on (a look of his since unlinked them: keepOwnerLooked). */
+  const moved = new Set<string>();
   /** undefined: this card holds its place; 'seen': a finished job he saw, and the card not
-   *  touched since (he brought it back: it stays, on the idle clock); 'idle': untouched. */
+   *  touched since (he brought it back: it stays, on the idle clock), or a picture whose job
+   *  moved on LOOK_GRACE_MS ago (a look of his since unlinked it); 'idle': untouched. */
   const verdict = (id: string): 'seen' | 'idle' | undefined => {
     const c = s.containers.find((k) => k.id === id);
     if (!c || shown.has(id) || c.by === 'auto' || c.sizeBy === 'owner' || c.kind === 'agenda') return undefined;
+    const on = c.kind === 'image' ? jobMovedOn(c, s.children) : undefined;
+    if (on !== undefined) {
+      if (now - on < graceMs()) return undefined;
+      moved.add(id);
+      return 'seen';
+    }
     if (c.kind === 'chat' || c.kind === 'browser') {
       const ch = s.children[c.ref];
       if (openFor.has(c.ref)) return undefined;
@@ -123,7 +196,7 @@ export function planTidy(s: SuperState, touched: (id: string) => number | undefi
     const vs = g.cards.map(verdict);
     if (!vs.every((v) => v)) continue;
     const seen = g.cards.filter((id) => seenWhen.has(id)).map((id) => seenWhen.get(id)!);
-    if (idle(g.id) || (seen.length && at(g.id) < Math.min(...seen))) out.push(g.id);
+    if (idle(g.id) || (seen.length && at(g.id) < Math.min(...seen)) || g.cards.some((id) => moved.has(id))) out.push(g.id);
   }
   return out;
 }
@@ -159,8 +232,8 @@ export async function tidyOnce(root: string, how: TidyIo, now = Date.now()): Pro
   let moved: string[] = [];
   await how.write(root, (d) => {
     if (!d.enabled) return;
-    // What changed since the read above (a card the owner brought back, one the super opened)
-    // counts as touched before anything moves.
+    // What changed since the read above (a card the owner brought back, one the super opened,
+    // a picture his look made his) counts as touched before anything moves.
     refreshMarks(m, d, now);
     moved = planTidy(d, touched, now);
     applyTidy(d, moved);

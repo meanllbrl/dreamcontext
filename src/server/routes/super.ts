@@ -58,8 +58,8 @@ import { addToOutbox } from '../../lib/super/outbox.js';
 import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp } from '../../lib/super/disk-leftovers.js';
 import { readMachineFacts } from './machine.js';
 import { tmpdir } from 'node:os';
-import { planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
-import { ensureTidy, touchCards, type TidyIo } from '../../lib/super/tidy.js';
+import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
+import { ensureTidy, keepOwnerLooked, touchCards, viewShows, type TidyIo } from '../../lib/super/tidy.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -662,14 +662,23 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (str(b.group) && !groupName) { refuse(res, 400, 'invalid_args', 'a group needs a name'); return; }
     // `--no-group`: the cards stand alone and the picture chain ends here.
     const noGroup = b.group === false;
+    // `--for <child>`: pictures shown for that child's job, which go to Others once the job moves
+    // on (tidy.ts). Images only, and only one of the super's children.
+    const forChild = str(b.for);
+    if (b.for !== undefined && kind !== 'image') { refuse(res, 400, 'invalid_args', '--for links pictures only (kind image)'); return; }
+    if (b.for !== undefined && (!forChild || !SESSION_ID_RE.test(forChild) || !hasChild(c.state, forChild))) {
+      refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)');
+      return;
+    }
     const ids = refs.map((ref) => containerIdFor(kind, ref));
     const root = c.who.contextRoot;
     const now = Date.now();
     // Pictures opened together are one group (image-group.ts): 2+ in one call, or one call after
     // another within IMAGE_CHAIN_MS. Decided against the record inside the locked write.
     const auto = (s: SuperState): ImageGroupPlan =>
-      kind === 'image' && !groupName && !noGroup ? planImageGroup(s, ids, refs, imageChains.get(root), now) : null;
-    const plan = (s: SuperState): { fits: boolean; groupId: string | null; name: string; cards: string[] } => {
+      kind === 'image' && !groupName && !noGroup ? planImageGroup(s, ids, refs, imageChains.get(root), now, forChild) : null;
+    // `before`: the record as it stood before a pull (below): what floated, and on its own, then.
+    const plan = (s: SuperState, before: SuperState = s): { fits: boolean; groupId: string | null; name: string; cards: string[] } => {
       const fresh = ids.filter((id) => !s.containers.some((k) => k.id === id)).length;
       const a = auto(s);
       const target = groupName ? s.groups.find((g) => g.name === groupName) : a && 'join' in a ? s.groups.find((g) => g.id === a.join) : undefined;
@@ -678,18 +687,25 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (a) {
         // A picture group counts net: the group (unless it already floats) minus each picked card
         // that floated on its own until now (the lone previous picture, a re-opened one).
-        const grouped = new Set(s.groups.flatMap((g) => g.cards));
+        // A pulled picture was no item of its own: its group still stands where it was.
+        const grouped = new Set(before.groups.flatMap((g) => g.cards));
         const loose = ('join' in a ? a.cards : a.make.cards)
-          .filter((id) => !grouped.has(id) && s.containers.some((k) => k.id === id && k.place === 'float')).length;
+          .filter((id) => !grouped.has(id) && before.containers.some((k) => k.id === id && k.place === 'float')).length;
         addFloat = ('join' in a && target?.place === 'float' ? 0 : 1) - loose;
       }
-      const fits = (addFloat <= 0 || floatCount(s) + addFloat <= MAX_FLOAT) && s.containers.length + fresh <= MAX_CONTAINERS;
+      const fits = (addFloat <= 0 || floatCount(before) + addFloat <= MAX_FLOAT) && s.containers.length + fresh <= MAX_CONTAINERS;
       if (groupName) return { fits, groupId: target?.id ?? newGroupId(), name: groupName, cards: ids };
       if (a && 'join' in a) return { fits, groupId: a.join, name: '', cards: a.cards };
       if (a) return { fits, groupId: newGroupId(), name: a.make.name, cards: a.make.cards };
       return { fits, groupId: null, name: '', cards: ids };
     };
-    if (!plan(c.state).fits) { tooMany(res, c.state); return; }
+    // A picture shown again for a job leaves a group of another job's (or turned-down) pictures
+    // first, to go with this job's new set (image-group.ts `picturesToPull`).
+    const pull = (s: SuperState): SuperState => {
+      if (kind === 'image' && !groupName) { const out = picturesToPull(s, ids, forChild); if (out.length) leaveGroups(s, out); }
+      return s;
+    };
+    if (!plan(pull(structuredClone(c.state)), c.state).fits) { tooMany(res, c.state); return; }
     let refused = false;
     let groupId: string | null = null;
     let autoGrouped = false;
@@ -698,9 +714,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     let kept: string[] = [];
     // Touched before the write too, so a tidy pass racing it never moves what is being opened.
     touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
+    // The child `--for` named left the record meanwhile (an ended one past the history cap):
+    // refused, never opened unlinked as if for its job.
+    let childGone = false;
     const state = await writeSuper(c.who.contextRoot, (s) => {
-      const p = plan(s);
-      if (!p.fits) { refused = true; return; }
+      if (forChild && !hasChild(s, forChild)) { childGone = true; return; }
+      if (!plan(pull(structuredClone(s)), s).fits) { refused = true; return; }
+      const p = plan(pull(s));
       groupId = p.groupId;
       autoGrouped = !!p.groupId && !groupName;
       kept = [];
@@ -717,6 +737,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
           }
           have.place = 'float';
           if (titleOf(ref)) have.title = titleOf(ref);
+          // Shown again: for the job named now, else still for the one it was shown for.
+          if (forChild && s.children[forChild]) { have.forChild = forChild; have.forAt = now; }
+          else if (have.forChild) have.forAt = now;
           return;
         }
         // The agenda opens at the size that holds its four sections, unless a size is named.
@@ -726,6 +749,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
           shape: shapeArg ?? defaultShape(kind as ContainerKind),
           ...(size !== 'small' ? { size } : {}),
           place: 'float', ...(titleOf(ref) ? { title: titleOf(ref) } : {}),
+          ...(forChild && s.children[forChild] ? { forChild, forAt: now } : {}),
         });
       });
       // A page the agent opens is shown side by side at once (owner 2026-10-22: "if it adds a
@@ -751,6 +775,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         else imageChains.set(root, { at: now, card: ids[0], group: s.groups.find((g) => g.cards.includes(ids[0]))?.id ?? null });
       }
     });
+    if (childGone) { refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)'); return; }
     if (refused) { tooMany(res, state); return; }
     const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
     if (made.length !== ids.length) { tooMany(res, state); return; }
@@ -1051,6 +1076,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const how = (r.result as { delivered?: unknown } | undefined)?.delivered;
     // Queued in the window's memory: also kept on disk, so a relaunch cannot lose it (outbox.ts).
     if (how === 'queued') await addToOutbox(c.who.contextRoot, child, text).catch((err) => console.warn(`[super outbox] could not keep a queued send: ${(err as Error).message}`));
+    // The job moved on: the pictures shown for it before now go to Others (tidy.ts).
+    const sentAt = Date.now();
+    // The message already went in: a stamp that could not be written must not refuse (and resend) it.
+    await writeSuper(c.who.contextRoot, (s) => { const x = s.children[child]; if (x) x.sentAt = sentAt; })
+      .catch((err) => console.warn(`[super] could not stamp ${child}'s send: ${(err as Error).message}`));
     await markOwnersJob(c, child);
     ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(woke ? { woke: true } : {}) });
   },
@@ -1947,12 +1977,18 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       sendError(res, 400, 'invalid_body', `cards and closed must be lists of at most ${MAX_CONTAINERS}`);
       return;
     }
-    // The owner opened these (a group's panel, a card full screen): touched now (tidy.ts).
-    const touch = Array.isArray(body.touch) ? (body.touch as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
+    // The owner looks at these (a group's panel and the cards it shows, a card full screen; his
+    // window reports it on open, while open and on close): touched now (tidy.ts). A group and
+    // its cards: at most one more id than the record holds cards.
+    const touch = Array.isArray(body.touch) ? (body.touch as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS + 1) : [];
     if (touch.length) touchCards(contextRoot, touch);
-    // A touch alone changes nothing on the record: no write.
+    // A look alone writes only when it makes pictures his: it arrives after their job moved on.
     if (Object.keys(body).every((k) => k === 'touch')) {
-      sendJson(res, 200, { state: superStateView(contextRoot, await readSuperState(contextRoot, superSanitizeOpts())) });
+      const seen = await readSuperState(contextRoot, superSanitizeOpts());
+      const state = keepOwnerLooked(structuredClone(seen), touch).length
+        ? await writeSuper(contextRoot, (s) => { keepOwnerLooked(s, touch); })
+        : seen;
+      sendJson(res, 200, { state: superStateView(contextRoot, state) });
       return;
     }
     const view = body.view;
@@ -1969,12 +2005,27 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       // Cards that leave what the view shows: to Others (a group's cards with it), closed,
       // grouped or resized (owner 2026-10-22: a presented card moved to Others stayed presented).
       const unshown = new Set<string>();
+      // What he arranges here (a card taken out of a group: that group, which he had open) and
+      // what a view he sets shows, he looked at: a picture whose job moved on is his now
+      // (tidy.ts), decided before a regroup or a dissolve can hide the group it was in. A view
+      // he only ends is not a look (the super's own side by side is not his).
+      const cardIds = (cards as unknown[]).map((x) => (x && typeof x === 'object' ? (x as Record<string, unknown>).id : undefined)).filter((x): x is string => typeof x === 'string');
+      const leftFrom = s.groups.filter((g) => g.cards.some((id) => leave.includes(id))).map((g) => g.id);
+      keepOwnerLooked(s, [...touch, ...cardIds, ...(groupOp ? [groupOp.id, ...groupOp.cards] : []), ...leave, ...leftFrom, ...ungroup, ...viewShows(view).slice(0, MAX_CONTAINERS)]);
       if (leave.length) leaveGroups(s, leave);
       for (const raw of cards as unknown[]) {
         const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
         const k = p && typeof p.id === 'string' ? (s.containers.find((x) => x.id === p.id) ?? s.groups.find((x) => x.id === p.id)) : undefined;
         if (!p || !k) continue;
         if (p.place === 'others') for (const id of 'kind' in k ? [k.id] : k.cards) unshown.add(id);
+        // He brings a picture (or a group) back from Others: it is his now, whether or not its
+        // job moved on yet (tidy.ts): the idle clock is its rule.
+        if (p.place === 'float' && k.place === 'others') {
+          for (const id of 'kind' in k ? [k.id] : k.cards) {
+            const pic = s.containers.find((x) => x.id === id);
+            if (pic) { delete pic.forChild; delete pic.forAt; }
+          }
+        }
         if ('kind' in k && p.size !== undefined) unshown.add(k.id);
         if (p.place === 'float' || p.place === 'others') k.place = p.place;
         if (p.pos === null) delete k.pos;
@@ -2032,7 +2083,8 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
   seen: async (_req, res, contextRoot, body) => {
     // The owner looked at finished jobs in the agenda (task super-agent-ajandasi-…): each entry
     // names a child and the finish key his window SHOWED (`at`), so a result that finished again
-    // after that frame stays new. Only ever raises `seenAt`; unknown children are ignored.
+    // after that frame stays new. Only ever raises `seenAt` (stamping when, `seenMarkedAt`);
+    // unknown children are ignored.
     const raw = body.children;
     if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_CONTAINERS) {
       sendError(res, 400, 'invalid_body', `children must be a list of 1 to ${MAX_CONTAINERS} { id, at }`);
@@ -2051,7 +2103,7 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     const state = await writeSuper(contextRoot, (s) => {
       for (const m of marks) {
         const ch = hasChild(s, m.id) ? s.children[m.id] : undefined;
-        if (ch && !(ch.seenAt !== undefined && ch.seenAt >= m.at)) ch.seenAt = m.at;
+        if (ch && !(ch.seenAt !== undefined && ch.seenAt >= m.at)) { ch.seenAt = m.at; ch.seenMarkedAt = Date.now(); }
       }
     });
     sendJson(res, 200, { state: superStateView(contextRoot, state) });

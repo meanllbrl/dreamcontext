@@ -60,6 +60,9 @@ export interface SuperContainer {
   by?: 'auto';
   /** The child an automatic card belongs to. */
   of?: string;
+  /** A picture shown for this child's job: it goes to Others once the job moves on. */
+  forChild?: string;
+  forAt?: number;
 }
 
 export interface SuperDismissed { kind: ContainerKind; ref: string; until: number }

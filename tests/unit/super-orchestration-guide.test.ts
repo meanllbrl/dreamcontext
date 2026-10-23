@@ -78,9 +78,9 @@ describe('super-orchestration guide: capacity (owner, 2026-10-21)', () => {
 
 describe('super-orchestration guide: shape', () => {
   // +500 (2026-10-22): §2 says how to ask the way any agent asks (`super ask --json`, the answer
-  // message, what came in meanwhile).
-  it('is at most 14,500 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(14_500);
+  // message, what came in meanwhile). +150 (2026-10-23): a child's pictures carry `--for <child>`.
+  it('is at most 14,650 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(14_650);
   });
 
   it('has the six sections in order', () => {
