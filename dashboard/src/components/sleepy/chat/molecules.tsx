@@ -383,7 +383,7 @@ export function DiffView({ diff, startLine }: { diff: EditDiff; startLine?: numb
  * step keeps its duration.
  */
 export function ThinkingPill({
-  streaming, tokens, open, onToggle, body, actor = 'lead', stretch, stretchRunning = false,
+  streaming, tokens, open, onToggle, body, actor = 'lead', stretch, stretchRunning = false, replyGroup,
 }: {
   streaming: boolean;
   tokens: number;
@@ -396,12 +396,15 @@ export function ThinkingPill({
   stretch?: 'lead' | 'follow';
   /** A step in this line's stretch is running. */
   stretchRunning?: boolean;
+  /** The Super answer group it belongs to (a thin line beside it). */
+  replyGroup?: string;
 }) {
   return (
     <div
       className="chat-m-thinking chat-step"
       data-actor={actor}
       data-stretch={stretch}
+      data-reply-grp={replyGroup}
       data-streaming={streaming || undefined}
     >
       <button type="button" className="chat-m-thinking-head" onClick={onToggle} aria-expanded={open}>

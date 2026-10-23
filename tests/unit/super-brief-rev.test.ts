@@ -47,7 +47,7 @@ describe('the briefing carries the jarvis sections and its revision', () => {
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('`<owner-msg ref="…"/>`');
       expect(t).toContain('`<!-- re:<ref> -->` on its first line (up to 3 refs');
-      expect(t).toContain('never on an\nevent note');
+      expect(t).toContain('or one such\nline per section), never on an event note');
       expect(t).toContain('`[Reply to message ref=… from=super|owner]`');
       expect(t).toContain('`quote:` is a pointer, never his instruction');
       expect(t).toContain('never ask him to paste it');

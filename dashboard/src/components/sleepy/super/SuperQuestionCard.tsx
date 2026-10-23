@@ -111,11 +111,11 @@ export function SuperQuestionTail({ session, anchored }: {
 
 /** The owner's answer to a question card, where it sits in the super chat: the card's own
  *  receipt ("You chose: …"), never a bubble he seems to have typed. Null for any other text. */
-export function SuperAnswerReceipt({ text }: { text: string }) {
+export function SuperAnswerReceipt({ text, itemId }: { text: string; itemId?: string }) {
   const answer = parseSuperAnswer(text);
   if (!answer) return null;
   return (
-    <div data-testid="super-answer-receipt" data-item={answer.item}>
+    <div data-testid="super-answer-receipt" data-item={answer.item} data-item-id={itemId}>
       <SurveyReceipt unclear={answer.unclear} values={answer.values} />
     </div>
   );

@@ -55,6 +55,7 @@ import { SleepyMascot } from '../SleepyMascot';
 import type { ComposerHost } from './composerHost';
 import './composer.css';
 import { useDictationReady } from '../../../lib/voice/useDictationReady';
+import { REPLY_TO_RE } from '../../../lib/superTypes';
 
 /**
  * The redesigned Agent Chat (beta) composer (task T6, plan rev.3) — replaced the inline
@@ -1234,6 +1235,9 @@ export function Composer({
   const sendableAttachments = attachments.filter(countsAsContent);
   // Only an About chip staged and nothing typed: the box asks for the words about that line.
   const aboutOnly = !draft.trim() && attachments.length > 0 && attachments.every((a) => a.kind === 'about');
+  // A reply chip (its ↩ on one message, owner 2026-10-23) asks for his answer, not "about".
+  const aboutPlaceholder = attachments.some((a) => a.kind === 'about' && REPLY_TO_RE.test(a.text ?? ''))
+    ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder');
   const uploadingCount = attachments.filter((a) => a.uploading).length;
   const hasSendableContent = !!draft.trim() || sendableAttachments.length > 0
     || uploadingCount > 0;
@@ -1946,7 +1950,7 @@ export function Composer({
             // two are saying something more urgent than where to find a feature.
             // Blank while the meter has the slot: two things in one place, one of them a
             // sentence about how to start something that has already started.
-            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? t('super.agenda.aboutPlaceholder') : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
+            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? aboutPlaceholder : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
             value={draft}
             disabled={disabled}
             onChange={(e) => {

@@ -51,6 +51,7 @@ describe('super types — server record <-> window mirror', () => {
     expect(client.MAX_REPLY_QUOTE).toBe(server.MAX_REPLY_QUOTE);
     expect(String(client.REPLY_MARK_RE)).toBe(String(server.REPLY_MARK_RE));
     expect(client.REPLY_MARK_HEAD_MAX).toBe(server.REPLY_MARK_HEAD_MAX);
+    expect(String(client.REPLY_MARK_LINE_RE)).toBe(String(server.REPLY_MARK_LINE_RE));
     for (const t of ['', 'hi', ' Ödev 😀 \n', 'x'.repeat(3000)]) expect(client.msgRef(t)).toBe(server.msgRef(t));
   });
 

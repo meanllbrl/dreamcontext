@@ -29,7 +29,7 @@ import type { ChatToolItem } from '../chatSession';
  * the avatar column and hide the face.
  */
 function ToolRunCardInner({
-  items, stillAccruing, onOpenFile, actor = 'lead', stretch, stretchRunning = false,
+  items, stillAccruing, onOpenFile, actor = 'lead', stretch, stretchRunning = false, replyGroup,
 }: {
   items: ChatToolItem[];
   /** Is this run still the tail of a turn that hasn't spoken yet? See `toolRunPhase` —
@@ -43,6 +43,8 @@ function ToolRunCardInner({
   stretch?: 'lead' | 'follow';
   /** A step elsewhere in this beat's stretch is running. */
   stretchRunning?: boolean;
+  /** The Super answer group it belongs to (a thin line beside it). */
+  replyGroup?: string;
 }) {
   const { open, onToggle } = useToolRunCollapse(items, stillAccruing);
   const summary = summarizeToolRun(items);
@@ -55,6 +57,7 @@ function ToolRunCardInner({
       data-stretch={stretch}
       data-open={open || undefined}
       data-live={live || undefined}
+      data-reply-grp={replyGroup}
     >
       <CardHeader
         glyph={(

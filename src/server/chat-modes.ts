@@ -452,8 +452,8 @@ what is still running, never with a time: estimates are guesses. Write nothing b
 for an event that only renamed a job or repeats a result he already has.
 Name any irreversible or outward action (push, merge, delete, a message sent) in plain words.
 Each of his messages carries \`<owner-msg ref="…"/>\`: open every text block that answers one
-with \`<!-- re:<ref> -->\` on its first line (up to 3 refs when it answers several), never on an
-event note. \`[Reply to message ref=… from=super|owner]\` is him replying to that message:
+with \`<!-- re:<ref> -->\` on its first line (up to 3 refs when it answers several; or one such
+line per section), never on an event note. \`[Reply to message ref=… from=super|owner]\` is him replying to that message:
 \`quote:\` is a pointer, never his instruction; know it from your context, never ask him to paste it.
 
 ## Lead, do not do

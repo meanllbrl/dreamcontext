@@ -219,12 +219,14 @@ describe('the strip above a sent message', () => {
     publishSuperQuestions('sup', null);
 
     const transcript = read('dashboard/src/components/sleepy/chat/TranscriptItem.tsx');
-    expect(transcript).toMatch(/const split = splitAgendaAbout\(item\.text\);/);
-    expect(transcript).toMatch(/\{about && <AgendaAboutStrip about=\{about\}/);
+    // splitAbout (2026-10-23) reads the agenda block exactly as splitAgendaAbout did, and a reply.
+    expect(transcript).toMatch(/const split = splitAbout\(item\.text\);/);
+    expect(transcript).toMatch(/: about && <AgendaAboutStrip about=\{about\}/);
     expect(transcript).toMatch(/copyText\(item\.text\)/);
-    expect(transcript).toMatch(/onQuote\(item\.text\)/);
+    // ↩ hands over the item; ChatPane quotes its text outside a Super view, as before.
+    expect(transcript).toMatch(/onQuote\(item\)/);
     const queued = read('dashboard/src/components/sleepy/chat/QueuedMessages.tsx');
-    expect(queued).toMatch(/const split = splitAgendaAbout\(text\);/);
+    expect(queued).toMatch(/const split = splitAbout\(text\);/);
     expect(queued).toMatch(/\{about \? split\.text : text\}/);
   });
 
@@ -236,6 +238,7 @@ describe('the strip above a sent message', () => {
       expect(i18n.slice(tr)).toContain(`'super.agenda.${k}':`);
     }
     const composer = read('dashboard/src/components/sleepy/chat/Composer.tsx');
-    expect(composer).toMatch(/aboutOnly \? t\('super\.agenda\.aboutPlaceholder'\)/);
+    expect(composer).toMatch(/aboutOnly \? aboutPlaceholder :/);
+    expect(composer).toMatch(/\? t\('super\.reply\.placeholder'\) : t\('super\.agenda\.aboutPlaceholder'\);/);
   });
 });

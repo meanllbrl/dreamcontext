@@ -16,8 +16,9 @@ import { Notice, NoticeRow, TokenDrop, ContextShrink, Glyph } from './Notice';
 import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
 import { useSpokenHighlight } from './useSpokenHighlight';
-import { splitAgendaAbout } from '../super/superHandover';
-import { AgendaAboutStrip } from './AgendaAboutStrip';
+import { splitAbout } from '../super/superHandover';
+import { AgendaAboutStrip, ReplyStrip } from './AgendaAboutStrip';
+import { useI18n } from '../../../context/I18nContext';
 import type { AgentRoleId } from '../../../lib/agentRoles';
 import type {
   ChatItem, ChatUserItem, ChatTextItem, ChatThinkingItem, ChatCompactItem, ChatSession,
@@ -108,28 +109,39 @@ function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path:
 }
 
 function UserMessage({
-  item, session, onQuote, onOpenFile, readOnly,
+  item, session, onQuote, onOpenFile, readOnly, onReplyJump,
 }: {
   item: ChatUserItem;
   session?: ChatSession;
-  onQuote?: (text: string) => void;
+  onQuote?: (item: ChatUserItem | ChatTextItem) => void;
+  /** His reply's strip was clicked: scroll to the message it names (a Super view only). */
+  onReplyJump?: (ref: string, from: 'super' | 'owner', beforeId: string) => void;
   /** Open an attached image full-size (the same lightbox an answer's image uses). */
   onOpenFile?: (path: string) => void;
   readOnly: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const { t } = useI18n();
   // What was attached is drawn; what was typed stays in the bubble. Copy/quote/rewind all
   // keep `item.text` — the real message, paths and all, is what was sent.
   const { text, media, refs, about } = useMemo(() => {
-    // A message written about an agenda line (owner 2026-10-23) opens with its block: drawn as
-    // a strip above the bubble, the bubble keeps only his words.
-    const split = splitAgendaAbout(item.text);
+    // A message written about an agenda line, or replying to one message (owner 2026-10-23),
+    // opens with its block: drawn as a strip above the bubble, the bubble keeps only his words.
+    const split = splitAbout(item.text);
     const board = splitUserBoardRefs(split.text);
     return { ...splitUserMedia(board.text), refs: board.refs, about: split.about };
   }, [item.text]);
   return (
-    <div className="chat-msg-user-row">
-      {about && <AgendaAboutStrip about={about} superSid={session?.mode === 'super' ? session.claudeId : null} />}
+    <div className="chat-msg-user-row" data-item-id={item.id} tabIndex={-1}>
+      {about?.kind === 'reply'
+        ? (
+          <ReplyStrip
+            label={t(about.from === 'super' ? 'super.reply.toSuper' : 'super.reply.toOwn')}
+            quotes={[about.quote]}
+            onJump={onReplyJump ? () => onReplyJump(about.ref, about.from, item.id) : undefined}
+          />
+        )
+        : about && <AgendaAboutStrip about={about} superSid={session && (session.mode === 'super' || session.superMirror) ? session.claudeId : null} />}
       {media.length > 0 && (
         <div className="chat-msg-user-media">
           {media.map((p) => <UserMediaItem key={p} path={p} onOpenFile={onOpenFile} />)}
@@ -159,7 +171,7 @@ function UserMessage({
           {session && (
             <IconButton label="Edit — rewind to before this message" onClick={() => setConfirming(true)}>✎</IconButton>
           )}
-          {onQuote && <IconButton label="Quote-reply" onClick={() => onQuote(item.text)}>↩</IconButton>}
+          {onQuote && <IconButton label="Quote-reply" onClick={() => onQuote(item)}>↩</IconButton>}
         </HoverActions>
       )}
       {confirming && session && (
@@ -226,11 +238,13 @@ export function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
 // ─── Assistant message (full-width, NO avatar) ─────────────────────────────────────
 
 function AssistantMessage({
-  item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, readOnly,
+  item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, readOnly, replyGroup,
 }: {
   item: ChatTextItem;
   session?: ChatSession;
-  onQuote?: (text: string) => void;
+  onQuote?: (item: ChatUserItem | ChatTextItem) => void;
+  /** The Super answer group this row belongs to (ChatPane's replyGroups): the thin line beside it. */
+  replyGroup?: string;
   /** Click-through for an inline image the answer rendered — same lightbox a tool
    *  card's image reference opens. Also backs the clickable backticked paths. */
   onOpenFile?: (path: string) => void;
@@ -317,7 +331,7 @@ function AssistantMessage({
   }
 
   return (
-    <div className="chat-msg-assistant-row" data-done={item.done}>
+    <div className="chat-msg-assistant-row" data-done={item.done} data-item-id={item.id} data-reply-grp={replyGroup} tabIndex={-1}>
       {/* WRITTEN ORDER. Prose runs and blocks are siblings in the row's own flex column, so
           a card sits between the paragraph that introduces it and the one that says what to
           notice — which is how the answer was written and, before 2026-08-27, not how it
@@ -355,7 +369,7 @@ function AssistantMessage({
       {!readOnly && (
         <HoverActions>
           <IconButton label="Copy" onClick={() => copyText(item.text)}>⧉</IconButton>
-          {onQuote && <IconButton label="Quote-reply" onClick={() => onQuote(item.text)}>↩</IconButton>}
+          {onQuote && <IconButton label="Quote-reply" onClick={() => onQuote(item)}>↩</IconButton>}
           {session && (
             <IconButton label="Retry — resend the preceding message" onClick={() => setConfirming(true)}>⟳</IconButton>
           )}
@@ -376,7 +390,7 @@ function AssistantMessage({
 
 // ─── Thinking ───────────────────────────────────────────────────────────────────────
 
-function ThinkingBlock({ item, stretch }: { item: ChatThinkingItem; stretch: StepStretch }) {
+function ThinkingBlock({ item, stretch, replyGroup }: { item: ChatThinkingItem; stretch: StepStretch; replyGroup?: string }) {
   // Open by default: the reasoning is worth reading in place; a click folds it away.
   const [open, setOpen] = useState(true);
   if (!item.text) return null;
@@ -387,6 +401,7 @@ function ThinkingBlock({ item, stretch }: { item: ChatThinkingItem; stretch: Ste
       open={open}
       onToggle={() => setOpen((v) => !v)}
       body={<MarkdownPreview content={item.text} />}
+      replyGroup={replyGroup}
       {...stretch}
     />
   );
@@ -463,7 +478,7 @@ interface StepStretch {
 
 function ItemViewInner({
   item, session, onOpenFile, onOpenBoard, onAction, conversationId, onQuote, readOnly = false,
-  actor, stretch, stretchRunning,
+  actor, stretch, stretchRunning, replyGroup, onReplyJump,
 }: StepStretch & {
   item: ChatItem;
   /** The live session backing this item — omitted for a read-only drill-in transcript
@@ -478,7 +493,11 @@ function ItemViewInner({
   /** This conversation's id, for `ChatViews`' checklist card. Optional — the read-only
    *  drill-in passes neither this nor `onAction`, so it renders no views (plan §T6). */
   conversationId?: string;
-  onQuote?: (text: string) => void;
+  onQuote?: (item: ChatUserItem | ChatTextItem) => void;
+  /** A Super view: the answer group this row belongs to (a thin line beside it). */
+  replyGroup?: string;
+  /** A Super view: his reply's strip scrolls to the message it names. */
+  onReplyJump?: (ref: string, from: 'super' | 'owner', beforeId: string) => void;
   /** Suppresses the mutating hover actions (edit/retry/quote) — Copy always stays,
    *  since it never mutates anything. Used by the sub-agent drill-in. */
   readOnly?: boolean;
@@ -492,6 +511,7 @@ function ItemViewInner({
           onQuote={onQuote}
           onOpenFile={onOpenFile}
           readOnly={readOnly}
+          onReplyJump={onReplyJump}
         />
       );
     case 'text':
@@ -505,12 +525,13 @@ function ItemViewInner({
           onAction={onAction}
           conversationId={conversationId}
           readOnly={readOnly}
+          replyGroup={replyGroup}
         />
       );
     // Step lines: where they sit in their speaker's stretch is decided by the transcript
     // (ChatPane, the drill-in), which is the only place that can see the neighbours.
     case 'thinking':
-      return <ThinkingBlock item={item} stretch={{ actor, stretch, stretchRunning }} />;
+      return <ThinkingBlock item={item} stretch={{ actor, stretch, stretchRunning }} replyGroup={replyGroup} />;
     case 'tool':
       return (
         <ToolCard
@@ -519,6 +540,7 @@ function ItemViewInner({
           actor={actor}
           stretch={stretch}
           stretchRunning={stretchRunning}
+          replyGroup={replyGroup}
         />
       );
     case 'compact':

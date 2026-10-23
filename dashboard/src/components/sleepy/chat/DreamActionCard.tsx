@@ -29,7 +29,7 @@ import './dreamaction.css';
  * glance even in the middle of a group.
  */
 export function DreamActionCard({
-  item, actions, open, onToggle, onOpenFile, actor = 'lead', stretch, stretchRunning = false,
+  item, actions, open, onToggle, onOpenFile, actor = 'lead', stretch, stretchRunning = false, replyGroup,
 }: {
   item: ChatToolItem;
   /** Every dreamcontext invocation in this one command, in order — an agent routinely chains
@@ -42,6 +42,8 @@ export function DreamActionCard({
   actor?: AgentRoleId;
   stretch?: 'lead' | 'follow';
   stretchRunning?: boolean;
+  /** The Super answer group it belongs to (a thin line beside it). */
+  replyGroup?: string;
 }) {
   const command = commandOf(item);
   const result = item.result !== undefined ? toolResultText(item.result) : undefined;
@@ -96,6 +98,7 @@ export function DreamActionCard({
       data-open={open || undefined}
       data-tone={view.tone}
       data-stretch={stretch}
+      data-reply-grp={replyGroup}
     >
       <ToolHeader
         status={status}

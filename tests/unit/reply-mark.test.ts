@@ -56,6 +56,29 @@ describe('splitReplyMark', () => {
     expect(splitReplyMark(long)).toEqual({ refs: [], body: long, pending: false });
   });
 
+  // Measured with the real model (2026-10-23): one block answering three messages opens a
+  // section per message, each with its own mark line.
+  it('a section per message: every line-start mark counts, none is shown', () => {
+    const block = '<!-- re:aaaaaa -->\nThe checkout form is still running.\n\n<!-- re:bbbbbb -->\nYes, the rename is done.\n\n<!-- re:cccccc aaaaaa -->\nThe deploy is green.';
+    const split = splitReplyMark(block);
+    expect(split.refs).toEqual(['aaaaaa', 'bbbbbb', 'cccccc']);
+    expect(split.body).toBe('The checkout form is still running.\n\nYes, the rename is done.\n\nThe deploy is green.');
+    expect(stripReplyMark(block)).toBe(split.body);
+    expect(server.stripReplyMark(block)).toBe(split.body);
+    // A mark written inside a sentence is not one of ours: left as written.
+    expect(splitReplyMark('Hi <!-- re:k3f9q0 --> there').body).toBe('Hi <!-- re:k3f9q0 --> there');
+  });
+
+  it('a section mark still arriving is held back from the body, never drawn or spoken', () => {
+    const seen: string[] = [];
+    let raw = '<!-- re:aaaaaa -->\nFirst answer.\n\n';
+    for (const d of ['<!-', '- re:bbb', 'bbb -->', '\nSecond.']) { raw += d; seen.push(splitReplyMark(raw).body); }
+    expect(seen).toEqual(['First answer.\n\n', 'First answer.\n\n', 'First answer.\n\n', 'First answer.\n\nSecond.']);
+    expect(splitReplyMark(raw).refs).toEqual(['aaaaaa', 'bbbbbb']);
+    // A line that cannot become a mark shows at once.
+    expect(splitReplyMark('<!-- re:aaaaaa -->\nSee <b>this</b>\n<b').body).toBe('See <b>this</b>\n<b');
+  });
+
   it('a notch cue is never a mark, and a mark never a notch cue', () => {
     const cue = '<!-- notch:present -->\nThe answer.';
     expect(splitReplyMark(cue)).toEqual({ refs: [], body: cue, pending: false });

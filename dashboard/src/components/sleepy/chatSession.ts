@@ -3,6 +3,7 @@ import { SpeechQueue, type SpokenChunk, type StopReason } from '../../lib/voice/
 import { turnTrace } from '../../lib/voice/turnTrace';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { splitNotchCue, stripNotchCue, presentationOf, type NotchCue } from '../../lib/notchCue';
+import { splitReplyMark } from '../../lib/replyMark';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { chatAgentFor } from '../../lib/chatAgentBinding';
@@ -1066,8 +1067,30 @@ export function createChatSession(
   const cueRaw = new Map<string, string>();
   const cues = new Map<string, NotchCue | null>();
   const presentListeners = new Set<(p: NotchPresentation) => void>();
-  /** The body to store for item `itemId` given its full raw text (identity outside assistant mode). */
+  // ── Super view: reply marks (lib/replyMark.ts) ───────────────────────────────────────
+  // The Super opens an answer with `<!-- re:<ref> -->` naming the owner messages it answers.
+  // Same shape as the notch cue: the raw text is kept per item, the item holds the body (so
+  // the transcript, speech and Copy never see the mark) and `replyTo` the refs. On the
+  // hands-free phone the Super's conversation is a `superMirror` session, not mode `super`.
+  const superView = mode === 'super' || superMirror;
+  const replyRefs = new Map<string, string[]>();
+  /** A text item with its reply refs as the head parsed so far (absent: none). */
+  function withReplyTo(it: ChatTextItem): ChatTextItem {
+    const refs = superView ? replyRefs.get(it.id) : undefined;
+    if (refs) return { ...it, replyTo: refs };
+    if (!it.replyTo) return it;
+    const { replyTo: _gone, ...rest } = it;
+    return rest;
+  }
+  /** The body to store for item `itemId` given its full raw text (identity outside assistant
+   *  mode and a Super view). */
   function cueBody(itemId: string, raw: string): string {
+    if (superView) {
+      cueRaw.set(itemId, raw);
+      const split = splitReplyMark(raw);
+      if (split.refs.length) replyRefs.set(itemId, split.refs); else replyRefs.delete(itemId);
+      return split.body;
+    }
     if (mode !== 'assistant') return raw;
     cueRaw.set(itemId, raw);
     const split = splitNotchCue(raw);
@@ -1075,9 +1098,9 @@ export function createChatSession(
     cues.set(itemId, split.cue);
     return split.body;
   }
-  /** The raw text an item has received so far (its body, outside assistant mode). */
+  /** The raw text an item has received so far (its body, outside assistant mode and a Super view). */
   function rawOf(itemId: string, body: string): string {
-    return mode === 'assistant' ? (cueRaw.get(itemId) ?? body) : body;
+    return mode === 'assistant' || superView ? (cueRaw.get(itemId) ?? body) : body;
   }
   function presentBlock(itemId: string, body: string): void {
     if (mode !== 'assistant' || !body.trim() || !cues.has(itemId)) return;
@@ -1467,7 +1490,7 @@ export function createChatSession(
         const cur = items[pos];
         if (cur && (cur.kind === 'text' || cur.kind === 'thinking')) {
           const next = cur.kind === 'text' ? cueBody(cur.id, rawOf(cur.id, cur.text) + ev.text) : cur.text + ev.text;
-          items[pos] = { ...cur, text: next };
+          items[pos] = cur.kind === 'text' ? withReplyTo({ ...cur, text: next }) : { ...cur, text: next };
           conv = { ...conv, items };
           // Fed live, so speech starts on the first closed sentence rather than at the end of
           // the turn. Thinking is never spoken.
@@ -1550,19 +1573,21 @@ export function createChatSession(
           const items = conv.items.slice();
           const cur = items[pos] as ChatTextItem | ChatThinkingItem;
           const body = kind === 'text' ? cueBody(cur.id, ev.text) : ev.text;
-          items[pos] = { ...cur, text: body };
+          items[pos] = cur.kind === 'text' ? withReplyTo({ ...cur, text: body }) : { ...cur, text: body };
           conv = { ...conv, items };
           // The echo is the AUTHORITATIVE full block. Only the tail beyond what this item
           // already contributed is spoken, so a reply that DID stream is not read twice.
           if (kind === 'text') { speakTail(cur.id, body); speech?.endBlock(); presentBlock(cur.id, body); }
         } else {
           const last = [...conv.items].reverse().find((it) => it.kind === kind);
-          const echoed = kind === 'text' && mode === 'assistant' ? stripNotchCue(ev.text) : ev.text;
+          const echoed = kind !== 'text' ? ev.text
+            : superView ? splitReplyMark(ev.text).body : mode === 'assistant' ? stripNotchCue(ev.text) : ev.text;
           if (last && (last as ChatTextItem | ChatThinkingItem).text === echoed) return;
           const id = nextItemId();
-          const item: ChatTextItem | ChatThinkingItem = {
+          const made: ChatTextItem | ChatThinkingItem = {
             kind, id, index: -1, text: kind === 'text' ? cueBody(id, ev.text) : ev.text, done: true, ts: Date.now(),
           };
+          const item = made.kind === 'text' ? withReplyTo(made) : made;
           conv = { ...conv, items: [...conv.items, item] };
           // AC8's case: a short reply the CLI sent with NO deltas at all. This is a fresh
           // item that has contributed nothing, so it is spoken in full — once.
@@ -2786,8 +2811,15 @@ export function createChatSession(
 
   function toChatItem(h: HistoryEntry): ChatItem | null {
     const it = historyChatItem(h, `hist-${++itemSeq}`);
+    if (!it || it.kind !== 'text') return it;
+    // A replayed Super block keeps its words and which messages it answers, never the mark.
+    if (superView) {
+      const split = splitReplyMark(it.text);
+      if (split.pending) return it;
+      return split.refs.length ? { ...it, text: split.body, replyTo: split.refs } : { ...it, text: split.body };
+    }
     // A replayed Assistant block keeps its words, never its notch cue (lib/notchCue.ts).
-    return it && it.kind === 'text' && mode === 'assistant' ? { ...it, text: stripNotchCue(it.text) } : it;
+    return mode === 'assistant' ? { ...it, text: stripNotchCue(it.text) } : it;
   }
 
   /** Resume replay: `--resume` never re-emits past frames, so a resumed chat would open

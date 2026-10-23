@@ -473,10 +473,12 @@ export const MAX_REPLY_QUOTE = 100;
 export const REPLY_MARK_RE = /^\s*<!--\s*re:\s*((?:[0-9a-z]{6}\s*){1,3})-->[ \t]*(?:\r?\n)?/;
 /** Longer than any real mark line; a comment still open past this is not one. */
 export const REPLY_MARK_HEAD_MAX = 64;
-/** The text without a leading reply mark (the server's text readers: chat-registry). */
+/** A mark on its own line anywhere in a block: one block answering several messages opens a
+ *  section per message (measured with the real model, 2026-10-23). */
+export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:\s*((?:[0-9a-z]{6}\s*){1,3})-->[ \t]*(?:\r?\n)?/g;
+/** The text without its reply marks (the server's text readers: chat-registry). */
 export function stripReplyMark(raw: string): string {
-  const m = REPLY_MARK_RE.exec(raw ?? '');
-  return m ? raw.slice(m[0].length) : raw;
+  return (raw ?? '').replace(REPLY_MARK_LINE_RE, '$1');
 }
 
 /** The next pad id: one past the last handed out and past every id the pad holds. */
