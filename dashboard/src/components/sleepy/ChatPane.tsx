@@ -70,6 +70,7 @@ import { groupSuperEventTurns, superEventOf, type SuperEventGroup } from './supe
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
+import { SuperRecapCard } from './super/SuperRecapCard';
 import { useSuperEventContext } from './super/superJobsStore';
 import './super/SuperSurface.css';
 import './chat/cards.css';
@@ -724,6 +725,14 @@ export function ChatPane({
   const superCtx = useSuperEventContext(session.mode === 'super' ? session.claudeId : null);
   const [openEvents, setOpenEvents] = useState<ReadonlySet<string>>(() => new Set());
   const toggleEvent = useCallback((anchor: string) => setOpenEvents((prev) => {
+    const next = new Set(prev);
+    if (next.has(anchor)) next.delete(anchor); else next.add(anchor);
+    return next;
+  }), []);
+  // A recap is the other way round (owner 2026-10-23): open unless the owner hid it, and a hide
+  // lives only in this pane, so a reload draws every recap open again.
+  const [hiddenRecaps, setHiddenRecaps] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleRecap = useCallback((anchor: string) => setHiddenRecaps((prev) => {
     const next = new Set(prev);
     if (next.has(anchor)) next.delete(anchor); else next.add(anchor);
     return next;
@@ -1689,11 +1698,28 @@ export function ChatPane({
 
   type Stretch = { stretch: 'lead' | 'follow'; running: boolean } | undefined;
 
-  const itemNode = (item: ChatItem, stretch: Stretch): React.ReactNode => {
+  const itemNode = (item: ChatItem, stretch: Stretch, accruing = false): React.ReactNode => {
     // A turn the Super Agent's inbox injected — live (`superEvent`) or replayed from the
     // transcript (its `[super …]` prefix) — is a small event chip, not an owner's bubble.
     if (item.kind === 'user' && (item.superEvent || superEventOf(item.text))) {
       const group = superGroups.get(item.id);
+      if (group && superCtx && group.kind === 'recap') {
+        // A hidden card builds nothing: building a question or a team card counts it as drawn,
+        // and the tail would then skip what the owner cannot see. The streaming tail of the
+        // turn (`accruing`, the anchor's own) goes to the last segment that SHOWS something,
+        // as `liveTail` does, so a live run keeps growing. One flat keyed list, like the
+        // transcript's: a question card moving to a newer segment keeps its state.
+        const hidden = hiddenRecaps.has(item.id);
+        const shows = (seg: RunSegment<ChatItem>) => seg.kind === 'run' || shapeOf(seg.item).draw !== 'nothing';
+        const body = hidden ? [] : (recapBodies.get(item.id) ?? []).filter((seg) => shows(seg) || cardsOf(seg).length > 0);
+        let tail = body.length - 1;
+        while (tail >= 0 && !shows(body[tail])) tail -= 1;
+        return (
+          <SuperRecapCard key={item.id} group={group} hidden={hidden} onToggle={toggleRecap}>
+            {body.flatMap((seg, i) => [renderSegment(seg, accruing && i === tail, noStretches), ...questionNodes(seg)])}
+          </SuperRecapCard>
+        );
+      }
       if (group && superCtx) {
         return <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
       }
@@ -1774,7 +1800,7 @@ export function ChatPane({
   // and "Show earlier messages" read as doing nothing at all (owner report 08-01, second
   // pass). See the helper's own doc for why the accruing tail keys off its head instead.
   const renderSegment = (seg: RunSegment<ChatItem>, accruing: boolean, stretches: Map<string, NonNullable<Stretch>>): React.ReactNode => {
-    if (seg.kind === 'single') return itemNode(seg.item, stretches.get(seg.item.id));
+    if (seg.kind === 'single') return itemNode(seg.item, stretches.get(seg.item.id), accruing);
     const stretch = stretches.get(`run:${seg.items[0].id}`);
     return (
       <ToolRunCard
@@ -1799,18 +1825,35 @@ export function ChatPane({
   // Event turns fold INSIDE each piece too (plan r4 D8): a group never straddles the window
   // edge, the history/live boundary or a notice; the anchor stays and renders the line.
   const superGroups = new Map<string, SuperEventGroup>();
+  // A recap's whole turn, segmented like the transcript and drawn inside its card rather than
+  // flat under the line: its prose open, its tool runs as run cards, its questions as cards.
+  const recapBodies = new Map<string, RunSegment<ChatItem>[]>();
+  // Its steps join no stretch: the card is a surface of its own, not part of the lead's run.
+  const noStretches = new Map<string, NonNullable<Stretch>>();
   // The Super Agent's questions to the owner, as cards under the turn that asked them
   // (superQuestions.ts, owner 2026-10-21 "soruyu hep chatta sorsun"): placed on what each
-  // piece KEEPS, so a call folded into an event line is not counted as drawn (the tail draws it).
+  // piece DRAWS (what it keeps, plus each recap card's body in its place), so a call folded into
+  // an event line is not counted as drawn (the tail draws it), and one in a recap lands in its card.
   const questionCards = new Map<string, Array<AskRef & { live: boolean }>>();
   const foldSuper = <T extends ChatItem>(piece: T[]): T[] => {
     let kept = piece;
+    let drawn = piece;
     if (superCtx) {
       const folded = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded: openEvents });
       for (const [k, g] of folded.groups) superGroups.set(k, g);
+      const inCard = new Set<string>();
+      for (const [k, g] of folded.groups) {
+        if (g.kind !== 'recap') continue;
+        const ids = new Set(g.folded);
+        for (const id of ids) inCard.add(id);
+        const body = piece.filter((it) => ids.has(it.id));
+        recapBodies.set(k, segmentToolRuns(body, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+      }
       kept = folded.kept;
+      const keptIds = new Set(kept.map((it) => it.id));
+      drawn = piece.filter((it) => keptIds.has(it.id) || inCard.has(it.id));
     }
-    if (session.mode === 'super') for (const [k, cards] of placeQuestionCards(kept)) questionCards.set(k, cards);
+    if (session.mode === 'super') for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
     return kept;
   };
   const historySlice = conv.history.slice(historyFrom);
