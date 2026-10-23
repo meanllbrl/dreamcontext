@@ -186,9 +186,23 @@ describe('who files during a live sleep cycle (DREAMCONTEXT_AUTO_SLEEP=1)', () =
     expect(printed()).toMatch(/--parent <slug>/);
   });
 
-  it('--basis plan --parent is the plan and never meets the bar', async () => {
-    expect(await cli('create', '1. dalga: x', '--parent', 'the-parent', '--basis', 'plan')).toBe(0);
+  it('--basis plan --parent quoting a wave of the parent\'s map is the plan and never meets the bar', async () => {
+    process.env.DREAMCONTEXT_AUTO_SLEEP = '';
+    await cli('insert', 'the-parent', 'technical_details', 'WAVE MAP: EXECUTION: lead | W1 (src/a.ts) | W2 (src/b.ts)');
+    process.env.DREAMCONTEXT_AUTO_SLEEP = '1';
+    expect(await cli('create', '1. dalga: x', '--parent', 'the-parent', '--basis', 'plan', '--quote', 'W1 (src/a.ts)')).toBe(0);
     expect(fmOf('1-dalga-x').filed_by).toBe('plan');
+  });
+
+  it('--basis plan --parent quoting no wave is refused like any sleep filing', async () => {
+    expect(await cli('create', 'Sneaky sub-task', '--parent', 'the-parent', '--basis', 'plan', '--quote', 'not on any map')).toBe(1);
+    expect(printed()).toMatch(/needs a basis/);
+  });
+
+  it('tasks basis is refused while a cycle is live', async () => {
+    writeTask('kid2', { name: 'Kid 2', parent_task: 'the-parent' });
+    expect(await cli('basis', 'kid2', '--basis', 'plan', '--quote', 'W1')).toBe(1);
+    expect(printed()).toMatch(/refused while a sleep cycle is live/);
   });
 
   it('--by agent passes and is recorded as an agent', async () => {

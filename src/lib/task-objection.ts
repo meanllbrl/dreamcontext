@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { nanoid } from 'nanoid';
+import { customAlphabet } from 'nanoid';
 import { acquireFileLockWithin, releaseFileLock } from './file-lock.js';
 import { slugify, today } from './id.js';
 import { loadStatuses } from './overrides.js';
@@ -37,6 +37,8 @@ import type { TaskBackend, TaskData } from './task-backend/types.js';
  */
 
 export const OBJECTIONS_REL_PATH = 'state/.task-objections.json';
+/** Objection ids are letters and digits only: they are matched as one word in logs, criteria and `rests_on`. */
+const objectionId = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ', 10);
 export const OBJECTION_LOCK_REL_PATH = 'state/.locks/.task-objections.lock';
 export const MIN_OBJECTION_NOTE_CHARS = 15;
 const MAX_NOTE_CHARS = 2000;
@@ -106,7 +108,13 @@ export function readObjectionsStrict(contextRoot: string): ObjectionRecord[] {
   if (!Array.isArray(parsed)) {
     throw new ObjectionLedgerError(`${OBJECTIONS_REL_PATH} is not a list; fix or move it by hand, it is never overwritten.`);
   }
-  return parsed.filter(isRecord);
+  // A record this build cannot read (hand-edited, or a newer shape) would be dropped by the next
+  // write: refuse the file instead.
+  const records = parsed.filter(isRecord);
+  if (records.length !== parsed.length) {
+    throw new ObjectionLedgerError(`${OBJECTIONS_REL_PATH} has ${parsed.length - records.length} record(s) this build cannot read; fix them by hand, the file is never overwritten.`);
+  }
+  return records;
 }
 
 /** For READERS that must not break a page (the task list): a broken ledger reads as empty. */
@@ -293,6 +301,37 @@ async function runLocked(
     }
   }
 
+  // 1b. Continuing a record: what it still has to do must still be possible. A target that is
+  //     gone (or closed, for a step not yet done) supersedes the record, so the page drops its box
+  //     and offers a new objection; a task that grew open sub-tasks is not cancelled.
+  if (record && !record.applied) {
+    const targetStep = record.as === 'subtask-of' ? 'parent' : record.as === 'criterion-on' ? 'criterion' : record.as === 'duplicate-of' ? 'duplicate-log' : null;
+    if (record.target && targetStep && !record.steps.includes(targetStep)) {
+      const t = await backend.get(record.target);
+      if (!t || isTerminal(defs, t.status)) {
+        record.error = 'superseded';
+        writeLedger(contextRoot, records);
+        return fail(409, 'objection_target_gone', `${record.target} is ${t ? t.status : 'gone'}, so ${record.id} cannot finish; object to the task again.`, record);
+      }
+      if (record.as === 'subtask-of') {
+        const all = (await backend.list()).map((x) => ({ slug: x.name, parent_task: x.parent_task, status: x.status }));
+        const link = validateParentLink(all, task.slug, record.target, defs);
+        if (!link.ok) {
+          record.error = 'superseded';
+          writeLedger(contextRoot, records);
+          return fail(409, 'objection_target_gone', `${link.message} ${record.id} cannot finish; object to the task again.`, record);
+        }
+      }
+    }
+    if (record.as !== 'subtask-of' && !record.steps.includes('cancel')) {
+      const all = (await backend.list()).map((x) => ({ slug: x.name, parent_task: x.parent_task, status: x.status }));
+      const open = openChildren(all, task.slug, defs);
+      if (open.length > 0) {
+        return fail(409, 'has_open_children', `${task.slug} has open sub-tasks (${open.map((c) => c.slug).join(', ')}); move them first, then finish ${record.id}.`, record);
+      }
+    }
+  }
+
   // 2. A new objection: check everything before the first write.
   if (!record) {
     if (!isObjectionKind(as)) return fail(400, 'invalid_kind', `The kind must be one of: ${OBJECTION_KINDS.join(', ')}.`);
@@ -302,7 +341,7 @@ async function runLocked(
       return fail(409, 'already_objected', `${task.slug} already has an applied objection.`);
     }
     record = {
-      id: `obj_${nanoid(10)}`,
+      id: `obj_${objectionId()}`,
       task: task.slug,
       snapshot: {
         name: task.name,
@@ -453,6 +492,12 @@ function declineStrict(contextRoot: string, rec: ObjectionRecord): void {
     declinedAt: rec.at,
     reason: `${rec.as === 'wrong-project' ? 'Another project\'s work' : 'Not a task'} (objection ${rec.id}): ${rec.note}`,
   };
+  // Temp file in the gitignored state/.locks, then rename: a crash never leaves half a file that
+  // the strict reader above would refuse from then on.
+  const tmpDir = join(contextRoot, 'state', '.locks');
+  mkdirSync(tmpDir, { recursive: true });
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify([idea, ...list].slice(0, MAX_DECLINED), null, 2) + '\n', 'utf-8');
+  const tmp = join(tmpDir, `.task-declined.${process.pid}.tmp`);
+  writeFileSync(tmp, JSON.stringify([idea, ...list].slice(0, MAX_DECLINED), null, 2) + '\n', 'utf-8');
+  renameSync(tmp, path);
 }

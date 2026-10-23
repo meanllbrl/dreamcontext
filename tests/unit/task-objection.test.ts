@@ -95,7 +95,7 @@ describe('the five kinds', () => {
   it('duplicate-of: a log on the target, the task cancelled', async () => {
     const r = await objectToTask(ctx, backend(), obj({ as: 'duplicate-of' }));
     expect(r.ok).toBe(true);
-    expect(read('real-work').body).toMatch(/itiraz obj_\w+: «Sleep Made This»/);
+    expect(read('real-work').body).toMatch(/itiraz obj_[A-Za-z0-9]+: «Sleep Made This»/);
     expect(read('sleep-made').fm.status).toBe('cancelled');
   });
 
@@ -170,7 +170,62 @@ describe('crash between steps, then the same call again', () => {
   });
 });
 
+describe('finishing a record whose world moved', () => {
+  it('criterion-on whose target was deleted: the same call supersedes it (409) and a new objection works', async () => {
+    // A record that stopped before its criterion step.
+    writeFileSync(join(ctx, OBJECTIONS_REL_PATH), JSON.stringify([{
+      id: 'obj_stuck00001', task: 'sleep-made', snapshot: { name: 'Sleep Made This', description: '', why: '', filing_basis: null, filed_by: 'sleep', created_at: '' },
+      as: 'criterion-on', target: 'real-work', note: NOTE, by: 'owner', via: 'ui', at: '2026-10-23T09:00:00.000Z', steps: [], error: 'boom', applied: null,
+    }]));
+    rmSync(join(ctx, 'state', 'real-work.md'));
+    const again = await objectToTask(ctx, backend(), obj({}));
+    expect(again).toMatchObject({ ok: false, status: 409, code: 'objection_target_gone' });
+    expect(readObjectionsStrict(ctx)[0].error).toBe('superseded');
+    expect(currentObjection(readObjectionsStrict(ctx), 'sleep-made')).toBeNull();
+    const fresh = await objectToTask(ctx, backend(), obj({ as: 'not-a-task', target: null }));
+    expect(fresh.ok).toBe(true);
+  });
+
+  it('subtask-of whose parent closed since: superseded, never a link to a closed task', async () => {
+    writeFileSync(join(ctx, OBJECTIONS_REL_PATH), JSON.stringify([{
+      id: 'obj_stuck00002', task: 'sleep-made', snapshot: { name: 'Sleep Made This', description: '', why: '', filing_basis: null, filed_by: 'sleep', created_at: '' },
+      as: 'subtask-of', target: 'real-work', note: NOTE, by: 'owner', via: 'ui', at: '2026-10-23T09:00:00.000Z', steps: [], error: 'boom', applied: null,
+    }]));
+    writeTask('real-work', { name: 'Real Work', status: 'completed' });
+    const r = await objectToTask(ctx, backend(), obj({ as: 'subtask-of' }));
+    expect(r).toMatchObject({ ok: false, code: 'objection_target_gone' });
+    expect(read('sleep-made').fm.parent_task).toBeNull();
+  });
+
+  it('a task that grew open sub-tasks before Finish is not cancelled', async () => {
+    await objectToTask(ctx, backend(), obj({}), { crashAfter: 'criterion' });
+    writeTask('late-child', { name: 'Late Child', parent_task: 'sleep-made' });
+    const r = await objectToTask(ctx, backend(), obj({}));
+    expect(r).toMatchObject({ ok: false, status: 409, code: 'has_open_children' });
+    expect(read('sleep-made').fm.status).toBe('todo');
+  });
+
+  it('a side effect that landed before the ledger recorded its step is not repeated', async () => {
+    // The criterion is already on the target, the ledger never wrote the step: the retry skips it.
+    writeFileSync(join(ctx, OBJECTIONS_REL_PATH), JSON.stringify([{
+      id: 'obj_sidefx0001', task: 'sleep-made', snapshot: { name: 'Sleep Made This', description: '', why: '', filing_basis: null, filed_by: 'sleep', created_at: '' },
+      as: 'criterion-on', target: 'real-work', note: NOTE, by: 'owner', via: 'ui', at: '2026-10-23T09:00:00.000Z', steps: [], error: null, applied: null,
+    }]));
+    await backend().insertSection('real-work', 'Acceptance Criteria', '- [ ] Sleep Made This (itiraz obj_sidefx0001)', { position: 'bottom', replacePlaceholders: true });
+    const r = await objectToTask(ctx, backend(), obj({}));
+    expect(r.ok).toBe(true);
+    expect(count(read('real-work').body, 'obj_sidefx0001')).toBe(1);
+  });
+});
+
 describe('refusals', () => {
+  it('a ledger holding a record this build cannot read is refused, not filtered and rewritten', async () => {
+    const raw = JSON.stringify([{ id: 'obj_future', task: 'x', as: 'not-a-task', at: '2026-10-23T09:00:00Z' }]);
+    writeFileSync(join(ctx, OBJECTIONS_REL_PATH), raw, 'utf-8');
+    expect(await objectToTask(ctx, backend(), obj({}))).toMatchObject({ ok: false, code: 'objection_ledger_unreadable' });
+    expect(readFileSync(join(ctx, OBJECTIONS_REL_PATH), 'utf-8')).toBe(raw);
+  });
+
   it('a ledger that does not parse is refused and left as it was', async () => {
     writeFileSync(join(ctx, OBJECTIONS_REL_PATH), '{ broken', 'utf-8');
     const r = await objectToTask(ctx, backend(), obj({}));

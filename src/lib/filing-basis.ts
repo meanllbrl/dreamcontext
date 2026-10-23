@@ -5,6 +5,7 @@ import { today } from './id.js';
 import { isSafeSessionId } from './transcript-locate.js';
 import { humanTurnText, isInjectedUserRecord } from './transcript-records.js';
 import type { FilingActor } from './task-filing-bar.js';
+import { latestWaveMap, waveMapParts } from './task-parent.js';
 
 /**
  * filing-basis — WHO opened a task and WHY, stamped on every create path.
@@ -53,6 +54,15 @@ export const MIN_QUOTE_WORDS = 3;
 export const MIN_QUOTE_CHARS = 12;
 /** A derived note keeps the start of the Why. */
 const NOTE_QUOTE_CHARS = 200;
+/** A quote or evidence lands in synced frontmatter that every task list parses: bounded. */
+export const MAX_BASIS_CHARS = 2000;
+
+/** Is `quote` (normalized, at least 4 characters) part of a wave of the parent's newest map? */
+function quotesWavePart(technicalDetails: string | null | undefined, quote: string): boolean {
+  const q = normalizeQuote(quote);
+  if (q.length < 4) return false;
+  return waveMapParts(latestWaveMap(technicalDetails)).some((p) => normalizeQuote(p.text).includes(q));
+}
 
 export function isFiledBy(v: unknown): v is FiledBy {
   return typeof v === 'string' && (FILED_BY as readonly string[]).includes(v);
@@ -242,6 +252,8 @@ export interface FilingInput {
   evidence?: string | null;
   /** The parent slug when this task is a sub-task. */
   parent: string | null;
+  /** The parent's Technical Details: a plan claim made during a live cycle is checked against its newest WAVE MAP. */
+  parentTechnicalDetails?: string | null;
   /** The task's Why (a derived note quotes its start). */
   why: string;
   /** Is a sleep cycle live? Callers pass `isSleepCycleLive(root)` (task-filing-bar.ts), so this
@@ -271,14 +283,14 @@ const ESCAPE = 'Put it under the task it belongs to with --parent <slug>, '
 export function decideFiling(input: FilingInput): FilingDecision {
   // An unknown `--by` value is no claim at all: it must not slip past the sleep rules.
   const byRaw = (input.by ?? '').trim();
-  const by = isFiledBy(byRaw) ? byRaw : null;
+  let by: FiledBy | null = isFiledBy(byRaw) ? byRaw : null;
   const basisRaw = (input.basis ?? '').trim() || null;
   if (basisRaw !== null && !isBasisKind(basisRaw)) {
     return { ok: false, code: 'invalid_basis', message: `--basis must be one of: ${BASIS_KINDS.join(', ')} (got "${basisRaw}").` };
   }
   const kind = basisRaw as BasisKind | null;
-  const quote = (input.quote ?? '').trim();
-  const evidence = (input.evidence ?? '').trim();
+  const quote = (input.quote ?? '').trim().slice(0, MAX_BASIS_CHARS);
+  const evidence = (input.evidence ?? '').trim().slice(0, MAX_BASIS_CHARS);
   const at = today();
   const warnings: string[] = [];
 
@@ -286,8 +298,11 @@ export function decideFiling(input: FilingInput): FilingDecision {
     return { ok: true, filedBy: 'human', basis: null, barActor: 'human', warnings };
   }
 
-  // A wave sub-task: a plan's, never sleep's, and it never needs the bar.
-  if ((kind === 'plan' || by === 'plan') && input.parent) {
+  // A wave sub-task: a plan's, never sleep's, and it never needs the bar. During a live sleep
+  // cycle the claim must be checkable: the quote is a wave part of the parent's newest WAVE MAP
+  // (Develop passes exactly that). Anything else falls through to sleep's rules, so `--basis plan`
+  // is never a way past the basis, the bar, the cap or the dedup gates.
+  if ((kind === 'plan' || by === 'plan') && input.parent && (!input.sleepLive || quotesWavePart(input.parentTechnicalDetails, quote))) {
     return {
       ok: true,
       filedBy: 'plan',
@@ -296,6 +311,10 @@ export function decideFiling(input: FilingInput): FilingDecision {
       warnings,
     };
   }
+
+  // A plan claim that did not hold is no claim: on the CLI during a live cycle it is a caller with
+  // no --by (sleep); anywhere else, an agent.
+  if (by === 'plan') by = input.surface === 'cli' && input.sleepLive ? null : 'agent';
 
   if (input.surface === 'api' && by === null) {
     return { ok: true, filedBy: 'human', basis: null, barActor: 'human', warnings };
@@ -320,7 +339,8 @@ export function decideFiling(input: FilingInput): FilingDecision {
     const text = kind === 'defect' ? evidence || quote : quote;
     let session: string | undefined;
     let verified = false;
-    if ((kind === 'ask' || kind === 'defect') && text && !quoteTooThin(text)) {
+    // Only the CLI runs inside the caller's own session; the server's session is not the caller's.
+    if (input.surface === 'cli' && (kind === 'ask' || kind === 'defect') && text && !quoteTooThin(text)) {
       const own = currentSessionTranscript(input.env);
       if (own) {
         const hit = findQuote([own], text, kind === 'ask' ? 'owner' : 'tools');

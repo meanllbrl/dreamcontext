@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  MAX_BASIS_CHARS,
   decideFiling,
   filingFields,
   findQuote,
@@ -129,9 +130,42 @@ describe('decideFiling — every create path', () => {
     expect(decideFiling(input({ by: 'agent', sleepLive: true }))).toMatchObject({ ok: true, filedBy: 'agent', barActor: 'agent' });
   });
 
-  it('CLI --basis plan --parent during a live cycle is the plan, not sleep', () => {
-    const d = decideFiling(input({ basis: 'plan', parent: 'p', quote: 'W1 (a.ts)', sleepLive: true }));
-    expect(d).toMatchObject({ ok: true, filedBy: 'plan', barActor: 'plan', basis: { kind: 'plan', quote: 'W1 (a.ts)' } });
+  const MAP = 'WAVE MAP: EXECUTION: lead | W1 1-dalga-api (src/a.ts) | W2 2-dalga-ui (src/b.tsx)';
+
+  it('CLI --basis plan --parent during a live cycle is the plan when it quotes a wave of the parent\'s map', () => {
+    const d = decideFiling(input({ basis: 'plan', parent: 'p', parentTechnicalDetails: MAP, quote: 'W1 1-dalga-api (src/a.ts)', sleepLive: true }));
+    expect(d).toMatchObject({ ok: true, filedBy: 'plan', barActor: 'plan', basis: { kind: 'plan', quote: 'W1 1-dalga-api (src/a.ts)' } });
+  });
+
+  it('a plan claim that quotes no wave is not a way past sleep\'s rules during a live cycle', () => {
+    for (const over of [
+      { basis: 'plan', parent: 'p', parentTechnicalDetails: MAP, quote: 'trust me' },
+      { basis: 'plan', parent: 'p', parentTechnicalDetails: null, quote: 'W1 (a.ts)' },
+      { basis: 'plan', parent: 'p', parentTechnicalDetails: MAP, quote: 'W1' },
+      { by: 'plan', basis: 'plan', parent: 'p', parentTechnicalDetails: MAP, quote: 'nothing here' },
+    ]) {
+      const d = decideFiling(input({ ...over, sleepLive: true }));
+      expect(d.ok, JSON.stringify(over)).toBe(false);
+      if (!d.ok) expect(d.code).toBe('basis_required');
+    }
+    // outside a cycle the plan's own creates (Plan mode opens waves before the map names them) still work
+    expect(decideFiling(input({ basis: 'plan', parent: 'p', parentTechnicalDetails: null, sleepLive: false }))).toMatchObject({ ok: true, filedBy: 'plan' });
+    // over HTTP an unproven plan claim mid-cycle is an agent, never sleep's bypass and never the owner
+    expect(decideFiling(input({ surface: 'api', by: 'plan', parent: 'p', parentTechnicalDetails: MAP, quote: 'nope', sleepLive: true }))).toMatchObject({ ok: true, filedBy: 'agent', barActor: 'agent' });
+  });
+
+  it('quote and evidence are capped before they reach synced frontmatter', () => {
+    const long = 'x '.repeat(5000);
+    const d = decideFiling(input({ by: 'agent', basis: 'change', quote: long }));
+    if (d.ok) expect(d.basis?.quote.length).toBeLessThanOrEqual(MAX_BASIS_CHARS);
+  });
+
+  it('over HTTP an awake ask is never "verified" against the server\'s own session', () => {
+    const env = { CLAUDE_CODE_SESSION_ID: 's1', CLAUDE_CONFIG_DIR: dir } as NodeJS.ProcessEnv;
+    mkdirSync(join(dir, 'projects', 'p'), { recursive: true });
+    writeFileSync(join(dir, 'projects', 'p', 's1.jsonl'), readFileSync(transcript));
+    expect(decideFiling(input({ surface: 'cli', by: 'agent', basis: 'ask', quote: 'görev sayfasında itiraz düğmesi', env }))).toMatchObject({ ok: true, basis: { verified: true, session: 's1' } });
+    expect(decideFiling(input({ surface: 'api', by: 'agent', basis: 'ask', quote: 'görev sayfasında itiraz düğmesi', env }))).toMatchObject({ ok: true, basis: { verified: false } });
   });
 
   it('CLI --basis plan with no parent outside sleep is an agent', () => {

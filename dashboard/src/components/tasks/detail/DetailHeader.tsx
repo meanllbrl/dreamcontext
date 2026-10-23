@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Task } from '../../../hooks/useTasks';
 import { useObjectToTask, useStatusModel } from '../../../hooks/useTasks';
 import { useI18n } from '../../../context/I18nContext';
@@ -12,7 +12,7 @@ import './ObjectionDialog.css';
  * "Object to this task" beside it. Nothing for the owner's own tasks; "Reason not recorded"
  * (with the button) for tasks older than the field, so old noise can train sleep too.
  */
-function FilingRow({ task, onObject }: { task: Task; onObject: () => void }) {
+function FilingRow({ task, onObject, buttonRef }: { task: Task; onObject: () => void; buttonRef: React.RefObject<HTMLButtonElement | null> }) {
   const { t, locale } = useI18n();
   const sm = useStatusModel();
   const view = filingView(task, t, locale);
@@ -31,7 +31,7 @@ function FilingRow({ task, onObject }: { task: Task; onObject: () => void }) {
           )}
       </div>
       {canObject(task, sm.isCancelled) && (
-        <button type="button" className="filing-object-btn" data-testid="object-btn" onClick={onObject}>
+        <button ref={buttonRef} type="button" className="filing-object-btn" data-testid="object-btn" onClick={onObject}>
           {t('tasks.objection.button')}
         </button>
       )}
@@ -53,7 +53,7 @@ function ObjectionBox({ task }: { task: Task }) {
   return (
     <div className="objection-box" data-testid="objection-box">
       <p>
-        <span className="objection-box-label">{t('tasks.objection.you')} · {shortDate(o.at, locale)}:</span> «{o.note}»
+        <span className="objection-box-label">{[t('tasks.objection.you'), shortDate(o.at, locale)].filter(Boolean).join(' · ')}:</span> «{o.note}»
         <br />
         {objectionResultLine(t, o.as, o.targetName || o.target)}
       </p>
@@ -106,6 +106,9 @@ export function DetailHeader({
   onError: (msg: string) => void;
 }) {
   const [objecting, setObjecting] = useState(false);
+  const objectRef = useRef<HTMLButtonElement | null>(null);
+  // Focus goes back to the button that opened the dialog (it is gone once the objection applied).
+  const closeDialog = () => { setObjecting(false); requestAnimationFrame(() => objectRef.current?.focus()); };
   return (
     <div className="detail-header">
       <div className="detail-head-main">
@@ -162,10 +165,10 @@ export function DetailHeader({
       {/* Its own full-width line under the title row, so a narrow drawer never squeezes it
           beside the header's buttons. */}
       <div className="detail-filing">
-        <FilingRow task={task} onObject={() => setObjecting(true)} />
+        <FilingRow task={task} onObject={() => setObjecting(true)} buttonRef={objectRef} />
         <ObjectionBox task={task} />
       </div>
-      {objecting && <ObjectionDialog task={task} allTasks={allTasks} onClose={() => setObjecting(false)} />}
+      {objecting && <ObjectionDialog task={task} allTasks={allTasks} onClose={closeDialog} />}
     </div>
   );
 }

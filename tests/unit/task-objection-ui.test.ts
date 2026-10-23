@@ -127,6 +127,8 @@ describe('preview, confirm label, result line, refused close', () => {
     const parent = task('p', { name: 'Ana görev' });
     const all = [parent, task('k1', { name: 'Açık dalga', parent_task: 'p' }), task('k2', { name: 'Biten', parent_task: 'p', status: 'completed' }), task('k3', { name: 'İptal', parent_task: 'p', status: 'cancelled' })];
     expect(openChildrenMessage(t, 'board', parent, all, isTerminal)).toBe('“Ana görev” görevinin açık alt görevleri var: Açık dalga.');
+    // a list that has not caught up (a sub-task opened elsewhere): the server's message, which names it
+    expect(openChildrenMessage(t, 'board', parent, [parent], isTerminal, 'This task has 1 open sub-task(s): x.')).toBe('This task has 1 open sub-task(s): x.');
     expect(isOpenChildrenRefusal({ status: 409, code: 'parent_has_open_children' })).toBe(true);
     expect(isOpenChildrenRefusal({ status: 409, code: 'sleep_eval_gate' })).toBe(false);
     expect(isOpenChildrenRefusal(new Error('x'))).toBe(false);

@@ -235,6 +235,19 @@
   border-top: 1px solid var(--color-border);
 }
 
+/* A finger, not a pointer: the row's button and Finish reach the 44px touch target. */
+@media (pointer: coarse) {
+  .filing-object-btn { min-height: 44px; }
+}
+
+/* A phone-width drawer: the title and the crumb take the full width under the header's
+   buttons instead of a narrow column beside them. */
+@media (max-width: 640px) {
+  .detail-header .detail-header-actions { order: 1; margin-left: auto; }
+  .detail-header .detail-head-main { order: 2; flex: 0 0 100%; }
+  .detail-header .detail-filing { order: 3; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .objection-option,
   .filing-object-btn {

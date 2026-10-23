@@ -595,6 +595,13 @@ describe('git-sync/semantic-merge — mergeTaskObjectionsJson (state/.task-objec
     expect(merged[0]).toMatchObject({ steps: ['decline', 'log', 'cancel'], error: null, applied: { at: '2026-10-23T11:00:00Z' } });
   });
 
+  it('superseded on one side stays superseded (a step error never revives it)', () => {
+    const a = JSON.stringify([rec('obj_1', { error: 'superseded' })]);
+    const b = JSON.stringify([rec('obj_1', { error: 'boom', steps: ['log'] })]);
+    expect(JSON.parse(mergeTaskObjectionsJson('[]', b, a).merged)[0].error).toBe('superseded');
+    expect(JSON.parse(mergeTaskObjectionsJson('[]', a, b).merged)[0].error).toBe('superseded');
+  });
+
   it('two applied sides: the later applied.at wins', () => {
     const a = JSON.stringify([rec('obj_1', { applied: { action: 'x', at: '2026-10-23T11:00:00Z' }, note: 'early' })]);
     const b = JSON.stringify([rec('obj_1', { applied: { action: 'x', at: '2026-10-23T12:00:00Z' }, note: 'late' })]);

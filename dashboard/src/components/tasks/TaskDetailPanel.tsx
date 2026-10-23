@@ -49,7 +49,7 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
   // A status change refused because sub-tasks are still open names them in the owner's
   // language (the status select snaps back on its own: it shows the server's status).
   const onMutationError = (err: Error) => {
-    setMutationError(isOpenChildrenRefusal(err) ? openChildrenMessage(t, 'detail', task, allTasks, sm.isTerminal) : err.message);
+    setMutationError(isOpenChildrenRefusal(err) ? openChildrenMessage(t, 'detail', task, allTasks, sm.isTerminal, err.message) : err.message);
     setTimeout(() => setMutationError(null), 5000);
   };
   const update = (updates: Updates, onError?: (err: Error) => void) => {

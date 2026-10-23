@@ -138,7 +138,10 @@ export function mergeTaskObjectionsJson(_base: string, ours: string, theirs: str
       ...winner,
       steps: unionStringArray(prev.steps, rec.steps),
     };
-    merged.error = merged.applied ? null : (prev.error ?? rec.error ?? null);
+    // Superseded on either side stays superseded: a step error must not revive a replaced record.
+    merged.error = merged.applied ? null
+      : prev.error === 'superseded' || rec.error === 'superseded' ? 'superseded'
+        : (prev.error ?? rec.error ?? null);
     byId.set(rec.id, merged);
   }
   const out = order.map((id) => byId.get(id)!);

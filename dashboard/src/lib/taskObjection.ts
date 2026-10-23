@@ -103,14 +103,20 @@ export function objectionResultLine(t: Translate, as: ObjectionKind, targetName:
   return fill(t, `tasks.objection.result.${as}`, { target: targetName ?? '' });
 }
 
-/** What a refused close says: which sub-tasks are still open, from the list the page holds. */
+/**
+ * What a refused close says: which sub-tasks are still open, from the list the page holds. When
+ * that list has none yet (a sub-task opened elsewhere since the last fetch), the server's own
+ * message, which names them, is the honest answer.
+ */
 export function openChildrenMessage(
   t: Translate,
   where: 'board' | 'detail',
   task: Pick<Task, 'slug' | 'name'>,
   allTasks: readonly Task[],
   isTerminal: (status: string) => boolean,
+  serverMessage = '',
 ): string {
   const open = allTasks.filter((x) => x.parent_task === task.slug && !isTerminal(x.status)).map((x) => x.name || x.slug);
+  if (open.length === 0 && serverMessage) return serverMessage;
   return fill(t, `tasks.openChildren.${where}`, { task: task.name || task.slug, list: open.join(', ') });
 }

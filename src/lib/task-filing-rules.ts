@@ -197,7 +197,11 @@ function writeAtomic(contextRoot: string, doc: RulesDoc): string | null {
   }
   const path = rulesPath(contextRoot);
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
+  // The temp file lives in the gitignored state/.locks: knowledge/patterns syncs, and a crash
+  // must not leave a stray file there for the next sync to commit.
+  const tmpDir = join(contextRoot, 'state', '.locks');
+  mkdirSync(tmpDir, { recursive: true });
+  const tmp = join(tmpDir, `.task-filing-rules.${process.pid}.tmp`);
   writeFileSync(tmp, text, 'utf-8');
   renameSync(tmp, path);
   return null;

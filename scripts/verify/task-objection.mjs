@@ -67,6 +67,7 @@ const DEFECT = 'ders-listesi-bosken-sayfa-cokuyor';
 const OLD = 'eski-bir-gorev';
 const MINE = 'sahibin-kendi-gorevi';
 const HALF = 'yarim-kalmis-itiraz';
+const HALF2 = 'ikinci-yarim-itiraz';
 
 seed(PARENT, { name: 'Ders planı ekranı yeniden yapılır', status: 'in_progress', priority: 'high' }, `## Why
 
@@ -100,8 +101,14 @@ An agent thought this was needed.
 ### 2026-10-23 - Objection
 - itiraz obj_halfdone01 (not-a-task): Bu konuşuldu ama hiç istenmedi, görev değil.
 `);
-// An objection that stopped after its last step (the task is cancelled, `applied` was never stamped).
+seed(HALF2, { name: 'İkinci yarım itiraz', status: 'cancelled', filed_by: 'sleep', filing_basis: { kind: 'note', quote: 'Sleep thought so.', at: '2026-10-21', verified: false } });
+// Objections that stopped after their last step (the task is cancelled, `applied` was never stamped).
 writeFileSync(join(state, '.task-objections.json'), JSON.stringify([{
+  id: 'obj_halfdone02', task: HALF2,
+  snapshot: { name: 'İkinci yarım itiraz', description: '', why: '', filing_basis: null, filed_by: 'sleep', created_at: '2026-10-20' },
+  as: 'wrong-project', target: null, note: 'Bu başka bir projenin işi, burada açılmamalıydı.', by: 'owner', via: 'ui',
+  at: '2026-10-23T09:05:00.000Z', steps: ['decline', 'log', 'cancel'], error: null, applied: null,
+}, {
   id: 'obj_halfdone01', task: HALF,
   snapshot: { name: 'Yarım kalmış itiraz', description: '', why: 'An agent thought this was needed.', filing_basis: null, filed_by: 'agent', created_at: '2026-10-20' },
   as: 'not-a-task', target: null, note: 'Bu konuşuldu ama hiç istenmedi, görev değil.', by: 'owner', via: 'ui',
@@ -259,10 +266,19 @@ try {
       check(`${W} draft 2: the preview says what happens`, /moves under «Ders planı ekranı yeniden yapılır»/.test(preview), preview);
       check(`${W} draft 2: confirm is ready`, await confirm.isEnabled());
       await shot('dialog');
-      // Esc closes the dialog, not the drawer.
+      // Tab stays inside the dialog.
+      let escaped = false;
+      for (let i = 0; i < 14; i++) {
+        await page.keyboard.press('Tab');
+        if (!(await page.evaluate(() => !!document.activeElement?.closest('[data-testid="objection-dialog"]')))) escaped = true;
+      }
+      check(`${W} Tab cycles inside the dialog`, !escaped);
+      // Esc with focus OUTSIDE any field (a click on the preview) closes the dialog, not the drawer.
+      await page.locator('.objection-preview').click();
       await page.keyboard.press('Escape');
       await wait(300);
-      check(`${W} Esc closes the dialog and keeps the drawer`, (await dialog.count()) === 0 && (await page.locator('.detail-panel').count()) === 1);
+      check(`${W} Esc (focus on the preview text) closes the dialog and keeps the drawer`, (await dialog.count()) === 0 && (await page.locator('.detail-panel').count()) === 1);
+      check(`${W} focus goes back to "Object to this task"`, await page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'object-btn'));
       await page.locator('[data-testid="object-btn"]').click();
       await page.locator('[data-testid="objection-target"]').selectOption(PARENT);
       await page.locator('[data-testid="objection-note"]').fill('Tatil günleri ders planı ekranının bir parçası, ayrı görev değil.');
@@ -293,13 +309,14 @@ try {
 
     // ── Unfinished: "Finish" on a cancelled task ──────────────────────────────
     await page.locator('[data-testid="toolbar-search"], input[type=search]').first().fill('').catch(() => {});
-    if (width === 1440) {
+    {
+      const HALFW = width === 1440 ? HALF : HALF2;
       // The cancelled task sits in the Cancelled column (off to the right): open it there.
-      const inDom = (await card(HALF).count()) === 1;
+      const inDom = (await card(HALFW).count()) === 1;
       check(`${W} unfinished: the cancelled task is on the board`, inDom);
       if (inDom) {
-        await card(HALF).scrollIntoViewIfNeeded();
-        await openTask(HALF);
+        await card(HALFW).scrollIntoViewIfNeeded();
+        await openTask(HALFW);
         const box = await page.locator('[data-testid="objection-box"]').innerText().catch(() => '');
         check(`${W} unfinished: "Unfinished · Finish" shows on the cancelled task`, /Unfinished/.test(box) && await page.locator('[data-testid="objection-finish"]').isVisible(), box.replace(/\s+/g, ' '));
         check(`${W} unfinished: no second objection button beside it`, (await page.locator('[data-testid="object-btn"]').count()) === 0);
@@ -308,8 +325,8 @@ try {
         await until(async () => (await page.locator('[data-testid="objection-finish"]').count()) === 0, 8000);
         const after = await page.locator('[data-testid="objection-box"]').innerText().catch(() => '');
         check(`${W} unfinished: Finish completes it (one record, applied)`, (await page.locator('[data-testid="objection-finish"]').count()) === 0
-          && /not a task; sleep will not open it again/.test(after)
-          && JSON.parse(readFileSync(join(state, '.task-objections.json'), 'utf-8')).filter((r) => r.task === HALF && r.applied).length === 1, after.replace(/\s+/g, ' '));
+          && /(not a task; sleep will not open it again|another project's work)/.test(after)
+          && JSON.parse(readFileSync(join(state, '.task-objections.json'), 'utf-8')).filter((r) => r.task === HALFW && r.applied).length === 1, after.replace(/\s+/g, ' '));
         await shot('finished');
         await closeDrawer();
       }

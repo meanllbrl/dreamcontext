@@ -793,6 +793,7 @@ export function registerTasksCommand(program: Command): void {
         quote: opts.quote,
         evidence: opts.evidence,
         parent: parent?.slug ?? null,
+        parentTechnicalDetails: parent?.technical_details ?? null,
         why: givenWhy,
         sleepLive: isSleepCycleLive(contextRoot),
       });
@@ -1574,6 +1575,13 @@ export function registerTasksCommand(program: Command): void {
       if (!slug) { process.exitCode = 1; return; }
       const task = await backend.get(slug);
       if (!task) { error(`Task not found: ${name}`); process.exitCode = 1; return; }
+      // An awake fix-up: during a live cycle it would be a way to stamp an unchecked basis after
+      // the filing bar already ran.
+      if (isSleepCycleLive(ensureContextRoot())) {
+        error('tasks basis records a basis awake; it is refused while a sleep cycle is live. Run it after the cycle.');
+        process.exitCode = 1;
+        return;
+      }
       if (opts.basis === 'plan' && !task.parent_task) {
         error('--basis plan marks a wave of a plan, and a wave is a sub-task: set its parent first (dreamcontext tasks parent <slug> <parent>).');
         process.exitCode = 1;

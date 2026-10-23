@@ -24,8 +24,36 @@ export function ObjectionDialog({ task, allTasks, onClose }: { task: Task; allTa
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const firstRef = useRef<HTMLInputElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => { firstRef.current?.focus(); }, []);
+
+  // Esc and Tab belong to the dialog wherever focus is. On `window` in the CAPTURE phase, so
+  // this runs before the drawer's own Esc listener (which would close the drawer and lose the
+  // typed reason), and Tab cycles inside the dialog instead of walking into the drawer behind.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      const inside = !!active && dialogRef.current.contains(active);
+      if (e.shiftKey && (!inside || active === first)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (!inside || active === last)) { e.preventDefault(); first.focus(); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
 
   const targets = useMemo(() => objectionTargets(task, allTasks, as, sm.isTerminal), [allTasks, task, sm, as]);
 
@@ -50,16 +78,13 @@ export function ObjectionDialog({ task, allTasks, onClose }: { task: Task; allTa
   return (
     <div className="modal-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div
+        ref={dialogRef}
         className="modal objection-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="objection-title"
         data-testid="objection-dialog"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          // Marked handled so the drawer underneath does not close on the same Esc.
-          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
-        }}
       >
         <div className="modal-header">
           <div className="objection-head">

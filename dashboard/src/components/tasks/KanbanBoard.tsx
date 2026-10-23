@@ -157,13 +157,15 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   // The card's column comes from the server's status, so a refused move leaves it where it
   // was; the toast says so, and "Moved to" only shows once the move landed. A parent with open
   // sub-tasks is refused (409 parent_has_open_children): name them from the list we hold.
+  // The promise, not per-call callbacks: TanStack keeps those for the latest call only, so a
+  // second move made before this one answers would swallow its refusal.
   const moveStatus = useCallback((task: Task, status: string) => {
-    updateTask.mutate({ slug: task.slug, updates: { status } as Partial<Task> }, {
-      onSuccess: () => flash(`Moved to ${sm.labelOf(status)}`),
-      onError: (err) => flash(isOpenChildrenRefusal(err)
-        ? openChildrenMessage(t, 'board', task, tasks, sm.isTerminal)
+    updateTask.mutateAsync({ slug: task.slug, updates: { status } as Partial<Task> }).then(
+      () => flash(`Moved to ${sm.labelOf(status)}`),
+      (err: Error) => flash(isOpenChildrenRefusal(err)
+        ? openChildrenMessage(t, 'board', task, tasks, sm.isTerminal, err.message)
         : err.message, true),
-    });
+    );
   }, [updateTask, flash, sm, t, tasks]);
 
   // ── drag + drop (patch the status) ─────────────────────────────────────────────

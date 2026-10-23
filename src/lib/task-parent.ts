@@ -188,7 +188,7 @@ export function waveChildren<T extends WaveChildInput>(
   const out = children
     .filter(isPlanChild)
     .map((child) => ({ child, wave: waveOnMap(parent.technical_details, child.slug) ?? waveFromName(child.name) }));
-  return out.sort((a, b) => (a.wave ?? Infinity) - (b.wave ?? Infinity));
+  return out.sort((a, b) => (a.wave ?? Number.MAX_SAFE_INTEGER) - (b.wave ?? Number.MAX_SAFE_INTEGER));
 }
 
 /**

@@ -528,6 +528,7 @@ export async function handleTasksCreate(
     quote: typeof body.quote === 'string' ? body.quote : null,
     evidence: typeof body.evidence === 'string' ? body.evidence : null,
     parent: parent?.slug ?? null,
+    parentTechnicalDetails: parent?.technical_details ?? null,
     why,
     sleepLive: isSleepCycleLive(contextRoot),
   });
