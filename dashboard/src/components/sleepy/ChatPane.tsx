@@ -70,6 +70,7 @@ import { groupSuperEventTurns, superEventOf, type SuperEventGroup } from './supe
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
+import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext } from './super/superJobsStore';
 import './super/SuperSurface.css';
 import './chat/cards.css';
@@ -1698,6 +1699,10 @@ export function ChatPane({
         return <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
       }
       return <SuperEventChip key={item.id} text={item.text} />;
+    }
+    // Pictures the Super Agent opened on the Mac's stage, as the phone sees them: a strip.
+    if (item.kind === 'user' && item.stageMedia) {
+      return <StageMediaStrip key={item.id} items={item.stageMedia} onOpenFile={handleOpenFile} />;
     }
     // The owner's answer to a question card in the super chat: the card's receipt, never a bubble.
     if (item.kind === 'user' && session.mode === 'super' && parseSuperAnswer(item.text)) {

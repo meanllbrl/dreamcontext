@@ -80,6 +80,9 @@ export interface ChatUserItem {
    *  server wrote the real text into the process; this item stands for it live, so it never
    *  matches a transcript row and the uuid backfill skips it. */
   superEvent?: string;
+  /** Pictures the Super Agent opened on the Mac's stage, as a phone mirror sees them (it has no
+   *  stage): drawn as a strip, never a bubble. Live only, like `superEvent`; `text` is empty. */
+  stageMedia?: Array<{ ref: string; title?: string }>;
 }
 export interface ChatTextItem { kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number }
 /** One Assistant text block as the notch should show it (`ChatSession.onPresent`). A block with
@@ -2152,6 +2155,21 @@ export function createChatSession(
       emitSuper({ kind: 'event', eventKind: ev.eventKind, child: ev.child });
       return;
     }
+    // The Super Agent opened pictures on the Mac's stage (phone mirror only): a strip in the
+    // chat. A join snapshot repeats on every reconnect, so refs already drawn are skipped.
+    if (ev.kind === 'stage-media') {
+      const shown = new Set<string>();
+      for (const it of [...conv.history, ...conv.items]) {
+        if (it.kind === 'user' && it.stageMedia) for (const m of it.stageMedia) shown.add(m.ref);
+      }
+      const fresh = ev.snapshot ? ev.items.filter((m) => !shown.has(m.ref)) : ev.items;
+      if (!fresh.length) return;
+      applyAndNotify(() => {
+        const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: '', ts: Date.now(), stageMedia: fresh };
+        conv = { ...conv, items: [...conv.items, item] };
+      });
+      return;
+    }
     // The owner typed on the Super Agent's other surface: their bubble here too, in order.
     if (ev.kind === 'owner-echo') {
       applyAndNotify(() => {
@@ -2854,7 +2872,7 @@ export function createChatSession(
           const it = items[i];
           // A super event chip stands for text the server wrote; it matches no row, and a
           // search for it would run past every older row and stop the backfill there.
-          if (it.kind !== 'user' || it.superEvent) continue;
+          if (it.kind !== 'user' || it.superEvent || it.stageMedia) continue;
           while (e >= 0 && entries[e].text !== it.text) e--;
           if (e < 0) break;
           if (!it.uuid) { items[i] = { ...it, uuid: entries[e].uuid }; changed = true; }

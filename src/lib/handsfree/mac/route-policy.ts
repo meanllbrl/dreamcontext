@@ -304,10 +304,14 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/agent/slash-commands': allow(`${CHAT}: the slash command list; side-effect free`),
   'GET /api/agent/chat-sessions': allow(`${CHAT}: this project's past chats; side-effect free`),
   'GET /api/agent/bg-output': allow(`${CHAT}: a background shell's output; side-effect free`),
-  'GET /api/agent/file': allow(`${CHAT}: a file inside this project (grants refused on the phone): JSON, or (raw=1) media from a fixed type table; an SVG goes out sandboxed`, 'media'),
+  'GET /api/agent/file': allow(`${CHAT}: a file inside this project: JSON, or (raw=1) media from a fixed type table, an SVG sandboxed. Outside the project the phone reads MEDIA only (raster image, audio, video), decided on the real path: under this project's own linked repos and their worktrees without asking, anywhere else after a one-tap phone grant; a file inside a project not chosen at start is refused. Desktop grants never count here`, 'media'),
   'GET /api/agent/board-assets': allow(`${CHAT}: a board's images inside this project; side-effect free`),
   'POST /api/agent/reveal': deny(DESKTOP),
   'POST /api/agent/grant': deny(DESKTOP),
+  // The phone's own one-tap consent for ONE outside media file (task hands-free-phone-shows-every-
+  // picture…): held in memory for that device only, never written to the desktop's grant file,
+  // and refused for a file inside a project not chosen at start.
+  'POST /api/agent/phone-grant': allow(`${CHAT}: the phone allows one media file outside the project for this device only (in memory, ends with its session); other projects refused`),
   'GET /api/agent/loopback-grants': deny(DESKTOP),
   'POST /api/agent/loopback-grant': deny(DESKTOP),
   'POST /api/agent/web-session': deny(DESKTOP),
@@ -324,7 +328,10 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/onboarding/fix': deny(ONBOARDING),
   'POST /api/onboarding/fix/cancel': deny(ONBOARDING),
   'POST /api/agent/prompt': filtered(`${CHAT}: hands an opening prompt to a new chat (the body's vault is checked with isMacExposed)`),
-  'POST /api/agent/drop': deny(DESKTOP),
+  // A photo from the phone (task hands-free-phone-shows-every-picture…): images only, decided by
+  // their bytes; the server names and places the file (the project's gitignored tmp), capped per
+  // device in the handler (10 MB, 2 in flight, 30 a minute, 500 MB of phone files per project).
+  'POST /api/agent/drop': allow(`${CHAT}: a photo from the phone (PNG/JPEG/WebP/GIF by magic bytes, server-named into this project's gitignored tmp; phone caps: 10 MB, 2 in flight, 30/min per device)`),
   'GET /api/notifications': deny(DESKTOP),
   'POST /api/notify': deny(DESKTOP),
   'POST /api/agent/secret': deny(SECRET),

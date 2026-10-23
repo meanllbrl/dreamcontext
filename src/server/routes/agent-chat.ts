@@ -80,11 +80,11 @@ import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '..
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
-import { clearSuperNote, delegatedChildMcp, peekSuperNote, superIndex, superRootOfChild } from '../../lib/super/store.js';
+import { clearSuperNote, delegatedChildMcp, peekSuperNote, readSuperState, superIndex, superRootOfChild } from '../../lib/super/store.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
-import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen } from '../../lib/super/phone-mirror.js';
+import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen, stageImageItems, stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, superAnswerDigest, superOwnerSpoke, superSocketAttached, superTurnEnded,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -2189,6 +2189,7 @@ export function startChatSession(
       mirror: (sock: import('ws').WebSocket, device: DeviceTag) => addMirror(sock, device),
       mirrorRoom: (device: DeviceTag) => mirrors.room(device),
       closeMirrors: () => { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super taken back'); },
+      mirrorFrame: (serialised: string) => { mirrors.frame(serialised); },
     } : {}),
   } : null;
   if (live) registerLiveChat(live);
@@ -2198,6 +2199,15 @@ export function startChatSession(
     if (!mirrors || !alive || handedOff || lingerTimer || lingerKillTimer) return false;
     if (!mirrors.add(sock, device)) return false;
     try { sock.send(JSON.stringify({ type: '_meta', subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 })); } catch { /* gone */ }
+    // The pictures on the Mac's stage right now, once: the phone has no stage, and an image card
+    // opened before it joined would otherwise never reach it (D2). Best-effort and async — a
+    // missing or unreadable super record just means no strip.
+    void readSuperState(contextRoot, superSanitizeOpts())
+      .then((st) => {
+        const frame = stageMediaFrame(stageImageItems(st), true);
+        if (frame && sock.readyState === sock.OPEN) sock.send(frame);
+      })
+      .catch(() => { /* no record, no strip */ });
     return true;
   }
   /** No socket right now; the reap timers below decide how long that may last. */
@@ -4578,6 +4588,19 @@ export async function handleAgentGrant(
 
   addGrant(contextRoot, target);
   sendJson(res, 200, { granted: true, path: target });
+}
+
+/**
+ * POST /api/agent/phone-grant — the hands-free phone allowing ONE media file outside the project
+ * for that device only (task hands-free-phone-shows-every-picture…). Built in wave 2.
+ */
+export async function handleAgentPhoneGrant(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string,
+): Promise<void> {
+  sendError(res, 501, 'not_built', 'Not available yet.');
 }
 
 /** The owner's own window: desktop app, this machine, a loopback Host, and this very origin

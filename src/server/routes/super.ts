@@ -31,6 +31,7 @@ import { childDefaultEffort } from '../../lib/model-facts.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
+import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import {
   CLAUDE_SESSIONS_MEANS, delegationAllowed, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
 } from '../../lib/super/capacity.js';
@@ -759,6 +760,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // Opened by the super: touched now (tidy.ts), the group it went into too.
     touchCards(root, groupId ? [...ids, groupId] : ids);
     const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
+    // The phone has no stage: a picture opened here reaches a phone watching this Super Agent as
+    // a strip in its chat (lib/super/phone-mirror.ts stageMediaFrame). Never the holder.
+    if (kind === 'image' && state.session) {
+      const frame = stageMediaFrame(made.map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) })));
+      if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
+    }
     ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view });
   },
 

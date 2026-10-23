@@ -205,7 +205,7 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
     for (const [m, p] of [
       ['POST', '/api/window/focus'], ['GET', '/api/assistant/status'], ['POST', '/api/agent/open-terminal'],
       ['POST', '/api/launcher/register'], ['POST', '/api/agent/secret'], ['POST', '/api/handsfree/mac/stop'],
-      ['POST', '/api/admin/shutdown'], ['POST', '/api/agent/voice/tts'], ['POST', '/api/notify'], ['POST', '/api/agent/drop'],
+      ['POST', '/api/admin/shutdown'], ['POST', '/api/agent/voice/tts'], ['POST', '/api/notify'], ['POST', '/api/agent/grant'],
       ['POST', '/api/brain/auth/device/start'], ['GET', '/api/launcher/status'], ['POST', '/api/agent/install'],
     ] as const) {
       const r = await request(phonePort, m, p, H(), m !== 'GET' ? '{}' : undefined);
