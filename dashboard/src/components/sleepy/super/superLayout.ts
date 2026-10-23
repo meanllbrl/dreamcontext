@@ -60,9 +60,27 @@ export const STAGE = {
   OTHERS_ZONE_W: 168,
   OTHERS_ZONE_H: 128,
   OTHERS_W: 172,
+  /** The minimised agenda's pill in the bottom-left corner (owner 2026-10-22 23:44), mirroring
+   *  the Others stack; the terminals dock starts after it. */
+  AGENDA_PILL_W: 172,
   /** A narrow stage's sheet sits this far inside the centre. */
   SHEET_INSET: 16,
 } as const;
+
+/**
+ * The floating cards' band in the stage's ONE stacking order (SuperSurface.css `--sz-cards` and
+ * `--sz-dock`; drift-tested). A card's plan z is its record order, +MAX_CONTAINERS when the owner
+ * placed it, +2 x MAX_CONTAINERS and its turn for the one he moved last: always under the agenda's
+ * slot, the band's highest but one (owner 2026-10-23: above ordinary stage cards, under anything
+ * opened over the stage: a group's panel, Others, a sheet, a dragged card).
+ */
+export const CARD_Z_BASE = 10;
+export const CARD_Z_SPAN = 290;
+export function cardZIndex(z: number, agenda = false): number {
+  // The band's last slot is left to the Others drop corner (--sz-dock-zone): the agenda is under it.
+  const slot = agenda ? CARD_Z_SPAN - 2 : Math.min(Math.max(0, Math.round(z)), CARD_Z_SPAN - 3);
+  return CARD_Z_BASE + slot;
+}
 
 /** Below this stage width every card is drawn in Others and side by side opens as a sheet (§0 C2). */
 export const NARROW_STAGE_PX = 1040;
@@ -96,6 +114,10 @@ export interface StagePlan {
   others: string[];
   othersRect: Rect;
   othersZone: Rect;
+  /** The minimised agenda's pill, bottom-left (drawn only while it is minimised). */
+  agendaPill: Rect;
+  /** The agenda drawn as that pill (its id), or null: it flies there and back like a card to Others. */
+  pill: string | null;
   queue: Rect;
   dock: Rect;
   /** The free area an owner's `pos` is a fraction of (the stage minus margins and bands). */
@@ -152,6 +174,8 @@ export function stageItems(containers: readonly SuperContainer[], groups: readon
   containers.forEach((c, i) => {
     const g = groupOf.get(c.id);
     const size = sizeOf(c);
+    // A minimised agenda is its pill in the corner, not a card on the stage (unless the view shows it).
+    if (c.min && !shown.has(c.id)) return;
     if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}) });
     if (g && !placed.has(g.id) && g.cards[0] !== undefined && index.has(g.cards[0])) {
       placed.add(g.id);
@@ -166,6 +190,8 @@ export interface PlanOptions {
   dragging?: { id: string; rect: Rect } | null;
   /** Terminal pills in the dock: the bottom band is reserved for them. */
   terminals?: number;
+  /** The minimised agenda's id: its pill holds the bottom band's left end (the band is reserved). */
+  agendaPill?: string | null;
 }
 
 const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -491,7 +517,7 @@ function pushOut(rect: Rect, centre: Rect, free: Rect): Rect {
 
 // ─── The plan ───────────────────────────────────────────────────────────────────
 
-interface Frame { width: number; height: number; content: Rect; free: Rect; othersRect: Rect; othersZone: Rect; bandTop: number; bandBottom: number }
+interface Frame { width: number; height: number; content: Rect; free: Rect; othersRect: Rect; othersZone: Rect; agendaPill: Rect; bandTop: number; bandBottom: number }
 
 /** The stage's frame. `bottomBand`: the bottom band is reserved (the content stops above it);
  *  without it the content runs down to the bottom margin. */
@@ -505,6 +531,7 @@ function frameOf(width: number, height: number, bottomBand = true): Frame {
     width, height, content, free: content, bandTop, bandBottom,
     othersRect: { x: width - MARGIN - STAGE.OTHERS_W, y: bandBottom, width: STAGE.OTHERS_W, height: BAND },
     othersZone: { x: width - STAGE.OTHERS_ZONE_W, y: height - STAGE.OTHERS_ZONE_H, width: STAGE.OTHERS_ZONE_W, height: STAGE.OTHERS_ZONE_H },
+    agendaPill: { x: MARGIN, y: bandBottom, width: STAGE.AGENDA_PILL_W, height: BAND },
   };
 }
 
@@ -512,7 +539,7 @@ function centreAt(f: Frame, w: number): Rect {
   return { x: (f.width - w) / 2, y: f.content.y, width: w, height: f.content.height };
 }
 
-function bands(f: Frame, centre: Rect): { queue: Rect; dock: Rect } {
+function bands(f: Frame, centre: Rect, pill = false): { queue: Rect; dock: Rect } {
   // Centred on the centre, one width whatever the stage's size (stage v2: the centre follows the
   // stage now, and a band that followed it re-fitted the pill's buttons inside the resize's own
   // ResizeObserver pass). A pill that fits one row never spills over the centre's header (it
@@ -521,7 +548,9 @@ function bands(f: Frame, centre: Rect): { queue: Rect; dock: Rect } {
   const qx = Math.min(Math.max(centre.x + (centre.width - qw) / 2, f.content.x), f.content.x + f.content.width - qw);
   return {
     queue: { x: qx, y: f.bandTop, width: qw, height: STAGE.BAND },
-    dock: { x: STAGE.MARGIN, y: f.bandBottom, width: Math.max(0, f.othersRect.x - STAGE.MARGIN - STAGE.GAP), height: STAGE.BAND },
+    dock: pill
+      ? { x: f.agendaPill.x + f.agendaPill.width + STAGE.GAP, y: f.bandBottom, width: Math.max(0, f.othersRect.x - f.agendaPill.x - f.agendaPill.width - 2 * STAGE.GAP), height: STAGE.BAND }
+      : { x: STAGE.MARGIN, y: f.bandBottom, width: Math.max(0, f.othersRect.x - STAGE.MARGIN - STAGE.GAP), height: STAGE.BAND },
   };
 }
 
@@ -556,7 +585,7 @@ export function planStage(
   // Others reserves the band and plans again (the same inputs always give the same screen).
   // An empty stage keeps the band: its first-run hint is drawn there (review Major).
   const narrow = Math.max(0, stage.width) < NARROW_STAGE_PX;
-  if (!narrow && !(opts.terminals ?? 0) && containers.length > 0) {
+  if (!narrow && !(opts.terminals ?? 0) && !opts.agendaPill && containers.length > 0) {
     const tall = planWith(containers, view, stage, opts, false);
     if (tall.others.length === 0) return tall;
   }
@@ -589,7 +618,7 @@ function planWith(
     others.sort((a, b) => (z.get(a) ?? 0) - (z.get(b) ?? 0));
     return {
       width: f.width, height: f.height, narrow, mode, centre, cards, others,
-      othersRect: f.othersRect, othersZone: f.othersZone, ...bands(f, centre), free: f.free,
+      othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill), free: f.free,
       centreWidth, unit, order: list.map((c) => c.id), orbit,
     };
   };
@@ -771,9 +800,10 @@ export interface LayoutPatch {
   /** Cards or groups the owner opened (a group's panel, full screen): the server's tidying
    *  counts them as touched. Changes nothing on the record. */
   touch?: string[];
-  /** The owner reopens the super's agenda card (the centre's Agenda button): the server makes it
-   *  if he closed it, or brings it back from Others when the stage has room. */
-  agenda?: 'open';
+  /** The owner reopens the super's agenda card (the centre's Agenda button, its corner pill): the
+   *  server makes it if the record has none, or brings it back from its pill, Others or a group.
+   *  `min`: its close, which collapses it to the pill in the bottom-left corner (never removed). */
+  agenda?: 'open' | 'min';
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
@@ -811,10 +841,19 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
   // comes back floating, out of its group (the server's rule for the owner's reopen).
   if (patch.agenda === 'open') {
     const agenda = st.containers.find((x) => x.kind === 'agenda');
-    if (agenda) { leaveGroups(st, [agenda.id]); agenda.place = 'float'; }
+    if (agenda) { leaveGroups(st, [agenda.id]); agenda.place = 'float'; delete agenda.min; }
+  }
+  // Its close collapses it to the corner pill (the server's rule): out of its group and the view.
+  const agendaId = st.containers.find((x) => x.kind === 'agenda')?.id;
+  if (agendaId && (patch.agenda === 'min' || patch.closed?.includes(agendaId))) {
+    const agenda = st.containers.find((x) => x.id === agendaId)!;
+    leaveGroups(st, [agendaId]);
+    agenda.place = 'float';
+    agenda.min = true;
+    unshown.add(agendaId);
   }
   if (patch.ungroup?.length) dissolveGroups(st, patch.ungroup);
-  const gone = new Set(patch.closed ?? []);
+  const gone = new Set((patch.closed ?? []).filter((id) => id !== agendaId));
   for (const id of gone) unshown.add(id);
   if (gone.size) st.containers = st.containers.filter((x) => !gone.has(x.id));
   const { containers, groups } = normalizeGroups(st.containers, st.groups);
@@ -843,8 +882,10 @@ export function patchEchoed(state: Staged, patch: LayoutPatch): boolean {
     if ('kind' in k && p.size && (CONTAINER_SIZES as readonly string[]).includes(p.size)
       && (sizeOf(k) !== p.size || k.sizeBy !== 'owner')) return false;
   }
-  for (const id of patch.closed ?? []) if (state.containers.some((x) => x.id === id)) return false;
-  if (patch.agenda === 'open' && !state.containers.some((x) => x.kind === 'agenda')) return false;
+  const agenda = state.containers.find((x) => x.kind === 'agenda');
+  for (const id of patch.closed ?? []) if (id !== agenda?.id && state.containers.some((x) => x.id === id)) return false;
+  if (patch.agenda === 'open' && (!agenda || agenda.min || agenda.place !== 'float')) return false;
+  if ((patch.agenda === 'min' || (agenda && patch.closed?.includes(agenda.id))) && !agenda?.min) return false;
   for (const id of patch.leave ?? []) if (groups.some((g) => g.cards.includes(id))) return false;
   for (const id of patch.ungroup ?? []) if (groups.some((g) => g.id === id)) return false;
   if (patch.group) {

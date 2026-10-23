@@ -427,10 +427,14 @@ describe('the rotation at a main result', () => {
 describe('a whole fresh cycle keeps the stage', () => {
   it('children, pool, containers, groups and view are unchanged', async () => {
     makeVault({ queue: [item({ id: 'q-f', createdAt: Date.now() })] });
+    expect((await readSuperState(root)).containers).toHaveLength(2);
+    await startSuperInbox([root]);
+    // The app's start puts the agenda on the stage (owner 2026-10-22 23:44); the fresh cycle
+    // then changes nothing.
     const before = await readSuperState(root);
     expect(before.pool).toHaveLength(1);
-    expect(before.containers).toHaveLength(2);
-    await startSuperInbox([root]);
+    expect(before.containers.map((c) => c.kind)).toEqual(['agenda', ...before.containers.slice(1).map((c) => c.kind)]);
+    expect(before.containers).toHaveLength(3);
     idleSuper();
     const { inbox, delivered } = fakeInbox();
     attachSuperInbox(inbox);

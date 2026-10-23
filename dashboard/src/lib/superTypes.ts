@@ -60,6 +60,8 @@ export interface SuperContainer {
   by?: 'auto';
   /** The child an automatic card belongs to. */
   of?: string;
+  /** The agenda only: minimised to the pill in the stage's bottom-left corner. */
+  min?: true;
 }
 
 export interface SuperDismissed { kind: ContainerKind; ref: string; until: number }
@@ -357,6 +359,8 @@ export function applyGroupOp(state: { containers: SuperContainer[]; groups: Supe
   if (!GROUP_ID_RE.test(op.id)) return;
   const live = new Set(state.containers.map((c) => c.id));
   const cards = [...new Set(op.cards)].filter((id) => live.has(id));
+  // A card in a group is drawn as the group's tile, never also as the agenda's pill.
+  for (const c of state.containers) if (cards.includes(c.id)) delete c.min;
   const name = cleanGroupName(op.name);
   for (const g of state.groups) if (g.id !== op.id) g.cards = g.cards.filter((c) => !cards.includes(c));
   const have = state.groups.find((g) => g.id === op.id);

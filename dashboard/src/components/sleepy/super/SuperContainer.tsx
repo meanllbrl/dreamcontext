@@ -21,7 +21,7 @@ import { backgroundOf, toneOfStatus } from './superHandover';
 import { KindTile, ResolvedTitle, TaskPageHead } from './SuperTiles';
 import { LAYOUT } from './handoverMotion';
 import { useLiveSession } from './liveSession';
-import { sizeOf, type CardPlan } from './superLayout';
+import { cardZIndex, sizeOf, type CardPlan } from './superLayout';
 import { inlineMediaKind } from '../chat/chatEntities';
 import { ZoomPane } from './ZoomPane';
 
@@ -188,6 +188,10 @@ export function SuperContainer(props: SuperContainerProps) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const small = drawnSize === 'small';
   const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
+  // The agenda is never closed: its close collapses it to its pill in the bottom-left corner.
+  const closeBtn = c.kind === 'agenda'
+    ? <IconButton icon="corner" label={t('super.agenda.minimize')} onClick={onCloseClick} testId="super-agenda-minimize" />
+    : <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />;
   // A floating card's one action, for a click and for Enter/Space alike: a team card opens its
   // member in AI Team (where the job is), any other card shows side by side.
   const openCard = () => {
@@ -223,7 +227,7 @@ export function SuperContainer(props: SuperContainerProps) {
       aria-label={props.title}
       tabIndex={floating ? 0 : -1}
       style={{
-        left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: 10 + plan.z,
+        left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: cardZIndex(plan.z, c.kind === 'agenda'),
         ...(props.cue ? { ['--cue-dx' as string]: `${props.cue.dx}px`, ['--cue-dy' as string]: `${props.cue.dy}px` } : {}),
       }}
       onPointerDown={floating ? (e) => props.onPress(e, c.id) : undefined}
@@ -253,14 +257,14 @@ export function SuperContainer(props: SuperContainerProps) {
                 {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen" />}
               </>
             )}
-            <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />
+            {closeBtn}
           </>
         ) : (
           <>
             <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
             {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen" />}
             <IconButton icon="minimize" label={t('super.card.minimize')} onClick={() => props.onMinimize(c.id)} testId="super-card-minimize" />
-            <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />
+            {closeBtn}
           </>
         )}
       </div>
@@ -321,11 +325,13 @@ function glowOf(s: SessionStatusInfo): 'working' | 'asking' | 'idle' {
   return s.kind === 'asking' ? 'asking' : s.kind === 'working' ? 'working' : 'idle';
 }
 
-type IconName = 'side' | 'others' | 'ask' | 'close' | 'minimize' | 'ungroup' | 'size' | 'fullscreen' | 'more';
+type IconName = 'side' | 'others' | 'corner' | 'ask' | 'close' | 'minimize' | 'ungroup' | 'size' | 'fullscreen' | 'more';
 
 const ICONS: Record<IconName, ReactNode> = {
   side: <><rect x="2" y="3" width="5" height="10" rx="1.4" /><rect x="9" y="3" width="5" height="10" rx="1.4" /></>,
   others: <><path d="M3.5 3.5l6 6" /><path d="M10 5v5H5" /><path d="M3 13h10" /></>,
+  /** Others' mirror: to the bottom-left corner (the agenda's pill). */
+  corner: <><path d="M12.5 3.5l-6 6" /><path d="M6 5v5h5" /><path d="M3 13h10" /></>,
   ask: <><path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v5A1.5 1.5 0 0 1 11.5 11H7l-3 2.4V11h0A1 1 0 0 1 3 10z" /></>,
   close: <><path d="M4.5 4.5l7 7" /><path d="M11.5 4.5l-7 7" /></>,
   minimize: <><path d="M9.5 3.5v3h3" /><path d="M6.5 12.5v-3h-3" /><path d="M9.5 6.5l3.5-3.5" /><path d="M6.5 9.5L3 13" /></>,

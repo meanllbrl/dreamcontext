@@ -140,6 +140,7 @@ export function ensureAgendaCard(s: SuperState, opts: { first?: boolean; bring?:
     if (opts.bring) {
       if (opts.owner) leaveGroups(s, [id]);
       if (have.place !== 'float' && room()) have.place = 'float';
+      if (have.place === 'float') delete have.min;
     }
     return id;
   }
@@ -147,6 +148,40 @@ export function ensureAgendaCard(s: SuperState, opts: { first?: boolean; bring?:
   const card = { id, kind: 'agenda' as const, ref: AGENDA_REF, shape: 'square' as const, size: AGENDA_SIZE, place: room() ? 'float' as const : 'others' as const };
   if (opts.first) s.containers.unshift(card); else s.containers.push(card);
   return id;
+}
+
+/**
+ * The agenda is ALWAYS on the stage (owner 2026-10-22 23:44: "it should be open by itself"): a
+ * new super session (the hand-over) and the app's start show it, floating and restored from its
+ * pill, made at its default place (first in the record, large) when the record has none. What
+ * the owner chose for it stays: his drop, his size, and a group he put it in. Returns its id
+ * (null: the record is full).
+ */
+export function showAgendaCard(s: SuperState): string | null {
+  const id = ensureAgendaCard(s, { first: true, owner: true });
+  const card = id ? s.containers.find((c) => c.id === id) : undefined;
+  if (card) { card.place = 'float'; delete card.min; }
+  return id;
+}
+
+/**
+ * The agenda's close (the owner's, or `super close`): it never leaves the stage, it collapses to
+ * the pill in the bottom-left corner. Out of whatever the view shows; its place, drop, size and
+ * group stay. Made first when the record has none (a pill to restore from). Returns its id.
+ */
+export function minimiseAgendaCard(s: SuperState): string | null {
+  const id = ensureAgendaCard(s, { first: true, owner: true });
+  const card = id ? s.containers.find((c) => c.id === id) : undefined;
+  if (!card) return null;
+  leaveGroups(s, [card.id]);
+  card.place = 'float';
+  card.min = true;
+  return card.id;
+}
+
+/** A shown stage with no agenda in its record (an older record, a hand edit): it gets one. */
+export function agendaMissing(s: Pick<SuperState, 'enabled' | 'containers'>): boolean {
+  return s.enabled && !s.containers.some((c) => c.kind === 'agenda') && s.containers.length < MAX_CONTAINERS;
 }
 
 /** Move a child's row (and stamp when). */
@@ -1578,6 +1613,10 @@ export async function startSuperInbox(contextRoots: readonly string[], opts: { p
     noteHead(root, s);
     seedOwnerHead(s.enabled ? superQueueHead(s) : null);
     if (!s.enabled) return;
+    // The app's start shows the agenda (owner 2026-10-22 23:44): back from its pill or Others.
+    try { await writeSuper(root, (x) => { if (x.enabled) showAgendaCard(x); }); } catch (err) {
+      console.warn(`[super] ${root}: the agenda was not put on the stage: ${(err as Error).message}`);
+    }
     // A question the relaunch interrupted is asked again (outbox.ts), before anything closes it.
     try { await keepQuestionsAcrossRelaunch(root, s); } catch (err) {
       console.warn(`[super] ${root}: the open questions were not kept for the relaunch: ${(err as Error).message}`);
