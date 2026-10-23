@@ -79,15 +79,16 @@ describe('super-orchestration guide: capacity (owner, 2026-10-21)', () => {
 describe('super-orchestration guide: shape', () => {
   // +500 (2026-10-22): §2 says how to ask the way any agent asks (`super ask --json`, the answer
   // message, what came in meanwhile).
-  it('is at most 14,500 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(14_500);
+  // +1,500 (2026-10-23): §7 Presentation layouts, the when-which table.
+  it('is at most 16,000 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(16_000);
   });
 
-  it('has the six sections in order', () => {
+  it('has the seven sections in order', () => {
     const heads = [...GUIDE.matchAll(/^## (\d)\. (.+)$/gm)].map((m) => `${m[1]} ${m[2]}`);
     expect(heads).toEqual([
       '1 Split procedure', '2 When to ask', '3 Models and effort', '4 Flow map', '5 Safety and speed',
-      '6 Worked example (fictional project "Orbit": repos `orbit-app`, `orbit-api`)',
+      '6 Worked example (fictional project "Orbit": repos `orbit-app`, `orbit-api`)', '7 Presentation layouts',
     ]);
   });
 

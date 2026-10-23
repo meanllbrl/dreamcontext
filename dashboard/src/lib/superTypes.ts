@@ -266,8 +266,9 @@ export function readOwnerViewFields(body: Record<string, unknown>): OwnerViewFie
 export function applyOwnerViewFields(view: SuperView, f: OwnerViewFields): SuperView {
   if (view.mode !== 'present') return view;
   const shown = view.cards ?? [];
+  // An exit also lands when a close he made just before it has not reached the record yet.
   if (f.exit && (sameCardSet(shown, f.exit.cards)
-    || sameCardSet(shown, [...new Set([...f.exit.cards, ...f.exit.closing])]))) return { mode: 'float' };
+    || sameCardSet(shown.filter((id) => !f.exit!.closing.includes(id)), f.exit.cards))) return { mode: 'float' };
   let next = view;
   if (f.presentLayout && sameCardSet(shown, f.presentLayout.cards)) {
     next = { ...next, layout: f.presentLayout.layout, layoutBy: 'owner' };

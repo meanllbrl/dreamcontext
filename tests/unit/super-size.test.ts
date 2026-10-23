@@ -301,7 +301,7 @@ describe('owner 2026-10-22: a page the agent opens is shown, never a small tile'
     expect(cardOf((result(r).container as SuperContainer).id)!.size).toBe('large');
     makeVault({ view: { mode: 'present', cards: ['task-a', 'task-b'] } });
     await verb('open', { kind: 'web', ref: 'https://example.com/b' });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a', 'task-b'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a', 'task-b'], layout: 'compare' });
     makeVault();
     r = await verb('open', { kind: 'web', refs: ['https://example.com/c', 'https://example.com/d'], group: 'Pages' });
     expect(r.status).toBe(200);
@@ -390,7 +390,7 @@ describe('owner 2026-10-22 13:19: a card that leaves the stage leaves the presen
   it('Move to Others on a presented card: the presentation goes on with the rest, then floats', async () => {
     makeVault({ view: PRES });
     await layout({ cards: [{ id: 'task-a', place: 'others' }] });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
     await layout({ cards: [{ id: 'task-b', place: 'others' }] });
     expect(onDisk().view).toEqual({ mode: 'float' });
   });
@@ -398,20 +398,20 @@ describe('owner 2026-10-22 13:19: a card that leaves the stage leaves the presen
   it('closed, resized or grouped by the owner: out of the presentation; a half page floats', async () => {
     makeVault({ view: PRES });
     await layout({ closed: ['task-a'] });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
     makeVault({ view: PRES });
     await layout({ cards: [{ id: 'task-b', size: 'large' }] });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a'], layout: 'spotlight' });
     makeVault({ view: PRES });
     await layout({ group: { id: 'grp-n', cards: ['task-a', 'task-c'] } });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
     makeVault({ view: { mode: 'half', card: 'task-a' } });
     await layout({ cards: [{ id: 'task-a', place: 'others' }] });
     expect(onDisk().view).toEqual({ mode: 'float' });
     // A drop position or a move back to the stage leaves the view alone; an explicit view wins.
     makeVault({ view: PRES });
     await layout({ cards: [{ id: 'task-a', pos: { x: 0.2, y: 0.2 } }, { id: 'task-b', place: 'float' }] });
-    expect(onDisk().view).toEqual(PRES);
+    expect(onDisk().view).toEqual({ ...PRES, layout: 'compare' });
     await layout({ cards: [{ id: 'task-a', place: 'others' }], view: { mode: 'half', card: 'task-b' } });
     expect(onDisk().view).toEqual({ mode: 'half', card: 'task-b' });
   });
@@ -420,30 +420,30 @@ describe('owner 2026-10-22 13:19: a card that leaves the stage leaves the presen
     const groups = [{ id: 'grp-1', name: 'Pair', cards: ['task-a', 'task-c'], place: 'float' as const }];
     makeVault({ groups, view: { mode: 'present', cards: ['task-a', 'task-b'] } });
     await layout({ cards: [{ id: 'grp-1', place: 'others' }] });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
     makeVault({ groups, view: { mode: 'present', cards: ['task-a', 'task-b'] } });
     const r = await verb('stack', { container: 'grp-1' });
     expect(r.status).toBe(200);
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
   });
 
   it('the agent\'s group and stack verbs follow the same rule', async () => {
     makeVault({ view: PRES });
     await verb('stack', { container: 'task-a' });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
     makeVault({ view: PRES });
     const r = await verb('group', { containers: ['task-b', 'task-c'], name: 'Two' });
     expect(r.status).toBe(200);
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a'] });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a'], layout: 'spotlight' });
   });
 
   it('the window applies the same rule the moment the owner presses (applyLayoutPatch)', async () => {
     const { applyLayoutPatch } = await import('../../dashboard/src/components/sleepy/super/superLayout.js');
     const st = { containers: [card('task-a'), card('task-b'), card('task-c')], groups: [], view: PRES as client.SuperView };
-    expect(applyLayoutPatch(st, { cards: [{ id: 'task-a', place: 'others' }] }).view).toEqual({ mode: 'present', cards: ['task-b'] });
+    expect(applyLayoutPatch(st, { cards: [{ id: 'task-a', place: 'others' }] }).view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
     expect(applyLayoutPatch(st, { closed: ['task-a', 'task-b'] }).view).toEqual({ mode: 'float' });
-    expect(applyLayoutPatch(st, { cards: [{ id: 'task-b', size: 'medium' }] }).view).toEqual({ mode: 'present', cards: ['task-a'] });
-    expect(applyLayoutPatch(st, { group: { id: 'grp-z', cards: ['task-a', 'task-c'] } }).view).toEqual({ mode: 'present', cards: ['task-b'] });
-    expect(applyLayoutPatch(st, { cards: [{ id: 'task-a', pos: { x: 0.1, y: 0.1 } }] }).view).toEqual(PRES);
+    expect(applyLayoutPatch(st, { cards: [{ id: 'task-b', size: 'medium' }] }).view).toEqual({ mode: 'present', cards: ['task-a'], layout: 'spotlight' });
+    expect(applyLayoutPatch(st, { group: { id: 'grp-z', cards: ['task-a', 'task-c'] } }).view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
+    expect(applyLayoutPatch(st, { cards: [{ id: 'task-a', pos: { x: 0.1, y: 0.1 } }] }).view).toEqual({ ...PRES, layout: 'compare' });
   });
 });

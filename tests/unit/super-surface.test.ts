@@ -558,7 +558,8 @@ describe('stable hooks for the lead\'s verify script', () => {
   it('every piece the verify drives carries its test id', () => {
     const all = readdirSync(join(ROOT, superDir)).filter((f) => f.endsWith('.tsx')).map((f) => read(`${superDir}/${f}`)).join('\n');
     for (const id of ['super-handover-btn', 'super-surface', 'super-container', 'super-job-bar', 'super-queue-head', 'super-terminals-row']) {
-      expect(all, id).toContain(`data-testid="${id}"`);
+      // A literal id, or one branch of an expression (the parked web card names its own).
+      expect(all.includes(`data-testid="${id}"`) || all.includes(`'${id}'`), id).toBe(true);
     }
     expect(all).toMatch(/data-kind=\{c\.kind\}/);
     expect(all).toMatch(/data-container-id=\{c\.id\}/);

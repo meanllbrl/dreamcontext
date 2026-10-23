@@ -318,8 +318,9 @@ export function readOwnerViewFields(body: Record<string, unknown>): OwnerViewFie
 export function applyOwnerViewFields(view: SuperView, f: OwnerViewFields): SuperView {
   if (view.mode !== 'present') return view;
   const shown = view.cards ?? [];
+  // An exit also lands when a close he made just before it has not reached the record yet.
   if (f.exit && (sameCardSet(shown, f.exit.cards)
-    || sameCardSet(shown, [...new Set([...f.exit.cards, ...f.exit.closing])]))) return { mode: 'float' };
+    || sameCardSet(shown.filter((id) => !f.exit!.closing.includes(id)), f.exit.cards))) return { mode: 'float' };
   let next = view;
   if (f.presentLayout && sameCardSet(shown, f.presentLayout.cards)) {
     next = { ...next, layout: f.presentLayout.layout, layoutBy: 'owner' };
@@ -960,7 +961,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 8;
+export const SUPER_BRIEF_REV = 9;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -983,9 +984,12 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   also moves a card nobody touched for 45 minutes and a finished job the owner saw.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
 - The owner has to decide something visual (a mockup, a layout): open the options as cards
-  (png, svg, html, a board), \`super present <card…>\`, then ask with \`super ask --json\` (an option
-  \`preview\` draws each choice in the card itself); after his
+  (png, svg, html, a board), \`super present <a> <b>\` (two options: side by side), then ask with
+  \`super ask --json\` (an option \`preview\` draws each choice in the card itself); after his
   answer, \`super present --off\`.
+- A site or a long document to look at: \`super present <card>\` (one card: the wide spotlight, the
+  site at its desktop width, you a small chat beside it). Pictures, slides or 5+ screenshots:
+  \`super present <c1…c8>\` (a filmstrip). A metric stays a large card, never a presentation.
 - Your answer would describe something he can look at: open it and write one line.
 - The server opens a child's dev-server site and its live browser as cards by itself; you see
   them in \`super state\`. Do not reopen or describe them. A child says its dev server runs but

@@ -845,7 +845,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // The owner's pick for these same cards is his (plan-r2 D10): the agent's order is written,
       // the layout and the chat bar stay. Other cards are a new presentation.
       if (same && prev.layoutBy === 'owner') { kept = true; s.view = { ...prev, cards: ids }; return; }
-      s.view = { mode: 'present', cards: ids, ...(layout ? { layout } : {}), ...(same && prev.chat === 'bar' ? { chat: 'bar' as const } : {}) };
+      // The same cards again with no --layout keep the layout they have (and his chat bar with it).
+      const lay = layout ?? (same ? prev.layout : undefined);
+      s.view = { mode: 'present', cards: ids, ...(lay ? { layout: lay } : {}), ...(same && prev.chat === 'bar' ? { chat: 'bar' as const } : {}) };
     });
     ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout' } : {}) });
   },
