@@ -582,6 +582,31 @@ async function stage(page, base, adopted = []) {
   await page.getByTestId('super-others-stack').click();
   ok('the Others stack opens its panel with it', await until(page, async () => (await page.locator(`[data-testid="super-others-item"][data-container-id="${B.id}"]`).count()) === 1, 3000));
   await page.screenshot({ path: join(OUT, 'stage-02-others-fan.png') });
+  // 30 cards in Others: the open panel fits the window, scrolls inside itself (wheel too, the stage
+  // behind stays put), the last card can be scrolled to and hit, and the pill does not cover it.
+  const fan = await page.evaluate(async () => {
+    const panel = document.querySelector('[data-testid="super-others-fan"]');
+    const grid = panel.querySelector('.super-group-panel-grid');
+    const first = grid.querySelector('[data-panel-item]');
+    for (let i = 0; i < 29; i++) { const c = first.cloneNode(true); c.dataset.clone = '1'; grid.appendChild(c); }
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const pr = panel.getBoundingClientRect();
+    const stackRect = document.querySelector('[data-testid="super-others-stack"]').getBoundingClientRect();
+    const last = grid.lastElementChild;
+    last.scrollIntoView({ block: 'end' });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const lr = last.getBoundingClientRect();
+    const hit = document.elementFromPoint(lr.x + lr.width / 2, lr.y + lr.height / 2);
+    return {
+      fits: pr.top >= 0 && pr.bottom <= window.innerHeight, clear: pr.bottom <= stackRect.top + 1,
+      scrolls: grid.scrollHeight > grid.clientHeight + 1, atEnd: grid.scrollTop > 0,
+      hitLast: !!hit && last.contains(hit), overscroll: getComputedStyle(grid).overscrollBehaviorY,
+    };
+  });
+  ok('Others with 30 cards: the panel fits the window and ends above the pill', fan.fits && fan.clear, JSON.stringify(fan));
+  ok('…its grid scrolls inside itself and contains the scroll', fan.scrolls && fan.atEnd && fan.overscroll === 'contain', JSON.stringify(fan));
+  ok('…the last card is scrolled into view and elementFromPoint hits it', fan.hitLast, JSON.stringify(fan));
+  await page.evaluate(() => document.querySelectorAll('[data-clone]').forEach((n) => n.remove()));
   await page.locator(`[data-testid="super-others-item"][data-container-id="${B.id}"]`).click();
   await page.waitForTimeout(900);
   g = await geo(page);

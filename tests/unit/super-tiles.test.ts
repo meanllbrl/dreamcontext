@@ -162,6 +162,11 @@ describe('the status ring and the tiles', () => {
     expect(others.x + others.width).toBeCloseTo(1520, 6);
     expect(others.y + others.height).toBeLessThanOrEqual(862);
     expect(others.width).toBe(4 * 160 + 3 * 16 + 32);
+    // 30 cards in Others: the panel is capped to the room above its stack and never reaches it.
+    const many = panelRect({ x: 1372, y: 862, width: 148, height: 40 }, 30, stage, true);
+    expect(many.y).toBeGreaterThanOrEqual(24);
+    expect(many.y + many.height).toBeLessThanOrEqual(862 - 12);
+    expect(many.height).toBeLessThan(48 + 8 * 160 + 7 * 16 + 16);
     for (const p of [r, others]) {
       expect(p.x).toBeGreaterThanOrEqual(24);
       expect(p.y).toBeGreaterThanOrEqual(24);
