@@ -213,7 +213,8 @@ describe('WebWidget — the web embed (D7)', () => {
     // The frame renders only on the `loaded` branch (a remote page) or once the port is granted or
     // opened once (a page on this computer, jarvis r9), and only through the one PageFrame.
     expect(widget).toMatch(/\{loaded \? \(\s*<PageFrame/);
-    expect(widget).toMatch(/\(granted \|\| once\) \? \(\s*<PageFrame/);
+    // (A granted page waits for its frame address, the session proxy's, before it mounts.)
+    expect(widget).toMatch(/\(granted \|\| once\) \? \(\s*frameHref\s*\?\s*<PageFrame/);
     // A file never gets an iframe of its own: the board's reader draws it, after the file route said yes.
     expect(widget).toMatch(/access\.state === 'blocked'/);
     expect(widget).toMatch(/api\.post\('\/agent\/grant'/);

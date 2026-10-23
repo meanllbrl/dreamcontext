@@ -557,9 +557,12 @@ describe('the window rules (D10, AC12)', () => {
 describe('stable hooks for the lead\'s verify script', () => {
   it('every piece the verify drives carries its test id', () => {
     const all = readdirSync(join(ROOT, superDir)).filter((f) => f.endsWith('.tsx')).map((f) => read(`${superDir}/${f}`)).join('\n');
-    for (const id of ['super-handover-btn', 'super-surface', 'super-container', 'super-job-bar', 'super-queue-head', 'super-terminals-row']) {
+    for (const id of ['super-handover-btn', 'super-surface', 'super-job-bar', 'super-queue-head', 'super-terminals-row']) {
       expect(all, id).toContain(`data-testid="${id}"`);
     }
+    // A live page parked off the stage (kept alive, hidden) answers to its own id, so the verify's
+    // `super-container` selector only ever finds a card the owner can see.
+    expect(all).toContain(`data-testid={props.parked ? 'super-container-parked' : 'super-container'}`);
     expect(all).toMatch(/data-kind=\{c\.kind\}/);
     expect(all).toMatch(/data-container-id=\{c\.id\}/);
     expect(all).toMatch(/data-super-motion=\{motion\}/);

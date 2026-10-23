@@ -110,7 +110,8 @@ describe('the card zoom (super/ZoomPane.tsx)', () => {
     expect(pane).toMatch(/usePanZoom\(\{ stageRef, content, stage, minScale: MIN_SCALE, maxScale: MAX_SCALE, wheel: 'pinch', fit: FIT \}\)/);
     expect(pane).toMatch(/const MIN_SCALE = 1;/);
     expect(pane).toMatch(/const MAX_SCALE = 5;/);
-    expect(pane.match(/data-pinch-owner="true"/g)?.length).toBe(1);
+    // Only while it is in the owner's hands: a floating or parked pane leaves the pinch alone.
+    expect(pane.match(/data-pinch-owner=\{interactive \? 'true' : undefined\}/g)?.length).toBe(1);
     // A bridge message counts only from a frame inside this pane.
     expect(pane).toMatch(/querySelectorAll\('iframe'\)\]\.find\(\(f\) => f\.contentWindow === event\.source\)/);
   });
