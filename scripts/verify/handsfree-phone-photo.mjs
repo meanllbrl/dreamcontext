@@ -190,6 +190,7 @@ async function setupScratch(browser) {
   // The "gallery": a big JPEG (a camera photo stands in) and a PNG screenshot.
   writeFileSync(join(UPLOADS, 'IMG_0042.jpg'), await drawPicture(browser, 'Camera photo', '#15803d', 'jpeg', { width: 2000, height: 3000 }));
   writeFileSync(join(UPLOADS, 'Screenshot.png'), await drawPicture(browser, 'Phone screenshot', '#9333ea', 'png', { width: 390, height: 844 }));
+  writeFileSync(join(UPLOADS, 'IMG_0043.jpg'), await drawPicture(browser, 'Second photo', '#0369a1', 'jpeg', { width: 3000, height: 2000 }));
 }
 
 function freePort() {
@@ -376,14 +377,15 @@ try {
 
   console.log('\n── 3. Photos from the phone');
   report.check('the phone\'s composer has a photo button and no "+"', (await vis('[data-testid="phone-photo-button"]').count()) === 1 && (await vis('[aria-label="Attach"]').count()) === 0);
-  await phone.locator('[data-testid="phone-photo-input"]').setInputFiles([join(UPLOADS, 'IMG_0042.jpg'), join(UPLOADS, 'Screenshot.png')]);
-  report.check('two photo chips appear with a count line', await until(async () => (await vis('.chat-cmp-attachment-image').count()) === 2 && /2/.test(await vis('[data-testid="phone-photo-meta"]').first().innerText().catch(() => '')), 10000));
+  // THREE at once: more than the Mac takes in flight per device (2), so the phone must queue.
+  await phone.locator('[data-testid="phone-photo-input"]').setInputFiles([join(UPLOADS, 'IMG_0042.jpg'), join(UPLOADS, 'Screenshot.png'), join(UPLOADS, 'IMG_0043.jpg')]);
+  report.check('three photo chips appear with a count line', await until(async () => (await vis('.chat-cmp-attachment-image').count()) === 3 && /3/.test(await vis('[data-testid="phone-photo-meta"]').first().innerText().catch(() => '')), 10000));
   await phone.screenshot({ path: join(SHOTS, '390x844-photo-chips.png') });
-  report.check('both photos finish uploading', await until(async () => (await phone.locator('.chat-cmp-attachment-image[data-state="ready"]').count()) === 2, 20000),
+  report.check('all three finish uploading (none refused by the per-device gate)', await until(async () => (await phone.locator('.chat-cmp-attachment-image[data-state="ready"]').count()) === 3, 30000),
     JSON.stringify(await phone.locator('.chat-cmp-attachment-image').evaluateAll((e) => e.map((x) => x.getAttribute('data-state')))));
   const drops = () => { try { return readdirSync(join(PROJ, '_dream_context', 'tmp', 'agent-drops')).filter((n) => n.startsWith('phone-')); } catch { return []; } };
   const dropped = drops();
-  report.check('the Mac saved them as JPEGs (the PNG re-encoded too), server-named, in the project\'s tmp', dropped.length === 2 && dropped.every((n) => /^phone-\d+-[0-9a-f]{8}\.jpg$/.test(n)
+  report.check('the Mac saved them as JPEGs (the PNG re-encoded too), server-named, in the project\'s tmp', dropped.length === 3 && dropped.every((n) => /^phone-\d+-[0-9a-f]{8}\.jpg$/.test(n)
     && readFileSync(join(PROJ, '_dream_context', 'tmp', 'agent-drops', n)).subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))), JSON.stringify(dropped));
   const bigOne = dropped.map((n) => readFileSync(join(PROJ, '_dream_context', 'tmp', 'agent-drops', n))).find((b) => b.length > 0);
   report.check('the photos are small enough for mobile data (each under 1.5 MB)', dropped.every((n) => readFileSync(join(PROJ, '_dream_context', 'tmp', 'agent-drops', n)).length < 1.5 * 1024 * 1024), String(bigOne?.length));
@@ -391,11 +393,15 @@ try {
   await send('this row looks cut off on the phone');
   report.check('the agent receives the photos as paths in the message', await until(async () => {
     const t = (await vis(pane).first().innerText().catch(() => '')).replace(/\s+/g, ' ');
-    return /ECHO this row looks cut off on the phone .*phone-\d+-[0-9a-f]{8}\.jpg.*phone-\d+-[0-9a-f]{8}\.jpg/.test(t);
+    return /ECHO this row looks cut off on the phone .*phone-\d+-[0-9a-f]{8}\.jpg.*phone-\d+-[0-9a-f]{8}\.jpg.*phone-\d+-[0-9a-f]{8}\.jpg/.test(t);
   }, 20000));
-  report.check('the owner\'s bubble on the phone shows both photos', await until(() => loaded(phone, '.chat-msg-user-media', '/phone-', 2), 15000), JSON.stringify(await imgs(phone, '.chat-msg-user-media', '/phone-')));
+  report.check('the owner\'s bubble on the phone shows all three photos', await until(() => loaded(phone, '.chat-msg-user-media', '/phone-', 3), 15000), JSON.stringify(await imgs(phone, '.chat-msg-user-media', '/phone-')));
+  await phone.locator('.chat-msg-user-media:visible').last().scrollIntoViewIfNeeded().catch(() => {});
+  await phone.waitForTimeout(400);
   await phone.screenshot({ path: join(SHOTS, '390x844-photo-sent.png') });
-  report.check('AC10: the Mac shows the same bubble with both photos', await until(() => loaded(desk, '.chat-msg-user-media', '/phone-', 2), 20000), JSON.stringify(await imgs(desk, '.chat-msg-user-media', '/phone-')));
+  report.check('AC10: the Mac shows the same bubble with all three photos', await until(() => loaded(desk, '.chat-msg-user-media', '/phone-', 3), 20000), JSON.stringify(await imgs(desk, '.chat-msg-user-media', '/phone-')));
+  await desk.locator('.chat-msg-user-media:visible').last().scrollIntoViewIfNeeded().catch(() => {});
+  await desk.waitForTimeout(400);
   await desk.screenshot({ path: join(SHOTS, '1440-mac-same-bubble.png') });
 
   console.log('\n── The second width');

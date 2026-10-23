@@ -54,6 +54,37 @@ async function decode(file: Blob): Promise<Drawable | null> {
   }
 }
 
+let prepChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * {@link preparePhonePhoto}, ONE AT A TIME. A decoded 24 MP photo is ~96 MB before it is
+ * shrunk; six decoded together is past what an iPhone tab may hold, and WebKit then reloads the
+ * page and the draft with it. The uploads that follow still run in parallel.
+ */
+export function preparePhonePhotoQueued(file: Blob): Promise<Blob | null> {
+  const run = prepChain.then(() => preparePhonePhoto(file));
+  prepChain = run.catch(() => null);
+  return run;
+}
+
+/** How many phone photos upload at once: the server's per-device gate (photo-limits.ts). */
+export const PHONE_PHOTO_UPLOADS_AT_ONCE = 2;
+let uploading = 0;
+const waiting: Array<() => void> = [];
+
+/**
+ * Run one upload when a slot is free. The Mac takes two photos in flight per device and refuses
+ * the third (429), so six photos picked at once go two at a time instead of four failing.
+ */
+export async function withPhotoUploadSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (uploading >= PHONE_PHOTO_UPLOADS_AT_ONCE) await new Promise<void>((resolve) => waiting.push(resolve));
+  uploading += 1;
+  try { return await fn(); } finally {
+    uploading -= 1;
+    waiting.shift()?.();
+  }
+}
+
 /** The JPEG to send for a picked photo, or null when this browser cannot decode it. */
 export async function preparePhonePhoto(file: Blob): Promise<Blob | null> {
   const pic = await decode(file);

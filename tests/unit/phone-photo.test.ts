@@ -5,7 +5,7 @@
  * exercised in a real browser by scripts/verify/handsfree-phone-photo.mjs.
  */
 import { describe, it, expect } from 'vitest';
-import { PHONE_PHOTOS_PER_MESSAGE, fitWithin, jpegName, preparePhonePhoto } from '../../dashboard/src/lib/phonePhoto.js';
+import { PHONE_PHOTOS_PER_MESSAGE, PHONE_PHOTO_UPLOADS_AT_ONCE, fitWithin, jpegName, preparePhonePhoto, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../dashboard/src/lib/phonePhoto.js';
 
 describe('fitWithin', () => {
   it('scales a 48 MP portrait photo down to a 2560 px long edge, keeping its shape', () => {
@@ -42,5 +42,35 @@ describe('preparePhonePhoto', () => {
 
   it('keeps six photos to a message', () => {
     expect(PHONE_PHOTOS_PER_MESSAGE).toBe(6);
+  });
+});
+
+describe('six photos picked at once (end review, edge cases)', () => {
+  it('upload two at a time — the Mac\'s per-device gate — so none is refused', async () => {
+    expect(PHONE_PHOTO_UPLOADS_AT_ONCE).toBe(2);
+    let now = 0; let peak = 0;
+    const done: number[] = [];
+    const jobs = Array.from({ length: 6 }, (_, i) => withPhotoUploadSlot(async () => {
+      now += 1; peak = Math.max(peak, now);
+      await new Promise((r) => setTimeout(r, 5));
+      now -= 1; done.push(i);
+      return i;
+    }));
+    expect(await Promise.all(jobs)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(peak).toBe(2);
+    expect(done).toHaveLength(6);
+  });
+
+  it('a failed upload frees its slot', async () => {
+    const fail = withPhotoUploadSlot(async () => { throw new Error('tunnel dropped'); });
+    await expect(fail).rejects.toThrow('tunnel dropped');
+    expect(await withPhotoUploadSlot(async () => 'next')).toBe('next');
+  });
+
+  it('prepares one photo at a time, and one failure does not stop the next', async () => {
+    const a = preparePhonePhotoQueued(new Blob([Buffer.from('x')]));
+    const b = preparePhonePhotoQueued(new Blob([Buffer.from('y')]));
+    expect(await a).toBeNull();
+    expect(await b).toBeNull();
   });
 });

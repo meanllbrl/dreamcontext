@@ -13,12 +13,15 @@ import { useI18n } from '../../../context/I18nContext';
  * inside-project rule of `GET /api/agent/file`; a picture that has gone since degrades to its
  * name, never a broken image icon.
  */
-export function StageMediaStrip({ items, onOpenFile }: {
+export function StageMediaStrip({ items, snapshot = false, onOpenFile }: {
   items: ReadonlyArray<{ ref: string; title?: string }>;
+  /** What the stage held as the phone joined: "on the Mac's stage now", not "Super opened…". */
+  snapshot?: boolean;
   onOpenFile?: (path: string) => void;
 }) {
   const { t } = useI18n();
-  const head = items.length === 1 ? t('chat.stageMedia.one') : t('chat.stageMedia.many').replace('{n}', String(items.length));
+  const head = snapshot ? t('chat.stageMedia.snapshot')
+    : items.length === 1 ? t('chat.stageMedia.one') : t('chat.stageMedia.many').replace('{n}', String(items.length));
   return (
     <div className="super-stage-media" role="group" aria-label={head} data-testid="stage-media-strip">
       <div className="super-stage-media-head">

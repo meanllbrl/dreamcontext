@@ -24,7 +24,7 @@ import { useVault } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
-import { PHONE_PHOTOS_PER_MESSAGE, jpegName, preparePhonePhoto } from '../../../lib/phonePhoto';
+import { PHONE_PHOTOS_PER_MESSAGE, jpegName, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
@@ -48,7 +48,7 @@ import {
 } from './chatEntities';
 import {
   addAttachments, dropSentAttachments, foldAttachments, nextAttachmentId, pendingUploads, readScratch, removeAttachment,
-  settleAttachment, subscribeScratch, wasSent, type Attachment,
+  setAttachmentPreview, settleAttachment, subscribeScratch, wasSent, type Attachment,
 } from './composerScratch';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
@@ -243,13 +243,13 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
           {attachments.map((a) => (
             <div
               key={a.id}
-              className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}`}
+              className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}${a.kind === 'image' && a.uploading && !a.url ? ' chat-cmp-photo-pending' : ''}`}
               data-state={a.uploading ? 'uploading' : a.failed ? 'failed' : 'ready'}
             >
-              {(a.kind === 'image' || (a.kind === 'element' && a.url)) ? (
+              {((a.kind === 'image' || a.kind === 'element') && a.url) ? (
                 <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
               ) : (
-                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : '📄'}</span>
+                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : a.kind === 'image' ? '🖼' : '📄'}</span>
               )}
               {/* An attachment says what will happen to it. A picture that can't be sent
                   must never look like one that can — that is the whole bug this row grew
@@ -889,10 +889,12 @@ export function Composer({
     for (const file of files.slice(0, room)) {
       const id = nextAttachmentId();
       const name = jpegName(file.name || 'photo');
-      addAttachments(convId, [{ id, kind: 'image', url: URL.createObjectURL(file), name, uploading: true }]);
-      const job = preparePhonePhoto(file).then((jpeg) => {
+      // No preview from the original (a 24 MP decode per chip): the small JPEG becomes it.
+      addAttachments(convId, [{ id, kind: 'image', name, uploading: true }]);
+      const job = preparePhonePhotoQueued(file).then((jpeg) => {
         if (!jpeg) { settleAttachment(convId, id, null, t('chat.photo.unreadable')); return; }
-        return uploadAgentFile(vault, jpeg, name).then((path) => { settleAttachment(convId, id, path); });
+        setAttachmentPreview(convId, id, URL.createObjectURL(jpeg));
+        return withPhotoUploadSlot(() => uploadAgentFile(vault, jpeg, name)).then((path) => { settleAttachment(convId, id, path); });
       });
       uploadsRef.current.add(job);
       void job.finally(() => uploadsRef.current.delete(job));

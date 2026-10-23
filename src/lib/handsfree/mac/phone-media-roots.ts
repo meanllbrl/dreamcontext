@@ -25,8 +25,8 @@
  */
 
 import { homedir } from 'node:os';
-import { realpath } from 'node:fs/promises';
-import { dirname, sep } from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
+import { dirname, join, sep } from 'node:path';
 import { listVaults } from '../../vaults.js';
 import { resolveLinkedRepos } from '../../linked-repos.js';
 import { listedWorktrees } from '../../super/worktrees.js';
@@ -40,6 +40,9 @@ export interface PhoneMediaRoots {
   auto: readonly string[];
   /** Every registered project's roots (root, worktrees, linked repos and theirs), real paths. */
   owners: readonly Owned[];
+  /** Git could not list some registered repo's worktrees, so an unchosen project's worktree may
+   *  be missing from `owners`: nothing outside the auto roots is offered then (fail closed). */
+  degraded?: boolean;
 }
 
 /** How long one build of the roots is reused. */
@@ -61,32 +64,46 @@ export function isTooBroad(root: string, home: string = homedir()): boolean {
   return isWithin(home, root);
 }
 
-/** A repo's root plus every worktree git lists for it, as real paths. A path that is not a git
- *  repo is just itself. */
-async function repoAndWorktrees(path: string): Promise<string[]> {
+/** A repo's root plus every worktree git lists for it, as real paths. A folder with no `.git`
+ *  is just itself; a repo git cannot list is flagged `failed` (its worktrees are unknown). */
+async function repoAndWorktrees(path: string): Promise<{ paths: string[]; failed: boolean }> {
   const out = new Set<string>();
   const r = await realOf(path);
   if (r) out.add(r);
+  let failed = false;
   try {
-    for (const p of await listedWorktrees(path)) {
-      const rp = await realOf(p);
-      if (rp) out.add(rp);
+    const listed = await listedWorktrees(path);
+    // Only a repo's own top (or one of its worktrees) owns the repo's worktrees: git lists the
+    // ENCLOSING repo's from any subfolder, and a project registered in a subfolder of a monorepo
+    // must not claim the whole repo (transcript-locate.ts buildOwnerCandidates keeps the same rule).
+    if (r && [...listed].some((p) => p === path || p === r)) {
+      for (const p of listed) {
+        const rp = await realOf(p);
+        if (rp) out.add(rp);
+      }
     }
-  } catch { /* not a repo, or git refused: the folder alone */ }
-  return [...out];
+  } catch {
+    // Not a repo: the folder alone. A repo whose listing failed (git missing from PATH, a
+    // "dubious ownership" refusal, a timeout): its worktrees are unknown, so say so.
+    failed = await stat(join(path, '.git')).then(() => true, () => false);
+  }
+  return { paths: [...out], failed };
 }
 
-/** Everything one project owns: its root, its worktrees, its linked repos and their worktrees. */
-async function projectFootprint(projectRoot: string, home?: string): Promise<{ root: string[]; linked: string[] }> {
-  const root = await repoAndWorktrees(projectRoot);
+/** Everything one project owns: its root and worktrees, its linked repos and theirs. */
+async function projectFootprint(projectRoot: string, home?: string): Promise<{ root: string[]; linked: string[]; failed: boolean }> {
+  const own = await repoAndWorktrees(projectRoot);
+  let failed = own.failed;
   const linked: string[] = [];
   let repos: ReturnType<typeof resolveLinkedRepos> = [];
   try { repos = resolveLinkedRepos(projectRoot, home); } catch { /* unreadable config: none */ }
   for (const repo of repos) {
     if (!repo.present || !repo.path) continue;
-    linked.push(...await repoAndWorktrees(repo.path));
+    const r = await repoAndWorktrees(repo.path);
+    linked.push(...r.paths);
+    failed ||= r.failed;
   }
-  return { root, linked };
+  return { root: own.paths, linked, failed };
 }
 
 /**
@@ -102,23 +119,37 @@ export async function buildPhoneMediaRoots(
   const vaults = opts.vaults ?? listVaults(opts.home);
   const requestReal = await realOf(projectRoot);
 
-  const owners = new Map<string, boolean>(); // real path → chosen
-  const own = (p: string, isChosen: boolean): void => {
-    // A path both a chosen and an unchosen project claim (a shared linked repo) is the chosen one's.
-    owners.set(p, (owners.get(p) ?? false) || isChosen);
-  };
-  for (const v of vaults) {
-    const isChosen = chosen.includes(v.name);
-    const fp = await projectFootprint(v.path, opts.home);
-    for (const p of [...fp.root, ...fp.linked]) own(p, isChosen);
+  // A PROJECT's own root and worktrees belong to it, whoever else links the folder; only a
+  // linked repo that a chosen and an unchosen project both link is the chosen one's.
+  const projects = new Map<string, boolean>(); // real path → chosen
+  const linked = new Map<string, boolean>();
+  const claim = (m: Map<string, boolean>, p: string, isChosen: boolean): void => { m.set(p, (m.get(p) ?? false) || isChosen); };
+  let degraded = false;
+  // Every project at once: one slow volume must not serialise the rest.
+  const prints = await Promise.all(vaults.map(async (v) => ({ isChosen: chosen.includes(v.name), fp: await projectFootprint(v.path, opts.home) })));
+  for (const { isChosen, fp } of prints) {
+    for (const p of fp.root) claim(projects, p, isChosen);
+    for (const p of fp.linked) claim(linked, p, isChosen);
+    degraded ||= fp.failed;
   }
 
   // The request project's own footprint, even when it is not (or not yet) in the registry.
   const mine = await projectFootprint(projectRoot, opts.home);
-  for (const p of [...mine.root, ...mine.linked]) own(p, true);
-  const auto = [...mine.root.filter((p) => p !== requestReal), ...mine.linked].filter((p) => !isTooBroad(p, home));
+  for (const p of mine.root) claim(projects, p, true);
+  for (const p of mine.linked) claim(linked, p, true);
+  degraded ||= mine.failed;
 
-  return { auto: [...new Set(auto)], owners: [...owners].map(([path, isChosen]) => ({ path, chosen: isChosen })) };
+  const owners = new Map<string, boolean>(linked);
+  for (const [p, isChosen] of projects) owners.set(p, isChosen);
+  // A linked root that IS an unchosen project's root never auto-serves.
+  const auto = [...mine.root.filter((p) => p !== requestReal), ...mine.linked]
+    .filter((p) => !isTooBroad(p, home) && owners.get(p) !== false);
+
+  return {
+    auto: [...new Set(auto)],
+    owners: [...owners].map(([path, isChosen]) => ({ path, chosen: isChosen })),
+    ...(degraded ? { degraded: true } : {}),
+  };
 }
 
 /**
@@ -131,7 +162,9 @@ export function phoneMediaVerdict(realFile: string, roots: PhoneMediaRoots): Pho
     if (isWithin(realFile, o.path) && (!best || o.path.length > best.path.length)) best = o;
   }
   if (best && !best.chosen) return 'other';
-  return roots.auto.some((r) => isWithin(realFile, r)) ? 'auto' : 'ask';
+  if (roots.auto.some((r) => isWithin(realFile, r))) return 'auto';
+  // Some project's worktrees could not be listed: an unknown file might be inside one.
+  return roots.degraded ? 'other' : 'ask';
 }
 
 // ─── The 30 s single-flight cache ───────────────────────────────────────────

@@ -81,8 +81,12 @@ export interface ChatUserItem {
    *  matches a transcript row and the uuid backfill skips it. */
   superEvent?: string;
   /** Pictures the Super Agent opened on the Mac's stage, as a phone mirror sees them (it has no
-   *  stage): drawn as a strip, never a bubble. Live only, like `superEvent`; `text` is empty. */
+   *  stage): drawn as a strip, never a bubble. Live only, like `superEvent`; `text` is empty.
+   *  NOT a message anyone sent: Retry never resends it, rewind never anchors on it, and its
+   *  arrival never counts as the owner moving on or as a send to scroll to. `snapshot`: what the
+   *  stage held as the phone joined, not a new open. */
   stageMedia?: Array<{ ref: string; title?: string }>;
+  stageSnapshot?: true;
 }
 export interface ChatTextItem { kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number }
 /** One Assistant text block as the notch should show it (`ChatSession.onPresent`). A block with
@@ -2165,7 +2169,7 @@ export function createChatSession(
       const fresh = ev.snapshot ? ev.items.filter((m) => !shown.has(m.ref)) : ev.items;
       if (!fresh.length) return;
       applyAndNotify(() => {
-        const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: '', ts: Date.now(), stageMedia: fresh };
+        const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: '', ts: Date.now(), stageMedia: fresh, ...(ev.snapshot ? { stageSnapshot: true as const } : {}) };
         conv = { ...conv, items: [...conv.items, item] };
       });
       return;
@@ -2771,7 +2775,7 @@ export function createChatSession(
     let userItem: ChatUserItem | undefined;
     for (let i = idx - 1; i >= 0; i--) {
       const it = all[i];
-      if (it.kind === 'user') { userItem = it; break; }
+      if (it.kind === 'user' && !it.stageMedia) { userItem = it; break; }
     }
     if (!userItem) return; // no preceding user message (e.g. the very first turn) — no-op
     await rewind(userItem.id, true);

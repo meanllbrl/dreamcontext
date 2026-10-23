@@ -146,6 +146,20 @@ export function settleAttachment(convId: string, id: string, path: string | null
   });
 }
 
+/**
+ * Give an image chip its preview once there is one worth showing (the hands-free phone shows
+ * the small re-encoded JPEG, never the 24 MP original — decoding six of those for 44 px chips is
+ * what gets a phone tab evicted). Revokes the URL it replaces. A no-op for a chip that has gone,
+ * and the URL is revoked then, since nothing will.
+ */
+export function setAttachmentPreview(convId: string, id: string, url: string): void {
+  const cur = readScratch(convId);
+  const found = cur.attachments.find((a) => a.id === id);
+  if (!found) { try { URL.revokeObjectURL(url); } catch { /* no DOM */ } return; }
+  revoke(found);
+  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a.id === id ? { ...a, url } : a)) });
+}
+
 /** Drop one chip (its ✕), revoking its preview. */
 export function removeAttachment(convId: string, id: string): void {
   const cur = readScratch(convId);

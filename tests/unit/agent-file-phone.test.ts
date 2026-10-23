@@ -12,9 +12,9 @@
  *     what it points at; a raster image must say so in its bytes;
  *   • desktop grants never count on the phone, and phone grants end with the run.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -31,9 +31,14 @@ const HOME = vi.hoisted(() => {
 
 // The device a request carries: a test header instead of a signed cookie (the auth store's own
 // tests cover the cookie). Everything else in the module is real.
+const signedOut = vi.hoisted(() => new Set<string>());
 vi.mock('../../src/server/handsfree-auth.js', async (orig) => {
   const real = await orig<typeof import('../../src/server/handsfree-auth.js')>();
-  return { ...real, deviceIdHash: (req: IncomingMessage) => (req.headers['x-test-device'] as string | undefined) ?? null };
+  return {
+    ...real,
+    deviceIdHash: (req: IncomingMessage) => (req.headers['x-test-device'] as string | undefined) ?? null,
+    macHandsfreeAuth: () => ({ store: { isValidDeviceHash: (h: string) => !signedOut.has(h) } }),
+  };
 });
 
 import { handleAgentFile, handleAgentPhoneGrant } from '../../src/server/routes/agent-chat.js';
@@ -52,7 +57,7 @@ function res(): { res: ServerResponse; status: () => number; body: () => Record<
     setHeader() {},
     write() { return true; },
     end(d?: string | Buffer) { if (typeof d === 'string') { try { body = JSON.parse(d); } catch { body = d; } } },
-    on() { return r; }, once() { return r; }, emit() { return false; }, removeListener() { return r; },
+    on() { return r; }, once() { return r; }, emit() { return false; }, removeListener() { return r; }, destroy() { return r; },
   } as unknown as ServerResponse;
   return { res: r, status: () => code, body: () => body as Record<string, unknown>, type: () => type };
 }
@@ -226,8 +231,18 @@ describe('the phone, anywhere else', () => {
     expect((await file(join(elsewhere, 'free.png'))).body().error).toBe('needs_phone_grant');
   });
 
-  it('a missing file is not found, and cannot be granted', async () => {
+  it('a missing file is not found — never a "Show" that can only answer 404 — and cannot be granted', async () => {
+    expect((await file(join(elsewhere, 'gone.png'))).status()).toBe(404);
+    expect((await file(join(codeWorktree, 'tmp', 'gone.png'))).status()).toBe(404);
     expect((await grant(join(elsewhere, 'gone.png'))).status()).toBe(404);
+  });
+
+  it('a device signed out while its grant was on the way gets no grant', async () => {
+    signedOut.add('dev-gone');
+    try {
+      expect((await grant(join(elsewhere, 'free.png'), 'dev-gone')).status()).toBe(409);
+      expect((await file(join(elsewhere, 'free.png'), 'dev-gone')).body().error).toBe('needs_phone_grant');
+    } finally { signedOut.delete('dev-gone'); }
   });
 });
 
@@ -246,6 +261,58 @@ describe('the phone, inside a project not chosen at start', () => {
   it('a project chosen at start is not refused', async () => {
     setMacExposedVaults(['brain', 'other']);
     expect((await file(join(otherProject, 'private.png'))).body().error).toBe('needs_phone_grant');
+  });
+});
+
+describe('the boundary holds where git and links blur it (end review, security)', () => {
+  const vaultsFile = (): string => join(HOME, '.dreamcontext', 'vaults.json');
+  let saved = '';
+  beforeEach(() => { saved = readFileSync(vaultsFile(), 'utf-8'); });
+  afterEach(() => { writeFileSync(vaultsFile(), saved); setMacExposedVaults(['brain']); });
+  const register = (extra: Array<{ name: string; path: string }>): void => {
+    const v = JSON.parse(saved) as { vaults: Array<{ name: string; path: string }> };
+    writeFileSync(vaultsFile(), JSON.stringify({ vaults: [...v.vaults, ...extra] }));
+    setMacExposedVaults(['brain']); // a fresh run: the roots are rebuilt
+  };
+
+  it('a worktree of an unchosen project is refused, not offered', async () => {
+    const repo = join(root, 'garden-app');
+    mkdirSync(repo, { recursive: true });
+    git(repo, 'init', '-q');
+    git(repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    const wt = join(root, 'worktrees', 'garden-app-child');
+    git(repo, 'worktree', 'add', '-q', '--detach', wt);
+    writeFileSync(join(wt, 'shot.png'), PNG);
+    register([{ name: 'garden-app', path: repo }]);
+    expect((await file(join(wt, 'shot.png'))).body().error).toBe('other_project');
+    expect((await grant(join(wt, 'shot.png'))).body().error).toBe('other_project');
+  });
+
+  it('an unchosen project whose root this project also links is refused, never auto-shown', async () => {
+    const shared = join(root, 'shared');
+    mkdirSync(join(shared, '_dream_context'), { recursive: true });
+    writeFileSync(join(shared, 'pic.png'), PNG);
+    const url = 'https://github.com/acme/shared.git';
+    const cfgPath = join(contextRoot, 'state', '.config.json');
+    const cfg = readFileSync(cfgPath, 'utf-8');
+    writeFileSync(cfgPath, JSON.stringify({ linkedRepos: [{ name: 'code', gitRemoteUrl: 'https://github.com/acme/code.git' }, { name: 'shared', gitRemoteUrl: url }] }));
+    setLinkedRepoPath(canonicalRemote(url) ?? url, shared, HOME);
+    try {
+      register([{ name: 'shared', path: shared }]);
+      expect((await file(join(shared, 'pic.png'))).body().error).toBe('other_project');
+    } finally {
+      writeFileSync(cfgPath, cfg);
+    }
+  });
+
+  it('when git cannot list a registered repo\'s worktrees, nothing outside the auto roots is offered', async () => {
+    const broken = join(root, 'broken');
+    mkdirSync(join(broken, '_dream_context'), { recursive: true });
+    writeFileSync(join(broken, '.git'), 'gitdir: /nonexistent/elsewhere\n');
+    register([{ name: 'broken', path: broken }]);
+    expect((await file(join(elsewhere, 'free.png'))).body().error).toBe('other_project');
+    // The project's own linked repo still shows: its roots were listed.
+    expect((await file(join(codeRepo, 'tmp', 'shot.png'))).status()).toBe(200);
   });
 });
 

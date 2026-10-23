@@ -17,7 +17,7 @@ import { readLoopbackGrants, setLoopbackGrant } from '../../lib/loopback-grants.
 import { serveMedia } from '../media.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { authFor, deviceIdHash, macHandsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
-import { isMacExposed, isMacOriginAllowed, isPhoneSocket, macExposedVaults, phoneTranscriptRefused } from '../phone-origin.js';
+import { isMacExposed, isMacOriginAllowed, isPhoneSocket, macExposedEpoch, macExposedVaults, phoneTranscriptRefused } from '../phone-origin.js';
 import { phoneMediaRoots, phoneMediaVerdict } from '../../lib/handsfree/mac/phone-media-roots.js';
 import { addPhoneFileGrant, hasPhoneFileGrant } from '../phone-file-grants.js';
 import { sniffImageType } from '../../lib/image-sniff.js';
@@ -4637,20 +4637,27 @@ async function phoneOutsideMedia(
 ): Promise<PhoneOutside> {
   let realAbs = abs;
   let missing = false;
-  try { realAbs = realpathSync.native(abs); } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return { deny: 'phone_media_only', abs };
-    missing = true;
-  }
+  // Any path that cannot be resolved (missing, not a directory, unreadable) answers the same,
+  // so the phone cannot tell those apart by probing.
+  try { realAbs = realpathSync.native(abs); } catch { missing = true; }
   // The boundary first: nothing below may serve a file inside an unchosen project.
   const roots = await phoneMediaRoots(projectRootOf(contextRoot), macExposedVaults());
   const verdict = phoneMediaVerdict(realAbs, roots);
   if (verdict === 'other') return { deny: 'other_project', abs };
   const type = AGENT_FILE_MEDIA_CONTENT_TYPE[extname(realAbs).toLowerCase()];
   if (!type) return { deny: 'phone_media_only', abs };
-  if (missing) return verdict === 'auto' || !opts.granted ? { deny: 'not_found', abs } : { deny: 'needs_phone_grant', abs: realAbs };
+  // The card names the path as REQUESTED (resolved, not followed): where a symlink points is not
+  // the phone's to learn before it is allowed. The grant route resolves it again.
+  // A file that is not there is not found, whatever its verdict: a "Show" that can only answer
+  // 404 is a button that does nothing (a merged child's worktree, a rebooted /tmp).
+  if (missing) return { deny: 'not_found', abs };
   if (verdict === 'ask' && opts.granted && !hasPhoneFileGrant(authFor(req) ? deviceIdHash(req) : null, realAbs)) {
-    return { deny: 'needs_phone_grant', abs: realAbs };
+    return { deny: 'needs_phone_grant', abs };
   }
+  // A regular file only: opening a FIFO named `x.png` would block the event loop.
+  let regular = false;
+  try { regular = statSync(realAbs).isFile(); } catch { /* raced away */ }
+  if (!regular) return { deny: 'not_found', abs };
   if (type.startsWith('image/')) {
     let head: Buffer | null = null;
     try {
@@ -4692,6 +4699,9 @@ export async function handleAgentPhoneGrant(
   if (!isPhoneSocket(req)) { sendError(res, 403, 'phone_only', 'Only the hands-free phone grants itself a file.'); return; }
   const device = authFor(req) ? deviceIdHash(req) : null;
   if (!device) { sendError(res, 401, 'unauthenticated', 'Sign in first.'); return; }
+  // The run and the device this grant is for, taken BEFORE the awaits: a Mac-mode restart or a
+  // revoke landing meanwhile must not leave a grant behind in the next run.
+  const epoch = macExposedEpoch();
   const body = await parseJsonBody(req);
   const target = typeof body?.path === 'string' ? body.path : '';
   if (!target.startsWith('/') || target.length > 4096 || target.includes('\0')) {
@@ -4707,6 +4717,9 @@ export async function handleAgentPhoneGrant(
   let isFile = false;
   try { isFile = statSync(v.abs).isFile(); } catch { /* gone */ }
   if (!isFile) { sendError(res, 404, 'not_found', `File not found: ${target}`); return; }
+  let stillSignedIn = false;
+  try { stillSignedIn = macHandsfreeAuth().store.isValidDeviceHash(device); } catch { /* unknown: refuse */ }
+  if (epoch !== macExposedEpoch() || !stillSignedIn) { sendError(res, 409, 'stale', 'Hands-free changed meanwhile; try again.'); return; }
   addPhoneFileGrant(device, v.abs);
   sendJson(res, 200, { granted: true, path: v.abs });
 }

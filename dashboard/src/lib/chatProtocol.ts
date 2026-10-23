@@ -1218,7 +1218,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     const items = Array.isArray(obj.items)
       ? (obj.items as unknown[]).filter(isRecord).slice(0, 6)
         .map((i) => ({ ref: str(i.ref) ?? '', title: str(i.title) }))
-        .filter((i) => i.ref && !i.ref.startsWith('/') && !i.ref.split('/').includes('..'))
+        .filter((i, n, all) => i.ref && !i.ref.startsWith('/') && !i.ref.split('/').includes('..') && all.findIndex((j) => j.ref === i.ref) === n)
         .map((i) => (i.title ? { ref: i.ref, title: i.title } : { ref: i.ref }))
       : [];
     return items.length ? { kind: 'stage-media', items, snapshot: obj.snapshot === true } : ignored('_meta:stage_media');

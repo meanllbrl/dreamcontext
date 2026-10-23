@@ -2476,7 +2476,7 @@ export { revealPath } from '../../../lib/reveal';
  */
 /** Why an inline picture is a card instead: the desktop's consent (`grant`), the phone's one
  *  tap (`phone-grant`), never on this phone (`other-project`, `refused`), or just unreadable. */
-type FallbackReason = 'grant' | 'open' | 'phone-grant' | 'other-project' | 'refused';
+type FallbackReason = 'grant' | 'open' | 'phone-grant' | 'other-project' | 'refused' | 'gone';
 
 export function useInlineMedia(
   ref: RefObject<HTMLElement | null>,
@@ -2561,6 +2561,7 @@ export function useInlineMedia(
       const standingNote = reason === 'grant' ? 'outside the project'
         : reason === 'phone-grant' ? sayRef.current('chat.media.outside', 'outside the project')
           : reason === 'other-project' ? sayRef.current('chat.media.otherProject', 'in a project this phone can\u2019t open')
+            : reason === 'gone' && phone ? sayRef.current('chat.media.gone', 'isn\u2019t there any more')
             : reason === 'refused' || phone ? sayRef.current('chat.media.cantShow', 'can\u2019t be shown on the phone')
               : null;
       setNote(standingNote);
@@ -2684,6 +2685,7 @@ export function useInlineMedia(
         // what "Allow access" has to grant — see `buildFallback`.
         void fetch(rawUrl(vault, path), { headers: { Range: 'bytes=0-0' } })
           .then(async (r): Promise<{ reason: FallbackReason; grantPath: string }> => {
+            if (r.status === 404) return { reason: 'gone', grantPath: path };
             if (r.status !== 403) return { reason: 'open', grantPath: path };
             const body = await r.json().catch(() => null) as { path?: unknown; error?: unknown } | null;
             const grantPath = typeof body?.path === 'string' ? body.path : path;

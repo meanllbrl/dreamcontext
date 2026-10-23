@@ -78,11 +78,10 @@ export function macProbeNonce(): string | null {
 // ─── The exposed projects (chosen at start) ─────────────────────────────────
 
 let exposedVaults: readonly string[] = [];
+let exposedEpoch = 0;
 
 /** Set per start (Mac session): the registered names of the projects the owner chose. The phone
  *  sees and reaches only these; an empty list (Mac mode off) exposes nothing. */
-let exposedEpoch = 0;
-
 export function setMacExposedVaults(names: readonly string[]): void {
   exposedVaults = Object.freeze([...new Set(names)]);
   // A start re-reads every project's worktrees (one may have been added since the last run).
