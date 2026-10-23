@@ -95,9 +95,15 @@ dreamcontext tasks list --status in_review
    # observed work, no ask:  --basis change --quote "<what changed>"   |   a bookmark: --basis bookmark --quote "<it>"
    ```
 3. **A new parent task**: ONLY for an owner ask or a defect that has no home on the board (`--basis ask --quote …` or `--basis defect --evidence "<the failing output, verbatim>"`). The CLI looks the quote up in the owner's typed turns (the evidence in tool results) and refuses anything else at the top level; its refusal names the `--parent` and criterion escapes.
-4. **Not placed**: only with a reason (killed by a later session, declined, out of scope, cap), in the report.
+4. **Not placed**: only with a reason (killed by a later session, declined, out of scope, cap, already a criterion), in the report.
 
-Placing an ask is NOT a status change: "the latest session wins" and "never bump a status from an older transcript" govern status only. A task updated after the session, or sitting `in_review` at the owner's gate, still takes the ask when it is not already on it (read its criteria and notes first): add the criterion, leave the status, and name the task in the report as needing the owner's eyes again. The criterion is the owner's ask in their own words, never a different problem you found on the way (that one is placed on its own).
+**What counts as an ask.** Every typed turn that asks for a change or a check: "fix X", "X should Y", "is X solved? check it", "why doesn't the agent do Y?". A question about a defect is an ask to fix it. "devam et", "ok" and a bare "merge it" are not.
+
+**Done in the session is still placed.** An ask the same session already shipped is recorded, never skipped: on its task as a ticked criterion in the owner's terms (`tasks insert <slug> acceptance_criteria "- [x] <the ask> (done in session <id>, <commit>)"`), or, with no home on the board, a new task filed done (`tasks create "<sentence>" --status completed --by sleep --basis ask --quote "<their words>" -w "…"`). sleep-state's changelog entry is in addition, never instead.
+
+**"Already on the board" means a criterion.** Skip an ask only when the same work already stands as an acceptance criterion (ticked or not) on its task: read that task's `## Acceptance Criteria` and quote the line in the report. A mention in the title, Why, Notes, Constraints, Technical Details or changelog is NOT placement, and neither is a `tasks log` you write now (history, not the board): add the criterion. The owner saying a ticked criterion fails in use ("why does it still ask me in plain text?") is a new criterion in their words, not a duplicate.
+
+Placing an ask is NOT a status change: "the latest session wins" and "never bump a status from an older transcript" govern status only. A task updated after the session, or sitting `in_review` at the owner's gate, still takes the ask when it is not already one of its criteria: add the criterion, leave the status, and name the task in the report as needing the owner's eyes again. The criterion is the owner's ask in their own words, never a different problem you found on the way (that one is placed on its own).
 
 **Waves.** A parent with wave sub-tasks (`dreamcontext tasks list --parent <slug> --json`: `wave` is set) takes its progress on the OPEN wave: log and tick there. Work inside the plan never gets a new sub-task.
 
@@ -130,7 +136,7 @@ A new task must clear **every** line:
    dreamcontext tasks declined                              # ideas a human dropped that never became tasks
    ```
    A tombstoned slug: log on the task that absorbed it, **never re-file it**. A DECLINED topic: do not re-file; if you believe the decision changed, say so in your report (only an awake `dreamcontext tasks undecline <key>` lifts it).
-4. **It is not a one-line observation** (→ `dreamcontext memory remember` or a bookmark) **and not already-shipped work** (→ a changelog entry).
+4. **It is not a one-line observation** (→ `dreamcontext memory remember` or a bookmark) **and not already-shipped work nobody asked for** (→ a changelog entry). An owner ask that shipped is still placed, as done (step 2).
 
 **What the CLI refuses on its own — read the message, it names the rule:**
 
@@ -298,7 +304,7 @@ One line per field; write `none` rather than dropping a field.
 - Updated: <slug> (in_progress → completed, "<done, validated>"), <slug> (→ in_review, "<what to verify>"), <slug> (logged)
 - Folded in (no new task): <existing-slug>: broadened scope + added <n> stories/criteria for <smaller-piece>
 - Filed: <k>/<cap>: read from `dreamcontext sleep config`
-- Owner asks: <N> → criterion <a> · subtask <b> · task <c> · not placed <d> (each not-placed ask + why)
+- Owner asks: <N> → criterion <a> · subtask <b> · task <c> · not placed <d> (each not-placed ask + why; "already a criterion" quotes that criterion and its task)
 - Rules learned: R<n> "<title>" (rests on obj_…) | merged obj_… into R<n> | unlearned: obj_… (why) | none
 - Created: <slug> (status, attached to vX.Y.Z): genuinely separate concern
 - Candidates NOT filed (cap): <what it was + the evidence> | none
@@ -337,3 +343,4 @@ Dropped-but-load-bearing self-check: <none | every signal you saw but did NOT fo
 11. **Latest session wins** (step 1).
 12. **Lands in THIS project**, or it gets no task here.
 13. **Direct evidence files; discussion defers** as a `task-candidate:<key>` flag.
+14. **Every owner ask is on the board when you finish**: shipped in the session → a ticked criterion or a completed task; "already there" only when a criterion says it.
