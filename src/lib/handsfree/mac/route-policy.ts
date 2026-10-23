@@ -122,6 +122,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'PATCH /api/tasks/:slug': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/changelog': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/assign-agent': allow(PROJECT_WRITE),
+  'POST /api/tasks/:slug/objection': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/insert': allow(PROJECT_WRITE),
 
   // Sleep

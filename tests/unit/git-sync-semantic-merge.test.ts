@@ -12,6 +12,7 @@ import {
   mergePeopleJson,
   mergeTaxonomyJson,
   mergeTasksMapJson,
+  mergeTaskObjectionsJson,
   mergeTaskMd,
   mergeMarkdownDoc,
   mergeWhiteboardMd,
@@ -570,5 +571,34 @@ describe('git-sync/semantic-merge — whiteboard-md', () => {
     expect(r.deferredToAgent).toEqual([{ path: 'whiteboards/c/c.excalidraw.md', class: 'whiteboard-md' }]);
     const merged = parseWhiteboard(readFileSync(join(cwd, 'whiteboards/b/b.excalidraw.md'), 'utf-8'));
     expect(merged.elements.map((e) => [e.id, e.version])).toEqual([['a', 2], ['n', 1]]);
+  });
+});
+
+describe('git-sync/semantic-merge — mergeTaskObjectionsJson (state/.task-objections.json)', () => {
+  const rec = (id: string, over: Record<string, unknown> = {}) => ({
+    id, task: 't', as: 'not-a-task', target: null, note: 'n', at: `2026-10-23T10:00:0${id.slice(-1)}Z`,
+    steps: [], error: null, applied: null, ...over,
+  });
+
+  it('classifies the ledger', () => {
+    expect(classifyPath('_dream_context/state/.task-objections.json')).toBe('task-objections-json');
+  });
+
+  it('unions by id; the applied side wins, steps union, error clears once applied', () => {
+    const ours = JSON.stringify([rec('obj_1', { steps: ['decline'], error: 'boom' }), rec('obj_2')]);
+    const theirs = JSON.stringify([
+      rec('obj_1', { steps: ['decline', 'log', 'cancel'], applied: { action: 'not-a-task', at: '2026-10-23T11:00:00Z' } }),
+      rec('obj_3'),
+    ]);
+    const merged = JSON.parse(mergeTaskObjectionsJson('[]', ours, theirs).merged);
+    expect(merged.map((r: { id: string }) => r.id)).toEqual(['obj_1', 'obj_2', 'obj_3']);
+    expect(merged[0]).toMatchObject({ steps: ['decline', 'log', 'cancel'], error: null, applied: { at: '2026-10-23T11:00:00Z' } });
+  });
+
+  it('two applied sides: the later applied.at wins', () => {
+    const a = JSON.stringify([rec('obj_1', { applied: { action: 'x', at: '2026-10-23T11:00:00Z' }, note: 'early' })]);
+    const b = JSON.stringify([rec('obj_1', { applied: { action: 'x', at: '2026-10-23T12:00:00Z' }, note: 'late' })]);
+    expect(JSON.parse(mergeTaskObjectionsJson('[]', a, b).merged)[0].note).toBe('late');
+    expect(JSON.parse(mergeTaskObjectionsJson('[]', b, a).merged)[0].note).toBe('late');
   });
 });

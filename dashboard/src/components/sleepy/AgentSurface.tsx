@@ -2047,7 +2047,7 @@ export function AgentSurface() {
       // `dreamcontext tasks ready`). Fails OPEN on a failed request: the check is a guard on
       // the plan's completeness, and an unreachable guard must not strand a finished plan.
       try {
-        const r = await scopedApi.get<{ ready: boolean; gaps: Array<{ field: string; problem: string }> }>(
+        const r = await scopedApi.get<{ ready: boolean; gaps: Array<{ field: string; problem: string }>; notes?: string[] }>(
           `/tasks/${encodeURIComponent(taskSlug)}/readiness`,
         );
         if (!r.ready) {
@@ -2063,8 +2063,13 @@ export function AgentSurface() {
             cancelLabel: 'Close',
           });
           if (askPlanner) {
+            // Waves are sub-tasks: a plan of two or more waves opens one per wave while it is
+            // being fixed anyway (the readiness `notes` say when none exist yet).
+            const waveNote = (r.notes ?? []).length > 0
+              ? `\n\nAlso: ${(r.notes ?? []).join(' ')} Each wave is a sub-task carrying its own criteria and files, and the WAVE MAP names its slug.`
+              : '';
             postToSession(cs, `The "Go to development" hand-off for \`${taskSlug}\` was refused — the task is missing:\n\n${gaps}\n\n`
-              + `Fill each into the task with \`dreamcontext tasks insert ${taskSlug} <section> "…"\`, confirm \`dreamcontext tasks ready ${taskSlug}\` passes, then offer the develop button again.`);
+              + `Fill each into the task with \`dreamcontext tasks insert ${taskSlug} <section> "…"\`, confirm \`dreamcontext tasks ready ${taskSlug}\` passes, then offer the develop button again.${waveNote}`);
           }
           return;
         }

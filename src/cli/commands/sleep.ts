@@ -55,6 +55,8 @@ import {
   CURATOR_TASK_SLUG,
 } from '../../lib/sleep-flags.js';
 import { loadStatuses } from '../../lib/overrides.js';
+import { RULES_REL_PATH, readRules, unlearnedIds } from '../../lib/task-filing-rules.js';
+import { appliedObjectionIds, readObjectionsStrict, type ObjectionRecord } from '../../lib/task-objection.js';
 import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-log.js';
 import { scanDigests, planDigestGc, runDigestGc } from '../../lib/session-digest.js';
 import { collectBrainDirty, renderBrainDirtyWarning } from '../../lib/brain-dirty.js';
@@ -284,6 +286,60 @@ export function migrateKnowledgeAccessKey(
 }
 
 // ─── Command Registration ──────────────────────────────────────────────────
+
+/**
+ * `--asks criterion=a,subtask=b,task=c,unplaced=d` → the line `sleep done` prints and appends to
+ * the cycle's history summary. Every key optional (0), every value a non-negative integer.
+ */
+export function parseAsks(raw: string): { ok: true; counts: Record<'criterion' | 'subtask' | 'task' | 'unplaced', number>; line: string } | { ok: false } {
+  const counts = { criterion: 0, subtask: 0, task: 0, unplaced: 0 };
+  const parts = raw.split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return { ok: false };
+  for (const part of parts) {
+    const m = /^(criterion|subtask|task|unplaced)\s*=\s*(\d+)$/.exec(part);
+    if (!m) return { ok: false };
+    counts[m[1] as keyof typeof counts] = Number(m[2]);
+  }
+  const n = counts.criterion + counts.subtask + counts.task + counts.unplaced;
+  return {
+    ok: true,
+    counts,
+    line: `Owner asks: ${n} → criterion ${counts.criterion} · subtask ${counts.subtask} · new task ${counts.task} · not placed ${counts.unplaced}`,
+  };
+}
+
+/** The filing-rules part of the `sleep start` brief. Lines starting with `!` are warnings. */
+export function filingRulesBrief(root: string): { lines: string[]; json: Record<string, unknown> } {
+  const lines: string[] = [];
+  const read = readRules(root);
+  let records: ObjectionRecord[] = [];
+  let ledgerError: string | null = null;
+  try {
+    records = readObjectionsStrict(root);
+  } catch (err) {
+    ledgerError = (err as Error).message;
+  }
+  if (read.state === 'unreadable') {
+    lines.push(`!Task filing rules could NOT be read: ${read.reason}. File as if unsure, and say so in the report.`);
+  } else if (read.doc.rules.length > 0) {
+    lines.push(`Task filing rules (${RULES_REL_PATH}):`);
+    for (const r of read.doc.rules) lines.push(`  ${r.id} · ${r.title} — Don't: ${r.dont} Do: ${r.do}`);
+  }
+  if (ledgerError) lines.push(`!Objections could NOT be read: ${ledgerError}`);
+  const unlearned = read.state === 'unreadable' ? [] : unlearnedIds(read.doc, appliedObjectionIds(records));
+  if (unlearned.length > 0) {
+    lines.push(`Objections to learn from (${unlearned.length}): dreamcontext tasks objections --unlearned`);
+  }
+  return {
+    lines,
+    json: {
+      state: read.state,
+      ...(read.state === 'unreadable' ? { reason: read.reason } : { rules: read.doc.rules }),
+      ...(ledgerError ? { objectionsError: ledgerError } : {}),
+      unlearned,
+    },
+  };
+}
 
 export function registerSleepCommand(program: Command): void {
   const sleep = program
@@ -572,6 +628,15 @@ export function registerSleepCommand(program: Command): void {
           }
         }
 
+        // The task-filing rules learned from the owner's objections, and the objections no
+        // rule rests on yet: sleep-tasks reads the first before it files anything and distils
+        // the second into rules. An unreadable rules file or ledger is SAID, never read as
+        // "no rules".
+        const filingRules = filingRulesBrief(root);
+        for (const line of filingRules.lines) {
+          if (line.startsWith('!')) say.warn(line.slice(1)); else say.info(line);
+        }
+
         if (asJson) {
           console.log(JSON.stringify({
             epoch: state.sleep_started_at,
@@ -581,6 +646,7 @@ export function registerSleepCommand(program: Command): void {
             cappedByCatchup: decision.cappedByCatchup,
             migrations: codeNotices,
             automationOutputs,
+            filingRules: filingRules.json,
           }, null, 2));
         }
       } finally {
@@ -609,11 +675,27 @@ export function registerSleepCommand(program: Command): void {
       '--ack-private-derivation',
       'Acknowledge that private automation output was distilled into synced knowledge this cycle (required to proceed while that disclosure is pending)',
     )
-    .action(async (summaryParts: string[], opts: { flag: string[]; ackPrivateDerivation?: boolean }) => {
-      const summary = summaryParts.join(' ');
+    .option(
+      '--asks <counts>',
+      'Where the owner\'s asks landed this cycle (sleep-tasks report): criterion=a,subtask=b,task=c,unplaced=d',
+    )
+    .action(async (summaryParts: string[], opts: { flag: string[]; ackPrivateDerivation?: boolean; asks?: string }) => {
+      let summary = summaryParts.join(' ');
       if (!summary.trim()) {
         error('Summary is required.');
         return;
+      }
+      // Parsed BEFORE any write, and never a refusal: a malformed value is kept raw with a
+      // warning, because refusing this late would leave the cycle half closed.
+      if (opts.asks !== undefined) {
+        const asks = parseAsks(opts.asks);
+        if (asks.ok) {
+          info(asks.line);
+          summary = `${summary.trim()} · ${asks.line}`;
+        } else {
+          warn(`--asks "${opts.asks}" is not criterion=a,subtask=b,task=c,unplaced=d; kept as written.`);
+          summary = `${summary.trim()} · Owner asks (unparsed): ${opts.asks}`;
+        }
       }
 
       const root = ensureContextRoot();
@@ -780,6 +862,11 @@ export function registerSleepCommand(program: Command): void {
             priority: 'medium',
             status: 'todo',
             tags: ['topic:taxonomy'],
+            // Sleep opened it, on a measured count rather than an owner ask.
+            local_fields: {
+              filed_by: 'sleep',
+              filing_basis: { kind: 'change', quote: `${buckets.orphan.length} orphan tags`, at: today_, verified: true },
+            },
             variant: 'cli',
           });
           info(`Curator task created: ${plan.slug} (${buckets.orphan.length} orphan tags).`);

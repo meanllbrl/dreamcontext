@@ -44,6 +44,40 @@ describe('agents/sleep-tasks.md — the protocol the bar cannot enforce', () => 
   it('tells the specialist how a review-band refusal is lifted', () => {
     expect(content).toContain('--neighbor-checked');
   });
+
+  it.each([
+    ['the model', 'A **sub-task** is a step of a parent'],
+    ['the placement order', 'Every owner ask lands somewhere — in this order.'],
+    ['the sub-task create', '--parent <parent> --basis ask --quote'],
+    ['the top-level rule', 'ONLY for an owner ask or a defect'],
+    ['progress on the open wave', 'takes its progress on the OPEN wave'],
+    ['the roll-up', '**Roll-up.**'],
+    ['learning from objections', 'tasks objections --unlearned'],
+    ['the only rule writers', 'tasks rules set --title'],
+    ['the owner-asks report line', '- Owner asks: <N> → criterion <a> · subtask <b> · task <c> · not placed <d>'],
+    ['placing is not a status change', 'Placing an ask is NOT a status change'],
+  ])('describes %s', (_what, marker) => {
+    expect(content).toContain(marker);
+  });
+
+  it('no longer tells the specialist to fold in when in doubt', () => {
+    expect(content).not.toMatch(/when in doubt, fold in/i);
+  });
+});
+
+describe('skill/references — sub-tasks, objections and the asks line', () => {
+  it.each([
+    ['skill/references/tasks-and-features.md', 'tasks parent <slug> <parent-slug|clear>'],
+    ['skill/references/tasks-and-features.md', 'tasks object <slug> --as subtask-of'],
+    ['skill/references/tasks-and-features.md', 'tasks rules revert R2'],
+    ['skill/references/tasks-and-features.md', 'Waves are sub-tasks.'],
+    ['skill/references/cli-reference.md', '`tasks objections [--unlearned] [--json]`'],
+    ['skill/references/cli-reference.md', '--asks criterion=a,subtask=b,task=c,unplaced=d'],
+    ['skill/references/sleep.md', "Relay sleep-tasks' `Owner asks:` line as `--asks`"],
+    ['skill/references/sleep-specialists.md', 'Why objections become rules.'],
+  ])('%s documents %s', (file, marker) => {
+    expect(read(file)).toContain(marker);
+  });
 });
 
 describe('skill/SKILL.md — the awake half of the declined ledger', () => {

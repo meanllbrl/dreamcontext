@@ -1,12 +1,14 @@
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
+import matter from 'gray-matter';
 import { loadStatuses, loadTaskOverride } from '../overrides.js';
 import { DEFAULT_STATUSES, normalizeStatusKey, statusKeys, type StatusDef } from '../task-status.js';
 import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../frontmatter.js';
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
 import { normalizeRice } from '../rice.js';
+import { isFiledBy, readFilingBasis } from '../filing-basis.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
 import { appendTombstone } from '../task-tombstones.js';
@@ -271,6 +273,8 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
       data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
         ? (data.custom_fields as Record<string, string | number | null>)
         : {},
+    filed_by: isFiledBy(data.filed_by) ? data.filed_by : null,
+    filing_basis: readFilingBasis(data.filing_basis),
     why: readSectionSafe(filePath, 'Why'),
     user_stories: readSectionSafe(filePath, 'User Stories'),
     acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
@@ -283,6 +287,27 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
     rawBody: content,
     raw: data,
   };
+}
+
+/**
+ * `fields` written into a freshly rendered task's frontmatter as part of its FIRST write
+ * (`CreateTaskInput.local_fields`). A key the template already carries on one line
+ * (`parent_task: null`) is replaced in place; any other key is appended before the closing
+ * `---`. Every other byte stays as rendered, so the golden-pinned templates only GAIN lines.
+ */
+function withFrontmatterFields(content: string, fields?: Record<string, unknown>): string {
+  const entries = Object.entries(fields ?? {}).filter(([, v]) => v !== undefined);
+  if (entries.length === 0 || !content.startsWith('---')) return content;
+  const close = content.indexOf('\n---', 3);
+  if (close === -1) return content;
+  let head = content.slice(0, close + 1);
+  const tail = content.slice(close + 1);
+  for (const [key, value] of entries) {
+    const yaml = matter.stringify('', { [key]: value }).replace(/^---\n/, '').replace(/---\n*$/, '');
+    const line = new RegExp(`^${key}:[^\\n]*\\n`, 'm');
+    head = line.test(head) ? head.replace(line, () => yaml) : head + yaml;
+  }
+  return head + tail;
 }
 
 // ─── Read memo ───────────────────────────────────────────────────────────────
@@ -473,7 +498,7 @@ export class LocalTaskBackend implements TaskBackend {
         description: input.description ?? input.name,
       });
 
-      writeFileSync(filePath, content, 'utf-8');
+      writeFileSync(filePath, withFrontmatterFields(content, input.local_fields), 'utf-8');
       if (input.rice) {
         updateFrontmatterFields(filePath, { rice: input.rice });
       }
@@ -499,7 +524,7 @@ export class LocalTaskBackend implements TaskBackend {
         status: 'todo',
         description: input.description ?? '',
       });
-      writeFileSync(filePath, content, 'utf-8');
+      writeFileSync(filePath, withFrontmatterFields(content, input.local_fields), 'utf-8');
       if (input.rice) {
         updateFrontmatterFields(filePath, { rice: input.rice });
       }
@@ -545,7 +570,7 @@ ${input.why || '(To be defined)'}
 ### ${dateStr} - Created
 - Task created.
 `;
-      writeFileSync(filePath, content, 'utf-8');
+      writeFileSync(filePath, withFrontmatterFields(content, input.local_fields), 'utf-8');
       if (input.start_date) {
         updateFrontmatterFields(filePath, { start_date: input.start_date });
       }

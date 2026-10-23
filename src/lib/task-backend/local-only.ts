@@ -70,6 +70,9 @@ export const KNOWN_LOCAL_ONLY_TASK_FIELDS: readonly string[] = [
   // The agent a task is assigned to: an agent is a vault entity with no remote
   // counterpart, and agents are never people, so it never becomes an assignee.
   'agent',
+  // Who opened the task and why (lib/filing-basis.ts): no remote has a field for either.
+  'filed_by',
+  'filing_basis',
 ];
 
 /** Identity fields the mirror-rebuild path mints fresh rather than restoring. */

@@ -333,6 +333,13 @@ Safety rules the planner must apply when building the map:
   cost. A reviewer flags a line that does not fit the work as Major.
 - **Lanes are the truly disjoint file groups** of a wave, with no fixed count. The map
   exists only for M/L tiers — S is one serial implement, no map.
+- **Waves are sub-tasks.** With two or more waves on a task that is not itself a sub-task,
+  the task document (Phase 3) opens one sub-task per wave (`dreamcontext tasks create "Wave N:
+  <what it delivers>" --parent <slug> --basis plan --quote "<the WN part>"`) holding that
+  wave's criteria and lane files; the parent keeps the goal, the Validation method and the
+  observed criteria, and its WAVE MAP line names each wave's slug. Progress, ticks and
+  `wN green` go on the wave, which closes when its gate is green; the parent cannot close while
+  a sub-task is open. A sub-task's own plan, or one wave, keeps the single-line map.
 - **Compiled artifacts marked.** A wave consumes the source of earlier waves, not their
   build output. When a task genuinely consumes a compiled artifact (it runs `dist/`, reads
   a generated manifest), its `depends on` cell says so explicitly, e.g.

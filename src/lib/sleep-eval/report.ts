@@ -256,9 +256,18 @@ export interface CloseGate {
  * baseline, and not below it beyond the set's tolerance. Synchronous on purpose: it reads
  * the stored scores, it never embeds.
  */
-export function checkCloseGate(contextRoot: string, child: string, parent: string | null): CloseGate {
+export function checkCloseGate(
+  contextRoot: string,
+  child: string,
+  parent: string | null,
+  opts: { exempt?: boolean } = {},
+): CloseGate {
   const baseline = readBaseline(contextRoot);
   if (!baseline || !parent || !baseline.parents.includes(parent)) return { applies: false, ok: true, message: '' };
+  // A plan's wave (`filed_by: plan` AND named on the parent's newest WAVE MAP, decided by the
+  // caller with task-parent.ts `isMappedWaveChild`) is a step of the parent's own work, which
+  // the parent's run measures; a $53 run per wave would measure the same thing again.
+  if (opts.exempt) return { applies: false, ok: true, message: '' };
   const runs = listRunsFor(contextRoot, child);
   const run = runs[runs.length - 1];
   const how = `run \`dreamcontext sleep eval run --for ${child}\`, then \`dreamcontext sleep eval score\``;

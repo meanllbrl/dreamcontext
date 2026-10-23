@@ -9,6 +9,7 @@ import {
   contextHandoffGaps,
   renderHandoffEntry,
   developHandoffGaps,
+  developHandoffNotes,
   HANDOFF_FIELDS,
 } from '../../src/lib/handoff-readiness.js';
 
@@ -75,5 +76,20 @@ describe('developHandoffGaps', () => {
     expect(developHandoffGaps({ ...READY, technical_details: 'Update the relevant files.' })[0].problem).toMatch(/names no file/);
     expect(developHandoffGaps({ ...READY, technical_details: '<!-- key files go here -->' })[0].problem).toMatch(/empty/);
     expect(developHandoffGaps({ ...READY, acceptance_criteria: '<!-- - [ ] Validation method: x -->' }).length).toBe(2);
+  });
+});
+
+describe('developHandoffNotes — wave sub-tasks are a note, never a gap', () => {
+  const map = 'WAVE MAP: EXECUTION: lead | W1 (src/a.ts) | W2 (src/b.ts)';
+  it('notes a 2+ wave map on a top-level task with no wave children', () => {
+    expect(developHandoffNotes({ slug: 'p', technical_details: map }, [])[0]).toMatch(/--parent p --basis plan/);
+  });
+  it('is silent with wave children, on a sub-task, and for a single wave', () => {
+    expect(developHandoffNotes({ slug: 'p', technical_details: map }, [{ slug: 'w1', name: '1. dalga: a', filed_by: 'plan' }])).toEqual([]);
+    expect(developHandoffNotes({ slug: 'p', parent_task: 'q', technical_details: map }, [])).toEqual([]);
+    expect(developHandoffNotes({ slug: 'p', technical_details: 'WAVE MAP: EXECUTION: lead | W1 (src/a.ts)' }, [])).toEqual([]);
+  });
+  it('a non-plan child does not count as a wave', () => {
+    expect(developHandoffNotes({ slug: 'p', technical_details: map }, [{ slug: 's', name: 'bug', filed_by: 'sleep' }])).toHaveLength(1);
   });
 });

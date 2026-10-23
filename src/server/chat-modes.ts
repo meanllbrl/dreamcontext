@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.1', develop: '1.2', train: '0.1',
+  basic: '1.0', plan: '1.2', develop: '1.2', train: '0.1',
 };
 
 /**
@@ -153,6 +153,9 @@ dreamcontext tasks insert <slug> acceptance_criteria "Validation method: <the us
 dreamcontext tasks insert <slug> technical_details "<the file-by-file plan>"
 dreamcontext tasks insert <slug> constraints "<decisions taken, what is out of scope>"
 \`\`\`
+
+   2+ waves: each wave is a sub-task (\`tasks create "Wave N: …" --parent <slug> --basis plan\`)
+   holding its criteria and lane files; the map names each wave's slug.
 
    Present it, and shelve it the moment it exists — emit
    \`\`\`dream-view {"type":"progress","task":"<the-slug>"}\`\`\` so the owner watches criteria land.

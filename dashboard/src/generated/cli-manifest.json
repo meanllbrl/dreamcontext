@@ -2938,7 +2938,8 @@
         "<summary...>"
       ],
       "valueFlags": [
-        "--flag"
+        "--flag",
+        "--asks"
       ]
     },
     {
@@ -3423,6 +3424,18 @@
       ]
     },
     {
+      "path": "tasks basis",
+      "desc": "Record why an existing task was opened; --basis plan also marks it as a plan's wave (filed_by: plan)",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--basis",
+        "--quote",
+        "--evidence"
+      ]
+    },
+    {
       "path": "tasks complete",
       "desc": "Mark a task as completed",
       "args": [
@@ -3462,6 +3475,10 @@
         "--feature",
         "--field",
         "--by",
+        "--parent",
+        "--basis",
+        "--quote",
+        "--evidence",
         "--neighbor-checked",
         "--declined-checked"
       ]
@@ -3575,7 +3592,8 @@
         "--since",
         "--until",
         "-g",
-        "--group-by"
+        "--group-by",
+        "--parent"
       ]
     },
     {
@@ -3592,11 +3610,37 @@
       "args": []
     },
     {
+      "path": "tasks object",
+      "desc": "Object to a task an agent opened: put it under another task, make it a criterion, mark it a duplicate, or decline it",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--as",
+        "--target",
+        "--note",
+        "--resume"
+      ]
+    },
+    {
+      "path": "tasks objections",
+      "desc": "List objections to tasks, newest first",
+      "args": []
+    },
+    {
       "path": "tasks objectives",
       "desc": "Print, set, or clear the roadmap objectives a task serves (local-only field)",
       "args": [
         "<name>",
         "[slugs]"
+      ]
+    },
+    {
+      "path": "tasks parent",
+      "desc": "Print, set, or clear the parent of a sub-task (two levels max; the parent must be open)",
+      "args": [
+        "<name>",
+        "[parent]"
       ]
     },
     {
@@ -3638,6 +3682,43 @@
         "--impact",
         "--confidence",
         "--effort"
+      ]
+    },
+    {
+      "path": "tasks rules",
+      "desc": "Task filing rules learned from objections (knowledge/patterns/task-filing-rules.md); the only writer of that file",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "tasks rules merge",
+      "desc": "Add objections to an existing rule (and optionally reword it)",
+      "args": [
+        "<id>"
+      ],
+      "valueFlags": [
+        "--rests-on",
+        "--title",
+        "--dont",
+        "--do"
+      ]
+    },
+    {
+      "path": "tasks rules revert",
+      "desc": "Drop a rule; the objections it rested on are dismissed and never learned again",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "tasks rules set",
+      "desc": "Add a rule learned from one or more applied objections",
+      "args": [],
+      "valueFlags": [
+        "--title",
+        "--dont",
+        "--do",
+        "--rests-on"
       ]
     },
     {

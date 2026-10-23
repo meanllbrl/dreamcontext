@@ -69,7 +69,12 @@ import { resolveTombstone } from './task-tombstones.js';
 /** Minimum justification for a task filed by a sleep cycle. See the note above. */
 export const MIN_SLEEP_WHY_CHARS = 40;
 
-export type FilingActor = 'human' | 'sleep' | 'unknown';
+/**
+ * Who the bar is told is filing. `agent` (an awake agent that named itself) and `plan` (a wave
+ * sub-task under its parent) pass like `human`: neither is the cycle, so neither counts toward
+ * its cap or meets its gates. Who counts as sleep is decided once, in filing-basis.ts.
+ */
+export type FilingActor = 'human' | 'agent' | 'plan' | 'sleep' | 'unknown';
 
 /**
  * Passage embedder shape — matches `embedPassages`. Injectable for TESTS only
@@ -209,8 +214,9 @@ export async function assertTaskFilingBar(input: FilingBarInput): Promise<Filing
   const { contextRoot, actor } = input;
   const nowMs = input.nowMs ?? Date.now();
 
-  // An explicit human is never under the bar, cycle or not.
-  if (actor === 'human') return { allowed: true, underBar: false };
+  // An explicit human, an agent that named itself, or a plan's wave is never under the bar,
+  // cycle or not.
+  if (actor === 'human' || actor === 'agent' || actor === 'plan') return { allowed: true, underBar: false };
   if (!isSleepCycleLive(contextRoot, nowMs) && actor !== 'sleep') {
     return { allowed: true, underBar: false };
   }

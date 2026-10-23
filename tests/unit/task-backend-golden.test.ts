@@ -60,6 +60,8 @@ let projectRoot: string;
 let contextRoot: string;
 let stateDir: string;
 let prevCwd: string;
+let prevSession: string | undefined;
+let prevAutoSleep: string | undefined;
 
 async function cli(...argv: string[]): Promise<void> {
   const program = new Command();
@@ -200,10 +202,18 @@ describe('task backend golden (M1 — byte-identical state/*.md)', () => {
     );
     prevCwd = process.cwd();
     process.chdir(projectRoot);
+    // The filing stamp an awake CLI create writes must not depend on the session the test
+    // happens to run in, nor on a sleep cycle a developer's env may claim (lib/filing-basis.ts).
+    prevSession = process.env.CLAUDE_CODE_SESSION_ID;
+    prevAutoSleep = process.env.DREAMCONTEXT_AUTO_SLEEP;
+    delete process.env.CLAUDE_CODE_SESSION_ID;
+    delete process.env.DREAMCONTEXT_AUTO_SLEEP;
     await runOperationScript();
   });
 
   afterAll(() => {
+    if (prevSession !== undefined) process.env.CLAUDE_CODE_SESSION_ID = prevSession;
+    if (prevAutoSleep !== undefined) process.env.DREAMCONTEXT_AUTO_SLEEP = prevAutoSleep;
     process.chdir(prevCwd);
     rmSync(projectRoot, { recursive: true, force: true });
   });

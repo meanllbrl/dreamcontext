@@ -496,3 +496,22 @@ describe('the end review the diff picks, in both recipes', () => {
     });
   }
 });
+
+describe('waves are sub-tasks (both recipes)', () => {
+  for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
+    it(`${name}: three cases, the wave carries its own progress and close, reopen reads \`wave\``, () => {
+      expect(recipe).toContain('dreamcontext tasks list --parent "$S" --json');
+      expect(recipe).toMatch(/\(a\) Wave sub-tasks exist: use them\. \(b\) Two or more waves, no wave sub-tasks and no `wN green`/);
+      expect(recipe).toContain('dreamcontext tasks create "Wave N: <what it delivers>" --parent "$S" --basis plan --quote "<the WN part of the map>"');
+      expect(recipe).toMatch(/add a NEW map naming their slugs/);
+      expect(recipe).toMatch(/\(c\) `wN green` lines already exist/);
+      expect(recipe).toMatch(/a task that is itself a sub-task: progress stays on "\$S"/);
+      expect(recipe).toContain('dreamcontext tasks status <wave-N> in_progress');
+      expect(recipe).toContain('dreamcontext tasks complete <wave-N> "<the check\'s summary line>"');
+      expect(recipe).toMatch(/A wave never closes\s+without a green check/);
+      expect(recipe).toMatch(/move "\$S" to `in_review` instead and name those sub-tasks/);
+      expect(recipe).toMatch(/the open child with the smallest `wave`/);
+      expect(recipe).toMatch(/`--wave` always comes from that field/);
+    });
+  }
+});
