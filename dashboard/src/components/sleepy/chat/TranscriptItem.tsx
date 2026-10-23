@@ -16,6 +16,8 @@ import { Notice, NoticeRow, TokenDrop, ContextShrink, Glyph } from './Notice';
 import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
 import { useSpokenHighlight } from './useSpokenHighlight';
+import { splitAgendaAbout } from '../super/superHandover';
+import { AgendaAboutStrip } from './AgendaAboutStrip';
 import type { AgentRoleId } from '../../../lib/agentRoles';
 import type {
   ChatItem, ChatUserItem, ChatTextItem, ChatThinkingItem, ChatCompactItem, ChatSession,
@@ -118,12 +120,16 @@ function UserMessage({
   const [confirming, setConfirming] = useState(false);
   // What was attached is drawn; what was typed stays in the bubble. Copy/quote/rewind all
   // keep `item.text` — the real message, paths and all, is what was sent.
-  const { text, media, refs } = useMemo(() => {
-    const board = splitUserBoardRefs(item.text);
-    return { ...splitUserMedia(board.text), refs: board.refs };
+  const { text, media, refs, about } = useMemo(() => {
+    // A message written about an agenda line (owner 2026-10-23) opens with its block: drawn as
+    // a strip above the bubble, the bubble keeps only his words.
+    const split = splitAgendaAbout(item.text);
+    const board = splitUserBoardRefs(split.text);
+    return { ...splitUserMedia(board.text), refs: board.refs, about: split.about };
   }, [item.text]);
   return (
     <div className="chat-msg-user-row">
+      {about && <AgendaAboutStrip about={about} superSid={session?.mode === 'super' ? session.claudeId : null} />}
       {media.length > 0 && (
         <div className="chat-msg-user-media">
           {media.map((p) => <UserMediaItem key={p} path={p} onOpenFile={onOpenFile} />)}

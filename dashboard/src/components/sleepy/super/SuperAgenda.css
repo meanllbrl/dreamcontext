@@ -34,6 +34,32 @@
 .super-agenda-empty { padding: 2px 6px 4px; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
 
 .super-agenda-row { border-radius: var(--radius-md); }
+/* "Write about this" (owner 2026-10-23, pick A): a sibling at the row's right edge, always there
+   and faint, full on the row's hover and on its own hover or focus. 28px to hit. */
+.super-agenda-row[data-about='true'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: start;
+}
+.super-agenda-about {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-tertiary);
+  opacity: 0.45;
+  cursor: pointer;
+}
+.super-agenda-row:hover .super-agenda-about { opacity: 1; }
+.super-agenda-about:hover { opacity: 1; color: var(--color-text); background: var(--color-bg-secondary); }
+.super-agenda-about:focus-visible { opacity: 1; color: var(--color-text); outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 .super-agenda-row-btn {
   box-sizing: border-box;
   width: 100%;

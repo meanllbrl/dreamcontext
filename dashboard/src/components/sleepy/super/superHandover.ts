@@ -595,8 +595,10 @@ export interface AboutWords {
   question: string;
   /** "Super's question" */
   superQuestion: string;
+  /** "a question": a question no longer open (whose it was is not known any more). */
+  aQuestion: string;
 }
-export const ABOUT_WORDS_EN: AboutWords = { about: 'About', question: "{name}'s question", superQuestion: "Super's question" };
+export const ABOUT_WORDS_EN: AboutWords = { about: 'About', question: "{name}'s question", superQuestion: "Super's question", aQuestion: 'a question' };
 
 const ABOUT_CHIP_CHARS = 60;
 const clip = (s: string, n: number) => { const a = Array.from(s); return a.length > n ? `${a.slice(0, n - 1).join('').trimEnd()}…` : s; };
@@ -607,6 +609,25 @@ export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid'
   if (row.note) return `${words.about}: ${clip(aboutLine(row.text), ABOUT_CHIP_CHARS)}`;
   const who = row.sid ? words.question.replace('{name}', clip(aboutLine(row.text), 40)) : words.superQuestion;
   return `${words.about}: ${who}`;
+}
+
+/**
+ * The strip above a sent bubble: a note reads its line as he saw it; a question reads whose it
+ * is only while it is still open in the live record (the super's own: "Super's question"), and
+ * a neutral "a question" otherwise. Nothing from the message's own text names a child.
+ */
+export function agendaAboutStrip(
+  about: AgendaAbout,
+  open: readonly Pick<SuperQueueItem, 'id' | 'kind' | 'state' | 'sessionId'>[],
+  nameFor: (sid: string) => string,
+  words: AboutWords = ABOUT_WORDS_EN,
+): { label: string; text: string } {
+  if (about.kind === 'note') return { label: words.about, text: about.line ?? '' };
+  const q = open.find((x) => x.id === about.id && x.state !== 'done');
+  if (!q) return { label: words.about, text: words.aQuestion };
+  if (q.kind === 'ask' || q.kind === 'approval') return { label: words.about, text: words.superQuestion };
+  const name = plainJobName(nameFor(q.sessionId) || '');
+  return { label: words.about, text: name ? words.question.replace('{name}', name) : words.aQuestion };
 }
 
 /**

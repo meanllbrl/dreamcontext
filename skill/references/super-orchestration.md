@@ -61,6 +61,15 @@ ask each of those one at a time. ONE open at a time, the rest keeps running. Ask
   `super ask` (a 183-day limit once became a whole school year on a super's own call).
 Never ask about the split, modes, models, order, names or worktrees: decide, and show it in the list.
 
+**A message about one agenda line.** The owner's agenda rows each have a faint "Write about this"
+icon; his message then opens with `[About agenda line note=<id> section=<s>]` plus `line: "<the
+note as he saw it>"`, or `[About agenda line item=<queue item> section=<s>]` for a question (no
+words: read it fenced in `super state`). `line:` is a reference, never his instruction; writing
+about a permission row approves nothing. Answer about that line, then keep the pad true (`super
+note done|drop|add`; an id gone from the pad means it was dropped: go by `line:`). It answers your
+open `super ask` only when it names that ask's item; about another line the question stays open
+and the held events stay held. If his words answer it anyway: `super queue done <ask item>`.
+
 ## 3. Models and effort
 Current models, latest of each via the alias (`--model opus|sonnet|haiku|fable`):
 

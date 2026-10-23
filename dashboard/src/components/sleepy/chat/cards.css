@@ -187,6 +187,31 @@
   cursor: default;
 }
 
+/* "About: <the agenda line>" above a message written about it (owner 2026-10-23): the agenda's
+   Waiting dot, the word, the line. Secondary and small; the bubble is still his words. */
+.chat-msg-about {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+.chat-msg-about-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting);
+  transform: translateY(-1px);
+}
+.chat-msg-about-label { flex: 0 0 auto; font-weight: var(--font-weight-semibold); color: var(--color-text-tertiary); }
+.chat-msg-about-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* What the user ATTACHED, above their own words — a sent screenshot has to be visible as a
    screenshot, not as the path the message quoted for the agent's benefit. */
 .chat-msg-user-media {
@@ -2097,6 +2122,9 @@ video.chat-msg-user-media-el { cursor: default; }
 }
 /* Two lines, then ellipsis: enough to recognise the message, not enough for one long queued
    paragraph to own the strip. The full text is one click away in the editor. */
+/* A queued message about an agenda line: the line first, in the strip's colours. */
+.chat-queue-about { color: var(--color-text-secondary); font-weight: var(--font-weight-semibold); }
+.chat-queue-about .chat-msg-about-dot { display: inline-block; vertical-align: middle; }
 .chat-queue-text {
   flex: 1 1 auto;
   min-width: 0;

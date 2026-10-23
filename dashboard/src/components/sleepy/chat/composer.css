@@ -250,6 +250,7 @@
   max-width: 220px;
 }
 .chat-cmp-attachment-image { padding-left: 0; }
+.chat-cmp-attachment-about { padding-left: 8px; }
 .chat-cmp-thumb {
   width: 44px;
   height: 44px;
@@ -258,6 +259,14 @@
   flex: 0 0 auto;
 }
 .chat-cmp-attachment-glyph { flex: 0 0 auto; }
+/* The About chip (an agenda line the message is about): the agenda's Waiting dot, then its name. */
+.chat-cmp-attachment-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting);
+}
 .chat-cmp-attachment-name {
   display: flex;
   flex-direction: column;

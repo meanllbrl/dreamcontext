@@ -244,6 +244,9 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
             >
               {(a.kind === 'image' || (a.kind === 'element' && a.url)) ? (
                 <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
+              ) : a.kind === 'about' ? (
+                // The agenda line the message is about: the agenda's Waiting dot.
+                <span className="chat-cmp-attachment-dot" aria-hidden />
               ) : (
                 <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : '📄'}</span>
               )}
@@ -1229,6 +1232,8 @@ export function Composer({
   // wasn't sent, rather than disappearing as if it had been.
   // An About chip (the agenda line the message is about) is not content: alone it sends nothing.
   const sendableAttachments = attachments.filter(countsAsContent);
+  // Only an About chip staged and nothing typed: the box asks for the words about that line.
+  const aboutOnly = !draft.trim() && attachments.length > 0 && attachments.every((a) => a.kind === 'about');
   const uploadingCount = attachments.filter((a) => a.uploading).length;
   const hasSendableContent = !!draft.trim() || sendableAttachments.length > 0
     || uploadingCount > 0;
@@ -1939,7 +1944,7 @@ export function Composer({
             // two are saying something more urgent than where to find a feature.
             // Blank while the meter has the slot: two things in one place, one of them a
             // sentence about how to start something that has already started.
-            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
+            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? t('super.agenda.aboutPlaceholder') : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
             value={draft}
             disabled={disabled}
             onChange={(e) => {

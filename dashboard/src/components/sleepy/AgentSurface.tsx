@@ -68,7 +68,7 @@ import { useI18n } from '../../context/I18nContext';
 import { ReadinessChecklist } from '../../pages/onboarding/ReadinessChecklist';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
-import { addAttachments, dropScratch, nextAttachmentId, settleAttachment, trackUpload } from './chat/composerScratch';
+import { addAttachments, dropScratch, nextAttachmentId, setAbout, settleAttachment, trackUpload } from './chat/composerScratch';
 import { dataUrlBlob, pickBlock, pickChipName, type WebPick } from '../../lib/webPick';
 import { deliverToChat, postToSession } from './chat/postToSession';
 import { parseChatActions } from './chat/chatActions';
@@ -99,7 +99,7 @@ import {
   actionGeneration, adoptionBody, cardReference, headAlarmOnce, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
   homedSessions, isSuperSession, markedChildren, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
-  linkOpensSuperStage, presenceChatId, leanMcpFor,
+  linkOpensSuperStage, presenceChatId, leanMcpFor, agendaAboutBlock, agendaAboutChipName, type AgendaRow,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap } from './super/superApi';
@@ -3599,6 +3599,22 @@ export function AgentSurface() {
     }
   }, [vault]);
 
+  /**
+   * "Write about this" on an agenda line (owner 2026-10-23): the line drops into the Super
+   * Agent's composer as ONE About chip (a second press replaces it), the draft untouched and the
+   * caret in the box. The message he sends opens with the line's block (`agendaAboutBlock`).
+   */
+  const writeAboutRow = useCallback((row: AgendaRow) => {
+    const cs = superChatRef.current;
+    if (!cs || cs.status === 'closed') return;
+    const convId = cs.scratchId || cs.claudeId;
+    const text = agendaAboutBlock(row);
+    if (!convId || !text) return;
+    const words = { about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'), superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion') };
+    setAbout(convId, { id: nextAttachmentId(), kind: 'about', name: agendaAboutChipName(row, words), text });
+    requestAnimationFrame(() => cs.focus());
+  }, [t]);
+
   // ── The hand-over and the take-back, with their flights (D17, D18) ─────────────────
   const flightLayerRef = useRef<HTMLDivElement | null>(null);
   const flightRunRef = useRef<{ run: FlightRun; dir: 'in' | 'out'; focusSid?: string } | null>(null);
@@ -4909,6 +4925,7 @@ export function AgentSurface() {
             onStageReady={onStageReady}
             onAskAbout={askAboutCard}
             onPickElement={pickElementFromCard}
+            onWriteAbout={writeAboutRow}
             onEndChild={endChildFromCard}
             onKeepChild={keepChildRunning}
             endPending={endPending}

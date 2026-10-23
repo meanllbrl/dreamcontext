@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ABOUT_AGENDA_RE, MAX_ABOUT_LINE } from '../../src/lib/super/types.js';
 import {
-  agendaAboutBlock, agendaAboutChipName, splitAgendaAbout, superEventOf, type AgendaRow,
+  agendaAboutBlock, agendaAboutChipName, agendaAboutStrip, splitAgendaAbout, superEventOf, type AgendaRow,
 } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import { parseSuperAnswer } from '../../dashboard/src/components/sleepy/super/superQuestions.js';
 import { composeOutgoing, type Attachment } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
@@ -72,7 +72,7 @@ describe('the block a message about a line opens with', () => {
     expect(agendaAboutChipName(note({ text: 'b'.repeat(90) }))).toMatch(/^About: b{59}…$/);
     expect(agendaAboutChipName(question())).toBe("About: Checkout form's question");
     expect(agendaAboutChipName(question({ sid: undefined, text: 'Super Agent' }))).toBe("About: Super's question");
-    expect(agendaAboutChipName(question(), { about: 'Hakkında', question: '{name} sorusu', superQuestion: "Super'in sorusu" })).toBe('Hakkında: Checkout form sorusu');
+    expect(agendaAboutChipName(question(), { about: 'Hakkında', question: '{name} sorusu', superQuestion: "Super'in sorusu", aQuestion: 'bir soru' })).toBe('Hakkında: Checkout form sorusu');
   });
 });
 
@@ -176,5 +176,59 @@ describe('the composer and the server use it', () => {
     expect(chat).toMatch(/const aboutHead = isSuper \? ABOUT_AGENDA_RE\.exec\(text\) : null;/);
     expect(chat).toMatch(/superAnswerDigest\(chatRegistryId, Date\.now\(\), about\)/);
     expect(chat).toMatch(/superOwnerSpoke\(chatRegistryId, Date\.now\(\), held\?\.items \?\? \[\], about\)/);
+  });
+});
+
+/** The bubble's strip (R3-7): a note reads its line; a question names whose it is only while the
+ *  live record still has it open; the super's own reads "Super's question". */
+describe('the strip above a sent message', () => {
+  const open = [
+    { id: 'q-ask-1', kind: 'ask' as const, state: 'escalated' as const, sessionId: 'sup' },
+    { id: 'q-12', kind: 'question' as const, state: 'escalated' as const, sessionId: 'c1' },
+  ];
+  const nameFor = (sid: string) => (sid === 'c1' ? 'Checkout form · develop opus/high' : '');
+
+  it('reads the note, the open question\'s job, the super\'s own, or a neutral question', () => {
+    expect(agendaAboutStrip({ kind: 'note', id: 'n7', section: 'waiting', line: 'Try it in Safari' }, open, nameFor)).toEqual({ label: 'About', text: 'Try it in Safari' });
+    expect(agendaAboutStrip({ kind: 'item', id: 'q-12', section: 'waiting' }, open, nameFor).text).toBe("Checkout form's question");
+    expect(agendaAboutStrip({ kind: 'item', id: 'q-ask-1', section: 'waiting' }, open, nameFor).text).toBe("Super's question");
+    expect(agendaAboutStrip({ kind: 'item', id: 'q-gone', section: 'waiting' }, open, nameFor).text).toBe('a question');
+    expect(agendaAboutStrip({ kind: 'item', id: 'q-12', section: 'waiting' }, [{ ...open[1], state: 'done' as const }], nameFor).text).toBe('a question');
+  });
+
+  it('is drawn above the bubble from the replayed text; the bubble keeps only his words; copy/quote keep the whole text', async () => {
+    const { createElement } = await import('../../dashboard/node_modules/react/index.js');
+    const { renderToStaticMarkup } = await import('../../dashboard/node_modules/react-dom/server.node.js');
+    const { I18nProvider } = await import('../../dashboard/src/context/I18nContext.js');
+    const { AgendaAboutStrip } = await import('../../dashboard/src/components/sleepy/chat/AgendaAboutStrip.js');
+    const { publishSuperQuestions } = await import('../../dashboard/src/components/sleepy/super/superJobsStore.js');
+    const draw = (about: Parameters<typeof agendaAboutStrip>[0], sid: string | null) => renderToStaticMarkup(
+      createElement(I18nProvider, null, createElement(AgendaAboutStrip as never, { about, superSid: sid })),
+    );
+    expect(draw({ kind: 'note', id: 'n7', section: 'waiting', line: 'Try it in Safari' }, null)).toMatch(/data-testid="chat-msg-about" data-kind="note".*About.*Try it in Safari/);
+    expect(draw({ kind: 'item', id: 'q-12', section: 'waiting' }, 'sup')).toContain('a question');
+    publishSuperQuestions('sup', { open: open as never, superSession: undefined, sessionFor: () => undefined }, 'k1');
+    expect(draw({ kind: 'item', id: 'q-ask-1', section: 'waiting' }, 'sup')).toContain("Super&#x27;s question");
+    publishSuperQuestions('sup', null);
+
+    const transcript = read('dashboard/src/components/sleepy/chat/TranscriptItem.tsx');
+    expect(transcript).toMatch(/const split = splitAgendaAbout\(item\.text\);/);
+    expect(transcript).toMatch(/\{about && <AgendaAboutStrip about=\{about\}/);
+    expect(transcript).toMatch(/copyText\(item\.text\)/);
+    expect(transcript).toMatch(/onQuote\(item\.text\)/);
+    const queued = read('dashboard/src/components/sleepy/chat/QueuedMessages.tsx');
+    expect(queued).toMatch(/const split = splitAgendaAbout\(text\);/);
+    expect(queued).toMatch(/\{about \? split\.text : text\}/);
+  });
+
+  it('every new word exists in EN and TR', () => {
+    const i18n = read('dashboard/src/context/I18nContext.tsx');
+    const tr = i18n.indexOf('const TR_PARTIAL');
+    for (const k of ['writeAbout', 'about', 'aboutPlaceholder', 'aboutQuestion', 'aboutSuperQuestion', 'aboutAQuestion']) {
+      expect(i18n.slice(0, tr)).toContain(`'super.agenda.${k}':`);
+      expect(i18n.slice(tr)).toContain(`'super.agenda.${k}':`);
+    }
+    const composer = read('dashboard/src/components/sleepy/chat/Composer.tsx');
+    expect(composer).toMatch(/aboutOnly \? t\('super\.agenda\.aboutPlaceholder'\)/);
   });
 });

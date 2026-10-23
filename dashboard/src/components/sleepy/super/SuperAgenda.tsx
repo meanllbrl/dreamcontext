@@ -16,8 +16,12 @@ import './SuperAgenda.css';
  * (large, wide, side by side) is the notepad itself. An open question's row is live even on a
  * floating card: it brings its card in the centre into view (a child's permission shows that
  * child beside the centre). Nothing polls: the record is pushed.
+ *
+ * Every full row also has a faint "Write about this" button at its right edge (owner
+ * 2026-10-23, pick A): it stages the line as an About chip in the centre's composer
+ * (`onWriteAbout`). A sibling of the row's own control, never inside it; the tile has none.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion }: {
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout }: {
   state: SuperStateView;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
   variant?: 'tile' | 'full';
@@ -29,6 +33,8 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   /** A question waiting on the owner (the super's own `ask`, a child's it escalated, an approval):
    *  bring its card into view. */
   onShowQuestion: (item: string) => void;
+  /** "Write about this" on a row. Absent: no icon (the super chat is not there to write in). */
+  onWriteAbout?: (row: AgendaRow) => void;
 }) {
   const { t } = useI18n();
   const sections = superNotepad(state, look);
@@ -88,10 +94,25 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
                   data-state={r.section}
                   data-kind={r.note ? 'note' : 'question'}
                   data-chip={r.chip ?? undefined}
+                  data-about={onWriteAbout ? 'true' : undefined}
                 >
                   {clickable(r)
                     ? <button type="button" className="super-agenda-row-btn" onClick={() => press(r)}>{body}</button>
                     : <div className="super-agenda-row-btn">{body}</div>}
+                  {onWriteAbout && (
+                    <button
+                      type="button"
+                      className="super-agenda-about"
+                      data-testid="super-agenda-about"
+                      aria-label={t('super.agenda.writeAbout')}
+                      title={t('super.agenda.writeAbout')}
+                      onClick={() => onWriteAbout(r)}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+                        <path d="M6.5 4 2.5 8l4 4M3 8h6.5a4 4 0 0 1 4 4v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               );
             })}

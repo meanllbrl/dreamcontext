@@ -16,7 +16,7 @@
  *  - the window's patch reads the same (`applyLayoutPatch`, `patchEchoed`).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ServerResponse } from 'node:http';
@@ -239,5 +239,79 @@ describe('the notepad: `super note`', () => {
     expect(s.padSeq).toBeUndefined();
     expect(nextPadId(s.pad ?? [], 0)).toEqual({ id: 'n7', seq: 7 });
     expect(nextPadId([], 12)).toEqual({ id: 'n13', seq: 13 });
+  });
+});
+
+/**
+ * "Write about this" on every agenda line (owner 2026-10-23, pick A: at the row's right edge,
+ * always there and faint). Rendered for real (static markup), plus the one wiring a static
+ * render cannot press: the icon calls onWriteAbout(row), the row keeps its own press.
+ */
+describe('the agenda row\'s Write about this icon', () => {
+  const ROOT_URL = new URL('../../', import.meta.url);
+  async function render(variant: 'tile' | 'full', onWriteAbout?: (r: unknown) => void): Promise<string> {
+    const { createElement } = await import('../../dashboard/node_modules/react/index.js');
+    const { renderToStaticMarkup } = await import('../../dashboard/node_modules/react-dom/server.node.js');
+    const { I18nProvider } = await import('../../dashboard/src/context/I18nContext.js');
+    const { SuperAgenda } = await import('../../dashboard/src/components/sleepy/super/SuperAgenda.js');
+    const state = {
+      ...emptySuperState(), session: SESSION, enabled: true, vault: 'acme',
+      queue: [
+        { id: 'q-ask-1', sessionId: SESSION, kind: 'ask', state: 'escalated', ownerText: 'Ship it?', createdAt: 1 },
+        { id: 'q-c1', sessionId: 'c1', kind: 'question', state: 'escalated', ownerText: 'Postgres or sqlite?', createdAt: 2 },
+      ],
+      pad: [
+        { id: 'n1', section: 'waiting', text: 'Your pick between the two paywalls', at: 1 },
+        { id: 'n2', section: 'now', text: 'Fixing how pictures group', at: 2 },
+        { id: 'n3', section: 'done', text: 'Released the login fix', at: 3 },
+      ],
+    };
+    const look = { live: () => null, titleFor: (s: string) => `Job ${s}`, superTitle: 'Super Agent' };
+    return renderToStaticMarkup(createElement(I18nProvider, null, createElement(SuperAgenda as never, {
+      state, look, variant, canShowChild: () => true, onShowChild: () => {}, onShowQuestion: () => {}, onWriteAbout,
+    })));
+  }
+
+  it('one faint button on every full row (notes and questions, every section), none on the tile or without a handler', async () => {
+    const html = await render('full', () => {});
+    const rows = html.match(/data-testid="super-agenda-row"/g) ?? [];
+    const icons = html.match(/data-testid="super-agenda-about"/g) ?? [];
+    expect(rows).toHaveLength(5);
+    expect(icons).toHaveLength(5);
+    expect(html).toContain('aria-label="Write about this"');
+    expect(await render('tile', () => {})).not.toContain('super-agenda-about');
+    expect(await render('full')).not.toContain('super-agenda-about');
+  });
+
+  it('no button inside a button: the icon is the row control\'s sibling', async () => {
+    const html = await render('full', () => {});
+    let depth = 0;
+    for (const m of html.matchAll(/<(\/?)button\b/g)) {
+      depth += m[1] ? -1 : 1;
+      expect(depth).toBeLessThanOrEqual(1);
+    }
+    expect(depth).toBe(0);
+  });
+
+  it('the icon calls onWriteAbout(row); the row\'s own press is unchanged', () => {
+    const src = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperAgenda.tsx', ROOT_URL), 'utf-8');
+    expect(src).toMatch(/className="super-agenda-row-btn" onClick=\{\(\) => press\(r\)\}/);
+    expect(src).toMatch(/className="super-agenda-about"[\s\S]{0,300}onClick=\{\(\) => onWriteAbout\(r\)\}/);
+    const css = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperAgenda.css', ROOT_URL), 'utf-8');
+    expect(css).toMatch(/\.super-agenda-about \{[^}]*width: 28px;[^}]*height: 28px;[^}]*opacity: 0\.45;/);
+    expect(css).toMatch(/\.super-agenda-row:hover \.super-agenda-about \{ opacity: 1; \}/);
+    expect(css).toMatch(/\.super-agenda-about:focus-visible \{ opacity: 1;/);
+  });
+
+  it('the stage passes it only while the super chat is there; a narrow stage floats first; the surface stages one chip and focuses', () => {
+    const surface = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperSurface.tsx', ROOT_URL), 'utf-8');
+    expect(surface).toMatch(/const writeAbout = onWriteAbout && superSession && superSession\.status !== 'closed'/);
+    expect(surface).toMatch(/if \(plan\.narrow && viewMode !== 'float'\) onLayout\(\{ view: \{ mode: 'float' \} \}\);/);
+    const agent = readFileSync(new URL('dashboard/src/components/sleepy/AgentSurface.tsx', ROOT_URL), 'utf-8');
+    const body = agent.slice(agent.indexOf('const writeAboutRow'), agent.indexOf('const writeAboutRow') + 900);
+    expect(body).toMatch(/const convId = cs\.scratchId \|\| cs\.claudeId;/);
+    expect(body).toMatch(/setAbout\(convId, \{ id: nextAttachmentId\(\), kind: 'about', name: agendaAboutChipName\(row, words\), text \}\);/);
+    expect(body).toMatch(/requestAnimationFrame\(\(\) => cs\.focus\(\)\)/);
+    expect(agent).toMatch(/onWriteAbout=\{writeAboutRow\}/);
   });
 });
