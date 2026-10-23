@@ -1,6 +1,6 @@
 {
   "productName": "dreamcontext-beta",
-  "version": "0.34.3",
+  "version": "0.34.4",
   "identifier": "com.dreamcontext.beta",
   "build": {
     "frontendDist": "./frontend-placeholder"
