@@ -844,7 +844,18 @@
 }
 .super-group-panel-btn:hover { border-color: var(--color-border-hover); color: var(--color-text); }
 .super-group-panel-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
-.super-group-panel-grid { display: grid; gap: 16px; padding: 0 16px 16px; grid-auto-rows: var(--super-tile, 160px); }
+.super-group-panel-grid {
+  display: grid;
+  gap: 16px;
+  padding: 0 16px 16px;
+  grid-auto-rows: var(--super-tile, 160px);
+  /* Taller than the panel (30 cards in Others): it scrolls inside itself and the stage behind
+     never pans with it. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .super-panel-item {
   position: relative;
   width: 160px;

@@ -13,7 +13,10 @@ export function panelRect(anchor: Rect, n: number, stage: { width: number; heigh
   const cols = Math.max(1, Math.min(n, 4));
   const rows = Math.max(1, Math.ceil(n / cols));
   const width = cols * T + (cols - 1) * GAP + 2 * GAP;
-  const height = 48 + rows * T + (rows - 1) * GAP + GAP;
+  // Taller than the room it has (the stage, or for Others the space above its stack): the panel
+  // stops there and its grid scrolls inside it, so the stack never covers a row.
+  const room = (system ? anchor.y - 12 : stage.height - MARGIN) - MARGIN;
+  const height = Math.min(48 + rows * T + (rows - 1) * GAP + GAP, Math.max(48 + T + GAP, room));
   let x = system ? anchor.x + anchor.width - width : anchor.x;
   let y = system ? anchor.y - height - 12 : anchor.y + (anchor.height - height) / 2;
   x = Math.min(Math.max(x, MARGIN), Math.max(MARGIN, stage.width - MARGIN - width));
