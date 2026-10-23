@@ -428,7 +428,9 @@ describe('the window rules (D10, AC12)', () => {
     expect(edit).toMatch(/if \(!st\) \{ notSaved\('no state in the answer'\); return; \}/);
     expect(edit).toMatch(/\n\s*notSaved,\n\s*\);/);
     expect(surface).toMatch(/if \(st\) setSuperState\(withPendingEdits\(st\)\);\n\s*\};/);
-    expect(surface).toMatch(/pendingPatchesRef\.current\.filter\(\(p\) => !patchEchoed\(st, p\)\)/);
+    // Each pending edit is read against the push with the earlier ones applied (withPendingPatches,
+    // presentation layouts end review: a close then Esc survives a push in between).
+    expect(surface).toMatch(/const \{ state, keep \} = withPendingPatches\(st, pendingPatchesRef\.current\);\n\s*pendingPatchesRef\.current = keep;/);
     const api = read(`${superDir}/superApi.ts`);
     expect(api).toMatch(/api\.post<\{ state\?: unknown \}>\('\/super\/layout', patch\)/);
   });
