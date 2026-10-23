@@ -264,6 +264,10 @@ export type PadSection = typeof PAD_SECTIONS[number];
 export interface SuperPadItem { id: string; section: PadSection; text: string; at: number }
 export const MAX_PAD = 40;
 export const MAX_PAD_TEXT = 160;
+/** The owner wrote about one agenda line: the header his message opens with (MIRRORED from the
+ *  server, `src/lib/super/types.ts`, pinned by super-types-mirror.test.ts). */
+export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done)\]/;
+export const MAX_ABOUT_LINE = 200;
 
 export interface SuperStateView extends SuperState {
   vault: string;

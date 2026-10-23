@@ -15,7 +15,7 @@
  * React-free and DOM-free: imports only the window's mirror of the server types.
  */
 import {
-  SUPER_EVENT_PREFIXES, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, MAX_ABOUT_LINE, SUPER_EVENT_PREFIXES, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 
 // ─── Who is the Super Agent ────────────────────────────────────────────────────
@@ -556,6 +556,91 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
   }
   out.done.sort((a, b) => b.at - a.at);
   return out;
+}
+
+// ─── Writing about one agenda line (owner 2026-10-23) ────────────────────────────
+
+/** What a message written about an agenda line names: a pad note (with the line as he saw it)
+ *  or an open question's queue item (no words: they are a child's). */
+export interface AgendaAbout { kind: 'note' | 'item'; id: string; section: AgendaSection; line?: string }
+
+const ABOUT_ID = /^[A-Za-z0-9_-]{1,40}$/;
+
+/** A note's words as its `line:` carries them: one line, no control characters, at most
+ *  MAX_ABOUT_LINE characters (counted whole, never half a character). */
+function aboutLine(text: string): string {
+  const flat = text.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim();
+  return Array.from(flat).slice(0, MAX_ABOUT_LINE).join('').trim();
+}
+
+/**
+ * The block a message about this row opens with (the composer's About chip carries it): the
+ * header, and for a note `line: "<its words>"`. A question row carries only its id and
+ * section: its words are a child's, and the super reads them fenced from `super state`.
+ * '' for a row that names neither.
+ */
+export function agendaAboutBlock(row: Pick<AgendaRow, 'section' | 'note' | 'item' | 'text'>): string {
+  if (row.note && ABOUT_ID.test(row.note)) {
+    return `[About agenda line note=${row.note} section=${row.section}]\nline: ${JSON.stringify(aboutLine(row.text))}`;
+  }
+  if (row.item && ABOUT_ID.test(row.item)) return `[About agenda line item=${row.item} section=${row.section}]`;
+  return '';
+}
+
+/** The words the About chip and strip read, in the window's language. */
+export interface AboutWords {
+  /** "About" */
+  about: string;
+  /** "{name}'s question" */
+  question: string;
+  /** "Super's question" */
+  superQuestion: string;
+}
+export const ABOUT_WORDS_EN: AboutWords = { about: 'About', question: "{name}'s question", superQuestion: "Super's question" };
+
+const ABOUT_CHIP_CHARS = 60;
+const clip = (s: string, n: number) => { const a = Array.from(s); return a.length > n ? `${a.slice(0, n - 1).join('').trimEnd()}…` : s; };
+
+/** The About chip's name: "About: <the note>" (clipped), or for a question "About: <child>'s
+ *  question" / "About: Super's question". The window's words only; never sent. */
+export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text'>, words: AboutWords = ABOUT_WORDS_EN): string {
+  if (row.note) return `${words.about}: ${clip(aboutLine(row.text), ABOUT_CHIP_CHARS)}`;
+  const who = row.sid ? words.question.replace('{name}', clip(aboutLine(row.text), 40)) : words.superQuestion;
+  return `${words.about}: ${who}`;
+}
+
+/**
+ * A sent message split into the agenda line it is about and the owner's own words. The block
+ * counts only at the very start; anything malformed (a header with junk after it, a note with
+ * no readable `line:`, a question carrying words) is NOT a block: null, and the text is
+ * returned untouched, so the bubble shows what was sent.
+ */
+export function splitAgendaAbout(text: string): { about: AgendaAbout | null; text: string } {
+  const none = { about: null, text };
+  if (typeof text !== 'string') return { about: null, text: '' };
+  const m = ABOUT_AGENDA_RE.exec(text);
+  if (!m) return none;
+  const kind = m[1] as 'note' | 'item';
+  let rest = text.slice(m[0].length);
+  if (rest !== '' && !rest.startsWith('\n')) return none;
+  let line: string | undefined;
+  const lineHead = /^\nline: ([^\n]*)/.exec(rest);
+  if (kind === 'note') {
+    if (!lineHead) return none;
+    try {
+      const parsed: unknown = JSON.parse(lineHead[1]);
+      if (typeof parsed !== 'string') return none;
+      line = parsed;
+    } catch { return none; }
+    rest = rest.slice(lineHead[0].length);
+    if (rest !== '' && !rest.startsWith('\n')) return none;
+  } else if (lineHead) {
+    return none;
+  }
+  return {
+    about: { kind, id: m[2], section: m[3] as AgendaSection, ...(line !== undefined ? { line } : {}) },
+    text: rest.replace(/^\n+/, ''),
+  };
 }
 
 // ─── Layout of the panes while handed over ─────────────────────────────────────

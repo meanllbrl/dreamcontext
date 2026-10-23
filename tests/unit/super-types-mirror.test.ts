@@ -45,6 +45,8 @@ describe('super types — server record <-> window mirror', () => {
     expect(String(client.GROUP_ID_RE)).toBe(String(server.GROUP_ID_RE));
     expect(client.MAX_GROUP_NAME).toBe(server.MAX_GROUP_NAME);
     expect(client.MIN_GROUP_CARDS).toBe(server.MIN_GROUP_CARDS);
+    expect(String(client.ABOUT_AGENDA_RE)).toBe(String(server.ABOUT_AGENDA_RE));
+    expect(client.MAX_ABOUT_LINE).toBe(server.MAX_ABOUT_LINE);
   });
 
   it('the group rules are one code on both sides (the window applies the owner\'s drop before the server echoes it)', () => {

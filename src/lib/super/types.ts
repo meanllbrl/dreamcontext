@@ -425,6 +425,17 @@ export function cleanPadText(raw: unknown): string {
   return raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_PAD_TEXT).trim();
 }
 
+/**
+ * The owner wrote ABOUT one agenda line (its "Write about this" icon, owner 2026-10-23): his
+ * message opens with this header, then (a note only) `line: "<the note as he saw it>"`, then his
+ * words. `note=` names a pad note, `item=` an open question's queue item (its words are a
+ * child's, so they never ride in his message: the super reads them fenced from `super state`).
+ * `section=` is where the line stood when he wrote. Not `[super `: never an injected turn.
+ */
+export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done)\]/;
+/** The `line:` a note's About block carries, at most this long. */
+export const MAX_ABOUT_LINE = 200;
+
 /** The next pad id: one past the last handed out and past every id the pad holds. */
 export function nextPadId(pad: readonly Pick<SuperPadItem, 'id'>[], seq = 0): { id: string; seq: number } {
   const top = pad.reduce((m, p) => Math.max(m, Number(p.id.slice(1)) || 0), Math.max(0, Math.floor(seq)));
@@ -796,7 +807,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 8;
+export const SUPER_BRIEF_REV = 9;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

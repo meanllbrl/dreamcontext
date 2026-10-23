@@ -36,8 +36,11 @@ export interface Attachment {
   /** `ref` is a pointer to a whiteboard element (an agent card's drag-to-ask), not a file:
    *  its `path` is the `dcref:wb/<board>/<id>` token the server expands into the element's
    *  content, and `name` is what the chip reads ("Note · Q3 plan"). It has no preview and no
-   *  upload, so it is sendable the moment it is staged. */
-  kind: 'image' | 'file' | 'folder' | 'ref' | 'element';
+   *  upload, so it is sendable the moment it is staged. `about` is the agenda line the next
+   *  message is written about (owner 2026-10-23, the Super Agent's agenda): `text` is the block
+   *  the message opens with (`agendaAboutBlock`), `name` what the chip reads. At most one per
+   *  conversation (`setAbout`); it never makes a message on its own (`countsAsContent`). */
+  kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about';
   name: string;
   /** Image attachments only — an object URL for the pasted `File` blob, so the chip shows
    *  the picture itself while its bytes are still on their way to disk. Revoked when the entry
@@ -161,16 +164,50 @@ export function removeAttachment(convId: string, id: string): void {
  * case this module exists for: a chip pasted just before a respawn is `uploading` with no path
  * and no `failed` flag, and the old rule would have dropped it as though it had been sent.
  */
-export function dropSentAttachments(convId: string): void {
+export function dropSentAttachments(convId: string, opts: { keepAbout?: boolean } = {}): void {
   const cur = readScratch(convId);
   if (!cur.attachments.length && cur.quote === null) return;
-  cur.attachments.forEach((a) => { if (wasSent(a)) revoke(a); });
-  commit(convId, { attachments: cur.attachments.filter((a) => !wasSent(a)), quote: null });
+  // A slash command never carries the About block, so its chip stays for the next message.
+  const gone = (a: Attachment) => wasSent(a) && !(opts.keepAbout && a.kind === 'about');
+  cur.attachments.forEach((a) => { if (gone(a)) revoke(a); });
+  commit(convId, { attachments: cur.attachments.filter((a) => !gone(a)), quote: null });
 }
 
-/** A chip a send carries: one with a path, or a picked element (its block is the content). */
+/** A chip a send carries: one with a path, a picked element or an About line (its block is the
+ *  content). */
 export function wasSent(a: Attachment): boolean {
-  return !!a.path || (a.kind === 'element' && !!a.text);
+  return !!a.path || ((a.kind === 'element' || a.kind === 'about') && !!a.text);
+}
+
+/** A chip that is something to send by itself. An About line is not: it says what the message
+ *  is about, and the message is still his to write. */
+export function countsAsContent(a: Attachment): boolean {
+  return a.kind !== 'about' && wasSent(a);
+}
+
+/** Stage (or clear, with null) the agenda line the next message is written about. One per
+ *  conversation: a second press on another line replaces it. */
+export function setAbout(convId: string, about: Attachment | null): void {
+  const cur = readScratch(convId);
+  const rest = cur.attachments.filter((a) => a.kind !== 'about');
+  if (!about && rest.length === cur.attachments.length) return;
+  commit(convId, { ...cur, attachments: about ? [{ ...about, kind: 'about' }, ...rest] : rest });
+}
+
+/**
+ * The message a send writes, from what is in the box. The About block opens it, then the reply
+ * quote, then the typed text with its chips (`foldAttachments`). A slash command is sent as
+ * typed: no block (`slash`, and the chip stays staged). `quoted` is the message without the
+ * block: what must have something in it for a send to happen at all.
+ */
+export function composeOutgoing(
+  text: string, attachments: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
+): { message: string; quoted: string; slash: boolean } {
+  const bodyText = foldAttachments(text, attachments, quotePath);
+  const quoted = quote ? `> ${quote}\n\n${bodyText}` : bodyText;
+  const slash = text.trimStart().startsWith('/');
+  const about = slash ? undefined : attachments.find((a) => a.kind === 'about' && !!a.text);
+  return { message: about?.text ? `${about.text}\n\n${quoted}` : quoted, quoted, slash };
 }
 
 /**
@@ -179,7 +216,7 @@ export function wasSent(a: Attachment): boolean {
  * picture's path last. `quote` quotes a path the way the composer always has (agentComposer).
  */
 export function foldAttachments(text: string, attachments: readonly Attachment[], quote: (p: string) => string): string {
-  const paths = attachments.filter((a) => a.kind !== 'element' && !!a.path)
+  const paths = attachments.filter((a) => a.kind !== 'element' && a.kind !== 'about' && !!a.path)
     .map((a) => (a.kind === 'ref' ? a.path ?? '' : quote(a.path ?? ''))).join(' ');
   const body = paths ? (text.trim() ? `${text.trim()} ${paths}` : paths) : text.trim();
   const blocks = attachments.filter((a) => a.kind === 'element' && !!a.text)

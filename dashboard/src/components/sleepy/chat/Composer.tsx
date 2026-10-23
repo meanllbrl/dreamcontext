@@ -45,8 +45,8 @@ import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
 } from './chatEntities';
 import {
-  addAttachments, dropSentAttachments, foldAttachments, nextAttachmentId, pendingUploads, readScratch, removeAttachment,
-  settleAttachment, subscribeScratch, wasSent, type Attachment,
+  addAttachments, composeOutgoing, countsAsContent, dropSentAttachments, nextAttachmentId, pendingUploads, readScratch,
+  removeAttachment, settleAttachment, subscribeScratch, type Attachment,
 } from './composerScratch';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
@@ -1227,7 +1227,8 @@ export function Composer({
   // land in the vault temp dir. An image whose upload FAILED has none, so it is not sendable
   // content and (unlike everything else) survives the submit — the chip stays, saying it
   // wasn't sent, rather than disappearing as if it had been.
-  const sendableAttachments = attachments.filter(wasSent);
+  // An About chip (the agenda line the message is about) is not content: alone it sends nothing.
+  const sendableAttachments = attachments.filter(countsAsContent);
   const uploadingCount = attachments.filter((a) => a.uploading).length;
   const hasSendableContent = !!draft.trim() || sendableAttachments.length > 0
     || uploadingCount > 0;
@@ -1239,6 +1240,9 @@ export function Composer({
   liveRef.current = { draft, busy, connected: canCompose, quote };
   /** Guards the window between "⏎ pressed" and "upload settled" against a second submit. */
   const sendingRef = useRef(false);
+  /** The next commit is a push-to-talk take sent untouched: it arms the read-aloud with the
+   *  message it actually sends. Consumed by that commit, whatever becomes of it. */
+  const spokenRef = useRef(false);
   const [awaitingUpload, setAwaitingUpload] = useState(false);
 
   /** `auto` — ⏎ and the ↑ button: send, or steer into the running turn.
@@ -1439,7 +1443,7 @@ export function Composer({
 
   useEffect(() => {
     if (voiceSubmitTick > 0) {
-      session.armSpoken?.(liveRef.current.draft.trim());
+      spokenRef.current = true;
       submitRef.current('auto');
     }
   }, [voiceSubmitTick]);
@@ -1560,23 +1564,25 @@ export function Composer({
 
   const commit = (mode: SubmitMode) => {
     const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote } = liveRef.current;
+    const spoken = spokenRef.current;
+    spokenRef.current = false;
     if (!isConnected) return;
     // A `ref` chip's path is a token the server matches (`dcref:wb/<board>/<id>`), not a
     // filesystem path: it goes out as written, never shell-quoted.
-    const bodyText = foldAttachments(text, readScratch(convId).attachments, quotePath);
-    const message = liveQuote ? `> ${liveQuote}\n\n${bodyText}` : bodyText;
-    if (!message.trim()) return;
+    // A message about an agenda line opens with its block (the About chip), before the quote.
+    const { message, quoted, slash } = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath);
+    if (!quoted.trim()) return;
 
     // `/login` is the one command this surface must not forward. The headless engine replies
     // "/login isn't available in this environment." (verified on CLI 2.1.220) — a dead end for
     // the user typing exactly the right thing. Hand it to the terminal instead, and keep the
     // draft: if the sign-in tab isn't what they wanted, their text is still here.
-    if (isSignInCommand(message)) { onSignIn(); return; }
+    if (isSignInCommand(text)) { onSignIn(); return; }
 
     // `/mcp` is the other one, and it fails worse: the engine ANSWERS it, with a result frame
     // whose text tells the user to use a terminal for the details. So it opens the MCP panel
     // instead of spending a turn to deliver that.
-    if (onMcpPanel && isMcpCommand(message)) {
+    if (onMcpPanel && isMcpCommand(text)) {
       onMcpPanel();
       // Cleared, unlike the sign-in above, and the difference is the message itself: `/login`
       // may be sitting in front of a half-written sentence worth keeping, while a draft that
@@ -1594,7 +1600,7 @@ export function Composer({
     // than in the handler because from the user's side this WAS a send — it just landed
     // somewhere else. A bare "@acme-payments" with nothing after it is someone mid-sentence, so it
     // falls through untouched rather than opening a session with an empty prompt.
-    const addressed = onPeerMessage ? addressedPeer(message, peers) : null;
+    const addressed = onPeerMessage ? addressedPeer(quoted, peers) : null;
     if (addressed && addressed.body) {
       onPeerMessage?.(addressed.peer, addressed.body);
       setDraft('');
@@ -1602,7 +1608,7 @@ export function Composer({
       setNavBoth(NO_HISTORY_NAV);
       setSlashQuery(null);
       setMentionQuery(null);
-      dropSentAttachments(convId);
+      dropSentAttachments(convId, { keepAbout: true });
       onClearQuote();
       return;
     }
@@ -1628,6 +1634,9 @@ export function Composer({
     // the quote are all still the user's, untouched. Clearing them on a refusal would be the
     // composer taking the message away without sending it, which is the one failure mode the
     // steer fallback above also exists to prevent.
+    // A spoken take is armed with the message as SENT (block and quote included), so the
+    // server's match on its text arms the read-aloud.
+    if (spoken) session.armSpoken?.(message);
     if (mode === 'queue') session.enqueue(message);
     else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
     else if (session.send(message) === false) return;
@@ -1638,13 +1647,14 @@ export function Composer({
     // Sent chips go (their previews with them); anything that could NOT be attached stays, so
     // the row keeps saying "not sent" instead of implying it went with the message. The rule is
     // "had a path" rather than "was not failed" — see `dropSentAttachments`, which also clears
-    // the quote, so this conversation's staged state settles in one write.
-    dropSentAttachments(convId);
+    // the quote, so this conversation's staged state settles in one write. A slash command
+    // carried no About block, so the About chip stays for the next message.
+    dropSentAttachments(convId, { keepAbout: slash });
     onClearQuote();
   };
 
   const submit = (mode: SubmitMode = 'auto') => {
-    if (!canCompose || !hasSendableContent || sendingRef.current) return;
+    if (!canCompose || !hasSendableContent || sendingRef.current) { spokenRef.current = false; return; }
     // Nothing in flight — the common case, and it stays synchronous. A picked element's picture
     // is uploaded outside this pane (composerScratch `trackUpload`) and is waited for the same way.
     const jobs = [...uploadsRef.current, ...pendingUploads(convId)];

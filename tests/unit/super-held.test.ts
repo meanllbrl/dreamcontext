@@ -28,7 +28,7 @@ import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperChild, type SuperState } from '../../src/lib/super/types.js';
 import {
-  HELD_OPEN, _resetSuperInbox, _superInboxDrained, attachSuperInbox, noteHeld, startSuperInbox, superAnswerDigest,
+  HELD_OPEN, _resetSuperInbox, _superInboxDrained, attachSuperInbox, clearOwnerLease, noteHeld, pumpSuper, startSuperInbox, superAnswerDigest,
   superOwnerSpoke, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
@@ -207,5 +207,95 @@ describe('a child\'s question open: the pile goes in the first event turn after 
       expect(s.queue.find((q) => q.id === 'q-done-c2')?.state).toBe('delivered');
       expect(s.ownerBatches).toContain(delivered[1].event.batch);
     }, W);
+  });
+});
+
+/**
+ * The owner writes ABOUT one agenda line (owner 2026-10-23: "Write about this"). About another
+ * line, his message is not the answer to the super's open question: it stays open, and what
+ * was held while it was open stays held, never folded into a message about something else.
+ * About the question's own row, it answers it as any message does.
+ */
+describe('a message about one agenda line', () => {
+  const noteAbout = { kind: 'note' as const, id: 'n7' };
+  async function heldWhileAsked() {
+    makeVault({ children: { c1: child('c1', { awaited: true }) } });
+    await startSuperInbox([root]);
+    settle(reg(SUPER, 'super'));
+    reg('c1');
+    const { inbox, delivered } = fakeInbox();
+    attachSuperInbox(inbox);
+    await openAsk();
+    await finish('c1', 'q-done-c1');
+    await vi.waitFor(async () => expect((await readSuperState(root)).held?.map((h) => h.item)).toEqual(['q-done-c1']), W);
+    return delivered;
+  }
+
+  it('about another line: no held block rides with it, the question stays open, the pile stays held', async () => {
+    const delivered = await heldWhileAsked();
+    expect(superAnswerDigest(SUPER, Date.now(), noteAbout)).toBeNull();
+    // A child's question row is another line too.
+    expect(superAnswerDigest(SUPER, Date.now(), { kind: 'item', id: 'q-someone-else' })).toBeNull();
+    superOwnerSpoke(SUPER, Date.now(), [], noteAbout);
+    await new Promise((r) => setTimeout(r, 120));
+    const s = await readSuperState(root);
+    expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('escalated');
+    expect(s.held?.map((h) => h.item)).toEqual(['q-done-c1']);
+    expect(s.queue.find((q) => q.id === 'q-done-c1')?.state).toBe('pending');
+    expect(delivered).toHaveLength(0);
+
+    // His words answered it anyway: the super closes it (`super queue done <ask>`), and the held
+    // events reach it in the next event turn, none lost.
+    await writeSuper(root, (x) => { const q = x.queue.find((y) => y.id === 'q-ask-1'); if (q) q.state = 'done'; });
+    clearOwnerLease(root); // the owner's lease (15 s) ran out
+    void pumpSuper(root); // what the queue-done route does after the same write (routes/super.ts)
+    await vi.waitFor(() => expect(delivered.length).toBeGreaterThanOrEqual(1), W);
+    const text = delivered.map((d) => d.text).join('\n');
+    expect(text).toContain(`${HELD_OPEN} items=1>`);
+    expect(text).toMatch(/- item=q-done-c1 child=c1 event=done awaited=owner/);
+    await vi.waitFor(async () => {
+      const after = await readSuperState(root);
+      expect(after.held).toBeUndefined();
+      expect(after.queue.find((q) => q.id === 'q-done-c1')?.state).toBe('delivered');
+    }, W);
+  });
+
+  it('about the question\'s own row: it is the answer, the pile rides with it', async () => {
+    await heldWhileAsked();
+    const own = { kind: 'item' as const, id: 'q-ask-1' };
+    const digest = superAnswerDigest(SUPER, Date.now(), own);
+    expect(digest?.items).toEqual(['q-done-c1']);
+    superOwnerSpoke(SUPER, Date.now(), digest!.items, own);
+    await vi.waitFor(async () => {
+      const s = await readSuperState(root);
+      expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('done');
+      expect(s.held).toBeUndefined();
+    }, W);
+  });
+
+  it('two questions open: about either one answers them (today\'s close-all); about a note keeps both', async () => {
+    await heldWhileAsked();
+    await writeSuper(root, (s) => {
+      s.queue.push({ id: 'q-ask-2', sessionId: SUPER, kind: 'ask', state: 'escalated', ownerText: 'And the docs?', createdAt: Date.now() });
+    });
+    expect(superAnswerDigest(SUPER, Date.now(), noteAbout)).toBeNull();
+    superOwnerSpoke(SUPER, Date.now(), [], noteAbout);
+    await new Promise((r) => setTimeout(r, 120));
+    let s = await readSuperState(root);
+    expect(s.queue.filter((q) => q.kind === 'ask').map((q) => q.state)).toEqual(['escalated', 'escalated']);
+
+    const second = { kind: 'item' as const, id: 'q-ask-2' };
+    const digest = superAnswerDigest(SUPER, Date.now(), second);
+    expect(digest).not.toBeNull();
+    superOwnerSpoke(SUPER, Date.now(), digest!.items, second);
+    await vi.waitFor(async () => {
+      s = await readSuperState(root);
+      expect(s.queue.filter((q) => q.kind === 'ask').map((q) => q.state)).toEqual(['done', 'done']);
+    }, W);
+  });
+
+  it('a plain message (no About header) still answers the open question', async () => {
+    await heldWhileAsked();
+    expect(superAnswerDigest(SUPER)).not.toBeNull();
   });
 });
