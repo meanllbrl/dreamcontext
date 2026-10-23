@@ -515,6 +515,13 @@
   background: var(--color-bg);
 }
 
+/* A page laid out at the desktop width and scaled to its box (Super presentation layouts): the
+   frame is positioned absolutely (PageFrame's inline geometry), so its box must hold it. */
+*:has(> .wb-web-frame--desktop) {
+  position: relative;
+  overflow: hidden;
+}
+
 .wb-web-prompt {
   display: flex;
   flex-direction: column;

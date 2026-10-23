@@ -4356,6 +4356,9 @@ export function AgentSurface() {
       if (document.querySelector('.super-group-panel')) return;
       // A card's size menu owns Esc the same way: it closes the menu (SuperContainer), never the stage.
       if (document.querySelector('.super-size-menu')) return;
+      // A presentation on that stage owns Esc: it goes back to the floating stage (SuperSurface),
+      // never folds the whole Agents view.
+      if (document.querySelector('.super-surface[data-presenting]')) return;
       // A card held on that stage owns Esc too: the drag's own listener cancels it, but it is
       // added at the press, after this one, so its stopPropagation cannot reach us.
       if (document.querySelector('.super-surface[data-dragging]')) return;

@@ -49,8 +49,9 @@ describe('webBudget', () => {
     const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
     expect(src).toMatch(/const webOnScreen = props\.visible/);
     expect(src).toMatch(/keptWebIds\(lru, webOnScreen, /);
-    // On screen = drawn on the stage: a web card in Others holds no frame, nor one open full screen.
-    expect(src).toMatch(/cp\.where === 'others' \|\| full\?\.id === c\.id\) return false/);
+    // On screen = drawn on the stage: a web card in Others holds no frame, nor one open full screen,
+    // nor a filmstrip thumb or a card behind a narrow sheet's tab (presentation layouts).
+    expect(src).toMatch(/cp\.where === 'others' \|\| cp\.where === 'thumb' \|\| cp\.where === 'tab' \|\| full\?\.id === c\.id\) return false/);
     // …and a floating tile (2026-10-20): a page is live side by side or presented, and since
     // 2026-10-22 in a large or wide floating card; a small or medium tile shows its title.
     expect(src).toMatch(/return cp\.where !== 'float' \|\| cp\.size === 'large' \|\| cp\.size === 'wide'/);
@@ -78,7 +79,9 @@ describe('webBudget', () => {
 
   it('the surface parks a kept page card off the stage under the same key, never drops it', () => {
     const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
-    expect(src).toMatch(/const parkedAt = !ghost && \(!placed \|\| placed\.where === 'others'\) && liveWeb\.has\(c\.id\) && isLivePage\(c\)/);
+    // Off the stage: Others, or behind a narrow sheet's tab.
+    expect(src).toMatch(/const off = !placed \|\| placed\.where === 'others' \|\| placed\.where === 'tab';/);
+    expect(src).toMatch(/const parkedAt = !ghost && off && liveWeb\.has\(c\.id\) && isLivePage\(c\)/);
     expect(src).toMatch(/parked=\{parked\}/);
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
     // A page from a server is ONE tree in every state (tile, float, large, parked).

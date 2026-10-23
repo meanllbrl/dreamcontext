@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { agentFileUrl } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import { openWebSession, portOfHost, readLoopbackGrants, setLoopbackGrant, useLoopbackGrants, type WebSessionView } from '../../../lib/loopbackGrants';
@@ -35,7 +35,17 @@ import type { WidgetProps } from './types';
  */
 export const WEB_WIDGET_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
-export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control }: WidgetProps & {
+/** A site's desktop layout width, in css px (Super presentation layouts, plan-r2 D8). */
+export const DESKTOP_WIDTH = 1280;
+
+/** The scale a page laid out at {@link DESKTOP_WIDTH} takes in a box this wide: only between 60 %
+ *  and 100 % (narrower it would be unreadable, wider it fits natively). Null: native. */
+export function desktopScale(boxWidth: number): number | null {
+  const s = boxWidth / DESKTOP_WIDTH;
+  return s >= 0.6 && s < 1 ? s : null;
+}
+
+export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control, desktop }: WidgetProps & {
   /** A PAGE's frame is allowed and shown (its trust gate passed): the Super Agent's card offers
    *  it full screen only from then on. Never called for a file. */
   onFrameAllowed?: (href: string) => void;
@@ -43,6 +53,9 @@ export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zo
   zoomBridge?: boolean;
   /** The Super Agent card's handle on the page: Reload, Clear cache, Inspect (webFrameControl.ts). */
   control?: WebFrameControl;
+  /** A PAGE laid out at the desktop width and scaled to its box (the frame only, never the card's
+   *  chrome or the trust prompt). */
+  desktop?: boolean;
 }) {
   const tx = useWbText();
   const check = validateWebUrl(payload.url, window.location.origin);
@@ -57,12 +70,12 @@ export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zo
   if (check.kind === 'file') {
     return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} zoomBridge={zoomBridge} />;
   }
-  return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} control={control} />;
+  return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} control={control} desktop={desktop} />;
 }
 
 type PageCheck = Extract<WebUrlCheck, { kind: 'url' }>;
 type FileCheck = Extract<WebUrlCheck, { kind: 'file' }>;
-type FrameProps = Pick<WidgetProps, 'active' | 'size'> & { title: string; onFrameAllowed?: (href: string) => void; control?: WebFrameControl };
+type FrameProps = Pick<WidgetProps, 'active' | 'size'> & { title: string; onFrameAllowed?: (href: string) => void; control?: WebFrameControl; desktop?: boolean };
 
 /** Tells the card once a page's frame is up (the trust gate passed). */
 function useFrameAllowed(shown: boolean, href: string, onFrameAllowed?: (href: string) => void) {
@@ -75,7 +88,7 @@ export const LOOPBACK_BUTTON_DELAY_MS = 600;
 
 /** The ONE frame a web card ever draws: no popups, no top navigation, no permissions (T8).
  *  `control` (a Super Agent card) is handed the frame and what it loaded. */
-export function PageFrame({ title, href, control, info }: { title: string; href: string; control?: WebFrameControl; info?: WebFrameInfo }) {
+export function PageFrame({ title, href, control, info, desktop }: { title: string; href: string; control?: WebFrameControl; info?: WebFrameInfo; desktop?: boolean }) {
   const ref = useRef<HTMLIFrameElement | null>(null);
   useEffect(() => {
     const el = ref.current;
@@ -83,10 +96,29 @@ export function PageFrame({ title, href, control, info }: { title: string; href:
     control.attach(el, info);
     return () => control.detach(el);
   }, [control, info]);
+  // The desktop width: the SAME element restyled (never remounted, so the page never reloads),
+  // laid out at DESKTOP_WIDTH and scaled to its box. Positioned absolutely, its width never feeds
+  // the box it measures; a 0-wide box keeps the last scale.
+  const [scale, setScale] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const box = ref.current?.parentElement;
+    if (!desktop || !box) { setScale(null); return undefined; }
+    const read = () => { if (box.clientWidth > 0) setScale(desktopScale(box.clientWidth)); };
+    read();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(read);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [desktop]);
+  const style: CSSProperties | undefined = scale
+    ? { position: 'absolute', left: 0, top: 0, width: DESKTOP_WIDTH, height: `${100 / scale}%`, transform: `scale(${scale})`, transformOrigin: '0 0' }
+    : undefined;
   return (
     <iframe
       ref={ref}
-      className="wb-web-frame"
+      className={scale ? 'wb-web-frame wb-web-frame--desktop' : 'wb-web-frame'}
+      data-desktop-scale={scale ? scale.toFixed(3) : undefined}
+      style={style}
       title={title}
       src={href}
       sandbox={WEB_WIDGET_SANDBOX}
@@ -130,7 +162,7 @@ function WebPage(props: FrameProps & { page: PageCheck }) {
  * (`lib/loopbackGrants.ts`): "Open once" loads it now and remembers nothing; "Always allow
  * localhost:PORT" records the port. The app's own ports are refused whatever is recorded.
  */
-function LoopbackPage({ page, title, active, size, onFrameAllowed, control }: FrameProps & { page: PageCheck }) {
+function LoopbackPage({ page, title, active, size, onFrameAllowed, control, desktop }: FrameProps & { page: PageCheck }) {
   const tx = useWbText();
   const api = useApi();
   const { vault } = useVault();
@@ -175,7 +207,7 @@ function LoopbackPage({ page, title, active, size, onFrameAllowed, control }: Fr
           : tx('web.loopback.denied', 'This page could not be allowed here.')}</WidgetNotice>
       ) : (granted || once) ? (
         frameHref
-          ? <PageFrame title={title} href={frameHref} control={control} info={info} />
+          ? <PageFrame title={title} href={frameHref} control={control} info={info} desktop={desktop} />
           : <WidgetNotice tone="loading">{tx('whiteboard.widget.loading', 'Loading…')}</WidgetNotice>
       ) : (
         <div className="wb-web-prompt" data-testid="web-loopback-prompt">
@@ -192,7 +224,7 @@ function LoopbackPage({ page, title, active, size, onFrameAllowed, control }: Fr
   );
 }
 
-function RemotePage({ page, title, active, size, onFrameAllowed, control }: FrameProps & { page: PageCheck }) {
+function RemotePage({ page, title, active, size, onFrameAllowed, control, desktop }: FrameProps & { page: PageCheck }) {
   const tx = useWbText();
   const [loaded, setLoaded] = useState(() => isTrustedHost(page.host));
   const info = useMemo<WebFrameInfo>(() => ({ href: page.href }), [page.href]);
@@ -207,7 +239,7 @@ function RemotePage({ page, title, active, size, onFrameAllowed, control }: Fram
   return (
     <WidgetFrame kind="web" title={title} active={active} size={size} actions={openInBrowser}>
       {loaded ? (
-        <PageFrame title={title} href={page.href} control={control} info={info} />
+        <PageFrame title={title} href={page.href} control={control} info={info} desktop={desktop} />
       ) : (
         <div className="wb-web-prompt">
           <span className="wb-web-host">{page.unicodeHost}</span>

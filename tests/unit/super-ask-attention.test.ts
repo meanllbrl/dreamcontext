@@ -77,7 +77,9 @@ describe('the wiring', () => {
 
   it('the centre counts every question the Super Agent put to the owner, never a child\'s permission', () => {
     const src = read('super/SuperSurface.tsx');
-    expect(src).toMatch(/const ownerAsk = state\.queue\.some\(\(q\) => needsOwner\(q\) && q\.kind !== 'permission'\);\s*const status = superCentreStatus\(superSession, ownerAsk\);/);
+    // Computed before the plan since presentation layouts (a question draws a folded chat as its mini).
+    expect(src).toMatch(/const ownerAsk = state\.queue\.some\(\(q\) => needsOwner\(q\) && q\.kind !== 'permission'\);/);
+    expect(src).toMatch(/const status = superCentreStatus\(superSession, ownerAsk\);/);
   });
 
   it('the folded dock draws the Super Agent\'s question as its own chip, opening the stage, never closable', () => {

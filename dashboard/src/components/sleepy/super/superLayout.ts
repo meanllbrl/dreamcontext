@@ -76,8 +76,9 @@ export const STAGE = {
   MINI_FRAC_H: 0.46,
   MINI_MIN_H: 320,
   MINI_MAX_H: 460,
-  /** The chat folded to its composer bar (and a narrow sheet's composer under it). */
-  CHAT_BAR_H: 48,
+  /** The chat folded to its composer bar (and a narrow sheet's composer under it): the chat's
+   *  whole composer card (its field and its row of controls), nothing else of the chat. */
+  CHAT_BAR_H: 128,
   /** Filmstrip: the strip of thumbs under the big card; a thumb at most this wide. */
   STRIP_H: 112,
   THUMB_MAX_W: 168,
