@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MAX_LIVE_IFRAMES, dropFromLru, liveWebIds, touchLru } from '../../dashboard/src/components/sleepy/super/webBudget.js';
+import { MAX_KEPT_FRAMES, MAX_LIVE_IFRAMES, dropFromLru, keptWebIds, liveWebIds, touchLru } from '../../dashboard/src/components/sleepy/super/webBudget.js';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -48,7 +48,7 @@ describe('webBudget', () => {
   it('the surface asks the budget only for what is on screen, and only while visible', () => {
     const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
     expect(src).toMatch(/const webOnScreen = props\.visible/);
-    expect(src).toMatch(/liveWebIds\(lru, webOnScreen\)/);
+    expect(src).toMatch(/keptWebIds\(lru, webOnScreen, /);
     // On screen = drawn on the stage: a web card in Others holds no frame, nor one open full screen.
     expect(src).toMatch(/cp\.where === 'others' \|\| full\?\.id === c\.id\) return false/);
     // …and a floating tile (2026-10-20): a page is live side by side or presented, and since
@@ -58,5 +58,31 @@ describe('webBudget', () => {
     // Past the budget a web container is a title + Load placeholder, never an iframe.
     expect(container).toMatch(/p\.webLive\s*\?\s*<div className="super-card-view super-card-view--web"><WebWidget/);
     expect(container).toMatch(/: <WebPlaceholder/);
+  });
+
+  // Owner 2026-10-22: a page must not reload when its card moves. A card that loaded its page
+  // keeps it (up to MAX_KEPT_FRAMES) wherever it goes: on screen drawn, off the stage parked.
+  it('kept frames: the on-screen auto loads first, then the most recent, four at most', () => {
+    expect(MAX_KEPT_FRAMES).toBe(4);
+    // Nothing focused: the two on-screen ones load on their own (the old rule), no more.
+    expect([...keptWebIds([], ['a', 'b', 'c'], ['a', 'b', 'c'])].sort()).toEqual(['a', 'b']);
+    // A page moved to Others (off screen) keeps its frame while it is recent enough.
+    expect([...keptWebIds(['a', 'b'], ['b'], ['a', 'b'])].sort()).toEqual(['a', 'b']);
+    // The stage folded (nothing on screen): the recent pages stay alive.
+    expect([...keptWebIds(['a', 'b', 'c'], [], ['a', 'b', 'c'])].sort()).toEqual(['a', 'b', 'c']);
+    // Never more than four; the least recent goes first; on-screen auto loads are never pushed out.
+    expect([...keptWebIds(['a', 'b', 'c', 'd', 'e'], ['f'], ['a', 'b', 'c', 'd', 'e', 'f'])].sort()).toEqual(['a', 'b', 'c', 'f']);
+    // A card that closed is never kept.
+    expect([...keptWebIds(['gone', 'a'], [], ['a'])]).toEqual(['a']);
+  });
+
+  it('the surface parks a kept page card off the stage under the same key, never drops it', () => {
+    const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
+    expect(src).toMatch(/const parkedAt = !ghost && \(!placed \|\| placed\.where === 'others'\) && liveWeb\.has\(c\.id\) && isLivePage\(c\)/);
+    expect(src).toMatch(/parked=\{parked\}/);
+    const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
+    // A page from a server is ONE tree in every state (tile, float, large, parked).
+    expect(container).toMatch(/\{isLivePage\(c\)\s*\n?\s*\/\/[^\n]*\n[^\n]*\n\s*\? <WebCardBody/);
+    expect(container).toMatch(/data-stage-key=\{props\.parked \? undefined : c\.id\}/);
   });
 });

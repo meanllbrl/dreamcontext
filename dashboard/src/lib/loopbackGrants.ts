@@ -77,3 +77,23 @@ export function __resetLoopbackGrantsForTests(): void {
   inflight.clear();
   listeners.clear();
 }
+
+/** An approved dev server's session proxy (`POST /api/agent/web-session`): the origin its card
+ *  loads it from (127.0.0.1, so its cookies stick) and the token its Clear uses. */
+export interface WebSessionView { origin: string; clearToken: string }
+
+/** The proxy for `port`, or null when it could not be opened: the card then loads the page
+ *  directly, as before. `once`: the owner's "Open once" (the server checks an "Always allow"
+ *  itself). Asked on every mount, never cached: the server answers the same proxy while it
+ *  lives, and a server that restarted under this window has a new one. */
+export function openWebSession(api: ApiClient, _vault: string, port: number, host: string, once: boolean): Promise<WebSessionView | null> {
+  return api.post<unknown>('/agent/web-session', { port, host, once })
+    .then((raw) => {
+      const r = raw as { origin?: unknown; clearToken?: unknown } | null;
+      if (typeof r?.origin === 'string' && /^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(r.origin) && typeof r.clearToken === 'string') {
+        return { origin: r.origin, clearToken: r.clearToken };
+      }
+      throw new Error('bad answer');
+    })
+    .catch(() => null);
+}
