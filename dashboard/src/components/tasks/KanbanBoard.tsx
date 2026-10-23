@@ -1,6 +1,8 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel } from '../../hooks/useTasks';
+import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
+import { useI18n } from '../../context/I18nContext';
+import { openChildrenMessage } from '../../lib/taskObjection';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
@@ -28,6 +30,7 @@ const distinct = (xs: string[]): string[] => Array.from(new Set(xs));
 type PendingSave = { mode: 'save' | 'create'; name?: string } | null;
 
 export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
+  const { t } = useI18n();
   const sm = useStatusModel();
   const s = useBoardState();
   const { data: tasks = [], isLoading } = useTasks();
@@ -62,10 +65,11 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const [showCreate, setShowCreate] = useState(false);
   const [showAuthor, setShowAuthor] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; refused: boolean } | null>(null);
 
-  const flash = useCallback((msg: string) => { setToast(msg); }, []);
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 1900); return () => clearTimeout(t); }, [toast]);
+  const flash = useCallback((msg: string, refused = false) => { setToast({ msg, refused }); }, []);
+  // A refusal says what to do next, so it stays long enough to be read.
+  useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(null), toast.refused ? 6000 : 1900); return () => clearTimeout(timer); }, [toast]);
 
   // Open the task the ⌘K palette / Brain map navigated to in the TaskDetailPanel.
   useFocusTarget(focus, (slug) => setSelectedSlug(slug));
@@ -149,6 +153,19 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     [tasks, sm],
   );
 
+  // ── status moves (drag, right-click) ───────────────────────────────────────────
+  // The card's column comes from the server's status, so a refused move leaves it where it
+  // was; the toast says so, and "Moved to" only shows once the move landed. A parent with open
+  // sub-tasks is refused (409 parent_has_open_children): name them from the list we hold.
+  const moveStatus = useCallback((task: Task, status: string) => {
+    updateTask.mutate({ slug: task.slug, updates: { status } as Partial<Task> }, {
+      onSuccess: () => flash(`Moved to ${sm.labelOf(status)}`),
+      onError: (err) => flash(isOpenChildrenRefusal(err)
+        ? openChildrenMessage(t, 'board', task, tasks, sm.isTerminal)
+        : err.message, true),
+    });
+  }, [updateTask, flash, sm, t, tasks]);
+
   // ── drag + drop (patch the status) ─────────────────────────────────────────────
   const draggable = true;
   const onCardDragStart = useCallback((e: React.DragEvent, id: string) => { setDragId(id); try { e.dataTransfer.effectAllowed = 'move'; } catch { /* noop */ } }, []);
@@ -166,9 +183,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     if (!id) return;
     const task = tasks.find((t) => t.id === id);
     if (!task || task.status === colValue) return;
-    updateTask.mutate({ slug: task.slug, updates: { status: colValue } });
-    flash(`Moved to ${sm.labelOf(colValue)}`);
-  }, [dragId, tasks, updateTask, flash, endDrag, sm]);
+    moveStatus(task, colValue);
+  }, [dragId, tasks, endDrag, moveStatus]);
 
   // ── right-click context menu ─────────────────────────────────────────────────────
   const openCtxMenu = useCallback((e: React.MouseEvent, task: Task) => {
@@ -177,9 +193,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     setCtxMenu({ x: e.clientX, y: e.clientY, task });
   }, []);
   const ctxSetStatus = useCallback((task: Task, status: string) => {
-    if (task.status !== status) { updateTask.mutate({ slug: task.slug, updates: { status } as Partial<Task> }); flash(`Moved to ${sm.labelOf(status)}`); }
+    if (task.status !== status) moveStatus(task, status);
     setCtxMenu(null);
-  }, [updateTask, flash, sm]);
+  }, [moveStatus]);
   const ctxSetPriority = useCallback((task: Task, priority: string) => {
     if (task.priority !== priority) { updateTask.mutate({ slug: task.slug, updates: { priority } as Partial<Task> }); flash(`Priority → ${levelLabel(priority)}`); }
     setCtxMenu(null);
@@ -192,7 +208,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     if (task.tags.some((t) => t.toLowerCase() === 'backlog')) return;
     updateTask.mutate(
       { slug: task.slug, updates: { tags: [...task.tags, 'backlog'] } as Partial<Task> },
-      { onSuccess: () => flash('Sent to backlog'), onError: () => flash('Could not send to backlog') },
+      { onSuccess: () => flash('Sent to backlog'), onError: () => flash('Could not send to backlog', true) },
     );
   }, [updateTask, flash]);
   const ctxDelete = useCallback(async (task: Task) => {
@@ -204,7 +220,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
       destructive: true,
     });
     if (!ok) return;
-    deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed') });
+    deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed', true) });
     if (selectedSlug === task.slug) setSelectedSlug(null);
   }, [deleteTask, flash, selectedSlug]);
 
@@ -356,8 +372,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
       {pendingSave && <SaveScopeDialog title={pendingTitle} defaultScope={pendingDefaultScope} onPick={handlePickScope} onCancel={() => setPendingSave(null)} />}
 
       {toast && (
-        <div className="bd-pop" style={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 60, display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 11, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-lg)', fontSize: 13, color: 'var(--color-text)' }}>
-          <span style={{ color: 'var(--color-accent)' }}>✓</span>{toast}
+        <div className="bd-pop" role={toast.refused ? 'alert' : 'status'} data-testid="board-toast" style={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 60, display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 11, background: 'var(--color-bg-elevated)', border: `1px solid ${toast.refused ? 'var(--color-error)' : 'var(--color-border)'}`, boxShadow: 'var(--shadow-lg)', fontSize: 13, color: 'var(--color-text)', width: 'max-content', maxWidth: 'min(560px, calc(100% - 32px))', lineHeight: 1.45 }}>
+          <span style={{ color: toast.refused ? 'var(--color-error)' : 'var(--color-accent)', flexShrink: 0 }}>{toast.refused ? '!' : '✓'}</span>{toast.msg}
         </div>
       )}
     </div>

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useUpdateTask, useDeleteTask, useFeatureOptions, useStatusModel } from '../../hooks/useTasks';
+import { useUpdateTask, useDeleteTask, useFeatureOptions, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
+import { useI18n } from '../../context/I18nContext';
+import { openChildrenMessage } from '../../lib/taskObjection';
 import { confirmAction } from '../../lib/desktop';
 import { useTheme } from '../../context/ThemeContext';
 import { DetailHeader } from './detail/DetailHeader';
@@ -32,6 +34,7 @@ interface TaskDetailPanelProps {
  */
 export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: TaskDetailPanelProps) {
   const { resolved: theme } = useTheme();
+  const { t } = useI18n();
   const sm = useStatusModel();
   const updateTask = useUpdateTask();
   // Body writes get their OWN mutation observer: a property edit through `updateTask` must never
@@ -43,8 +46,10 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
   const [parentError, setParentError] = useState<string | null>(null);
   const [fullScreen, setFullScreen] = useState(false);
 
+  // A status change refused because sub-tasks are still open names them in the owner's
+  // language (the status select snaps back on its own: it shows the server's status).
   const onMutationError = (err: Error) => {
-    setMutationError(err.message);
+    setMutationError(isOpenChildrenRefusal(err) ? openChildrenMessage(t, 'detail', task, allTasks, sm.isTerminal) : err.message);
     setTimeout(() => setMutationError(null), 5000);
   };
   const update = (updates: Updates, onError?: (err: Error) => void) => {
@@ -147,6 +152,7 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
       <div className={`detail-panel ${fullScreen ? 'detail-panel--fullscreen' : ''}`} onClick={(e) => e.stopPropagation()} data-task-slug={task.slug}>
         <DetailHeader
           task={task}
+          allTasks={allTasks}
           featureName={featureName}
           parent={parent}
           parentProgress={parentProgress}

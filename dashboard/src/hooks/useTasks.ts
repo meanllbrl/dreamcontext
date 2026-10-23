@@ -52,6 +52,45 @@ export interface Task {
   body: string;
   /** The board card's clip: top-level entries in `state/assets/<slug>/` and the first image. List only. */
   attachments?: { count: number; cover: string | null };
+  /** Who opened the task (server: lib/filing-basis.ts). Null on tasks older than the field. */
+  filed_by?: FiledBy | null;
+  /** Why it was opened. Null when nothing was recorded (the owner's own tasks, older tasks). */
+  filing_basis?: FilingBasis | null;
+  /** The owner's objection to this task and the rule sleep learned from it (newest), or null. */
+  objection?: TaskObjection | null;
+}
+
+export type FiledBy = 'human' | 'agent' | 'sleep' | 'plan';
+export type FilingBasisKind = 'ask' | 'defect' | 'change' | 'bookmark' | 'plan' | 'note';
+export interface FilingBasis {
+  kind: FilingBasisKind;
+  quote: string;
+  session?: string;
+  /** YYYY-MM-DD */
+  at: string;
+  verified: boolean;
+}
+
+export type ObjectionKind = 'subtask-of' | 'criterion-on' | 'duplicate-of' | 'not-a-task' | 'wrong-project';
+/** The kinds that point at another task. */
+export const OBJECTION_TARGETED: ReadonlySet<ObjectionKind> = new Set(['subtask-of', 'criterion-on', 'duplicate-of']);
+/** Mirrors the server's floor (lib/task-objection.ts MIN_OBJECTION_NOTE_CHARS). */
+export const MIN_OBJECTION_NOTE_CHARS = 15;
+
+export interface TaskObjection {
+  id: string;
+  as: ObjectionKind;
+  target: string | null;
+  targetName: string | null;
+  note: string;
+  /** ISO timestamp the objection was made. */
+  at: string;
+  /** Not finished: the page offers "Finish" (the same request again). */
+  pending: boolean;
+  error: string | null;
+  applied: { action: string; at: string } | null;
+  /** The rule sleep learned from it, or null (not yet, or deleted by hand). */
+  rule: { id: string; title: string; dont: string; do: string } | null;
 }
 
 interface TasksResponse {
@@ -170,6 +209,35 @@ export function useUpdateTask() {
       if (variables.updates.agent !== undefined) {
         queryClient.invalidateQueries({ queryKey: ['agents'] });
       }
+    },
+  });
+}
+
+/**
+ * Did a status change come back refused because the task still has open sub-tasks? (409
+ * `parent_has_open_children`.) The board and the drawer answer it in their own words, from the
+ * task list they already hold (lib/taskObjection.ts openChildrenMessage), not the route's English.
+ */
+export function isOpenChildrenRefusal(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === 'parent_has_open_children';
+}
+
+/**
+ * "Object to this task" (`POST /api/tasks/:slug/objection`). The same call finishes an
+ * unfinished objection. Rejects with the route's RequestError (its `code` and message); the
+ * dialog shows it in place.
+ */
+export function useObjectToTask() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation<{ outcome: 'applied' | 'already_applied'; task: Task | null }, Error, { slug: string; as: ObjectionKind; target: string | null; note: string }>({
+    mutationFn: ({ slug, as, target, note }) =>
+      api.post(`/tasks/${encodeURIComponent(slug)}/objection`, { as, target, note }),
+    // Settled, not success: a step that failed midway still changed the task (and the ledger).
+    onSettled: (_data, _err, { slug, target }) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks', slug] });
+      if (target) queryClient.invalidateQueries({ queryKey: ['tasks', target] });
     },
   });
 }
