@@ -96,6 +96,13 @@ export interface SuperView {
   /** `half` only: the server put this page side by side on its own; the stage waits to show it
    *  while the owner types or drags (useStageCues). */
   auto?: true;
+  /** `present` only: its layout (always resolved by the store, {@link resolveLayout}). */
+  layout?: PresentLayout;
+  /** `present` only: the OWNER picked this layout for these cards; an agent `present` of the same
+   *  set keeps it. */
+  layoutBy?: 'owner';
+  /** `present` only: the owner folded the agent's chat to its composer bar. */
+  chat?: 'bar';
 }
 
 /**
@@ -110,9 +117,166 @@ export function viewWithout(view: SuperView, ids: ReadonlySet<string>): SuperVie
   if (view.mode === 'present') {
     const cards = (view.cards ?? []).filter((id) => !ids.has(id));
     if (!cards.length) return { mode: 'float' };
-    return cards.length === (view.cards ?? []).length ? view : { mode: 'present', cards };
+    return cards.length === (view.cards ?? []).length ? view : { ...view, cards };
   }
   return view;
+}
+
+/**
+ * A presentation's named layout (task super-sahnesinde-adli-sunum-duzenleri…, owner 2026-10-23:
+ * "sometimes we want the site wide"): `spotlight` one big card with the agent as a small square
+ * bottom-left, `compare` two equal cards, `grid` 2-4, `filmstrip` one big card over a strip of
+ * the rest, `review` a child's page with its chat (and browser) under it.
+ */
+export const PRESENT_LAYOUTS = ['spotlight', 'compare', 'grid', 'filmstrip', 'review'] as const;
+export type PresentLayout = typeof PRESENT_LAYOUTS[number];
+/** A filmstrip shows at most this many cards; every other layout {@link MAX_PRESENT}. */
+export const MAX_FILMSTRIP = 8;
+
+/** How many cards a layout shows. */
+export function presentRange(layout: PresentLayout): { min: number; max: number } {
+  switch (layout) {
+    case 'spotlight': return { min: 1, max: 1 };
+    case 'compare': return { min: 2, max: 2 };
+    case 'grid': return { min: 2, max: MAX_PRESENT };
+    case 'filmstrip': return { min: 2, max: MAX_FILMSTRIP };
+    case 'review': return { min: 2, max: 3 };
+  }
+}
+
+type LayoutCard = Pick<SuperContainer, 'kind' | 'ref' | 'of'>;
+
+/**
+ * A child's page under review: exactly one chat, plus that child's site (a web card it owns,
+ * `of`) and/or its live browser (`ref` = the chat's session), and nothing else. The agenda never
+ * makes one.
+ */
+export function isReviewSet(cards: readonly LayoutCard[]): boolean {
+  if (cards.length < 2 || cards.length > 3) return false;
+  const chats = cards.filter((c) => c.kind === 'chat');
+  if (chats.length !== 1) return false;
+  const child = chats[0].ref;
+  let web = 0;
+  let browser = 0;
+  for (const c of cards) {
+    if (c.kind === 'chat') continue;
+    if (c.kind === 'web' && c.of === child) web += 1;
+    else if (c.kind === 'browser' && c.ref === child) browser += 1;
+    else return false;
+  }
+  return web <= 1 && browser <= 1 && web + browser >= 1;
+}
+
+/** Does this layout take these cards (its count, and for review what they are)? */
+export function layoutFits(layout: PresentLayout, cards: readonly LayoutCard[]): boolean {
+  const r = presentRange(layout);
+  if (cards.length < r.min || cards.length > r.max) return false;
+  return layout !== 'review' || isReviewSet(cards);
+}
+
+/** The layout the cards pick when none is given: 1 spotlight, a child's page with its chat
+ *  review, 2 compare, 3-4 grid, 5-8 filmstrip. */
+export function defaultLayout(cards: readonly LayoutCard[]): PresentLayout {
+  if (cards.length <= 1) return 'spotlight';
+  if (isReviewSet(cards)) return 'review';
+  if (cards.length === 2) return 'compare';
+  return cards.length <= MAX_PRESENT ? 'grid' : 'filmstrip';
+}
+
+/** The ONE resolver (store, route and window): an asked layout that takes the cards, else the
+ *  cards' default. */
+export function resolveLayout(asked: unknown, cards: readonly LayoutCard[]): PresentLayout {
+  return typeof asked === 'string' && (PRESENT_LAYOUTS as readonly string[]).includes(asked)
+    && layoutFits(asked as PresentLayout, cards) ? asked as PresentLayout : defaultLayout(cards);
+}
+
+/**
+ * A present view read against the record: up to {@link MAX_FILMSTRIP} known cards, the layout
+ * resolved, then cut to that layout's most. The owner's mark and the chat bar stay only while the
+ * layout read is the layout kept (a closed card that changed it drops both). Null: no card left.
+ */
+export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutBy?: unknown; chat?: unknown }, containers: readonly (LayoutCard & { id: string })[]): SuperView | null {
+  const byId = new Map(containers.map((c) => [c.id, c] as const));
+  const cards: string[] = [];
+  for (const x of Array.isArray(raw.cards) ? raw.cards : []) {
+    if (typeof x === 'string' && byId.has(x) && !cards.includes(x)) cards.push(x);
+    if (cards.length >= MAX_FILMSTRIP) break;
+  }
+  if (!cards.length) return null;
+  const layout = resolveLayout(raw.layout, cards.map((id) => byId.get(id)!));
+  const shown = cards.slice(0, presentRange(layout).max);
+  const kept = raw.layout === layout;
+  return {
+    mode: 'present', cards: shown, layout,
+    ...(kept && raw.layoutBy === 'owner' ? { layoutBy: 'owner' as const } : {}),
+    ...(kept && raw.chat === 'bar' ? { chat: 'bar' as const } : {}),
+  };
+}
+
+/** Two card lists name the same cards (in any order). */
+export function sameCardSet(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const s = new Set(a);
+  return b.every((id) => s.has(id));
+}
+
+/** What a layout takes, in words (the `present` refusal names it). */
+export function layoutRule(layout: PresentLayout): string {
+  if (layout === 'review') return 'review shows a child\'s page (web or browser) with that child\'s chat, optionally its browser: 2-3 cards';
+  const r = presentRange(layout);
+  return r.min === r.max ? `${layout} shows exactly ${r.min} card${r.min === 1 ? '' : 's'}` : `${layout} shows ${r.min}-${r.max} cards`;
+}
+
+/**
+ * The owner's presentation gestures, each naming the cards he SAW (plan-r2 D9, R2-E3): the
+ * layout he picked, the chat folded to its bar or opened again, and leaving the presentation.
+ * Each applies only to a presentation of that same set, so one that lands after the agent
+ * presented other cards is dropped, never laid over them.
+ */
+export interface OwnerViewFields {
+  presentLayout?: { layout: PresentLayout; cards: string[] };
+  chat?: { value: 'bar' | null; cards: string[] };
+  /** `closing`: cards his window closed in a request still on its way (close, then Esc). */
+  exit?: { cards: string[]; closing: string[] };
+}
+
+const idList = (v: unknown, max: number): string[] | null =>
+  Array.isArray(v) && v.length <= max && v.every((x) => typeof x === 'string') ? [...v as string[]] : null;
+
+/** The fields read from a layout body; a malformed one is left out. */
+export function readOwnerViewFields(body: Record<string, unknown>): OwnerViewFields {
+  const out: OwnerViewFields = {};
+  const rec = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null);
+  const pl = rec(body.presentLayout);
+  const plCards = pl ? idList(pl.cards, MAX_FILMSTRIP) : null;
+  if (pl && plCards && typeof pl.layout === 'string' && (PRESENT_LAYOUTS as readonly string[]).includes(pl.layout)) {
+    out.presentLayout = { layout: pl.layout as PresentLayout, cards: plCards };
+  }
+  const ch = rec(body.chat);
+  const chCards = ch ? idList(ch.cards, MAX_FILMSTRIP) : null;
+  if (ch && chCards && (ch.value === 'bar' || ch.value === null)) out.chat = { value: ch.value, cards: chCards };
+  const ex = rec(body.exit);
+  const exCards = ex ? idList(ex.cards, MAX_FILMSTRIP) : null;
+  const closing = ex && ex.closing !== undefined ? idList(ex.closing, MAX_CONTAINERS) : [];
+  if (ex && exCards && closing) out.exit = { cards: exCards, closing };
+  return out;
+}
+
+/** The view after the owner's fields: unchanged unless it presents the set they name. */
+export function applyOwnerViewFields(view: SuperView, f: OwnerViewFields): SuperView {
+  if (view.mode !== 'present') return view;
+  const shown = view.cards ?? [];
+  if (f.exit && (sameCardSet(shown, f.exit.cards)
+    || sameCardSet(shown, [...new Set([...f.exit.cards, ...f.exit.closing])]))) return { mode: 'float' };
+  let next = view;
+  if (f.presentLayout && sameCardSet(shown, f.presentLayout.cards)) {
+    next = { ...next, layout: f.presentLayout.layout, layoutBy: 'owner' };
+  }
+  if (f.chat && sameCardSet(shown, f.chat.cards)) {
+    next = { ...next };
+    if (f.chat.value === 'bar') next.chat = 'bar'; else delete next.chat;
+  }
+  return next;
 }
 
 export interface SuperChild {
@@ -395,15 +559,17 @@ const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => type
 const isUnit = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
 
 /** A pushed view, or `float` when it names no card this state holds. */
-function readView(v: unknown, ids: ReadonlySet<string>): SuperView {
+function readView(v: unknown, containers: readonly SuperContainer[]): SuperView {
+  const ids = new Set(containers.map((c) => c.id));
   if (!isRecord(v) || !oneOf(VIEW_MODES, v.mode)) return { mode: 'float' };
   if (v.mode === 'half') {
     if (typeof v.card !== 'string' || !ids.has(v.card)) return { mode: 'float' };
     return v.auto === true ? { mode: 'half', card: v.card, auto: true } : { mode: 'half', card: v.card };
   }
   if (v.mode === 'present') {
-    const cards = Array.isArray(v.cards) ? v.cards.filter((x): x is string => typeof x === 'string' && ids.has(x)).slice(0, MAX_PRESENT) : [];
-    return cards.length ? { mode: 'present', cards } : { mode: 'float' };
+    // The server resolved it already; the same resolver keeps an older push (no layout) and
+    // this window agreeing on what is drawn.
+    return resolvePresent(v, containers) ?? { mode: 'float' };
   }
   return { mode: 'float' };
 }
@@ -422,7 +588,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     && (c.pos === undefined || (isRecord(c.pos) && isUnit(c.pos.x) && isUnit(c.pos.y))));
   // The server already settled them; read the same way, a row dropped above leaves its group.
   const { containers, groups } = normalizeGroups(rows, v.groups);
-  const view = readView(v.view, new Set(containers.map((c) => c.id)));
+  const view = readView(v.view, containers);
   const queue = v.queue.filter((q): q is SuperQueueItem =>
     isRecord(q) && typeof q.id === 'string' && typeof q.sessionId === 'string' && oneOf(QUEUE_KINDS, q.kind)
     && oneOf(QUEUE_STATES, q.state) && typeof q.createdAt === 'number');
