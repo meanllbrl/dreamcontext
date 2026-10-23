@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { MAX_CONTAINERS, MAX_FLOAT, atLeastSize, floatCount, isPageKind, minSizeFor, type ContainerKind, type SuperContainer, type SuperState } from './types.js';
 import type { SuperSignal } from './signals.js';
+import { makeRoom } from './room.js';
 
 /**
  * The cards the SERVER opens and settles on its own (jarvis plan r9, §3 S1-S3, noise rules
@@ -89,6 +90,7 @@ function openAuto(s: SuperState, kind: ContainerKind, ref: string, child: string
     return true;
   }
   if (dismissed(s, kind, ref, now)) return false;
+  makeRoom(s, 1, [id]);
   if (s.containers.length >= MAX_CONTAINERS) return false;
   const place = floatCount(s) < MAX_FLOAT ? 'float' : 'others';
   // A site card is titled by its host and port (`localhost:5173`): a full URL breaks in a 1:1 tile.

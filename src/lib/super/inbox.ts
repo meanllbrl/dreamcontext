@@ -6,6 +6,7 @@ import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
 import { teamLiveRows } from './team.js';
 import { superRestoreHold } from './restore.js';
+import { makeRoom } from './room.js';
 import { keepQuestionsAcrossRelaunch } from './outbox.js';
 import {
   STARTING_GRACE_MS, activityOf, chatTopic, getChat, onChatChange, type ChatChange, type ChatEntry,
@@ -109,13 +110,15 @@ export function containerIdFor(kind: string, ref: string): string {
 }
 
 /** A child's `chat` card: tall, placed automatically (plan-r8 F1). Floating while the stage has
- *  room (MAX_FLOAT top-level items), in Others when it is full; only a record holding
- *  MAX_CONTAINERS cards adds none (null). */
+ *  room (MAX_FLOAT top-level items), in Others when it is full. A full record first retires its
+ *  oldest finished cards (room.ts); only a record of cards that must all stay adds none (null),
+ *  which every caller reports out loud (`cardOutcome`). */
 export function ensureChatContainer(s: SuperState, sessionId: string, title?: string): string | null {
   const have = s.containers.find((c) => c.kind === 'chat' && c.ref === sessionId);
   if (have) return have.id;
-  if (s.containers.length >= MAX_CONTAINERS) return null;
   const id = containerIdFor('chat', sessionId);
+  makeRoom(s, 1, [id]);
+  if (s.containers.length >= MAX_CONTAINERS) return null;
   const place = floatCount(s) < MAX_FLOAT ? 'float' : 'others';
   s.containers.push({ id, kind: 'chat', ref: sessionId, shape: 'tall', place, ...(title ? { title } : {}) });
   return id;
@@ -1335,7 +1338,13 @@ export function noteChatStarted(sessionId: string): Promise<void> {
 
 async function startedAgain(root: string, sid: string): Promise<void> {
   if ((await readSuperState(root, superSanitizeOpts())).children[sid]?.row !== 'gone') return;
-  await writeSuper(root, (s) => { if (s.children[sid]?.row === 'gone') delete s.children[sid].row; });
+  // A gone child's card may have retired to make room (room.ts): running again, it gets one back.
+  await writeSuper(root, (s) => {
+    const x = s.children[sid];
+    if (x?.row !== 'gone') return;
+    delete x.row;
+    if (s.enabled && x.endedAt === undefined) ensureChatContainer(s, sid, x.brief.slice(0, 120));
+  });
 }
 
 async function reopenedByOwner(root: string, sid: string): Promise<void> {

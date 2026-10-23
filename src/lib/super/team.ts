@@ -5,6 +5,7 @@ import { plainPostText, readThread } from '../automations/threads.js';
 import type { ThreadEntry } from '../automations/types.js';
 import { MAX_CONTAINERS, MAX_FLOAT, MAX_TEAM_JOBS, floatCount, type SuperState, type SuperTeamJob, type TeamJobStatus } from './types.js';
 import { containerIdFor, newQueueId } from './inbox.js';
+import { makeRoom } from './room.js';
 
 /**
  * The Super Agent's jobs for the project's AI Team (`super team ask`, task
@@ -30,12 +31,14 @@ export function recordTeamJob(s: SuperState, job: SuperTeamJob): void {
 }
 
 /** A team job's card: square, placed like a child's chat card (floating while the stage has
- *  room, in Others when it is full; none when the record holds MAX_CONTAINERS). */
+ *  room, in Others when it is full; a full record retires its oldest finished cards first, and
+ *  adds none only when every card must stay). */
 export function ensureTeamContainer(s: SuperState, jobId: string): string | null {
   const have = s.containers.find((c) => c.kind === 'team' && c.ref === jobId);
   if (have) return have.id;
-  if (s.containers.length >= MAX_CONTAINERS) return null;
   const id = containerIdFor('team', jobId);
+  makeRoom(s, 1, [id]);
+  if (s.containers.length >= MAX_CONTAINERS) return null;
   s.containers.push({ id, kind: 'team', ref: jobId, shape: 'square', place: floatCount(s) < MAX_FLOAT ? 'float' : 'others' });
   return id;
 }

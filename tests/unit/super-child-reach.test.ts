@@ -212,6 +212,22 @@ describe('super send to a parked child', () => {
     expect(sends.at(-1)?.args).toEqual({ tab: B, text: 'pick up where you stopped' });
   });
 
+  it('a woken child whose card cannot open says card: not_opened in the send answer (task super-kart-kaydi)', async () => {
+    makeVault({ [B]: child(B) });
+    // The record is full of cards the owner placed: none may retire, and B has no card.
+    const pinned = Array.from({ length: 48 }, (_, i) => ({ id: `task-p${i}`, kind: 'task', ref: `p-${i}`, shape: 'square', place: 'others', pos: { x: 0.5, y: 0.5 } }));
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SUPER, enabled: true, children: { [B]: child(B) }, containers: pinned }));
+    transcript(B);
+    let asks = 0;
+    windowAnswer = () => (frames.some((f) => f.subtype === 'super_command' && f.verb === 'resume') && ++asks > 1
+      ? { ok: true, result: { delivered: 'sent' } }
+      : { ok: false, error: NOT_RUNNING });
+    const r = await verb('send', { child: B, text: 'go on' });
+    expect(r.status).toBe(200);
+    expect(r.json.result).toMatchObject({ child: B, delivered: 'sent', woke: true, card: 'not_opened', container: null });
+    expect((r.json.result as Record<string, unknown>).cardError).toMatchObject({ reason: 'record_full', limit: 'record' });
+  });
+
   it('a child that is already running is not resumed: steered, as before', async () => {
     makeVault({ [B]: child(B) });
     registerChat({ sessionId: B, conversationId: null, vault: 'acme', mode: 'basic' });

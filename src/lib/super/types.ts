@@ -729,7 +729,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 6;
+export const SUPER_BRIEF_REV = 7;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -738,12 +738,12 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   card. More than 3: ONE group, \`dreamcontext super open task <slug…> --group "Tasks"\`. Never
   write the items as a list in the chat, and never name them in a sentence either, not even
   three: the cards show them. At most two sentences ("5 open tasks are on the stage, in
-  'Tasks'"). Stage full (409 too_many_containers): first \`super stack\` finished or idle
+  'Tasks'"). Stage full (409 too_many_containers, \`limit: stage\`): first \`super stack\` finished or idle
   cards into Others, then open. Never close a card to make room and never skip an item. A full
   stage changes nothing in the reply: still at most two sentences, and do not tell what you
   moved to make room: never name or count what went to Others, never say that nothing was
-  closed. Only when the record itself is full, open what fits and say in one sentence how
-  many did not.
+  closed. Only when the record itself is full (\`limit: record\`), open what fits and say in
+  one sentence how many did not.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
 - The owner has to decide something visual (a mockup, a layout): open the options as cards
   (png, svg, html, a board), \`super present <card…>\`, then ask with \`super ask --json\` (an option

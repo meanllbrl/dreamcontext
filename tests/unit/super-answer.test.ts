@@ -238,7 +238,8 @@ describe('card verbs (AC4, plan-r8 F2)', () => {
     for (let i = 0; i < 12; i += 1) expect((await verb('open', { kind: 'task', ref: `t-${i}` })).status).toBe(200);
     const r = await verb('open', { kind: 'task', ref: 't-12' });
     expect(r.status).toBe(409);
-    expect(r.json).toMatchObject({ error: 'too_many_containers', freeFloat: 0, freeTotal: 36 });
+    expect(r.json).toMatchObject({ error: 'too_many_containers', limit: 'stage', floating: 12, maxFloating: 12, total: 12, maxTotal: 48, freeFloat: 0, freeTotal: 36 });
+    expect(String(r.json.message)).toContain('the stage is full: 12 of 12');
     expect((await readSuperState(root)).containers).toHaveLength(12);
     // Stacking one into Others makes room; the stacked card stays in the record.
     const first = (await readSuperState(root)).containers[0].id;
@@ -252,12 +253,24 @@ describe('card verbs (AC4, plan-r8 F2)', () => {
     expect((await verb('open', { kind: 'task', ref: 't-14' })).status).toBe(409);
   });
 
-  it('the 49th record is refused even with the stage empty', async () => {
+  it('a full record retires its oldest card in Others for the 49th (task super-kart-kaydi)', async () => {
     const containers = Array.from({ length: 48 }, (_, i) => ({ id: `task-o${i}`, kind: 'task' as const, ref: `o-${i}`, shape: 'square' as const, place: 'others' as const }));
     makeVault({ containers });
     const r = await verb('open', { kind: 'task', ref: 'new' });
+    expect(r.status).toBe(200);
+    const ids = (await readSuperState(root)).containers.map((c) => c.id);
+    expect(ids).toHaveLength(48);
+    expect(ids).not.toContain('task-o0');
+    expect(ids).toContain('task-o1');
+  });
+
+  it('the 49th is refused naming the record when every card must stay (the owner placed them)', async () => {
+    const containers = Array.from({ length: 48 }, (_, i) => ({ id: `task-o${i}`, kind: 'task' as const, ref: `o-${i}`, shape: 'square' as const, place: 'others' as const, pos: { x: 0.1, y: 0.1 } }));
+    makeVault({ containers });
+    const r = await verb('open', { kind: 'task', ref: 'new' });
     expect(r.status).toBe(409);
-    expect(r.json).toMatchObject({ freeFloat: 12, freeTotal: 0 });
+    expect(r.json).toMatchObject({ error: 'too_many_containers', limit: 'record', total: 48, maxTotal: 48, freeFloat: 12, freeTotal: 0 });
+    expect(String(r.json.message)).toContain('the card record holds 48 cards');
   });
 });
 

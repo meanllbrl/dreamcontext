@@ -67,7 +67,14 @@ function print(r: CallResult): void {
     process.exitCode = 1;
     return;
   }
-  process.stdout.write(`${JSON.stringify(r.body.result ?? r.body, null, 2)}\n`);
+  const result = (r.body.result ?? r.body) as Record<string, unknown>;
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  // The child runs but has no card: said on stderr too, so it cannot pass unseen. Exit 0: the
+  // verb itself worked, and a retry would start the job twice.
+  if (result && result.card === 'not_opened') {
+    const e = (result.cardError ?? {}) as { message?: unknown; todo?: unknown };
+    process.stderr.write(`CARD NOT OPENED: ${String(e.message ?? 'the owner cannot see this child')}. Next: ${String(e.todo ?? '`super state`')}\n`);
+  }
 }
 
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
