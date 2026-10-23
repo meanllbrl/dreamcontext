@@ -381,6 +381,31 @@ describe('handleAgentFile — a web page has its own cap, and a 413 says how big
   });
 });
 
+// Owner 2026-10-23: `super open whiteboard super-sunum-duzenleri` drew "couldn't be read" —
+// the 202-element board was 827 KB, over the 512 KB text cap every board card reads through.
+describe('handleAgentFile — an Excalidraw board shares the larger cap', () => {
+  const boardOf = (bytes: number) => `---\nexcalidraw-plugin: parsed\n---\n\n%%\n## Drawing\n\`\`\`json\n{"elements":[],"pad":"${'x'.repeat(bytes)}"}\n\`\`\`\n%%\n`;
+
+  it('serves an ~827 KB whiteboard at its slug-folder path', async () => {
+    const dir = join(contextRoot, 'whiteboards', 'big-board');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'big-board.excalidraw.md'), boardOf(827 * 1024), 'utf-8');
+    const { res, status, body } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=_dream_context/whiteboards/big-board/big-board.excalidraw.md'), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    expect(body().type).toBe('markdown');
+    expect(body().content.length).toBeGreaterThan(827 * 1024);
+  });
+
+  it('a plain .md of the same size keeps the 512 KB cap', async () => {
+    writeFileSync(join(projectRoot, 'notes-big.md'), 'x'.repeat(827 * 1024), 'utf-8');
+    const { res, status, body } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=notes-big.md'), res, {}, contextRoot);
+    expect(status()).toBe(413);
+    expect(body().limit).toBe(512 * 1024);
+  });
+});
+
 // `?probe=1`: the card asks "will this load?" without the file being read (it used to read a
 // whole page twice: once for a ranged probe the text branch ignored, once for the reader).
 describe('handleAgentFile — probe=1 answers every gate and its branch\'s cap, reading nothing', () => {

@@ -4185,6 +4185,20 @@ const AGENT_FILE_MAX_BYTES = 512 * 1024;
  *  sandbox, so the cap stays a ceiling, not a stream. */
 const AGENT_FILE_HTML_MAX_BYTES = 8 * 1024 * 1024;
 
+/** An Excalidraw board (`*.excalidraw.md`) shares that larger cap: its scene JSON grows fast
+ *  (a 202-element whiteboard was 827 KB), and over the preview cap every board card — the
+ *  Super stage's `whiteboard` and `board` containers, a chat embed — drew "couldn't be read"
+ *  (2026-10-23). The whiteboards page reads the same file uncapped. */
+const AGENT_FILE_BOARD_MAX_BYTES = AGENT_FILE_HTML_MAX_BYTES;
+
+/** The text-preview cap for one file: a web page and a board get the larger one. */
+export function agentFileTextCap(abs: string): number {
+  const lower = abs.toLowerCase();
+  if (lower.endsWith('.excalidraw.md') || lower.endsWith('.excalidraw')) return AGENT_FILE_BOARD_MAX_BYTES;
+  const ext = extname(lower);
+  return ext === '.html' || ext === '.htm' ? AGENT_FILE_HTML_MAX_BYTES : AGENT_FILE_MAX_BYTES;
+}
+
 /** A file over its branch's cap: the size and the limit ride along, so a card can say how big
  *  it is and what the limit is instead of "could not be read". */
 function sendTooLarge(res: ServerResponse, size: number, limit: number, message: string): void {
@@ -4444,8 +4458,8 @@ export async function handleAgentFile(
   }
 
   // Text preview keeps the tight cap: this branch reads the whole file into a JSON body. A web
-  // page gets the larger one (its pictures ride inline).
-  const textCap = ext === '.html' || ext === '.htm' ? AGENT_FILE_HTML_MAX_BYTES : AGENT_FILE_MAX_BYTES;
+  // page (its pictures ride inline) and an Excalidraw board (its scene JSON) get the larger one.
+  const textCap = agentFileTextCap(abs);
   if (st.size > textCap) { sendTooLarge(res, st.size, textCap, 'File exceeds the preview size cap.'); return; }
   if (probe) { sendProbe(res, st.size, textCap); return; }
   let content: string;
