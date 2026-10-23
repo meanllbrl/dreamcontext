@@ -32,7 +32,7 @@ const sameRect = (a: Rect, b: Rect) => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y
 /** Two plans that draw the same screen: a re-render that changed nothing on the stage (a POST's
  *  echo, a slot epoch) must not cancel and restart a motion that is running. */
 export function samePlan(a: StagePlan, b: StagePlan): boolean {
-  if (a.width !== b.width || a.height !== b.height || !sameRect(a.centre, b.centre)) return false;
+  if (a.width !== b.width || a.height !== b.height || a.pill !== b.pill || !sameRect(a.centre, b.centre)) return false;
   const ka = Object.keys(a.cards);
   if (ka.length !== Object.keys(b.cards).length) return false;
   for (const k of ka) {
@@ -69,6 +69,8 @@ export class StageMotion extends Component<StageMotionProps> {
       before.set(key, { rect: this.run?.standInRect(key, origin) ?? rectIn(el, origin), where });
     }
     for (const id of prev.plan.others) before.set(id, { rect: prev.plan.othersRect, where: 'others' });
+    // The minimised agenda rests in its corner pill: it flies out of it like a card out of Others.
+    if (prev.plan.pill && !before.has(prev.plan.pill)) before.set(prev.plan.pill, { rect: prev.plan.agendaPill, where: 'others' });
     return { snap: false, before };
   }
 
@@ -87,6 +89,7 @@ export class StageMotion extends Component<StageMotionProps> {
     const p = this.props.plan;
     const after = new Map<string, StageBox>([['centre', { rect: p.centre, where: 'centre' }]]);
     for (const c of Object.values(p.cards)) after.set(c.id, { rect: c.rect, where: c.where });
+    if (p.pill && !after.has(p.pill)) after.set(p.pill, { rect: p.agendaPill, where: 'others' });
     const reduced = prefersReducedMotion();
     const light = isLightMode();
     const skip = [this.props.dragId];

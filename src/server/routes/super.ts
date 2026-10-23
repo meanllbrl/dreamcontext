@@ -21,7 +21,7 @@ import { currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles
 import { getAutomation } from '../../lib/automations/store.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
-  containerIdFor, ensureAgendaCard, ensureChatContainer, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
+  agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
@@ -716,6 +716,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
             if (next === 'small') delete have.size; else have.size = next;
           }
           have.place = 'float';
+          // A minimised agenda the agent opens is shown, not left in its pill (end review r1).
+          delete have.min;
           if (titleOf(ref)) have.title = titleOf(ref);
           return;
         }
@@ -845,7 +847,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // A card stacked on its own leaves its group.
       leaveGroups(s, [id]);
       const k = s.containers.find((x) => x.id === id);
-      if (k) k.place = 'others';
+      // In Others, not also in the agenda's pill: one place at a time.
+      if (k) { k.place = 'others'; delete k.min; }
       // A stacked card leaves the half page or the presentation it was in.
       s.view = viewWithout(s.view, new Set([id]));
     });
@@ -868,6 +871,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // The agent never positions a card: floating again means placed automatically.
       k.place = 'float';
       delete k.pos;
+      delete k.min;
     });
     ok(res, { container: id, place: 'float' });
   },
@@ -879,6 +883,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     const id = containerArg(c, b, res);
     if (!id) return;
+    // The agenda is never closed: it collapses to its pill in the bottom-left corner (owner
+    // 2026-10-22 23:44); the owner's pill or the centre's Agenda button brings it back.
+    if (c.state.containers.some((x) => x.id === id && x.kind === 'agenda')) {
+      await writeSuper(c.who.contextRoot, (s) => { if (minimiseAgendaCard(s)) s.view = viewWithout(s.view, new Set([id])); });
+      ok(res, { closed: id, minimised: true });
+      return;
+    }
     // The store drops a closed card from the view (half → float; a presentation keeps the rest).
     await writeSuper(c.who.contextRoot, (s) => { s.containers = s.containers.filter((x) => x.id !== id); });
     ok(res, { closed: id });
@@ -1914,7 +1925,15 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   if (!requireSuperOwner(req, res)) return;
   ensureTidy(contextRoot, TIDY_IO);
   try {
-    const state = await readSuperState(contextRoot, superSanitizeOpts());
+    let state = await readSuperState(contextRoot, superSanitizeOpts());
+    // The agenda is always on a shown stage (owner 2026-10-22 23:44): a record without one gets
+    // it at its default place on this load.
+    // A write that fails never fails the load: the window gets what was read.
+    if (agendaMissing(state)) {
+      try { state = await writeSuper(contextRoot, (s) => { if (agendaMissing(s)) showAgendaCard(s); }); } catch (err) {
+        console.warn(`[super] ${contextRoot}: the agenda was not put on the stage: ${(err as Error).message}`);
+      }
+    }
     sendJson(res, 200, superStateView(contextRoot, await settleApprovals(contextRoot, state)));
   } catch (err) { storeRefusal(res, err); }
 }
@@ -1996,6 +2015,13 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       if (body.agenda === 'open') ensureAgendaCard(s, { bring: true, owner: true });
       if (ungroup.length) dissolveGroups(s, ungroup);
       const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
+      // The agenda never leaves the stage (owner 2026-10-22 23:44): its close, or the owner's
+      // minimise, collapses it to the pill in the bottom-left corner.
+      const agendaId = s.containers.find((x) => x.kind === 'agenda')?.id;
+      if (body.agenda === 'min' || (agendaId && gone.has(agendaId))) {
+        const id = minimiseAgendaCard(s);
+        if (id) { gone.delete(id); unshown.add(id); }
+      }
       for (const id of gone) unshown.add(id);
       s.view = viewWithout(s.view, unshown);
       if (gone.size) {

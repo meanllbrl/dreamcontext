@@ -3,7 +3,8 @@
  * 19:15 "like a person's sticky notepad; the agent writes what it does and what it expects from
  * me"):
  *  - the hand-over opens one `agenda` card (large, first in the record, so it lands left); a
- *    closed one comes back with the next hand-over, one he put in Others stays there;
+ *    missing one comes back with the next hand-over, and so does one in Others (owner 23:44: the
+ *    agenda is always on the stage; super-agenda-always.test.ts);
  *  - the owner's layout `{agenda: 'open'}` makes it again, or brings it back from Others; it is
  *    the only card his layout may create;
  *  - `super open agenda` (no ref) opens it large; any other ref is refused;
@@ -76,7 +77,7 @@ afterEach(() => {
 });
 
 describe('the agenda card', () => {
-  it('opens with the hand-over: one large card, first in the record; closed it comes back, in Others it stays', async () => {
+  it('opens with the hand-over: one large card, first in the record; missing or in Others, it comes back', async () => {
     registerChat({ sessionId: 'mine', conversationId: null, vault: 'acme', mode: 'basic' });
     const { state } = await enableSuper(root, { adopt: ['mine'], titles: {} });
     const agenda = state.containers.filter((c) => c.kind === 'agenda');
@@ -85,7 +86,7 @@ describe('the agenda card', () => {
     await writeSuper(root, (s) => { s.containers = s.containers.filter((c) => c.kind !== 'agenda'); });
     expect((await enableSuper(root, { adopt: [], titles: {} })).state.containers.some((c) => c.id === AGENDA_ID)).toBe(true);
     await writeSuper(root, (s) => { s.containers.find((c) => c.id === AGENDA_ID)!.place = 'others'; });
-    expect((await enableSuper(root, { adopt: [], titles: {} })).state.containers.find((c) => c.id === AGENDA_ID)?.place).toBe('others');
+    expect((await enableSuper(root, { adopt: [], titles: {} })).state.containers.find((c) => c.id === AGENDA_ID)?.place).toBe('float');
   });
 
   it('a full stage puts a new agenda in Others; a full record adds none', () => {
