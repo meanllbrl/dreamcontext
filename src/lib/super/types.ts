@@ -110,6 +110,9 @@ export interface SuperContainer {
    *  23:44: its close collapses it there, it never leaves the stage). Its place, drop and size
    *  stay as they were, so a restore puts it back where it stood. */
   min?: true;
+  /** A live child's chat card the OWNER put away himself (dragged to Others or grouped), epoch
+   *  ms: it stays there until that run finishes (live.ts). Server-written from his layout only. */
+  heldAt?: number;
 }
 
 /** The owner closed an automatic card: the same (kind, ref) is not opened again automatically
@@ -817,6 +820,8 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
 - Every card you open gets a short human name: \`--title "…"\`, several with \`--titles "a|b|c"\`.
   What is decided or finished goes to Others at once (\`super stack <card|group>\`); the stage
   also moves a card nobody touched for 45 minutes and a finished job the owner saw.
+- A live job's card (working, asking, stuck, waiting on him) always floats: never stack or group
+  it (409 \`live_child\`); the stage makes room for it by itself.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
 - The owner has to decide something visual (a mockup, a layout): open the options as cards
   (png, svg, html, a board), \`super present <card…>\`, then ask with \`super ask --json\` (an option

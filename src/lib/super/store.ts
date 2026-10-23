@@ -138,6 +138,7 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
       ...(c.by === 'auto' ? { by: 'auto' as const } : {}),
       ...(c.by === 'auto' && typeof c.of === 'string' && Object.prototype.hasOwnProperty.call(children, c.of) ? { of: c.of } : {}),
       ...(c.kind === 'agenda' && c.min === true ? { min: true as const } : {}),
+      ...(c.kind === 'chat' && typeof c.heldAt === 'number' && Number.isFinite(c.heldAt) && c.heldAt > 0 ? { heldAt: Math.min(c.heldAt, Date.now()) } : {}),
     });
   }
   return out;

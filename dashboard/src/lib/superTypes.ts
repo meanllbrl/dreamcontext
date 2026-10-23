@@ -62,6 +62,8 @@ export interface SuperContainer {
   of?: string;
   /** The agenda only: minimised to the pill in the stage's bottom-left corner. */
   min?: true;
+  /** A live child's chat card the owner put away himself (server-written, epoch ms). */
+  heldAt?: number;
 }
 
 export interface SuperDismissed { kind: ContainerKind; ref: string; until: number }

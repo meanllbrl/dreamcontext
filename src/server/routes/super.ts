@@ -47,6 +47,7 @@ import { existsSync } from 'node:fs';
 import { insightPath } from '../../lib/lab/store.js';
 import { noteDismissed } from '../../lib/super/proactive.js';
 import { RECORD_FULL_MESSAGE, cardCounts, cardOutcome, makeRoom, noCardWarnings, roomPossible } from '../../lib/super/room.js';
+import { childIsLive, isLiveChatCard } from '../../lib/super/live.js';
 import { activityOf, dropOwnerWait, getChat, onChatChange } from '../../lib/assistant/chat-registry.js';
 import { noteSuperSend } from '../../lib/super/owner-wait.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
@@ -115,6 +116,24 @@ function storeRefusal(res: ServerResponse, err: unknown): void {
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 const refuse = (res: ServerResponse, status: number, error: string, message: string, extra: Record<string, unknown> = {}) =>
   sendJson(res, status, { ok: false, error, message, ...extra });
+
+/** The live children's chat cards among these cards and these groups' cards (live.ts). */
+function liveCards(s: SuperState, ids: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const id of ids) {
+    const g = s.groups.find((x) => x.id === id);
+    for (const cid of g ? g.cards : [id]) {
+      const k = s.containers.find((x) => x.id === cid);
+      if (k && isLiveChatCard(s, k) && !out.includes(cid)) out.push(cid);
+    }
+  }
+  return out;
+}
+
+/** 409 live_child: a live job's card stays a floating card (owner 2026-10-23). */
+function refuseLive(res: ServerResponse, cards: readonly string[], what: string): void {
+  refuse(res, 409, 'live_child', `${cards.join(', ')} ${cards.length === 1 ? 'is a job that still runs' : 'are jobs that still run'} (working, asking, stuck or waiting on the owner): a live job's card stays on the stage, never ${what}. It may go once the job is done; the stage makes room for live jobs itself`, { cards });
+}
 
 // ─── The agent's door ────────────────────────────────────────────────────────
 
@@ -466,7 +485,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(awaited ? { awaited: true as const } : {}),
       };
       delete s.notes[sid];
-      container = (succeeds ? succeedChild(s, succeeds, sid, { brief: job.brief }) : null) ?? ensureChatContainer(s, sid, job.title);
+      container = (succeeds ? succeedChild(s, succeeds, sid, { brief: job.brief }) : null) ?? ensureChatContainer(s, sid, job.title, true);
       // Havuz → Çalışıyor in ONE write: the row leaves the pool as the child enters the list.
       if (fromRow) s.pool = s.pool.filter((p) => p.id !== fromRow.id);
     });
@@ -677,6 +696,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // `--no-group`: the cards stand alone and the picture chain ends here.
     const noGroup = b.group === false;
     const ids = refs.map((ref) => containerIdFor(kind, ref));
+    // A live job is never opened into a group: its card floats on its own (live.ts).
+    if (groupName && kind === 'chat') {
+      const live = refs.filter((ref) => childIsLive(c.state, ref)).map((ref) => containerIdFor('chat', ref));
+      if (live.length) { refuseLive(res, live, 'in a group'); return; }
+    }
     const root = c.who.contextRoot;
     const now = Date.now();
     // Pictures opened together are one group (image-group.ts): 2+ in one call, or one call after
@@ -853,6 +877,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const t = targetArg(c, b, res);
     if (!t) return;
     const id = t.id;
+    const live = liveCards(c.state, [id]);
+    if (live.length) { refuseLive(res, live, 'in Others'); return; }
     if (t.group) {
       await writeSuper(c.who.contextRoot, (s) => {
         const g = s.groups.find((x) => x.id === id);
@@ -929,6 +955,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (!c.state.containers.some((k) => k.id === id)) { refuse(res, 404, 'unknown_container', `no such card: ${id} (\`dreamcontext super state\` lists them)`); return; }
     }
     if (groupIds.length > 1) { refuse(res, 400, 'invalid_args', 'name at most one group; `super ungroup` the other first'); return; }
+    const live = liveCards(c.state, cards);
+    if (live.length) { refuseLive(res, live, 'in a group'); return; }
     let id = groupIds[0];
     if (!id) {
       if (cards.length < MIN_GROUP_CARDS) { refuse(res, 400, 'invalid_args', `a group needs at least ${MIN_GROUP_CARDS} cards`); return; }
@@ -1432,8 +1460,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const after = await writeSuper(root, (s) => {
         const x = s.children[child];
         if (!x) return;
-        if (x.endedAt !== undefined) { delete x.endedAt; x.adopted = true; }
-        container = ensureChatContainer(s, child, x.brief);
+        // A new run only when it was ended: a resume of a child that runs on keeps the owner's hold.
+        const wasEnded = x.endedAt !== undefined;
+        if (wasEnded) { delete x.endedAt; x.adopted = true; }
+        container = ensureChatContainer(s, child, x.brief, wasEnded);
       });
       await markOwnersJob(c, child);
       ok(res, { child, resumed: false, running: true, ...cardOutcome(container, child, after) });
@@ -1469,7 +1499,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (used.mode === 'basic') delete x.mode; else x.mode = used.mode;
         if (used.model) x.model = used.model; else if (used.reported) delete x.model;
         if (used.effort) x.effort = used.effort; else if (used.reported) delete x.effort;
-        container = ensureChatContainer(s, child, x.brief);
+        container = ensureChatContainer(s, child, x.brief, true);
       });
       await markOwnersJob(c, child);
       const asked = { mode: str(b.mode), model: str(b.model), effort: str(b.effort) };
@@ -2011,14 +2041,29 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       // Cards that leave what the view shows: to Others (a group's cards with it), closed,
       // grouped or resized (owner 2026-10-22: a presented card moved to Others stayed presented).
       const unshown = new Set<string>();
-      if (leave.length) leaveGroups(s, leave);
+      // A live job's card the OWNER puts away (Others, a group) stays there until that run is
+      // done; one he brings back is the stage's again (live.ts).
+      const now = Date.now();
+      const hold = (ids: readonly string[], on: boolean) => {
+        for (const id of ids) {
+          const k = s.containers.find((x) => x.id === id);
+          if (!k || k.kind !== 'chat') continue;
+          if (on && childIsLive(s, k.ref)) k.heldAt = now; else if (!on) delete k.heldAt;
+        }
+      };
+      if (leave.length) { leaveGroups(s, leave); hold(leave, false); }
       for (const raw of cards as unknown[]) {
         const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
         const k = p && typeof p.id === 'string' ? (s.containers.find((x) => x.id === p.id) ?? s.groups.find((x) => x.id === p.id)) : undefined;
         if (!p || !k) continue;
         if (p.place === 'others') for (const id of 'kind' in k ? [k.id] : k.cards) unshown.add(id);
         if ('kind' in k && p.size !== undefined) unshown.add(k.id);
-        if (p.place === 'float' || p.place === 'others') k.place = p.place;
+        if (p.place === 'float' || p.place === 'others') {
+          k.place = p.place;
+          // Floating his group back keeps it whole: its live cards stay his, in it.
+          if (p.place === 'others') hold('kind' in k ? [k.id] : k.cards, true);
+          else if ('kind' in k) hold([k.id], false);
+        }
         if (p.pos === null) delete k.pos;
         else if (p.pos && typeof p.pos === 'object') k.pos = p.pos as { x: number; y: number };
         // The owner's size (a card only; a group is always one tile): his choice, which no agent
@@ -2031,7 +2076,7 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
         // The card the owner moved last is drawn on top: it goes to the end of the list.
         if (p.order === 'last' && 'kind' in k) s.containers = [...s.containers.filter((x) => x !== k), k];
       }
-      if (groupOp) { applyGroupOp(s, groupOp); for (const id of groupOp.cards) unshown.add(id); }
+      if (groupOp) { applyGroupOp(s, groupOp); hold(groupOp.cards, true); for (const id of groupOp.cards) unshown.add(id); }
       // The one card the owner may (re)open here: the super's agenda (owner 2026-10-22), from
       // the centre's head after he closed it, put it in Others or grouped it: out of its group,
       // floating (his ask; MAX_FLOAT binds only what an agent opens).

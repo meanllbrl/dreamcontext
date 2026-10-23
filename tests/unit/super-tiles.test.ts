@@ -196,7 +196,8 @@ describe('the surface wiring (source rules)', () => {
   });
 
   it('a card released on a tile groups: on a card a new group where it stood, on a group into it', () => {
-    expect(surface).toMatch(/const tg = drop && !h \? dropTargetAt\(p, x - origin\.left, y - origin\.top, id\) : null;/);
+    // Only in the float view: beside a page a tile is a live job's rail tile (super-canli-kart-sahnede).
+    expect(surface).toMatch(/const tg = drop && !h && floatView \? dropTargetAt\(p, x - origin\.left, y - origin\.top, id\) : null;/);
     expect(surface).toMatch(/else if \(drop && tg\) groupOnto\(id, tg\);/);
     expect(surface).toMatch(/if \(isGroupId\(onto\)\) onLayout\(\{ \.\.\.out, group: \{ id: onto, cards: \[held\] \} \}\);/);
     expect(surface).toMatch(/onLayout\(\{ \.\.\.out, group: \{ id: newGroupId\(\), cards: \[onto, held\], name: nextGroupName\(/);
