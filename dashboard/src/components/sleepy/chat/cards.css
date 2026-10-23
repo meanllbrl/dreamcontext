@@ -586,7 +586,7 @@ video.chat-msg-user-media-el { cursor: default; }
 }
 .chat-surveycard-dot.done .chat-surveycard-dot-i { background: var(--color-accent); border-color: var(--color-accent); }
 .chat-surveycard-dot.on .chat-surveycard-dot-i { transform: scale(1.5); border-color: var(--color-accent); }
-.chat-surveycard-actions { display: flex; align-items: center; gap: 10px; }
+.chat-surveycard-actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .chat-surveycard-jump {
   padding: 0;
   border: 0;
@@ -641,6 +641,29 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-opt-desc { font-size: 11.5px; color: var(--color-text-secondary); }
 .chat-surveycard-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
 .chat-surveycard-count { color: var(--color-text-tertiary); font-size: 11.5px; }
+/* "Waiting for connection" is drawn over the pager's box (or, with no pager, in the space left
+   of the buttons), out of the flow and on ONE line: nothing reflows, the card never grows. */
+.chat-surveycard-pager { position: relative; }
+.chat-surveycard-pager[data-waiting] > :not(.chat-surveycard-waiting) { visibility: hidden; }
+.chat-surveycard-pager > .chat-surveycard-waiting { position: absolute; inset: 0; display: flex; align-items: center; }
+.chat-surveycard-actions { position: relative; }
+.chat-surveycard-waiting-beside {
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 10px;
+  max-width: 9.5em;
+  display: flex;
+}
+.chat-surveycard-waiting {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--color-warning);
+  font-size: 11.5px;
+}
 .chat-surveycard-receipt {
   display: flex;
   align-items: center;

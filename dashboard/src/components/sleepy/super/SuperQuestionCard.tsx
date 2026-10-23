@@ -75,9 +75,10 @@ function OpenQuestion({ item, superSession, child }: {
   const send = (text: string) => {
     if (!sendToSuper(superSession, text)) setAttempt((a) => a + 1);
   };
+  // Handed off either way: a refused send re-mounts the card (`attempt`), its own failure path.
   const host: SurveyHost = {
-    answerQuestion: (_requestId, questions, picked, notes) => send(superAnswerText(item, questions, picked, notes)),
-    answer: (_requestId, opts) => send(superUnclearText(item, opts.message ?? '')),
+    answerQuestion: (_requestId, questions, picked, notes) => { send(superAnswerText(item, questions, picked, notes)); return true; },
+    answer: (_requestId, opts) => { send(superUnclearText(item, opts.message ?? '')); return true; },
   };
   return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} />);
 }

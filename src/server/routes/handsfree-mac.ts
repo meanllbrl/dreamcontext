@@ -24,6 +24,7 @@ import { setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
 import { MacModeError, MacSession, type MacSessionDeps } from '../../lib/handsfree/mac/session.js';
 import { isValidHostname } from '../../lib/handsfree/mac/tunnel.js';
 import type { MacErrorCode } from '../../lib/handsfree/mac/contract.js';
+import { PHONE_LOG_INTERVAL_MS, PHONE_LOG_MAX_BYTES, parsePhoneLog, writePhoneLog } from '../../lib/handsfree/mac/phone-log.js';
 
 /**
  * Mac mode's routes (`/api/handsfree/mac/*`): the desktop's Hands-free sheet and the CLI drive
@@ -374,6 +375,26 @@ function readSmallJson(req: IncomingMessage, max: number): Promise<unknown> {
   });
 }
 
+/** Like {@link readSmallJson}, but says WHY it has nothing: a body over `max` (413) is not a
+ *  body that is not JSON (400). */
+function readBoundedJson(req: IncomingMessage, max: number): Promise<{ ok: true; value: unknown } | { ok: false; tooLarge: boolean }> {
+  return new Promise((resolveBody) => {
+    const declared = Number(req.headers?.['content-length']);
+    if (Number.isFinite(declared) && declared > max) { resolveBody({ ok: false, tooLarge: true }); return; }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let done = false;
+    const finish = (v: { ok: true; value: unknown } | { ok: false; tooLarge: boolean }) => { if (!done) { done = true; resolveBody(v); } };
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > max) { finish({ ok: false, tooLarge: true }); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => { try { finish({ ok: true, value: JSON.parse(Buffer.concat(chunks).toString('utf8')) }); } catch { finish({ ok: false, tooLarge: false }); } });
+    req.on('error', () => finish({ ok: false, tooLarge: false }));
+  });
+}
+
 /** The phone's own push routes: a Mac-mode phone socket only (the gate demanded a device session);
  *  the device is the cookie's, never anything in the body. */
 function phoneOnly(fn: (req: IncomingMessage, res: ServerResponse, device: string) => Promise<void>): Handler {
@@ -397,11 +418,42 @@ export const handsfreePushRoutes = {
   unsubscribe: phoneOnly(async (_req, res, device) => { sendJson(res, 200, { ok: true, removed: macPushStore().remove(device) }); }),
 };
 
+/** When each device last sent its log (device hash → epoch ms). */
+const phoneLogStamps = new Map<string, number>();
+
+/** Tests only. */
+export function resetPhoneLogStampsForTests(): void { phoneLogStamps.clear(); }
+
+/**
+ * `POST /api/handsfree/phone-log`: the phone's connection log, for the agent to read when the
+ * owner says the phone misbehaved (lib/handsfree/mac/phone-log.ts). A signed-in phone only, one
+ * upload per device per 10 s, 64 KB, the shape checked key by key.
+ */
+export const handsfreePhoneLogRoute = phoneOnly(async (req, res, device) => {
+  // Stamped BEFORE any await: two quick taps are one upload and one 429, never two files.
+  const now = Date.now();
+  const last = phoneLogStamps.get(device);
+  if (last !== undefined && now - last < PHONE_LOG_INTERVAL_MS) { sendError(res, 429, 'too_soon', 'One log every 10 seconds.'); return; }
+  phoneLogStamps.set(device, now);
+  const body = await readBoundedJson(req, PHONE_LOG_MAX_BYTES);
+  if (!body.ok) {
+    phoneLogStamps.delete(device);
+    if (body.tooLarge) sendError(res, 413, 'too_large', 'The log must be at most 64 KB.');
+    else sendError(res, 400, 'invalid_log', 'The body must be JSON.');
+    return;
+  }
+  const parsed = parsePhoneLog(body.value);
+  if (!parsed.ok) { phoneLogStamps.delete(device); sendError(res, 400, 'invalid_log', `Refused: ${parsed.reason}.`); return; }
+  writePhoneLog(parsed.log, device, homedir());
+  sendJson(res, 201, { ok: true, events: parsed.log.events.length });
+});
+
 export function registerHandsfreeMacRoutes(router: Router): void {
   armPushNotifier();
   router.get('/api/handsfree/push/key', handsfreePushRoutes.key);
   router.put('/api/handsfree/push/subscription', handsfreePushRoutes.subscribe);
   router.delete('/api/handsfree/push/subscription', handsfreePushRoutes.unsubscribe);
+  router.post('/api/handsfree/phone-log', handsfreePhoneLogRoute);
   router.get('/api/handsfree/mac/status', handsfreeMacRoutes.status);
   router.post('/api/handsfree/mac/setup', handsfreeMacRoutes.setup);
   router.post('/api/handsfree/mac/start', handsfreeMacRoutes.start);

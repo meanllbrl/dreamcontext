@@ -537,9 +537,14 @@ export function AccountMismatchBanner({ accountId, email, signedInAs, onDismiss 
   );
 }
 
+export { RECONNECT_CHIP_DELAY_MS, reconnectChipDue } from './reconnectChip';
+
+/** Floats over the transcript (`.chat-transcript` is its positioning context) and takes no
+ *  layout: as a flex child above the transcript it shrank the viewport by its own height on
+ *  every drop, and the chat jumped with each reconnect (2026-10-23). */
 export function ReconnectingChip() {
   return (
-    <div className="chat-banner-reconnecting">
+    <div className="chat-banner-reconnecting" role="status">
       <span className="chat-banner-reconnecting-dot" aria-hidden />
       Reconnecting…
     </div>

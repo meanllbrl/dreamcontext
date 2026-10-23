@@ -87,6 +87,8 @@ import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
 import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire } from '../handsfree/macContract';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
+import { recordPhoneEvent } from '../../lib/phoneConnLog';
+import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
 import { readSuperStateView, type SuperStateView } from '../../lib/superTypes';
@@ -379,10 +381,12 @@ function carryDraftInto(next: ChatSession, draft: string): void {
  * held for an account switch (`held` — typed before anything the composer queued behind them),
  * then the outgoing session's own queued rows, paused again if the user had paused them.
  * Enqueued, never sent: the new socket is still connecting, and the queue drains on its open
- * edge (see `armAccountSwitch`'s note on why `send` here lost the message every time).
+ * edge (see `armAccountSwitch`'s note on why `send` here lost the message every time). The held
+ * turns are the owner's SENT messages, so they ride as `resubmit` rows: out of sight while the
+ * new session can send them by itself (`chatQueue.visibleQueued`).
  */
 function carryQueueInto(next: ChatSession, held: string[], queued: { texts: string[]; paused: boolean }): void {
-  for (const text of held) next.enqueue(text);
+  for (const text of held) next.enqueue(text, { resubmit: true });
   for (const text of queued.texts) next.enqueue(text);
   if (queued.paused && queued.texts.length > 0) next.pauseQueue();
 }
@@ -1546,6 +1550,9 @@ export function AgentSurface() {
     if (kind === 'chat' && claudeId) dropScratch(claudeId);
     // The super chat's event-line context lives as long as its conversation (superJobsStore).
     if (kind === 'chat' && claudeId) publishSuperEventContext(claudeId, null);
+    // A question card's kept picks (chat/surveyDrafts.ts) end with the conversation, not with a
+    // respawn's dispose, which is why this lives here and not in `ChatSession.dispose`.
+    if (kind === 'chat' && claudeId) dropSurveyDraftsFor(claudeId);
     // A conversation closed here is closed: it no longer rides along as an unjudged stored tab.
     if (claudeId) unrestoredRef.current = unrestoredRef.current.filter((m) => m.sessionId !== claudeId);
 
@@ -1788,7 +1795,11 @@ export function AgentSurface() {
     // `conv.queued`, which is per session and died with it. Every respawn ate it — and an
     // account switch is the respawn most likely to have one waiting, since the composer
     // queues behind the very message the server is holding.
-    const carriedQueue = { texts: cs.getModel().queued.map((q) => q.text), paused: !!cs.getModel().queuePaused };
+    // A row still held from an EARLIER switch stays held: it rides ahead with this switch's.
+    const oldQueued = cs.getModel().queued;
+    const carriedQueue = { texts: oldQueued.filter((q) => !q.resubmit).map((q) => q.text), paused: !!cs.getModel().queuePaused };
+    const held = [...oldQueued.filter((q) => q.resubmit).map((q) => q.text), ...heldTexts];
+    recordPhoneEvent('respawn', cs.claudeId, { reason: targetAccountId ? 'account' : targetBypass !== undefined ? 'mode' : 'resume' });
     traceRespawn('resumeChatSession', 'begin', {
       from: cs.id, claudeId: cs.claudeId,
       detail: { targetBypass, targetAccountId, fromAccountId: cs.accountId, mode: cs.mode, exited: cs.getModel().exited },
@@ -1819,7 +1830,7 @@ export function AgentSurface() {
     // The carry stays ADJACENT to the spawn — `chat-draft-carry.test.ts` reads the proximity
     // as the guarantee, and the trace below is diagnostics that must not come between them.
     carryDraftInto(s as ChatSession, carried);
-    carryQueueInto(s as ChatSession, heldTexts, carriedQueue);
+    carryQueueInto(s as ChatSession, held, carriedQueue);
     traceRespawn('resumeChatSession', 'spawned', { from: cs.id, to: s.id, claudeId: cs.claudeId, detail: { accountId: acct } });
     setSessionList((prev) => {
       const next = prev.map((m) => (m.id === cs.id ? { ...m, id: s.id, kind: 'chat' as const, bypass: s.bypass, claudeId: s.claudeId, mode: cs.mode } : m));
@@ -3457,7 +3468,9 @@ export function AgentSurface() {
       if (!picks.ok) return picks;
       // Exactly what the child's own card sends (`answerQuestion` builds the load-bearing
       // `{questions, answers}` shape).
-      cs.answerQuestion(requestId, q.questions, picks.picked, picks.notes);
+      // Not written (the child's socket is down): the card is still pending, and saying so is
+      // the honest answer — never report an answer nobody received.
+      if (!cs.answerQuestion(requestId, q.questions, picks.picked, picks.notes)) return { ok: false, error: 'not_connected' };
       return { ok: true };
     }
     if (verb === 'resume') {

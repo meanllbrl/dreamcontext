@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ChatSession, PendingQuestion } from '../chatSession';
 import type { QuestionSpec } from '../../../lib/chatProtocol';
@@ -14,6 +14,10 @@ import {
   isSwipeDeck, numberValue, optionLetter, pickFor, resolveAnswers, resolveNotes, setText,
   setValue, textRole, toggleOther, togglePick, unclearMessage, type SurveyPicks,
 } from './surveyAnswers';
+import { markSurveyDraftSent, readSurveyDraft, surveyDraftOwner, writeSurveyDraft } from './surveyDrafts';
+import { RECONNECT_CHIP_DELAY_MS } from './reconnectChip';
+import { recordPhoneEvent } from '../../../lib/phoneConnLog';
+import { useI18n } from '../../../context/I18nContext';
 
 /**
  * AskUserQuestion, state 5 — a card built to be answered COLD.
@@ -55,6 +59,12 @@ import {
  *
  * The receipt after Submit is local and brief: `ChatSession` removes the answered item from
  * `pending` optimistically, so the card unmounts on the next tick.
+ *
+ * THE PICKS OUTLIVE THE CARD (`draftKey`, chat/surveyDrafts.ts): a reattach that re-sends the
+ * same ask, or a phone leaving the chat and coming back, remounts this card, and the owner's
+ * pick, note and page come back with it. A SUBMIT THAT COULD NOT BE WRITTEN is never a dead
+ * button and never a lost answer: the picks stay, the footer says it is waiting for the
+ * connection, and the session is asked to reconnect now. Nothing re-sends by itself.
  */
 
 /** What the card needs from its host: an answer, and a way to decline. A chat session is one;
@@ -79,12 +89,46 @@ export function SurveyReceipt({ title, unclear, values }: { title?: string; uncl
   );
 }
 
-export function SurveyCard({ item, session }: { item: PendingQuestion; session: SurveyHost }) {
-  const [picks, setPicks] = useState<SurveyPicks>({});
-  const [submitted, setSubmitted] = useState<null | 'answered' | 'unclear'>(null);
-  const [page, setPage] = useState(0);
-
+export function SurveyCard({ item, session, draftKey, connected }: {
+  item: PendingQuestion;
+  session: SurveyHost & { reconnectSoon?: () => void };
+  /** Keep the picks outside the card under this key (a chat pane passes one; hosts that do not
+   *  keep today's card-local state). */
+  draftKey?: string;
+  /** The session's socket is open. `false` turns a tap on Submit into a held answer. */
+  connected?: boolean;
+}) {
+  const { t } = useI18n();
   const questions = item.questions;
+  // Read once, at mount: the store is the card's memory across a remount, not a live source.
+  const [restored] = useState(() => (draftKey ? readSurveyDraft(draftKey, questions.map((q) => q.question)) : null));
+  const [picks, setPicks] = useState<SurveyPicks>(() => restored?.picks ?? {});
+  const [submitted, setSubmitted] = useState<null | 'answered' | 'unclear'>(null);
+  const [page, setPage] = useState(() => restored?.page ?? 0);
+  /** A tap could not be written: the footer says so until the connection is back. */
+  const [held, setHeld] = useState(false);
+  /** The connection has been down long enough to be worth saying (the chip's own rule). */
+  const [longDown, setLongDown] = useState(false);
+
+  // Functional updaters write `picks` and `page` from many places; persisting from an effect
+  // catches every one of them.
+  useEffect(() => {
+    if (draftKey && !submitted) writeSurveyDraft(draftKey, picks, page);
+  }, [draftKey, picks, page, submitted]);
+
+  useEffect(() => {
+    if (!draftKey) return;
+    const { claudeId, requestId } = surveyDraftOwner(draftKey);
+    recordPhoneEvent('card-mount', claudeId, { requestId });
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (connected !== false) { setHeld(false); setLongDown(false); return; }
+    const id = setTimeout(() => setLongDown(true), RECONNECT_CHIP_DELAY_MS);
+    return () => clearTimeout(id);
+  }, [connected]);
+  const waiting = connected === false && (held || longDown);
+
   const total = questions.length;
   const swipe = isSwipeDeck(questions, item.source);
   // Clamped rather than trusted: `page` is the only piece of card state that can outrun
@@ -137,16 +181,37 @@ export function SurveyCard({ item, session }: { item: PendingQuestion; session: 
     setPage(target);
   };
 
+  const waitingLine = (
+    <span className="chat-surveycard-waiting" role="status" title={t('chat.survey.waitingDetail')} aria-label={t('chat.survey.waitingDetail')}>
+      {t('chat.survey.waiting')}
+    </span>
+  );
+
+  /** Not written: keep everything, say so, and ask for the connection now. */
+  const hold = () => {
+    setHeld(true);
+    if (draftKey) {
+      const { claudeId, requestId } = surveyDraftOwner(draftKey);
+      recordPhoneEvent('submit-held', claudeId, { requestId, reason: 'offline' });
+    }
+    session.reconnectSoon?.();
+  };
+
   const submit = () => {
     if (!complete || submitted) return;
+    if (connected === false) { hold(); return; }
+    if (!session.answerQuestion(item.requestId, questions, resolveAnswers(questions, picks), resolveNotes(questions, picks))) { hold(); return; }
+    // Written is not arrived: the picks stay until the turn moves on (surveyDrafts.ts).
+    if (draftKey) markSurveyDraftSent(draftKey);
     setSubmitted('answered');
-    session.answerQuestion(item.requestId, questions, resolveAnswers(questions, picks), resolveNotes(questions, picks));
   };
 
   const unclear = () => {
     if (submitted) return;
+    if (connected === false) { hold(); return; }
+    if (!session.answer(item.requestId, { behavior: 'deny', message: unclearMessage(questions, picks) })) { hold(); return; }
+    if (draftKey) markSurveyDraftSent(draftKey);
     setSubmitted('unclear');
-    session.answer(item.requestId, { behavior: 'deny', message: unclearMessage(questions, picks) });
   };
 
   /** ⌘/Ctrl+Enter out of a text field: send when nothing is left to answer, otherwise move
@@ -258,8 +323,10 @@ export function SurveyCard({ item, session }: { item: PendingQuestion; session: 
       </div>
 
       <div className="chat-surveycard-foot">
+        {/* The waiting line is drawn OVER the pager's own box (the pager stays in the flow,
+            hidden), so nothing in this row reflows: the card's height never changes. */}
         {total > 1 ? (
-          <div className="chat-surveycard-pager">
+          <div className="chat-surveycard-pager" data-waiting={waiting || undefined}>
             <button
               type="button"
               className="chat-surveycard-arrow"
@@ -288,6 +355,7 @@ export function SurveyCard({ item, session }: { item: PendingQuestion; session: 
               disabled={onLastPage}
               aria-label="Next question"
             >›</button>
+            {waiting && waitingLine}
           </div>
         ) : (
           <button type="button" className="chat-surveycard-unclear" onClick={unclear}>
@@ -296,6 +364,8 @@ export function SurveyCard({ item, session }: { item: PendingQuestion; session: 
         )}
 
         <div className="chat-surveycard-actions">
+          {/* One question has no pager: the line hangs in the free space left of the buttons. */}
+          {waiting && total <= 1 && <span className="chat-surveycard-waiting-beside">{waitingLine}</span>}
           {total > 1 && (
             <button type="button" className="chat-surveycard-unclear" onClick={unclear}>
               Unclear? Ask again

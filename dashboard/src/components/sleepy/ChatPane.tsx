@@ -59,8 +59,10 @@ import { openExternalUrl } from '../../lib/desktop';
 import {
   AccountSwitchBanner, HandoffCard,
   BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, TakenOverBanner,
-  SignInBanner, WorkingIndicator,
+  SignInBanner, WorkingIndicator, RECONNECT_CHIP_DELAY_MS, reconnectChipDue,
 } from './chat/Banners';
+import { surveyDraftKey } from './chat/surveyDrafts';
+import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { Composer } from './chat/Composer';
 import { readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
@@ -540,6 +542,26 @@ function AutomationQuestionComposerLock() {
  * goes through `t()`, unlike this directory's older English-only components: the hand-over
  * ships TR + EN from day one.
  */
+/** "Reconnecting…" only once the session has been connecting for {@link RECONNECT_CHIP_DELAY_MS}:
+ *  a drop that heals in a second never flashes it. A flap back to open hides it at once. */
+function ReconnectingChipWhenDue({ connecting, claudeId }: { connecting: boolean; claudeId: string }) {
+  const [due, setDue] = useState(false);
+  useEffect(() => {
+    if (!connecting) { setDue(false); return; }
+    const since = Date.now();
+    const id = setTimeout(() => setDue(reconnectChipDue(since, Date.now())), RECONNECT_CHIP_DELAY_MS);
+    return () => clearTimeout(id);
+  }, [connecting]);
+  const shown = connecting && due;
+  const wasShown = useRef(false);
+  useEffect(() => {
+    if (shown === wasShown.current) return;
+    wasShown.current = shown;
+    recordPhoneEvent('chip', claudeId, { reason: shown ? 'shown' : 'hidden' });
+  }, [shown, claudeId]);
+  return shown ? <ReconnectingChip /> : null;
+}
+
 function SuperReadOnlyLine() {
   const { t } = useI18n();
   return (
@@ -1998,9 +2020,9 @@ export function ChatPane({
           team={{ parties: drawnParties, runsOf: liveRunsOf, onDrillIn: handleDrillIn, inView: teamInView }}
         />
       )}
-      {session.status === 'connecting' && <ReconnectingChip />}
       <BrowserHostProvider value={browserHost}>
       <div className="chat-transcript">
+        <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
         <div
           className="chat-scroll"
           ref={scrollRef}
@@ -2172,7 +2194,15 @@ export function ChatPane({
               .map((p) => <PermissionCard key={p.requestId} item={p} session={session} permissionMode={permissionMode} />)}
             {conv.pending
               .filter((p): p is PendingQuestion => p.kind === 'question')
-              .map((p) => <SurveyCard key={p.requestId} item={p} session={session} />)}
+              .map((p) => (
+                <SurveyCard
+                  key={p.requestId}
+                  item={p}
+                  session={session}
+                  draftKey={surveyDraftKey(session.claudeId, p.requestId)}
+                  connected={session.status === 'open'}
+                />
+              ))}
             {conv.pending
               .filter((p): p is PendingPlan => p.kind === 'plan')
               .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}

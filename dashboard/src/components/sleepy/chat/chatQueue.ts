@@ -27,20 +27,52 @@ export interface QueuedMessage {
    *  this, ⏎ would silently degrade into "waits for the turn to end", which is the exact
    *  behaviour steering exists to replace. */
   steerWhenPossible?: true;
+  /** A turn the server HELD for an account switch: the owner already sent it, so while the
+   *  new session can still send it by itself it is not shown as a row waiting for them (it
+   *  flashed in the composer area for a moment, 2026-10-23). See {@link visibleQueued}. */
+  resubmit?: true;
 }
 
 /** Append a message. Whitespace-only text is not a message — `send` refuses it too, so
  *  queueing it would only produce a row that can never leave. */
 export function appendQueued(
   queue: QueuedMessage[], text: string, id: string, ts: number,
-  opts?: { steerWhenPossible?: boolean },
+  opts?: { steerWhenPossible?: boolean; resubmit?: boolean },
 ): QueuedMessage[] {
   const clean = text.trim();
   if (!clean) return queue;
   return [...queue, {
     id, text: clean, ts,
     ...(opts?.steerWhenPossible ? { steerWhenPossible: true as const } : {}),
+    ...(opts?.resubmit ? { resubmit: true as const } : {}),
   }];
+}
+
+/** Every row as an ordinary one: the session can no longer send the held rows by itself
+ *  (paused, stopped, closed, signed out, or the socket never opened), so they are the owner's
+ *  to see, edit or drop — "the rows are the user's only copy". */
+export function withoutResubmit(queue: QueuedMessage[]): QueuedMessage[] {
+  return queue.map((q) => {
+    if (!q.resubmit) return q;
+    const { resubmit: _held, ...rest } = q;
+    return rest;
+  });
+}
+
+/**
+ * The rows the strip shows. A `resubmit` row is hidden ONLY while the session can still send
+ * it by itself (`autoDrainable`: not paused, not ended, not taken over, connecting or open);
+ * any other moment it is an ordinary row. No clock here: the time bound is the session's own
+ * `resubmitTimer`, which clears the flag and notifies.
+ */
+/** Whether the session can still send its held rows by itself (the input to
+ *  {@link visibleQueued}): not paused, not ended, not taken over, and connecting or open. */
+export function queueAutoDrainable(p: { paused?: boolean; ended?: boolean; takenOver?: boolean; status: string }): boolean {
+  return !p.paused && !p.ended && !p.takenOver && (p.status === 'connecting' || p.status === 'open');
+}
+
+export function visibleQueued(queue: QueuedMessage[], p: { autoDrainable: boolean }): QueuedMessage[] {
+  return p.autoDrainable ? queue.filter((q) => !q.resubmit) : queue;
 }
 
 /**

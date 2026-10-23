@@ -496,6 +496,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'owned-cdp-',
   'owner-',
   'phone-gate-',
+  'phone-log-',
   'phone-origin-',
   'phone-own-',
   'push-',

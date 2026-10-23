@@ -120,17 +120,20 @@ export function AgentQuestionBlock({
   const host: SurveyHost = {
     answerQuestion: (_id, questions, picked, notes) => {
       const q = questions[0];
-      if (!q) return;
+      if (!q) return true;
       const raw = picked[q.question] ?? '';
       const value = raw.split(', ').map((v) => valueOf.get(v) ?? v).join(', ');
       const note = notes?.[q.question]?.trim();
       send(value && note && note !== value ? `${value}\n\n${note}` : value || note || '');
+      // Handed off: the mutation reports its own failure (onError above).
+      return true;
     },
     answer: (_id, opts) => {
       // "Unclear — ask again". The chat's wording names AskUserQuestion, which a headless run
       // does not have; an agent re-asks with `propose`.
       send((opts.message ?? 'I did not understand this question.')
         .replace('Ask again with AskUserQuestion', 'Ask again with `dreamcontext automations propose`'));
+      return true;
     },
   };
 

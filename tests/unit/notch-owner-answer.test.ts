@@ -75,7 +75,7 @@ describe('POST /api/assistant/answer relays the OWNER\'s answer as his', () => {
 
 describe('the project window answers by conversation id (runVerb answer)', () => {
   function fakeChat(pending: unknown[]) {
-    return { answer: vi.fn(), answerQuestion: vi.fn(), getModel: () => ({ pending }) };
+    return { answer: vi.fn(() => true), answerQuestion: vi.fn(() => true), getModel: () => ({ pending }) };
   }
   let chat: ReturnType<typeof fakeChat>;
   let deps: Parameters<typeof runVerb>[0];
