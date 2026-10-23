@@ -1,4 +1,5 @@
 import { memo, useMemo, useRef, useState } from 'react';
+import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { agentFileUrl, type ApiClient } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
@@ -43,7 +44,9 @@ function copyText(text: string): void {
  *  when the server refused (gone, or not a file), so the card can stay put and say so. A
  *  module function, not a component — the caller passes its own vault-bound client. */
 function grantFile(api: ApiClient, path: string): Promise<boolean> {
-  return api.post('/agent/grant', { path }).then(() => true, () => false);
+  // The hands-free phone grants itself one file, for this device only (its own route); the
+  // desktop's grant is the owner's consent for the Mac's own screen and is laptop-only.
+  return api.post(isMacPhoneSurface() ? '/agent/phone-grant' : '/agent/grant', { path }).then(() => true, () => false);
 }
 
 // ─── User message ───────────────────────────────────────────────────────────────────

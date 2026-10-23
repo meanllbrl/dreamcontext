@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { useQueryClient } from '@tanstack/react-query';
 import { agentFileUrl, graphContentUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';
@@ -411,7 +412,7 @@ function ViewerDocument({
   useInlineMedia(docRef, {
     onOpen,
     onReveal: (p) => revealPath(api, p),
-    onGrant: (p) => api.post('/agent/grant', { path: p }).then(() => true, () => false),
+    onGrant: (p) => api.post(isMacPhoneSurface() ? '/agent/phone-grant' : '/agent/grant', { path: p }).then(() => true, () => false),
   });
 
   const data = state.data;

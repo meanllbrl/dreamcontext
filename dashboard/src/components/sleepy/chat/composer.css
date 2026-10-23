@@ -1839,3 +1839,30 @@
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* ── The hands-free phone's photos (Composer.tsx PhotoButton) ──────────────────── */
+
+.chat-cmp-photobtn { color: var(--color-accent); }
+.chat-cmp-photo-meta {
+  padding: 0 var(--space-3);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+/* A photo still on its way says so on the picture itself, not only in words. */
+.chat-cmp-attachment-image[data-state='uploading'] { position: relative; }
+.chat-cmp-attachment-image[data-state='uploading']::after {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: calc(50% - 7px);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--color-accent-soft);
+  border-top-color: var(--color-accent);
+  animation: chat-cmp-photo-spin 0.9s linear infinite;
+}
+@keyframes chat-cmp-photo-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-cmp-attachment-image[data-state='uploading']::after { animation: none; }
+}

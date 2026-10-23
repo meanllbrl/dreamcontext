@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApi } from '../../../context/VaultContext';
+import { useOptionalI18n } from '../../../context/I18nContext';
+import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 
 /**
  * What a file surface says when the bytes did not arrive — and the one click that usually
@@ -25,8 +27,8 @@ import { useApi } from '../../../context/VaultContext';
 type Probe =
   | { state: 'checking' }
   /** Outside the project root — `path` is the file the server resolved, which is what a
-   *  grant must record. */
-  | { state: 'blocked'; path: string }
+   *  grant must record. `phone`: the hands-free phone's own one-tap grant (its own route). */
+  | { state: 'blocked'; path: string; phone?: boolean }
   /** Reachable, or gone, or refused — either way the message says which. */
   | { state: 'explained'; message: string };
 
@@ -41,6 +43,11 @@ export function FileUnavailable({
   onGranted: () => void;
 }) {
   const api = useApi();
+  const i18n = useOptionalI18n();
+  const say = (key: string, fallback: string): string => {
+    const v = i18n?.t(key);
+    return v && v !== key ? v : fallback;
+  };
   const [probe, setProbe] = useState<Probe>({ state: 'checking' });
   const [granting, setGranting] = useState(false);
 
@@ -54,6 +61,12 @@ export function FileUnavailable({
           if (body?.error === 'needs_grant') {
             return { state: 'blocked', path: typeof body.path === 'string' ? body.path : src };
           }
+          // The hands-free phone (agent-chat.ts `phoneOutsideMedia`): one tap, or never.
+          if (body?.error === 'needs_phone_grant' && typeof body.path === 'string') {
+            return { state: 'blocked', path: body.path, phone: true };
+          }
+          if (body?.error === 'other_project') return { state: 'explained', message: say('chat.media.otherProject', 'it is in a project this phone can’t open') };
+          if (body?.error === 'phone_media_only') return { state: 'explained', message: say('chat.media.cantShow', 'it can’t be shown on the phone') };
           return { state: 'explained', message: 'it can’t be read from here' };
         }
         if (r.status === 404) return { state: 'explained', message: 'it isn’t there any more' };
@@ -70,9 +83,10 @@ export function FileUnavailable({
     return () => { cancelled = true; };
   }, [src]);
 
-  const allow = (grantPath: string) => {
+  const allow = (grantPath: string, phone = false) => {
     setGranting(true);
-    void api.post('/agent/grant', { path: grantPath }).then(
+    // Never the desktop's grant from the phone: that route is laptop-only (route-policy.ts).
+    void api.post(phone || isMacPhoneSurface() ? '/agent/phone-grant' : '/agent/grant', { path: grantPath }).then(
       () => onGranted(),
       () => setProbe({ state: 'explained', message: 'it couldn’t be allowed' }),
     ).finally(() => setGranting(false));
@@ -81,6 +95,17 @@ export function FileUnavailable({
   const noun = kind === 'file' ? 'file' : kind === 'image' ? 'image' : kind === 'video' ? 'video' : 'audio';
 
   if (probe.state === 'checking') return <p className="chat-unavailable-note">Checking this {noun}…</p>;
+
+  if (probe.state === 'blocked' && probe.phone) {
+    return (
+      <div className="chat-unavailable">
+        <p className="chat-unavailable-note">{say('chat.media.outside', 'outside the project')}</p>
+        <button type="button" className="chat-btn" onClick={() => allow(probe.path, true)} disabled={granting}>
+          {granting ? say('chat.media.showing', 'Showing…') : say('chat.media.show', 'Show')}
+        </button>
+      </div>
+    );
+  }
 
   if (probe.state === 'blocked') {
     return (

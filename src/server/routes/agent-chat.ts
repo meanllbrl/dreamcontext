@@ -17,7 +17,10 @@ import { readLoopbackGrants, setLoopbackGrant } from '../../lib/loopback-grants.
 import { serveMedia } from '../media.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { authFor, deviceIdHash, macHandsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
-import { isMacExposed, isMacOriginAllowed, isPhoneSocket, phoneTranscriptRefused } from '../phone-origin.js';
+import { isMacExposed, isMacOriginAllowed, isPhoneSocket, macExposedVaults, phoneTranscriptRefused } from '../phone-origin.js';
+import { phoneMediaRoots, phoneMediaVerdict } from '../../lib/handsfree/mac/phone-media-roots.js';
+import { addPhoneFileGrant, hasPhoneFileGrant } from '../phone-file-grants.js';
+import { sniffImageType } from '../../lib/image-sniff.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HOLDER_PROBE_MS, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
@@ -4407,10 +4410,18 @@ export async function handleAgentFile(
   if (!rawPath) { sendError(res, 400, 'missing_path', 'Query parameter "path" is required.'); return; }
 
 
-  // A Mac-mode phone: the project root only, grants ignored — a grant is the desktop owner's
-  // consent for THEIR screen, and the phone is another trust level.
-  const resolved = isPhoneSocket(req) ? resolveServablePath(contextRoot, rawPath, { grants: false }) : resolveServablePath(contextRoot, rawPath);
-  if ('deny' in resolved) {
+  // A Mac-mode phone: the desktop's grants never count — they are the owner's consent for the
+  // Mac's own screen. Outside the project the phone sees MEDIA only, by its own rules
+  // (`phoneOutsideMedia`): its own linked repos and worktrees without asking, anything else after
+  // a one-tap phone grant, a project not chosen at start never.
+  const phone = isPhoneSocket(req);
+  const resolved = phone ? resolveServablePath(contextRoot, rawPath, { grants: false }) : resolveServablePath(contextRoot, rawPath);
+  let phoneMedia: { abs: string; type: string } | null = null;
+  if ('deny' in resolved && phone && resolved.deny === 'outside' && resolved.abs) {
+    const v = await phoneOutsideMedia(req, contextRoot, resolved.abs, { granted: true });
+    if ('deny' in v) { sendPhoneOutsideRefusal(res, v, rawPath); return; }
+    phoneMedia = v;
+  } else if ('deny' in resolved) {
     if (resolved.deny === 'needs_grant') {
       // NOT a refusal the UI should render as an error: it is the prompt to ask the user.
       // `path` is the RESOLVED file, so the card can name it and grant exactly it — the
@@ -4425,11 +4436,23 @@ export async function handleAgentFile(
     }
     return;
   }
-  const abs = resolved.abs;
+  const abs = phoneMedia ? phoneMedia.abs : (resolved as { abs: string }).abs;
   if (!existsSync(abs)) { sendError(res, 404, 'not_found', `File not found: ${rawPath}`); return; }
 
   let st: ReturnType<typeof statSync>;
   try { st = statSync(abs); } catch { sendError(res, 404, 'not_found', `File not found: ${rawPath}`); return; }
+
+  // The phone, outside the project: the media stream and nothing else — never a folder listing,
+  // a text preview or a probe of anything but the media it may see.
+  if (phoneMedia) {
+    if (!st.isFile()) { sendError(res, 404, 'not_found', `Not a file: ${rawPath}`); return; }
+    const url0 = new URL(req.url || '/', `http://${req.headers.host}`);
+    if (url0.searchParams.get('raw') !== '1') { sendError(res, 403, 'phone_media_only', 'Outside the project the phone shows pictures, audio and video only.'); return; }
+    if (st.size > AGENT_MEDIA_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_MEDIA_MAX_BYTES, 'File is too large to stream.'); return; }
+    if (url0.searchParams.get('probe') === '1') { sendProbe(res, st.size, AGENT_MEDIA_MAX_BYTES); return; }
+    serveMedia(req, res, abs, st.size, phoneMedia.type);
+    return;
+  }
 
   // A DIRECTORY answers with its listing — a folder named in the transcript is something to
   // look inside, not an error.
@@ -4590,17 +4613,102 @@ export async function handleAgentGrant(
   sendJson(res, 200, { granted: true, path: target });
 }
 
+// ─── The hands-free phone, outside the project ──────────────────────────────────────
+//
+// Task hands-free-phone-shows-every-picture… (owner 2026-10-23). The Super Agent's pictures live
+// in its children's worktrees, the linked repo and /tmp — all outside the brain project — and the
+// phone used to refuse every one with a 400. Now, decided on the REAL path, media only:
+//   • a file inside a project the owner did not choose at start → refused (`other_project`), first;
+//   • under the request project's own worktrees, linked repos or theirs → shown;
+//   • anywhere else → shown after the phone's one-tap grant for that file (`needs_phone_grant`).
+// Raster images must also SAY so in their bytes; a symlink named `.mp4` that points at a text
+// file is judged by what it points at.
+
+type PhoneOutside =
+  | { abs: string; type: string }
+  | { deny: 'other_project' | 'needs_phone_grant' | 'phone_media_only' | 'not_found'; abs: string };
+
+async function phoneOutsideMedia(
+  req: IncomingMessage,
+  contextRoot: string,
+  abs: string,
+  /** `granted`: honour this device's phone grants (the file route). The grant route passes false. */
+  opts: { granted: boolean },
+): Promise<PhoneOutside> {
+  let realAbs = abs;
+  let missing = false;
+  try { realAbs = realpathSync.native(abs); } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return { deny: 'phone_media_only', abs };
+    missing = true;
+  }
+  // The boundary first: nothing below may serve a file inside an unchosen project.
+  const roots = await phoneMediaRoots(projectRootOf(contextRoot), macExposedVaults());
+  const verdict = phoneMediaVerdict(realAbs, roots);
+  if (verdict === 'other') return { deny: 'other_project', abs };
+  const type = AGENT_FILE_MEDIA_CONTENT_TYPE[extname(realAbs).toLowerCase()];
+  if (!type) return { deny: 'phone_media_only', abs };
+  if (missing) return verdict === 'auto' || !opts.granted ? { deny: 'not_found', abs } : { deny: 'needs_phone_grant', abs: realAbs };
+  if (verdict === 'ask' && opts.granted && !hasPhoneFileGrant(authFor(req) ? deviceIdHash(req) : null, realAbs)) {
+    return { deny: 'needs_phone_grant', abs: realAbs };
+  }
+  if (type.startsWith('image/')) {
+    let head: Buffer | null = null;
+    try {
+      const fd = openSync(realAbs, 'r');
+      try { head = Buffer.alloc(16); readSync(fd, head, 0, 16, 0); } finally { closeSync(fd); }
+    } catch { head = null; }
+    if (!head || sniffImageType(head) !== type) return { deny: 'phone_media_only', abs };
+  }
+  return { abs: realAbs, type };
+}
+
+function sendPhoneOutsideRefusal(res: ServerResponse, v: { deny: string; abs: string }, rawPath: string): void {
+  if (v.deny === 'needs_phone_grant') {
+    // The prompt to ask, not an error: `path` is the REAL file, which is what a grant records.
+    sendJson(res, 403, { error: 'needs_phone_grant', message: 'Outside the project — tap Show to see it on this phone.', path: v.abs });
+  } else if (v.deny === 'other_project') {
+    // No path, no card button: this file is never the phone's to see.
+    sendJson(res, 403, { error: 'other_project', message: 'This file is inside a project this phone cannot open.' });
+  } else if (v.deny === 'not_found') {
+    sendError(res, 404, 'not_found', `File not found: ${rawPath}`);
+  } else {
+    sendJson(res, 403, { error: 'phone_media_only', message: 'Outside the project the phone shows pictures, audio and video only.' });
+  }
+}
+
 /**
- * POST /api/agent/phone-grant — the hands-free phone allowing ONE media file outside the project
- * for that device only (task hands-free-phone-shows-every-picture…). Built in wave 2.
+ * POST /api/agent/phone-grant — the hands-free phone allowing ONE media file outside the project,
+ * for that device only (phone-file-grants.ts: memory, ends with the device's session or the run).
+ * Re-runs every rule of the file route — the boundary, media only, the bytes — so a grant can
+ * never reach what the route itself would refuse. Body: `{ path }`, the absolute path the file
+ * route answered `needs_phone_grant` with.
  */
 export async function handleAgentPhoneGrant(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
-  _contextRoot: string,
+  contextRoot: string,
 ): Promise<void> {
-  sendError(res, 501, 'not_built', 'Not available yet.');
+  if (!isPhoneSocket(req)) { sendError(res, 403, 'phone_only', 'Only the hands-free phone grants itself a file.'); return; }
+  const device = authFor(req) ? deviceIdHash(req) : null;
+  if (!device) { sendError(res, 401, 'unauthenticated', 'Sign in first.'); return; }
+  const body = await parseJsonBody(req);
+  const target = typeof body?.path === 'string' ? body.path : '';
+  if (!target.startsWith('/') || target.length > 4096 || target.includes('\0')) {
+    sendError(res, 400, 'invalid_path', 'An absolute file path is required.');
+    return;
+  }
+  const resolved = resolveServablePath(contextRoot, target, { grants: false });
+  // Inside the project there is nothing to grant: the file route already serves it.
+  if (!('deny' in resolved)) { sendJson(res, 200, { granted: true, inside: true }); return; }
+  if (resolved.deny !== 'outside' || !resolved.abs) { sendError(res, 400, 'invalid_path', 'That path cannot be read.'); return; }
+  const v = await phoneOutsideMedia(req, contextRoot, resolved.abs, { granted: false });
+  if ('deny' in v) { sendPhoneOutsideRefusal(res, v, target); return; }
+  let isFile = false;
+  try { isFile = statSync(v.abs).isFile(); } catch { /* gone */ }
+  if (!isFile) { sendError(res, 404, 'not_found', `File not found: ${target}`); return; }
+  addPhoneFileGrant(device, v.abs);
+  sendJson(res, 200, { granted: true, path: v.abs });
 }
 
 /** The owner's own window: desktop app, this machine, a loopback Host, and this very origin

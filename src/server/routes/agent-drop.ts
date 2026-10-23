@@ -5,6 +5,12 @@ import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { sanitizeDropFilename } from '../../lib/filename.js';
 import { sniffImageType as sniffImage, EXT_BY_IMAGE_TYPE, type ImageMimeType } from '../../lib/image-sniff.js';
+import { randomBytes } from 'node:crypto';
+import { isPhoneSocket } from '../phone-origin.js';
+import { authFor, deviceIdHash } from '../handsfree-auth.js';
+import {
+  PHONE_DROPS_MAX_BYTES, PHONE_MAX_PHOTO_BYTES, PHONE_PHOTO_PREFIX, acquirePhonePhoto, releasePhonePhoto,
+} from '../../lib/handsfree/mac/photo-limits.js';
 
 /**
  * POST /api/agent/drop — receive ANY file dropped onto the embedded agent terminal,
@@ -82,18 +88,25 @@ function pruneDrops(dir: string): void {
 
 /**
  * Stream the request body with a per-chunk size cap. Resolves the assembled buffer, or
- * null if the cap was exceeded (413 already sent) or the stream errored.
+ * null if the cap was exceeded (413 already sent), the stream errored, or the client went away
+ * before the end (an aborted phone upload must free its gate slot, so `close` settles it too).
  */
-function readCappedBody(req: IncomingMessage, res: ServerResponse): Promise<Buffer | null> {
+function readCappedBody(
+  req: IncomingMessage,
+  res: ServerResponse,
+  limit: number = MAX_DROP_BYTES,
+  tooLarge = 'Dropped file exceeds the 25 MB limit.',
+): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
     let done = false;
     const finish = (v: Buffer | null) => { if (!done) { done = true; resolve(v); } };
     req.on('data', (chunk: Buffer) => {
+      if (done) return;
       size += chunk.length;
-      if (size > MAX_DROP_BYTES) {
-        sendError(res, 413, 'too_large', 'Dropped file exceeds the 25 MB limit.');
+      if (size > limit) {
+        sendError(res, 413, 'too_large', tooLarge);
         req.destroy();
         finish(null);
         return;
@@ -102,7 +115,85 @@ function readCappedBody(req: IncomingMessage, res: ServerResponse): Promise<Buff
     });
     req.on('end', () => finish(Buffer.concat(chunks)));
     req.on('error', () => finish(null));
+    req.on('close', () => finish(null));
   });
+}
+
+/** Bytes of phone photos already in the drop folder (the per-project ceiling). */
+function phoneDropBytes(dir: string): number {
+  let total = 0;
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(PHONE_PHOTO_PREFIX)) continue;
+      try { total += statSync(join(dir, name)).size; } catch { /* gone meanwhile */ }
+    }
+  } catch { /* no folder yet */ }
+  return total;
+}
+
+/**
+ * The hands-free PHONE's photo (task hands-free-phone-shows-every-picture…, D5): the one remote
+ * caller this route takes, decided per socket (the tunnel dials from 127.0.0.1, so never by
+ * address), with caps of its own (lib/handsfree/mac/photo-limits.ts):
+ *   • a declared size over the cap is refused before a byte is read; the stream is capped too;
+ *   • the device's gate is taken BEFORE the body (2 in flight, 30 a minute) and always released;
+ *   • images only, by their BYTES (PNG/JPEG/WebP/GIF) — the client's type and file name are
+ *     ignored, the server names the file, and it lands only in this project's gitignored tmp;
+ *   • the folder holds at most 500 MB of phone photos; the 7-day prune applies as for any drop.
+ * The server never decodes the image. The answer is the absolute path the chat quotes into the
+ * message, exactly as a desktop drop's.
+ */
+async function handlePhoneDrop(req: IncomingMessage, res: ServerResponse, contextRoot: string): Promise<void> {
+  const device = authFor(req) ? deviceIdHash(req) : null;
+  if (!device) { sendError(res, 401, 'unauthenticated', 'Sign in first.'); return; }
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > PHONE_MAX_PHOTO_BYTES) {
+    sendError(res, 413, 'too_large', 'A photo from the phone can be at most 10 MB.');
+    req.destroy();
+    return;
+  }
+  const verdict = acquirePhonePhoto(device);
+  if (verdict !== 'ok') {
+    sendJson(res, 429, {
+      error: 'photo_busy',
+      message: verdict === 'busy' ? 'Another photo is still uploading.' : 'Too many photos in the last minute.',
+    });
+    req.resume();
+    return;
+  }
+  try {
+    const buf = await readCappedBody(req, res, PHONE_MAX_PHOTO_BYTES, 'A photo from the phone can be at most 10 MB.');
+    if (!buf) return;
+    if (buf.length === 0) { sendError(res, 400, 'empty', 'No photo data was received.'); return; }
+    const sniffed = sniffImageType(buf);
+    if (!sniffed) { sendError(res, 415, 'not_an_image', 'Only a photo (PNG, JPEG, WebP or GIF) can be sent from the phone.'); return; }
+
+    const dropDir = join(contextRoot, 'tmp', 'agent-drops');
+    try {
+      mkdirSync(dropDir, { recursive: true });
+      ensureTmpGitignored(contextRoot);
+      pruneDrops(dropDir);
+    } catch (err) {
+      console.error('[agent-drop] could not prepare drop dir', err);
+      sendError(res, 500, 'mkdir_failed', 'Could not prepare the drop directory.');
+      return;
+    }
+    if (phoneDropBytes(dropDir) + buf.length > PHONE_DROPS_MAX_BYTES) {
+      sendError(res, 507, 'drops_full', 'Too many phone photos are waiting in this project; older ones are removed after a week.');
+      return;
+    }
+    const finalPath = join(dropDir, `${PHONE_PHOTO_PREFIX}${Date.now()}-${randomBytes(4).toString('hex')}${EXT_BY_TYPE[sniffed]}`);
+    try {
+      writeFileSync(finalPath, buf, { flag: 'wx' });
+    } catch (err) {
+      console.error('[agent-drop] could not write phone photo', err);
+      sendError(res, 500, 'write_failed', 'Could not save the photo.');
+      return;
+    }
+    sendJson(res, 200, { path: finalPath, contentType: sniffed });
+  } finally {
+    releasePhonePhoto(device);
+  }
 }
 
 export async function handleAgentDrop(
@@ -111,6 +202,8 @@ export async function handleAgentDrop(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  // The phone first: `isDesktop()` is process-wide, so it says nothing about who is asking.
+  if (isPhoneSocket(req)) { await handlePhoneDrop(req, res, contextRoot); return; }
   if (!isDesktop()) {
     sendError(res, 403, 'desktop_only', 'Agent file drop is only available in the desktop app.');
     return;

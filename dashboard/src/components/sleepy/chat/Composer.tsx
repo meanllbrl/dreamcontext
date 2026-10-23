@@ -23,6 +23,8 @@ import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 import { useVault } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
+import { isMacPhoneSurface } from '../../../lib/phoneSurface';
+import { PHONE_PHOTOS_PER_MESSAGE, jpegName, preparePhonePhoto } from '../../../lib/phonePhoto';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
@@ -215,11 +217,13 @@ const MemoUsageMenu = memo(UsageMenu);
 
 /** The quote strip and the attachment row. A fragment, so both stay direct children of
  *  `.chat-cmp-body` — `measureBodyChrome` sums the body's children. */
-const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, onClearQuote }: {
+const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, onClearQuote, photoMeta }: {
   quote: string | null;
   attachments: Attachment[];
   convId: string;
   onClearQuote: () => void;
+  /** The hands-free phone's one line under its photo chips ("2 photos · 1 uploading…"). */
+  photoMeta?: string | null;
 }) {
   return (
     <>
@@ -253,13 +257,14 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
               <span className="chat-cmp-attachment-name">
                 {a.name}
                 {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
-                {a.failed && <span className="chat-cmp-attachment-note">{a.kind === 'element' ? 'sent without its picture' : 'couldn\'t attach — not sent'}</span>}
+                {a.failed && <span className="chat-cmp-attachment-note">{a.note ?? (a.kind === 'element' ? 'sent without its picture' : 'couldn\'t attach — not sent')}</span>}
               </span>
               <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(convId, a.id)}>✕</button>
             </div>
           ))}
         </div>
       )}
+      {photoMeta && <div className="chat-cmp-photo-meta" data-testid="phone-photo-meta">{photoMeta}</div>}
     </>
   );
 });
@@ -336,6 +341,48 @@ const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker }: {
         </div>
       )}
     </Popover>
+  );
+});
+
+/** A picture, drawn (the hands-free phone's photo button). */
+function PhotoIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <circle cx="9" cy="10" r="1.8" />
+      <path d="M21 16l-5-5-8 9" />
+    </svg>
+  );
+}
+
+/**
+ * The hands-free phone's attach control (task hands-free-phone-shows-every-picture…, D3): the `+`
+ * menu's files, folders and task all need the Mac's own picker, so on the phone it is ONE button
+ * that opens the phone's own sheet — photo library, camera, files. No `capture`, so the library
+ * is offered too; `multiple`, the composer keeps the first six.
+ */
+const PhotoButton = memo(function PhotoButton({ onFiles, label }: { onFiles: (files: File[]) => void; label: string }) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button type="button" className="chat-cmp-iconbtn chat-cmp-photobtn" onClick={() => input.current?.click()} title={label} aria-label={label} data-testid="phone-photo-button">
+        <PhotoIcon />
+      </button>
+      <input
+        ref={input}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        data-testid="phone-photo-input"
+        onChange={(e) => {
+          const files = Array.from(e.currentTarget.files ?? []);
+          // Cleared at once, so picking the same photo again still fires a change.
+          e.currentTarget.value = '';
+          if (files.length) onFiles(files);
+        }}
+      />
+    </>
   );
 });
 
@@ -828,6 +875,30 @@ export function Composer({
     if (addedImage) e.preventDefault(); // don't also paste raw image bytes as garbage text
   };
 
+  // ── The hands-free phone's photos (task hands-free-phone-shows-every-picture…) ──────────
+  // Each picked photo becomes a chip AT ONCE (its own preview) and its upload starts at once: iOS
+  // may evict a backgrounded tab, and bytes already on the Mac survive that. It is re-encoded on
+  // the phone first (lib/phonePhoto.ts: oriented, ≤ 2560 px, JPEG, no EXIF), then goes through the
+  // same channel a pasted image does, so the message quotes its path exactly as the desktop's.
+  const phonePhotos = isMacPhoneSurface();
+  const [photoCapNote, setPhotoCapNote] = useState(false);
+  const onPhonePhotos = (files: File[]) => {
+    const staged = readScratch(convId).attachments.filter((a) => a.kind === 'image').length;
+    const room = Math.max(0, PHONE_PHOTOS_PER_MESSAGE - staged);
+    setPhotoCapNote(files.length > room);
+    for (const file of files.slice(0, room)) {
+      const id = nextAttachmentId();
+      const name = jpegName(file.name || 'photo');
+      addAttachments(convId, [{ id, kind: 'image', url: URL.createObjectURL(file), name, uploading: true }]);
+      const job = preparePhonePhoto(file).then((jpeg) => {
+        if (!jpeg) { settleAttachment(convId, id, null, t('chat.photo.unreadable')); return; }
+        return uploadAgentFile(vault, jpeg, name).then((path) => { settleAttachment(convId, id, path); });
+      });
+      uploadsRef.current.add(job);
+      void job.finally(() => uploadsRef.current.delete(job));
+    }
+  };
+
   // ── Slash-command autocomplete ───────────────────────────────────────────────────
   // Typing `/` opens the same menu the CLI's own TUI offers, from the SAME list: the
   // command names `system:init` reported for this session (built-ins + this project's
@@ -1229,6 +1300,15 @@ export function Composer({
   // wasn't sent, rather than disappearing as if it had been.
   const sendableAttachments = attachments.filter(wasSent);
   const uploadingCount = attachments.filter((a) => a.uploading).length;
+  // The phone's line under its photo chips: how many, how many still on their way, the cap.
+  const photoCount = attachments.filter((a) => a.kind === 'image').length;
+  const photoMeta = phonePhotos && photoCount > 0
+    ? [
+      photoCount === 1 ? t('chat.photo.count.one') : t('chat.photo.count.many').replace('{n}', String(photoCount)),
+      uploadingCount > 0 ? t('chat.photo.uploading').replace('{n}', String(uploadingCount)) : '',
+      photoCapNote ? t('chat.photo.max') : '',
+    ].filter(Boolean).join(' · ')
+    : null;
   const hasSendableContent = !!draft.trim() || sendableAttachments.length > 0
     || uploadingCount > 0;
 
@@ -1756,6 +1836,7 @@ export function Composer({
   const stableClearQuote = useStableHandler(() => onClearQuote());
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
   const stableTaskPicker = useStableHandler(() => onOpenTaskPicker?.());
+  const stablePhonePhotos = useStableHandler((files: File[]) => onPhonePhotos(files));
 
   return (
     <div className="chat-cmp" ref={rootRef}>
@@ -1890,7 +1971,7 @@ export function Composer({
           paint) — composer.css's own two-line fallback holds the box until then, rather
           than a JS constant that would drift from the tokens the moment one moved. */}
       <div className="chat-cmp-body" ref={bodyRef} data-instant={instantH ? '1' : undefined} style={bodyHeight == null ? undefined : { ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
-        <ComposerChips quote={quote} attachments={attachments} convId={convId} onClearQuote={stableClearQuote} />
+        <ComposerChips quote={quote} attachments={attachments} convId={convId} onClearQuote={stableClearQuote} photoMeta={photoMeta} />
 
         <div className="chat-cmp-row" ref={rowRef}>
           <div className="chat-cmp-field">
@@ -2041,8 +2122,9 @@ export function Composer({
             menu is a short list that clamps to its trigger rather than spanning the card.
             Drawn only inside a project (`showAttach`) — every attachment becomes a path, and
             a pasted image's bytes need that project's temp dir. */}
-        {showAttach && (
-          <AttachButton onPick={stablePick} onOpenTaskPicker={onOpenTaskPicker ? stableTaskPicker : undefined} />
+        {showAttach && (phonePhotos
+          ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
+          : <AttachButton onPick={stablePick} onOpenTaskPicker={onOpenTaskPicker ? stableTaskPicker : undefined} />
         )}
 
         <div className="chat-cmp-spacer" />
