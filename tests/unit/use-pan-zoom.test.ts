@@ -117,6 +117,14 @@ describe('the card zoom (super/ZoomPane.tsx)', () => {
   });
   it('wraps a picture, a page and a live browser shown large; a page served by a server gets Inspect', () => {
     expect(card).toMatch(/c\.kind === 'image' \|\| c\.kind === 'web' \|\| c\.kind === 'browser'/);
-    expect(card).toMatch(/<ZoomPane key=\{c\.id\} live=\{isLivePage\(c\)\}>\{viewFor\(p, true\)\}<\/ZoomPane>/);
+    expect(card).toMatch(/<ZoomPane key=\{c\.id\}>\{viewFor\(p\)\}<\/ZoomPane>/);
+    // A web card's pane: the bar and Inspect only for a page from a server; a project page carries
+    // its zoom bridge in every state, so its srcdoc (and frame) never changes with the card.
+    expect(card).toMatch(/const live = isLivePage\(c\);/);
+    expect(card).toMatch(/<ZoomPane live=\{live\} interactive=\{p\.large\} control=\{live \? control : undefined\}>/);
+    expect(card).toMatch(/control=\{live \? control : undefined\} zoomBridge=\{!live\} \/>/);
+    // …which is harmless while the card floats: the pane reads a bridge message only while
+    // interactive (the card shown large).
+    expect(pane).toMatch(/const onMessage = \(event: MessageEvent\) => \{\s*\n\s*if \(!interactive\) return;/);
   });
 });
