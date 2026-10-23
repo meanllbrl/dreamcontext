@@ -141,6 +141,8 @@ export function formatListItems(content: string, checkbox: boolean): string {
       const t = line.trim();
       if (t === '') return line;
       if (/^[-*]\s+/.test(t)) return line; // already a bullet / checkbox
+      // A bare `[x] …` (the dash dropped so the CLI does not read it as an option) keeps its tick.
+      if (checkbox && /^\[[ xX]\]\s/.test(t)) return `- ${t}`;
       return checkbox ? `- [ ] ${t}` : `- ${t}`;
     })
     .join('\n');

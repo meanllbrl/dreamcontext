@@ -58,7 +58,7 @@ describe('agents/sleep-tasks.md — the protocol the bar cannot enforce', () => 
     ['placing is not a status change', 'Placing an ask is NOT a status change'],
     ['a question about a defect is an ask', '**What counts as an ask.**'],
     ['a shipped ask is placed as done', '**Done in the session is still placed.**'],
-    ['the ticked-criterion form', 'acceptance_criteria "- [x] <the ask> (done in session <id>, <commit>)"'],
+    ['the ticked-criterion form', 'acceptance_criteria -- "- [x] <the ask> (done in session <id>, <commit>)"'],
     ['"already there" means a criterion', '**"Already on the board" means a criterion.**'],
     ['the check that a criterion exists', "sed -n '/^## Acceptance Criteria/,/^## /p'"],
     ['a sent button text is an owner turn', 'including a suggested action or button text they sent as their turn'],

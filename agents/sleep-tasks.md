@@ -99,7 +99,7 @@ dreamcontext tasks list --status in_review
 
 **What counts as an ask.** Every turn the owner sent that asks for a change or a check, including a suggested action or button text they sent as their turn ("Fix the drift: …"): "fix X", "X should Y", "is X solved? check it", "why doesn't the agent do Y?". A question about a defect is an ask to fix it. "devam et", "ok" and a bare "merge it" are not. List every ask per session before you place any, so none is lost between sessions.
 
-**Done in the session is still placed.** An ask the same session already shipped is recorded, never skipped: on its task as a ticked criterion in the owner's terms (`tasks insert <slug> acceptance_criteria "- [x] <the ask> (done in session <id>, <commit>)"`), or, with no home on the board, a new task filed done (`tasks create "<sentence>" --status completed --by sleep --basis ask --quote "<their words>" -w "…"`). sleep-state's changelog entry is in addition, never instead.
+**Done in the session is still placed.** An ask the same session already shipped is recorded, never skipped: on its task as a ticked criterion in the owner's terms (`tasks insert <slug> acceptance_criteria -- "- [x] <the ask> (done in session <id>, <commit>)"`: the `--` is required, a leading `-` is otherwise read as an option), or, with no home on the board, a new task filed done (`tasks create "<sentence>" --status completed --by sleep --basis ask --quote "<their words>" -w "…"`). sleep-state's changelog entry is in addition, never instead.
 
 **"Already on the board" means a criterion.** Skip an ask only when the same work already stands as an acceptance criterion (ticked or not) on its task: read that task's `## Acceptance Criteria` and quote the line in the report:
 ```bash
