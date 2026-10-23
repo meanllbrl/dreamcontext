@@ -60,6 +60,9 @@ describe('agents/sleep-tasks.md — the protocol the bar cannot enforce', () => 
     ['a shipped ask is placed as done', '**Done in the session is still placed.**'],
     ['the ticked-criterion form', 'acceptance_criteria "- [x] <the ask> (done in session <id>, <commit>)"'],
     ['"already there" means a criterion', '**"Already on the board" means a criterion.**'],
+    ['the check that a criterion exists', "sed -n '/^## Acceptance Criteria/,/^## /p'"],
+    ['a sent button text is an owner turn', 'including a suggested action or button text they sent as their turn'],
+    ['a completed task still takes a shipped ask', 'A completed task whose changelog records the fix takes the ask as a ticked criterion too.'],
   ])('describes %s', (_what, marker) => {
     expect(content).toContain(marker);
   });
