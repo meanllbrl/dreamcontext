@@ -284,9 +284,9 @@ const MSG_REF_SPACE = 2_176_782_336;
 export const REPLY_TO_RE = /^\[Reply to message ref=([0-9a-z]{6}) from=(super|owner)\]/;
 export const MAX_REPLY_QUOTE = 100;
 /** The super's mark on an answer's first line, `<!-- re:<ref> -->` (lib/replyMark.ts parses it). */
-export const REPLY_MARK_RE = /^\s*<!--\s*re:\s*((?:[0-9a-z]{6}\s*){1,3})-->[ \t]*(?:\r?\n)?/;
-export const REPLY_MARK_HEAD_MAX = 64;
-export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:\s*((?:[0-9a-z]{6}\s*){1,3})-->[ \t]*(?:\r?\n)?/g;
+export const REPLY_MARK_RE = /^\s*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/;
+export const REPLY_MARK_HEAD_MAX = 120;
+export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/g;
 
 export interface SuperStateView extends SuperState {
   vault: string;

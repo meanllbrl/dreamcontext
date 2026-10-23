@@ -11,7 +11,8 @@
  *
  * A block that answers several messages may instead open a SECTION per message, each with its
  * own mark on its own line (what the real model does, measured 2026-10-23): every line-start
- * mark counts, the refs are their union in order, and none of them is ever shown.
+ * mark counts, the refs are their union in order, and none of them is ever shown. A mark naming
+ * more than three, or written with commas or capitals, is still a mark: never shown either.
  *
  * STREAMING, the notch cue's rule (notchCue.ts): while the head could still become a mark it is
  * `pending`, nothing is drawn or spoken, and after REPLY_MARK_HEAD_MAX characters without a
@@ -30,6 +31,7 @@ export interface SplitReplyMark {
 }
 
 const OPEN = '<!--';
+const MSG_REF = /^[0-9a-z]{6}$/;
 const WORD = 're:';
 
 /** Could this (a line's start) still become a mark? */
@@ -37,8 +39,9 @@ function couldBeMark(fragment: string): boolean {
   const head = fragment.trimStart();
   if (head.length < OPEN.length) return OPEN.startsWith(head);
   const word = head.slice(OPEN.length).trimStart();
-  return head.startsWith(OPEN) && !head.includes('-->') && head.length <= REPLY_MARK_HEAD_MAX
-    && (word.length <= WORD.length ? WORD.startsWith(word) : word.startsWith(WORD) && /^[0-9a-z\s]*-{0,2}$/.test(word.slice(WORD.length)));
+  // A mark is one line: a head that broke its line without closing is text.
+  return head.startsWith(OPEN) && !head.includes('-->') && !head.includes('\n') && head.length <= REPLY_MARK_HEAD_MAX
+    && (word.length <= WORD.length ? WORD.startsWith(word) : word.startsWith(WORD) && /^[0-9a-zA-Z,\s]*-{0,2}$/.test(word.slice(WORD.length)));
 }
 
 export function splitReplyMark(raw: string): SplitReplyMark {
@@ -46,7 +49,8 @@ export function splitReplyMark(raw: string): SplitReplyMark {
   if (!REPLY_MARK_RE.test(text) && couldBeMark(text)) return { refs: [], body: '', pending: true };
   const refs: string[] = [];
   let body = text.replace(REPLY_MARK_LINE_RE, (_m, pre: string, named: string) => {
-    for (const r of named.trim().split(/\s+/)) if (!refs.includes(r)) refs.push(r);
+    // Any `<!-- re:… -->` line is ours and goes; only well-formed refs count.
+    for (const r of named.toLowerCase().split(/[\s,]+/)) if (MSG_REF.test(r) && !refs.includes(r)) refs.push(r);
     return pre;
   });
   // A section mark still arriving: hold it back, never draw or speak half of it.

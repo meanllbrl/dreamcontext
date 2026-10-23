@@ -17,17 +17,20 @@ describe('splitReplyMark', () => {
     expect(splitReplyMark('  <!--re:k3f9q0-->Done.')).toEqual({ refs: ['k3f9q0'], body: 'Done.', pending: false });
   });
 
-  it('up to three refs; four is not a mark', () => {
+  it('one to three refs; a mark naming more still counts (never shown), its refs all read', () => {
     expect(splitReplyMark('<!-- re:k3f9q0 a1b2c3 -->\nBoth done.').refs).toEqual(['k3f9q0', 'a1b2c3']);
     expect(splitReplyMark('<!-- re: k3f9q0  a1b2c3 zz00zz -->\nAll three.').refs).toEqual(['k3f9q0', 'a1b2c3', 'zz00zz']);
-    const four = '<!-- re:k3f9q0 a1b2c3 zz00zz 999999 -->\nFour.';
-    expect(splitReplyMark(four)).toEqual({ refs: [], body: four, pending: false });
+    // The owner's "5 messages in a row": the model may name them all in one mark.
+    expect(splitReplyMark('<!-- re:k3f9q0 a1b2c3 zz00zz 999999 aaaaaa -->\nFive.')).toEqual({ refs: ['k3f9q0', 'a1b2c3', 'zz00zz', '999999', 'aaaaaa'], body: 'Five.', pending: false });
   });
 
-  it('a malformed ref is not a mark', () => {
-    for (const t of ['<!-- re:K3F9Q0 -->\nx', '<!-- re:k3f9 -->\nx', '<!-- re: -->\nx', '<!-- re:k3f9q0x -->\nx']) {
-      expect(splitReplyMark(t)).toEqual({ refs: [], body: t, pending: false });
+  it('a mark written loosely is still ours: never shown, only well-formed refs counted', () => {
+    expect(splitReplyMark('<!-- re:K3F9Q0, A1B2C3 -->\nx')).toEqual({ refs: ['k3f9q0', 'a1b2c3'], body: 'x', pending: false });
+    for (const t of ['<!-- re:k3f9 -->\nx', '<!-- re: -->\nx', '<!-- re:k3f9q0x -->\nx']) {
+      expect(splitReplyMark(t)).toEqual({ refs: [], body: 'x', pending: false });
     }
+    // Not a mark at all: another comment, or one that never closes on its line.
+    for (const t of ['<!-- note: k3f9q0 -->\nx', '<!-- re:k3f9q0\nx']) expect(splitReplyMark(t).body).toBe(t);
   });
 
   it('streaming: pending while the head may still become a mark, nothing drawn', () => {
@@ -51,7 +54,7 @@ describe('splitReplyMark', () => {
     expect(splitReplyMark('Hello')).toEqual({ refs: [], body: 'Hello', pending: false });
     expect(splitReplyMark('<b>bold</b>').pending).toBe(false);
     expect(splitReplyMark('<!-- note to self').pending).toBe(false);
-    const long = `<!-- re:${'k3f9q0 '.repeat(9)}`;
+    const long = `<!-- re:${'k3f9q0 '.repeat(20)}`;
     expect(long.length).toBeGreaterThan(client.REPLY_MARK_HEAD_MAX);
     expect(splitReplyMark(long)).toEqual({ refs: [], body: long, pending: false });
   });

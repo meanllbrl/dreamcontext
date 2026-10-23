@@ -292,6 +292,17 @@ try {
   report.check('still no horizontal overflow', await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await phone.screenshot({ path: join(SHOTS, '390x844-reply-sent.png') });
 
+  console.log('\n── 5. A reload: the phone still knows the Super conversation');
+  await phone.reload({ waitUntil: 'domcontentloaded' });
+  await phone.waitForTimeout(3000);
+  report.check('the Super conversation id is kept across the reload', await phone.evaluate((id) => (localStorage.getItem('dreamcontext-super-mirror-ids') ?? '').includes(id), SUPER));
+  if (await onList()) await vis('[data-testid="super-row"]').click().catch(() => {});
+  report.check('after the reload the strip and the reply strip draw again from the replay', await until(async () => {
+    const t = (await pane().innerText().catch(() => '')).replace(/\s+/g, ' ');
+    return /To your message Bir: giriş sayfası/.test(t) && (await vis('[data-testid="chat-msg-reply"]').count()) >= 1 && !t.includes('<!--');
+  }, 20000), (await pane().innerText().catch(() => '')).replace(/\s+/g, ' ').slice(-300));
+  await phone.screenshot({ path: join(SHOTS, '390x844-after-reload.png') });
+
   report.check('no console error on the phone', errors.length === 0, errors.slice(0, 5).join(' | '));
   report.check('no 403 on any request the phone made', forbidden.length === 0, forbidden.slice(0, 8).join(' | '));
 } catch (err) {

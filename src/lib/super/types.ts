@@ -466,16 +466,18 @@ export const REPLY_TO_RE = /^\[Reply to message ref=([0-9a-z]{6}) from=(super|ow
 export const MAX_REPLY_QUOTE = 100;
 /**
  * The super's mark on an answer: the FIRST line of a text block may name the owner messages it
- * answers, `<!-- re:k3f9q0 -->` (1-3 refs). An HTML comment, so a surface that never parses it
+ * answers, `<!-- re:k3f9q0 -->` (1-3 refs asked; any `<!-- re:… -->` line is ours and never
+ * shown, its well-formed refs counted, so a mark naming five or written `K3F9Q0, A1B2C3` still
+ * goes). An HTML comment, so a surface that never parses it
  * draws nothing; a surface that keeps the text strips it (`stripReplyMark`). The window's
  * streaming parser is dashboard/src/lib/replyMark.ts.
  */
-export const REPLY_MARK_RE = /^\s*<!--\s*re:\s*((?:[0-9a-z]{6}\s*){1,3})-->[ \t]*(?:\r?\n)?/;
+export const REPLY_MARK_RE = /^\s*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/;
 /** Longer than any real mark line; a comment still open past this is not one. */
-export const REPLY_MARK_HEAD_MAX = 64;
+export const REPLY_MARK_HEAD_MAX = 120;
 /** A mark on its own line anywhere in a block: one block answering several messages opens a
  *  section per message (measured with the real model, 2026-10-23). */
-export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:\s*((?:[0-9a-z]{6}\s*){1,3})-->[ \t]*(?:\r?\n)?/g;
+export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/g;
 /** The text without its reply marks (the server's text readers: chat-registry). */
 export function stripReplyMark(raw: string): string {
   return (raw ?? '').replace(REPLY_MARK_LINE_RE, '$1');

@@ -86,6 +86,7 @@ import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, pu
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
 import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire } from '../handsfree/macContract';
+import { isSuperMirrorId, rememberSuperMirrorIds } from './superMirrorIds';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
@@ -636,9 +637,6 @@ export function AgentSurface() {
   // predicate, `isSuperSession`). While handed over it is homed into the centre slot.
   const [superState, setSuperState] = useState<SuperStateView | null>(null);
   const superStateRef = useRef(superState);
-  /** Conversations the hands-free phone opened as the Super Agent (`openSuperOnPhone`): each
-   *  spawn of one is a `superMirror` chat session. */
-  const superMirrorIdsRef = useRef(new Set<string>());
   /** Delegated children being opened right now, before the server's record names them: their
    *  lean MCP set (orchestration plan r5 D14). Read by `spawn` with the record. */
   const leanOpeningRef = useRef<Map<string, string[]>>(new Map());
@@ -1433,7 +1431,7 @@ export function AgentSurface() {
       const lean = mode === 'super' ? null : leanMcpFor(superStateRef.current, cid, leanOpeningRef.current);
       // The phone's Super conversation is a mirror in an ordinary chat mode: told here, on every
       // spawn of it, that it shows the Super (reply strips, groups, the ↩ chip).
-      const mirror = mode !== 'super' && superMirrorIdsRef.current.has(cid);
+      const mirror = mode !== 'super' && isSuperMirrorId(cid);
       const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, cid, resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach, lean, mirror);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
@@ -2286,7 +2284,7 @@ export function AgentSurface() {
   // Mac decides it is a MIRROR (agent-chat.ts `phoneSuperOpen`): never `reattach=1`, so not even a
   // Mac that had stopped recognising the session would evict the window that holds it.
   const openSuperOnPhone = useCallback((row: SuperChatWire) => {
-    superMirrorIdsRef.current.add(row.conversationId);
+    rememberSuperMirrorIds([row.conversationId]);
     // The product's name, the same in every language (`handsfree.super.title`).
     resumePastSession({ id: row.conversationId, title: 'Super Agent', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, 'passive');
   }, [resumePastSession]);
