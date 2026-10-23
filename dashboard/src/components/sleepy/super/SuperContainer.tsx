@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile';
 import { useI18n } from '../../../context/I18nContext';
@@ -24,6 +24,8 @@ import { useLiveSession } from './liveSession';
 import { cardZIndex, sizeOf, type CardPlan } from './superLayout';
 import { inlineMediaKind } from '../chat/chatEntities';
 import { ZoomPane } from './ZoomPane';
+import { WebFrameControl } from '../../../lib/webFrameControl';
+import type { WebPick } from '../../../lib/webPick';
 
 /** What a card opens full screen (owner 2026-10-22): a picture, a project web page, a page on the
  *  web or this computer (only once its frame is allowed), or a board. */
@@ -101,6 +103,8 @@ export interface SuperCardActions {
   onOpenPage: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
   /** The owner sizes a card (the size menu). */
   onSize: (id: string, size: ContainerSize) => void;
+  /** Inspect picked an element in a web card's page: it goes to the Super Agent's composer. */
+  onPickElement?: (id: string, pick: WebPick, page: string) => void;
   /** Open what the card shows full screen. */
   onFullscreen: (id: string, subject: CardFullscreen) => void;
 }
@@ -114,8 +118,12 @@ export interface SuperContainerProps extends SuperCardActions {
   title: string;
   /** Pending its hand-over flight: drawn at opacity 0 so no empty stage ever flashes (D18). */
   pending: boolean;
-  /** `web`: may hold a live iframe right now (webBudget.ts). */
+  /** `web`: holds its frame right now (webBudget.ts `keptWebIds`): on screen it is drawn; parked
+   *  it lives on, hidden, so a move, a group or Others never reloads the page. */
   webLive: boolean;
+  /** A web card off the stage (in Others, in a group, the stage folded) kept ALIVE: drawn hidden at
+   *  its last rect, without a stage key (the motion never sees it), inert. */
+  parked?: boolean;
   /** `browser`: the child's `ChatSession.id` (the live frames' key), and whether this card may
    *  re-render on new frames right now (at most two, on screen, window focused). */
   browserSessionId?: string;
@@ -182,8 +190,10 @@ export function SuperContainer(props: SuperContainerProps) {
   const [allowedHref, setAllowedHref] = useState<string | null>(null);
   const full = fullscreenOf(c, props.title, allowedHref);
   const openFull = full ? () => props.onFullscreen(c.id, full) : undefined;
-  // The size menu (and, on a small tile, the "more" menu that holds it).
+  // The size menu (and, on a small tile, the "more" menu that holds it). A card parked off the
+  // stage closes it (a hidden menu would keep the window's arrow keys and Esc).
   const [menu, setMenu] = useState<null | 'size' | 'more'>(null);
+  useEffect(() => { if (props.parked) setMenu(null); }, [props.parked]);
   const drawnSize: ContainerSize = plan.size ?? sizeOf(c);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const small = drawnSize === 'small';
@@ -208,9 +218,9 @@ export function SuperContainer(props: SuperContainerProps) {
   return (
     <div
       ref={frameRef}
-      className={`super-card-frame${pending ? ' super-card-frame--pending' : ''}`}
-      data-testid="super-container"
-      data-stage-key={c.id}
+      className={`super-card-frame${pending ? ' super-card-frame--pending' : ''}${props.parked ? ' super-card-frame--parked' : ''}`}
+      data-testid={props.parked ? 'super-container-parked' : 'super-container'}
+      data-stage-key={props.parked ? undefined : c.id}
       data-container-id={c.id}
       data-kind={c.kind}
       data-where={plan.where}
@@ -222,23 +232,28 @@ export function SuperContainer(props: SuperContainerProps) {
       data-super-tone={status ? toneOfStatus(status.kind) : props.team ? toneOfStatus(teamRingKind(teamStatusOf(props.team))) : undefined}
       data-drop-target={props.dropTarget ? 'card' : undefined}
       data-cue={props.cue?.kind}
-      inert={props.cue?.kind === 'close' ? true : undefined}
+      inert={props.cue?.kind === 'close' || props.parked ? true : undefined}
+      aria-hidden={props.parked ? true : undefined}
       role="group"
       aria-label={props.title}
-      tabIndex={floating ? 0 : -1}
+      tabIndex={floating && !props.parked ? 0 : -1}
       style={{
         left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: cardZIndex(plan.z, c.kind === 'agenda'),
         ...(props.cue ? { ['--cue-dx' as string]: `${props.cue.dx}px`, ['--cue-dy' as string]: `${props.cue.dy}px` } : {}),
       }}
-      onPointerDown={floating ? (e) => props.onPress(e, c.id) : undefined}
-      onClick={floating ? (e) => { if (!(e.target as HTMLElement).closest('button')) openCard(); } : undefined}
+      onPointerDown={floating && !props.parked ? (e) => props.onPress(e, c.id) : undefined}
+      onClick={floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button')) openCard(); } : undefined}
       onKeyDown={onKeyDown}
     >
       <div className="super-card-lift" aria-hidden />
       <div className="super-card-clip">
-        {large
-          ? <LargeBody {...props} status={status} onFrameAllowed={setAllowedHref} />
-          : <FloatBody {...props} status={status} onFrameAllowed={setAllowedHref} />}
+        {isLivePage(c)
+          // A page from a server keeps ONE tree whatever the card does, so its frame never
+          // remounts (owner 2026-10-22: "every reload loses what I did").
+          ? <WebCardBody {...props} status={status} onFrameAllowed={setAllowedHref} large={large && !props.parked} />
+          : large
+            ? <LargeBody {...props} status={status} onFrameAllowed={setAllowedHref} />
+            : <FloatBody {...props} status={status} onFrameAllowed={setAllowedHref} />}
       </div>
       <span className="super-drop-ring" aria-hidden />
       {props.cue && <span className="super-card-glint" aria-hidden />}
@@ -268,7 +283,7 @@ export function SuperContainer(props: SuperContainerProps) {
           </>
         )}
       </div>
-      {floating && menu && (
+      {floating && !props.parked && menu && (
         <SizeMenu
           current={sizeOf(c)}
           drawn={drawnSize}
@@ -518,6 +533,60 @@ function LargeBody(p: BodyProps): ReactNode {
             // A picture, a page or a live browser zooms where it is (owner 2026-10-22).
             ? <ZoomPane key={c.id} live={isLivePage(c)}>{viewFor(p, true)}</ZoomPane>
             : viewFor(p)}
+      </div>
+    </div>
+  );
+}
+
+/** The size a hidden page keeps (a 1×1 tile, parked off the stage): the last size it was drawn
+ *  at, so a responsive app does not re-lay itself out (and drop state) at tile width. */
+const KEEP_DEFAULT = { w: 960, h: 640 };
+
+/**
+ * A live page's card body (owner 2026-10-22), the same elements in every state: a tile (its
+ * KindTile drawn over the hidden page), a large floating card, side by side or presented, parked
+ * off the stage. The frame mounts while the card holds one (`webLive`) and is never rebuilt by a
+ * move; hidden, it keeps the last size it was drawn at. Picks from Inspect go to the composer.
+ */
+function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
+  const c = p.container;
+  const size = p.plan.size ?? 'small';
+  const tile = !p.large && !p.parked && SIZE_UNITS[size].h === 1;
+  const hidden = tile || !!p.parked;
+  const [control] = useState(() => new WebFrameControl());
+  const onPick = p.onPickElement;
+  useEffect(() => control.subscribe({ pick: (pick) => onPick?.(c.id, pick, control.pageHref() || pick.href) }), [control, onPick, c.id]);
+  // The last size the page was drawn at (measured while shown).
+  const keepRef = useRef<HTMLDivElement | null>(null);
+  const [keep, setKeep] = useState(KEEP_DEFAULT);
+  useLayoutEffect(() => {
+    const el = keepRef.current;
+    if (!el || hidden) return undefined;
+    const measure = () => { if (el.clientWidth > 40 && el.clientHeight > 40) setKeep({ w: el.clientWidth, h: el.clientHeight }); };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hidden]);
+  const keepStyle: CSSProperties | undefined = hidden
+    ? { position: 'absolute', left: 0, top: 0, width: keep.w, height: keep.h, visibility: 'hidden', pointerEvents: 'none' }
+    : undefined;
+  const frame = p.webLive && p.viewReady;
+  return (
+    <div className={p.large ? 'super-card-large' : tile ? 'super-card-body' : 'super-card-body super-card-large'}
+      data-inert={p.large ? undefined : 'true'} data-testid="super-web-card" data-web-state={p.parked ? 'parked' : tile ? 'tile' : p.large ? 'large' : 'float'}>
+      {!tile && <CardHead kind={c.kind} title={p.title} container={c} />}
+      <div className="super-card-large-body super-web-body">
+        <div ref={keepRef} className="super-web-keep" style={keepStyle}>
+          <ZoomPane live interactive={p.large} control={control}>
+            {frame
+              ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={widgetSize(p.plan)} onFrameAllowed={p.onFrameAllowed} control={control} /></div>
+              : null}
+          </ZoomPane>
+        </div>
+        {!frame && !tile && !p.parked && <WebPlaceholder title={c.title || c.ref} onLoad={() => p.onLoadWeb(c.id)} />}
+        {tile && <div className="super-web-tile"><KindTile container={c} title={p.title} viewReady={p.viewReady} wide={size === 'medium'} /></div>}
       </div>
     </div>
   );

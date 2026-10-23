@@ -19,18 +19,19 @@ import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
 import { AgendaButton, AgendaPill } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
-import { SuperContainer, chatStatus, superCentreStatus } from './SuperContainer';
+import { SuperContainer, chatStatus, isLivePage, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { anchoredPos, fitsNow, isGroupId, planStage, sizeOf, stageItems, type LayoutPatch, type StagePlan } from './superLayout';
+import { anchoredPos, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
 import { useTasks } from '../../../hooks/useTasks';
 import type { CardFullscreen } from './SuperContainer';
+import type { WebPick } from '../../../lib/webPick';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
 import { NewSessionButton } from './NewSessionButton';
-import { MAX_LIVE_BROWSERS, liveWebIds, touchLru, dropFromLru } from './webBudget';
+import { MAX_LIVE_BROWSERS, keptWebIds, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { useWindowActivity } from '../../../lib/windowActivity';
 import { useStageCues, withGhosts } from './useStageCues';
 import './SuperSurface.css';
@@ -70,6 +71,8 @@ export interface SuperSurfaceProps {
   onStageReady: (stage: { origin: DOMRect; plan: StagePlan }) => void;
   /** O11: the owner dropped a card on the centre (or pressed its "Ask about this"). */
   onAskAbout: (id: string, title: string) => void;
+  /** Inspect picked an element in a web card's page (`page`: its address as the dev server knows it). */
+  onPickElement?: (id: string, pick: WebPick, page: string) => void;
   /** The owner ended a child from its card (`whenDone`: once its turn ends). */
   onEndChild: (child: string, whenDone: boolean) => void;
   /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
@@ -247,8 +250,20 @@ export function SuperSurface(props: SuperSurfaceProps) {
       return cp.where !== 'float' || cp.size === 'large' || cp.size === 'wide';
     }).map((c) => c.id)
     : [];
-  const liveWeb = liveWebIds(lru, webOnScreen);
+  // Every live page card, and the ones keeping their page now (on screen or parked off the stage).
+  const livePages = state.containers.filter(isLivePage).map((c) => c.id);
+  // A project file's frame is never parked: it counts only while on screen.
+  const liveWeb = keptWebIds(lru, webOnScreen, [...livePages, ...webOnScreen.filter((id) => !livePages.includes(id))]);
   cuesLiveWebRef.current = liveWeb;
+  // A page that loaded on its own joins the recency list, so it stays alive when moved away.
+  const liveKey = [...liveWeb].join(',');
+  useEffect(() => {
+    setLru((prev) => { const add = [...liveWeb].filter((id) => !prev.includes(id)); return add.length ? [...prev, ...add] : prev; });
+  }, [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Where each page card was last drawn: a parked one stays there, hidden, at its size.
+  const lastRectRef = useRef(new Map<string, CardPlan>());
+  for (const id of livePages) { const cp = plan.cards[id]; if (cp && cp.where !== 'others') lastRectRef.current.set(id, cp); }
+  for (const id of [...lastRectRef.current.keys()]) if (!byId.has(id)) lastRectRef.current.delete(id);
 
   // ── The live browser budget: at most two cards re-render on frames, only while this window is
   //    visible and focused; the rest keep their last frame (AC7). ──
@@ -521,8 +536,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
           // A closed card fades as itself: the SAME key, so React keeps its view mounted (no
           // Excalidraw or transcript remount for a 360 ms fade), at its last spot.
           const ghost = byId.has(c.id) ? undefined : stageCues.leaving.find((g) => g.container.id === c.id);
-          const cp = ghost ? ghost.plan : plan.cards[c.id];
-          if (!cp || cp.where === 'others') return null;
+          const placed = ghost ? ghost.plan : plan.cards[c.id];
+          // Off the stage (Others, a group): a page card that keeps its page is parked, hidden,
+          // under the SAME key, so its frame is never rebuilt (owner 2026-10-22).
+          const parkedAt = !ghost && (!placed || placed.where === 'others') && liveWeb.has(c.id) && isLivePage(c)
+            ? lastRectRef.current.get(c.id) : undefined;
+          const parked = !!parkedAt;
+          const cp = parked ? { ...parkedAt!, where: 'float' as const, z: -1, owner: false } : placed;
+          if (!cp || (!parked && cp.where === 'others')) return null;
           const cue = ghost ? { kind: 'close' as const } : stageCues.cueFor(c.id);
           const rect = cp.rect;
           return (
@@ -542,6 +563,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
               title={titleOf(c)}
               pending={pending.has(c.id) || stageCues.held.has(c.id)}
               webLive={liveWeb.has(c.id) || !!ghost?.webLive}
+              parked={parked}
+              onPickElement={props.onPickElement}
               browserSessionId={c.kind === 'browser' ? props.sessionFor(c.ref)?.id : undefined}
               browserLive={liveBrowser.has(c.id)}
               viewReady={viewsReady}

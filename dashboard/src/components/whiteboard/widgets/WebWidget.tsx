@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { agentFileUrl } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
-import { portOfHost, readLoopbackGrants, setLoopbackGrant, useLoopbackGrants } from '../../../lib/loopbackGrants';
+import { openWebSession, portOfHost, readLoopbackGrants, setLoopbackGrant, useLoopbackGrants, type WebSessionView } from '../../../lib/loopbackGrants';
+import { proxiedHref } from '../../../lib/webPick';
+import type { WebFrameControl, WebFrameInfo } from '../../../lib/webFrameControl';
 import { openExternalUrl } from '../../../lib/desktop';
 import { externalHref } from '../../../lib/externalLinks';
 import { DocumentReader, readerLinkAction } from '../../appLink/DocumentReader';
@@ -33,12 +35,14 @@ import type { WidgetProps } from './types';
  */
 export const WEB_WIDGET_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
-export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge }: WidgetProps & {
+export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control }: WidgetProps & {
   /** A PAGE's frame is allowed and shown (its trust gate passed): the Super Agent's card offers
    *  it full screen only from then on. Never called for a file. */
   onFrameAllowed?: (href: string) => void;
   /** A project web page posts its wheel and pinch to the host (DocumentReader `zoomBridge`). */
   zoomBridge?: boolean;
+  /** The Super Agent card's handle on the page: Reload, Clear cache, Inspect (webFrameControl.ts). */
+  control?: WebFrameControl;
 }) {
   const tx = useWbText();
   const check = validateWebUrl(payload.url, window.location.origin);
@@ -53,12 +57,12 @@ export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zo
   if (check.kind === 'file') {
     return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} zoomBridge={zoomBridge} />;
   }
-  return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} />;
+  return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} control={control} />;
 }
 
 type PageCheck = Extract<WebUrlCheck, { kind: 'url' }>;
 type FileCheck = Extract<WebUrlCheck, { kind: 'file' }>;
-type FrameProps = Pick<WidgetProps, 'active' | 'size'> & { title: string; onFrameAllowed?: (href: string) => void };
+type FrameProps = Pick<WidgetProps, 'active' | 'size'> & { title: string; onFrameAllowed?: (href: string) => void; control?: WebFrameControl };
 
 /** Tells the card once a page's frame is up (the trust gate passed). */
 function useFrameAllowed(shown: boolean, href: string, onFrameAllowed?: (href: string) => void) {
@@ -69,10 +73,19 @@ function useFrameAllowed(shown: boolean, href: string, onFrameAllowed?: (href: s
  *  its allow buttons wake this long after it is drawn (T6). */
 export const LOOPBACK_BUTTON_DELAY_MS = 600;
 
-/** The ONE frame a web card ever draws: no popups, no top navigation, no permissions (T8). */
-export function PageFrame({ title, href }: { title: string; href: string }) {
+/** The ONE frame a web card ever draws: no popups, no top navigation, no permissions (T8).
+ *  `control` (a Super Agent card) is handed the frame and what it loaded. */
+export function PageFrame({ title, href, control, info }: { title: string; href: string; control?: WebFrameControl; info?: WebFrameInfo }) {
+  const ref = useRef<HTMLIFrameElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !control || !info) return undefined;
+    control.attach(el, info);
+    return () => control.detach(el);
+  }, [control, info]);
   return (
     <iframe
+      ref={ref}
       className="wb-web-frame"
       title={title}
       src={href}
@@ -81,6 +94,31 @@ export function PageFrame({ title, href }: { title: string; href: string }) {
       referrerPolicy="no-referrer"
     />
   );
+}
+
+type SessionState = 'pending' | { direct: true } | { direct: false; view: WebSessionView };
+
+/** The proxy for an allowed loopback page: `pending` while it is asked, `direct` when it could
+ *  not be opened (or there is no project), null while the page is not allowed. */
+function useWebSession(allowed: boolean, port: number, href: string, once: boolean): SessionState | null {
+  const api = useApi();
+  const { vault } = useVault();
+  const [state, setState] = useState<SessionState | null>(null);
+  const onceRef = useRef(once);
+  onceRef.current = once;
+  let host = 'localhost';
+  try { host = new URL(href).hostname.toLowerCase(); } catch { /* the default */ }
+  useEffect(() => {
+    if (!allowed) { setState(null); return undefined; }
+    if (!vault) { setState({ direct: true }); return undefined; }
+    let cancelled = false;
+    setState('pending');
+    void openWebSession(api, vault, port, host, onceRef.current).then((view) => {
+      if (!cancelled) setState(view ? { direct: false, view } : { direct: true });
+    });
+    return () => { cancelled = true; };
+  }, [allowed, api, vault, port, host]);
+  return state;
 }
 
 function WebPage(props: FrameProps & { page: PageCheck }) {
@@ -92,7 +130,7 @@ function WebPage(props: FrameProps & { page: PageCheck }) {
  * (`lib/loopbackGrants.ts`): "Open once" loads it now and remembers nothing; "Always allow
  * localhost:PORT" records the port. The app's own ports are refused whatever is recorded.
  */
-function LoopbackPage({ page, title, active, size, onFrameAllowed }: FrameProps & { page: PageCheck }) {
+function LoopbackPage({ page, title, active, size, onFrameAllowed, control }: FrameProps & { page: PageCheck }) {
   const tx = useWbText();
   const api = useApi();
   const { vault } = useVault();
@@ -107,7 +145,17 @@ function LoopbackPage({ page, title, active, size, onFrameAllowed }: FrameProps 
   }, []);
   const owned = !!grants?.ownedPorts.includes(port);
   const granted = !!grants?.grants.includes(port) && !owned;
-  useFrameAllowed(!owned && !denied && (granted || once), page.href, onFrameAllowed);
+  const allowed = !owned && !denied && (granted || once);
+  // The page's session (owner 2026-10-22): an allowed dev server loads through its proxy on
+  // 127.0.0.1, the same site as this window, so its login cookie sticks (a `localhost` frame is
+  // third-party in WKWebView: no cookie at all). A proxy that cannot open loads it directly.
+  const session = useWebSession(allowed, port, page.href, once && !granted);
+  const frameHref = session && session !== 'pending' ? (session.direct ? page.href : proxiedHref(page.href, session.view.origin)) : null;
+  const info = useMemo<WebFrameInfo | undefined>(
+    () => (session && session !== 'pending' ? { href: page.href, ...(session.direct ? {} : { proxyOrigin: session.view.origin, clearToken: session.view.clearToken }) } : undefined),
+    [session, page.href],
+  );
+  useFrameAllowed(allowed && !!frameHref, frameHref ?? page.href, onFrameAllowed);
   // Fail closed: a refused or failed grant, or a port the server owns right now, never loads.
   const always = () => {
     if (!vault) { setDenied(true); return; }
@@ -126,7 +174,9 @@ function LoopbackPage({ page, title, active, size, onFrameAllowed }: FrameProps 
           ? tx('web.loopback.owned', 'This is the app\'s own port; it is never shown in a card.')
           : tx('web.loopback.denied', 'This page could not be allowed here.')}</WidgetNotice>
       ) : (granted || once) ? (
-        <PageFrame title={title} href={page.href} />
+        frameHref
+          ? <PageFrame title={title} href={frameHref} control={control} info={info} />
+          : <WidgetNotice tone="loading">{tx('whiteboard.widget.loading', 'Loading…')}</WidgetNotice>
       ) : (
         <div className="wb-web-prompt" data-testid="web-loopback-prompt">
           <span className="wb-web-host">{tx('web.loopback.ask', 'A page on this computer: {host}').replace('{host}', page.host)}</span>
@@ -142,9 +192,10 @@ function LoopbackPage({ page, title, active, size, onFrameAllowed }: FrameProps 
   );
 }
 
-function RemotePage({ page, title, active, size, onFrameAllowed }: FrameProps & { page: PageCheck }) {
+function RemotePage({ page, title, active, size, onFrameAllowed, control }: FrameProps & { page: PageCheck }) {
   const tx = useWbText();
   const [loaded, setLoaded] = useState(() => isTrustedHost(page.host));
+  const info = useMemo<WebFrameInfo>(() => ({ href: page.href }), [page.href]);
   useFrameAllowed(loaded, page.href, onFrameAllowed);
 
   const openInBrowser = (
@@ -156,7 +207,7 @@ function RemotePage({ page, title, active, size, onFrameAllowed }: FrameProps & 
   return (
     <WidgetFrame kind="web" title={title} active={active} size={size} actions={openInBrowser}>
       {loaded ? (
-        <PageFrame title={title} href={page.href} />
+        <PageFrame title={title} href={page.href} control={control} info={info} />
       ) : (
         <div className="wb-web-prompt">
           <span className="wb-web-host">{page.unicodeHost}</span>

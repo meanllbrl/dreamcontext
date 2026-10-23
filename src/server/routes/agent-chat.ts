@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { sendJson, sendError, isForeignOriginUpgrade, parseJsonBody } from '../middleware.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
+import { openWebSession, UPSTREAM_HOSTS } from '../web-session-proxy.js';
 import { createSuperSignalObserver } from '../super-signals.js';
 import { readLoopbackGrants, setLoopbackGrant } from '../../lib/loopback-grants.js';
 import { serveMedia } from '../media.js';
@@ -4617,6 +4618,43 @@ export async function handleLoopbackGrantSet(
     sendJson(res, 200, { grants, ownedPorts: [...owned].sort((a, b) => a - b) });
   } catch (err) {
     sendError(res, 500, 'grant_unwritable', `The grant could not be saved: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * POST /api/agent/web-session `{port, host, once?}` — the session proxy for a web card's dev
+ * server (`web-session-proxy.ts`): its origin (`http://127.0.0.1:<proxy>`, same site as this
+ * window, so the page's cookies stick) and the token its Clear button uses. The owner's window
+ * only (`requireGrantOwner`), never an owned port, and only for a port this vault always allows
+ * or one the owner just opened once (the card's own gate already asked him).
+ */
+export async function handleWebSessionOpen(
+  req: IncomingMessage, res: ServerResponse, _params: Record<string, string>, contextRoot: string,
+): Promise<void> {
+  if (!requireGrantOwner(req, res)) return;
+  const body = (await parseJsonBody(req)) ?? {};
+  const port = body.port;
+  const host = typeof body.host === 'string' ? body.host.toLowerCase() : 'localhost';
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535 || !(UPSTREAM_HOSTS as readonly string[]).includes(host)) {
+    sendError(res, 400, 'invalid_body', 'Send {port, host: "localhost" | "127.0.0.1" | "[::1]"}.');
+    return;
+  }
+  const owned = ownedLoopbackPorts();
+  if (owned.has(port)) {
+    sendError(res, 403, 'owned_port', `localhost:${port} is this app's own port; it is never shown in a card.`);
+    return;
+  }
+  const granted = readLoopbackGrants(vaultRealPath(contextRoot), owned).some((g) => g.port === port);
+  if (!granted && body.once !== true) {
+    sendError(res, 403, 'not_allowed', `localhost:${port} is not allowed in this project.`);
+    return;
+  }
+  try {
+    // One session per project and port: two projects on :3000 never share a login or storage.
+    const s = await openWebSession(port, { scope: vaultRealPath(contextRoot), host, parent: `http://${String(req.headers.host ?? '').toLowerCase()}` });
+    sendJson(res, 200, { origin: s.origin, clearToken: s.clearToken });
+  } catch (err) {
+    sendError(res, 500, 'proxy_failed', `The page's session could not be opened: ${(err as Error).message}`);
   }
 }
 
