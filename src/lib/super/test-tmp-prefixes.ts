@@ -583,6 +583,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'transcript-locate-',
   'vault-logo-',
   'wb-reconcile-',
+  'websess-',
+  'websess-other-',
   'window-super-',
   'window-super-home-',
   'ws-origin-'

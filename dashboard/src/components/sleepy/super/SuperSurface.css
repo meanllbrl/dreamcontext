@@ -1297,6 +1297,23 @@
 .super-zoom-btn:disabled { opacity: 0.4; cursor: default; }
 .super-zoom-btn[aria-pressed='true'] { background: var(--color-bg-tertiary); color: var(--color-text); }
 .super-zoom-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.super-zoom-btn--danger { color: var(--color-error); }
+/* A narrow card (a sheet, a 390 px window): the bar stays inside the card; the zoom steps give
+   way (a pinch still zooms), Fit stays while the view is zoomed (the way back), the Clear
+   question wraps rather than scrolling its start out of sight, and anything left scrolls. */
+.super-zoom { container-type: inline-size; }
+.super-zoom-bar { max-width: calc(100% - 2 * var(--space-2)); overflow-x: auto; scrollbar-width: none; }
+.super-zoom-bar::-webkit-scrollbar { display: none; }
+.super-zoom-bar > * { flex: none; white-space: nowrap; }
+@container (max-width: 460px) {
+  .super-zoom-bar .super-zoom-ctl,
+  .super-zoom:not([data-zoomed]) .super-zoom-bar .super-zoom-fit { display: none; }
+  .super-zoom-bar:has(.super-zoom-ask) { border-radius: var(--radius-lg); }
+  .super-zoom-bar > .super-zoom-ask { flex: 1 1 auto; min-width: 0; white-space: normal; padding-left: var(--space-2); }
+}
+.super-zoom-ask { padding: 0 6px 0 10px; font-size: var(--font-size-xs); color: var(--color-text); white-space: nowrap; }
+/* Inspect picking in the page: the page takes the pointer (its bridge outlines and picks). */
+.super-zoom[data-picker] .super-zoom-content { pointer-events: auto; }
 .super-zoom-level { min-width: 44px; text-align: center; font-family: var(--font-mono); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
 /* A picture zoomed in place is the whole card, fitted and centred: the pointer finds it wherever
    it points (at the card's top it left the card's lower half empty, and zooming there showed nothing). */
@@ -1306,3 +1323,13 @@
 /* The agenda's list is live on a floating card (owner 2026-10-22: the agenda is a card): its
    rows are buttons and it scrolls; the card around it is still the grab handle. */
 .super-card-frame[data-where='float'][data-kind='agenda'] .super-card-large .super-agenda { pointer-events: auto; }
+
+/* A live page's card (owner 2026-10-22): one tree in every state, so its frame never reloads.
+   Shown, the page fills the body; hidden (a 1×1 tile, parked) it keeps its last size, unseen. */
+.super-web-body { position: relative; display: flex; flex-direction: column; overflow: hidden; }
+.super-web-keep { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.super-web-tile { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--color-bg-elevated); }
+.super-web-tile > * { flex: 1 1 auto; min-height: 0; }
+/* Kept alive off the stage (Others, a group): never seen, never hit, never in the tab order. */
+.super-card-frame--parked { visibility: hidden; pointer-events: none; }
+.super-card-frame--parked .super-card-actions { display: none; }

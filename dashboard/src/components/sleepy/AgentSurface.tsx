@@ -68,7 +68,8 @@ import { useI18n } from '../../context/I18nContext';
 import { ReadinessChecklist } from '../../pages/onboarding/ReadinessChecklist';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
-import { dropScratch } from './chat/composerScratch';
+import { addAttachments, dropScratch, nextAttachmentId, settleAttachment, trackUpload } from './chat/composerScratch';
+import { dataUrlBlob, pickBlock, pickChipName, type WebPick } from '../../lib/webPick';
 import { deliverToChat, postToSession } from './chat/postToSession';
 import { parseChatActions } from './chat/chatActions';
 import { cleanTabTitle } from '../../lib/chatViewSpec';
@@ -3573,6 +3574,31 @@ export function AgentSurface() {
     requestAnimationFrame(() => cs.focus());
   }, []);
 
+  /**
+   * Inspect picked an element in a web card's page (owner 2026-10-22: "the selected component
+   * should reach the composer, so I can comment on that spot"): a removable chip in the Super
+   * Agent's composer carrying the element's block; its picture is uploaded like a pasted image
+   * and joins the block once it lands. Several picks, several chips.
+   */
+  const pickElementFromCard = useCallback((id: string, pick: WebPick, page: string) => {
+    const cs = superChatRef.current;
+    if (!cs || cs.status === 'closed') return;
+    const convId = cs.scratchId || cs.claudeId;
+    if (!convId) return;
+    const card = superStateRef.current?.containers.find((c) => c.id === id);
+    const att = nextAttachmentId();
+    const blob = pick.crop ? dataUrlBlob(pick.crop) : null;
+    addAttachments(convId, [{
+      id: att, kind: 'element', name: pickChipName(pick), text: pickBlock(pick, { id, title: card?.title || card?.ref || id }, page),
+      ...(pick.crop ? { url: pick.crop } : {}), ...(blob ? { uploading: true } : {}),
+    }]);
+    if (blob) {
+      const job = uploadAgentFile(vault, blob, `element-${pick.tag}.${blob.type === 'image/jpeg' ? 'jpg' : 'png'}`).then((path) => settleAttachment(convId, att, path));
+      // A send right after the pick waits for the picture (the composer awaits it).
+      trackUpload(convId, job);
+    }
+  }, [vault]);
+
   // ── The hand-over and the take-back, with their flights (D17, D18) ─────────────────
   const flightLayerRef = useRef<HTMLDivElement | null>(null);
   const flightRunRef = useRef<{ run: FlightRun; dir: 'in' | 'out'; focusSid?: string } | null>(null);
@@ -4335,6 +4361,9 @@ export function AgentSurface() {
       if (document.querySelector('.super-surface[data-dragging]')) return;
       // A card's corner held for a resize owns Esc the same way (useStageDrag marks the stage).
       if (document.querySelector('[data-resizing]')) return;
+      // A web card in Inspect, or asking whether to clear its page, owns Esc: it leaves Inspect
+      // (ZoomPane). A pick never focuses the page (its click is swallowed), so Esc lands here.
+      if (document.querySelector('.super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"]')) return;
       const ae = document.activeElement as Element | null;
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
       // Any centered command surface on top of us owns Esc — ⌘K palette, ⌘P switcher,
@@ -4879,6 +4908,7 @@ export function AgentSurface() {
             onSlotsChanged={bumpSuperSlots}
             onStageReady={onStageReady}
             onAskAbout={askAboutCard}
+            onPickElement={pickElementFromCard}
             onEndChild={endChildFromCard}
             onKeepChild={keepChildRunning}
             endPending={endPending}

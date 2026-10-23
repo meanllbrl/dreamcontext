@@ -199,6 +199,7 @@ import {
 import { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
 import { claimOwnedPort } from './owned-ports.js';
+import { closeAllWebSessions } from './web-session-proxy.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
   handleAgentAccountsSwitchPolicy, handleAgentAccountsList,
@@ -214,7 +215,7 @@ import {
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
 import { handleAppMachine } from './routes/machine.js';
-import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleAgentBackgroundOutput } from './routes/agent-chat.js';
+import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
@@ -605,6 +606,7 @@ export function buildRouter(): Router {
   router.post('/api/agent/grant', handleAgentGrant);
   router.get('/api/agent/loopback-grants', handleLoopbackGrantsGet);
   router.post('/api/agent/loopback-grant', handleLoopbackGrantSet);
+  router.post('/api/agent/web-session', handleWebSessionOpen);
   router.get('/api/agent/goal-live', handleAgentGoalLive);
   // Headless teammates: registered/launched `claude -p` runs, read off their own transcripts.
   router.get('/api/agent/teammates', handleAgentTeammates);
@@ -1377,6 +1379,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
           killTrackedChildren();
           // Nothing the owner has not approved is sent: pending Assistant proposals are declined.
           declineAllProposals();
+          // The web cards' session proxies (their ports were claimed as owned).
+          void closeAllWebSessions();
           server.close(() => process.exit(0));
         });
         setTimeout(() => process.exit(1), 5000);

@@ -37,7 +37,7 @@ export interface Attachment {
    *  its `path` is the `dcref:wb/<board>/<id>` token the server expands into the element's
    *  content, and `name` is what the chip reads ("Note · Q3 plan"). It has no preview and no
    *  upload, so it is sendable the moment it is staged. */
-  kind: 'image' | 'file' | 'folder' | 'ref';
+  kind: 'image' | 'file' | 'folder' | 'ref' | 'element';
   name: string;
   /** Image attachments only — an object URL for the pasted `File` blob, so the chip shows
    *  the picture itself while its bytes are still on their way to disk. Revoked when the entry
@@ -50,6 +50,11 @@ export interface Attachment {
    *  vault temp dir got when its bytes were uploaded (`uploadAgentFile`). The chat protocol
    *  is text-only, so this path IS the attachment as far as the agent is concerned. */
   path?: string;
+  /** `element`: an element the owner picked in a web card's page with Inspect (owner
+   *  2026-10-22). `text` is the block the message carries (page, selector, element, text, React
+   *  components, box); `url` is its picture as a data URL (the chip's thumbnail), and `path`,
+   *  once uploaded, the picture the agent can open. It is sendable without a picture. */
+  text?: string;
   /** Image attachments only — bytes still in flight, so there is no `path` to send yet.
    *  `submit` waits for these rather than sending a message that references nothing. */
   uploading?: boolean;
@@ -159,8 +164,49 @@ export function removeAttachment(convId: string, id: string): void {
 export function dropSentAttachments(convId: string): void {
   const cur = readScratch(convId);
   if (!cur.attachments.length && cur.quote === null) return;
-  cur.attachments.forEach((a) => { if (a.path) revoke(a); });
-  commit(convId, { attachments: cur.attachments.filter((a) => !a.path), quote: null });
+  cur.attachments.forEach((a) => { if (wasSent(a)) revoke(a); });
+  commit(convId, { attachments: cur.attachments.filter((a) => !wasSent(a)), quote: null });
+}
+
+/** A chip a send carries: one with a path, or a picked element (its block is the content). */
+export function wasSent(a: Attachment): boolean {
+  return !!a.path || (a.kind === 'element' && !!a.text);
+}
+
+/**
+ * The message a send builds: the typed text, then the chips. A file is its quoted path on the
+ * same line; a `ref` its token as written; a picked element its block on lines of its own, the
+ * picture's path last. `quote` quotes a path the way the composer always has (agentComposer).
+ */
+export function foldAttachments(text: string, attachments: readonly Attachment[], quote: (p: string) => string): string {
+  const paths = attachments.filter((a) => a.kind !== 'element' && !!a.path)
+    .map((a) => (a.kind === 'ref' ? a.path ?? '' : quote(a.path ?? ''))).join(' ');
+  const body = paths ? (text.trim() ? `${text.trim()} ${paths}` : paths) : text.trim();
+  const blocks = attachments.filter((a) => a.kind === 'element' && !!a.text)
+    .map((a) => (a.path ? `${a.text}\npicture: ${quote(a.path)}` : a.text ?? ''));
+  return [body, ...blocks].filter(Boolean).join('\n\n');
+}
+
+const uploads = new Map<string, Set<Promise<unknown>>>();
+
+/** An upload staged from OUTSIDE the composer (a picked element's picture, AgentSurface): a send
+ *  waits for it like it waits for a pasted image, so the message carries the picture's path. */
+export function trackUpload(convId: string, job: Promise<unknown>): void {
+  let set = uploads.get(convId);
+  if (!set) { set = new Set(); uploads.set(convId, set); }
+  set.add(job);
+  const done = () => {
+    const live = uploads.get(convId);
+    if (!live) return;
+    live.delete(job);
+    if (!live.size) uploads.delete(convId);
+  };
+  job.then(done, done);
+}
+
+/** The uploads a send to this conversation must wait for. */
+export function pendingUploads(convId: string): Promise<unknown>[] {
+  return [...(uploads.get(convId) ?? [])];
 }
 
 /** Set (or clear, with null) the message the next send quotes. */
@@ -194,5 +240,6 @@ function revoke(a: Attachment): void {
 export function __resetScratchForTests(): void {
   store.clear();
   listeners.clear();
+  uploads.clear();
   seq = 0;
 }

@@ -45,8 +45,8 @@ import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
 } from './chatEntities';
 import {
-  addAttachments, dropSentAttachments, nextAttachmentId, readScratch, removeAttachment,
-  settleAttachment, subscribeScratch, type Attachment,
+  addAttachments, dropSentAttachments, foldAttachments, nextAttachmentId, pendingUploads, readScratch, removeAttachment,
+  settleAttachment, subscribeScratch, wasSent, type Attachment,
 } from './composerScratch';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
@@ -242,10 +242,10 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
               className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}`}
               data-state={a.uploading ? 'uploading' : a.failed ? 'failed' : 'ready'}
             >
-              {a.kind === 'image' ? (
+              {(a.kind === 'image' || (a.kind === 'element' && a.url)) ? (
                 <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
               ) : (
-                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : '📄'}</span>
+                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : '📄'}</span>
               )}
               {/* An attachment says what will happen to it. A picture that can't be sent
                   must never look like one that can — that is the whole bug this row grew
@@ -253,7 +253,7 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
               <span className="chat-cmp-attachment-name">
                 {a.name}
                 {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
-                {a.failed && <span className="chat-cmp-attachment-note">couldn't attach — not sent</span>}
+                {a.failed && <span className="chat-cmp-attachment-note">{a.kind === 'element' ? 'sent without its picture' : 'couldn\'t attach — not sent'}</span>}
               </span>
               <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(convId, a.id)}>✕</button>
             </div>
@@ -1227,7 +1227,7 @@ export function Composer({
   // land in the vault temp dir. An image whose upload FAILED has none, so it is not sendable
   // content and (unlike everything else) survives the submit — the chip stays, saying it
   // wasn't sent, rather than disappearing as if it had been.
-  const sendableAttachments = attachments.filter((a) => !!a.path);
+  const sendableAttachments = attachments.filter(wasSent);
   const uploadingCount = attachments.filter((a) => a.uploading).length;
   const hasSendableContent = !!draft.trim() || sendableAttachments.length > 0
     || uploadingCount > 0;
@@ -1563,9 +1563,7 @@ export function Composer({
     if (!isConnected) return;
     // A `ref` chip's path is a token the server matches (`dcref:wb/<board>/<id>`), not a
     // filesystem path: it goes out as written, never shell-quoted.
-    const pathsText = readScratch(convId).attachments.filter((a) => !!a.path)
-      .map((a) => (a.kind === 'ref' ? a.path ?? '' : quotePath(a.path ?? ''))).join(' ');
-    const bodyText = pathsText ? (text.trim() ? `${text.trim()} ${pathsText}` : pathsText) : text.trim();
+    const bodyText = foldAttachments(text, readScratch(convId).attachments, quotePath);
     const message = liveQuote ? `> ${liveQuote}\n\n${bodyText}` : bodyText;
     if (!message.trim()) return;
 
@@ -1647,14 +1645,16 @@ export function Composer({
 
   const submit = (mode: SubmitMode = 'auto') => {
     if (!canCompose || !hasSendableContent || sendingRef.current) return;
-    // Nothing in flight — the common case, and it stays synchronous.
-    if (uploadsRef.current.size === 0) { commit(mode); return; }
+    // Nothing in flight — the common case, and it stays synchronous. A picked element's picture
+    // is uploaded outside this pane (composerScratch `trackUpload`) and is waited for the same way.
+    const jobs = [...uploadsRef.current, ...pendingUploads(convId)];
+    if (jobs.length === 0) { commit(mode); return; }
     // A screenshot pasted and sent in the same breath: the message can only name the file
     // once the path exists, so hold the submit for the upload rather than sending a message
     // that references nothing. Loopback write of a clipboard image — milliseconds.
     sendingRef.current = true;
     setAwaitingUpload(true);
-    void Promise.allSettled([...uploadsRef.current]).then(() => {
+    void Promise.allSettled(jobs).then(() => {
       sendingRef.current = false;
       setAwaitingUpload(false);
       commit(mode);

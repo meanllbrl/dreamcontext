@@ -187,7 +187,7 @@ describe('the surface wiring (source rules)', () => {
     expect(frame).toMatch(/: <KindTile container=\{c\} title=\{p\.title\} viewReady=\{p\.viewReady\} wide=\{size === 'medium'\} \/>/);
     expect(frame).toMatch(/if \(SIZE_UNITS\[size\]\.h > 1 && c\.kind !== 'chat'\)/);
     expect(surface).toMatch(/return cp\.where !== 'float' \|\| cp\.size === 'large' \|\| cp\.size === 'wide';/);
-    expect(surface).toMatch(/const liveWeb = liveWebIds\(lru, webOnScreen\);/);
+    expect(surface).toMatch(/const liveWeb = keptWebIds\(lru, webOnScreen, /);
   });
 
   it('a card released on a tile groups: on a card a new group where it stood, on a group into it', () => {
