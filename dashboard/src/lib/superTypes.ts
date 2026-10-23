@@ -268,6 +268,24 @@ export const MAX_PAD_TEXT = 160;
  *  server, `src/lib/super/types.ts`, pinned by super-types-mirror.test.ts). */
 export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item)=([A-Za-z0-9_-]{1,40}) section=(waiting|now|done)\]/;
 export const MAX_ABOUT_LINE = 200;
+/** A message's reference: six base-36 characters derived from its words (MIRRORED from the
+ *  server, which hashes what a turn received; the window hashes what it sent). */
+export function msgRef(text: string): string {
+  let h = 0x811c9dc5;
+  const s = (text ?? '').trim();
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return (h % MSG_REF_SPACE).toString(36).padStart(6, '0');
+}
+const MSG_REF_SPACE = 2_176_782_336;
+/** The owner replies to one message: the header his message opens with, and its quote's cap. */
+export const REPLY_TO_RE = /^\[Reply to message ref=([0-9a-z]{6}) from=(super|owner)\]/;
+export const MAX_REPLY_QUOTE = 100;
+/** The super's mark on an answer's first line, `<!-- re:<ref> -->` (lib/replyMark.ts parses it). */
+export const REPLY_MARK_RE = /^\s*<!--\s*re:\s*((?:[0-9a-z]{6}\s*){1,3})-->[ \t]*(?:\r?\n)?/;
+export const REPLY_MARK_HEAD_MAX = 64;
 
 export interface SuperStateView extends SuperState {
   vault: string;

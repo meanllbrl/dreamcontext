@@ -47,6 +47,11 @@ describe('super types — server record <-> window mirror', () => {
     expect(client.MIN_GROUP_CARDS).toBe(server.MIN_GROUP_CARDS);
     expect(String(client.ABOUT_AGENDA_RE)).toBe(String(server.ABOUT_AGENDA_RE));
     expect(client.MAX_ABOUT_LINE).toBe(server.MAX_ABOUT_LINE);
+    expect(String(client.REPLY_TO_RE)).toBe(String(server.REPLY_TO_RE));
+    expect(client.MAX_REPLY_QUOTE).toBe(server.MAX_REPLY_QUOTE);
+    expect(String(client.REPLY_MARK_RE)).toBe(String(server.REPLY_MARK_RE));
+    expect(client.REPLY_MARK_HEAD_MAX).toBe(server.REPLY_MARK_HEAD_MAX);
+    for (const t of ['', 'hi', ' Ödev 😀 \n', 'x'.repeat(3000)]) expect(client.msgRef(t)).toBe(server.msgRef(t));
   });
 
   it('the group rules are one code on both sides (the window applies the owner\'s drop before the server echoes it)', () => {

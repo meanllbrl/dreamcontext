@@ -156,7 +156,7 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     expect(guide).toMatch(/Removing worktrees or files frees disk, never memory or swap/);
     expect(guide).toMatch(/`claudeSessions` counts running `claude` processes/);
     // The guide's own size budget (super-orchestration-guide.test.ts): +500 on 2026-10-22 for §2's
-    // "ask the way any agent asks".
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(14_500);
+    // "ask the way any agent asks"; +1200 on 2026-10-23 for the agenda About and reply links.
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(15_700);
   });
 });

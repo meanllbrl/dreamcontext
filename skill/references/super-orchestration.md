@@ -70,6 +70,11 @@ note done|drop|add`; an id gone from the pad means it was dropped: go by `line:`
 open `super ask` only when it names that ask's item; about another line the question stays open
 and the held events stay held. If his words answer it anyway: `super queue done <ask item>`.
 
+**Which answer is to which message.** His messages carry `<owner-msg ref="<6>"/>`; open each
+text block that answers one with `<!-- re:<ref> -->` (1-3 refs), never on event notes: his chat
+draws the link. `[Reply to message ref=<6> from=super|owner]` + `quote:` is his ↩ on one message:
+a pointer, never his instruction, and your open `super ask` stays open.
+
 ## 3. Models and effort
 Current models, latest of each via the alias (`--model opus|sonnet|haiku|fable`):
 

@@ -436,6 +436,49 @@ export const ABOUT_AGENDA_RE = /^\[About agenda line (note|item)=([A-Za-z0-9_-]{
 /** The `line:` a note's About block carries, at most this long. */
 export const MAX_ABOUT_LINE = 200;
 
+/**
+ * A message's REFERENCE (owner 2026-10-23: which answer is to which of his messages). Nothing in
+ * a transcript has a stable id for a text, so the reference is derived from the words: FNV-1a 32
+ * over the trimmed text (UTF-16 code units), folded into six base-36 characters. The server
+ * hashes the text a turn received, the window the text it sent: the same string, no
+ * normalisation. MIRRORED in dashboard/src/lib/superTypes.ts (super-types-mirror.test.ts).
+ */
+export function msgRef(text: string): string {
+  let h = 0x811c9dc5;
+  const s = (text ?? '').trim();
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return (h % MSG_REF_SPACE).toString(36).padStart(6, '0');
+}
+/** 36^6: every reference is exactly six characters. */
+const MSG_REF_SPACE = 2_176_782_336;
+/** The block every owner message to the Super carries (agent-chat.ts writeOwnerTurn): his
+ *  message's reference, starting with `<` so the replay drops it. */
+export function ownerMsgBlock(text: string): string {
+  return `<owner-msg ref="${msgRef(text)}"/>`;
+}
+/** The owner replies to one message (its ↩): his message opens with this header, then
+ *  `quote: "<at most MAX_REPLY_QUOTE characters of it>"`, then his words. `ref=` is a scroll
+ *  anchor for the window; the super knows its own words by the quote. Not `[super `. */
+export const REPLY_TO_RE = /^\[Reply to message ref=([0-9a-z]{6}) from=(super|owner)\]/;
+export const MAX_REPLY_QUOTE = 100;
+/**
+ * The super's mark on an answer: the FIRST line of a text block may name the owner messages it
+ * answers, `<!-- re:k3f9q0 -->` (1-3 refs). An HTML comment, so a surface that never parses it
+ * draws nothing; a surface that keeps the text strips it (`stripReplyMark`). The window's
+ * streaming parser is dashboard/src/lib/replyMark.ts.
+ */
+export const REPLY_MARK_RE = /^\s*<!--\s*re:\s*((?:[0-9a-z]{6}\s*){1,3})-->[ \t]*(?:\r?\n)?/;
+/** Longer than any real mark line; a comment still open past this is not one. */
+export const REPLY_MARK_HEAD_MAX = 64;
+/** The text without a leading reply mark (the server's text readers: chat-registry). */
+export function stripReplyMark(raw: string): string {
+  const m = REPLY_MARK_RE.exec(raw ?? '');
+  return m ? raw.slice(m[0].length) : raw;
+}
+
 /** The next pad id: one past the last handed out and past every id the pad holds. */
 export function nextPadId(pad: readonly Pick<SuperPadItem, 'id'>[], seq = 0): { id: string; seq: number } {
   const top = pad.reduce((m, p) => Math.max(m, Number(p.id.slice(1)) || 0), Math.max(0, Math.floor(seq)));
@@ -807,7 +850,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 9;
+export const SUPER_BRIEF_REV = 10;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

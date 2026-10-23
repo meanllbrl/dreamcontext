@@ -81,7 +81,12 @@ export interface ChatUserItem {
    *  matches a transcript row and the uuid backfill skips it. */
   superEvent?: string;
 }
-export interface ChatTextItem { kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number }
+export interface ChatTextItem {
+  kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number;
+  /** In a Super view: the owner messages this block answers, by reference (its
+   *  `<!-- re:<ref> -->` head, which `text` never holds). Absent: no mark. */
+  replyTo?: string[];
+}
 /** One Assistant text block as the notch should show it (`ChatSession.onPresent`). A block with
  *  no cue is an answer: `present`, not staying. */
 export interface NotchPresentation { itemId: string; kind: NotchCue['kind']; stay: boolean; text: string }
@@ -493,6 +498,9 @@ export interface ChatSession {
    *  for plain Claude. Read at spawn from `chatAgentFor(claudeId)`, so it follows the
    *  conversation through every respawn; readonly for the reason `mode` is. */
   readonly agent: string;
+  /** This pane shows the Super Agent's conversation although its mode is not `super`: the
+   *  hands-free phone's mirror (AgentSurface `openSuperOnPhone`). Client-only, never sent. */
+  readonly superMirror: boolean;
   ensureOpen: () => void;
   fitAndResize: () => void;
   applyZoom: (zoom: number) => void;
@@ -938,6 +946,8 @@ export function createChatSession(
   /** A Super Agent's delegated child (orchestration plan r5 D14): `--strict-mcp-config` and only
    *  these of the user's MCP servers ([] = none). Null = every other chat, its URL unchanged. */
   leanMcp: readonly string[] | null = null,
+  /** `ChatSession.superMirror`: the phone opened the Super Agent's conversation. */
+  superMirror = false,
 ): ChatSession {
   const id = `chat-${++chatSessionSeq}`;
   const container = document.createElement('div');
@@ -1181,6 +1191,7 @@ export function createChatSession(
     effort,
     mode,
     agent,
+    superMirror,
     accountId,
     ensureOpen: () => { /* no DOM-open step — the AgentSurface portal mount IS "open" */ },
     // No terminal grid to refit — the transcript's equivalent is "you were just moved or

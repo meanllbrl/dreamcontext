@@ -15,7 +15,7 @@
  * React-free and DOM-free: imports only the window's mirror of the server types.
  */
 import {
-  ABOUT_AGENDA_RE, MAX_ABOUT_LINE, SUPER_EVENT_PREFIXES, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, REPLY_TO_RE, SUPER_EVENT_PREFIXES, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 
 // ─── Who is the Super Agent ────────────────────────────────────────────────────
@@ -662,6 +662,69 @@ export function splitAgendaAbout(text: string): { about: AgendaAbout | null; tex
     about: { kind, id: m[2], section: m[3] as AgendaSection, ...(line !== undefined ? { line } : {}) },
     text: rest.replace(/^\n+/, ''),
   };
+}
+
+// ─── Replying to one message (owner 2026-10-23) ──────────────────────────────────
+
+/** A message replying to one earlier message (its ↩): whose it was, its reference (a scroll
+ *  anchor) and the quote as he saw it. */
+export interface ReplyAbout { kind: 'reply'; ref: string; from: 'super' | 'owner'; quote: string }
+/** What a sent message is about: an agenda line, or a message it replies to. */
+export type MessageAbout = AgendaAbout | ReplyAbout;
+
+/** A reply's quote: one line, no control characters, at most MAX_REPLY_QUOTE characters. */
+function replyQuote(text: string): string {
+  const flat = text.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim();
+  return Array.from(flat).slice(0, MAX_REPLY_QUOTE).join('').trim();
+}
+
+/**
+ * The block a reply opens with (the composer's About chip carries it, the agenda's own chip):
+ * the header with the target's reference, then `quote: "<its first words>"`. Never the whole
+ * message: the super wrote it and knows it. `refText` is the target's text exactly as it was
+ * sent or shown (its reference is hashed from it); `quoteText` what the quote reads (his own
+ * words, without the block his message opened with), by default the same.
+ */
+export function replyAboutBlock(refText: string, from: 'super' | 'owner', quoteText: string = refText): string {
+  return `[Reply to message ref=${msgRef(refText)} from=${from}]\nquote: ${JSON.stringify(replyQuote(quoteText))}`;
+}
+
+/** The words the reply chip reads, in the window's language. */
+export interface ReplyWords { chipSuper: string; chipOwn: string }
+export const REPLY_WORDS_EN: ReplyWords = { chipSuper: 'Reply to Super', chipOwn: 'Your message' };
+
+/** The reply chip's name: "Reply to Super: <quote>" / "Your message: <quote>", clipped. */
+export function replyAboutChipName(quoteText: string, from: 'super' | 'owner', words: ReplyWords = REPLY_WORDS_EN): string {
+  return `${from === 'super' ? words.chipSuper : words.chipOwn}: ${clip(replyQuote(quoteText), ABOUT_CHIP_CHARS)}`;
+}
+
+function splitReplyAbout(text: string): { about: ReplyAbout | null; text: string } {
+  const none = { about: null, text };
+  const m = REPLY_TO_RE.exec(text);
+  if (!m) return none;
+  const rest = text.slice(m[0].length);
+  const head = /^\nquote: ([^\n]*)/.exec(rest);
+  if (!head) return none;
+  let quote: string;
+  try {
+    const parsed: unknown = JSON.parse(head[1]);
+    if (typeof parsed !== 'string') return none;
+    quote = parsed;
+  } catch { return none; }
+  const words = rest.slice(head[0].length);
+  if (words !== '' && !words.startsWith('\n')) return none;
+  return { about: { kind: 'reply', ref: m[1], from: m[2] as 'super' | 'owner', quote }, text: words.replace(/^\n+/, '') };
+}
+
+/**
+ * A sent message split into what it is about (an agenda line or the message it replies to) and
+ * the owner's own words. Same rule as `splitAgendaAbout`: only at offset 0, malformed = null and
+ * the text untouched.
+ */
+export function splitAbout(text: string): { about: MessageAbout | null; text: string } {
+  if (typeof text !== 'string') return { about: null, text: '' };
+  const agenda = splitAgendaAbout(text);
+  return agenda.about ? agenda : splitReplyAbout(text);
 }
 
 // ─── Layout of the panes while handed over ─────────────────────────────────────
