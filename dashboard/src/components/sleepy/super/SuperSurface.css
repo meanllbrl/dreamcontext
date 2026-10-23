@@ -1369,14 +1369,14 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .super-layout-switch {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  height: 32px;
-  padding: 2px;
+  gap: var(--space-1);
+  height: var(--space-8);
+  padding: var(--space-1);
   border-radius: var(--radius-full);
   border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
   background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
@@ -1385,7 +1385,7 @@
 .super-layout-seg,
 .super-sheet-tab {
   height: 100%;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   border: none;
   border-radius: var(--radius-full);
   background: transparent;
@@ -1409,11 +1409,11 @@
 .super-chat-fold:focus-visible,
 .super-card-frame[data-where='thumb']:focus-visible {
   outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  outline-offset: var(--space-1);
 }
 .super-stage-exit {
-  height: 32px;
-  padding: 0 14px;
+  height: var(--space-8);
+  padding: 0 var(--space-4);
   border-radius: var(--radius-full);
   border: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
@@ -1431,13 +1431,13 @@
   z-index: var(--sz-sheet);
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px;
+  gap: var(--space-1);
+  padding: var(--space-1);
   overflow-x: auto;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
 }
-.super-sheet-tab { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.super-sheet-tab { max-width: calc(var(--space-28) + var(--space-16)); overflow: hidden; text-overflow: ellipsis; }
 /* A filmstrip thumb: a static tile the owner presses to make it big. */
 .super-card-frame[data-where='thumb'] { cursor: pointer; }
 .super-card-frame[data-where='thumb']:hover .super-card-clip {
@@ -1449,15 +1449,15 @@
    composer) it is the composer alone (the centre's own glow still says when the agent asks);
    its unfold sits just right of it. ── */
 .super-centre[data-chat='mini'] .super-centre-head,
-.super-centre[data-chat='bar'] .super-centre-head { gap: 8px; }
+.super-centre[data-chat='bar'] .super-centre-head { gap: var(--space-2); }
 .super-centre[data-chat='bar'] .super-centre-head { display: none; }
 /* Everything of the chat but its composer: the transcript, the pins, the banners, the chips. */
 .super-centre[data-chat='bar'] .chat-pane > :not(.chat-cmp):not(:has(.chat-cmp)),
 .super-centre[data-chat='bar'] .chat-transcript { display: none; }
 .super-chat-fold {
   margin-left: auto;
-  height: 24px;
-  padding: 0 10px;
+  height: var(--space-6);
+  padding: 0 var(--space-3);
   border-radius: var(--radius-full);
   border: 1px solid var(--color-border);
   background: transparent;
@@ -1472,6 +1472,8 @@
 .super-chat-fold--bar {
   position: absolute;
   z-index: var(--sz-queue);
+  left: calc(var(--bar-x) + var(--space-3));
+  top: calc(var(--bar-mid) - var(--space-6) / 2);
   margin-left: 0;
   background: var(--color-bg-elevated);
 }

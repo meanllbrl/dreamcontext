@@ -50,6 +50,8 @@ export interface SuperSurfaceProps {
   visible: boolean;
   /** Landing targets still waiting for their hand-over flight (`'centre'` or a card id). */
   pending: ReadonlySet<string>;
+  /** Cards the owner closed whose close has not reached the record yet. */
+  pendingCloses: () => string[];
   motion: 'running' | 'idle';
   superSession: ChatSession | undefined;
   vault: string;
@@ -173,10 +175,15 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const ownerAsk = state.queue.some((q) => needsOwner(q) && q.kind !== 'permission');
   // The layouts the switcher offers: those the presented cards can take (R3(f)).
   const presented = useMemo(() => (view.mode === 'present' ? (view.cards ?? []).filter((id) => state.containers.some((c) => c.id === id)) : []), [view, state.containers]);
+  // A selection belongs to one presentation: another card set starts on its first card.
+  const presentedKey = [...presented].sort().join('\n');
+  useEffect(() => { setSelected(null); }, [presentedKey]);
   const layoutChoices = useMemo<PresentLayout[]>(() => {
     const cards = presented.map((id) => state.containers.find((c) => c.id === id)!);
     return cards.length ? PRESENT_LAYOUTS.filter((l) => resolveLayout(l, cards) === l) : [];
   }, [presented, state.containers]);
+  /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
+  const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const plan = useMemo(
     () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, asking: ownerAsk, layoutChoices: layoutChoices.length }),
     [items, view, size, pinned, props.terminals.length, agendaPill, selected, ownerAsk, layoutChoices.length],
@@ -337,7 +344,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (c?.kind === 'chat') props.onKeepChild(c.ref);
     },
     onMinimize: (id: string) => {
-      onLayout({ view: { mode: 'float' } });
+      // Presenting: the set-guarded exit, so a minimize never floats the agent's newer presentation.
+      onLayout(view.mode === 'present' ? exitPatch() : { view: { mode: 'float' } });
       requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(id)}"]`)?.focus());
     },
     onLoadWeb: (id: string) => setLru((prev) => touchLru(prev, id)),
@@ -363,8 +371,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // ── A presentation (plan-r2 D7, D11-D13): every gesture names the cards the owner SAW ──
   const pickLayout = (layout: PresentLayout) => onLayout({ presentLayout: { layout, cards: presented } });
   const toggleBar = () => onLayout({ chat: { value: plan.chat === 'bar' ? null : 'bar', cards: presented } });
-  // Cards this window closed whose close has not reached the record yet (pending, gone here).
-  const exitPresentation = () => onLayout({ exit: { cards: presented, closing: [...pending].filter((id) => id !== 'centre' && !byId.has(id)) } });
+  const exitPresentation = () => onLayout(exitPatch());
   const presentKeysRef = useRef({ exit: exitPresentation, plan, full: !!full });
   presentKeysRef.current = { exit: exitPresentation, plan, full: !!full };
   const presenting = plan.mode === 'present' && props.visible;
@@ -374,7 +381,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (e.key !== 'Escape' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       const ae = document.activeElement as HTMLElement | null;
       // Whatever owns the key first keeps it (AgentSurface's fold list, plus the stage's own).
-      if (ae && (ae.tagName === 'IFRAME' || ae.isContentEditable || ae.closest('input, textarea, select, .agent-composer, .agent-pane-slot, .cmd-modal'))) return;
+      // A chat on the stage (the Super's, a shown child's) owns its keys: its question card pages
+      // and answers on the arrows and Esc.
+      if (ae && (ae.tagName === 'IFRAME' || ae.isContentEditable || ae.closest('input, textarea, select, .agent-composer, .agent-pane-slot, [data-super-slot], .cmd-modal'))) return;
       if (presentKeysRef.current.full) return;
       if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay, .quest-receipt-scrim, .agent-composer-menu, .cmd-modal, .agent-tab-menu, .agent-new-menu')) return;
       if (document.querySelector('.super-group-panel, .super-size-menu, .super-close-choice, .super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"], [data-resizing], .super-surface[data-dragging]')) return;
@@ -507,7 +516,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       actions.onSideBySide(agendaCard.id);
       return;
     }
-    onLayout(viewMode === 'float' ? { agenda: 'open' } : { agenda: 'open', view: { mode: 'float' } });
+    onLayout(viewMode === 'float' ? { agenda: 'open' } : viewMode === 'present' ? { agenda: 'open', ...exitPatch() } : { agenda: 'open', view: { mode: 'float' } });
     // Focus follows the card back (the pill that held it is gone).
     if (agendaCard) requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(agendaCard.id)}"]`)?.focus());
   };
@@ -574,7 +583,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               {plan.chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
               {plan.chat === 'column' && !agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
               {plan.chat === 'column' && <NewSessionButton pending={freshPending(state)} onPress={props.onNewSession} />}
-              {plan.chat === 'mini' && (
+              {plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' && (
                 <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
               )}
             </div>
@@ -685,7 +694,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {plan.chat === 'bar' && !plan.narrow && (
         // Folded, the centre is the composer alone: its unfold sits just right of it.
         <button type="button" className="super-chat-fold super-chat-fold--bar" data-testid="super-chat-fold" aria-pressed
-          style={{ left: plan.centre.x + plan.centre.width + 12, top: plan.centre.y + (plan.centre.height - 24) / 2 }} onClick={toggleBar}>
+          style={{ ['--bar-x' as string]: `${plan.centre.x + plan.centre.width}px`, ['--bar-mid' as string]: `${plan.centre.y + plan.centre.height / 2}px` }} onClick={toggleBar}>
           {t('super.chat.toMini')}
         </button>
       )}

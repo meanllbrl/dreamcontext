@@ -264,7 +264,8 @@ export function readOwnerViewFields(body: Record<string, unknown>): OwnerViewFie
 
 /** The view after the owner's fields: unchanged unless it presents the set they name. */
 export function applyOwnerViewFields(view: SuperView, f: OwnerViewFields): SuperView {
-  if (view.mode !== 'present') return view;
+  // A malformed whole view (null, a string) is left for the store's sanitize, which floats it.
+  if (!view || typeof view !== 'object' || view.mode !== 'present') return view;
   const shown = view.cards ?? [];
   // An exit also lands when a close he made just before it has not reached the record yet.
   if (f.exit && (sameCardSet(shown, f.exit.cards)

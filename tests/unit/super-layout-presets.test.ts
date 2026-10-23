@@ -155,6 +155,13 @@ describe('a narrow stage (1000 x 800)', () => {
     }
   });
 
+  it('a question of his open: the chat at the mini\'s height with its transcript, the sheet above it', () => {
+    const p = plan('compare', items(2), narrow, {}, { asking: true });
+    expect(p.chat).toBe('mini');
+    expect(p.centre.height).toBeGreaterThanOrEqual(STAGE.MINI_MIN_H);
+    for (const c of drawn(p)) expect(c.rect.y + c.rect.height).toBeLessThanOrEqual(p.centre.y + 0.5);
+  });
+
   it('the picked tab is the one drawn; widening restores the stored layout (width never writes)', () => {
     const view: SuperView = { mode: 'present', cards: ['c0', 'c1', 'c2'], layout: 'grid' };
     const p = planStage(items(3), view, narrow, { selected: 'c2' });

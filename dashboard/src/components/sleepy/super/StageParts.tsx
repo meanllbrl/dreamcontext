@@ -93,13 +93,16 @@ export function SheetTabs({ rect, ids, selected, titleOf, onSelect }: {
     const i = ids.indexOf(selected);
     const next = ids[(i + (e.key === 'ArrowRight' ? 1 : ids.length - 1)) % ids.length];
     onSelect(next);
+    // Focus follows the selected tab (the roving tabindex leaves the old one at -1).
+    const row = e.currentTarget;
+    requestAnimationFrame(() => row.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next)}"]`)?.focus());
   };
   return (
     <div className="super-sheet-tabs" role="tablist" aria-label={t('super.layout.tab')} data-testid="super-sheet-tabs" onKeyDown={onKey}
       style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
       {ids.map((id) => (
         <button key={id} type="button" role="tab" className="super-sheet-tab" aria-selected={id === selected} tabIndex={id === selected ? 0 : -1}
-          data-testid="super-sheet-tab" onClick={() => onSelect(id)}>
+          data-testid="super-sheet-tab" data-tab-id={id} onClick={() => onSelect(id)}>
           {titleOf(id)}
         </button>
       ))}

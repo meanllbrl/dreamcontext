@@ -721,11 +721,13 @@ function planWith(
     };
 
     if (narrow) {
-      // Any layout is the sheet; the agent's composer is a bar under it (D14).
+      // Any layout is the sheet; the agent's composer is a bar under it (D14). A question of his
+      // open: the chat at the mini's height, its transcript shown, so the question is there (D7).
       const i = STAGE.SHEET_INSET;
-      const bar: Rect = { x: f.content.x, y: f.content.y + f.content.height - STAGE.CHAT_BAR_H, width: f.content.width, height: STAGE.CHAT_BAR_H };
-      const sheet: Rect = { x: f.content.x + i, y: f.content.y + i, width: f.content.width - 2 * i, height: Math.max(0, f.content.height - STAGE.CHAT_BAR_H - STAGE.GAP - i) };
-      const extra = { layout, chat: 'bar' as const, controls };
+      const barH = opts.asking ? Math.min(STAGE.MINI_MAX_H, Math.max(STAGE.MINI_MIN_H, STAGE.MINI_FRAC_H * f.height), f.content.height / 2) : STAGE.CHAT_BAR_H;
+      const bar: Rect = { x: f.content.x, y: f.content.y + f.content.height - barH, width: f.content.width, height: barH };
+      const sheet: Rect = { x: f.content.x + i, y: f.content.y + i, width: f.content.width - 2 * i, height: Math.max(0, f.content.height - barH - STAGE.GAP - i) };
+      const extra = { layout, chat: opts.asking ? 'mini' as const : 'bar' as const, controls };
       if (layout === 'filmstrip') {
         const st = strip(sheet);
         for (const c of list) if (!cards[c.id]) toOthers(c);
@@ -1048,6 +1050,23 @@ export function patchEchoed(state: Staged, patch: LayoutPatch): boolean {
   // is dropped, never laid over the agent's new set.
   if ((patch.view || patch.presentLayout || patch.chat || patch.exit) && !sameView(applyLayoutPatch(state, patch).view, state.view)) return false;
   return true;
+}
+
+/**
+ * A push with the owner's edits not yet echoed laid over it: each edit is checked against the push
+ * WITH the earlier pending edits applied, in the order he made them (an Esc after a close that has
+ * not landed reads against the closed set, so a push in between never drops it). Returns what to
+ * draw and the edits still pending.
+ */
+export function withPendingPatches<S extends Staged>(pushed: S, pending: readonly LayoutPatch[]): { state: S; keep: LayoutPatch[] } {
+  let state = pushed;
+  const keep: LayoutPatch[] = [];
+  for (const p of pending) {
+    if (patchEchoed(state, p)) continue;
+    keep.push(p);
+    state = applyLayoutPatch(state, p);
+  }
+  return { state, keep };
 }
 
 /** Two views draw the same: mode, card (half), cards in order, layout and chat bar (present). */

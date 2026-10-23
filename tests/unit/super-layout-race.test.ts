@@ -26,7 +26,7 @@ import { PRESENT_LAYOUTS, emptySuperState, type SuperState } from '../../src/lib
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { handleSuperLayout, handleSuperVerb } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
-import { applyLayoutPatch, patchEchoed, type LayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { applyLayoutPatch, patchEchoed, withPendingPatches, type LayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import type { SuperContainer, SuperView } from '../../dashboard/src/lib/superTypes.js';
 
 const CHILD = 'child-race';
@@ -85,6 +85,24 @@ describe('the window: a pending owner gesture over the agent\'s pushes', () => {
     expect(applyLayoutPatch(review, { closed: [chat.id] }).view).toEqual({ mode: 'present', cards: [site.id], layout: 'spotlight' });
     const grid = staged({ mode: 'present', cards: ids(3), layout: 'grid', layoutBy: 'owner' });
     expect(applyLayoutPatch(grid, { closed: ['t2'] }).view).toEqual({ mode: 'present', cards: ids(2), layout: 'grid', layoutBy: 'owner' });
+  });
+
+  it('the window keeps a close then Esc over a push that carries neither (each edit read after the ones before)', () => {
+    const pushed = staged({ mode: 'present', cards: ids(3), layout: 'grid' });
+    const pending: LayoutPatch[] = [{ closed: ['t2'] }, { exit: { cards: ids(2), closing: ['t2'] } }];
+    const { state, keep } = withPendingPatches(pushed, pending);
+    expect(keep).toHaveLength(2);
+    expect(state.view).toEqual({ mode: 'float' });
+    // A pick right after a close survives the same push.
+    const pick: LayoutPatch[] = [{ closed: ['t2'] }, { presentLayout: { layout: 'filmstrip', cards: ids(2) } }];
+    const r = withPendingPatches(pushed, pick);
+    expect(r.keep).toHaveLength(2);
+    expect(r.state.view).toEqual({ mode: 'present', cards: ids(2), layout: 'filmstrip', layoutBy: 'owner' });
+    // Once the server carries both, nothing is pending.
+    expect(withPendingPatches({ ...staged({ mode: 'float' }), containers: containers.filter((c) => c.id !== 't2') }, pending).keep).toHaveLength(0);
+    // An edit undone by a later one is kept in order: Others then back, over the old push, ends floating.
+    const undo: LayoutPatch[] = [{ cards: [{ id: 't5', place: 'others' }] }, { cards: [{ id: 't5', place: 'float' }] }];
+    expect(withPendingPatches(staged({ mode: 'float' }), undo).state.containers.find((c) => c.id === 't5')!.place).toBe('float');
   });
 
   it('a close then Esc: the exit names the close still on its way, and lands either order', () => {

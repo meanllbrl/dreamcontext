@@ -281,6 +281,16 @@ describe('the owner wins for his card set (D9, D10)', () => {
     expect(onDisk().view).toEqual({ mode: 'float' });
   });
 
+  it('a malformed whole view from the owner still floats the stage (no 500)', async () => {
+    makeVault();
+    await present(ids(2));
+    for (const view of [null, 'present', 7]) {
+      expect((await owner({ view })).status, JSON.stringify(view)).toBe(200);
+      expect(onDisk().view).toEqual({ mode: 'float' });
+      await present(ids(2));
+    }
+  });
+
   it('a whole owner view never carries his marks; malformed fields are ignored', async () => {
     makeVault();
     await owner({ view: { mode: 'present', cards: ids(2), layout: 'grid', layoutBy: 'owner', chat: 'bar' } });
