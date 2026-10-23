@@ -2476,7 +2476,7 @@ export { revealPath } from '../../../lib/reveal';
  */
 /** Why an inline picture is a card instead: the desktop's consent (`grant`), the phone's one
  *  tap (`phone-grant`), never on this phone (`other-project`, `refused`), or just unreadable. */
-type FallbackReason = 'grant' | 'open' | 'phone-grant' | 'other-project' | 'refused' | 'gone';
+type FallbackReason = 'grant' | 'open' | 'phone-grant' | 'other-project' | 'refused' | 'gone' | 'unreachable';
 
 export function useInlineMedia(
   ref: RefObject<HTMLElement | null>,
@@ -2562,6 +2562,7 @@ export function useInlineMedia(
         : reason === 'phone-grant' ? sayRef.current('chat.media.outside', 'outside the project')
           : reason === 'other-project' ? sayRef.current('chat.media.otherProject', 'in a project this phone can\u2019t open')
             : reason === 'gone' && phone ? sayRef.current('chat.media.gone', 'isn\u2019t there any more')
+              : reason === 'unreachable' && phone ? sayRef.current('chat.media.unreachable', 'couldn\u2019t load')
             : reason === 'refused' || phone ? sayRef.current('chat.media.cantShow', 'can\u2019t be shown on the phone')
               : null;
       setNote(standingNote);
@@ -2590,6 +2591,17 @@ export function useInlineMedia(
         // never pointerup, so this is a tap only; the disabled button ignores the click after.
         show.addEventListener('pointerup', (e) => { if (e.pointerType !== 'mouse') activate(); });
         card.append(show);
+      }
+      // A dropped connection (the tunnel, a moving phone) is not a verdict: try again in place.
+      if (phone && reason === 'unreachable') {
+        const again = document.createElement('button');
+        again.type = 'button';
+        again.className = 'chat-md-blocked-allow';
+        again.textContent = sayRef.current('chat.media.retry', 'Try again');
+        const retry = (): void => { if (!again.disabled) { again.disabled = true; card.replaceWith(buildMedia(path)); } };
+        again.addEventListener('click', retry);
+        again.addEventListener('pointerup', (e) => { if (e.pointerType !== 'mouse') retry(); });
+        card.append(again);
       }
       // Nothing on the phone can hand a file to the Mac's OS: the card ends at its reason.
       if (phone) return card;
@@ -2686,6 +2698,7 @@ export function useInlineMedia(
         void fetch(rawUrl(vault, path), { headers: { Range: 'bytes=0-0' } })
           .then(async (r): Promise<{ reason: FallbackReason; grantPath: string }> => {
             if (r.status === 404) return { reason: 'gone', grantPath: path };
+            if (r.status >= 500) return { reason: 'unreachable', grantPath: path };
             if (r.status !== 403) return { reason: 'open', grantPath: path };
             const body = await r.json().catch(() => null) as { path?: unknown; error?: unknown } | null;
             const grantPath = typeof body?.path === 'string' ? body.path : path;
@@ -2695,7 +2708,7 @@ export function useInlineMedia(
             if (body?.error === 'phone_media_only') return { reason: 'refused', grantPath: path };
             return { reason: 'grant', grantPath };
           })
-          .catch((): { reason: FallbackReason; grantPath: string } => ({ reason: 'open', grantPath: path }))
+          .catch((): { reason: FallbackReason; grantPath: string } => ({ reason: 'unreachable', grantPath: path }))
           // The probe is async, and the block around a still-streaming reference re-renders in
           // the meantime. Swapping a DETACHED element does nothing except drop the fallback on
           // the floor, so only replace one that is still on the page; the next pass rebuilds it.

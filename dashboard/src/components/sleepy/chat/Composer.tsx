@@ -24,7 +24,7 @@ import { useVault } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
-import { PHONE_PHOTOS_PER_MESSAGE, jpegName, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
+import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
@@ -894,7 +894,7 @@ export function Composer({
       const job = preparePhonePhotoQueued(file).then((jpeg) => {
         if (!jpeg) { settleAttachment(convId, id, null, t('chat.photo.unreadable')); return; }
         setAttachmentPreview(convId, id, URL.createObjectURL(jpeg));
-        return withPhotoUploadSlot(() => uploadAgentFile(vault, jpeg, name)).then((path) => { settleAttachment(convId, id, path); });
+        return withPhotoUploadSlot(() => uploadAgentFile(vault, jpeg, name, photoUploadSignal())).then((path) => { settleAttachment(convId, id, path); });
       });
       uploadsRef.current.add(job);
       void job.finally(() => uploadsRef.current.delete(job));

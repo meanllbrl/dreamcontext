@@ -1858,6 +1858,7 @@
   border: 2px solid var(--color-accent-soft);
   border-top-color: var(--color-accent);
   color: transparent;
+  font-size: 0;
   overflow: hidden;
   animation: chat-cmp-photo-spin 0.9s linear infinite;
 }

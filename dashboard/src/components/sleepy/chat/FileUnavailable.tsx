@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../../context/VaultContext';
 import { useOptionalI18n } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
@@ -48,6 +48,10 @@ export function FileUnavailable({
     const v = i18n?.t(key);
     return v && v !== key ? v : fallback;
   };
+  // Read through a ref inside the probe effect: the effect re-runs on `src` only.
+  const sayRef = useRef(say);
+  sayRef.current = say;
+  const phone = isMacPhoneSurface();
   const [probe, setProbe] = useState<Probe>({ state: 'checking' });
   const [granting, setGranting] = useState(false);
 
@@ -65,11 +69,11 @@ export function FileUnavailable({
           if (body?.error === 'needs_phone_grant' && typeof body.path === 'string') {
             return { state: 'blocked', path: body.path, phone: true };
           }
-          if (body?.error === 'other_project') return { state: 'explained', message: say('chat.media.otherProject', 'it is in a project this phone can’t open') };
-          if (body?.error === 'phone_media_only') return { state: 'explained', message: say('chat.media.cantShow', 'it can’t be shown on the phone') };
+          if (body?.error === 'other_project') return { state: 'explained', message: sayRef.current('chat.media.otherProject', 'in a project this phone can’t open') };
+          if (body?.error === 'phone_media_only') return { state: 'explained', message: sayRef.current('chat.media.cantShow', 'can’t be shown on the phone') };
           return { state: 'explained', message: 'it can’t be read from here' };
         }
-        if (r.status === 404) return { state: 'explained', message: 'it isn’t there any more' };
+        if (r.status === 404) return { state: 'explained', message: phone ? sayRef.current('chat.media.gone', 'isn’t there any more') : 'it isn’t there any more' };
         // The bytes ARE reachable and the element still refused them: the file is damaged, or
         // in a format this engine has no decoder for. Saying "couldn't load" there would be a
         // guess the probe just disproved.
@@ -78,7 +82,7 @@ export function FileUnavailable({
         }
         return { state: 'explained', message: 'it couldn’t be loaded' };
       })
-      .catch((): Probe => ({ state: 'explained', message: 'it couldn’t be loaded' }))
+      .catch((): Probe => ({ state: 'explained', message: phone ? sayRef.current('chat.media.unreachable', 'couldn’t load') : 'it couldn’t be loaded' }))
       .then((next) => { if (!cancelled) setProbe(next); });
     return () => { cancelled = true; };
   }, [src]);
@@ -94,7 +98,7 @@ export function FileUnavailable({
 
   const noun = kind === 'file' ? 'file' : kind === 'image' ? 'image' : kind === 'video' ? 'video' : 'audio';
 
-  if (probe.state === 'checking') return <p className="chat-unavailable-note">Checking this {noun}…</p>;
+  if (probe.state === 'checking') return <p className="chat-unavailable-note">{phone ? say('chat.media.checking', 'Checking…') : `Checking this ${noun}…`}</p>;
 
   if (probe.state === 'blocked' && probe.phone) {
     return (
@@ -121,5 +125,7 @@ export function FileUnavailable({
     );
   }
 
+  // The phone reads its reason in its own language, never wrapped in an English sentence.
+  if (phone) return <p className="chat-unavailable-note error">{probe.message}</p>;
   return <p className="chat-unavailable-note error">Couldn’t show this {noun} — {probe.message}.</p>;
 }

@@ -77,12 +77,25 @@ const waiting: Array<() => void> = [];
  * the third (429), so six photos picked at once go two at a time instead of four failing.
  */
 export async function withPhotoUploadSlot<T>(fn: () => Promise<T>): Promise<T> {
+  // A freed slot is HANDED to the next waiter (never released and re-taken), so nobody arriving
+  // in between can slip in as a third.
   if (uploading >= PHONE_PHOTO_UPLOADS_AT_ONCE) await new Promise<void>((resolve) => waiting.push(resolve));
-  uploading += 1;
+  else uploading += 1;
   try { return await fn(); } finally {
-    uploading -= 1;
-    waiting.shift()?.();
+    const next = waiting.shift();
+    if (next) next(); else uploading -= 1;
   }
+}
+
+/** How long one phone photo may take to reach the Mac before it is given up (and its slot
+ *  freed): a stalled upload on a moving phone must not hold every later photo back. */
+export const PHONE_PHOTO_UPLOAD_TIMEOUT_MS = 90_000;
+
+export function photoUploadSignal(ms: number = PHONE_PHOTO_UPLOAD_TIMEOUT_MS): AbortSignal {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const c = new AbortController();
+  setTimeout(() => c.abort(), ms);
+  return c.signal;
 }
 
 /** The JPEG to send for a picked photo, or null when this browser cannot decode it. */

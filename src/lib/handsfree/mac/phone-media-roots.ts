@@ -82,10 +82,11 @@ async function repoAndWorktrees(path: string): Promise<{ paths: string[]; failed
         if (rp) out.add(rp);
       }
     }
-  } catch {
+  } catch (err) {
     // Not a repo: the folder alone. A repo whose listing failed (git missing from PATH, a
     // "dubious ownership" refusal, a timeout): its worktrees are unknown, so say so.
     failed = await stat(join(path, '.git')).then(() => true, () => false);
+    if (failed) console.warn(`[phone-media-roots] cannot list the worktrees of ${path}; the phone's one-tap pictures stay closed until it can: ${(err as Error)?.message ?? err}`);
   }
   return { paths: [...out], failed };
 }
