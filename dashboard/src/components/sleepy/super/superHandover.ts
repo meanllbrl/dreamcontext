@@ -607,7 +607,7 @@ const clip = (s: string, n: number) => { const a = Array.from(s); return a.lengt
  *  question" / "About: Super's question". The window's words only; never sent. */
 export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text'>, words: AboutWords = ABOUT_WORDS_EN): string {
   if (row.note) return `${words.about}: ${clip(aboutLine(row.text), ABOUT_CHIP_CHARS)}`;
-  const who = row.sid ? words.question.replace('{name}', clip(aboutLine(row.text), 40)) : words.superQuestion;
+  const who = row.sid ? words.question.replace('{name}', () => clip(aboutLine(row.text), 40)) : words.superQuestion;
   return `${words.about}: ${who}`;
 }
 
@@ -627,7 +627,7 @@ export function agendaAboutStrip(
   if (!q) return { label: words.about, text: words.aQuestion };
   if (q.kind === 'ask' || q.kind === 'approval') return { label: words.about, text: words.superQuestion };
   const name = plainJobName(nameFor(q.sessionId) || '');
-  return { label: words.about, text: name ? words.question.replace('{name}', name) : words.aQuestion };
+  return { label: words.about, text: name ? words.question.replace('{name}', () => name) : words.aQuestion };
 }
 
 /**

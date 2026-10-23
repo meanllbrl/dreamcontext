@@ -1659,7 +1659,9 @@ export function Composer({
   };
 
   const submit = (mode: SubmitMode = 'auto') => {
-    if (!canCompose || !hasSendableContent || sendingRef.current) { spokenRef.current = false; return; }
+    // A submit refused while an earlier one waits on its upload leaves that one's spoken take armed.
+    if (sendingRef.current) return;
+    if (!canCompose || !hasSendableContent) { spokenRef.current = false; return; }
     // Nothing in flight — the common case, and it stays synchronous. A picked element's picture
     // is uploaded outside this pane (composerScratch `trackUpload`) and is waited for the same way.
     const jobs = [...uploadsRef.current, ...pendingUploads(convId)];

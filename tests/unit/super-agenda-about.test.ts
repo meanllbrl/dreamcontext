@@ -164,6 +164,10 @@ describe('the composer and the server use it', () => {
     expect(composer).toMatch(/dropSentAttachments\(convId, \{ keepAbout: slash \}\)/);
   });
 
+  it('a submit refused while another waits on its upload leaves that spoken take armed', () => {
+    expect(composer).toMatch(/if \(sendingRef\.current\) return;\n\s*if \(!canCompose \|\| !hasSendableContent\) \{ spokenRef\.current = false; return; \}/);
+  });
+
   it('a spoken take is armed with the message as sent, block included, so it is still read aloud', () => {
     expect(composer).toMatch(/if \(spoken\) session\.armSpoken\?\.\(message\);/);
     expect(composer).not.toMatch(/armSpoken\?\.\(liveRef\.current\.draft/);
@@ -193,6 +197,9 @@ describe('the strip above a sent message', () => {
     expect(agendaAboutStrip({ kind: 'item', id: 'q-12', section: 'waiting' }, open, nameFor).text).toBe("Checkout form's question");
     expect(agendaAboutStrip({ kind: 'item', id: 'q-ask-1', section: 'waiting' }, open, nameFor).text).toBe("Super's question");
     expect(agendaAboutStrip({ kind: 'item', id: 'q-gone', section: 'waiting' }, open, nameFor).text).toBe('a question');
+    // A job name is inserted as written, never read as a replacement pattern.
+    expect(agendaAboutStrip({ kind: 'item', id: 'q-12', section: 'waiting' }, open, () => 'Price $& plan').text).toBe("Price $& plan's question");
+    expect(agendaAboutChipName(question({ text: 'Cost $1 fix' }))).toBe("About: Cost $1 fix's question");
     expect(agendaAboutStrip({ kind: 'item', id: 'q-12', section: 'waiting' }, [{ ...open[1], state: 'done' as const }], nameFor).text).toBe('a question');
   });
 
