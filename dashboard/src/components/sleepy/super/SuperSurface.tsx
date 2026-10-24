@@ -22,7 +22,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, isLivePage, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan } from './superLayout';
+import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
@@ -32,7 +32,7 @@ import type { WebPick } from '../../../lib/webPick';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
 import { NewSessionButton } from './NewSessionButton';
 import { MAX_LIVE_BROWSERS, keptWebIds, liveWebIds, touchLru, dropFromLru } from './webBudget';
-import { useWindowActivity } from '../../../lib/windowActivity';
+import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windowActivity';
 import { useStageCues, withGhosts } from './useStageCues';
 import './SuperSurface.css';
 import './superTone.css';
@@ -249,8 +249,32 @@ export function SuperSurface(props: SuperSurfaceProps) {
     if (openGroup === 'others' ? !plan.others.length : plan.cards[openGroup]?.where !== 'float') setOpenGroup(null);
   }, [openGroup, plan]);
   const closePanel = useCallback(() => setOpenGroup(null), []);
-  // The owner opened a group (its panel): touched, so the stage's tidying leaves it (tidy.ts).
-  useEffect(() => { if (openGroup && openGroup !== 'others') onLayout({ touch: [openGroup] }); }, [openGroup]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The owner looks at a group (its panel) or a card full screen: reported when it opens, while it
+  // stays open and when it closes, with the cards it shows (the last ones, if the group dissolved
+  // meanwhile). A report that arrives after a picture's job moved on makes it his (tidy.ts).
+  const layoutRef = useRef(onLayout);
+  layoutRef.current = onLayout;
+  const lookAt = (id: string | null | undefined) => {
+    if (!id) return undefined;
+    const shows = () => {
+      const g = stateRef.current.groups.find((x) => x.id === id);
+      return g ? [g.id, ...g.cards] : stateRef.current.containers.some((c) => c.id === id) ? [id] : [];
+    };
+    let last = shows();
+    const look = () => {
+      // Not while the window is hidden: nobody looks at a panel left open behind it.
+      if (document.hidden) return;
+      const now = shows();
+      if (now.length) last = now;
+      if (last.length) layoutRef.current({ touch: last });
+    };
+    look();
+    // Never slower than Light mode's focused cadence: a look that starts while the window is
+    // visible but not focused (×4) would otherwise outlast the server's grace.
+    const timer = setInterval(look, Math.min(pollMs(LOOK_RENEW_MS), LOOK_RENEW_MS * LIGHT_POLL_FACTOR));
+    return () => { clearInterval(timer); if (last.length) layoutRef.current({ touch: last }); };
+  };
+  useEffect(() => lookAt(openGroup !== 'others' ? openGroup : null), [openGroup]); // eslint-disable-line react-hooks/exhaustive-deps
   // A stage that is no longer on screen (the overlay folded by a click or the hotkey) closes its
   // panel: a hidden panel would keep Escape and focus for the whole app.
   useEffect(() => { if (!props.visible) setOpenGroup(null); }, [props.visible]);
@@ -267,8 +291,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const [lru, setLru] = useState<string[]>([]);
   // What is open full screen (one at a time); its card gives up its own frame meanwhile.
   const [full, setFull] = useState<{ id: string; subject: CardFullscreen } | null>(null);
-  // A card opened full screen is touched too (tidy.ts).
-  useEffect(() => { if (full) onLayout({ touch: [full.id] }); }, [full?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A card opened full screen is looked at too, while the stage is on screen.
+  useEffect(() => lookAt(props.visible ? full?.id : null), [full?.id, props.visible]); // eslint-disable-line react-hooks/exhaustive-deps
   const webOnScreen = props.visible
     // A small or medium floating tile shows a page's title; the frame lives side by side,
     // presented, or in a large/wide floating card (owner 2026-10-22), within the same budget.

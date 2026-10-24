@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useTasks } from '../../../hooks/useTasks';
 import { useKnowledgeList } from '../../../hooks/useKnowledge';
@@ -218,7 +219,22 @@ export function groupStatus(members: readonly GroupMember[]): SessionStatusKind 
  */
 export function GroupTile({ group, members }: { group: Pick<SuperGroup, 'name'>; members: readonly GroupMember[] }) {
   const { t } = useI18n();
-  const shown = members.length > 3 ? members.slice(0, 2) : members;
+  // The name reads whole on up to two lines (owner 2026-10-23: "Pencere düzeltmesi" showed as
+  // "Pencere…"); its second line takes one member row's place: two rows under it instead of three.
+  const nameRef = useRef<HTMLDivElement>(null);
+  const [wraps, setWraps] = useState(false);
+  useLayoutEffect(() => {
+    const el = nameRef.current;
+    if (!el) return;
+    // Taller than one and a half lines = it wrapped (20 px when the line height reads "normal").
+    const measure = () => setWraps(el.scrollHeight > (parseFloat(getComputedStyle(el).lineHeight) || 20) * 1.5);
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [group.name]);
+  const rows = wraps ? 2 : 3;
+  const shown = members.length > rows ? members.slice(0, rows - 1) : members;
   return (
     <div className="super-tile super-tile--group" data-tile="group" data-kind={groupStatus(members)}>
       <span className="super-tile-corners" aria-hidden />
@@ -227,7 +243,7 @@ export function GroupTile({ group, members }: { group: Pick<SuperGroup, 'name'>;
         <span className="super-tile-kind">{t('super.tile.kind.group')}</span>
         <span className="super-tile-count">{members.length}</span>
       </div>
-      <div className="super-tile-name" title={group.name}>{group.name}</div>
+      <div ref={nameRef} className="super-tile-name" title={group.name}>{group.name}</div>
       <ul className="super-tile-members">
         {shown.map((m) => (
           <li key={m.id}>

@@ -113,6 +113,11 @@ export interface SuperContainer {
   /** A live child's chat card the OWNER put away himself (dragged to Others or grouped), epoch
    *  ms: it stays there until that run finishes (live.ts). Server-written from his layout only. */
   heldAt?: number;
+  /** A picture the super showed for a child's job (`super open image … --for <child>`): it goes
+   *  to Others once that job moves on after `forAt` (tidy.ts `jobMovedOn`). Images only. */
+  forChild?: string;
+  /** When it was (last) shown for that job (epoch ms), beside `forChild`. */
+  forAt?: number;
 }
 
 /** The owner closed an automatic card: the same (kind, ref) is not opened again automatically
@@ -385,6 +390,15 @@ export interface SuperChild {
   /** `super delegate --succeeds` handed its card, brief and task to this child (one job, one
    *  owner); it is ended, and `super state` warns while it still runs. */
   succeededBy?: string;
+  /** When it handed its job on (`--succeeds`, epoch ms): the pictures it showed go (`forChild`). */
+  succeededAt?: number;
+  /** When the super last handed it work (`super send`, epoch ms): the pictures it showed for
+   *  the job before then go to Others (`forChild`). */
+  sentAt?: number;
+  /** When the owner marked its result seen, on the server's clock (`POST /api/super/seen`, epoch
+   *  ms; `seenAt` is the finish key his window showed): the grace of the pictures that result
+   *  turned down counts from here (`forChild`). */
+  seenMarkedAt?: number;
 }
 
 /** Ended children the record keeps (newest first); older ones drop out of it, except one that
@@ -982,7 +996,8 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   one sentence how many did not.
 - A set of pictures is always ONE group: \`super open image <a> <b> …\` in one call (the server
   groups them; a picture opened within 2 minutes of the last joins its group). \`--no-group\` only
-  when the owner wants them apart.
+  when the owner wants them apart. Pictures of a child's work: always \`--for <child>\`, so they
+  go to Others once that job moves on (you send it new work, end it, or he saw a newer result).
 - Every card you open gets a short human name: \`--title "…"\`, several with \`--titles "a|b|c"\`.
   What is decided or finished goes to Others at once (\`super stack <card|group>\`); the stage
   also moves a card nobody touched for 45 minutes and a finished job the owner saw.

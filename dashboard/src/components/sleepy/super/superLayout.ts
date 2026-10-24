@@ -1009,14 +1009,20 @@ export interface LayoutPatch extends OwnerViewFields {
   leave?: string[];
   /** Groups dissolved (the panel's Ungroup). */
   ungroup?: string[];
-  /** Cards or groups the owner opened (a group's panel, full screen): the server's tidying
-   *  counts them as touched. Changes nothing on the record. */
+  /** What the owner looks at (a group's panel and its cards, a card full screen), reported on open,
+   *  every LOOK_RENEW_MS while open and on close: the server's tidying counts them as touched,
+   *  and a picture whose job moved on before the report is his. */
   touch?: string[];
   /** The owner reopens the super's agenda card (the centre's Agenda button, its corner pill): the
    *  server makes it if the record has none, or brings it back from its pill, Others or a group.
    *  `min`: its close, which collapses it to the pill in the bottom-left corner (never removed). */
   agenda?: 'open' | 'min';
 }
+
+/** How often the window reports the owner's look at an open group or a full-screen card, through
+ *  `pollMs` and never slower than twice this (Light mode): inside the server's grace either way
+ *  (src/lib/super/tidy.ts LOOK_GRACE_MS, 90 s; a drift test pins it). */
+export const LOOK_RENEW_MS = 30_000;
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
@@ -1029,6 +1035,9 @@ type Staged = { containers: SuperContainer[]; groups?: SuperGroup[]; view: Super
  * ignored, the list is never replaced, a view naming no card falls back to float.
  */
 export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch): S {
+  // A look changes nothing on the stage: the state stays as the server sent it (its view's
+  // `auto` mark too, which a rebuilt view would drop for the length of a request).
+  if (Object.keys(patch).every((k) => k === 'touch')) return state;
   const st = { containers: state.containers.map((c) => ({ ...c })), groups: (state.groups ?? []).map((g) => ({ ...g, cards: [...g.cards] })) };
   // Cards that leave what the view shows (the server's rule): to Others, resized, grouped, closed.
   const unshown = new Set<string>();

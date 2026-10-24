@@ -139,6 +139,9 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
       ...(c.by === 'auto' && typeof c.of === 'string' && Object.prototype.hasOwnProperty.call(children, c.of) ? { of: c.of } : {}),
       ...(c.kind === 'agenda' && c.min === true ? { min: true as const } : {}),
       ...(c.kind === 'chat' && typeof c.heldAt === 'number' && Number.isFinite(c.heldAt) && c.heldAt > 0 ? { heldAt: Math.min(c.heldAt, Date.now()) } : {}),
+      // A picture shown for a child's job: only a picture, only a child the record holds.
+      ...(c.kind === 'image' && typeof c.forChild === 'string' && Object.prototype.hasOwnProperty.call(children, c.forChild) && (finite(c.forAt) ?? -1) >= 0
+        ? { forChild: c.forChild, forAt: finite(c.forAt) as number } : {}),
     });
   }
   return out;
@@ -213,11 +216,16 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (child.row === 'stuck' && oneOf(STUCK_REASONS, c.stuckReason)) child.stuckReason = c.stuckReason;
     if (c.awaited === true) child.awaited = true;
     // The agenda's two stamps (epoch ms): a non-finite or negative value is dropped.
-    for (const k of ['finishedAt', 'seenAt'] as const) {
+    const sentAt = finite(c.sentAt);
+    if (sentAt !== undefined && sentAt >= 0) child.sentAt = sentAt;
+    const succeededAt = finite(c.succeededAt);
+    if (child.succeededBy && succeededAt !== undefined && succeededAt >= 0) child.succeededAt = succeededAt;
+    for (const k of ['finishedAt', 'seenAt', 'seenMarkedAt'] as const) {
       const v = finite(c[k]);
       // A "seen" from the future would hide every later finish: never past now (as the route clamps).
-      if (v !== undefined && v >= 0) child[k] = k === 'seenAt' ? Math.min(v, Date.now()) : v;
+      if (v !== undefined && v >= 0) child[k] = k === 'finishedAt' ? v : Math.min(v, Date.now());
     }
+    if (child.seenAt === undefined) delete child.seenMarkedAt;
     out[key] = child;
   }
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that

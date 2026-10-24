@@ -3230,7 +3230,8 @@
         "--shape",
         "--size",
         "--title",
-        "--titles"
+        "--titles",
+        "--for"
       ]
     },
     {

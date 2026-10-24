@@ -24,7 +24,7 @@ export function taskOf(ch: SuperChild | undefined): string | null {
  * keeps its place, group and view slot under its new id. Returns the successor's card id, or
  * null when `from` had no card (the caller then makes one as for any child).
  */
-export function succeedChild(s: SuperState, from: string, to: string, opts: { brief?: string } = {}): string | null {
+export function succeedChild(s: SuperState, from: string, to: string, opts: { brief?: string; now?: number } = {}): string | null {
   const old = s.children[from];
   const next = s.children[to];
   if (!old || !next || from === to) return null;
@@ -35,6 +35,8 @@ export function succeedChild(s: SuperState, from: string, to: string, opts: { br
   // tree it works in, and `super merge` finds the branch under it.
   if (old.worktree && old.branch && !next.worktree) { next.worktree = old.worktree; next.branch = old.branch; }
   old.succeededBy = to;
+  // The job moved on: the pictures shown for the old child go to Others (tidy.ts).
+  old.succeededAt = opts.now ?? Date.now();
 
   const card = s.containers.find((k) => k.kind === 'chat' && k.ref === from);
   if (!card) return null;

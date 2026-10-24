@@ -631,7 +631,7 @@
   -webkit-box-orient: vertical;
   word-break: break-word;
 }
-.super-tile-name { font-family: var(--font-family-display); font-size: var(--font-size-base); font-weight: 700; -webkit-line-clamp: 1; }
+.super-tile-name { font-family: var(--font-family-display); font-size: var(--font-size-base); font-weight: 700; flex: none; }
 /* A team card (an AI Team job): the member's face beside "<name> took the job". */
 .super-team-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .super-team-who .agent-av,

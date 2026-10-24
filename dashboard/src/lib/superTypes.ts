@@ -64,6 +64,9 @@ export interface SuperContainer {
   min?: true;
   /** A live child's chat card the owner put away himself (server-written, epoch ms). */
   heldAt?: number;
+  /** A picture shown for this child's job: it goes to Others once the job moves on. */
+  forChild?: string;
+  forAt?: number;
 }
 
 export interface SuperDismissed { kind: ContainerKind; ref: string; until: number }
