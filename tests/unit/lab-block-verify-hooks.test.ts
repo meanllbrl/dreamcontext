@@ -11,7 +11,11 @@
  * lab-block-chart-options.test.ts does.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { createElement, type ReactElement } from 'react';
+// React lives in dashboard/node_modules only (the root package never depends on it), so the value
+// import names that copy, like react-dom below; a bare 'react' resolved on a dev box by accident
+// and failed on every clean CI install (main's Linux job since 2026-10-20, run 39488254336).
+import type { ReactElement } from 'react';
+import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
