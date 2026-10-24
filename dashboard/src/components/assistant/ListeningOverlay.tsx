@@ -20,7 +20,7 @@ import { useI18n } from '../../context/I18nContext';
  * property is written on the animation frame (the same discipline as `VoiceMeter`).
  */
 
-const SHOWN: ReadonlySet<VoiceActivity['phase']> = new Set(['recording', 'transcribing', 'error', 'silent', 'too-short']);
+const SHOWN: ReadonlySet<VoiceActivity['phase']> = new Set(['recording', 'transcribing', 'error', 'silent', 'garbled', 'too-short']);
 /** How long a "did not hear that" / failure line stays before the overlay steps aside. */
 const NOTICE_MS = 2600;
 
@@ -49,7 +49,7 @@ export function ListeningOverlay({ vault, avatar, name, mode }: {
   }), [vault]);
 
   // A failure or a silent take is said, then the overlay steps aside.
-  const failing = act?.phase === 'error' || act?.phase === 'silent' || act?.phase === 'too-short';
+  const failing = act?.phase === 'error' || act?.phase === 'silent' || act?.phase === 'garbled' || act?.phase === 'too-short';
   useEffect(() => {
     if (!failing) { setNotice(false); return; }
     setNotice(true);
@@ -87,6 +87,10 @@ export function ListeningOverlay({ vault, avatar, name, mode }: {
   } else if (act.phase === 'error') {
     title = t('voice.overlay.failed');
     sub = t('voice.note.error');
+  } else if (act.phase === 'garbled') {
+    // Understood by nobody, twice, and nothing was sent: the owner is asked to say it again.
+    title = t('voice.note.garbled');
+    sub = '';
   } else if (act.phase === 'too-short') {
     // A tap: one word, and the orb nudges (notch.css) — not a second line telling the owner off.
     title = t('voice.note.tap');

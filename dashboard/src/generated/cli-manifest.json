@@ -4112,6 +4112,22 @@
       ]
     },
     {
+      "path": "voice",
+      "desc": "Dictation from inside a chat: retranscribe a voice message that reads as nonsense (only from a dreamcontext chat)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "voice retry",
+      "desc": "Transcribe a dictated message again, once, from the same audio (its <voice-take ref>); omit ref for this chat's latest take",
+      "args": [
+        "[ref]"
+      ],
+      "valueFlags": [
+        "--language"
+      ]
+    },
+    {
       "path": "whiteboard",
       "desc": "Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web, wiki)",
       "args": [],

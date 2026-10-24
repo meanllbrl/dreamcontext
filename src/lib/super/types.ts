@@ -1037,7 +1037,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 10;
+export const SUPER_BRIEF_REV = 11;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -1080,7 +1080,9 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
 export const SUPER_VOICE_SECTION = `## Voice
 Only a message carrying an \`<owner-voice>\` block is read aloud: answer it in one or two short
 sentences, any detail on a card. Every other message, typed or dictated, is only read on screen:
-give it your usual reply, as long as it needs.`;
+give it your usual reply, as long as it needs.
+A dictated \`<voice-take ref=…>\` message is nonsense: \`dreamcontext voice retry <ref>\`
+once (\`--language <code>\`), act only on sensible text, else ask him to say it again.`;
 
 /** Rides on a spoken owner message to the super agent (a second block, never stored). */
 export const OWNER_VOICE_TEXT = '<owner-voice> The owner spoke this message; your reply is read aloud. Answer in one or two short spoken sentences; put any detail on a card. </owner-voice>';

@@ -1334,6 +1334,11 @@ export function Composer({
   /** The next commit is a push-to-talk take sent untouched: it arms the read-aloud with the
    *  message it actually sends. Consumed by that commit, whatever becomes of it. */
   const spokenRef = useRef(false);
+  /** The dictated take the draft IS, word for word: sent unchanged, its frame names the take
+   *  (`voiceTake`) so the agent can retranscribe it. Any edit and the text no longer matches. */
+  const voiceTakeRef = useRef<{ text: string; ref: string } | null>(null);
+  // A respawned session (an account switch) carries no take from the one before.
+  useEffect(() => { voiceTakeRef.current = null; }, [session]);
   const [awaitingUpload, setAwaitingUpload] = useState(false);
 
   /** `auto` — ⏎ and the ↑ button: send, or steer into the running turn.
@@ -1441,7 +1446,7 @@ export function Composer({
    * (owner, 2026-09-27: the correction pass is gone; whisper is primed with the project's own
    * vocabulary instead, which is how Handy gets the same words right with the same model).
    */
-  const onTranscript = useCallback((text: string) => {
+  const onTranscript = useCallback((text: string, take?: string) => {
     const typed = liveRef.current.draft;
     // AC3f: an async transcript NEVER overwrites what the owner typed while it was in flight.
     // The busy guard stops a second TAKE, but it cannot stop a keyboard, so the arriving text
@@ -1452,6 +1457,7 @@ export function Composer({
     const next = untouched ? text : `${typed.trimEnd()} ${text}`.trim();
     setDraft(next);
     session.syncDraft(next);
+    voiceTakeRef.current = untouched && take ? { text: next, ref: take } : null;
     if (!untouched) {
       setVoiceNotice(ADDED_TO_DRAFT_NOTICE);
       return;
@@ -1478,7 +1484,7 @@ export function Composer({
     return () => { levelSubsRef.current.delete(fn); };
   }, []);
 
-  const voice = useVoiceCapture({ vault, onTranscript, onLevel, ...(phoneVoice ? { maxMs: PHONE_MAX_TAKE_MS } : {}) });
+  const voice = useVoiceCapture({ vault, onTranscript, onLevel, conv: convId, ...(phoneVoice ? { maxMs: PHONE_MAX_TAKE_MS } : {}) });
 
   // The capture state, published for a surface that draws it bigger (lib/voice/voiceActivity.ts).
   useEffect(() => {
@@ -1657,7 +1663,9 @@ export function Composer({
     const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote } = liveRef.current;
     const spoken = spokenRef.current;
     spokenRef.current = false;
+    const take = voiceTakeRef.current;
     if (!isConnected) return;
+    voiceTakeRef.current = null;
     // A `ref` chip's path is a token the server matches (`dcref:wb/<board>/<id>`), not a
     // filesystem path: it goes out as written, never shell-quoted.
     // A message about an agenda line opens with its block (the About chip), before the quote.
@@ -1728,6 +1736,8 @@ export function Composer({
     // A spoken take is armed with the message as SENT (block and quote included), so the
     // server's match on its text arms the read-aloud.
     if (spoken) session.armSpoken?.(message);
+    // The dictated take, only when the draft is still exactly what was heard.
+    if (take && take.text === text) session.armVoiceTake?.(message, take.ref);
     if (mode === 'queue') session.enqueue(message);
     else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
     else if (session.send(message) === false) return;
@@ -2251,14 +2261,21 @@ export function Composer({
             (`data-rest`); the phone's mic needs no caption. */}
         {voiceEnabled && !voiceNotice && voice.state !== 'error' && voice.state !== 'unconfigured'
           && !(phoneVoice && voice.state === 'idle') && (
-          <span className="chat-cmp-voice-note is-idle" data-rest={voice.state === 'idle' ? '' : undefined}>
+          <span className="chat-cmp-voice-note is-idle" data-rest={voice.state === 'idle' ? '' : undefined} data-garbled={voice.state === 'garbled' ? '' : undefined}
+            title={voice.state === 'garbled' && voice.heard ? voice.heard : undefined}>
             {voice.state === 'recording' ? t('voice.note.listening')
               : voice.state === 'transcribing'
                 ? (voice.attempt > 0 ? t('voice.note.retry').replace('{n}', String(voice.attempt)).replace('{max}', String(STT_RETRIES)) : t('voice.note.transcribing'))
                 : voice.state === 'too-short' ? t('voice.note.tap')
                   : voice.state === 'silent' ? t('voice.note.silent')
-                    : t('voice.note.rest').replace('{key}', hotkeyLabel(pushToTalk))}
+                    : voice.state === 'garbled' ? t('voice.note.garbled')
+                      : t('voice.note.rest').replace('{key}', hotkeyLabel(pushToTalk))}
           </span>
+        )}
+        {/* What whisper made of a take nobody could understand: dimmed, plain text (it is the
+            model's output), and never sent. */}
+        {voiceEnabled && !voiceNotice && voice.state === 'garbled' && voice.heard && (
+          <span className="chat-cmp-voice-heard" title={voice.heard}>{voice.heard}</span>
         )}
         {voiceEnabled && (voiceNotice || voice.state === 'error' || voice.state === 'unconfigured') && (
           // Said in the row rather than only in a tooltip: a take that was refused looks
@@ -2294,6 +2311,7 @@ export function Composer({
                 : voice.state === 'transcribing' ? 'Transcribing…'
                       : voice.state === 'too-short' ? 'Hold the button while you speak.'
                         : voice.state === 'silent' ? 'Nothing was heard in that take.'
+                          : voice.state === 'garbled' ? 'That take could not be understood, so nothing was sent. Say it again.'
                           : voice.state === 'unconfigured' ? (voice.error || 'Dictation is not installed — install it in Settings → Voice.')
                             : voice.state === 'error' ? (voice.error || 'That take did not go through.')
                               : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'

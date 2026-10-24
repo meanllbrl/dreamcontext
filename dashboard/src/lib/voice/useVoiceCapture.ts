@@ -71,6 +71,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { wavFromTake, TARGET_SAMPLE_RATE } from './wavEncoder';
 import { turnTrace } from './turnTrace';
+import { unlock as unlockCue, play as playCue } from './cuePlayer';
 import {
   beginNativeTake, endNativeTake, cancelNativeTake, onNativeLevel, probeNativeMic, nativeMicReady,
 } from './nativeMic';
@@ -279,6 +280,8 @@ export type CaptureState =
   | 'transcribing'
   | 'too-short'
   | 'silent'
+  /** The Mac could not understand the take, twice, and sent nothing ("Anlayamadım"). */
+  | 'garbled'
   | 'error'
   | 'unconfigured';
 
@@ -315,6 +318,8 @@ export interface VoiceCapture {
   busy: boolean;
   /** What went wrong, in the owner's terms. Never an upstream message. */
   error: string;
+  /** What whisper made of a `garbled` take — shown dimmed, as plain text, never sent. */
+  heard: string;
   start: () => void;
   stop: () => void;
 }
@@ -329,8 +334,11 @@ export const PHONE_MAX_TAKE_MS = 115_000;
 export interface VoiceCaptureOptions {
   /** The vault this take belongs to — `/stt` is vault-scoped. */
   vault: string | null;
-  /** Called with a non-empty transcript. Never called for a rejected or empty take. */
-  onTranscript: (text: string) => void;
+  /** Called with a non-empty transcript and its take ref (when the server kept one). Never
+   *  called for a rejected, empty or garbled take. */
+  onTranscript: (text: string, take?: string) => void;
+  /** The conversation the take is dictated into: one of the server's language-context signals. */
+  conv?: string | null;
   /**
    * The live input level (RMS, 0..1), roughly every 21 ms while a take is recording.
    *
@@ -343,7 +351,7 @@ export interface VoiceCaptureOptions {
   maxMs?: number;
 }
 
-export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCaptureOptions): VoiceCapture {
+export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: VoiceCaptureOptions): VoiceCapture {
   /** Read by the recording tick; `stopRef` is the stop below, which the tick cannot name yet. */
   const maxMsRef = useRef(maxMs);
   maxMsRef.current = maxMs;
@@ -355,6 +363,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCa
   onLevelRef.current = onLevel;
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
+  const [heard, setHeard] = useState('');
   const [attempt, setAttempt] = useState(0);
 
   const streamRef = useRef<MediaStream | null>(null);
@@ -458,19 +467,31 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCa
         if (takeRef.current !== take) return;          // unmounted or superseded meanwhile
         setAttempt(n);
         let status: number | null = null;
-        let body: { text?: string; error?: string; message?: string } = {};
+        let body: {
+          text?: string; error?: string; message?: string; take?: string;
+          garbled?: boolean; heard?: string; cue?: { b64?: string };
+        } = {};
         try {
           const res = await fetch('/api/agent/voice/stt', {
             method: 'POST',
             headers: {
               'Content-Type': 'audio/wav',
               ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}),
-              ...(meta ? { 'X-Dreamcontext-Take': JSON.stringify({ ...meta, attempt: n }) } : {}),
+              ...(meta ? { 'X-Dreamcontext-Take': JSON.stringify({ ...meta, attempt: n, ...takeContext(conv) }) } : {}),
             },
             body: bytes,
           });
           status = res.status;
           body = await res.json().catch(() => ({})) as typeof body;
+          if (res.ok && body.garbled === true) {
+            // Understood by nobody, twice: NOTHING reaches the composer and nothing is sent.
+            // The notice says so, and the phone says it aloud (owner, 2026-10-24).
+            turnTrace.drop(vault, 'silent');
+            setHeard(typeof body.heard === 'string' ? body.heard : '');
+            setState('garbled');
+            if (typeof body.cue?.b64 === 'string') void playCue(body.cue.b64);
+            return;
+          }
           if (res.ok) {
             const text = (body.text || '').trim();
             if (!text) {
@@ -482,7 +503,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCa
             turnTrace.mark(vault, 'stt');
             turnTrace.sttAttempts(vault, n + 1);
             setState('idle');
-            onTranscript(text);
+            onTranscript(text, typeof body.take === 'string' ? body.take : undefined);
             return;
           }
         } catch {
@@ -507,7 +528,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCa
       inFlightRef.current = false;
       phaseRef.current = 'idle';
     }
-  }, [vault, onTranscript]);
+  }, [vault, onTranscript, conv]);
 
   /**
    * Close the tape and decide what happens to it. Called from `stop()` — there is no recorder
@@ -665,9 +686,13 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCa
     // up overwriting something the owner typed by hand while waiting (AC3f).
     if (inFlightRef.current) return;
     inFlightRef.current = true;
+    // The cue's context, inside the gesture and before the native path returns early: by the
+    // time a take comes back garbled the gesture is long gone (`cuePlayer.ts`).
+    unlockCue();
     const take = ++takeRef.current;
     phaseRef.current = 'opening';
     setError('');
+    setHeard('');
     setElapsed(0);
     peakRef.current = 0;
     floorRef.current = Infinity;
@@ -864,7 +889,16 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs }: VoiceCa
     elapsed,
     busy: state === 'recording' || state === 'transcribing',
     error,
+    heard,
     start,
     stop,
   };
+}
+
+/** The language-context half of the take header: the conversation (shape-checked again by the
+ *  server) and the device's UI language — the OS language the owner reads, which says more
+ *  about what they speak than the app's own, English-by-default locale. */
+function takeContext(conv: string | null | undefined): { conv?: string; ui?: string } {
+  const ui = typeof navigator !== 'undefined' ? navigator.language : '';
+  return { ...(conv && /^[\w-]{1,64}$/.test(conv) ? { conv } : {}), ...(ui ? { ui } : {}) };
 }

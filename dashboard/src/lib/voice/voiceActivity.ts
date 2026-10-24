@@ -11,7 +11,7 @@
  * Keyed by vault, so the notch only listens to its own `__assistant__` composer.
  */
 
-export type VoicePhase = 'idle' | 'recording' | 'transcribing' | 'too-short' | 'silent' | 'error' | 'unconfigured';
+export type VoicePhase = 'idle' | 'recording' | 'transcribing' | 'too-short' | 'silent' | 'garbled' | 'error' | 'unconfigured';
 
 export interface VoiceActivity {
   vault: string;

@@ -373,9 +373,15 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * characters), owner-asked: a Basic chat answered 'planla' with Claude's native plan mode;
    * the deny flag removes the tool, this section says where the request goes instead.
    * Actual 13,605; 13,750 keeps ~145 of headroom.
+   *
+   * 13750 -> 14150 on 2026-10-24, a RAISE for 'A dictated message' (402 characters), owner-asked
+   * (task sesli-giris-bozuk…, D5): a dictated message carries `<voice-take ref>`, and an agent
+   * that finds it garbled retries the SAME audio once (`dreamcontext voice retry`), then asks.
+   * This file is the only way a chat agent learns the verb exists. Actual 14,007; 14,150 keeps
+   * ~140 of headroom.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(13750);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14150);
   });
 
   /**
@@ -386,7 +392,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 13605)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14007)).toBeLessThanOrEqual(20);
   });
 
   /**

@@ -607,6 +607,26 @@
    under everything else on purpose — it must be readable and must never compete with the
    composer itself, so it is quiet until the take starts. */
 .chat-cmp-voice-note.is-idle { opacity: 0.75; }
+/* A garbled take's "Anlayamadım" stays at full strength: it is the one note that asks for
+   something (say it again). What was heard sits beside it, dimmed and cut short. */
+.chat-cmp-voice-note.is-idle[data-garbled] { opacity: 1; color: var(--color-text-secondary); max-width: 34ch; flex-shrink: 0; }
+.chat-cmp-voice-heard {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-style: italic;
+  /* Dimmed by the tertiary token alone, which is AA at full opacity; an opacity on top was not. */
+  color: var(--color-text-tertiary);
+}
+/* A phone-width composer has room for the notice OR what was heard, and the notice is the one
+   that asks for something; the heard text stays on the notice's title. */
+@media (max-width: 600px) {
+  .chat-cmp-voice-heard { display: none; }
+}
 .chat-cmp-voice-note.is-idle:has(+ *) { opacity: 0.75; }
 .chat-cmp-voice-op {
   margin: 0 4px;

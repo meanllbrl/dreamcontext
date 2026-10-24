@@ -783,6 +783,9 @@ export class SpeechQueue {
    * documents. By the time the agent's first sentence arrives we are several async hops from
    * a gesture, so the mic-press handler calls this SYNCHRONOUSLY.
    */
+  /** The playback context, once unlocked — lent to the "Anlayamadım" cue (`cuePlayer.ts`). */
+  get audioContext(): AudioContext | null { return this.ctx; }
+
   unlock(): void {
     this.openContext();
     void this.ctx?.resume().catch(() => { /* `ensureContext` tries again at play time */ });

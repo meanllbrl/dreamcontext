@@ -32,6 +32,8 @@ import { homedir, cpus } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { claimOwnedPort } from '../../server/owned-ports.js';
+import { normalizeLanguage } from './languageContext.js';
+import type { WhisperSegment } from './garble.js';
 
 /** Binaries that speak whisper.cpp's server protocol, in the order they are looked for. */
 const SERVER_BINARIES = ['whisper-server'];
@@ -162,8 +164,12 @@ interface Running {
 let running: Running | null = null;
 
 /** Port chosen once and reused. High and fixed so a stray process is identifiable in `lsof`;
- *  bound to loopback by whisper-server's own default. */
-const PORT = 47_113;
+ *  bound to loopback by whisper-server's own default. `DREAMCONTEXT_WHISPER_PORT` moves it, for a
+ *  verify run whose stand-in must not collide with the owner's real server on this one. */
+const PORT = (() => {
+  const v = Number(process.env.DREAMCONTEXT_WHISPER_PORT);
+  return Number.isInteger(v) && v >= 1024 && v <= 65_535 ? v : 47_113;
+})();
 
 /** Give up on a model that will not load. A cold `large-v3-turbo` takes ~5s on first start. */
 const READY_TIMEOUT_MS = 60_000;
@@ -187,31 +193,13 @@ export const BEAM_SIZE = 5;
 export const BEST_OF = 5;
 
 /**
- * STICKY LANGUAGE DETECTION, and why it is worth the machinery.
+ * NO STICKY LANGUAGE ANY MORE (task sesli-giris-bozuk…, 2026-10-24).
  *
- * Measured on the owner's machine, same model, same take: `language=auto` costs ~1.75s and a
- * pinned language ~0.88s. Detection is a whole extra pass, and it runs on EVERY take, so the
- * mode's headline latency was doubled by a hint nobody asked for.
- *
- * So the first take detects, and the ones after it reuse what was detected. The window is
- * short and refreshed by use: switch language between two sentences and the second one is
- * transcribed as the first's language — a bounded, recoverable wrong, against a permanent
- * second on every take. An empty transcript drops the memory immediately, because that is
- * what a wrongly-pinned language most often produces.
+ * This module used to remember the language `auto` detected and pin it for ten minutes. On the
+ * owner's phone that memory pinned an Icelandic MISdetection, and the next take came back in
+ * Icelandic spelling too. The caller now decides the language from context
+ * (`languageContext.ts`) and passes it in; this module only transcribes what it is told.
  */
-const DETECTED_TTL_MS = 10 * 60 * 1000;
-let detected: { language: string; at: number } | null = null;
-
-/** Forget the detected language — a wrong pin must not outlive the take that revealed it. */
-export function forgetDetectedLanguage(): void { detected = null; }
-
-/** What to send as `language` for this take: the pin, the memory, or `auto` to detect. */
-export function languageFor(pinned: string | undefined, now: number = Date.now()): string {
-  const explicit = (pinned || '').trim();
-  if (explicit && explicit !== 'auto') return explicit;
-  if (detected && now - detected.at < DETECTED_TTL_MS) return detected.language;
-  return 'auto';
-}
 
 async function waitForReady(port: number, deadline: number): Promise<boolean> {
   for (;;) {
@@ -232,6 +220,11 @@ async function waitForReady(port: number, deadline: number): Promise<boolean> {
  * The child is detached from stdio and killed with the process. A crash simply leaves
  * `running` null, so the NEXT take starts a fresh one — one retry per take, never a loop.
  */
+/** The server's argument list. Exported for the test that pins `-nlp` in it. */
+export function serverArgs(install: WhisperInstall, port: number, threads: number): string[] {
+  return ['-m', install.model, '--port', String(port), '-t', String(threads), '-nlp'];
+}
+
 function ensureServer(install: WhisperInstall): Running {
   if (running && running.child.exitCode === null && !running.child.killed) return running;
 
@@ -239,7 +232,11 @@ function ensureServer(install: WhisperInstall): Running {
   // Beam search multiplies the decode work, so the threads are what keep the added search
   // inside the latency budget. One reserved core: this runs while the owner is using the app.
   const threads = Math.max(2, Math.min(8, (cpus()?.length ?? 4) - 1));
-  const child = spawn(install.bin, ['-m', install.model, '--port', String(PORT), '-t', String(threads)], {
+  // `-nlp`: no language-probability map. The server otherwise computes it on EVERY
+  // `verbose_json` request (+650-800 ms measured 2026-10-24); with it off, verbose costs the
+  // same as plain json and still carries each segment's `avg_logprob` and `no_speech_prob`,
+  // which `garble.ts` reads. The probability itself is useless (0.97-0.99 on misdetections).
+  const child = spawn(install.bin, serverArgs(install, PORT, threads), {
     stdio: 'ignore',
     detached: false,
   });
@@ -274,7 +271,6 @@ export function warmWhisper(): { model: string } | null {
 
 /** Stop the warm server. Called when the engine is switched off in Settings, and on exit. */
 export function stopWhisperServer(): void {
-  forgetDetectedLanguage();
   if (!running) return;
   try { running.child.kill(); } catch { /* already gone */ }
   running = null;
@@ -282,16 +278,32 @@ export function stopWhisperServer(): void {
 
 process.once('exit', stopWhisperServer);
 
+/** One pass's answer: the text, and what `garble.ts` needs to judge it. */
+export interface LocalTranscript {
+  text: string;
+  ms: number;
+  model: string;
+  /** The language the pass was decoded in: the pin, or the detected one (normalized), or null. */
+  language: string | null;
+  /** True when the language was pinned rather than detected. */
+  forced: boolean;
+  segments: WhisperSegment[];
+}
+
 /**
- * Transcribe a WAV locally, or return null so the caller can fall back to the cloud.
+ * Transcribe a WAV locally, or return null so the caller can report a failure.
  *
  * `null` covers every "not here, not ready, not working" case on purpose: this path is an
  * optimisation, and an optimisation that can fail loudly is worse than no optimisation.
+ *
+ * `language` is a normalized code (`languageContext.ts`) or `auto`; anything else is `auto`.
+ * `primer: false` and `temperature` are the loop retry's: the same language, no prompt to copy,
+ * a little sampling to break the loop.
  */
 export async function transcribeLocal(
   wav: Buffer,
-  opts: { language?: string; install?: WhisperInstall | null; lexicon?: string } = {},
-): Promise<{ text: string; ms: number; model: string } | null> {
+  opts: { language?: string; install?: WhisperInstall | null; lexicon?: string; primer?: boolean; temperature?: number } = {},
+): Promise<LocalTranscript | null> {
   const install = opts.install !== undefined ? opts.install : findWhisper();
   if (!install) return null;
 
@@ -302,14 +314,15 @@ export async function transcribeLocal(
     return null;
   }
 
-  const language = languageFor(opts.language);
+  const pinned = normalizeLanguage(opts.language);
+  const language = pinned ?? 'auto';
   try {
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), 'take.wav');
-    // `verbose_json` only while DETECTING: it is the response that names the language it
-    // chose, and naming it is what lets the next take skip the detection pass entirely.
-    form.append('response_format', language === 'auto' ? 'verbose_json' : 'json');
-    form.append('temperature', '0');
+    // `verbose_json` on EVERY pass: its segments carry the decoding confidence the garble
+    // score reads, and with the server's `-nlp` it costs the same as plain json.
+    form.append('response_format', 'verbose_json');
+    form.append('temperature', String(opts.temperature ?? 0));
     // ── BEAM SEARCH, because greedy is whisper-server's default and it is not what the owner
     // runs by hand ────────────────────────────────────────────────────────────────────────
     // `whisper-server --help` reports `--beam-size [-1]`, i.e. greedy decoding with
@@ -333,12 +346,13 @@ export async function transcribeLocal(
     //   • It must be a PUNCTUATED SENTENCE. Whisper copies the prompt's style, so a bare list
     //     of tokens came back as transcripts with no commas and no capitals — and this app
     //     then splits speech on exactly that punctuation.
-    if (opts.lexicon && language !== 'auto') form.append('prompt', primerFrom(opts.lexicon));
+    if (opts.lexicon && pinned && opts.primer !== false) form.append('prompt', primerFrom(opts.lexicon));
     // `auto` IS SENT EXPLICITLY, and that is the opposite of the cloud path's rule. Omitting
     // the field here does not mean "detect" — whisper.cpp's default is ENGLISH, and a Turkish
     // take then comes back transliterated and shouting: "DREAM-JON TEXT TASKINI GUNCELLE"
     // where `language=auto` gives "Dremontext Taskını güncelle". Measured, twice, because the
-    // first reading looked like the model was simply bad.
+    // first reading looked like the model was simply bad. A pin is the table's code, which
+    // whisper.cpp accepts as readily as its name.
     form.append('language', language);
 
     const res = await fetch(`http://127.0.0.1:${server.port}/inference`, {
@@ -347,18 +361,28 @@ export async function transcribeLocal(
       signal: AbortSignal.timeout(inferenceTimeoutMs(wav.length)),
     });
     if (!res.ok) return null;
-    const body = (await res.json()) as { text?: unknown; language?: unknown };
+    const body = (await res.json()) as { text?: unknown; language?: unknown; segments?: unknown };
     const text = typeof body?.text === 'string' ? cleanWhisperText(body.text) : '';
-    // whisper answers with the language's NAME ("turkish"), and accepts that same name back
-    // as a pin — verified against the server, so there is no mapping table to drift.
-    if (language === 'auto' && typeof body?.language === 'string' && body.language && text) {
-      detected = { language: body.language, at: Date.now() };
-    }
-    if (!text) forgetDetectedLanguage();
-    return { text, ms: Date.now() - started, model: install.modelName };
+    const segments: WhisperSegment[] = Array.isArray(body?.segments)
+      ? body.segments.filter((s): s is Record<string, unknown> => !!s && typeof s === 'object').map((s) => ({
+        start: num(s.start), end: num(s.end), avg_logprob: num(s.avg_logprob), no_speech_prob: num(s.no_speech_prob),
+      }))
+      : [];
+    return {
+      text,
+      ms: Date.now() - started,
+      model: install.modelName,
+      language: pinned ?? normalizeLanguage(body?.language),
+      forced: !!pinned,
+      segments,
+    };
   } catch {
     return null;
   }
+}
+
+function num(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
 /**

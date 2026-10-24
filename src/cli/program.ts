@@ -35,6 +35,7 @@ import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerAppCommand } from './commands/app.js';
 import { registerAssistantCommand } from './commands/assistant.js';
 import { registerWindowCommand } from './commands/window.js';
+import { registerVoiceCommand } from './commands/voice.js';
 import { registerSuperCommand } from './commands/super.js';
 import { registerTaxonomyCommand } from './commands/taxonomy.js';
 import { registerVaultsCommand } from './commands/vaults.js';
@@ -155,6 +156,7 @@ export function createProgram(): Command {
   registerAppCommand(program);
   registerAssistantCommand(program);
   registerWindowCommand(program);
+  registerVoiceCommand(program);
   registerSuperCommand(program);
   registerSnapshotCommand(program);
   registerSleepCommand(program);

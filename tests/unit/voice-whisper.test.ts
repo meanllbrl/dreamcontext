@@ -13,7 +13,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  findWhisper, modelName, cleanWhisperText, languageFor, forgetDetectedLanguage,
+  findWhisper, modelName, cleanWhisperText, serverArgs,
   transcribeLocal, primerFrom,
 } from '../../src/lib/voice/whisper.js';
 
@@ -21,12 +21,10 @@ let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'dc-whisper-'));
-  forgetDetectedLanguage();
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
   vi.unstubAllGlobals();
-  forgetDetectedLanguage();
 });
 
 /** A plausible install: a binary and a model file big enough to be real. */
@@ -57,53 +55,63 @@ describe('finding an install', () => {
   });
 });
 
-describe('which language is sent', () => {
-  it('sends the PIN when Settings has one', () => {
-    expect(languageFor('tr')).toBe('tr');
-  });
-
-  it('asks for detection when there is nothing pinned and nothing remembered', () => {
-    // Not "sends no field": whisper.cpp's default is ENGLISH, and omitting it is how a Turkish
-    // take came back transliterated and in capitals. Measured, not assumed.
-    expect(languageFor('auto')).toBe('auto');
-    expect(languageFor(undefined)).toBe('auto');
-  });
-});
-
-describe('sticky detection', () => {
-  /** A whisper-server answering with `body`, so the module's own bookkeeping can be observed
-   *  without a model. */
-  function serverAnswering(body: unknown) {
+describe('which language is sent (no memory: the caller decides, task sesli-giris…)', () => {
+  function serverAnswering(seen: Record<string, unknown>, body: unknown = { text: ' merhaba ', language: 'turkish', segments: [{ start: 0, end: 2, avg_logprob: -0.1, no_speech_prob: 0.01 }] }) {
     return vi.fn(async (url: string, init?: { body?: unknown }) => {
       if (String(url).endsWith('/inference')) {
-        return { ok: true, status: 200, json: async () => body, form: init?.body };
+        const form = init?.body as FormData;
+        for (const k of ['language', 'response_format', 'temperature', 'prompt']) seen[k] = form.get(k);
+        return { ok: true, status: 200, json: async () => body };
       }
       return { ok: true, status: 404, json: async () => ({}) };   // the readiness probe
     });
   }
 
-  it('remembers the language the first take detected, and pins it on the next', async () => {
-    // The whole point: detection is an extra pass, ~1.75s against ~0.88s once it is known.
+  it('sends a normalized pin as given, and `auto` for anything not in the table', async () => {
     const install = fakeInstall();
-    const fetchMock = serverAnswering({ text: ' merhaba ', language: 'turkish' });
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof globalThis.fetch);
+    const seen: Record<string, unknown> = {};
+    vi.stubGlobal('fetch', serverAnswering(seen) as unknown as typeof globalThis.fetch);
+    await transcribeLocal(Buffer.from('RIFF'), { language: 'Turkish', install });
+    expect(seen.language).toBe('tr');
+    await transcribeLocal(Buffer.from('RIFF'), { language: 'tr;rm -rf', install });
+    expect(seen.language).toBe('auto');
+  });
+
+  it('a detected language is NOT remembered: the next take with no pin detects again', async () => {
+    // The old 10-minute memory pinned an Icelandic misdetection onto the next take (measured
+    // 2026-10-24, takes 18-32-58 → 18-36-00).
+    const install = fakeInstall();
+    const seen: Record<string, unknown> = {};
+    vi.stubGlobal('fetch', serverAnswering(seen, { text: 'Nei þurfum það', language: 'icelandic', segments: [] }) as unknown as typeof globalThis.fetch);
     const first = await transcribeLocal(Buffer.from('RIFF'), { language: 'auto', install });
-    expect(first?.text).toBe('merhaba');
-    expect(languageFor('auto')).toBe('turkish');   // whisper takes its own name back as a pin
+    expect(first?.language).toBe('is');
+    expect(first?.forced).toBe(false);
+    await transcribeLocal(Buffer.from('RIFF'), { install });
+    expect(seen.language).toBe('auto');
   });
 
-  it('FORGETS it when a take comes back empty — the likeliest sign the pin was wrong', async () => {
+  it('asks for verbose_json on every pass and hands back the segments garble.ts reads', async () => {
     const install = fakeInstall();
-    vi.stubGlobal('fetch', serverAnswering({ text: ' ', language: 'turkish' }) as unknown as typeof globalThis.fetch);
-    await transcribeLocal(Buffer.from('RIFF'), { language: 'auto', install });
-    expect(languageFor('auto')).toBe('auto');
+    const seen: Record<string, unknown> = {};
+    vi.stubGlobal('fetch', serverAnswering(seen) as unknown as typeof globalThis.fetch);
+    const r = await transcribeLocal(Buffer.from('RIFF'), { language: 'tr', install });
+    expect(seen.response_format).toBe('verbose_json');
+    expect(r).toMatchObject({ text: 'merhaba', language: 'tr', forced: true });
+    expect(r?.segments[0]).toEqual({ start: 0, end: 2, avg_logprob: -0.1, no_speech_prob: 0.01 });
   });
 
-  it('never lets a remembered language override an explicit pin', async () => {
+  it('the loop retry: no primer, a little temperature', async () => {
     const install = fakeInstall();
-    vi.stubGlobal('fetch', serverAnswering({ text: 'merhaba', language: 'turkish' }) as unknown as typeof globalThis.fetch);
-    await transcribeLocal(Buffer.from('RIFF'), { language: 'auto', install });
-    expect(languageFor('en')).toBe('en');
+    const seen: Record<string, unknown> = {};
+    vi.stubGlobal('fetch', serverAnswering(seen) as unknown as typeof globalThis.fetch);
+    await transcribeLocal(Buffer.from('RIFF'), { language: 'tr', install, lexicon: 'dreamcontext', primer: false, temperature: 0.2 });
+    expect(seen.prompt).toBeNull();
+    expect(seen.temperature).toBe('0.2');
+  });
+
+  it('starts the server with -nlp (no language-probability map: verbose_json at json cost)', () => {
+    const install = fakeInstall();
+    expect(serverArgs(install, 47113, 4)).toContain('-nlp');
   });
 });
 

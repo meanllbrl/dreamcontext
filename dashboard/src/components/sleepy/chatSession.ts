@@ -2,6 +2,7 @@ import { ApiClient } from '../../api/client';
 import { SpeechQueue, type SpokenChunk, type StopReason } from '../../lib/voice/speechQueue';
 import { turnTrace } from '../../lib/voice/turnTrace';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
+import { lendContext as lendCueContext } from '../../lib/voice/cuePlayer';
 import { splitNotchCue, stripNotchCue, presentationOf, type NotchCue } from '../../lib/notchCue';
 import { splitReplyMark } from '../../lib/replyMark';
 import { contextLimitFor } from '../../lib/agentComposer';
@@ -661,6 +662,9 @@ export interface ChatSession {
   bargeInSpeech: () => void;
   /** The next message written with exactly this text was spoken (`voice: true`). */
   armSpoken: (text: string) => void;
+  /** A message written with exactly this text is the dictated take `ref`, sent unchanged:
+   *  its frame carries `voiceTake`. Optional — a host without dictation never calls it. */
+  armVoiceTake?: (text: string, ref: string) => void;
   /** When the owner last typed in this composer (epoch ms, 0 = never). */
   typedAt: () => number;
   /**
@@ -1060,12 +1064,17 @@ export function createChatSession(
   const speech = mode === 'assistant' || mode === 'super'
     ? new SpeechQueue(claudeId, undefined, undefined, { surface: mode })
     : null;
+  // Its unlocked context plays the "Anlayamadım" cue when the cue's own is still suspended.
+  const unlendCue = speech ? lendCueContext(() => speech.audioContext) : null;
   /** Super: the server said a spoken owner message is being answered (`voice_turn`), until
    *  `voice_turn_end`. Only text streamed in between is read; the client never arms it on its
    *  own (an event turn may be running when the owner speaks). */
   let voiceTurn = false;
   /** The text of the next spoken message (`armSpoken`). */
   let spokenNext: string | null = null;
+  /** Dictated messages armed with their take (`armVoiceTake`): text → ref, consumed on send.
+   *  Bounded; lives in this closure, so a pane restarted by an account switch has none. */
+  const voiceTakes = new Map<string, string>();
 
   /**
    * How many characters of each TEXT ITEM have already been handed to the speech queue,
@@ -1282,6 +1291,12 @@ export function createChatSession(
     interrupt,
     bargeInSpeech,
     armSpoken: (text: string) => { spokenNext = text.trim() || null; },
+    armVoiceTake: (text: string, ref: string) => {
+      const clean = text.trim();
+      if (!clean || !/^vt_[0-9a-f]{32}$/.test(ref)) return;
+      voiceTakes.set(clean, ref);
+      while (voiceTakes.size > 8) voiceTakes.delete(voiceTakes.keys().next().value as string);
+    },
     typedAt: () => lastTypedAt,
     onSpeaking,
     onSpokenChunk,
@@ -2354,7 +2369,11 @@ export function createChatSession(
     // which plays nothing. Sent as typed text, the server adds no `<owner-voice>` block and
     // arms no voice turn, so the reply keeps its usual length and nobody reads it aloud.
     const spoken = saidAloud && readAloudEnabled() && !isMacPhoneSurface();
-    const frame: ClientControl = spoken ? { type: 'user', text: clean, voice: true } : { type: 'user', text: clean };
+    const take = voiceTakes.get(clean);
+    voiceTakes.delete(clean);
+    const frame: ClientControl = {
+      type: 'user', text: clean, ...(spoken ? { voice: true as const } : {}), ...(take ? { voiceTake: take } : {}),
+    };
     try { ws.send(JSON.stringify(frame)); } catch { return false; }
     turnTrace.mark(vault, 'sent');
     applyAndNotify(() => {
@@ -3054,6 +3073,7 @@ export function createChatSession(
     // that owned it stopped existing.
     renderFlush.cancel();
     speech?.dispose();
+    unlendCue?.();
     dropBrowserLive(session.id);
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     clearConnectTimer();

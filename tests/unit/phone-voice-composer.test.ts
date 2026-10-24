@@ -56,7 +56,7 @@ describe('the phone composer\'s mic', () => {
   });
 
   it('the phone\'s take ends and is sent at its cap, like a release; the laptop has none (edge-cases review)', () => {
-    expect(composer).toMatch(/useVoiceCapture\(\{ vault, onTranscript, onLevel, \.\.\.\(phoneVoice \? \{ maxMs: PHONE_MAX_TAKE_MS \} : \{\}\) \}\)/);
+    expect(composer).toMatch(/useVoiceCapture\(\{ vault, onTranscript, onLevel, conv: convId, \.\.\.\(phoneVoice \? \{ maxMs: PHONE_MAX_TAKE_MS \} : \{\}\) \}\)/);
     const capture = code('dashboard/src/lib/voice/useVoiceCapture.ts');
     expect(capture).toMatch(/if \(maxMsRef\.current && ms >= maxMsRef\.current\) stopRef\.current\(\);/);
     expect(capture).toMatch(/stopRef\.current = stop;/);

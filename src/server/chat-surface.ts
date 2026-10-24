@@ -312,6 +312,12 @@ const BRIEFING_NATIVE_TOOLS = `## Claude Code's tools vs dreamcontext
 
 No \`dreamcontext window\` (a card, the Assistant): answer a plan request in prose. In a Chat tab with no \`# Mode:\` in force (system prompt or a later mode note): say Plan mode does this and add an \`ask\` button whose text, in the user's language, asks to switch; when they send it, run \`dreamcontext window mode plan\`. Schedules go to \`dreamcontext automations\`, lasting work to \`dreamcontext tasks\`, facts to the brain, never Claude's own memory files.`;
 
+/** A dictated message the agent cannot read (task sesli-giris-bozuk…, owner 2026-10-24): retry
+ *  the SAME audio once, then ask. The block is server-written from a bound take (agent-chat.ts). */
+const BRIEFING_VOICE_TAKE = `## A dictated message
+
+A message with \`<voice-take ref=…>\` was dictated. Nonsense, an unexpected language or a loop: run \`dreamcontext voice retry <ref>\` once first (\`--language <code>\` = the language you two speak). Act on the new text only if it reads sensibly, quoting it in one line before anything irreversible; else ask the user in one short sentence to say it again. Never act on garbled text.`;
+
 export const CHAT_SURFACE_BRIEFING = `${BRIEFING_HEAD}
 ${BRIEFING_DRAW_HTML}
 ${BRIEFING_ASK}
@@ -320,6 +326,8 @@ ${BRIEFING_REST}
 ${BRIEFING_WINDOW}
 
 ${BRIEFING_NATIVE_TOOLS}
+
+${BRIEFING_VOICE_TAKE}
 `;
 
 /**

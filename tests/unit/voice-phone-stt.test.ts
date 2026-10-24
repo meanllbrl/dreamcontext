@@ -16,6 +16,12 @@ import {
   PHONE_MAX_STT_BYTES, PHONE_MAX_STT_SECONDS, PHONE_STT_LIMITS, phoneSttGate, sttGate, wavSeconds,
 } from '../../src/lib/voice/limits.js';
 import { handleVoiceStt } from '../../src/server/routes/agent-voice.js';
+
+// The cue is the Mac's `say`; a unit test never spawns it (voice-cue.test.ts covers the render).
+vi.mock('../../src/lib/voice/cue.js', () => ({
+  cueAudio: vi.fn(async () => Buffer.from('RIFFcueWAVE')),
+  prerenderCue: vi.fn(),
+}));
 import { markPhoneSocket } from '../../src/server/phone-origin.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
 import { MAC_DENIED_API_ROUTES, phoneAllows, setPhoneSurfaceForTests } from '../../dashboard/src/lib/phoneSurface.js';
@@ -76,8 +82,8 @@ beforeEach(() => {
   process.env.DREAMCONTEXT_WHISPER_BIN = bin;
   process.env.DREAMCONTEXT_WHISPER_MODEL = model;
   inference = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ text: ' telefondan bir mesaj ', language: 'turkish' }) }));
-  vi.stubGlobal('fetch', (vi.fn(async (u: string) => (String(u).endsWith('/inference')
-    ? inference()
+  vi.stubGlobal('fetch', (vi.fn(async (u: string, init?: { body?: unknown }) => (String(u).endsWith('/inference')
+    ? inference(init)
     : { ok: true, status: 404, json: async () => ({}) }))) as unknown as typeof globalThis.fetch);
   vi.spyOn(console, 'info').mockImplementation(() => {});
   sttGate.reset();
@@ -179,7 +185,7 @@ describe('the route policy opens exactly one voice route (AC2)', () => {
     const others = Object.keys(ROUTE_POLICY).filter((k) => k.includes('/api/agent/voice/') && k !== 'POST /api/agent/voice/stt');
     expect(others.sort()).toEqual([
       'GET /api/agent/voice/dictation', 'GET /api/agent/voice/status', 'POST /api/agent/voice/dictation',
-      'POST /api/agent/voice/focus', 'POST /api/agent/voice/log', 'POST /api/agent/voice/tts', 'POST /api/agent/voice/warm',
+      'POST /api/agent/voice/focus', 'POST /api/agent/voice/log', 'POST /api/agent/voice/retranscribe', 'POST /api/agent/voice/tts', 'POST /api/agent/voice/warm',
       'PUT /api/agent/voice/config',
     ]);
     for (const k of others) expect(ROUTE_POLICY[k].allow).toBe(false);
@@ -225,5 +231,86 @@ describe('a long phone take (edge-cases review)', () => {
     expect(PHONE_MAX_STT_SECONDS * 1000 - PHONE_MAX_TAKE_MS).toBeGreaterThanOrEqual(3_000);
     // …and its bytes stay under the phone's body cap, so the Mac answers 413, never a reset.
     expect((PHONE_MAX_TAKE_MS / 1000) * 32_000 + 44).toBeLessThan(PHONE_MAX_STT_BYTES);
+  });
+});
+
+// ─── The retry ladder (task sesli-giris-bozuk…, AC2/AC4) ──────────────────────────────────
+
+/** A stand-in whisper: `auto` hears Icelandic at -0.7, a Turkish pin hears Turkish cleanly —
+ *  or, with `bad`, every language is weak. Records the language of each pass. */
+function standIn(langs: string[], bad = false) {
+  return vi.fn(async (init?: { body?: unknown }) => {
+    const lang = String((init?.body as FormData).get('language'));
+    langs.push(lang);
+    const body = bad
+      ? { text: lang === 'auto' ? 'Men bisverðir hens' : 'ne olja ne mitja', language: lang === 'auto' ? 'icelandic' : 'turkish', segments: [{ start: 0, end: 3, avg_logprob: -0.8, no_speech_prob: 0.05 }] }
+      : lang === 'auto'
+        ? { text: 'Nei þurfum það í skanki', language: 'icelandic', segments: [{ start: 0, end: 3, avg_logprob: -0.7, no_speech_prob: 0.02 }] }
+        : { text: 'Ne durumdayız, nasıl gidiyor?', language: 'turkish', segments: [{ start: 0, end: 3, avg_logprob: -0.08, no_speech_prob: 0.01 }] };
+    return { ok: true, status: 200, json: async () => body };
+  });
+}
+
+/** A phone request whose take header carries the page's UI language. */
+function phoneReq(ui = 'tr'): IncomingMessage {
+  const r = makeReq(wav(2), true);
+  (r.headers as Record<string, string>)['x-dreamcontext-take'] = JSON.stringify({ source: 'webkit', ui, conv: 'conv-1' });
+  return r;
+}
+
+describe('the retry ladder', () => {
+  it('Icelandic from `auto`, then a retry pinned to the context language: the Turkish text is sent, 2 passes', async () => {
+    const langs: string[] = [];
+    inference = standIn(langs);
+    const r = makeRes();
+    await handleVoiceStt(phoneReq(), r.res, {}, home);
+    expect(langs).toEqual(['auto', 'tr']);
+    expect(r.body()).toMatchObject({ text: 'Ne durumdayız, nasıl gidiyor?', quality: 'clean', language: 'tr', passes: 2 });
+    expect(r.body().take).toMatch(/^vt_[0-9a-f]{32}$/);
+    // The phone stays at one take in flight across both passes.
+    expect(phoneSttGate.state.inFlight).toBe(0);
+  });
+
+  it('both passes bad: nothing is sent — `garbled`, no `text`, what was heard, a take ref', async () => {
+    const langs: string[] = [];
+    inference = standIn(langs, true);
+    const r = makeRes();
+    await handleVoiceStt(phoneReq(), r.res, {}, home);
+    expect(langs).toHaveLength(2);
+    const body = r.body();
+    expect(body.garbled).toBe(true);
+    expect(body.text).toBeUndefined();
+    expect(typeof body.heard).toBe('string');
+    expect(body.passes).toBe(2);
+    expect(body.cue).toEqual({ mime: 'audio/wav', b64: Buffer.from('RIFFcueWAVE').toString('base64') });
+  });
+
+  it('a clean take is ONE pass, and once two clean Turkish takes exist the next is pinned (no detection)', async () => {
+    const langs: string[] = [];
+    inference = standIn(langs);
+    // Two clean takes in Turkish (each recovered by the retry), then a third.
+    await handleVoiceStt(phoneReq(), makeRes().res, {}, home);
+    await handleVoiceStt(phoneReq(), makeRes().res, {}, home);
+    langs.length = 0;
+    const r = makeRes();
+    await handleVoiceStt(phoneReq(), r.res, {}, home);
+    expect(langs).toEqual(['tr']);
+    expect(r.body()).toMatchObject({ passes: 1, quality: 'clean' });
+  });
+
+  it('the phone holds one slot for the whole ladder: a second phone take during it is refused', async () => {
+    const langs: string[] = [];
+    let release: () => void = () => {};
+    const gate = new Promise<void>((res) => { release = res; });
+    const inner = standIn(langs);
+    inference = vi.fn(async (init?: { body?: unknown }) => { await gate; return inner(init); });
+    const first = handleVoiceStt(phoneReq(), makeRes().res, {}, home);
+    await new Promise((r) => setTimeout(r, 10));
+    const second = makeRes();
+    await handleVoiceStt(phoneReq(), second.res, {}, home);
+    expect(second.status()).toBe(429);
+    release();
+    await first;
+    expect(phoneSttGate.state.inFlight).toBe(0);
   });
 });

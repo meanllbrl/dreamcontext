@@ -51,13 +51,22 @@ import {
   trimSpeechTail, SENTENCE_TAIL_MS, CLAUSE_TAIL_MS,
 } from '../../lib/voice/wav.js';
 import {
-  transcribeLocal, findWhisper, warmWhisper,
+  transcribeLocal, findWhisper, warmWhisper, type LocalTranscript,
 } from '../../lib/voice/whisper.js';
+import { score, pick, type Candidate, type Verdict } from '../../lib/voice/garble.js';
+import { contextFor, normalizeLanguage, type LanguageContext } from '../../lib/voice/languageContext.js';
+import { cueAudio, prerenderCue } from '../../lib/voice/cue.js';
+import { isLoopback } from './agent-spawn-shared.js';
+import { WINDOW_TOKEN_HEADER, channelFor, identityOf } from '../../lib/window-control.js';
+import { readFileSync } from 'node:fs';
 import { readVerbatim, verbatimRatio } from '../../lib/voice/verbatim.js';
 import { dictationState, startDictationInstall } from '../../lib/voice/dictationInstall.js';
 import { buildVoiceLexicon } from '../../lib/voice/lexicon.js';
 import { hold, release, hookExitRestore } from '../../lib/voice/audioFocus.js';
-import { logVoiceEvent, parseTakeMeta, parseTurnTrace, parseSpeechReport, keepTake } from '../../lib/voice/voiceLog.js';
+import {
+  logVoiceEvent, parseTakeMeta, parseTurnTrace, parseSpeechReport, keepTake,
+  contextTakes, findTake, latestTakeOf, TAKE_REF_RE,
+} from '../../lib/voice/voiceLog.js';
 import { readAssistantConfig, DEFAULT_ASSISTANT_CONFIG } from '../../lib/assistant/home.js';
 
 /**
@@ -239,6 +248,75 @@ export function isWav(buf: Buffer): boolean {
     && buf.toString('ascii', 8, 12) === 'WAVE';
 }
 
+// ─── The retry ladder ─────────────────────────────────────────────────────────────
+
+/** How long a garbled answer waits for its cue to render (it is pre-rendered on warm). */
+const CUE_WAIT_MS = 1500;
+
+/** `/stt`'s answer when the take is sent. The new fields are additive: an old client reads `text`. */
+export interface SttOk {
+  text: string; ms: number; engine: string; take: string;
+  quality: 'clean' | 'suspect'; language: string; passes: 1 | 2;
+}
+/** `/stt`'s answer when it is not: no `text`, so an old client drops it as silence. */
+export interface SttGarbled {
+  garbled: true; heard: string; take: string; ms: number; passes: 1 | 2;
+  cue?: { mime: 'audio/wav'; b64: string };
+}
+
+/**
+ * Transcribe a take, judge it, and retranscribe it ONCE when it is not clean (at most two
+ * passes, owner 2026-10-24). Null when whisper did not answer the first pass at all.
+ *
+ *   • Pass 1 is pinned to the context's primary language when there is one (the fast path,
+ *     ~2 s faster than detecting), else `auto`.
+ *   • Pass 2: after a LOOP, the same language with no primer at a little temperature; after an
+ *     `auto`, out-of-context or weak pass, pinned to the context language; after a weak PINNED
+ *     pass, `auto` (the owner may have switched language).
+ *   • The better pass wins by `pick`'s sort key; a garbled winner is never sent.
+ */
+export async function transcribeWithRetry(
+  wav: Buffer,
+  opts: { cfg: { sttLanguage?: string; sttLanguages?: string[] }; conv: string | null; ui?: unknown; lexicon?: string },
+): Promise<{
+  winner: Candidate<LocalTranscript>; verdict: Verdict; passes: 1 | 2; ms: number;
+  context: LanguageContext; attempts: Array<Record<string, unknown>>;
+} | null> {
+  const started = Date.now();
+  const context = contextFor({ conv: opts.conv, uiLang: opts.ui, cfg: opts.cfg, takes: contextTakes() });
+  const first = await transcribeLocal(wav, { language: context.primary ?? 'auto', lexicon: opts.lexicon });
+  if (!first) return null;
+  const candidates: Array<Candidate<LocalTranscript>> = [{ pass: first, score: score(first, context) }];
+  const s1 = candidates[0].score;
+  if (s1.verdict !== 'clean' && first.text) {
+    // This take may end in "Anlayamadım": render its cue now, alongside pass 2, rather than after
+    // it (the phone never calls /warm, so nothing may have pre-rendered it). Cached; a no-op after.
+    prerenderCue(context.primary ?? normalizeLanguage(opts.ui) ?? 'en');
+    const target = context.primary ?? context.set[0] ?? normalizeLanguage(opts.ui);
+    let second: LocalTranscript | null = null;
+    if (s1.loop) {
+      second = await transcribeLocal(wav, { language: first.language ?? 'auto', lexicon: opts.lexicon, primer: false, temperature: 0.2 });
+    } else if ((!first.forced || !s1.inContext) && target && target !== (first.forced ? first.language : null)) {
+      second = await transcribeLocal(wav, { language: target, lexicon: opts.lexicon });
+    } else if (first.forced) {
+      second = await transcribeLocal(wav, { language: 'auto', lexicon: opts.lexicon });
+    }
+    if (second) candidates.push({ pass: second, score: score(second, context) });
+  }
+  const { winner, verdict } = pick(candidates);
+  return {
+    winner,
+    verdict,
+    passes: candidates.length as 1 | 2,
+    ms: Date.now() - started,
+    context,
+    attempts: candidates.map((c) => ({
+      language: c.pass.language, forced: c.pass.forced, verdict: c.score.verdict, reasons: c.score.reasons,
+      logprob: c.score.logprob === null ? null : Number(c.score.logprob.toFixed(3)), ms: c.pass.ms,
+    })),
+  };
+}
+
 // ─── POST /api/agent/voice/stt ────────────────────────────────────────────────
 
 export async function handleVoiceStt(
@@ -306,19 +384,50 @@ export async function handleVoiceStt(
     // DICTATION IS LOCAL, AND ONLY LOCAL (owner, 2026-09-27: "dikte sadece yerel olsun",
     // "her konuştuğumda maliyet olsun istemiyorum"). No take is ever sent to an API: a take
     // the local model could not answer is reported, never re-sent somewhere that bills.
-    const local = await transcribeLocal(audioEarly, {
-      language: cfgEarly.sttLanguage,
+    const meta = parseTakeMeta(req.headers['x-dreamcontext-take']);
+    const ladder = await transcribeWithRetry(audioEarly, {
+      cfg: cfgEarly,
+      conv: typeof meta.conv === 'string' ? meta.conv : null,
+      ui: meta.ui,
       // The vault's own vocabulary, biasing the decoder toward the words this project
       // actually uses. Vault-scoped, which is why `/stt` is classified vault-SCOPED.
       lexicon: buildVoiceLexicon(contextRoot),
     });
-    const meta = parseTakeMeta(req.headers['x-dreamcontext-take']);
-    if (local) {
-      console.info(`[voice:stt] local ${local.model} ${local.ms}ms`);
-      const record = { kind: 'stt', ...meta, bytes: audioEarly.length, engine: `local:${local.model}`, ms: local.ms, chars: local.text.length };
+    if (ladder) {
+      const { winner, verdict, passes, ms, context, attempts } = ladder;
+      const engine = `local:${winner.pass.model}`;
+      console.info(`[voice:stt] local ${winner.pass.model} ${ms}ms ${verdict} (${passes} pass${passes > 1 ? 'es' : ''})`);
+      const record = {
+        kind: 'stt', ...meta, bytes: audioEarly.length, engine, ms, chars: winner.pass.text.length,
+        quality: verdict, passes, language: winner.pass.language ?? 'auto', attempts,
+      };
       logVoiceEvent(record);
-      keepTake(audioEarly, { ...record, language: cfgEarly.sttLanguage || 'auto', text: local.text });
-      sendJson(res, 200, { text: local.text, ms: local.ms, engine: `local:${local.model}` });
+      const take = keepTake(audioEarly, {
+        ...record,
+        contextRoot,
+        primary: context.primary,
+        // A garbled take feeds no context and binds to no message; its text stays for replay.
+        text: winner.pass.text,
+      }) ?? '';
+      if (verdict === 'garbled') {
+        // NOTHING IS SENT (owner, 2026-10-24): the page shows "Anlayamadım" and plays the cue.
+        // `heard` is what whisper made of it, for the dimmed line under the notice.
+        // At most CUE_WAIT_MS inside the gate: a cold render goes on in the background and is
+        // cached for the next garbled take; this one shows the written notice alone.
+        const cue = await Promise.race([
+          cueAudio(context.primary ?? meta.ui ?? 'en').catch(() => null),
+          new Promise<null>((r) => { const t = setTimeout(() => r(null), CUE_WAIT_MS); t.unref?.(); }),
+        ]);
+        const body: SttGarbled = { garbled: true, heard: winner.pass.text.slice(0, 200), take, ms, passes };
+        if (cue && cue.length < 400_000) body.cue = { mime: 'audio/wav', b64: cue.toString('base64') };
+        sendJson(res, 200, body);
+        return;
+      }
+      const ok: SttOk = {
+        text: winner.pass.text, ms, engine, take, quality: verdict,
+        language: winner.pass.language ?? '', passes,
+      };
+      sendJson(res, 200, ok);
       return;
     }
     logVoiceEvent({ kind: 'stt', ...meta, bytes: audioEarly.length, failed: findWhisper() ? 'stt_failed' : 'stt_unconfigured' });
@@ -335,6 +444,101 @@ export async function handleVoiceStt(
   } finally {
     sttGate.release();
     if (phone) phoneSttGate.release();
+  }
+}
+
+// ─── POST /api/agent/voice/retranscribe ───────────────────────────────────────────────────
+
+/** Retranscribes per take, and per session per minute. */
+export const RETRANSCRIBE_PER_TAKE = 2;
+export const RETRANSCRIBE_PER_MINUTE = 6;
+const retranscribed = new Map<string, number>();
+const sessionMinute = new Map<string, number[]>();
+
+/** Forget the caps (tests). */
+export function resetRetranscribeCaps(): void { retranscribed.clear(); sessionMinute.clear(); }
+
+/**
+ * A chat's agent asks for ONE more pass over a take it received (`dreamcontext voice retry`),
+ * forced to the language the conversation is in — the second layer behind the `/stt` ladder
+ * (owner, 2026-10-24: "önce dene, olmazsa sor").
+ *
+ * WHO MAY: only the chat process holding a live window token, from this machine, never over
+ * the phone's tunnel (refused here AND in the route policy). WHAT: only a take bound to that
+ * chat (`session`) in that chat's own vault; the lexicon comes from the token's vault, never
+ * from a `?vault=`. HOW OFTEN: {@link RETRANSCRIBE_PER_TAKE} per take and
+ * {@link RETRANSCRIBE_PER_MINUTE} per session a minute, counted before the pass starts.
+ */
+export async function handleVoiceRetranscribe(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (isPhoneSocket(req) || !isLoopback(req)) {
+    sendError(res, 403, 'local_only', 'Retranscribing a take is only possible from a chat on this machine.');
+    return;
+  }
+  const token = channelFor(req.headers[WINDOW_TOKEN_HEADER]);
+  const who = token ? identityOf(token) : null;
+  if (!who) {
+    sendError(res, 401, 'not_a_chat', 'Only an agent running in a dreamcontext chat can retranscribe its own voice takes.');
+    return;
+  }
+  const body = (await parseJsonBody(req).catch(() => null)) ?? {};
+  const rawLang = typeof body.language === 'string' ? body.language.trim() : '';
+  const forcedLang = rawLang ? normalizeLanguage(rawLang) : null;
+  if (rawLang && !forcedLang) {
+    sendError(res, 400, 'bad_language', 'That is not a language dictation knows (use a code like tr or en).');
+    return;
+  }
+  let take;
+  if (body.ref === undefined || body.ref === null || body.ref === '') {
+    const latest = latestTakeOf(who.sessionId, who.contextRoot);
+    take = latest ? findTake(latest.ref) : null;
+  } else {
+    if (typeof body.ref !== 'string' || !TAKE_REF_RE.test(body.ref)) {
+      sendError(res, 404, 'unknown_take', 'No such voice take (or it has expired).');
+      return;
+    }
+    take = findTake(body.ref);
+  }
+  if (!take) {
+    sendError(res, 404, 'unknown_take', 'No such voice take (or it has expired).');
+    return;
+  }
+  if (take.session !== who.sessionId || take.contextRoot !== who.contextRoot) {
+    sendError(res, 403, 'not_your_take', 'That voice take was not sent to this chat.');
+    return;
+  }
+  // The caps, checked and counted synchronously before anything awaits.
+  const now = Date.now();
+  const recent = (sessionMinute.get(who.sessionId) ?? []).filter((t) => now - t < 60_000);
+  if ((retranscribed.get(take.ref) ?? 0) >= RETRANSCRIBE_PER_TAKE || recent.length >= RETRANSCRIBE_PER_MINUTE) {
+    sendError(res, 429, 'retry_capped', 'This take has been retranscribed enough; ask the owner to say it again.');
+    return;
+  }
+  retranscribed.set(take.ref, (retranscribed.get(take.ref) ?? 0) + 1);
+  sessionMinute.set(who.sessionId, [...recent, now]);
+
+  const verdict = sttGate.acquire();
+  if (verdict !== 'ok') {
+    sendJson(res, 429, { error: 'stt_busy', message: 'Another recording is still being transcribed.' });
+    return;
+  }
+  try {
+    const language = forcedLang ?? take.primary ?? take.language ?? 'auto';
+    let wav: Buffer;
+    try { wav = readFileSync(take.wavPath); } catch {
+      sendError(res, 404, 'unknown_take', 'No such voice take (or it has expired).');
+      return;
+    }
+    const pass = await transcribeLocal(wav, { language, lexicon: buildVoiceLexicon(who.contextRoot) });
+    if (!pass) {
+      sendJson(res, 503, { error: 'stt_failed', message: 'Local transcription did not answer. Try again in a moment.' });
+      return;
+    }
+    const judged = score(pass, { set: pass.language ? [pass.language] : [] });
+    const quality = judged.scriptFlag ? 'garbled' : judged.verdict;
+    logVoiceEvent({ kind: 'retranscribe', language: pass.language, quality, reasons: judged.reasons, ms: pass.ms });
+    sendJson(res, 200, { ref: take.ref, text: pass.text, language: pass.language ?? language, quality, reasons: judged.reasons });
+  } finally {
+    sttGate.release();
   }
 }
 
@@ -707,6 +911,9 @@ export async function handleVoiceWarm(
     return;
   }
   const warmed = warmWhisper();
+  // The "Anlayamadım" cue for the language the next take will most likely be in, rendered now
+  // so a garbled take does not wait on `say`.
+  if (warmed) prerenderCue(contextFor({ cfg: readVoiceConfig(), takes: contextTakes() }).primary ?? 'en');
   sendJson(res, 200, { warming: warmed ? warmed.model : null });
 }
 
@@ -870,12 +1077,30 @@ export async function handleVoiceConfigPut(
     sendError(res, 400, 'bad_body', 'Expected a JSON object.');
     return;
   }
-  const patch: Record<string, string | number | boolean | null | undefined> = {};
+  const patch: Record<string, string | string[] | number | boolean | null | undefined> = {};
   // `null` clears; `undefined` (an absent field) leaves the stored value alone — so the
   // Settings card can save the voice picker without blanking a key it never rendered.
   if ('openRouterKey' in body) patch.openRouterKey = body.openRouterKey === null ? null : String(body.openRouterKey ?? '');
   if ('voice' in body) patch.voice = String(body.voice ?? '');
-  if ('sttLanguage' in body) patch.sttLanguage = String(body.sttLanguage ?? '');
+  if ('sttLanguage' in body) {
+    // `auto` or a language from the fixed table; anything else is refused, never stored.
+    const raw = String(body.sttLanguage ?? '').trim();
+    const code = normalizeLanguage(raw);
+    if (raw && raw !== 'auto' && !code) {
+      sendError(res, 400, 'bad_language', 'That is not a language dictation knows.');
+      return;
+    }
+    patch.sttLanguage = raw === 'auto' || !raw ? raw : code;
+  }
+  if ('sttLanguages' in body) {
+    // "Languages I speak": unknown entries are dropped, the rest normalized and deduplicated.
+    if (!Array.isArray(body.sttLanguages)) {
+      sendError(res, 400, 'bad_languages', 'Languages I speak is a list of language codes.');
+      return;
+    }
+    const list = body.sttLanguages;
+    patch.sttLanguages = [...new Set(list.map(normalizeLanguage).filter((l): l is string => !!l))].slice(0, 12);
+  }
   if ('speech' in body) patch.speech = Boolean(body.speech);
   if ('pushToTalkMode' in body) {
     if (body.pushToTalkMode !== 'hold' && body.pushToTalkMode !== 'toggle') {
