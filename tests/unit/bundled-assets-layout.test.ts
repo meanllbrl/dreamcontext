@@ -108,5 +108,14 @@ describe('the desktop app ships every directory the npm package does', () => {
       expect(conf.bundle.resources[`../../${dir}`], `resource for ${dir}`).toBe(dir);
     }
   });
+
+  it('names no resource that is missing from the repo (a missing one fails every bundle build)', () => {
+    const conf = JSON.parse(readFileSync(join(ROOT, 'desktop', 'src-tauri', 'tauri.conf.json'), 'utf-8')) as {
+      bundle: { resources: Record<string, string> };
+    };
+    for (const src of Object.keys(conf.bundle.resources)) {
+      expect(existsSync(join(ROOT, 'desktop', 'src-tauri', src)), `resource ${src}`).toBe(true);
+    }
+  });
 });
 

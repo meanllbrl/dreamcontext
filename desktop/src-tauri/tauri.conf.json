@@ -32,7 +32,6 @@
       "../../skill": "skill",
       "../../agents": "agents",
       "../../assets": "assets",
-      "../../cloud": "cloud",
       "../../skill-initializer": "skill-initializer",
       "../../skill-curator": "skill-curator",
       "../../skill-deep-research": "skill-deep-research",
