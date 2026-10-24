@@ -865,6 +865,9 @@ export function Composer({
   /** `refused` as last seen: a NEW refusal (a sixth ↩) shows the max notice, a remount does not. */
   const refusedSeenRef = useRef(readScratch(convId).refused ?? 0);
   const [maxNotice, setMaxNotice] = useState(0);
+  /** The row above the box: the Super view's references are chips IN the text, so they leave it.
+   *  Memoised: the row is a memo'd part and must not re-render on every keystroke. */
+  const chipRow = useMemo(() => (superView ? attachments.filter((a) => a.kind !== 'about') : attachments), [attachments, superView]);
   useEffect(() => {
     setAttachments(readScratch(convId).attachments);
     refusedSeenRef.current = readScratch(convId).refused ?? 0;
@@ -938,9 +941,11 @@ export function Composer({
       flashSeenRef.current.set(a.id, a.flash);
       flashRef(a.id);
     }
-    const pending = attachments.filter((a) => a.kind === 'about' && a.pending);
+    // Read live, not from this render: on a mount that also adopts a rewind, that effect has just
+    // re-staged the refs and rewritten the draft.
+    const pending = readScratch(convId).attachments.filter((a) => a.kind === 'about' && a.pending);
     if (!pending.length) return;
-    let next = liveRef.current.draft;
+    let next = session.getModel().draft;
     let caret = lastCaretRef.current ?? next.length;
     caret = snapSelection(next, caret, caret, caret).start;
     const fits = chipFits();
@@ -1752,7 +1757,6 @@ export function Composer({
   /** The chips in the order they stand, for the screen reader's list; the row above the box
    *  keeps everything else. */
   const srRefs = superView ? refsInOrder(draft, attachments) : [];
-  const chipRow = superView ? attachments.filter((a) => a.kind !== 'about') : attachments;
   const srListId = `${convId}-refs`;
   const refHint = trailingRef && fieldFocused
     ? (REPLY_TO_RE.test(trailingRef.text ?? '') ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder'))
@@ -2456,9 +2460,11 @@ export function Composer({
             // Keep the mirror aligned when the field scrolls (a draft past the height cap).
             onScroll={(e) => { if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop; }}
           />
-          {superView && <RefSrList id={srListId} refs={srRefs} onRemove={removeRef} />}
           </div>
         </div>
+        {/* Below the field row, not in it: reached by Tab, it shows on a line of its own and
+            never squeezes the textarea its mirror is aligned to. */}
+        {superView && <RefSrList id={srListId} refs={srRefs} onRemove={removeRef} />}
         {maxNotice > 0 && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-ref-notice">{t('super.ref.max')}</div>}
       </div>
 

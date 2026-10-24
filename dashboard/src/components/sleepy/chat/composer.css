@@ -536,6 +536,36 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+/* …until a keyboard reaches it: Tab out of the box lands on its Remove buttons, so they show,
+   with a visible ring, rather than being invisible focus stops a key could act on. A panel just
+   above the box, so the box keeps its size and its mirror stays aligned. */
+.chat-cmp-refs-sr:focus-within {
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: calc(100% + var(--space-1));
+  z-index: 2;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  white-space: normal;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: baseline;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.chat-cmp-refs-sr ul { display: contents; list-style: none; }
+.chat-cmp-refs-sr button { font: inherit; color: var(--color-text); background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0 var(--space-1); }
+.chat-cmp-refs-sr button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 
 .chat-cmp-hl-mention {
   color: transparent;

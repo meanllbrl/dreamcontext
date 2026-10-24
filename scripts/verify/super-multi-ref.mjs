@@ -284,6 +284,7 @@ const markInfo = (page) => marks(page).evaluateAll((ms) => ms.map((m) => ({ slot
 const caret = (page) => centreInput(page).evaluate((el) => [el.selectionStart, el.selectionEnd]);
 const setCaret = (page, a, b = a) => centreInput(page).evaluate((el, [x, y]) => { el.focus(); el.setSelectionRange(x, y); el.dispatchEvent(new Event('select')); }, [a, b]);
 const typeIn = async (page, text) => { await page.keyboard.type(text, { delay: 6 }); await page.waitForTimeout(80); };
+const aboutHeadCount = (t) => [...t.matchAll(/(^|\n\n)\[About agenda line note=/g)].length;
 const headerText = (page) => page.evaluate(() => /\[About agenda line|\[Reply to message/.test(document.querySelector('[data-super-slot="centre"]')?.innerText ?? ''));
 
 async function main() {
@@ -379,6 +380,18 @@ async function main() {
     ok('Esc closes it', await until(page, async () => (await pop.count()) === 0, 2000));
     ok('every chip has a screen-reader Remove', (await centre(page).locator('.chat-cmp-refs-sr button').count()) === 3
       && (await centreInput(page).getAttribute('aria-describedby'))?.endsWith('-refs'));
+    await centreInput(page).focus();
+    await page.keyboard.press('Tab');
+    const srFocus = await page.evaluate(() => {
+      const el = document.activeElement;
+      const list = el?.closest('.chat-cmp-refs-sr');
+      const r = el?.getBoundingClientRect();
+      return { inList: !!list, w: Math.round(r?.width ?? 0), h: Math.round(r?.height ?? 0), outline: el ? getComputedStyle(el).outlineStyle : '' };
+    });
+    ok('Tab out of the box lands on a VISIBLE Remove with a focus ring (never an invisible stop)', srFocus.inList && srFocus.w > 40 && srFocus.h > 8 && srFocus.outline !== 'none', JSON.stringify(srFocus));
+    await shot(page, '03b-sr-list-focused-1440-dark.png');
+    await page.keyboard.press('Shift+Tab');
+    ok('…Shift+Tab is back in the box, nothing removed', tokensIn(await value(page)).length === 3);
 
     // 5. Five chips; a sixth ↩ shows the notice and adds nothing.
     await setCaret(page, (await value(page)).length);
@@ -476,6 +489,17 @@ async function main() {
     ok('the queued row shows the same chips inline (slots 1, 2), no header text', await until(page, async () => (await qrow.locator('.chat-ref-chip').count()) === 2, 5000)
       && !/\[About agenda line/.test(await qrow.innerText()), await qrow.innerText().catch(() => ''));
     await shot(page, '08-queued-row-1440-dark.png');
+    // Its editor edits the RAW text (plan R2-3): a word added, saved; every header survives.
+    const qn = superFrames().length;
+    await qrow.locator('.chat-queue-text').click();
+    const qedit = centre(page).locator('.chat-queue-edit');
+    await qedit.press('End');
+    await qedit.type(' ek', { delay: 10 });
+    await qedit.press('Enter');
+    ok('an edited, saved multi-part queued row goes out with both headers and the edit', await until(page, async () => {
+      const f = superFrames().slice(qn).find((x) => x.blocks[0].startsWith('Sıradaki:'));
+      return !!f && aboutHeadCount(f.blocks[0]) === 2 && f.blocks[0].endsWith('kart. ek');
+    }, 40000), JSON.stringify(superFrames().slice(qn).map((x) => x.blocks[0])));
     await until(page, async () => (await centre(page).locator('.chat-queue-row').count()) === 0, 40000);
     await until(page, async () => !(await centre(page).locator('.chat-cmp-stop:visible').count()), 20000);
     await page.waitForTimeout(1500);
@@ -513,6 +537,27 @@ async function main() {
     await page.waitForTimeout(1500);
     for (let i = 0; i < 6; i++) { const more = centre(page).locator('.chat-window-more'); if (!(await more.count())) break; await more.click(); await page.waitForTimeout(400); }
     ok('after a reload the bubble draws its three chips again, no header text', await until(page, async () => (await centre(page).locator('[data-testid="chat-msg-parts"] .chat-ref-chip').count()) >= 3 && !(await headerText(page)), 20000));
+
+    // 12b. ↑ recall gives a sent message back with its chips; ↑, ↩, ↑ keeps the chip.
+    await centreInput(page).click();
+    await typeIn(page, 'Geri çağır:');
+    await aboutRow(page, NOTES[0][1]);
+    await typeIn(page, 'bir');
+    await aboutRow(page, NOTES[1][1]);
+    await typeIn(page, 'iki');
+    ok('a two-chip message for recall was answered', await sendAndWait(page, ''));
+    await centreInput(page).click();
+    await page.keyboard.press('ArrowUp');
+    v = await value(page);
+    ok('↑ in an empty box brings the last message back with its two chips, never header text', tokensIn(v).length === 2 && stripped(v) === 'Geri çağır: bir iki' && !/\[About agenda line/.test(v), JSON.stringify(v));
+    await aboutRow(page, NOTES[2][1]);
+    await centreInput(page).click();
+    await setCaret(page, 0);
+    await page.keyboard.press('ArrowUp');
+    v = await value(page);
+    ok('↑, ↩, ↑: the new chip and the recalled ones stay (a draft with chips is never recalled over)', tokensIn(v).length === 3, JSON.stringify(v));
+    await setCaret(page, 0, v.length);
+    await page.keyboard.press('Backspace');
 
     // 13. Light theme, then 390x844.
     await page.evaluate(() => localStorage.setItem('dreamcontext-theme', 'light'));

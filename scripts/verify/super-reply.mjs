@@ -407,9 +407,11 @@ async function main() {
     await tAnswer.locator('[aria-label="Quote-reply"]').click();
     ok('…a second ↩ ADDS a chip (two in the text)', await until(page, async () => (await chip(page).count()) === 2, 5000));
     // Back to one chip for the one-chip wire check: clear the box, ↩ the first answer again.
+    // (The hover that shows ↩ is proven by the two presses above; this one is a DOM click, so a
+    // hover bar still fading in after the fill cannot make the step flaky.)
     await centreInput(page).fill('');
-    await aRow.hover();
-    await aRow.locator('[aria-label="Quote-reply"]').click();
+    await aRow.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    await aRow.locator('[aria-label="Quote-reply"]').evaluate((el) => el.click());
     await until(page, async () => (await chip(page).count()) === 1, 5000);
     await shot(page, '03-reply-chip-1440-dark.png');
     let n = superFrames().length;
