@@ -100,16 +100,17 @@ describe('downloadWindowsSetup — never an unverified installer', () => {
 });
 
 describe('runWindowsSetup — the silent per-user install', () => {
-  it('runs the installer itself with /S and nothing else', () => {
-    const calls: Array<[string, readonly string[]]> = [];
-    runWindowsSetup('C:\\t\\setup.exe', (f, a) => { calls.push([f, a]); return { status: 0, stdout: '' }; });
-    expect(calls).toEqual([['C:\\t\\setup.exe', ['/S']]]);
+  it('runs the installer itself with /S, its TEMP/TMP in the private folder (NSIS loads plugin DLLs from %TEMP%)', () => {
+    const calls: Array<[string, readonly string[], NodeJS.ProcessEnv | undefined]> = [];
+    runWindowsSetup('C:\\t\\setup.exe', 'C:\\Users\\me\\.dreamcontext\\tmp\\dc-app-dl-1\\temp', (f, a, o) => { calls.push([f, a, o?.env]); return { status: 0, stdout: '' }; });
+    expect(calls.map(([f, a]) => [f, a])).toEqual([['C:\\t\\setup.exe', ['/S']]]);
+    expect(calls[0][2]).toMatchObject({ TEMP: 'C:\\Users\\me\\.dreamcontext\\tmp\\dc-app-dl-1\\temp', TMP: 'C:\\Users\\me\\.dreamcontext\\tmp\\dc-app-dl-1\\temp' });
     expect(WIN_SILENT_INSTALL_ARGS).toEqual(['/S']);
   });
 
   it('throws on a non-zero exit or a hang', () => {
-    expect(() => runWindowsSetup('s.exe', () => ({ status: 2, stdout: '' }))).toThrow(/exited with code 2/);
-    expect(() => runWindowsSetup('s.exe', () => ({ status: null, stdout: '' }))).toThrow(/did not finish/);
+    expect(() => runWindowsSetup('s.exe', 't', () => ({ status: 2, stdout: '' }))).toThrow(/exited with code 2/);
+    expect(() => runWindowsSetup('s.exe', 't', () => ({ status: null, stdout: '' }))).toThrow(/did not finish/);
   });
 });
 
@@ -218,9 +219,15 @@ describe('doWindowsInstall — app install / app update on win32', () => {
   it('--from runs that installer (no download), and refuses a path that is not an existing .exe', async () => {
     const local = join(scratch, 'my-setup.exe');
     writeFileSync(local, BYTES);
+    const temps: string[] = [];
     const ok = base({ exists: existsSync, fetchRelease: async () => { throw new Error('never fetched'); } });
+    const run = ok.deps.runSetup as (p: string, t: string) => void;
+    ok.deps.runSetup = (p: string, t: string) => { temps.push(t); expect(existsSync(t)).toBe(true); run(p, t); };
     expect(await doWindowsInstall(local, { update: false, background: false }, ok.deps)).toBe('installed');
     expect(ok.ran).toEqual([local]);
+    // Even a local installer gets a private TEMP in the profile, removed afterwards.
+    expect(temps[0].startsWith(join(scratch, '.dreamcontext', 'tmp', 'dc-app-run-'))).toBe(true);
+    expect(existsSync(temps[0])).toBe(false);
     expect(readAppManifest(scratch)?.source).toBe(local);
 
     const bad = base({ exists: existsSync });
@@ -241,6 +248,17 @@ describe('doWindowsInstall — app install / app update on win32', () => {
     const bg = base();
     expect(await doWindowsInstall(undefined, { update: true, background: true }, bg.deps)).toBe('none');
     expect([...fg.ran, ...bg.ran]).toEqual([]);
+  });
+
+  it('a lock older than an hour is abandoned, whatever its pid says', async () => {
+    const { mkdirSync: mk, writeFileSync: wf, utimesSync } = await import('node:fs');
+    const lockPath = join(scratch, '.dreamcontext', 'app-install.lock');
+    mk(join(scratch, '.dreamcontext'), { recursive: true });
+    wf(lockPath, JSON.stringify({ pid: process.pid, at: Date.now() }));
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    utimesSync(lockPath, old, old);
+    const a = base();
+    expect(await doWindowsInstall(undefined, { update: false, background: false }, a.deps)).toBe('installed');
   });
 
   it('releases the lock when done, so the next install runs', async () => {

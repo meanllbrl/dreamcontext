@@ -30,7 +30,9 @@ const INSTALL_TIMEOUT_MS = 10 * 60_000;
 export interface ReleaseAsset { name: string; browser_download_url: string }
 export interface ReleaseLike { tag_name: string; assets: ReleaseAsset[] }
 
-export type RunSync = (file: string, args: readonly string[], opts?: { timeoutMs?: number }) => { status: number | null; stdout: string };
+export type RunSync = (
+  file: string, args: readonly string[], opts?: { timeoutMs?: number; env?: NodeJS.ProcessEnv },
+) => { status: number | null; stdout: string };
 
 /** spawnSync with no shell: the file is an absolute path (reg.exe, tasklist.exe, the installer). */
 export const defaultRunSync: RunSync = (file, args, opts) => {
@@ -39,6 +41,7 @@ export const defaultRunSync: RunSync = (file, args, opts) => {
     windowsHide: true,
     timeout: opts?.timeoutMs ?? 30_000,
     stdio: ['ignore', 'pipe', 'pipe'],
+    ...(opts?.env ? { env: opts.env } : {}),
   });
   return { status: r.status, stdout: r.stdout ?? '' };
 };
@@ -120,9 +123,17 @@ export async function downloadWindowsSetup(
   }
 }
 
-/** Run a per-user NSIS installer silently and wait for it. Throws on a non-zero exit or a hang. */
-export function runWindowsSetup(setupPath: string, run: RunSync = defaultRunSync): void {
-  const r = run(setupPath, WIN_SILENT_INSTALL_ARGS, { timeoutMs: INSTALL_TIMEOUT_MS });
+/**
+ * Run a per-user NSIS installer silently and wait for it. Throws on a non-zero exit or a hang.
+ * TEMP/TMP point at `privateTemp` (a folder in the user's profile): NSIS unpacks its plugin DLLs
+ * into `%TEMP%\nsXXXX.tmp` and loads them, so a shared TEMP would reopen the swap window the
+ * staging folder closes (see {@link downloadStagingRoot}).
+ */
+export function runWindowsSetup(setupPath: string, privateTemp: string, run: RunSync = defaultRunSync): void {
+  const r = run(setupPath, WIN_SILENT_INSTALL_ARGS, {
+    timeoutMs: INSTALL_TIMEOUT_MS,
+    env: { ...process.env, TEMP: privateTemp, TMP: privateTemp },
+  });
   if (r.status !== 0) {
     throw new Error(r.status === null
       ? 'The installer did not finish in time.'

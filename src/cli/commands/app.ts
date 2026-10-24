@@ -9,6 +9,7 @@ import {
   rmSync,
   renameSync,
   readdirSync,
+  statSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -17,7 +18,7 @@ import chalk from 'chalk';
 import { compareVersions } from '../../lib/version-check.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import {
-  clearAppUpdateAvailable, downloadWindowsSetup, isWindowsAppRunning, pendingAppUpdate, readWindowsInstall,
+  clearAppUpdateAvailable, downloadStagingRoot, downloadWindowsSetup, isWindowsAppRunning, pendingAppUpdate, readWindowsInstall,
   recordAppUpdateAvailable, runWindowsSetup, WIN_SETUP_ASSET,
 } from '../../lib/app-windows.js';
 
@@ -939,7 +940,7 @@ function doStatus(): void {
 export interface WindowsInstallDeps {
   fetchRelease?: () => Promise<{ tag_name: string; assets: Array<{ name: string; browser_download_url: string }> } | null>;
   download?: typeof downloadWindowsSetup;
-  runSetup?: (setupPath: string) => void;
+  runSetup?: (setupPath: string, privateTemp: string) => void;
   readInstall?: () => { version: string | null; exePath: string | null } | null;
   isRunning?: (exePath: string) => boolean;
   exists?: (p: string) => boolean;
@@ -964,12 +965,15 @@ export async function doWindowsInstall(
   const exists = deps.exists ?? existsSync;
   const readInstall = deps.readInstall ?? (() => readWindowsInstall({ home }));
   const isRunning = deps.isRunning ?? ((exe: string) => isWindowsAppRunning(exe));
-  const runSetup = deps.runSetup ?? ((p: string) => runWindowsSetup(p));
+  const runSetup = deps.runSetup ?? ((p: string, t: string) => runWindowsSetup(p, t));
   const fail = (msg: string): 'failed' => { log(chalk.red(msg)); process.exitCode = 1; return 'failed'; };
 
   // One install at a time per machine: every project's daily hook can fire a background update,
   // and two NSIS runs over one install folder must never overlap.
   const lock = join(home, '.dreamcontext', 'app-install.lock');
+  // A hard ceiling past the pid check: Windows reuses pids, and a crashed holder's pid can belong
+  // to another account's process (EPERM reads as alive). No install takes an hour.
+  try { if (Date.now() - statSync(lock).mtimeMs > 60 * 60_000) releaseFileLock(lock); } catch { /* no lock */ }
   if (!acquireFileLock(lock, Date.now(), 15 * 60_000, { verifyPidLiveness: true })) {
     if (mode.background) return 'none';
     return fail('Another desktop app install or update is running. Try again when it has finished.');
@@ -987,7 +991,7 @@ async function windowsInstallLocked(
   ctx: {
     log: (l: string) => void; home: string; exists: (p: string) => boolean;
     readInstall: () => { version: string | null; exePath: string | null } | null;
-    isRunning: (exe: string) => boolean; runSetup: (p: string) => void;
+    isRunning: (exe: string) => boolean; runSetup: (p: string, privateTemp: string) => void;
     fail: (msg: string) => 'failed'; deps: WindowsInstallDeps;
   },
 ): Promise<'installed' | 'current' | 'offered' | 'none' | 'failed'> {
@@ -1037,8 +1041,16 @@ async function windowsInstallLocked(
   }
 
   try {
+    // The installer's own TEMP: a private folder in the profile (runWindowsSetup says why).
+    if (!workDir) {
+      const root = downloadStagingRoot(home);
+      mkdirSync(root, { recursive: true });
+      workDir = mkdtempSync(join(root, 'dc-app-run-'));
+    }
+    const privateTemp = join(workDir, 'temp');
+    mkdirSync(privateTemp, { recursive: true });
     if (!mode.background) log(chalk.cyan('Running the installer (per-user, silent)…'));
-    runSetup(setupPath);
+    runSetup(setupPath, privateTemp);
   } catch (e) {
     return fail(`The installer failed: ${(e as Error).message}`);
   } finally {
