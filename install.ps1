@@ -163,8 +163,10 @@ function Install-Dreamcontext {
     foreach ($p in @($dcHome, $nodeRoot, $dest, $npmGlobal)) { Assert-NotLink $p }
     New-Item -ItemType Directory -Force -Path $nodeRoot | Out-Null
 
-    # A fresh folder in the user's own temp (%LOCALAPPDATA%\Temp, readable by this user only).
-    $work = Join-Path ([IO.Path]::GetTempPath()) ('dreamcontext-node-' + [Guid]::NewGuid().ToString('N'))
+    # A fresh download folder inside the (link-checked) node folder in the user's own profile,
+    # never %TEMP%: TEMP can point at a shared folder (C:\Temp by policy) whose inherited rights
+    # would let another local user swap the archive between its checksum check and its unpacking.
+    $work = Join-Path $nodeRoot ('.dl-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $work | Out-Null
     $staging = $null
     $aside = $null

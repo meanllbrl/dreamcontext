@@ -9,7 +9,8 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  WIN_SETUP_ASSET, WIN_SILENT_INSTALL_ARGS, WIN_UNINSTALL_KEY, appUpdateNotice, downloadWindowsSetup, exeFromDisplayIcon,
+  WIN_SETUP_ASSET, WIN_SILENT_INSTALL_ARGS, WIN_UNINSTALL_KEY, appUpdateNotice, downloadStagingRoot, downloadWindowsSetup,
+  exeFromDisplayIcon, isReleaseDownloadUrl,
   isWindowsAppRunning, parseRegQuery, parseSha256File, pendingAppUpdate, readWindowsInstall, recordAppUpdateAvailable,
   runWindowsSetup, type RunSync,
 } from '../../src/lib/app-windows.js';
@@ -70,6 +71,20 @@ describe('downloadWindowsSetup — never an unverified installer', () => {
   it('REFUSES an asset URL outside github.com/<repo>/releases/download', async () => {
     const r = release({ setupUrl: 'https://evil.example/setup.exe' });
     await expect(downloadWindowsSetup(r, { repo: REPO, fetchImpl: fakeFetch(r.sumText), tmpRoot: scratch })).rejects.toThrow(/does not come from/);
+  });
+
+  it('judges the asset URL after parsing, so a %2e%2e climb to another repo is refused', () => {
+    expect(isReleaseDownloadUrl(`${URL_BASE}${WIN_SETUP_ASSET}`, REPO)).toBe(true);
+    expect(isReleaseDownloadUrl(`https://github.com/${REPO}/releases/download/%2e%2e/%2e%2e/%2e%2e/%2e%2e/evil/repo/releases/download/v1/x.exe`, REPO)).toBe(false);
+    expect(isReleaseDownloadUrl(`https://github.com/${REPO}/releases/download/../../../../evil/repo/x.exe`, REPO)).toBe(false);
+    expect(isReleaseDownloadUrl(`http://github.com/${REPO}/releases/download/v1/x.exe`, REPO)).toBe(false);
+    expect(isReleaseDownloadUrl(`https://github.com.evil.example/${REPO}/releases/download/v1/x.exe`, REPO)).toBe(false);
+    expect(isReleaseDownloadUrl(`https://user@github.com/${REPO}/releases/download/v1/x.exe`, REPO)).toBe(false);
+    expect(isReleaseDownloadUrl('not a url', REPO)).toBe(false);
+  });
+
+  it('stages downloads in the user\'s own profile, never %TEMP% (a shared C:\\Temp would let another user swap the file)', () => {
+    expect(downloadStagingRoot('/home/me')).toBe(join('/home/me', '.dreamcontext', 'tmp'));
   });
 
   it('a release without a Windows installer is null, not an error', async () => {
@@ -212,6 +227,26 @@ describe('doWindowsInstall — app install / app update on win32', () => {
     expect(await doWindowsInstall(join(scratch, 'missing.exe'), { update: false, background: false }, bad.deps)).toBe('failed');
     expect(await doWindowsInstall(join(scratch, 'x.zip'), { update: false, background: false }, bad.deps)).toBe('failed');
     expect(bad.ran).toEqual([]);
+  });
+
+  it('one install at a time: a held lock refuses in the foreground and stays quiet in the background', async () => {
+    const { mkdirSync: mk, writeFileSync: wf } = await import('node:fs');
+    mk(join(scratch, '.dreamcontext'), { recursive: true });
+    // A live holder: this test process's own pid, written fresh.
+    wf(join(scratch, '.dreamcontext', 'app-install.lock'), JSON.stringify({ pid: process.pid, at: Date.now() }));
+    const fg = base();
+    expect(await doWindowsInstall(undefined, { update: false, background: false }, fg.deps)).toBe('failed');
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+    const bg = base();
+    expect(await doWindowsInstall(undefined, { update: true, background: true }, bg.deps)).toBe('none');
+    expect([...fg.ran, ...bg.ran]).toEqual([]);
+  });
+
+  it('releases the lock when done, so the next install runs', async () => {
+    const a = base();
+    expect(await doWindowsInstall(undefined, { update: false, background: false }, a.deps)).toBe('installed');
+    expect(existsSync(join(scratch, '.dreamcontext', 'app-install.lock'))).toBe(false);
   });
 
   it('an installer that runs but leaves no app behind is a failure, with no manifest', async () => {

@@ -15,6 +15,7 @@ import { join, resolve, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import chalk from 'chalk';
 import { compareVersions } from '../../lib/version-check.js';
+import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import {
   clearAppUpdateAvailable, downloadWindowsSetup, isWindowsAppRunning, pendingAppUpdate, readWindowsInstall,
   recordAppUpdateAvailable, runWindowsSetup, WIN_SETUP_ASSET,
@@ -966,6 +967,31 @@ export async function doWindowsInstall(
   const runSetup = deps.runSetup ?? ((p: string) => runWindowsSetup(p));
   const fail = (msg: string): 'failed' => { log(chalk.red(msg)); process.exitCode = 1; return 'failed'; };
 
+  // One install at a time per machine: every project's daily hook can fire a background update,
+  // and two NSIS runs over one install folder must never overlap.
+  const lock = join(home, '.dreamcontext', 'app-install.lock');
+  if (!acquireFileLock(lock, Date.now(), 15 * 60_000, { verifyPidLiveness: true })) {
+    if (mode.background) return 'none';
+    return fail('Another desktop app install or update is running. Try again when it has finished.');
+  }
+  try {
+    return await windowsInstallLocked(from, mode, { log, home, exists, readInstall, isRunning, runSetup, fail, deps });
+  } finally {
+    releaseFileLock(lock);
+  }
+}
+
+async function windowsInstallLocked(
+  from: string | undefined,
+  mode: { update: boolean; background: boolean },
+  ctx: {
+    log: (l: string) => void; home: string; exists: (p: string) => boolean;
+    readInstall: () => { version: string | null; exePath: string | null } | null;
+    isRunning: (exe: string) => boolean; runSetup: (p: string) => void;
+    fail: (msg: string) => 'failed'; deps: WindowsInstallDeps;
+  },
+): Promise<'installed' | 'current' | 'offered' | 'none' | 'failed'> {
+  const { log, home, exists, readInstall, isRunning, runSetup, fail, deps } = ctx;
   const before = readInstall();
   let setupPath: string;
   let version: string | null = null;

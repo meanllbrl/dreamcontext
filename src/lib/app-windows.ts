@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { dirname, join, win32 } from 'node:path';
 import { win32System32 } from './proc.js';
 import { compareVersions } from './version-check.js';
@@ -43,9 +43,21 @@ export const defaultRunSync: RunSync = (file, args, opts) => {
   return { status: r.status, stdout: r.stdout ?? '' };
 };
 
-/** A release asset URL this CLI will download from: GitHub's own release-download path, https. */
+/** A release asset URL this CLI will download from: GitHub's own release-download path, https.
+ *  Judged on the PARSED URL, whose path has `..` / `%2e%2e` segments resolved: a raw prefix
+ *  check would pass `…/releases/download/%2e%2e/%2e%2e/…/other/repo/…`. */
 export function isReleaseDownloadUrl(url: string, repo: string): boolean {
-  return url.startsWith(`https://github.com/${repo}/releases/download/`);
+  let u: URL;
+  try { u = new URL(url); } catch { return false; }
+  return u.protocol === 'https:' && u.hostname === 'github.com' && !u.port && !u.username && !u.password
+    && u.pathname.startsWith(`/${repo}/releases/download/`);
+}
+
+/** Where downloads are staged: inside the user's own profile, never %TEMP%. TEMP can point at a
+ *  shared folder (C:\Temp by policy) whose inherited ACL lets another local user swap the
+ *  installer between its checksum check and its run; the profile is this user's alone. */
+export function downloadStagingRoot(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'tmp');
 }
 
 /** The digest in a `.sha256` file (`<hex>  <name>` or a bare hex), or null when it has none. */
@@ -65,10 +77,12 @@ async function downloadTo(url: string, dest: string, fetchImpl: typeof fetch): P
 }
 
 /**
- * Download the release's installer and its `.sha256` into a fresh temp folder and verify it.
- * Null when the release carries no Windows installer. Throws (and leaves nothing behind) when
- * the checksum asset is missing or does not match: the installer runs silently, often from the
- * background update, so an unverified one is never run. The caller removes `workDir`.
+ * Download the release's installer and its `.sha256` into a fresh folder under
+ * {@link downloadStagingRoot} and verify it. Null when the release carries no Windows installer.
+ * Throws (and leaves nothing behind) when the checksum asset is missing or does not match. The
+ * checksum is INTEGRITY only (a corrupt or truncated download, a swapped file): it comes from the
+ * same release, so authenticity rests on the GitHub release itself, as on macOS, until the
+ * installer is code-signed. The caller removes `workDir`.
  */
 export async function downloadWindowsSetup(
   release: ReleaseLike,
@@ -86,7 +100,9 @@ export async function downloadWindowsSetup(
     }
   }
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const workDir = mkdtempSync(join(opts.tmpRoot ?? tmpdir(), 'dc-app-dl-'));
+  const root = opts.tmpRoot ?? downloadStagingRoot();
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const workDir = mkdtempSync(join(root, 'dc-app-dl-'));
   try {
     const setupPath = join(workDir, WIN_SETUP_ASSET);
     await downloadTo(setup.browser_download_url, setupPath, fetchImpl);
