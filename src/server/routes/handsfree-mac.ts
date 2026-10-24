@@ -11,6 +11,7 @@ import { isLoopback } from './agent-spawn-shared.js';
 import { AUTH_COOKIE } from '../network-auth.js';
 import { notifyViaBundle } from '../../lib/automations/notifier.js';
 import { listVaults } from '../../lib/vaults.js';
+import { superIndex } from '../../lib/super/store.js';
 import { deviceIdHash, ensureMacHandsfreeDir, generatePassphrase, hashPassphrase, macHandsfreeAuth, onDeviceSessionsChanged, onMacSignIn } from '../handsfree-auth.js';
 import { isPhoneSocket, macExposedVaults, macPublicOrigin, setMacExposedVaults, setMacProbeNonce, setMacPublicOrigin } from '../phone-origin.js';
 import { setMacPhoneSource } from '../handsfree-login.js';
@@ -341,6 +342,12 @@ export function armPushNotifier(): PushNotifier {
     store: () => macPushStore(),
     deviceValid: (h) => macHandsfreeAuth().store.isValidDeviceHash(h),
     showingDevice: (sid) => phoneDeviceShowing(sid),
+    superSession: (vault) => {
+      const v = listVaults().find((x) => x.name === vault);
+      if (!v) return null;
+      const idx = superIndex(join(v.path, '_dream_context'));
+      return idx.enabled && idx.session ? idx.session : null;
+    },
     send: (sub, payload) => (pushSendOverride ?? ((x, p) => sendPush(x, p, { vapid: macVapid(), contact: macPublicOrigin() ?? 'mailto:handsfree@dreamcontext.ai' })))(sub, payload),
   });
   const n = notifier;

@@ -895,6 +895,36 @@ export function superAnswerPicks(
 }
 
 /**
+ * The owner's own card answer carried from another surface (the hands-free phone's card for a
+ * child question the Super escalated): `picked` and `notes` keyed by the child's question texts,
+ * as the child's own card builds them (`resolveAnswers`/`resolveNotes`). Every key must be one of
+ * the child's questions and every value one non-empty line; at least one pick.
+ */
+export function ownerAnswerPicks(
+  questions: readonly QuestionLike[],
+  picked: unknown,
+  notes: unknown,
+): { ok: true; picked: Record<string, string>; notes?: Record<string, string> } | { ok: false; error: string } {
+  const known = new Set(questions.map((q) => q.question));
+  const read = (raw: unknown): Record<string, string> | null => {
+    if (raw === undefined || raw === null) return {};
+    if (typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (!known.has(k) || typeof v !== 'string' || !v.trim() || v.length > 4000) return null;
+      out[k] = v;
+    }
+    return out;
+  };
+  const p = read(picked);
+  const n = read(notes);
+  if (!p) return { ok: false, error: 'unknown_choice' };
+  if (!n) return { ok: false, error: 'invalid_notes' };
+  if (!Object.keys(p).length) return { ok: false, error: 'empty_answer' };
+  return Object.keys(n).length ? { ok: true, picked: p, notes: n } : { ok: true, picked: p };
+}
+
+/**
  * A `delegate` frame the window got too late (the server's `args.deadline`, epoch ms): the
  * server has given up waiting, so opening a child now would leave one it never records. A frame
  * with no deadline is never expired (older servers).

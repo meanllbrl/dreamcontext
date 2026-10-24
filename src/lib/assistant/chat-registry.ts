@@ -71,7 +71,23 @@ export interface PendingQuestion {
   /** The question text / the command being asked about, capped. */
   text: string;
   options: string[];
+  /** An AskUserQuestion's whole question list, VERBATIM (an answer is keyed by these exact
+   *  texts and labels), so a surface without the chat's socket (the hands-free phone, for a
+   *  child question the Super Agent escalated) can draw the same card. Absent on a permission,
+   *  and when the input is over {@link MAX_QUESTION_BYTES}: never cut, since a cut text would
+   *  key an answer the CLI cannot match. */
+  questions?: RegistryQuestion[];
 }
+
+export interface RegistryQuestionOption { label: string; description?: string; preview?: string }
+export interface RegistryQuestion {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options: RegistryQuestionOption[];
+}
+/** The most a pending question's list may weigh (previews included) to be kept whole. */
+export const MAX_QUESTION_BYTES = 64 * 1024;
 
 export interface ChatEntry {
   sessionId: string;
@@ -207,7 +223,11 @@ function emit(e: ChatEntry, from: ChatStatus): void {
 const cap = (s: string, n = TEXT_CAP) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const clone = (e: ChatEntry): ChatEntry => ({
   ...e, lastAssistantText: [...e.lastAssistantText],
-  pendingQuestion: e.pendingQuestion ? { ...e.pendingQuestion, options: [...e.pendingQuestion.options] } : null,
+  pendingQuestion: e.pendingQuestion ? {
+    ...e.pendingQuestion,
+    options: [...e.pendingQuestion.options],
+    ...(e.pendingQuestion.questions ? { questions: e.pendingQuestion.questions.map((q) => ({ ...q, options: q.options.map((o) => ({ ...o })) })) } : {}),
+  } : null,
   ...(e.ownerWaits ? { ownerWaits: e.ownerWaits.map((w) => ({ ...w })) } : {}),
   ...(e.ownerAnswered ? { ownerAnswered: [...e.ownerAnswered] } : {}),
 });
@@ -336,6 +356,33 @@ export function activityOf(e: Pick<ChatEntry, 'status' | 'lastFrameAt' | 'toolsI
   return e.status;
 }
 
+/** An AskUserQuestion's `questions`, verbatim, or undefined when a shape is unrecognised or the
+ *  whole is over {@link MAX_QUESTION_BYTES}. */
+export function registryQuestions(raw: readonly unknown[]): RegistryQuestion[] | undefined {
+  const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
+  const out: RegistryQuestion[] = [];
+  for (const rq of raw) {
+    if (!rq || typeof rq !== 'object' || Array.isArray(rq)) return undefined;
+    const q = rq as Record<string, unknown>;
+    const question = str(q.question);
+    if (!question) return undefined;
+    const rawOpts = Array.isArray(q.options) ? q.options as unknown[] : [];
+    const options: RegistryQuestionOption[] = [];
+    for (const ro of rawOpts) {
+      const o = (ro && typeof ro === 'object' ? ro : {}) as Record<string, unknown>;
+      const label = str(o.label);
+      if (!label) return undefined;
+      const description = str(o.description);
+      const preview = str(o.preview);
+      options.push({ label, ...(description ? { description } : {}), ...(preview ? { preview } : {}) });
+    }
+    const header = str(q.header);
+    out.push({ question, ...(header ? { header } : {}), ...(q.multiSelect === true ? { multiSelect: true } : {}), options });
+  }
+  if (!out.length || Buffer.byteLength(JSON.stringify(out), 'utf-8') > MAX_QUESTION_BYTES) return undefined;
+  return out;
+}
+
 /** Read a `control_request{can_use_tool}` into a pending question. Unrecognised shapes
  *  return null (`pattern-unrecognized-shape-returns-null`). */
 export function readPendingQuestion(frame: Record<string, unknown>): PendingQuestion | null {
@@ -351,7 +398,8 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
       ? (first.options as Array<Record<string, unknown>>).map((o) => (typeof o?.label === 'string' ? o.label : '')).filter(Boolean)
       : [];
     const text = qs.map((q) => (typeof q.question === 'string' ? q.question : '')).filter(Boolean).join('\n');
-    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options };
+    const questions = registryQuestions(qs);
+    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options, ...(questions ? { questions } : {}) };
   }
   const described = typeof input.command === 'string' ? input.command
     : typeof input.file_path === 'string' ? input.file_path

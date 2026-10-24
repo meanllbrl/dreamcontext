@@ -326,7 +326,7 @@ describe('ONE question component: the chat\'s own card, no look-alike', () => {
 
   it('the answer stands in the transcript as the card\'s receipt, not a bubble', () => {
     const pane = src('dashboard/src/components/sleepy/ChatPane.tsx');
-    expect(pane).toMatch(/if \(item\.kind === 'user' && session\.mode === 'super' && parseSuperAnswer\(item\.text\)\) \{\s*return <SuperAnswerReceipt/);
+    expect(pane).toMatch(/if \(item\.kind === 'user' && superView && parseSuperAnswer\(item\.text\)\) \{\s*return <SuperAnswerReceipt/);
     expect(card).toMatch(/<SurveyReceipt unclear=\{answer\.unclear\} values=\{answer\.values\} \/>/);
   });
 

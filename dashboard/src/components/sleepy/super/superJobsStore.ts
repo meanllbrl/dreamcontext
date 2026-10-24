@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { SuperQueueItem } from '../../../lib/superTypes';
+import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 
 /**
@@ -68,6 +68,19 @@ export interface SuperQuestionView {
   open: readonly SuperQueueItem[];
   superSession: ChatSession | undefined;
   sessionFor: (claudeId: string) => ChatSession | undefined;
+  /** A surface that holds no child's socket (the hands-free phone): each child question's card
+   *  as the server read it from the child, and the route that answers it through the Mac window
+   *  (`/api/agent/super-answer`). Absent on the laptop, which answers through the child's chat. */
+  remote?: SuperRemoteQuestions;
+}
+
+/** The phone's way to a child question it cannot hold (usePhoneSuperQuestions.ts). */
+export interface SuperRemoteQuestions {
+  /** The child's AskUserQuestion as the card draws it, or null (words only). */
+  cardOf: (itemId: string) => SuperAskSpec | null;
+  /** Send the owner's answer. `ok`: the child has it; `retry`: it did not, and another tap may
+   *  land (the window away, a socket down, a timeout); neither: stale, answered elsewhere. */
+  answer: (item: SuperQueueItem, body: { picked: Record<string, string>; notes?: Record<string, string> } | { unclear: string }) => Promise<{ ok: boolean; retry: boolean }>;
 }
 const questionViews = new Map<string, SuperQuestionView>();
 const questionKeys = new Map<string, string>();
