@@ -269,8 +269,10 @@ async function awaitResumeHandoff(contextRoot: string, resumeId: string): Promis
   if (!resumeId) return;
   const mapped = resolveAgentSession(contextRoot, resumeId);
   // Only conversations that actually EXIST can produce the bad fall-through, so an id with no
-  // transcript never costs a wait.
-  const candidates = [mapped, resumeId].filter((c) => c && claudeConversationExists(c));
+  // transcript never costs a wait, unless a live child still holds it: a respawn of a conversation
+  // that has not written its transcript yet (a stage respawned at a new autonomy level before its
+  // first answer) would otherwise be refused as held instead of waiting out the hand-off.
+  const candidates = [mapped, resumeId].filter((c) => c && (claudeConversationExists(c) || liveConversations.has(c)));
   if (!candidates.length) return;
   const deadline = Date.now() + RESUME_HANDOFF_WAIT_MS;
   let polls = 0;
