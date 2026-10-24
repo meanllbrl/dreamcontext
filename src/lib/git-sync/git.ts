@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import { delimiter, join, win32 } from 'node:path';
+import { delimiter, join, win32, resolve } from 'node:path';
 
 /**
  * Thin, testable git wrapper over `execFileSync` (pattern from
@@ -241,7 +241,10 @@ export function getRemoteUrl(cwd: string, name: string): string | null {
  */
 export function repoToplevel(cwd: string): string | null {
   try {
-    return run(cwd, ['rev-parse', '--show-toplevel']).trim();
+    const top = run(cwd, ['rev-parse', '--show-toplevel']).trim();
+    // git answers `C:/Users/…` on Windows; every path it is compared to there is native
+    // (`C:\Users\…`), so it is normalised. Unchanged elsewhere.
+    return process.platform === 'win32' && top ? resolve(top) : top;
   } catch {
     return null;
   }

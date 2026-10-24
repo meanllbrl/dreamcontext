@@ -115,6 +115,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-bt-',
   'dc-builder-',
   'dc-bundle-',
+  'dc-canon-',
   'dc-card-chat-',
   'dc-card-chat-home-',
   'dc-chat-subagents-',

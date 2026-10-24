@@ -119,5 +119,11 @@ jobs:
         run: npm run build
 
       # pwsh is on the runner, so tests/unit/install-ps1.test.ts also runs install.ps1 itself.
+      # TEMP/TMP: the runner's default is an 8.3 short path (C:\Users\RUNNER~1\…). The product
+      # compares canonical (long) paths, so tests that build their expectation from tmpdir()
+      # would compare a short spelling against a long one; runner.temp has no short names.
       - name: Run unit + integration tests
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: npm test -- run

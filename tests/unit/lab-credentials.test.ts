@@ -49,7 +49,7 @@ describe('writeCredential — gitignore-first ordering + 0600', () => {
 
     const credPath = join(contextRoot, 'lab', 'credentials.json');
     const mode = statSync(credPath).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== 'win32') expect(mode).toBe(0o600); // Windows has no POSIX mode bits
 
     const contextIgnore = readFileSync(join(contextRoot, '.gitignore'), 'utf-8');
     expect(contextIgnore).toContain('lab/credentials.json');

@@ -27,6 +27,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { relPosix } from './paths.js';
 
 /** A project whose last check took longer than this is checked once per turn, at Stop. */
 export const SLOW_TSC_MS = 4000;
@@ -128,9 +129,13 @@ export function filterTscErrors(output: string | null, filePath: string, project
   if (!output || !output.trim()) return null;
   const resolvedPath = resolve(filePath);
   const relativePath = relative(projectRoot, resolvedPath);
+  // tsc prints forward slashes on every OS (`src/a.ts(1,7): …`); on Windows the native forms
+  // carry backslashes and never matched, so the forward-slash spellings are tried too
+  // (identical strings on POSIX).
+  const names = [...new Set([resolvedPath, relativePath, resolvedPath.replace(/\\/g, '/'), relPosix(projectRoot, resolvedPath)])];
   const relevant: string[] = [];
   for (const line of output.split('\n')) {
-    if (line.includes(resolvedPath) || line.includes(relativePath)) relevant.push(line.trim());
+    if (names.some((n) => line.includes(n))) relevant.push(line.trim());
   }
   if (relevant.length === 0) return null;
   return `TypeScript errors in ${basename(filePath)}:\n${relevant.join('\n')}`;

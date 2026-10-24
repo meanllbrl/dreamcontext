@@ -222,7 +222,8 @@ export function loadDigestDocs(root: string): CorpusDoc[] {
       const title = `Session digest ${sessionId}`;
       const body = content.trim();
       if (!body) continue;
-      const relPath = join('state', DIGESTS_DIRNAME, `${sessionId}.md`);
+      // A corpus key, so POSIX on every OS (recall's other loaders use relPosix).
+      const relPath = `state/${DIGESTS_DIRNAME}/${sessionId}.md`;
       const createdAt = coerceCreatedAt(data.created_at);
       const fields = buildFields({ slug, title, description: '', tags: [], body });
       const ms = createdAt ? Date.parse(createdAt) : NaN;

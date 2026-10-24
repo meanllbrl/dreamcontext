@@ -1012,7 +1012,7 @@ export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
       out.push({
         type: 'skill',
         path: file,
-        relPath: relative(skillsRoot, file),
+        relPath: relPosix(skillsRoot, file),
         slug,
         title,
         description,

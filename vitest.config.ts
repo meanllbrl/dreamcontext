@@ -23,12 +23,15 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     // On Windows only, the explicit, commented skip list (tests/windows-skip.ts).
-    exclude: ['node_modules', 'dist', 'e2e', 'dashboard', ...(process.platform === 'win32' ? WINDOWS_SKIPS.map((s) => s.file) : [])],
+    exclude: ['node_modules', 'dist', 'e2e', 'dashboard', ...(process.platform === 'win32' ? WINDOWS_SKIPS.filter((s) => !s.test).map((s) => s.file) : [])],
+    // Windows starts a process several times slower (Defender scans every node.exe a test
+    // spawns): the CLI-spawning tests get room there; elsewhere vitest's 5s default holds.
+    ...(process.platform === 'win32' ? { testTimeout: 30_000, hookTimeout: 30_000 } : {}),
     // Insulates the suite from a spawned parent: a builder that runs `npm test` must not have
     // its own spawn marker or pane boundary leak into the hook processes the tests launch.
     // windows-home: on win32 only, a HOME a test sets is mirrored into USERPROFILE (what
     // os.homedir() reads there), so the suite's home isolation holds on Windows too.
-    setupFiles: ['tests/setup/isolate-spawn-env.ts', 'tests/setup/windows-home.ts'],
+    setupFiles: ['tests/setup/isolate-spawn-env.ts', 'tests/setup/windows-home.ts', 'tests/setup/windows-skips.ts'],
     // `forks` (process IPC rather than worker threads) and the teardown margin
     // date from the v0.11.0 CI-red episode and are kept because they are cheap
     // and the suite is process-heavy either way.

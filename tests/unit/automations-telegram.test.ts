@@ -122,7 +122,7 @@ afterEach(() => {
 describe('the token is a capability, stored like one', () => {
   it('writes 0600 — a token readable by other users is the whole gate handed away', () => {
     const mode = statSync(telegramConfigPath(home)).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== 'win32') expect(mode).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('lives in ~/.dreamcontext, NEVER in the brain', () => {

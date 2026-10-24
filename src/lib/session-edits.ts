@@ -104,7 +104,8 @@ function canonical(path: string): string {
  *  keeps the warning meaningful. Matched on a PATH SEGMENT, so a directory merely ending in
  *  `_dream_context` (or a file named that) is not swept up with it. */
 export function isBrainPath(path: string): boolean {
-  return path.split(sep).includes('_dream_context');
+  // Windows takes both separators: a tool can report `C:\repo\…` or `C:/repo/…`.
+  return path.split(process.platform === 'win32' ? /[\\/]/ : sep).includes('_dream_context');
 }
 
 /**

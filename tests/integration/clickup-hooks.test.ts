@@ -55,7 +55,7 @@ describe('git sync hooks (M5 — never fail, never block)', () => {
       expect(content.trimEnd().endsWith('exit 0')).toBe(true);
       expect(content).toContain('tasks sync both --hook');
       if (process.platform !== 'win32') {
-        expect(statSync(path).mode & 0o111).toBeTruthy();
+        if (process.platform !== 'win32') expect(statSync(path).mode & 0o111).toBeTruthy(); // Windows has no POSIX mode bits
       }
     }
   });

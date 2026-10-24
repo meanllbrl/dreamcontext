@@ -228,7 +228,7 @@ describe('installPack — video-watching (bundleDir + executable engine)', () =>
 
     // SKILL.md invokes `./scripts/transcribe.sh`, so the exec bit must survive the copy.
     const mode = statSync(join(base, 'scripts', 'transcribe.sh')).mode;
-    expect(mode & 0o111).not.toBe(0);
+    if (process.platform !== 'win32') expect(mode & 0o111).not.toBe(0); // Windows has no POSIX mode bits
 
     expect(result.installed).toContain('.claude/skills/video-watching/scripts/transcribe.sh');
     for (const p of result.installed) {

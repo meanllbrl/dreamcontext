@@ -4679,8 +4679,13 @@ export async function handleAgentGrant(
 
   // win32: a `//host/share` spelling passes the `/` test, and the stat below would send the user's
   // NTLM hash to that host (see resolveChatReference).
-  if (!target.startsWith('/') || target.includes('\0') || target.includes('/../') || target.endsWith('/..')
-    || (process.platform === 'win32' && /^[\\/]{2}/.test(target))) {
+  // Absolute, literal, local: `/…` on POSIX; a drive path (`C:\…`, `C:/…`) on Windows, where a
+  // `//host/share` spelling would make the stat below send the user's NTLM hash to that host
+  // (see resolveChatReference). No climb segment in either separator.
+  const win = process.platform === 'win32';
+  const absolute = win ? /^[A-Za-z]:[\\/]/.test(target) : target.startsWith('/');
+  const climb = win ? /(^|[\\/])\.\.([\\/]|$)/ : /(^|\/)\.\.(\/|$)/;
+  if (!absolute || target.includes('\0') || climb.test(target)) {
     sendError(res, 400, 'invalid_path', 'An absolute, literal file path is required.');
     return;
   }

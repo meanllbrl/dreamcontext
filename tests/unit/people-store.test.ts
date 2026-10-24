@@ -25,7 +25,10 @@ import {
 const execFileAsync = promisify(execFile);
 
 /** vite-node runs a child in a separate OS process against the REAL TypeScript store. */
-const VITE_NODE = resolve('node_modules/.bin/vite-node');
+const VITE_NODE = process.platform === 'win32' ? process.execPath : resolve('node_modules/.bin/vite-node');
+/** win32: `.bin/vite-node` is a .cmd shim Node will not spawn without a shell, so its own entry
+ *  runs under node instead. */
+const VITE_NODE_ARGS = process.platform === 'win32' ? [resolve('node_modules/vite-node/dist/cli.mjs')] : [];
 const STORE_MODULE = resolve('src/lib/people-store.ts');
 
 let root: string; // the CONTEXT root (…/_dream_context)
@@ -229,7 +232,7 @@ describe('people-store — the roster lock', () => {
         'utf-8',
       );
 
-      await Promise.all(names.map((name) => execFileAsync(VITE_NODE, [childPath, root, name])));
+      await Promise.all(names.map((name) => execFileAsync(VITE_NODE, [...VITE_NODE_ARGS, childPath, root, name])));
 
       expect(Object.keys(readPeople(root)).sort()).toEqual(['ada-lovelace', 'bob-builder', 'carol-coder', 'dan-deploy']);
       for (const slug of Object.keys(readPeople(root))) {

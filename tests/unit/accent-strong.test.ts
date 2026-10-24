@@ -127,7 +127,7 @@ interface Rule { file: string; selector: string; body: string }
 function cssRules(): Rule[] {
   const rules: Rule[] = [];
   for (const abs of walk(SRC, ['.css'])) {
-    const file = relative(SRC, abs);
+    const file = relative(SRC, abs).replace(/\\/g, '/');
     const src = readFileSync(abs, 'utf-8').replace(/\/\*[\s\S]*?\*\//g, ' ');
     for (const chunk of src.split('}')) {
       const i = chunk.lastIndexOf('{');
@@ -205,7 +205,7 @@ describe('text on an accent fill uses --color-accent-strong, app-wide', () => {
   it('every inline accent fill carrying text is converted too', () => {
     const offenders: string[] = [];
     for (const abs of walk(SRC, ['.tsx'])) {
-      const file = relative(SRC, abs);
+      const file = relative(SRC, abs).replace(/\\/g, '/');
       const src = readFileSync(abs, 'utf-8');
       const re = /background:\s*'([^']*)'/g;
       let m: RegExpExecArray | null;

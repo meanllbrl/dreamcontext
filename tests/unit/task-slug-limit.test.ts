@@ -97,7 +97,7 @@ describe('every place that validates a task slug takes the whole range', () => {
         if (e.name === 'node_modules' || e.name === 'dist') continue;
         const p = join(dir, e.name);
         if (e.isDirectory()) walk(p);
-        else if (/\.(ts|tsx)$/.test(e.name) && /\bTASK_SLUG_RE\s*=/.test(readFileSync(p, 'utf-8'))) owners.push(p.slice(ROOT.length));
+        else if (/\.(ts|tsx)$/.test(e.name) && /\bTASK_SLUG_RE\s*=/.test(readFileSync(p, 'utf-8'))) owners.push(p.slice(ROOT.length).replace(/\\/g, '/'));
       }
     };
     walk(join(ROOT, 'src'));

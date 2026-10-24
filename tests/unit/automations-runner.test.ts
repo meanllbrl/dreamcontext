@@ -1008,6 +1008,8 @@ describe('runAutomation — timeout kill matrix', () => {
 
 // ─── killRunGroup — CLI-only guards ──────────────────────────────────────────
 
+// Fake pids throughout: the win32 ownership check (recordedChildIsOurs) is injected as true here
+// and tested on its own below and in proc.test.ts.
 describe('killRunGroup', () => {
   it('no sidecar ⇒ found: false', () => {
     const result = killRunGroup(contextRoot, 'no-such-slug');
@@ -1058,7 +1060,7 @@ describe('killRunGroup', () => {
       fireAt: NOW.toISOString(), startedAt: NOW.toISOString(), timeoutAt: NOW.toISOString(),
     });
     const killImpl = vi.fn();
-    const result = killRunGroup(contextRoot, slug, { killImpl });
+    const result = killRunGroup(contextRoot, slug, { killImpl, isOurs: () => true });
     expect(result.killed).toBe(false);
     expect(result.refusedReason).toMatch(/does not match the current run lock/);
     // killImpl IS invoked with signal 0 for the informational runnerAlive/
@@ -1078,12 +1080,12 @@ describe('killRunGroup', () => {
     const killImpl = vi.fn((pid: number) => {
       if (pid === 999999) { const e = new Error('gone') as NodeJS.ErrnoException; e.code = 'ESRCH'; throw e; }
     });
-    const refused = killRunGroup(contextRoot, slug, { nowMs: NOW.getTime(), killImpl });
+    const refused = killRunGroup(contextRoot, slug, { nowMs: NOW.getTime(), killImpl, isOurs: () => true });
     expect(refused.killed).toBe(false);
     expect(refused.refusedReason).toMatch(/minutes old/);
     expect(killImpl).not.toHaveBeenCalledWith(-44444, 'SIGKILL');
 
-    const forced = killRunGroup(contextRoot, slug, { nowMs: NOW.getTime(), killImpl, force: true });
+    const forced = killRunGroup(contextRoot, slug, { nowMs: NOW.getTime(), killImpl, force: true, isOurs: () => true });
     expect(forced.killed).toBe(true);
     expect(killImpl).toHaveBeenCalledWith(-44444, 'SIGKILL');
   });
@@ -1101,7 +1103,7 @@ describe('killRunGroup', () => {
       if (pid === 999999) { const e = new Error('gone') as NodeJS.ErrnoException; e.code = 'ESRCH'; throw e; }
     });
     const nowMs = new Date('2026-07-26T17:05:00.000Z').getTime();
-    const result = killRunGroup(contextRoot, slug, { killImpl, nowMs });
+    const result = killRunGroup(contextRoot, slug, { killImpl, nowMs, isOurs: () => true });
 
     expect(result.killed).toBe(true);
     expect(result.childPgid).toBe(55555);

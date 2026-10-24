@@ -64,5 +64,11 @@ if (process.platform === 'win32') {
       return (orig as (...a: unknown[]) => unknown).apply(this, args);
     };
   }
+  // Windows keeps a folder busy for a moment after a child that worked in it exits (EBUSY /
+  // ENOTEMPTY on a test's cleanup). A recursive rmSync gets Node's own retry there.
+  const fs = createRequire(import.meta.url)('node:fs') as Record<string, unknown>;
+  const rmOrig = fs.rmSync as (p: unknown, o?: Record<string, unknown>) => void;
+  fs.rmSync = (p: unknown, o?: Record<string, unknown>) =>
+    rmOrig(p, o && o.recursive && o.maxRetries === undefined ? { ...o, maxRetries: 10, retryDelay: 100 } : o);
   syncBuiltinESMExports();
 }
