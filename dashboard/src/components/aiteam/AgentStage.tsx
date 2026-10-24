@@ -149,9 +149,12 @@ function StageChat({ agent, level, homeId, homeLive, ready, vault, bus }: {
   const { session, open } = useStageSession(vault, agent, homeId, level);
   // Held elsewhere = a live process has the home conversation and it is not this stage's.
   const heldElsewhere = !session && homeLive;
+  // Looking at a teammate starts nothing: the conversation's process starts when the owner turns
+  // to it (a click on the card), exactly as a board's agent panel waits to be opened.
+  const [armed, setArmed] = useState(false);
   useEffect(() => {
-    if (!session && ready && agent.approvedForChat && !heldElsewhere) open();
-  }, [session, ready, agent.approvedForChat, heldElsewhere, open]);
+    if (armed && !session && ready && agent.approvedForChat && !heldElsewhere) open();
+  }, [armed, session, ready, agent.approvedForChat, heldElsewhere, open]);
   // The level changed (the Edit dialog): the server decides the permission mode only at a spawn,
   // so the same conversation is respawned at the new level, once the turn in flight has ended.
   const openedAt = session ? stageSessionLevel(vault, agent.slug) : null;
@@ -184,6 +187,11 @@ function StageChat({ agent, level, homeId, homeLive, ready, vault, bus }: {
             {t('aiteam.stage.openTab')}
           </button>
         </div>
+      ) : !session && !armed ? (
+        <button type="button" className="aiteam-stage-start" onClick={() => setArmed(true)} data-stage-start>
+          <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={56} of="agent" face={agent.face} />
+          <span className="aiteam-stage-start-line">{homeId ? t('aiteam.stage.continue') : t('aiteam.stage.placeholder').replace('{name}', agent.title)}</span>
+        </button>
       ) : !session ? (
         <div className="aiteam-stage-note"><p>{t('common.loading')}</p></div>
       ) : (

@@ -269,6 +269,11 @@ async function browserLeg(WebSocket, port, consoleErrors, failedRequests) {
         check(`${tag}: Scout opens on its stage`, stageUp);
         const tone = await page.locator('.aiteam-stage-head .agent-figure').first().evaluate((el) => getComputedStyle(el).getPropertyValue('--fc-body') && getComputedStyle(el.querySelector('*')).fill).catch(() => '');
         check(`${tag}: the stage header wears its figure in a theme tone`, /rgb/.test(tone), tone);
+        // Looking at a teammate starts nothing; the card is the way in.
+        const sessionsBefore = (await (await fetch(`${base}/api/agent/live-chats?vault=lumen`)).json().catch(() => ({}))).chats?.length ?? null;
+        check(`${tag}: opening the stage spawns nothing until the card is clicked`, await page.locator('[data-stage-start]').isVisible(), `live chats: ${sessionsBefore}`);
+        if (!phone) await shot('0-stage-before-talk');
+        await page.locator('[data-stage-start]').click();
         const input = page.locator('.aiteam-stage-chat .chat-cmp-input').first();
         const inputUp = await until(() => input.isVisible(), 20000);
         check(`${tag}: the centre card is a live chat`, inputUp);
