@@ -4,8 +4,10 @@
  * stage, every other card a small 1:1 tile on an ORBIT around it (a side's tiles on an arc, the
  * middle one standing out, the ends tucked in toward the centre), groups drawn as one tile, an
  * "Others" stack bottom-right, the queue pill above the centre and the terminals dock
- * bottom-left. `half` puts one card beside the centre, `present` moves the centre left and shows
- * 1-4 cards on the right; a narrow stage puts every card in Others.
+ * bottom-left. `half` puts one card beside the centre, `present` shows 1-8 cards in a named layout
+ * (spotlight, compare, grid, filmstrip, review; compare and grid move the centre to a left column,
+ * the other three shrink it to a mini chat bottom-left); a narrow stage puts every card in Others
+ * and opens a presentation as a sheet over a composer bar.
  *
  * `planStage` turns the record (cards, view) and the stage's size into a rect for everything
  * the window draws. The window positions cards absolutely from it and the layout motion reads
@@ -21,8 +23,9 @@
  * that does not fit is DRAWN smaller (the plan's `size`), the record is never touched.
  */
 import {
-  CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, SIZE_UNITS, applyGroupOp, dissolveGroups, leaveGroups, normalizeGroups, viewWithout,
-  type ContainerShape, type ContainerSize, type GroupOp, type SuperContainer, type SuperGroup, type SuperState, type SuperView,
+  CONTAINER_SIZES, MAX_CONTAINERS, MAX_FILMSTRIP, MAX_PRESENT, PRESENT_LAYOUTS, SIZE_UNITS, applyGroupOp, applyOwnerViewFields, dissolveGroups,
+  leaveGroups, normalizeGroups, presentRange, resolvePresent, viewWithout,
+  type ContainerShape, type ContainerSize, type GroupOp, type OwnerViewFields, type PresentLayout, type SuperContainer, type SuperGroup, type SuperState, type SuperView,
 } from '../../../lib/superTypes';
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -65,6 +68,30 @@ export const STAGE = {
   AGENDA_PILL_W: 172,
   /** A narrow stage's sheet sits this far inside the centre. */
   SHEET_INSET: 16,
+  /** Spotlight, filmstrip, review: the agent's chat is a mini square bottom-left of the content,
+   *  this share of the stage, clamped. */
+  MINI_FRAC_W: 0.24,
+  MINI_MIN_W: 300,
+  MINI_MAX_W: 380,
+  MINI_FRAC_H: 0.46,
+  MINI_MIN_H: 320,
+  MINI_MAX_H: 460,
+  /** The chat folded to its composer bar (and a narrow sheet's composer under it): the chat's
+   *  whole composer card (its field and its row of controls), nothing else of the chat. */
+  CHAT_BAR_H: 128,
+  /** Filmstrip: the strip of thumbs under the big card; a thumb at most this wide. */
+  STRIP_H: 112,
+  THUMB_MAX_W: 168,
+  /** Review: the row of the child's own cards under its page. */
+  REVIEW_ROW_FRAC: 0.34,
+  REVIEW_ROW_MIN: 200,
+  REVIEW_ROW_MAX: 320,
+  /** A narrow sheet's tab row (2+ cards). */
+  TAB_H: 36,
+  /** The top band's presentation controls at its right end: the exit, and one segment per layout
+   *  the switcher offers (none for a single choice). */
+  EXIT_W: 132,
+  SWITCH_SEG_W: 96,
 } as const;
 
 /**
@@ -86,7 +113,10 @@ export function cardZIndex(z: number, agenda = false): number {
 export const NARROW_STAGE_PX = 1040;
 
 /** Where a card is drawn this time (its record may say otherwise: overflow is drawn, not written). */
-export type CardWhere = 'float' | 'others' | 'half' | 'present' | 'sheet';
+export type CardWhere = 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab';
+
+/** How the agent's chat is drawn: the centre window, the mini square, or its composer bar. */
+export type ChatDraw = 'column' | 'mini' | 'bar';
 
 export interface CardPlan {
   id: string;
@@ -130,6 +160,17 @@ export interface StagePlan {
   /** Each side's orbit, for the faint path drawn through its inner column (none on a side
    *  with fewer than two tiles there). */
   orbit: OrbitArc[];
+  /** `present` only: the layout drawn; null otherwise. */
+  layout: PresentLayout | null;
+  /** How the agent's chat is drawn (the centre rect is its rect). */
+  chat: ChatDraw;
+  /** A narrow sheet of 2+ cards (not a filmstrip): its tab row and the cards in tab order; the
+   *  selected one is drawn `sheet`, the rest `tab` (kept, not shown). */
+  tabs?: { rect: Rect; ids: string[] };
+  /** Filmstrip: the strip under the big card, and which card is big. */
+  strip?: { rect: Rect; big: string };
+  /** While presenting: the top band's switcher and exit, at its right end. */
+  controls?: Rect;
 }
 
 /** A side's orbit: x = x0 + dir * depth * (1 - ((y - cy) / ymax)^2), through tile centres. */
@@ -216,6 +257,14 @@ export interface PlanOptions {
   terminals?: number;
   /** The minimised agenda's id: its pill holds the bottom band's left end (the band is reserved). */
   agendaPill?: string | null;
+  /** The card the owner made big (filmstrip) or picked in a narrow sheet's tabs; the first when
+   *  absent or no longer presented. Window state, never the record. */
+  selected?: string | null;
+  /** A Super question for the owner is open: a chat folded to its bar is drawn as the mini. */
+  asking?: boolean;
+  /** How many layouts the switcher offers (the window knows the cards' kinds); absent = those
+   *  whose count fits. */
+  layoutChoices?: number;
 }
 
 const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -571,13 +620,15 @@ function centreAt(f: Frame, w: number): Rect {
   return { x: (f.width - w) / 2, y: f.content.y, width: w, height: f.content.height };
 }
 
-function bands(f: Frame, centre: Rect, pill = false): { queue: Rect; dock: Rect } {
+function bands(f: Frame, centre: Rect, pill = false, controls?: Rect): { queue: Rect; dock: Rect } {
   // Centred on the centre, one width whatever the stage's size (stage v2: the centre follows the
   // stage now, and a band that followed it re-fitted the pill's buttons inside the resize's own
   // ResizeObserver pass). A pill that fits one row never spills over the centre's header (it
-  // grows as an overlay only while the owner points at it).
-  const qw = Math.min(STAGE.QUEUE_MAX, f.content.width);
-  const qx = Math.min(Math.max(centre.x + (centre.width - qw) / 2, f.content.x), f.content.x + f.content.width - qw);
+  // grows as an overlay only while the owner points at it). A presentation's controls hold the
+  // band's right end: the pill stops a gap before them.
+  const right = controls ? Math.max(f.content.x, controls.x - STAGE.GAP) : f.content.x + f.content.width;
+  const qw = Math.max(0, Math.min(STAGE.QUEUE_MAX, right - f.content.x));
+  const qx = Math.min(Math.max(centre.x + (centre.width - qw) / 2, f.content.x), right - qw);
   return {
     queue: { x: qx, y: f.bandTop, width: qw, height: STAGE.BAND },
     dock: pill
@@ -632,7 +683,7 @@ function planWith(
   bottomBand: boolean,
 ): StagePlan {
   // Items: at most the record's MAX_CONTAINERS cards, plus a grouped card the view presents beside its group.
-  const list = containers.slice(0, MAX_CONTAINERS + MAX_PRESENT);
+  const list = containers.slice(0, MAX_CONTAINERS + MAX_FILMSTRIP);
   const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand);
   const narrow = f.width < NARROW_STAGE_PX;
   const ids = new Set(list.map((c) => c.id));
@@ -646,24 +697,25 @@ function planWith(
     cards[c.id] = { id: c.id, rect: f.othersRect, where: 'others', shape: c.shape, owner: false, z: z.get(c.id) ?? 0 };
     others.push(c.id);
   };
-  const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = []): StagePlan => {
+  const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
+    extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls'>> = {}): StagePlan => {
     // Others in record order, whatever order they were sent there in; a live job leads it (a
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
     return {
       width: f.width, height: f.height, narrow, mode, centre, cards, others,
-      othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill), free: f.free,
-      centreWidth, unit, order: list.map((c) => c.id), orbit,
+      othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, extra.controls), free: f.free,
+      centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...extra,
     };
   };
+  const place = (id: string, rect: Rect, where: CardWhere) => {
+    const c = list.find((x) => x.id === id)!;
+    cards[id] = { id, rect, where, shape: c.shape, owner: false, z: z.get(id) ?? 0 };
+  };
 
-  // ── half / present (a narrow stage opens them as a sheet over the centre) ──
-  const half = view.mode === 'half' && view.card && ids.has(view.card) ? view.card : null;
-  const shown = view.mode === 'present' ? (view.cards ?? []).filter((id) => ids.has(id)).slice(0, MAX_PRESENT) : [];
-  if (half || shown.length) {
-    const picked = half ? [half] : shown;
-    // Live jobs stay on the stage beside a page or a presentation (owner 2026-10-23): a column of
-    // tiles at the left edge (two at most), the centre and the page share what is left.
+  // Live jobs stay on the stage beside a page or a presentation (owner 2026-10-23): a column of
+  // tiles at the left edge (two at most), and what they leave is the content the view draws in.
+  const besideRail = (picked: readonly string[]): Rect => {
     const rail = narrow ? [] : list.filter((c) => c.live && c.kind === 'chat' && c.place === 'float' && !picked.includes(c.id));
     const perCol = capacity(f.content.height);
     let railCols = perCol > 0 ? Math.min(2, Math.ceil(rail.length / perCol)) : 0;
@@ -673,7 +725,6 @@ function planWith(
     const keep = 2 * STAGE.PRESENT_MIN + STAGE.GAP;
     while (railCols > 0 && f.content.width - railCols * (STAGE.TILE + STAGE.GAP) < keep) railCols -= 1;
     const railW = railCols ? railCols * (STAGE.TILE + STAGE.GAP) : 0;
-    const content: Rect = { ...f.content, x: f.content.x + railW, width: f.content.width - railW };
     rail.slice(0, railCols * perCol).forEach((c, i) => {
       const col = Math.floor(i / perCol);
       const inCol = Math.min(perCol, rail.length - col * perCol);
@@ -682,30 +733,122 @@ function planWith(
       const rect = { x: f.content.x + col * (STAGE.TILE + STAGE.GAP), y, width: STAGE.TILE, height: STAGE.TILE };
       cards[c.id] = { id: c.id, rect, where: 'float', shape: 'square', size: 'small', owner: false, z: z.get(c.id) ?? 0 };
     });
+    return { ...f.content, x: f.content.x + railW, width: f.content.width - railW };
+  };
+
+  // ── half (a narrow stage opens it as a sheet over the centre) ──
+  const half = view.mode === 'half' && view.card && ids.has(view.card) ? view.card : null;
+  if (half) {
+    const content = besideRail([half]);
     let centre: Rect;
     let region: Rect;
     if (narrow) {
       centre = { ...f.content };
       const i = STAGE.SHEET_INSET;
       region = { x: centre.x + i, y: centre.y + i, width: centre.width - 2 * i, height: centre.height - 2 * i };
-    } else if (half) {
+    } else {
       const w = (content.width - STAGE.GAP) / 2;
       centre = { x: content.x, y: content.y, width: w, height: content.height };
       region = { x: content.x + w + STAGE.GAP, y: content.y, width: w, height: content.height };
-    } else {
-      // The centre's share of what the rail leaves (the rail narrows the centre and the cards alike).
-      const w = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
-      centre = { x: content.x, y: content.y, width: w, height: content.height };
-      region = { x: content.x + w + STAGE.GAP, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
     }
-    const rects = grid(region, picked.length);
-    const where: CardWhere = narrow ? 'sheet' : half ? 'half' : 'present';
-    picked.forEach((id, i) => {
-      const c = list.find((x) => x.id === id)!;
-      cards[id] = { id, rect: rects[i], where, shape: c.shape, owner: false, z: z.get(id) ?? 0 };
-    });
+    place(half, region, narrow ? 'sheet' : 'half');
     for (const c of list) if (!cards[c.id]) toOthers(c);
-    return finish(centre, centre.width, half ? 'half' : 'present');
+    return finish(centre, centre.width, 'half');
+  }
+
+  // ── present: a named layout (a narrow stage opens it as a sheet over a composer bar) ──
+  const pool = view.mode === 'present' ? [...new Set((view.cards ?? []).filter((id) => ids.has(id)))] : [];
+  if (pool.length) {
+    const layout = drawnLayout(view.layout, pool.length);
+    // The agenda is never a filmstrip's big card: drawn last there (the record keeps its order).
+    const kindOf = (id: string) => list.find((x) => x.id === id)?.kind;
+    const shown = pool.slice(0, presentRange(layout).max);
+    const ordered = layout === 'filmstrip' ? [...shown.filter((id) => kindOf(id) !== 'agenda'), ...shown.filter((id) => kindOf(id) === 'agenda')] : shown;
+    const selected = opts.selected && ordered.includes(opts.selected) ? opts.selected : ordered[0];
+    const choices = opts.layoutChoices ?? PRESENT_LAYOUTS.filter((p) => p !== 'review' && shown.length >= presentRange(p).min && shown.length <= presentRange(p).max).length;
+    const cw = STAGE.EXIT_W + (choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0);
+    const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop, width: Math.min(cw, f.content.width), height: STAGE.BAND };
+    const strip = (main: Rect): StagePlan['strip'] => {
+      // The big card over one row of thumbs, the rest in their order.
+      const thumbs = ordered.filter((id) => id !== selected);
+      const row: Rect = { x: main.x, y: main.y + main.height - STAGE.STRIP_H, width: main.width, height: STAGE.STRIP_H };
+      place(selected, { x: main.x, y: main.y, width: main.width, height: Math.max(0, main.height - STAGE.STRIP_H - STAGE.GAP) }, narrow ? 'sheet' : 'present');
+      const tw = thumbs.length ? Math.min(STAGE.THUMB_MAX_W, (row.width - (thumbs.length - 1) * STAGE.GAP) / thumbs.length) : 0;
+      thumbs.forEach((id, i) => place(id, { x: row.x + i * (tw + STAGE.GAP), y: row.y, width: tw, height: row.height }, 'thumb'));
+      return { rect: row, big: selected };
+    };
+
+    if (narrow) {
+      // Any layout is the sheet; the agent's composer is a bar under it (D14). A question of his
+      // open: the chat at the mini's height, its transcript shown, so the question is there (D7).
+      const i = STAGE.SHEET_INSET;
+      const barH = opts.asking ? Math.min(STAGE.MINI_MAX_H, Math.max(STAGE.MINI_MIN_H, STAGE.MINI_FRAC_H * f.height), f.content.height / 2) : STAGE.CHAT_BAR_H;
+      const bar: Rect = { x: f.content.x, y: f.content.y + f.content.height - barH, width: f.content.width, height: barH };
+      const sheet: Rect = { x: f.content.x + i, y: f.content.y + i, width: f.content.width - 2 * i, height: Math.max(0, f.content.height - barH - STAGE.GAP - i) };
+      const extra = { layout, chat: opts.asking ? 'mini' as const : 'bar' as const, controls };
+      if (layout === 'filmstrip') {
+        const st = strip(sheet);
+        for (const c of list) if (!cards[c.id]) toOthers(c);
+        return finish(bar, bar.width, 'present', undefined, undefined, { ...extra, strip: st });
+      }
+      if (ordered.length === 1) {
+        place(ordered[0], sheet, 'sheet');
+        for (const c of list) if (!cards[c.id]) toOthers(c);
+        return finish(bar, bar.width, 'present', undefined, undefined, extra);
+      }
+      const tabs: Rect = { x: sheet.x, y: sheet.y, width: sheet.width, height: STAGE.TAB_H };
+      const body: Rect = { x: sheet.x, y: sheet.y + STAGE.TAB_H + STAGE.GAP / 2, width: sheet.width, height: Math.max(0, sheet.height - STAGE.TAB_H - STAGE.GAP / 2) };
+      for (const id of ordered) place(id, body, id === selected ? 'sheet' : 'tab');
+      for (const c of list) if (!cards[c.id]) toOthers(c);
+      return finish(bar, bar.width, 'present', undefined, undefined, { ...extra, tabs: { rect: tabs, ids: ordered } });
+    }
+
+    // A wide stage keeps the live jobs beside the presentation; the layouts draw in what they leave.
+    const content = besideRail(ordered);
+    if (layout === 'compare' || layout === 'grid') {
+      // The centre as a left column, the cards in a grid on the right (as before layouts); the
+      // centre's share is of what the rail leaves (the rail narrows the centre and the cards alike).
+      const w = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
+      const centre: Rect = { x: content.x, y: content.y, width: w, height: content.height };
+      const region: Rect = { x: content.x + w + STAGE.GAP, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
+      const rects = grid(region, ordered.length);
+      ordered.forEach((id, k) => place(id, rects[k], 'present'));
+      for (const c of list) if (!cards[c.id]) toOthers(c);
+      return finish(centre, centre.width, 'present', undefined, undefined, { layout, chat: 'column', controls });
+    }
+
+    // Spotlight, filmstrip, review: the agent is a mini square bottom-left (or its composer bar,
+    // when the owner folded it and no question of his is open), the cards take the rest.
+    const c = content;
+    const chat: ChatDraw = view.chat === 'bar' && !opts.asking ? 'bar' : 'mini';
+    const miniW = Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * f.width));
+    const miniH = Math.min(c.height, STAGE.MINI_MAX_H, Math.max(STAGE.MINI_MIN_H, STAGE.MINI_FRAC_H * f.height));
+    const centre: Rect = chat === 'bar'
+      ? { x: c.x, y: c.y + c.height - STAGE.CHAT_BAR_H, width: miniW, height: STAGE.CHAT_BAR_H }
+      : { x: c.x, y: c.y + c.height - miniH, width: miniW, height: miniH };
+    const main: Rect = chat === 'bar'
+      ? { x: c.x, y: c.y, width: c.width, height: Math.max(0, c.height - STAGE.CHAT_BAR_H - STAGE.GAP) }
+      : { x: c.x + miniW + STAGE.GAP, y: c.y, width: Math.max(0, c.width - miniW - STAGE.GAP), height: c.height };
+    const extra = { layout, chat, controls };
+    if (layout === 'filmstrip') {
+      const st = strip(main);
+      for (const k of list) if (!cards[k.id]) toOthers(k);
+      return finish(centre, centre.width, 'present', undefined, undefined, { ...extra, strip: st });
+    }
+    if (layout === 'review') {
+      // The child's page big on top (its site, else its browser), its other cards in a row under it.
+      const page = ordered.find((id) => kindOf(id) === 'web') ?? ordered.find((id) => kindOf(id) === 'browser') ?? ordered[0];
+      const rest = ordered.filter((id) => id !== page);
+      const rowH = Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * main.height));
+      place(page, { x: main.x, y: main.y, width: main.width, height: Math.max(0, main.height - rowH - STAGE.GAP) }, 'present');
+      const rw = rest.length ? (main.width - (rest.length - 1) * STAGE.GAP) / rest.length : 0;
+      rest.forEach((id, k) => place(id, { x: main.x + k * (rw + STAGE.GAP), y: main.y + main.height - rowH, width: rw, height: rowH }, 'present'));
+      for (const k of list) if (!cards[k.id]) toOthers(k);
+      return finish(centre, centre.width, 'present', undefined, undefined, extra);
+    }
+    place(ordered[0], main, 'present');
+    for (const k of list) if (!cards[k.id]) toOthers(k);
+    return finish(centre, centre.width, 'present', undefined, undefined, extra);
   }
 
   // ── narrow: the centre takes the width, every card is in Others ──
@@ -797,6 +940,16 @@ function planWith(
   return finish(centre, centre.width, 'float', { left: width('left'), right: width('right') }, sol.orbit);
 }
 
+/** The layout a presentation is drawn in: the stored one while it takes this many cards, else the
+ *  count's default (an older push carries none; the store resolves review by what the cards are). */
+function drawnLayout(stored: PresentLayout | undefined, n: number): PresentLayout {
+  if (stored && (PRESENT_LAYOUTS as readonly string[]).includes(stored)) {
+    const r = presentRange(stored);
+    if (n >= r.min && n <= r.max) return stored;
+  }
+  return n <= 1 ? 'spotlight' : n === 2 ? 'compare' : n <= MAX_PRESENT ? 'grid' : 'filmstrip';
+}
+
 /** Taller than wide by more than a hair: 'tall'. A floating tile is always square. */
 function drawnShape(r: Rect): ContainerShape {
   return r.height > r.width * 1.1 ? 'tall' : 'square';
@@ -843,7 +996,9 @@ export interface LayoutPatchCard {
   size?: ContainerSize | null;
 }
 
-export interface LayoutPatch {
+/** The owner's presentation gestures travel as {@link OwnerViewFields} (each names the card set
+ *  he saw), never as a whole view. */
+export interface LayoutPatch extends OwnerViewFields {
   cards?: LayoutPatchCard[];
   closed?: string[];
   view?: SuperView;
@@ -915,13 +1070,14 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
   if (gone.size) st.containers = st.containers.filter((x) => !gone.has(x.id));
   const { containers, groups } = normalizeGroups(st.containers, st.groups);
   const live = new Set(containers.map((c) => c.id));
-  const v = patch.view ?? viewWithout(state.view, unshown);
+  // The server's order: the cards leave, an explicit view wins (without his marks: those travel
+  // set-guarded), the set-guarded fields, then the store's sanitize re-resolves the layout.
+  let v: SuperView = viewWithout(state.view, unshown);
+  if (patch.view) { v = { ...patch.view }; delete v.layoutBy; delete v.chat; }
+  v = applyOwnerViewFields(v, patch);
   let view: SuperView = { mode: 'float' };
   if (v.mode === 'half' && v.card && live.has(v.card)) view = { mode: 'half', card: v.card };
-  else if (v.mode === 'present') {
-    const cards = [...new Set((v.cards ?? []).filter((id) => live.has(id)))].slice(0, MAX_PRESENT);
-    if (cards.length) view = { mode: 'present', cards };
-  }
+  else if (v.mode === 'present') view = resolvePresent(v, containers) ?? { mode: 'float' };
   return { ...state, containers, groups, view };
 }
 
@@ -952,14 +1108,34 @@ export function patchEchoed(state: Staged, patch: LayoutPatch): boolean {
     if (JSON.stringify(want) !== JSON.stringify(groups)) return false;
   }
   // The whole view, not its mode: a push still on `half A` must not swallow the owner's
-  // `half B` (end review r8). Compared as the server would store it (a gone card is float).
-  if (patch.view && !sameView(applyLayoutPatch(state, patch).view, state.view)) return false;
+  // `half B` (end review r8). Compared as the server would store it (a gone card is float). A
+  // set-guarded field over another card set changes nothing there, so it reads as echoed and
+  // is dropped, never laid over the agent's new set.
+  if ((patch.view || patch.presentLayout || patch.chat || patch.exit) && !sameView(applyLayoutPatch(state, patch).view, state.view)) return false;
   return true;
 }
 
-function sameView(a: SuperView, b: SuperView): boolean {
+/**
+ * A push with the owner's edits not yet echoed laid over it: each edit is checked against the push
+ * WITH the earlier pending edits applied, in the order he made them (an Esc after a close that has
+ * not landed reads against the closed set, so a push in between never drops it). Returns what to
+ * draw and the edits still pending.
+ */
+export function withPendingPatches<S extends Staged>(pushed: S, pending: readonly LayoutPatch[]): { state: S; keep: LayoutPatch[] } {
+  let state = pushed;
+  const keep: LayoutPatch[] = [];
+  for (const p of pending) {
+    if (patchEchoed(state, p)) continue;
+    keep.push(p);
+    state = applyLayoutPatch(state, p);
+  }
+  return { state, keep };
+}
+
+/** Two views draw the same: mode, card (half), cards in order, layout and chat bar (present). */
+export function sameView(a: SuperView, b: SuperView): boolean {
   if (a.mode !== b.mode) return false;
   if (a.mode === 'half') return a.card === b.card;
-  if (a.mode === 'present') return (a.cards ?? []).join('\n') === (b.cards ?? []).join('\n');
+  if (a.mode === 'present') return (a.cards ?? []).join('\n') === (b.cards ?? []).join('\n') && a.layout === b.layout && a.chat === b.chat;
   return true;
 }

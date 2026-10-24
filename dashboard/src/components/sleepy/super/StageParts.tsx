@@ -1,5 +1,7 @@
-import { STAGE, type StagePlan } from './superLayout';
-import type { SuperStateView } from '../../../lib/superTypes';
+import type { KeyboardEvent } from 'react';
+import { STAGE, type Rect, type StagePlan } from './superLayout';
+import type { PresentLayout, SuperStateView } from '../../../lib/superTypes';
+import { useI18n } from '../../../context/I18nContext';
 import type { ChatSession } from '../chatSession';
 import { ChatTile, type AsksOwner } from './AgentCard';
 import { chatStatus } from './SuperContainer';
@@ -54,3 +56,56 @@ export function OrbitPath({ plan }: { plan: StagePlan }) {
 }
 
 
+
+/**
+ * A presentation's controls at the top band's right end (plan-r2 D11, D12): the layouts these
+ * cards can take (only when there is a choice), then the way back to the floating stage.
+ */
+export function StageControls({ rect, layouts, current, onPick, onExit }: {
+  rect: Rect; layouts: readonly PresentLayout[]; current: PresentLayout; onPick: (l: PresentLayout) => void; onExit: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="super-stage-controls" data-testid="super-stage-controls" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
+      {layouts.length > 1 && (
+        <div className="super-layout-switch" role="group" aria-label={t('super.layout.switch')} data-testid="super-layout-switch">
+          {layouts.map((l) => (
+            <button key={l} type="button" className="super-layout-seg" aria-pressed={l === current} data-layout={l}
+              data-testid={`super-layout-${l}`} onClick={() => { if (l !== current) onPick(l); }}>
+              {t(`super.layout.${l}`)}
+            </button>
+          ))}
+        </div>
+      )}
+      <button type="button" className="super-stage-exit" data-testid="super-stage-exit" onClick={onExit} title="Esc">{t('super.stage.exit')}</button>
+    </div>
+  );
+}
+
+/** A narrow sheet's tab row: one tab per presented card, the shown one pressed; arrows move. */
+export function SheetTabs({ rect, ids, selected, titleOf, onSelect }: {
+  rect: Rect; ids: readonly string[]; selected: string; titleOf: (id: string) => string; onSelect: (id: string) => void;
+}) {
+  const { t } = useI18n();
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const i = ids.indexOf(selected);
+    const next = ids[(i + (e.key === 'ArrowRight' ? 1 : ids.length - 1)) % ids.length];
+    onSelect(next);
+    // Focus follows the selected tab (the roving tabindex leaves the old one at -1).
+    const row = e.currentTarget;
+    requestAnimationFrame(() => row.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next)}"]`)?.focus());
+  };
+  return (
+    <div className="super-sheet-tabs" role="tablist" aria-label={t('super.layout.tab')} data-testid="super-sheet-tabs" onKeyDown={onKey}
+      style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
+      {ids.map((id) => (
+        <button key={id} type="button" role="tab" className="super-sheet-tab" aria-selected={id === selected} tabIndex={id === selected ? 0 : -1}
+          data-testid="super-sheet-tab" data-tab-id={id} onClick={() => onSelect(id)}>
+          {titleOf(id)}
+        </button>
+      ))}
+    </div>
+  );
+}

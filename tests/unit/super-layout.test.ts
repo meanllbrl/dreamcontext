@@ -10,7 +10,7 @@ import {
   NARROW_STAGE_PX, STAGE, applyLayoutPatch, dropTargetAt, overCentre, overOthersZone, patchEchoed, planStage,
   posFromRect, preferredCentre, rectFromPos, stageItems, type Rect, type StagePlan,
 } from '../../dashboard/src/components/sleepy/super/superLayout.js';
-import { MAX_CONTAINERS, MAX_FLOAT, MAX_PRESENT, type SuperContainer, type SuperGroup, type SuperView } from '../../dashboard/src/lib/superTypes.js';
+import { MAX_CONTAINERS, MAX_FILMSTRIP, MAX_FLOAT, MAX_PRESENT, type SuperContainer, type SuperGroup, type SuperView } from '../../dashboard/src/lib/superTypes.js';
 
 const card = (id: string, shape: SuperContainer['shape'] = 'tall', extra: Partial<SuperContainer> = {}): SuperContainer =>
   ({ id, kind: shape === 'tall' ? 'chat' : 'insight', ref: `ref-${id}`, shape, place: 'float', ...extra });
@@ -194,9 +194,9 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
     expect(p.cards.b.rect).toEqual(p.othersRect);
   });
 
-  it('never lays out more than the record\'s MAX_CONTAINERS cards plus the 4 a view may present beside their group', () => {
-    const many = Array.from({ length: MAX_CONTAINERS + MAX_PRESENT + 1 }, (_, i) => card(`k${i}`, 'square'));
-    expect(Object.keys(planStage(many, FLOAT, STAGES[3]).cards)).toHaveLength(MAX_CONTAINERS + MAX_PRESENT);
+  it('never lays out more than the record\'s MAX_CONTAINERS cards plus the 8 a filmstrip may present beside their group', () => {
+    const many = Array.from({ length: MAX_CONTAINERS + MAX_FILMSTRIP + 1 }, (_, i) => card(`k${i}`, 'square'));
+    expect(Object.keys(planStage(many, FLOAT, STAGES[3]).cards)).toHaveLength(MAX_CONTAINERS + MAX_FILMSTRIP);
   });
 });
 
@@ -593,7 +593,8 @@ describe('the owner\'s patch, applied locally (§0 C3)', () => {
     expect(patchEchoed(applyLayoutPatch(s0, toB), toB)).toBe(true);
     const present = { view: { mode: 'present' as const, cards: ['a', 'c'] } };
     expect(patchEchoed({ ...s0, view: { mode: 'present', cards: ['b'] } }, present)).toBe(false);
-    expect(patchEchoed({ ...s0, view: { mode: 'present', cards: ['a', 'c'] } }, present)).toBe(true);
+    // A pushed presentation always carries its resolved layout (readView).
+    expect(patchEchoed({ ...s0, view: { mode: 'present', cards: ['a', 'c'], layout: 'compare' } }, present)).toBe(true);
     // A half on a card the server already closed is stored as float: that push carries it.
     const gone = { containers: [card('a', 'tall')], view: FLOAT };
     expect(patchEchoed(gone, toB)).toBe(true);

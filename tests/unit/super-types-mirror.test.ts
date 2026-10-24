@@ -117,6 +117,45 @@ describe('super types — server record <-> window mirror', () => {
     expect(v?.notes).toEqual({});
   });
 
+  it('the presentation layouts are one list, one limit and one resolver on both sides', () => {
+    expect([...client.PRESENT_LAYOUTS]).toEqual([...server.PRESENT_LAYOUTS]);
+    expect([...server.PRESENT_LAYOUTS]).toEqual(['spotlight', 'compare', 'grid', 'filmstrip', 'review']);
+    expect([client.MAX_FILMSTRIP, server.MAX_FILMSTRIP]).toEqual([8, 8]);
+    for (const l of server.PRESENT_LAYOUTS) {
+      expect(client.presentRange(l)).toEqual(server.presentRange(l));
+      expect(client.layoutRule(l)).toBe(server.layoutRule(l));
+    }
+    type C = Pick<server.SuperContainer, 'kind' | 'ref' | 'of'>;
+    const chat: C = { kind: 'chat', ref: 'kid' };
+    const site: C = { kind: 'web', ref: 'http://127.0.0.1:5173/', of: 'kid' };
+    const browser: C = { kind: 'browser', ref: 'kid' };
+    const task = (r: string): C => ({ kind: 'task', ref: r });
+    const agenda: C = { kind: 'agenda', ref: 'agenda' };
+    // [asked layout, cards, the layout both sides resolve to]
+    const fixtures: [unknown, C[], string][] = [
+      [undefined, [task('a')], 'spotlight'],
+      [undefined, [site, chat], 'review'],
+      [undefined, [site, chat, browser], 'review'],
+      [undefined, [chat, agenda], 'compare'],
+      [undefined, [site, chat, agenda], 'grid'],
+      ['review', [task('a'), task('b')], 'compare'],
+      ['grid', [task('a'), task('b')], 'grid'],
+      // An old record: no layout, five cards.
+      [undefined, ['a', 'b', 'c', 'd', 'e'].map(task), 'filmstrip'],
+    ];
+    for (const [asked, cards, want] of fixtures) {
+      expect(server.resolveLayout(asked, cards), JSON.stringify([asked, cards])).toBe(want);
+      expect(client.resolveLayout(asked, cards), JSON.stringify([asked, cards])).toBe(want);
+    }
+    const containers = [{ id: 'w', ...site }, { id: 'c', ...chat }, { id: 'b', ...browser }] as server.SuperContainer[];
+    const raw = { cards: ['w', 'c', 'b'], layout: 'review', layoutBy: 'owner', chat: 'bar' };
+    expect(client.resolvePresent(raw, containers)).toEqual(server.resolvePresent(raw, containers));
+    const body = { presentLayout: { layout: 'grid', cards: ['w', 'c'] }, chat: { value: 'bar', cards: ['w'] }, exit: { cards: ['w'], closing: ['c'] } };
+    expect(client.readOwnerViewFields(body)).toEqual(server.readOwnerViewFields(body));
+    const view = { mode: 'present' as const, cards: ['w', 'c'], layout: 'compare' as const };
+    expect(client.applyOwnerViewFields(view, client.readOwnerViewFields(body))).toEqual(server.applyOwnerViewFields(view, server.readOwnerViewFields(body)));
+  });
+
   it('both files carry the MIRRORED comment that sends the next reader to the other one', () => {
     expect(readFileSync(join(ROOT, 'src/lib/super/types.ts'), 'utf-8')).toContain('dashboard/src/lib/superTypes.ts');
     expect(readFileSync(join(ROOT, 'dashboard/src/lib/superTypes.ts'), 'utf-8')).toContain('src/lib/super/types.ts');

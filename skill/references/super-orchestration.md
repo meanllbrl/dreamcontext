@@ -187,3 +187,26 @@ Ayla on WhatsApp 'standup moved to 10'."
 
 U1 and U3 both edit `orbit-app` but not the same file; each has its own worktree and the topic branch
 merges them. Reply: "Started 6 (one messages Ayla), 2 wait for the invites API. Releasing 1.4 needs your yes."
+
+## 7. Presentation layouts
+`super present <card…> [--layout <name>]` takes 1-8 cards. Leave `--layout` off and the cards pick it:
+1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip, and a page with its own child's chat (and browser) is
+review. A wrong count for a named layout answers 400 naming the range. The owner can switch the layout
+from the stage's top band; an answer with `kept: owner_layout` means he chose it: leave it.
+
+| Situation | Layout | Command |
+|---|---|---|
+| local dev site to review | spotlight | `present <web>` |
+| a child builds a site, the owner watches | review | `present <web> <child-chat> [<browser>]` |
+| mockup A/B choice | compare + ask | `present <a> <b>` → `super ask --json` (previews) |
+| before / after | compare | `present <before> <after>` |
+| 3-4 options or metrics together | grid | `present <c1…c4>` |
+| picture set, deck, 5+ screenshots | filmstrip | `present <c1…c8>` |
+| long document, PDF, a whiteboard | spotlight | `present <card>` |
+| one metric / insight | none | `open insight <slug> --size large` |
+| talking, a card only for reference | half | `half <card>` |
+| decided / done | float | `present --off` |
+| narrow window | automatic | nothing |
+
+In spotlight, filmstrip and review you are a small chat in the bottom-left corner; a site in spotlight
+or review is laid out at a desktop width (1280 css px) and scaled to fit.

@@ -142,11 +142,12 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('present [cards...]')
-    .description('Presentation: you move left, 1-4 cards fill the right; --off returns to the floating cards')
+    .description('Presentation of 1-8 cards in a named layout: spotlight (1), compare (2), grid (2-4), filmstrip (2-8), review (a page with its child\'s chat); without --layout the cards pick it; --off returns to the floating cards')
+    .option('--layout <name>', 'spotlight | compare | grid | filmstrip | review')
     .option('--off', 'Leave the presentation')
-    .action((containers: string[], o: { off?: boolean }) => {
-      if (!o.off && containers.length === 0) return usage('name 1-4 cards, or pass --off');
-      return run('present', { containers: o.off ? [] : containers });
+    .action((containers: string[], o: { off?: boolean; layout?: string }) => {
+      if (!o.off && containers.length === 0) return usage('name 1-8 cards, or pass --off');
+      return run('present', o.off ? { containers: [] } : { containers, ...(o.layout ? { layout: o.layout } : {}) });
     });
 
   s.command('stack <card>')

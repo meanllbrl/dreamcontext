@@ -267,7 +267,7 @@ export function motionEasing(): string {
 // ─── Layout motion (plan-r8 F8, §0 FE2/FE3, round 2) ───────────────────────────
 
 /** Where a stage key is drawn (`superLayout`'s CardWhere, plus the centre). */
-export type StageWhere = 'centre' | 'float' | 'others' | 'half' | 'present' | 'sheet';
+export type StageWhere = 'centre' | 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab';
 
 export interface StageBox { rect: Rect; where: StageWhere }
 
@@ -331,7 +331,8 @@ const near = (a: number, b: number, tol = 0.5) => Math.abs(a - b) <= tol;
 const sameRect = (a: Rect, b: Rect) => near(a.x, b.x) && near(a.y, b.y) && near(a.width, b.width) && near(a.height, b.height);
 const sameSize = (a: Rect, b: Rect) =>
   b.width > 0 && b.height > 0 && Math.abs(a.width / b.width - 1) <= LAYOUT.sizeTolerance && Math.abs(a.height / b.height - 1) <= LAYOUT.sizeTolerance;
-const onStage = (w: StageWhere | undefined) => !!w && w !== 'others';
+// A card behind a narrow sheet's tab is kept, not shown: it moves like one in Others.
+const onStage = (w: StageWhere | undefined) => !!w && w !== 'others' && w !== 'tab';
 
 /**
  * What every key does between two layouts. `before` holds the rects MEASURED in the snapshot

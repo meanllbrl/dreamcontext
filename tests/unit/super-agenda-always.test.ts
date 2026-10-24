@@ -160,7 +160,7 @@ describe('its close minimises it to the bottom-left pill', () => {
     expect((await layout({ agenda: 'min' })).status).toBe(200);
     let s = await readSuperState(root);
     expect(s.containers.find((c) => c.id === AGENDA_ID)).toEqual(agenda({ pos: { x: 0.2, y: 0.3 }, size: 'wide', sizeBy: 'owner', min: true }));
-    expect(s.view).toEqual({ mode: 'present', cards: ['task-a'] });
+    expect(s.view).toEqual({ mode: 'present', cards: ['task-a'], layout: 'spotlight' });
     expect(s.dismissed).toEqual([]);
     expect((await layout({ agenda: 'open' })).status).toBe(200);
     expect(await agendaOf()).toEqual(agenda({ pos: { x: 0.2, y: 0.3 }, size: 'wide', sizeBy: 'owner' }));

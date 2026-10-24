@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { isLightMode } from '../../../lib/lightMode';
-import { MAX_CONTAINERS, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
+import { MAX_CONTAINERS, PRESENT_LAYOUTS, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
 import { SleepyMascot } from '../SleepyMascot';
 import type { ChatSession } from '../chatSession';
 import { prefersReducedMotion } from './motionRunner';
@@ -13,7 +13,7 @@ import { SuperGroupCard } from './SuperGroupCard';
 import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
-import { OrbitPath, PanelChatTile } from './StageParts';
+import { OrbitPath, PanelChatTile, SheetTabs, StageControls } from './StageParts';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
@@ -50,6 +50,8 @@ export interface SuperSurfaceProps {
   visible: boolean;
   /** Landing targets still waiting for their hand-over flight (`'centre'` or a card id). */
   pending: ReadonlySet<string>;
+  /** Cards the owner closed whose close has not reached the record yet. */
+  pendingCloses: () => string[];
   motion: 'running' | 'idle';
   superSession: ChatSession | undefined;
   vault: string;
@@ -170,9 +172,28 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const a = state.containers.find((c) => c.kind === 'agenda');
     return a?.min && !items.some((i) => i.id === a.id) ? a.id : null;
   }, [state.containers, items]);
+  // A presentation's window state (plan-r2 D13, D14): the card made big in a filmstrip, or picked
+  // in a narrow sheet's tabs. Never the record; a card no longer presented falls back to the first.
+  const [selected, setSelected] = useState<string | null>(null);
+  // A question the Super Agent put to the owner (its own `ask`, a child's question it escalated,
+  // an AI Team approval) is ITS question while it waits, like an AskUserQuestion is a chat's: the
+  // centre asks, not spins (owner, 2026-10-22). A child's permission stays on the child's card.
+  // A chat folded to its bar is drawn as the mini meanwhile, so the question shows (D7).
+  const ownerAsk = state.queue.some((q) => needsOwner(q) && q.kind !== 'permission');
+  // The layouts the switcher offers: those the presented cards can take (R3(f)).
+  const presented = useMemo(() => (view.mode === 'present' ? (view.cards ?? []).filter((id) => state.containers.some((c) => c.id === id)) : []), [view, state.containers]);
+  // A selection belongs to one presentation: another card set starts on its first card.
+  const presentedKey = [...presented].sort().join('\n');
+  useEffect(() => { setSelected(null); }, [presentedKey]);
+  const layoutChoices = useMemo<PresentLayout[]>(() => {
+    const cards = presented.map((id) => state.containers.find((c) => c.id === id)!);
+    return cards.length ? PRESENT_LAYOUTS.filter((l) => resolveLayout(l, cards) === l) : [];
+  }, [presented, state.containers]);
+  /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
+  const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill }),
-    [items, view, size, pinned, props.terminals.length, agendaPill],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, asking: ownerAsk, layoutChoices: layoutChoices.length }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, ownerAsk, layoutChoices.length],
   );
   cuesPlanRef.current = plan;
   const planRef = useRef(plan);
@@ -253,7 +274,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
     // presented, or in a large/wide floating card (owner 2026-10-22), within the same budget.
     ? state.containers.filter((c) => {
       const cp = c.kind === 'web' ? plan.cards[c.id] : undefined;
-      if (!cp || cp.where === 'others' || full?.id === c.id) return false;
+      // A filmstrip thumb and a card behind a narrow tab never show a live page (D13).
+      if (!cp || cp.where === 'others' || cp.where === 'thumb' || cp.where === 'tab' || full?.id === c.id) return false;
       return cp.where !== 'float' || cp.size === 'large' || cp.size === 'wide';
     }).map((c) => c.id)
     : [];
@@ -269,14 +291,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }, [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // Where each page card was last drawn: a parked one stays there, hidden, at its size.
   const lastRectRef = useRef(new Map<string, CardPlan>());
-  for (const id of livePages) { const cp = plan.cards[id]; if (cp && cp.where !== 'others') lastRectRef.current.set(id, cp); }
+  for (const id of livePages) { const cp = plan.cards[id]; if (cp && cp.where !== 'others' && cp.where !== 'tab') lastRectRef.current.set(id, cp); }
   for (const id of [...lastRectRef.current.keys()]) if (!byId.has(id)) lastRectRef.current.delete(id);
 
   // ── The live browser budget: at most two cards re-render on frames, only while this window is
   //    visible and focused; the rest keep their last frame (AC7). ──
   const activity = useWindowActivity();
   const browserOnScreen = props.visible && activity.focused
-    ? state.containers.filter((c) => c.kind === 'browser' && plan.cards[c.id] && plan.cards[c.id].where !== 'others').map((c) => c.id)
+    ? state.containers.filter((c) => c.kind === 'browser' && plan.cards[c.id] && !['others', 'thumb', 'tab'].includes(plan.cards[c.id].where)).map((c) => c.id)
     : [];
   const liveBrowser = liveWebIds(lru, browserOnScreen, MAX_LIVE_BROWSERS);
   useEffect(() => {
@@ -329,7 +351,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (c?.kind === 'chat') props.onKeepChild(c.ref);
     },
     onMinimize: (id: string) => {
-      onLayout({ view: { mode: 'float' } });
+      // Presenting: the set-guarded exit, so a minimize never floats the agent's newer presentation.
+      onLayout(view.mode === 'present' ? exitPatch() : { view: { mode: 'float' } });
       requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(id)}"]`)?.focus());
     },
     onLoadWeb: (id: string) => setLru((prev) => touchLru(prev, id)),
@@ -351,6 +374,39 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const canFit = (id: string, next: ContainerSize) => fitsNow(items, view, size, id, next, { terminals: props.terminals.length });
   // A card closed meanwhile takes its full-screen view with it.
   useEffect(() => { if (full && !byId.has(full.id)) setFull(null); }, [byId, full]);
+
+  // ── A presentation (plan-r2 D7, D11-D13): every gesture names the cards the owner SAW ──
+  const pickLayout = (layout: PresentLayout) => onLayout({ presentLayout: { layout, cards: presented } });
+  const toggleBar = () => onLayout({ chat: { value: plan.chat === 'bar' ? null : 'bar', cards: presented } });
+  const exitPresentation = () => onLayout(exitPatch());
+  const presentKeysRef = useRef({ exit: exitPresentation, plan, full: !!full });
+  presentKeysRef.current = { exit: exitPresentation, plan, full: !!full };
+  const presenting = plan.mode === 'present' && props.visible;
+  useEffect(() => {
+    if (!presenting) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const ae = document.activeElement as HTMLElement | null;
+      // Whatever owns the key first keeps it (AgentSurface's fold list, plus the stage's own).
+      // A chat on the stage (the Super's, a shown child's) owns its keys: its question card pages
+      // and answers on the arrows and Esc.
+      if (ae && (ae.tagName === 'IFRAME' || ae.isContentEditable || ae.closest('input, textarea, select, .agent-composer, .agent-pane-slot, [data-super-slot], .cmd-modal'))) return;
+      if (presentKeysRef.current.full) return;
+      if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay, .quest-receipt-scrim, .agent-composer-menu, .cmd-modal, .agent-tab-menu, .agent-new-menu')) return;
+      if (document.querySelector('.super-group-panel, .super-size-menu, .super-close-choice, .super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"], [data-resizing], .super-surface[data-dragging]')) return;
+      const p = presentKeysRef.current.plan;
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); presentKeysRef.current.exit(); return; }
+      // ←/→: the next big card of a filmstrip, the next tab of a narrow sheet.
+      const order = p.strip ? [p.strip.big, ...Object.values(p.cards).filter((c) => c.where === 'thumb').sort((a, b) => a.rect.x - b.rect.x).map((c) => c.id)] : p.tabs?.ids;
+      if (!order || order.length < 2 || !rootRef.current?.contains(ae)) return;
+      const ids = p.tabs?.ids ?? (view.cards ?? []).filter((id) => order.includes(id));
+      const at = ids.indexOf(p.strip?.big ?? ids.find((id) => p.cards[id]?.where === 'sheet') ?? ids[0]);
+      e.preventDefault();
+      setSelected(ids[(at + (e.key === 'ArrowRight' ? 1 : ids.length - 1)) % ids.length]);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [presenting, view.cards]);
 
   const onUngroup = (id: string) => { setOpenGroup(null); onLayout({ ungroup: [id] }); };
   dragDeps.current = {
@@ -394,10 +450,6 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // The stage follows the Super Agent's STATUS (the centre's glow and the mascot), never its every
   // token: its transcript re-renders itself (liveSession.ts).
   useLiveSession(superSession, () => { const s = chatStatus(superSession); return `${s.kind}|${s.mood}`; });
-  // A question the Super Agent put to the owner (its own `ask`, a child's question it escalated,
-  // an AI Team approval) is ITS question while it waits, like an AskUserQuestion is a chat's: the
-  // centre asks, not spins (owner, 2026-10-22). A child's permission stays on the child's card.
-  const ownerAsk = state.queue.some((q) => needsOwner(q) && q.kind !== 'permission');
   const status = superCentreStatus(superSession, ownerAsk);
   // The cape goes on WITH the hand-over (D18, AC13): the face mounts with the surface — inside
   // the centre, still at opacity 0 while its stand-in grows in — so the 400 ms entrance starts
@@ -471,7 +523,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       actions.onSideBySide(agendaCard.id);
       return;
     }
-    onLayout(viewMode === 'float' ? { agenda: 'open' } : { agenda: 'open', view: { mode: 'float' } });
+    onLayout(viewMode === 'float' ? { agenda: 'open' } : viewMode === 'present' ? { agenda: 'open', ...exitPatch() } : { agenda: 'open', view: { mode: 'float' } });
     // Focus follows the card back (the pill that held it is gone).
     if (agendaCard) requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(agendaCard.id)}"]`)?.focus());
   };
@@ -515,6 +567,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
       data-mode={plan.mode}
       data-narrow={plan.narrow ? 'true' : undefined}
       data-dragging={drag ? 'true' : undefined}
+      data-presenting={plan.mode === 'present' ? 'true' : undefined}
+      data-layout={plan.layout ?? undefined}
     >
       <div ref={underRef} className="super-stage-under" aria-hidden />
       {plan.mode === 'float' && !plan.narrow && plan.orbit.length > 0 && <OrbitPath plan={plan} />}
@@ -524,6 +578,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
           data-stage-key="centre"
           data-status={status.kind === 'asking' ? 'asking' : status.kind === 'working' ? 'working' : 'idle'}
           data-ask-target={hot === 'centre' ? 'true' : undefined}
+          data-chat={plan.chat}
+          data-testid="super-centre"
           style={{ left: plan.centre.x, top: plan.centre.y, width: plan.centre.width, height: plan.centre.height }}
         >
           <div className="super-centre-bg" aria-hidden />
@@ -531,9 +587,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
             <div className="super-centre-head">
               <SleepyMascot size={28} compact mood={status.mood} mode="super" capeOn={capeOn} />
               <span className="super-centre-name">{t('super.centre.name')}</span>
-              <span className="super-centre-sub">{t('super.centre.sub')}</span>
-              {!agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
-              <NewSessionButton pending={freshPending(state)} onPress={props.onNewSession} />
+              {plan.chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
+              {plan.chat === 'column' && !agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
+              {plan.chat === 'column' && <NewSessionButton pending={freshPending(state)} onPress={props.onNewSession} />}
+              {plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' && (
+                <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
+              )}
             </div>
             <div className="super-slot" data-super-slot="centre" />
           </div>
@@ -546,11 +605,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
           const placed = ghost ? ghost.plan : plan.cards[c.id];
           // Off the stage (Others, a group): a page card that keeps its page is parked, hidden,
           // under the SAME key, so its frame is never rebuilt (owner 2026-10-22).
-          const parkedAt = !ghost && (!placed || placed.where === 'others') && liveWeb.has(c.id) && isLivePage(c)
+          const off = !placed || placed.where === 'others' || placed.where === 'tab';
+          const parkedAt = !ghost && off && liveWeb.has(c.id) && isLivePage(c)
             ? lastRectRef.current.get(c.id) : undefined;
           const parked = !!parkedAt;
           const cp = parked ? { ...parkedAt!, where: 'float' as const, z: -1, owner: false } : placed;
-          if (!cp || (!parked && cp.where === 'others')) return null;
+          if (!cp || (!parked && (cp.where === 'others' || cp.where === 'tab'))) return null;
           const cue = ghost ? { kind: 'close' as const } : stageCues.cueFor(c.id);
           const rect = cp.rect;
           return (
@@ -586,6 +646,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
               canFit={(next) => canFit(c.id, next)}
               onPressResize={ghost ? undefined : onPressResize}
               agenda={c.kind === 'agenda' ? renderAgenda : undefined}
+              // One big page (spotlight, review's site, a filmstrip's big card): at a desktop width.
+              desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present'}
+              onSelectThumb={setSelected}
               {...actions}
             />
           );
@@ -635,6 +698,20 @@ export function SuperSurface(props: SuperSurfaceProps) {
         onReplyToSuper={props.onReplyToSuper}
         onShowChild={showChild}
       />
+      {plan.chat === 'bar' && !plan.narrow && (
+        // Folded, the centre is the composer alone: its unfold sits just right of it.
+        <button type="button" className="super-chat-fold super-chat-fold--bar" data-testid="super-chat-fold" aria-pressed
+          style={{ ['--bar-x' as string]: `${plan.centre.x + plan.centre.width}px`, ['--bar-mid' as string]: `${plan.centre.y + plan.centre.height / 2}px` }} onClick={toggleBar}>
+          {t('super.chat.toMini')}
+        </button>
+      )}
+      {plan.controls && plan.layout && (
+        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} />
+      )}
+      {plan.tabs && (
+        <SheetTabs rect={plan.tabs.rect} ids={plan.tabs.ids} selected={plan.tabs.ids.find((id) => plan.cards[id]?.where === 'sheet') ?? plan.tabs.ids[0]}
+          titleOf={(id) => { const c = byId.get(id); return c ? titleOf(c) : id; }} onSelect={setSelected} />
+      )}
       {state.containers.length === 0 && props.terminals.length === 0 && (
         <div className="super-empty-hint" data-testid="super-empty-hint" style={{ left: plan.centre.x, top: plan.dock.y, width: plan.centre.width, height: plan.dock.height }}>
           {t('super.stage.empty')}
@@ -696,7 +773,8 @@ export function heldFallback(drawn: SuperView, wanted: SuperView, containers: re
   if (drawn.mode === 'half' && drawn.card && drawn.card !== wanted.card && live.has(drawn.card)) return { mode: 'half', card: drawn.card };
   if (drawn.mode === 'present') {
     const cards = (drawn.cards ?? []).filter((id) => live.has(id) && id !== wanted.card);
-    if (cards.length) return { mode: 'present', cards };
+    // Its layout and chat bar go with it (the plan redraws a layout the count cannot take).
+    if (cards.length) return { mode: 'present', cards, ...(drawn.layout ? { layout: drawn.layout } : {}), ...(drawn.chat ? { chat: drawn.chat } : {}) };
   }
   return { mode: 'float' };
 }

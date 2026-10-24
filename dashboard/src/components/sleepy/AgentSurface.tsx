@@ -103,7 +103,7 @@ import {
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap } from './super/superApi';
-import { applyLayoutPatch, patchEchoed, type LayoutPatch, type StagePlan } from './super/superLayout';
+import { applyLayoutPatch, withPendingPatches, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -646,9 +646,12 @@ export function AgentSurface() {
   /** The owner's layout edits not yet echoed by the server (F3): re-applied over every push. */
   const pendingPatchesRef = useRef<LayoutPatch[]>([]);
   const withPendingEdits = (st: SuperStateView): SuperStateView => {
-    pendingPatchesRef.current = pendingPatchesRef.current.filter((p) => !patchEchoed(st, p));
-    return pendingPatchesRef.current.reduce((acc, p) => applyLayoutPatch(acc, p), st);
+    const { state, keep } = withPendingPatches(st, pendingPatchesRef.current);
+    pendingPatchesRef.current = keep;
+    return state;
   };
+  /** Cards the owner closed whose close has not reached the record yet (an exit names them). */
+  const pendingCloses = useCallback(() => pendingPatchesRef.current.flatMap((p) => p.closed ?? []), []);
   const [superView, setSuperView] = useState<'panes' | 'super'>('panes');
   const superViewRef = useRef(superView);
   superViewRef.current = superView;
@@ -4361,6 +4364,9 @@ export function AgentSurface() {
       if (document.querySelector('.super-group-panel')) return;
       // A card's size menu owns Esc the same way: it closes the menu (SuperContainer), never the stage.
       if (document.querySelector('.super-size-menu')) return;
+      // A presentation on that stage owns Esc: it goes back to the floating stage (SuperSurface),
+      // never folds the whole Agents view.
+      if (document.querySelector('.super-surface[data-presenting]')) return;
       // A card held on that stage owns Esc too: the drag's own listener cancels it, but it is
       // added at the press, after this one, so its stopPropagation cannot reach us.
       if (document.querySelector('.super-surface[data-dragging]')) return;
@@ -4898,6 +4904,7 @@ export function AgentSurface() {
             initialHeight={hostRef.current?.clientHeight || 0}
             visible={expanded && !windowActivity.hidden}
             pending={superPending}
+            pendingCloses={pendingCloses}
             motion={superMotion}
             superSession={superChatSession}
             vault={vault ?? ''}

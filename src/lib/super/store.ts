@@ -4,9 +4,9 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
-  MAX_PRESENT, MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
+  MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, MAX_HELD,
-  SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups,
+  SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent,
   type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
@@ -169,14 +169,9 @@ export function sanitizeView(raw: unknown, containers: readonly SuperContainer[]
     if (typeof raw.card !== 'string' || !ids.has(raw.card)) return { mode: 'float' };
     return raw.auto === true ? { mode: 'half', card: raw.card, auto: true } : { mode: 'half', card: raw.card };
   }
-  if (raw.mode === 'present') {
-    const cards: string[] = [];
-    for (const x of Array.isArray(raw.cards) ? raw.cards : []) {
-      if (typeof x === 'string' && ids.has(x) && !cards.includes(x)) cards.push(x);
-      if (cards.length >= MAX_PRESENT) break;
-    }
-    return cards.length ? { mode: 'present', cards } : { mode: 'float' };
-  }
+  // A presentation always carries its resolved layout, and so every path that removes a card
+  // (close, end, Others, a hand-over) re-resolves it here (plan-r2 D4, R2-E1/E2).
+  if (raw.mode === 'present') return resolvePresent(raw, containers) ?? { mode: 'float' };
   return { mode: 'float' };
 }
 

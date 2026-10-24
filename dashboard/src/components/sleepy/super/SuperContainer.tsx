@@ -153,6 +153,11 @@ export interface SuperContainerProps extends SuperCardActions {
   onPressResize?: (e: PointerEvent<HTMLElement>, id: string) => void;
   /** `agenda`: the super's agenda as this card draws it (SuperAgenda), the counts tile or the list. */
   agenda?: (variant: 'tile' | 'full', wide: boolean) => ReactNode;
+  /** A web page shown big in a presentation (spotlight, review, a filmstrip's big card): laid
+   *  out at a desktop width and scaled to the card (plan-r2 D8). */
+  desktopViewport?: boolean;
+  /** A filmstrip thumb pressed: it becomes the big card. */
+  onSelectThumb?: (id: string) => void;
 }
 
 /**
@@ -174,6 +179,9 @@ export function SuperContainer(props: SuperContainerProps) {
   const status = c.kind === 'chat' ? chatStatus(session) : null;
   const floating = plan.where === 'float';
   const large = plan.where === 'half' || plan.where === 'present' || plan.where === 'sheet';
+  // A filmstrip thumb (plan-r2 D13): a static tile, never a live page, never dragged; a press
+  // makes it the big card.
+  const thumb = plan.where === 'thumb' && !props.parked;
   // A child chat's close asks first (owner 2026-10-21): end the session, or keep it running in
   // Others. A working or asking child offers "end when done" instead of cutting its turn.
   const [closeAsk, setCloseAsk] = useState(false);
@@ -212,8 +220,8 @@ export function SuperContainer(props: SuperContainerProps) {
     props.onSideBySide(c.id);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget || !floating) return;
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCard(); }
+    if (e.target !== e.currentTarget || !(floating || thumb)) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (thumb) props.onSelectThumb?.(c.id); else openCard(); }
   };
   return (
     <div
@@ -234,15 +242,16 @@ export function SuperContainer(props: SuperContainerProps) {
       data-cue={props.cue?.kind}
       inert={props.cue?.kind === 'close' || props.parked ? true : undefined}
       aria-hidden={props.parked ? true : undefined}
-      role="group"
-      aria-label={props.title}
-      tabIndex={floating && !props.parked ? 0 : -1}
+      role={thumb ? 'button' : 'group'}
+      aria-label={thumb ? t('super.layout.thumb').replace('{title}', props.title) : props.title}
+      tabIndex={(floating || thumb) && !props.parked ? 0 : -1}
       style={{
         left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: cardZIndex(plan.z, c.kind === 'agenda'),
         ...(props.cue ? { ['--cue-dx' as string]: `${props.cue.dx}px`, ['--cue-dy' as string]: `${props.cue.dy}px` } : {}),
       }}
       onPointerDown={floating && !props.parked ? (e) => props.onPress(e, c.id) : undefined}
-      onClick={floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button')) openCard(); } : undefined}
+      onClick={thumb ? () => props.onSelectThumb?.(c.id)
+        : floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button')) openCard(); } : undefined}
       onKeyDown={onKeyDown}
     >
       <div className="super-card-lift" aria-hidden />
@@ -257,7 +266,7 @@ export function SuperContainer(props: SuperContainerProps) {
       </div>
       <span className="super-drop-ring" aria-hidden />
       {props.cue && <span className="super-card-glint" aria-hidden />}
-      <div className="super-card-actions">
+      {!thumb && <div className="super-card-actions">
         {floating ? (
           <>
             <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} />
@@ -282,7 +291,7 @@ export function SuperContainer(props: SuperContainerProps) {
             {closeBtn}
           </>
         )}
-      </div>
+      </div>}
       {floating && !props.parked && menu && (
         <SizeMenu
           current={sizeOf(c)}
@@ -572,6 +581,12 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
   const keepStyle: CSSProperties | undefined = hidden
     ? { position: 'absolute', left: 0, top: 0, width: keep.w, height: keep.h, visibility: 'hidden', pointerEvents: 'none' }
     : undefined;
+  // The desktop width (plan-r2 D8, R3(e)): asked while shown in spotlight or review, FROZEN while
+  // the frame is parked (a thumb, Others, floating): the hidden box keeps its last size, so the
+  // page keeps its width and scale and never re-lays itself out.
+  const desktopRef = useRef(false);
+  if (!hidden) desktopRef.current = !!p.desktopViewport && p.large;
+  const desktop = desktopRef.current;
   const frame = p.webLive && p.viewReady;
   return (
     <div className={p.large ? 'super-card-large' : tile ? 'super-card-body' : 'super-card-body super-card-large'}
@@ -581,7 +596,7 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
         <div ref={keepRef} className="super-web-keep" style={keepStyle}>
           <ZoomPane live interactive={p.large} control={control}>
             {frame
-              ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={widgetSize(p.plan)} onFrameAllowed={p.onFrameAllowed} control={control} /></div>
+              ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={widgetSize(p.plan)} onFrameAllowed={p.onFrameAllowed} control={control} desktop={desktop} /></div>
               : null}
           </ZoomPane>
         </div>

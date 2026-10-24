@@ -1371,3 +1371,120 @@
 /* Kept alive off the stage (Others, a group): never seen, never hit, never in the tab order. */
 .super-card-frame--parked { visibility: hidden; pointer-events: none; }
 .super-card-frame--parked .super-card-actions { display: none; }
+
+/* ── Presentation layouts (plan-r2 D11-D14): the top band's switcher and exit, a narrow
+   sheet's tabs, a filmstrip's thumbs. Tokens only. ── */
+.super-stage-controls {
+  position: absolute;
+  z-index: var(--sz-queue);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+.super-layout-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--space-8);
+  padding: var(--space-1);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  box-shadow: var(--shadow-md);
+}
+.super-layout-seg,
+.super-sheet-tab {
+  height: 100%;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+.super-layout-seg:hover,
+.super-sheet-tab:hover { color: var(--color-text); }
+.super-layout-seg[aria-pressed='true'],
+.super-sheet-tab[aria-selected='true'] {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-text);
+}
+.super-layout-seg:focus-visible,
+.super-sheet-tab:focus-visible,
+.super-stage-exit:focus-visible,
+.super-chat-fold:focus-visible,
+.super-card-frame[data-where='thumb']:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: var(--space-1);
+}
+.super-stage-exit {
+  height: var(--space-8);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  flex: none;
+}
+.super-stage-exit:hover { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
+.super-sheet-tabs {
+  position: absolute;
+  z-index: var(--sz-sheet);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  overflow-x: auto;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+}
+.super-sheet-tab { max-width: calc(var(--space-28) + var(--space-16)); overflow: hidden; text-overflow: ellipsis; }
+/* A filmstrip thumb: a static tile the owner presses to make it big. */
+.super-card-frame[data-where='thumb'] { cursor: pointer; }
+.super-card-frame[data-where='thumb']:hover .super-card-clip {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+}
+
+/* ── The centre in a presentation (plan-r2 D6, D7, D14): a mini square keeps its head to the name
+   and the fold, its list scrolls and the composer stays; folded to a bar (and a narrow sheet's
+   composer) it is the composer alone (the centre's own glow still says when the agent asks);
+   its unfold sits just right of it. ── */
+.super-centre[data-chat='mini'] .super-centre-head,
+.super-centre[data-chat='bar'] .super-centre-head { gap: var(--space-2); }
+.super-centre[data-chat='bar'] .super-centre-head { display: none; }
+/* Everything of the chat but its composer: the transcript, the pins, the banners, the chips. */
+.super-centre[data-chat='bar'] .chat-pane > :not(.chat-cmp):not(:has(.chat-cmp)),
+.super-centre[data-chat='bar'] .chat-transcript { display: none; }
+.super-chat-fold {
+  margin-left: auto;
+  height: var(--space-6);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex: none;
+}
+.super-chat-fold:hover { color: var(--color-text); }
+.super-chat-fold--bar {
+  position: absolute;
+  z-index: var(--sz-queue);
+  left: calc(var(--bar-x) + var(--space-3));
+  top: calc(var(--bar-mid) - var(--space-6) / 2);
+  margin-left: 0;
+  background: var(--color-bg-elevated);
+}

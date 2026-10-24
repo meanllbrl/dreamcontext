@@ -213,15 +213,16 @@ describe('card verbs (AC4, plan-r8 F2)', () => {
     expect((await verb('half', { container: 'nope' })).status).toBe(404);
   });
 
-  it('present: 1-4 cards, deduped; a fifth is refused; stacking or closing a presented card leaves the presentation', async () => {
+  it('present: 1-8 cards, deduped; a ninth is refused, a fifth only as a filmstrip; stacking or closing a presented card leaves the presentation', async () => {
     makeVault();
     const ids = [];
-    for (const r of ['a', 'b', 'c', 'd', 'e']) ids.push(await idOf('task', r));
+    for (const r of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']) ids.push(await idOf('task', r));
     expect((await verb('present', { containers: ids })).status).toBe(400);
+    expect((await verb('present', { containers: ids.slice(0, 5), layout: 'grid' })).status).toBe(400);
     expect((await verb('present', { containers: [ids[0], ids[1], ids[0]] })).status).toBe(200);
-    expect((await readSuperState(root)).view).toEqual({ mode: 'present', cards: [ids[0], ids[1]] });
+    expect((await readSuperState(root)).view).toEqual({ mode: 'present', cards: [ids[0], ids[1]], layout: 'compare' });
     await verb('stack', { container: ids[0] });
-    expect((await readSuperState(root)).view).toEqual({ mode: 'present', cards: [ids[1]] });
+    expect((await readSuperState(root)).view).toEqual({ mode: 'present', cards: [ids[1]], layout: 'spotlight' });
     await verb('close', { container: ids[1] });
     expect((await readSuperState(root)).view).toEqual({ mode: 'float' });
     expect((await verb('present', { containers: ['nope'] })).status).toBe(404);

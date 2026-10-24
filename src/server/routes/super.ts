@@ -13,6 +13,7 @@ import {
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, AGENDA_SIZE, MAX_PAD, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, dissolveGroups, floatCount, isPageKind, leaveGroups, minSizeFor, viewWithout,
+  MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type ContainerKind, type ContainerShape, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
 } from '../../lib/super/types.js';
 import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, setTeamLiveSource, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
@@ -856,7 +857,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       ok(res, { view: { mode: 'float' } });
       return;
     }
-    if (raw.length > MAX_PRESENT) { refuse(res, 400, 'invalid_args', `present shows at most ${MAX_PRESENT} cards`); return; }
+    // A named layout (task super-sahnesinde-adli-sunum-duzenleri…): omitted = the cards pick it.
+    const asked = b.layout === undefined || b.layout === null ? undefined : b.layout;
+    if (asked !== undefined && !(typeof asked === 'string' && (PRESENT_LAYOUTS as readonly string[]).includes(asked))) {
+      refuse(res, 400, 'invalid_args', `layout is one of: ${PRESENT_LAYOUTS.join(', ')}`);
+      return;
+    }
+    if (raw.length > MAX_FILMSTRIP) {
+      refuse(res, 400, 'invalid_args', `present shows at most ${MAX_FILMSTRIP} cards (a filmstrip); every other layout at most ${MAX_PRESENT}`);
+      return;
+    }
     const ids: string[] = [];
     for (const x of raw) {
       const id = typeof x === 'string' ? x : '';
@@ -866,11 +876,24 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       }
       if (!ids.includes(id)) ids.push(id);
     }
+    const layout = asked as PresentLayout | undefined;
+    if (layout && !layoutFits(layout, ids.map((id) => c.state.containers.find((k) => k.id === id)!))) {
+      refuse(res, 400, 'invalid_args', layoutRule(layout));
+      return;
+    }
+    let kept = false;
     const state = await writeSuper(c.who.contextRoot, (s) => {
       for (const k of s.containers) if (ids.includes(k.id)) k.place = 'float';
-      s.view = { mode: 'present', cards: ids };
+      const prev = s.view;
+      const same = prev.mode === 'present' && sameCardSet(prev.cards ?? [], ids);
+      // The owner's pick for these same cards is his (plan-r2 D10): the agent's order is written,
+      // the layout and the chat bar stay. Other cards are a new presentation.
+      if (same && prev.layoutBy === 'owner') { kept = true; s.view = { ...prev, cards: ids }; return; }
+      // The same cards again with no --layout keep the layout they have (and his chat bar with it).
+      const lay = layout ?? (same ? prev.layout : undefined);
+      s.view = { mode: 'present', cards: ids, ...(lay ? { layout: lay } : {}), ...(same && prev.chat === 'bar' ? { chat: 'bar' as const } : {}) };
     });
-    ok(res, { view: state.view });
+    ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout' } : {}) });
   },
 
   stack: async (c, b, res) => {
@@ -2028,6 +2051,7 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       return;
     }
     const view = body.view;
+    const ownerView = readOwnerViewFields(body);
     // Groups (2026-10-20): `leave` takes cards out of their group, `group` puts cards in one (a
     // new id makes it, standing where its first card stands), `ungroup` dissolves. A `cards`
     // entry may name a group: a drop, Others or back, the same as a card.
@@ -2101,8 +2125,11 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       // The owner's view is his: it never carries the server's "put here on its own" mark.
       if (view !== undefined) {
         s.view = view as SuperState['view'];
-        if (s.view && typeof s.view === 'object') delete (s.view as { auto?: unknown }).auto;
+        // His marks on a presentation travel only as the set-guarded fields below.
+        if (s.view && typeof s.view === 'object') for (const k of ['auto', 'layoutBy', 'chat'] as const) delete (s.view as unknown as Record<string, unknown>)[k];
       }
+      // The layout he picked, the chat bar, leaving: each only on the cards he saw (plan-r2 R2-E3).
+      s.view = applyOwnerViewFields(s.view, ownerView);
     });
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },

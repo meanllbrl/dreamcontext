@@ -197,11 +197,14 @@ describe('hostile fields are dropped (D2)', () => {
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'half', card: 'b' } })).view).toEqual({ mode: 'half', card: 'b' });
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'half', card: 'gone' } })).view).toEqual({ mode: 'float' });
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'present', cards: ['b', 'gone', 'b', 'a'] } })).view)
-      .toEqual({ mode: 'present', cards: ['b', 'a'] });
+      .toEqual({ mode: 'present', cards: ['b', 'a'], layout: 'compare' });
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'present', cards: ['gone'] } })).view).toEqual({ mode: 'float' });
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'zoom' } })).view).toEqual({ mode: 'float' });
     const many = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, kind: 'task', ref: `t-${i}` }));
-    expect(sanitizeSuperState(raw({ containers: many, view: { mode: 'present', cards: many.map((c) => c.id) } })).view.cards).toHaveLength(4);
+    expect(sanitizeSuperState(raw({ containers: many, view: { mode: 'present', cards: many.map((c) => c.id) } })).view).toEqual({ mode: 'present', cards: many.map((c) => c.id), layout: 'filmstrip' });
+    const nine = Array.from({ length: 9 }, (_, i) => ({ id: `q${i}`, kind: 'task', ref: `t-q${i}` }));
+    expect(sanitizeSuperState(raw({ containers: nine, view: { mode: 'present', cards: nine.map((c) => c.id), layout: 'grid' } })).view)
+      .toEqual({ mode: 'present', cards: nine.slice(0, 8).map((c) => c.id), layout: 'filmstrip' });
   });
 
   it('closing a card the view names drops it from the view on the next write', async () => {
@@ -213,7 +216,7 @@ describe('hostile fields are dropped (D2)', () => {
       s.view = { mode: 'present', cards: ['a', 'b'] };
     });
     let st = await updateSuperState(root, (s) => { s.containers = s.containers.filter((c) => c.id !== 'a'); });
-    expect(st.view).toEqual({ mode: 'present', cards: ['b'] });
+    expect(st.view).toEqual({ mode: 'present', cards: ['b'], layout: 'spotlight' });
     st = await updateSuperState(root, (s) => { s.view = { mode: 'half', card: 'b' }; });
     st = await updateSuperState(root, (s) => { s.containers = []; });
     expect(st.view).toEqual({ mode: 'float' });
