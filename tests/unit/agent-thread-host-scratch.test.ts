@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import {
-  __resetScratchForTests, addAttachments, dropSentAttachments, foldAttachments, readScratch, nextAttachmentId,
+  __resetScratchForTests, addAttachments, composeOutgoing, dropSentAttachments, foldAttachments, readScratch, nextAttachmentId,
   type Attachment,
 } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
 
@@ -138,9 +138,11 @@ describe('a ref chip', () => {
     const src = readFileSync(
       join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/Composer.tsx'), 'utf8',
     );
-    // The fold lives in composerScratch (`foldAttachments`, 2026-10-22); the Composer hands it
-    // its own quoting. A ref goes out as written, a file path quoted.
-    expect(src).toMatch(/foldAttachments\(text, readScratch\(convId\)\.attachments, quotePath\)/);
+    // The fold lives in composerScratch (`foldAttachments`, 2026-10-22, called by
+    // `composeOutgoing` since 2026-10-23); the Composer hands it its own quoting. A ref goes out
+    // as written, a file path quoted.
+    expect(src).toMatch(/composeOutgoing\(text, readScratch\(convId\)\.attachments, liveQuote, quotePath\)/);
+    expect(composeOutgoing('see', [chip('dcref:wb/q3-plan/note-1')], null, (p) => `'${p}'`).message).toBe('see dcref:wb/q3-plan/note-1');
     expect(foldAttachments('see', [chip('dcref:wb/q3-plan/note-1'), { id: 'f', kind: 'file', name: 'f', path: '/a b' }], (p) => `'${p}'`))
       .toBe("see dcref:wb/q3-plan/note-1 '/a b'");
     expect(src).toMatch(/a\.kind === 'ref' \? '📌'/);

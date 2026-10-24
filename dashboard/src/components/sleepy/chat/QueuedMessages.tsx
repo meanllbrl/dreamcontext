@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatSession } from '../chatSession';
+import { useI18n } from '../../../context/I18nContext';
+import { agendaAboutStrip, splitAgendaAbout } from '../super/superHandover';
 
 /**
  * ORGANISM — the message queue: the strip of messages submitted while Claude was working,
@@ -38,8 +40,15 @@ function QueuedRow({
   onSave: (next: string) => void;
   onRemove: () => void;
 }) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(text);
+  // A message about an agenda line shows that line, never the raw block (the edit box keeps it).
+  const split = splitAgendaAbout(text);
+  const about = split.about ? agendaAboutStrip(split.about, [], () => '', {
+    about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
+    superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),
+  }) : null;
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Opening the editor starts from what is queued NOW, not from whatever was typed into a
@@ -100,7 +109,10 @@ function QueuedRow({
         className="chat-queue-text"
         onClick={() => setEditing(true)}
         title="Edit this queued message"
-      >{text}</button>
+      >
+        {about && <span className="chat-queue-about" data-testid="chat-queue-about"><span className="chat-msg-about-dot" aria-hidden /> {about.label}: {about.text} · </span>}
+        {about ? split.text : text}
+      </button>
       <span className="chat-queue-actions">
         {/* Jump the line. First in the row because it is the action a queued message most
             often wants once you have re-read it — "actually, say this now" — and because the

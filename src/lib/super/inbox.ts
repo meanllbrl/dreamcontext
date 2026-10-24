@@ -609,9 +609,10 @@ export function clearOwnerLease(contextRoot: string): void {
  * the owner's turn (D18): the lease is stamped; the running event turn is marked steered (it
  * spends no question attempt, r2-C3: marked BEFORE the batch is cleared) and stops being the
  * open batch (an `ask` written after this is about the owner's message, not the events); and an
- * open `ask` is closed: this message is its answer (D7).
+ * open `ask` is closed: this message is its answer (D7), unless it is written `about` another
+ * agenda line (`aboutKeepsAsks`).
  */
-export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = []): void {
+export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = [], about: AgendaAbout | null = null): void {
   const root = superRootOfSession(sessionId);
   if (!root) return;
   const key = keyOf(root);
@@ -622,7 +623,23 @@ export function superOwnerSpoke(sessionId: string, now = Date.now(), told: reado
     for (const c of carried.get(key) ?? []) if (c.batch === ob.batch) c.steered = true;
     openBatch.delete(sessionId);
   }
+  if (aboutKeepsAsks(lastStates.get(key), about)) return;
   void track(closeOpenAsks(key, sessionId, told));
+}
+
+/** The agenda line an owner message is written about (its `[About agenda line …]` header). */
+export interface AgendaAbout { kind: 'note' | 'item'; id: string }
+
+/**
+ * A message about ONE agenda line (owner 2026-10-23) answers the super's open question only when
+ * that line IS the question: about another line, the question stays open and what was held
+ * while it was open stays held (the super closes it with `queue done` if his words answer it
+ * anyway). Read from the same cached record as the digest, so the two always agree.
+ */
+function aboutKeepsAsks(s: SuperState | undefined, about: AgendaAbout | null): boolean {
+  if (!about) return false;
+  if (about.kind !== 'item') return true;
+  return !(s?.queue ?? []).some((q) => q.kind === 'ask' && q.state !== 'done' && q.id === about.id);
 }
 
 /**
@@ -689,12 +706,13 @@ export function heldBlock(contextRoot: string, s: SuperState, now = Date.now()):
  * question (`super ask`) is open, that message is its answer, and everything held while it was
  * open rides in the SAME message, as one more block. `items` go to `superOwnerSpoke`.
  */
-export function superAnswerDigest(sessionId: string, now = Date.now()): { text: string; items: string[] } | null {
+export function superAnswerDigest(sessionId: string, now = Date.now(), about: AgendaAbout | null = null): { text: string; items: string[] } | null {
   const root = superRootOfSession(sessionId);
   if (!root) return null;
   const s = lastStates.get(keyOf(root));
   if (!s || !s.enabled || s.session !== sessionId) return null;
   if (!s.queue.some((q) => q.kind === 'ask' && q.state === 'escalated')) return null;
+  if (aboutKeepsAsks(s, about)) return null;
   return heldBlock(root, s, now);
 }
 

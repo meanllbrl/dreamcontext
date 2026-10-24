@@ -21,8 +21,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  __resetScratchForTests, addAttachments, dropScratch, dropSentAttachments, nextAttachmentId,
-  readScratch, removeAttachment, settleAttachment, setQuote, subscribeScratch,
+  __resetScratchForTests, addAttachments, countsAsContent, dropScratch, dropSentAttachments, foldAttachments, nextAttachmentId,
+  readScratch, removeAttachment, setAbout, settleAttachment, setQuote, subscribeScratch, wasSent,
   type Attachment,
 } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
 
@@ -203,6 +203,44 @@ const code = (src: string) => src
 const COMPOSER = 'dashboard/src/components/sleepy/chat/Composer.tsx';
 const PANE = 'dashboard/src/components/sleepy/ChatPane.tsx';
 const SURFACE = 'dashboard/src/components/sleepy/AgentSurface.tsx';
+
+/** The agenda line a message is written about (owner 2026-10-23): one chip, never content alone. */
+describe('composerScratch — the About chip', () => {
+  const aboutChip = (text: string, name = 'About: x'): Attachment => ({ id: nextAttachmentId(), kind: 'about', name, text });
+
+  it('one per conversation: a second line replaces the first, other chips stay, it goes first', () => {
+    addAttachments(CONV, [file('/tmp/a.txt')]);
+    setAbout(CONV, aboutChip('[About agenda line note=n1 section=now]\nline: "a"', 'About: a'));
+    setAbout(CONV, aboutChip('[About agenda line note=n2 section=waiting]\nline: "b"', 'About: b'));
+    const atts = readScratch(CONV).attachments;
+    expect(atts.map((a) => a.kind)).toEqual(['about', 'file']);
+    expect(atts[0].name).toBe('About: b');
+    expect(readScratch(OTHER).attachments).toEqual([]);
+    setAbout(CONV, null);
+    expect(readScratch(CONV).attachments.map((a) => a.kind)).toEqual(['file']);
+  });
+
+  it('a send carries it (and drops it); it is never content by itself; folding ignores it', () => {
+    const a = aboutChip('[About agenda line item=q-1 section=waiting]');
+    expect(wasSent(a)).toBe(true);
+    expect(countsAsContent(a)).toBe(false);
+    expect(countsAsContent(file('/tmp/a.txt'))).toBe(true);
+    expect(foldAttachments('hi', [a], (p) => `"${p}"`)).toBe('hi');
+    setAbout(CONV, a);
+    setQuote(CONV, 'earlier');
+    dropSentAttachments(CONV);
+    expect(readScratch(CONV)).toEqual({ attachments: [], quote: null });
+  });
+
+  it('a slash command keeps it staged; the quote and other sent chips go as always', () => {
+    setAbout(CONV, aboutChip('[About agenda line note=n1 section=now]\nline: "a"'));
+    addAttachments(CONV, [file('/tmp/a.txt')]);
+    setQuote(CONV, 'earlier');
+    dropSentAttachments(CONV, { keepAbout: true });
+    expect(readScratch(CONV).attachments.map((x) => x.kind)).toEqual(['about']);
+    expect(readScratch(CONV).quote).toBeNull();
+  });
+});
 
 describe('composerScratch — the wiring nobody can see at the call site', () => {
   it('the composer no longer revokes an object URL on unmount', () => {

@@ -29,7 +29,7 @@ import { cardTitle } from './superTitles';
 import { useTasks } from '../../../hooks/useTasks';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
-import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type JobLook } from './superHandover';
+import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
 import { NewSessionButton } from './NewSessionButton';
 import { MAX_LIVE_BROWSERS, keptWebIds, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windowActivity';
@@ -75,6 +75,8 @@ export interface SuperSurfaceProps {
   onAskAbout: (id: string, title: string) => void;
   /** Inspect picked an element in a web card's page (`page`: its address as the dev server knows it). */
   onPickElement?: (id: string, pick: WebPick, page: string) => void;
+  /** "Write about this" on an agenda line: the line becomes the About chip in the centre's composer. */
+  onWriteAbout?: (row: AgendaRow) => void;
   /** The owner ended a child from its card (`whenDone`: once its turn ends). */
   onEndChild: (child: string, whenDone: boolean) => void;
   /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
@@ -559,6 +561,17 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const c = stateRef.current.containers.find((k) => k.kind === 'chat' && k.ref === row.slice(2));
     if (c) showChildRef.current(c.id);
   }), []);
+  // "Write about this" on a line: its About chip goes into the centre's composer. Only while
+  // the super chat is there to write in. A stage too narrow to float cards first goes back to
+  // the floating view (its cards to Others, the head's Agenda button stays), so the composer
+  // the chip lands in is in view.
+  const onWriteAbout = props.onWriteAbout;
+  const writeAbout = onWriteAbout && superSession && superSession.status !== 'closed'
+    ? (row: AgendaRow) => {
+      if (plan.narrow && viewMode !== 'float') onLayout({ view: { mode: 'float' } });
+      onWriteAbout(row);
+    }
+    : undefined;
   const renderAgenda = (variant: 'tile' | 'full', wide: boolean) => (
     <SuperAgenda
       state={state}
@@ -568,6 +581,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       canShowChild={(sid) => state.containers.some((k) => k.kind === 'chat' && k.ref === sid)}
       onShowChild={showChild}
       onShowQuestion={showQuestion}
+      onWriteAbout={writeAbout}
     />
   );
   const othersItems: OthersItem[] = plan.others.map((id) => {
