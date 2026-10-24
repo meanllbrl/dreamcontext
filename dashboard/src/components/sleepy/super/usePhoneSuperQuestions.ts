@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { pollMs } from '../../../lib/windowActivity';
 import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import { publishSuperQuestions, type SuperQuestionView } from './superJobsStore';
@@ -161,7 +162,9 @@ export function usePhoneSuperQuestions(opts: {
     };
 
     void read();
-    const timer = setInterval(() => { void read(); }, PHONE_QUESTIONS_POLL_MS);
+    // The window's poll cadence (windowActivity.ts), like every other super poll.
+    const tick = (): void => { void read(); };
+    const timer = setInterval(tick, pollMs(PHONE_QUESTIONS_POLL_MS));
     const onVisible = () => { if (document.visibilityState === 'visible') void read(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
