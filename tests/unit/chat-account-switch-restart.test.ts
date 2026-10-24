@@ -33,7 +33,7 @@
  * imports it could not load. The live behaviour is asserted against a real Chromium and real
  * processes by `scripts/verify/claude-auth-switch.mjs`.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { accountSwitchKey } from '../../dashboard/src/components/sleepy/chatSession';
@@ -123,11 +123,13 @@ describe('every chat respawn carries what was waiting to be sent', () => {
   });
 
   it('carries it onto the new session beside the draft', () => {
-    expect(resume).toMatch(/carryQueueInto\(s as ChatSession, heldTexts, carriedQueue\)/);
+    expect(resume).toMatch(/carryQueueInto\(s as ChatSession, held, carriedQueue\)/);
+    // A row still held from an earlier switch rides as held again, ahead of this switch's.
+    expect(resume).toMatch(/const held = \[\.\.\.oldQueued\.filter\(\(q\) => q\.resubmit\)\.map\(\(q\) => q\.text\), \.\.\.heldTexts\]/);
   });
 
   it('enqueues the held turns AHEAD of the old queue, and never sends', () => {
-    const heldAt = carry.indexOf('for (const text of held) next.enqueue(text)');
+    const heldAt = carry.indexOf('for (const text of held) next.enqueue(text, { resubmit: true })');
     const queuedAt = carry.indexOf('for (const text of queued.texts) next.enqueue(text)');
     expect(heldAt).toBeGreaterThan(-1);
     expect(queuedAt).toBeGreaterThan(heldAt);
@@ -233,5 +235,141 @@ describe('the held-text list on the wire', () => {
   it('is dropped with the single text when the notice is carried onto the new session', () => {
     const session = code(read(SESSION));
     expect(session).toMatch(/const \{ pendingText: _drop, pendingTexts: _dropAll, \.\.\.rest \} = move/);
+  });
+});
+
+/**
+ * THE 00:05 FRAME (owner's recording, 2026-10-23): an already-sent long message showed in the
+ * composer area for about a second. Pinned here which path put it there: NOT the draft carry —
+ * a send clears `conv.draft`, so `carryDraftInto` has nothing sent to carry — but the held
+ * turn `carryQueueInto` enqueues, drawn as a queue row until the new socket opened. Those rows
+ * are now `resubmit` rows: hidden while the new session can send them by itself, sent once,
+ * and ordinary visible rows the moment it cannot.
+ */
+describe('a respawn\'s held, already-sent text (resubmit rows)', () => {
+  class FakeWebSocket {
+    static OPEN = 1;
+    static CONNECTING = 0;
+    static all: FakeWebSocket[] = [];
+    readonly OPEN = 1;
+    readyState = 0;
+    url: string;
+    onopen: (() => void) | null = null;
+    onclose: ((e: { code: number }) => void) | null = null;
+    onmessage: ((e: { data: string }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    sent: string[] = [];
+    constructor(url: string) { this.url = url; FakeWebSocket.all.push(this); }
+    send(d: string) { this.sent.push(d); }
+    close() { this.readyState = 3; }
+    open() { this.readyState = 1; this.onopen?.(); }
+    drop(code: number) { this.readyState = 3; this.onclose?.({ code }); }
+    frame(o: unknown) { this.onmessage?.({ data: JSON.stringify(o) }); }
+  }
+  const last = () => FakeWebSocket.all[FakeWebSocket.all.length - 1];
+  const userFrames = () => FakeWebSocket.all.flatMap((w) => w.sent.map((d) => JSON.parse(d)).filter((f) => f.type === 'user'));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeWebSocket.all = [];
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('window', new EventTarget());
+    vi.stubGlobal('location', { protocol: 'http:', host: '127.0.0.1:4173', assign: vi.fn() });
+    vi.stubGlobal('document', {
+      createElement: () => ({ className: '', remove() {}, style: {}, appendChild() {} }),
+      addEventListener() {}, removeEventListener() {}, visibilityState: 'visible', querySelector: () => null,
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ messages: [], items: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem() {}, removeItem() {} });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function respawnWithHeld(text: string) {
+    const { createChatSession } = await import('../../dashboard/src/components/sleepy/chatSession');
+    const s = createChatSession('demo', false, () => {}, '6f1c2e9a-a001-4a5b-8c9d-0123456789ab', true, '', '', '', '', false, 'basic', '', '', null, '');
+    s.enqueue(text, { resubmit: true });   // what carryQueueInto does with a held turn
+    return s;
+  }
+  async function visible(s: Awaited<ReturnType<typeof respawnWithHeld>>) {
+    const { visibleQueued, queueAutoDrainable } = await import('../../dashboard/src/components/sleepy/chat/chatQueue');
+    const conv = s.getModel();
+    return visibleQueued(conv.queued, {
+      autoDrainable: queueAutoDrainable({ paused: conv.queuePaused, ended: !!conv.exited || !!conv.authRequired, takenOver: s.takenOver, status: s.status }),
+    }).map((q) => q.text);
+  }
+
+  it('a send clears the draft, so the draft carry can never put a sent text back', async () => {
+    const { createChatSession } = await import('../../dashboard/src/components/sleepy/chatSession');
+    const s = createChatSession('demo', false, () => {}, '6f1c2e9a-a001-4a5b-8c9d-0123456789ab', false, '', '', '', '', false, 'basic', '', '', null, '');
+    last().open();
+    s.sendText('a long message');
+    expect(s.getModel().draft).toContain('a long message');
+    s.send('a long message');
+    expect(s.getModel().draft).toBe('');
+    s.dispose();
+  });
+
+  it('never visible while auto-drainable, never in the draft, sent exactly once on open', async () => {
+    const s = await respawnWithHeld('the held one');
+    expect(s.status).toBe('connecting');
+    expect(await visible(s)).toEqual([]);
+    expect(s.getModel().draft).toBe('');
+    last().open();
+    expect(userFrames().map((f) => f.text)).toEqual(['the held one']);
+    last().frame({ type: 'result', subtype: 'success', is_error: false, result: 'ok', num_turns: 1 });
+    expect(userFrames()).toHaveLength(1);
+    expect(s.getModel().queued).toEqual([]);
+    s.dispose();
+  });
+
+  it('the socket never opens: after 15 s a notify fires and the row is visible', async () => {
+    const s = await respawnWithHeld('the held one');
+    let notified = 0;
+    s.subscribe(() => { notified += 1; });
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(await visible(s)).toEqual([]);
+    const before = notified;
+    await vi.advanceTimersByTimeAsync(1);
+    expect(notified).toBeGreaterThan(before);
+    expect(await visible(s)).toEqual(['the held one']);
+    s.dispose();
+  });
+
+  it('a paused carry shows the held rows as paused rows', async () => {
+    const s = await respawnWithHeld('the held one');
+    s.enqueue('mine');
+    s.pauseQueue();
+    expect(await visible(s)).toEqual(['the held one', 'mine']);
+    last().open();
+    expect(userFrames()).toHaveLength(0);
+    s.dispose();
+  });
+
+  it('signed out (authRequired), ended, or taken over (4409): the row is visible', async () => {
+    const b = await respawnWithHeld('held b');
+    last().frame({ type: 'assistant', error: 'authentication_failed', message: { content: [{ type: 'text', text: 'Not logged in · Please run /login' }] } });
+    expect(b.getModel().authRequired).toBeTruthy();
+    expect(await visible(b)).toEqual(['held b']);
+    b.dispose();
+    const c = await respawnWithHeld('held c');
+    last().frame({ type: '_meta', subtype: 'exit', code: 1 });
+    last().drop(1000);
+    expect(await visible(c)).toEqual(['held c']);
+    c.dispose();
+    const d = await respawnWithHeld('held d');
+    last().drop(4409);
+    expect(await visible(d)).toEqual(['held d']);
+    d.dispose();
+  });
+
+  it('Stop turns a held row back into an ordinary one', async () => {
+    const s = await respawnWithHeld('the held one');
+    s.interrupt();
+    expect(s.getModel().queued.map((q) => q.resubmit)).toEqual([undefined]);
+    expect(await visible(s)).toEqual(['the held one']);
+    s.dispose();
   });
 });

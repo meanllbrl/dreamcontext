@@ -37,6 +37,8 @@ const SUPER = 'sup-1';
 const frames: Array<Record<string, unknown>> = [];
 let token = '';
 const savedDesktop = process.env.DREAMCONTEXT_DESKTOP;
+/** What the window answers every command with (a test may make it refuse). */
+let windowReply: { ok: boolean; result?: unknown; error?: string } = { ok: true, result: {} };
 
 function makeVault(state: Partial<SuperState> = {}): void {
   root = join(dir, 'acme', '_dream_context');
@@ -50,7 +52,7 @@ function makeVault(state: Partial<SuperState> = {}): void {
   token = mintWindowToken({
     send: (frame) => {
       frames.push(frame);
-      if (typeof frame.id === 'string') setImmediate(() => deliverSuperResult(token, frame.id, { ok: true, result: {} }));
+      if (typeof frame.id === 'string') setImmediate(() => deliverSuperResult(token, frame.id, windowReply as never));
       return true;
     },
     vault: 'acme', contextRoot: root, sessionId: SUPER, mode: 'super',
@@ -60,6 +62,7 @@ function makeVault(state: Partial<SuperState> = {}): void {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'super-answer-'));
   frames.length = 0;
+  windowReply = { ok: true, result: {} };
   _resetChatRegistry();
   resetSuperIndex();
   _resetSuperInbox();
@@ -106,6 +109,16 @@ describe('super answer — questions only, current only', () => {
     expect(r.status).toBe(200);
     expect(commands()).toEqual([expect.objectContaining({ verb: 'answer', args: { child: 'c1', requestId: 'req-1', choices: ['postgres'] } })]);
     expect((await readSuperState(root)).queue[0].state).toBe('done');
+  });
+
+  it('the child\'s socket is down (the window answers not_connected): said so, and the question stays open', async () => {
+    // AgentSurface's `super answer`: `answerQuestion` returned false, nothing was written.
+    makeVault({ queue: [{ id: 'q-1', sessionId: 'c1', kind: 'question', requestId: 'req-1', state: 'delivered', createdAt: 1 }] });
+    ask(reg('c1'), 'req-1');
+    windowReply = { ok: false, error: 'not_connected' };
+    const r = await verb('answer', { child: 'c1', requestId: 'req-1', choices: ['postgres'] });
+    expect(r.json.error).toBe('not_connected');
+    expect((await readSuperState(root)).queue[0].state).not.toBe('done');
   });
 
   it('a permission request is refused (403) and never reaches the window', async () => {

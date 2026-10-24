@@ -21,6 +21,8 @@ import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
 import { leanMcpParam, superEventText } from './super/superHandover';
 import { createChildAlarmGate } from './super/childAlarm';
+import { dropSettledSurveyDrafts } from './chat/surveyDrafts';
+import { recordPhoneEvent } from '../../lib/phoneConnLog';
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -580,7 +582,7 @@ export interface ChatSession {
    *  still wants the first opening rather than the end of the turn, and `maybeFlushQueue`
    *  gives it one as soon as there is one. Callers falling back from a refused steer should
    *  always pass it; the ⇡ button never does. */
-  enqueue: (text: string, opts?: { steerWhenPossible?: boolean }) => void;
+  enqueue: (text: string, opts?: { steerWhenPossible?: boolean; resubmit?: boolean }) => void;
   /** Hold the queue as Stop does (a no-op when it is empty). For a respawn carrying over the
    *  rows of a session whose queue the user had paused: the rows come along, the pause too. */
   pauseQueue: () => void;
@@ -638,11 +640,19 @@ export interface ChatSession {
   /** Called with the composer's text on every keystroke (`syncDraft`). The Super Agent's chat
    *  uses it for the owner-activity lease; the text itself never leaves the window. */
   setDraftListener: (fn: ((text: string) => void) | null) => void;
-  /** Answer a pending permission request (or a plain non-question `can_use_tool` prompt). */
-  answer: (requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }) => void;
+  /** Answer a pending permission request (or a plain non-question `can_use_tool` prompt).
+   *  FALSE when the answer could not be written (the socket is not open): the card stays, and
+   *  the caller says so instead of reporting an answer nobody received. TRUE after a write,
+   *  which is not proof it arrived (there is no ack frame). */
+  answer: (requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }) => boolean;
   /** Answer a pending AskUserQuestion card — builds the load-bearing `{questions, answers}`
-   *  updatedInput shape via `buildQuestionAnswer` and allows it. */
-  answerQuestion: (requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>) => void;
+   *  updatedInput shape via `buildQuestionAnswer` and allows it. Same return as {@link answer}. */
+  answerQuestion: (requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>) => boolean;
+  /** The owner tapped something that needs the wire while it is down (a card's Submit): try
+   *  again about a second after the last attempt instead of waiting out the backoff, and give
+   *  up on an attempt that has hung for more than {@link HUNG_ATTEMPT_MS}. Never faster than
+   *  the backoff floor; a no-op while open, taken over or ended. */
+  reconnectSoon: () => void;
   /** Ask the server to interrupt the in-flight turn (Stop button while busy). */
   interrupt: () => void;
   /** Silence spoken audio and bank the autoplay activation. Called by the composer's mic
@@ -833,6 +843,12 @@ export const RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 10000, 30000] as const;
 /** One attempt (a WS upgrade, a chat-history fetch) that has not answered in this long is
  *  abandoned and retried on the backoff — the cloud's port forwarder can hang a request. */
 export const CONNECT_TIMEOUT_MS = 15000;
+/** How long a socket must stay open before the backoff starts again from its first rung. An
+ *  open that drops at once is part of the same outage: resetting on the open edge made an
+ *  open-then-drop loop retry every second forever (the jumping phone chat, 2026-10-23). */
+export const STABLE_OPEN_MS = 5000;
+/** A CONNECTING attempt older than this is given up on when the owner taps for a reconnect. */
+export const HUNG_ATTEMPT_MS = 3000;
 
 /** The server's `_meta/reattached` frame (agent-chat.ts), or null for anything else. Its
  *  `_meta/turn_state` frame reads the same way: the server's word that nothing is running,
@@ -1249,6 +1265,7 @@ export function createChatSession(
     flushQueue,
     answer,
     answerQuestion,
+    reconnectSoon,
     setCommandHandler,
     setOwnerWordsHook,
     setWindowHandler,
@@ -1611,6 +1628,7 @@ export function createChatSession(
         // instead.
         session.busy = false;
         conv = { ...conv, authRequired: { text: ev.text } };
+        clearResubmit();
         return;
       }
       case 'auth-changed': {
@@ -2034,6 +2052,17 @@ export function createChatSession(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let connectTimer: ReturnType<typeof setTimeout> | null = null;
   let lastAttemptAt = Date.now();
+  /** Bounds how long an account switch's held, already-sent rows stay out of sight
+   *  (see `enqueue`). */
+  let resubmitTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Arms the backoff reset once an open has lasted {@link STABLE_OPEN_MS}. */
+  let stableTimer: ReturnType<typeof setTimeout> | null = null;
+  /** How the current attempt attaches: a replacement for a hung one must ask the same way,
+   *  or a "Buraya al" (evicting) attempt would come back passive and be refused 4409. */
+  let attemptHow: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE;
+  /** The current attempt is itself the replacement for one a tap gave up on: it is never
+   *  abandoned in turn, so taps can never starve a slow but healthy upgrade. */
+  let attemptAbandoned = false;
   /** The server reported an error on the current socket — the close that follows is an end
    *  (a spawn failure, an account refusal, a conversation held elsewhere), not a drop. */
   let sawServerError = false;
@@ -2042,6 +2071,10 @@ export function createChatSession(
 
   function clearConnectTimer(): void {
     if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+  }
+
+  function clearStableTimer(): void {
+    if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
   }
 
   /** Is `sock` the socket this session currently owns? A late event from an abandoned attempt
@@ -2062,7 +2095,10 @@ export function createChatSession(
     ws.onopen = () => {
       if (!isCurrentSocket(ws)) return;
       clearConnectTimer();
-      reconnectAttempt = 0;
+      // NOT reset here: only an open that lasts climbs back down the backoff.
+      clearStableTimer();
+      stableTimer = setTimeout(() => { stableTimer = null; if (!disposed) reconnectAttempt = 0; }, STABLE_OPEN_MS);
+      recordPhoneEvent('open', claudeId);
       applyAndNotify(() => { session.status = 'open'; });
       if (isReconnect) void replayMissed();
       // THE OPEN EDGE IS A DRAIN EDGE. Until this fires, `writeUser` refuses every frame
@@ -2086,24 +2122,27 @@ export function createChatSession(
   }
 
   function onSocketClosed(code = 0): void {
+    // First: a drop before the open settled must not reset the backoff behind its back.
+    clearStableTimer();
     clearConnectTimer();
+    recordPhoneEvent('close', claudeId, { code });
     // A spoken turn's end may be lost with the socket: the server re-announces it on reattach.
     voiceTurn = false;
     if (disposed) return;
     if (code === MAC_CLOSE_TAKEN_OVER) {
       // Another screen holds this chat. Reconnecting would only take it back and start a
       // ping-pong, so the loop stops here; "Buraya al" is the owner's explicit choice.
-      applyAndNotify(() => { session.takenOver = true; session.status = 'closed'; });
+      applyAndNotify(() => { session.takenOver = true; session.status = 'closed'; clearResubmit(); });
       return;
     }
     if (code === MAC_CLOSE_SIGNED_OUT && isMacPhoneSurface()) {
       // The phone was signed out (Return, "Hepsini çıkar", a new password): to the login page.
       try { location.assign('/login?revoked=1'); } catch { /* not a browser */ }
-      applyAndNotify(() => { session.status = 'closed'; });
+      applyAndNotify(() => { session.status = 'closed'; clearResubmit(); });
       return;
     }
     if (conv.exited || sawServerError) {
-      applyAndNotify(() => { session.busy = false; session.asking = false; session.status = 'closed'; });
+      applyAndNotify(() => { session.busy = false; session.asking = false; session.status = 'closed'; clearResubmit(); });
       return;
     }
     scheduleReconnect();
@@ -2122,8 +2161,12 @@ export function createChatSession(
 
   function reconnectNow(how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): void {
     if (disposed) return;
+    clearStableTimer();
     lastAttemptAt = Date.now();
+    attemptAbandoned = false;
+    attemptHow = how;
     isReconnect = true;
+    recordPhoneEvent('attempt', claudeId);
     ws = new WebSocket(reconnectUrl(how));
     bindSocket(ws);
   }
@@ -2132,6 +2175,7 @@ export function createChatSession(
   function takeBack(): void {
     if (disposed) return;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectAttempt = 0;
     applyAndNotify(() => { session.takenOver = false; session.status = 'connecting'; });
     reconnectNow(REATTACH_EVICT);
   }
@@ -2140,6 +2184,7 @@ export function createChatSession(
    *  was taken over reattaches on its own — passively, like any automatic open. */
   function onMacModeEnded(): void {
     if (disposed || !session.takenOver) return;
+    reconnectAttempt = 0;
     applyAndNotify(() => { session.takenOver = false; session.status = 'connecting'; });
     reconnectNow(REATTACH_PASSIVE);
   }
@@ -2157,6 +2202,33 @@ export function createChatSession(
   }
   window.addEventListener('online', onWake);
   document.addEventListener('visibilitychange', onWake);
+
+  /** See {@link ChatSession.reconnectSoon}. Unlike {@link onWake}, a tap inside the floor is
+   *  DEFERRED to the floor, never dropped: the owner is holding an answer that waits for it. */
+  function reconnectSoon(): void {
+    if (disposed) return;
+    const now = Date.now();
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      const wait = Math.max(0, lastAttemptAt + RECONNECT_BACKOFF_MS[0] - now);
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; reconnectNow(); }, wait);
+      return;
+    }
+    if (ws.readyState === WebSocket.CONNECTING) {
+      if (attemptAbandoned || now - lastAttemptAt <= HUNG_ATTEMPT_MS) return;
+      // Close the hung attempt FIRST (the server then skips the holder probe); `reconnectNow`
+      // replaces `ws`, so this attempt's late close fails `isCurrentSocket` and schedules nothing.
+      const hung = ws;
+      const how = attemptHow;
+      try { hung.close(); } catch { /* gone */ }
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      reconnectNow(how);
+      attemptAbandoned = true;
+      return;
+    }
+    // Open: nothing to do. Closed with no timer armed (taken over, exited, refused): that
+    // state's own banner is the answer, not a reconnect.
+  }
 
   function onSocketMessage(e: MessageEvent): void {
     const raw = typeof e.data === 'string' ? e.data : '';
@@ -2236,6 +2308,10 @@ export function createChatSession(
     // The ONE place coalescing is allowed: a socket frame nobody is waiting to act on can
     // ride the next paint instead of forcing a React commit per streamed token.
     applyAndNotify(() => applyEvent(ev), !isUrgentChatEvent(ev));
+    if (ev.kind === 'question') recordPhoneEvent('ask', claudeId, { requestId: ev.requestId });
+    // A `result` after an answer means the answer was taken: a lost one is re-sent by the
+    // server on reattach BEFORE any `result`. So the picks of a question no longer open go.
+    if (ev.kind === 'result') dropSettledSurveyDrafts(claudeId, conv.pending.map((p) => p.requestId));
     // Outside the reducer on purpose: draining the queue SENDS a frame and appends an item,
     // which is a second mutation with its own notify — not something a reducer arm may do
     // mid-event. Cheap on every frame (four flag reads and an array length).
@@ -2250,6 +2326,7 @@ export function createChatSession(
    *  can still be waiting: the CLI only asks inside a turn, and a still-open ask is re-sent by
    *  the server right after this frame. */
   function applyReattached(busy: boolean): void {
+    recordPhoneEvent('reattached', claudeId, { busy });
     applyAndNotify(() => {
       session.busy = busy;
       if (!busy) {
@@ -2396,12 +2473,28 @@ export function createChatSession(
 
   // ── Message queue (submitted while a turn was in flight) ──────────────────────────
 
-  function enqueue(text: string, opts?: { steerWhenPossible?: boolean }): void {
+  function enqueue(text: string, opts?: { steerWhenPossible?: boolean; resubmit?: boolean }): void {
     if (ownerWordsTaken(text)) return;
     applyAndNotify(() => {
       const next = queue.appendQueued(conv.queued, text, `q-${id}-${++queuedSeq}`, Date.now(), opts);
       if (next !== conv.queued) conv = { ...conv, queued: next };
     });
+    // A held row the owner already sent stays out of sight only while it can still go out by
+    // itself; a socket that has not opened within the connect timeout turns it back into an
+    // ordinary row. STATE, not a render-time clock: the timer notifies, so the pane redraws.
+    if (opts?.resubmit && !resubmitTimer && !disposed) {
+      resubmitTimer = setTimeout(() => {
+        resubmitTimer = null;
+        if (!disposed && conv.queued.some((q) => q.resubmit)) applyAndNotify(() => clearResubmit());
+      }, CONNECT_TIMEOUT_MS);
+    }
+  }
+
+  /** Every held row becomes an ordinary, visible, editable row (see `chatQueue.visibleQueued`).
+   *  Mutates `conv`: call it inside `applyAndNotify` (or the reducer). */
+  function clearResubmit(): void {
+    if (resubmitTimer) { clearTimeout(resubmitTimer); resubmitTimer = null; }
+    if (conv.queued.some((q) => q.resubmit)) conv = { ...conv, queued: queue.withoutResubmit(conv.queued) };
   }
 
   /** Tell the server which queued texts the owner took back (see ClientControl `queue_dropped`). */
@@ -2412,7 +2505,7 @@ export function createChatSession(
   function pauseQueue(): void {
     if (conv.queued.length > 0) {
       noteQueueDropped(conv.queued.map((q) => q.text));
-      applyAndNotify(() => { conv = { ...conv, queuePaused: true }; });
+      applyAndNotify(() => { conv = { ...conv, queuePaused: true }; clearResubmit(); });
     }
   }
 
@@ -2511,14 +2604,17 @@ export function createChatSession(
     const remaining = conv.queued.slice(1);
     conv = { ...conv, queued: remaining };
     if (!send(next.text)) conv = { ...conv, queued: [next, ...conv.queued] };
+    if (resubmitTimer && !conv.queued.some((q) => q.resubmit)) { clearTimeout(resubmitTimer); resubmitTimer = null; }
   }
 
-  function answer(requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }): void {
-    if (ws.readyState === WebSocket.OPEN) {
-      const frame: ClientControl = { type: 'answer', requestId, behavior: opts.behavior, updatedInput: opts.updatedInput, message: opts.message };
-      try { ws.send(JSON.stringify(frame)); } catch { /* best-effort — the request stays pending server-side */ }
-    }
-    // Optimistic local removal: the protocol has no explicit "answer accepted" ack frame.
+  function answer(requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }): boolean {
+    // Not written = not answered: the card STAYS. Removing it anyway (the old "optimistic"
+    // path) lost the answer on a dropped phone socket — the server still held the request and
+    // re-sent it on reattach, and the card came back empty.
+    if (ws.readyState !== WebSocket.OPEN) { recordPhoneEvent('submit-held', claudeId, { requestId, reason: 'offline' }); return false; }
+    const frame: ClientControl = { type: 'answer', requestId, behavior: opts.behavior, updatedInput: opts.updatedInput, message: opts.message };
+    try { ws.send(JSON.stringify(frame)); } catch { recordPhoneEvent('submit-held', claudeId, { requestId, reason: 'unsent' }); return false; }
+    // Optimistic local removal after the write: the protocol has no "answer accepted" ack frame.
     applyAndNotify(() => {
       conv = { ...conv, pending: conv.pending.filter((p) => p.requestId !== requestId) };
       session.asking = conv.pending.length > 0;
@@ -2526,17 +2622,20 @@ export function createChatSession(
     // Answering the last open card can itself be the moment the session becomes drainable (a
     // card that outlived its turn's `result` frame) — normally the guard just returns.
     maybeFlushQueue();
+    return true;
   }
 
-  function answerQuestion(requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>): void {
+  function answerQuestion(requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>): boolean {
     const item = conv.pending.find((p): p is PendingQuestion => p.kind === 'question' && p.requestId === requestId);
-    answer(requestId, { behavior: 'allow', updatedInput: buildQuestionAnswer(questions, picked, { input: item?.input, notes }) });
+    return answer(requestId, { behavior: 'allow', updatedInput: buildQuestionAnswer(questions, picked, { input: item?.input, notes }) });
   }
 
   function interrupt(): void {
     // Before the socket check, on purpose: Stop must silence the audio even when the socket
     // has already gone away, or a dead session keeps talking.
     silenceSpeech('stopped');
+    // Stop turns a held, already-sent row back into one the owner can see and edit.
+    if (conv.queued.some((q) => q.resubmit)) applyAndNotify(() => clearResubmit());
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ type: 'interrupt' } as ClientControl)); } catch { /* best-effort */ }
     // Stop means stop — including whatever was lined up behind this turn. The queue is held,
@@ -2958,6 +3057,8 @@ export function createChatSession(
     dropBrowserLive(session.id);
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     clearConnectTimer();
+    clearStableTimer();
+    if (resubmitTimer) { clearTimeout(resubmitTimer); resubmitTimer = null; }
     window.removeEventListener('online', onWake);
     document.removeEventListener('visibilitychange', onWake);
     document.removeEventListener('visibilitychange', onPageVisibility);

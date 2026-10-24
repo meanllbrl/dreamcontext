@@ -327,7 +327,14 @@
 }
 
 .chat-banner-reconnecting {
-  align-self: flex-start;
+  /* Floats over the transcript's top edge, never in the flow: a flow chip shrank the viewport
+     by its own height on every drop and the chat jumped (2026-10-23). */
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  pointer-events: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;

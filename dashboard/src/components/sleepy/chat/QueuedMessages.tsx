@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChatSession } from '../chatSession';
 import { useI18n } from '../../../context/I18nContext';
 import { agendaAboutStrip, splitAbout } from '../super/superHandover';
+import { queueAutoDrainable, visibleQueued } from './chatQueue';
 
 /**
  * ORGANISM — the message queue: the strip of messages submitted while Claude was working,
@@ -157,11 +158,14 @@ function whenLabel(paused: boolean, total: number, owed: number): string {
 
 export function QueuedMessages({ session }: { session: ChatSession }) {
   const conv = session.getModel();
-  const queued = conv.queued;
-  if (queued.length === 0) return null;
-
   const paused = !!conv.queuePaused;
   const ended = !!conv.exited || !!conv.authRequired;
+  // A turn held by an account switch is already the owner's SENT message: out of sight while
+  // the session can still send it by itself, an ordinary row the moment it cannot.
+  const autoDrainable = queueAutoDrainable({ paused, ended, takenOver: session.takenOver, status: session.status });
+  const queued = visibleQueued(conv.queued, { autoDrainable });
+  if (queued.length === 0) return null;
+  const hidden = conv.queued.length - queued.length;
   const owed = queued.filter((q) => q.steerWhenPossible).length;
 
   /**
@@ -209,7 +213,12 @@ export function QueuedMessages({ session }: { session: ChatSession }) {
             onClick={() => session.flushQueue()}
           >Resume</button>
         )}
-        <button type="button" className="chat-queue-btn" onClick={() => session.removeQueued()}>Clear</button>
+        {/* Clears what the strip shows: a held row out of sight is not the owner's to lose. */}
+        <button
+          type="button"
+          className="chat-queue-btn"
+          onClick={() => { if (hidden === 0) session.removeQueued(); else for (const q of queued) session.removeQueued(q.id); }}
+        >Clear</button>
       </div>
       <ul className="chat-queue-rows">
         {queued.map((q, i) => (

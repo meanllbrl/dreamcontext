@@ -11,6 +11,7 @@ import { rememberSuperMirrorIds } from './superMirrorIds';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { HandsfreeBackdrop, HandsfreeMark } from '../brand/HandsfreeMark';
 import { PushOptIn } from '../handsfree/phone/PushOptIn';
+import { PhoneLogSend } from '../handsfree/phone/PhoneLogSend';
 import type { PastSession } from './ChatHistoryPicker';
 import type { ChatSession } from './chatSession';
 import { liveStateKey, pastTap } from './drawerRows';
@@ -280,6 +281,7 @@ export function PhoneChatList({
           <p className="mchat-empty" data-testid="super-hint">{t('handsfree.super.hint')}</p>
         </div>
         <PushOptIn />
+        <PhoneLogSend />
         <div className="mlist-foot">
           <button type="button" className="mlist-foot-btn" onClick={onExitToDashboard} data-testid="list-dashboard">
             <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
@@ -430,6 +432,7 @@ export function PhoneChatList({
       </div>
 
       <PushOptIn />
+      <PhoneLogSend />
       <div className="mlist-foot">
         <button type="button" className="mlist-foot-btn" onClick={onExitToDashboard} data-testid="list-dashboard">
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>

@@ -26,24 +26,28 @@ export function PlanCard({ item, session }: { item: PendingPlan; session: ChatSe
   // outlive the click itself, and it stops a double-send while the frame is in flight.
   const [sent, setSent] = useState(false);
 
+  // Locked only once the answer was WRITTEN: an offline tap keeps the card (chatSession's
+  // honest `answer`), and a lock set before it would leave both buttons dead after the
+  // reconnect re-sends this same request under the same key.
   const approve = () => {
     if (sent) return;
-    setSent(true);
     // The ORIGINAL input echoed back, exactly as a permission allow does. Verified against
     // CLI 2.1.220: the file the plan describes is written on the very next tool call.
-    session.answer(item.requestId, { behavior: 'allow', updatedInput: item.input });
+    if (session.answer(item.requestId, { behavior: 'allow', updatedInput: item.input })) setSent(true);
+    else session.reconnectSoon();
   };
 
   const keepPlanning = () => {
     if (sent) return;
-    setSent(true);
     // Phrased as what it IS. The default denial ("The user doesn't want to proceed…STOP what
     // you are doing") reads as an abort and stops the turn dead; this keeps Claude in plan
     // mode and pointed at the next message, which is where the user's feedback is about to go.
-    session.answer(item.requestId, {
+    const written = session.answer(item.requestId, {
       behavior: 'deny',
       message: 'The user did not approve this plan. Stay in plan mode and wait for their notes on what to change.',
     });
+    if (written) setSent(true);
+    else session.reconnectSoon();
   };
 
   return (

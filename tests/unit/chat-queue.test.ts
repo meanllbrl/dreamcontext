@@ -245,3 +245,29 @@ describe('appendQueued — steerWhenPossible', () => {
     });
   });
 });
+
+describe('resubmit rows (an account switch\'s held, already-sent turns)', () => {
+  it('survives append, edit and remove of OTHER rows, and its own edit', async () => {
+    const { visibleQueued, withoutResubmit } = await import('../../dashboard/src/components/sleepy/chat/chatQueue.js');
+    let rows = appendQueued([], 'held', 'q1', 0, { resubmit: true });
+    rows = appendQueued(rows, 'mine', 'q2', 1);
+    expect(rows[0].resubmit).toBe(true);
+    expect(rows[1]).not.toHaveProperty('resubmit');
+    rows = editQueued(rows, 'q2', 'mine, edited');
+    rows = editQueued(rows, 'q1', 'held, edited');
+    expect(rows[0].resubmit).toBe(true);
+    rows = removeQueued(rows, 'q2');
+    expect(rows).toEqual([{ id: 'q1', text: 'held, edited', ts: 0, resubmit: true }]);
+    expect(withoutResubmit(rows)).toEqual([{ id: 'q1', text: 'held, edited', ts: 0 }]);
+    expect(visibleQueued(rows, { autoDrainable: true })).toEqual([]);
+  });
+
+  it('visibleQueued: hidden only while the session can still send it by itself', async () => {
+    const { visibleQueued } = await import('../../dashboard/src/components/sleepy/chat/chatQueue.js');
+    const rows: QueuedMessage[] = [{ ...q('a', 'held'), resubmit: true }, q('b', 'mine')];
+    expect(visibleQueued(rows, { autoDrainable: true }).map((r) => r.id)).toEqual(['b']);
+    expect(visibleQueued(rows, { autoDrainable: false }).map((r) => r.id)).toEqual(['a', 'b']);
+    expect(visibleQueued([q('b', 'mine')], { autoDrainable: true }).map((r) => r.id)).toEqual(['b']);
+    expect(visibleQueued([], { autoDrainable: false })).toEqual([]);
+  });
+});

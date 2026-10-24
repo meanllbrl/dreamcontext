@@ -97,14 +97,16 @@ export async function runVerb(
       // The pick goes to the question that offers it as an option, else the first question.
       const target = pending.questions.find((q) => q.options.some((o) => o.label === said)) ?? pending.questions[0];
       if (!target) return { ok: false, error: 'that question has nothing to answer' };
-      chat.answerQuestion(pending.requestId, pending.questions, { [target.question]: said });
+      // Not written (the chat's socket is down): the card is still waiting — never `answered`.
+      if (!chat.answerQuestion(pending.requestId, pending.questions, { [target.question]: said })) return { ok: false, error: 'not_connected' };
       return { ok: true, result: { answered: said } };
     }
     const allow = ALLOW_RE.test(said);
     if (!allow && !DENY_RE.test(said)) return { ok: false, error: 'answer a permission or plan prompt with allow or deny' };
-    chat.answer(pending.requestId, allow
+    const sent = chat.answer(pending.requestId, allow
       ? { behavior: 'allow', updatedInput: pending.input }
       : { behavior: 'deny', message: args.by === 'owner' ? 'Declined by the owner.' : 'Declined by the owner through the Assistant.' });
+    if (!sent) return { ok: false, error: 'not_connected' };
     return { ok: true, result: { answered: allow ? 'allow' : 'deny' } };
   }
   if (verb === 'close') {

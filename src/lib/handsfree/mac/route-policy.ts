@@ -80,6 +80,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/handsfree/push/key': agnostic('the VAPID public key the phone subscribes with; side-effect free'),
   'PUT /api/handsfree/push/subscription': agnostic('the phone stores its own push subscription (device id from its cookie, never the body)'),
   'DELETE /api/handsfree/push/subscription': agnostic('the phone removes its own push subscription'),
+  'POST /api/handsfree/phone-log': agnostic('the phone sends its own connection log to this Mac (signed-in phone only, 64 KB, shape-checked, no message text)'),
   'GET /api/handsfree/mac/status': deny(MAC_ADMIN),
   'POST /api/handsfree/mac/setup': deny(MAC_ADMIN),
   'POST /api/handsfree/mac/start': deny(MAC_ADMIN),

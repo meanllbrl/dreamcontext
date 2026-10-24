@@ -88,8 +88,8 @@ describe('a project answering its doorbell (runVerb)', () => {
       send: vi.fn(),
       steer: vi.fn(() => true),
       enqueue: vi.fn(),
-      answer: vi.fn(),
-      answerQuestion: vi.fn(),
+      answer: vi.fn(() => true),
+      answerQuestion: vi.fn(() => true),
       getModel: () => ({ pending }),
     };
   }
