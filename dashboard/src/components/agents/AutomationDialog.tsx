@@ -234,6 +234,14 @@ export interface AutomationDialogInitial {
  *  - K92 — Model and Effort are closed dropdowns (values); mode and days are
  *          chips (they change what the form shows).
  */
+
+/** The slug a new agent will most likely get from its name (the server's own rule: lowercase,
+ *  accents dropped, runs of other characters to one dash), so the create preview shows the figure
+ *  it will wear. A taken pair still moves it to the next free one when it is created. */
+function previewSlug(title: string): string {
+  return title.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'new-agent';
+}
+
 export function AutomationDialog({
   automation: agent,
   onClose,
@@ -669,7 +677,7 @@ export function AutomationDialog({
         <div className="agent-photo-row">
           {preview
             ? <span className="agent-av agent-photo-preview"><img src={preview} alt="" /></span>
-            : <AgentAvatar slug={agent?.slug ?? ''} title={title || 'New agent'} hasPhoto={!!agent?.hasPhoto} size={56} />}
+            : <AgentAvatar slug={agent?.slug ?? previewSlug(title)} title={title || 'New agent'} hasPhoto={!!agent?.hasPhoto} size={56} />}
           <div className="agent-photo-side">
             <div className="agent-photo-controls">
               <button type="button" className="agent-btn" onClick={() => fileRef.current?.click()}>Upload photo</button>

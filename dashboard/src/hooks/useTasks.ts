@@ -56,6 +56,8 @@ export interface Task {
   filed_by?: FiledBy | null;
   /** Why it was opened. Null when nothing was recorded (the owner's own tasks, older tasks). */
   filing_basis?: FilingBasis | null;
+  /** The owner kept this agent-opened task ("Approve"), and when. Absent until approved. */
+  filing_approved?: { at: string } | null;
   /** The owner's objection to this task and the rule sleep learned from it (newest), or null. */
   objection?: TaskObjection | null;
 }
@@ -238,6 +240,19 @@ export function useObjectToTask() {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', slug] });
       if (target) queryClient.invalidateQueries({ queryKey: ['tasks', target] });
+    },
+  });
+}
+
+/** "Approve": keep a task an agent (or a sleep, or a plan) opened. The status never changes. */
+export function useApproveFiling() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation<{ task: Task; already: boolean }, Error, { slug: string }>({
+    mutationFn: ({ slug }) => api.post(`/tasks/${encodeURIComponent(slug)}/filing-approval`, {}),
+    onSettled: (_data, _err, { slug }) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks', slug] });
     },
   });
 }

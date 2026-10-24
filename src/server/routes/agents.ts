@@ -26,6 +26,7 @@ import { readStageHomeSession } from '../../lib/local-store.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import { agentActivity } from '../automation-job.js';
 import { isAgentRequest } from '../desktop.js';
+import { findLiveChat } from './agent-chat-live.js';
 import { roleLineOf, soulExcerpt } from '../../lib/agents/soul.js';
 import {
   approvalFields,
@@ -553,6 +554,8 @@ export interface StageView {
   autonomy: AgentAutonomy;
   /** The conversation the stage's chat resumes; null before its first one. Machine-local. */
   homeSessionId: string | null;
+  /** A live, ATTACHED process holds the home session right now (a stage, or a Chat tab). */
+  homeLive: boolean;
   /** Whose agent it is (arrives with the brain sync); null on this build. */
   owner: string | null;
   /** What it is doing right now: one row per target of it holding its run lock. */
@@ -602,12 +605,16 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
     if (files.length >= STAGE_FILES) break;
   }
 
+  const home = readStageHomeSession(dirname(contextRoot), slug);
   return {
     slug,
     title: target.agentTitle || target.title,
     face: faceOf(slug, agent?.face ?? null),
     autonomy: target.autonomy ?? DEFAULT_AGENT_AUTONOMY,
-    homeSessionId: readStageHomeSession(dirname(contextRoot), slug),
+    homeSessionId: home,
+    // Held = a live child with a socket bound to it right now. A detached one (its pane closed a
+    // moment ago) is not held: the stage adopts it.
+    homeLive: !!home && !!findLiveChat(home)?.holder?.(),
     owner: null,
     liveJobs,
     reports,

@@ -1,0 +1,8 @@
+/* The figure paints from three variables: its tone (set inline from the --agent-face-<tone>
+   tokens), the dream-stone's top facet (the tone with 38% white) and the eyes (white). */
+.agent-figure {
+  display: inline-block;
+  flex-shrink: 0;
+  --fc-facet: color-mix(in srgb, var(--fc-body) 62%, #ffffff);
+  --fc-eye: #ffffff;
+}

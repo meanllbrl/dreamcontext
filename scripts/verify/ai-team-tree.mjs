@@ -142,7 +142,8 @@ async function shots(base, vault, outArg) {
       // A: the tree, a teammate three levels down open, its Profile.
       await page.locator('[data-roster-view="tree"]').click();
       await page.locator('[data-tree-row="reklam-izleyici"] [data-team-row]').click();
-      await page.locator('.aiteam-iconbtn[aria-label]').last().click();
+      // The teammate opens on its stage (AI Team v2): its Profile is the header's panel button.
+      await page.locator('.aiteam-stage-head .aiteam-pill').last().click();
       await page.locator('[data-section="place"]').waitFor({ timeout: 10000 });
       await page.locator('[data-tree-row="icerik-editoru"] .aiteam-caret').click();
       await page.locator('[data-tree-row="destek-ozeti"] .aiteam-caret').click();

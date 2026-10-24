@@ -1,8 +1,8 @@
 /* AI Team — the page's own pieces. Every value is an app token (from the approved board,
    ai-team-ekranlari: mockups/src/ai-team.css), plus the tab switch and toast the retired
    Automations page owned. */
-.aiteam { display: grid; grid-template-columns: 304px minmax(0, 1fr); height: 100%; min-height: 0; background: var(--color-bg); }
-.aiteam--panel { grid-template-columns: 304px minmax(0, 1fr) 416px; }
+.aiteam { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; min-height: 0; background: var(--color-bg); }
+.aiteam--panel { grid-template-columns: 264px minmax(0, 1fr) 416px; }
 
 /* ── roster ── */
 .aiteam-roster { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--color-border); }

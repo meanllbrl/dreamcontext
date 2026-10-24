@@ -71,6 +71,14 @@ export function canObject(task: Pick<Task, 'filed_by' | 'status' | 'objection'>,
 }
 
 /**
+ * May the owner approve this task now ("keep it as it is")? The same tasks they may object to,
+ * and not once it is approved.
+ */
+export function canApprove(task: Pick<Task, 'filed_by' | 'status' | 'objection' | 'filing_approved'>, isCancelled: (status: string) => boolean): boolean {
+  return !task.filing_approved && canObject(task, isCancelled);
+}
+
+/**
  * The tasks the dialog offers as a target: open ones, never the task itself, sorted by name;
  * for "sub-task of" only tasks that are not sub-tasks themselves (two levels max).
  */

@@ -19,3 +19,9 @@
   object-fit: cover;
   display: block;
 }
+
+/* No photo: the agent's figure, drawn on nothing (it carries its own shape and tone). */
+.agent-av--figure {
+  background: transparent;
+  overflow: visible;
+}

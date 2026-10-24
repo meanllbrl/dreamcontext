@@ -27,6 +27,7 @@ import {
 } from '../../lib/automations/store.js';
 import { getAgent, removeAgent, withRestamp } from '../../lib/agents/store.js';
 import { agentKeyOf, readManifestFrontmatter } from '../../lib/agents/slot.js';
+import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import type { AgentIdentityPatch } from '../../lib/agents/types.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
@@ -192,6 +193,8 @@ interface AutomationSummary {
    *  one. One server-side string so the card, the profile popover and the CLI
    *  can never word an agent's cadence differently. */
   cadenceLabel: string;
+  /** Its figure: the face stamped on its file, else the bare hash of its slug. */
+  face: AgentFace;
   model: string | null;
   /** On the summary (not only the detail) because the Edit dialog prefills
    *  from the LIST — opening it must not have to fetch the manifest first, or
@@ -296,6 +299,7 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     hasPhoto: resolveAutomationPhoto(contextRoot, m.photo) !== null,
     description: m.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
     cadenceLabel: cadenceLabel(m),
+    face: faceOf(m.slug, m.path ? parseFace(readManifestFrontmatter(m.path)?.data.face) : null),
     model: m.model,
     effort: m.effort,
     timeoutMinutes: m.timeoutMinutes,

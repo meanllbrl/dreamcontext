@@ -444,7 +444,7 @@ describe('AC-A1-4 the stage', () => {
     await handleAgentsStage(fakeReq(), open, { slug: 'scout' }, contextRoot);
     expect(open.status).toBe(200);
     expect(Object.keys(open.json().stage as object).sort()).toEqual(
-      ['autonomy', 'face', 'files', 'homeSessionId', 'inbox', 'liveJobs', 'owner', 'reports', 'routines', 'slug', 'title'].sort(),
+      ['autonomy', 'face', 'files', 'homeLive', 'homeSessionId', 'inbox', 'liveJobs', 'owner', 'reports', 'routines', 'slug', 'title'].sort(),
     );
     const missing = fakeRes();
     await handleAgentsStage(fakeReq(), missing, { slug: 'nobody' }, contextRoot);

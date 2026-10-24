@@ -1,0 +1,77 @@
+/* An agent's STAGE: the live conversation as the main card, its work around it. App tokens only. */
+.aiteam-stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: var(--space-4); padding: var(--space-4) var(--space-5) var(--space-4) var(--space-6); overflow: hidden; container-type: inline-size; container-name: aiteam-stage; }
+.aiteam-stage-head { display: flex; align-items: center; gap: var(--space-3); flex-shrink: 0; }
+.aiteam-stage-id { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.aiteam-stage-head > .aiteam-autonomy, .aiteam-stage-head > .aiteam-pill { flex-shrink: 0; }
+.aiteam-stage-name { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-family-display); font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); letter-spacing: -0.3px; color: var(--color-text); }
+.aiteam-stage-role { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+
+.aiteam-autonomy { display: inline-flex; align-items: center; height: 26px; padding: 0 var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-full); background: var(--color-bg-secondary); color: var(--color-text-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); white-space: nowrap; }
+button.aiteam-autonomy { cursor: pointer; }
+button.aiteam-autonomy:hover { border-color: var(--color-border-hover); color: var(--color-text); }
+.aiteam-autonomy--balanced { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); background: var(--color-accent-soft); color: var(--color-accent-ink); }
+.aiteam-autonomy--free { border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border)); background: var(--color-warning-subtle); color: var(--color-warning-ink); }
+
+.aiteam-stage-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--space-4); }
+.aiteam-stage-main { min-width: 0; min-height: 0; display: flex; }
+.aiteam-stage-side { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--space-3); padding-left: var(--space-4); border-left: 1px solid var(--color-border); }
+.aiteam-stage-foot { flex-shrink: 0; }
+
+/* the main card: the Chat engine (CardChat moves the session's container in here) */
+.aiteam-stage-chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); border-radius: var(--radius-xl); background: var(--color-bg); overflow: hidden; }
+.aiteam-stage-chat-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); }
+.aiteam-stage-chat-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.aiteam-stage-live { font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-text-tertiary); }
+.aiteam-stage-live.is-busy { color: var(--color-accent-ink); }
+.aiteam-stage-chat .wb-agent-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.aiteam-stage-chat .wb-agent-chat > .agent-pane-chat { flex: 1; min-height: 0; position: relative; }
+.aiteam-stage-note { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-6); text-align: center; font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-stage-note p { margin: 0; max-width: 360px; line-height: 1.5; }
+
+/* side cards */
+.aiteam-card { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-secondary); color: var(--color-text); text-align: left; font: inherit; }
+button.aiteam-card { cursor: pointer; }
+button.aiteam-card:hover { border-color: var(--color-border-hover); }
+.aiteam-card--quiet { background: transparent; border-style: dashed; }
+.aiteam-card-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.aiteam-card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.aiteam-card-state { flex-shrink: 0; padding: 2px var(--space-2); border-radius: var(--radius-sm); background: var(--color-success-subtle, var(--color-bg-tertiary)); color: var(--color-success); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); white-space: nowrap; }
+.aiteam-card-when { flex-shrink: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.aiteam-card-sub { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-card-line { margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: var(--font-size-xs); line-height: 1.45; color: var(--color-text-secondary); }
+.aiteam-card-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); color: var(--color-text); }
+.aiteam-card-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.aiteam-card-foot { display: flex; justify-content: flex-end; }
+.aiteam-card-empty { margin: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-card-list { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-1) 0 0; padding: 0; list-style: none; }
+.aiteam-card-routine { display: flex; align-items: center; gap: var(--space-2); min-width: 0; font-size: var(--font-size-sm); }
+.aiteam-card-routine-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aiteam-linkbtn { flex-shrink: 0; padding: 0; border: 0; background: transparent; color: var(--color-accent-ink); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); cursor: pointer; }
+.aiteam-linkbtn:hover { text-decoration: underline; }
+.aiteam-report { display: flex; align-items: baseline; gap: var(--space-3); width: 100%; padding: var(--space-1) 0; border: 0; background: transparent; color: var(--color-text); text-align: left; font: inherit; cursor: pointer; }
+.aiteam-report-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); }
+.aiteam-report:hover .aiteam-report-text { color: var(--color-accent-ink); }
+
+/* the Stage / Activity switch above a teammate */
+.aiteam-viewswitch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--color-border); border-radius: var(--radius-full); background: var(--color-bg-secondary); }
+.aiteam-viewswitch button { height: 26px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-full); background: transparent; color: var(--color-text-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); cursor: pointer; }
+.aiteam-viewswitch button[aria-pressed='true'] { background: var(--color-bg); color: var(--color-text); box-shadow: var(--shadow-sm); }
+
+/* phone width: the chat fills the stage, the cards wait behind "Cards" */
+.aiteam-stage--narrow { padding: var(--space-3); gap: var(--space-3); }
+.aiteam-stage--narrow .aiteam-stage-head { flex-wrap: wrap; }
+.aiteam-stage--narrow .aiteam-stage-role { white-space: normal; }
+.aiteam-stage--narrow .aiteam-stage-body { grid-template-columns: minmax(0, 1fr); }
+.aiteam-stage--narrow .aiteam-stage-side { padding-left: 0; border-left: 0; }
+.aiteam-stage--narrow[data-show='chat'] .aiteam-stage-side { display: none; }
+.aiteam-stage--narrow[data-show='cards'] .aiteam-stage-main { display: none; }
+.aiteam-stage .aiteam-approval { padding: 0; max-height: 40%; }
+
+/* A stage squeezed by the side panel: the cards leave the side column and become one row under
+   the chat, scrolled sideways, so the conversation keeps its width. */
+@container aiteam-stage (max-width: 860px) {
+  .aiteam-stage:not(.aiteam-stage--narrow) .aiteam-stage-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .aiteam-stage:not(.aiteam-stage--narrow) .aiteam-stage-side { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 0 0 var(--space-1); border-left: 0; }
+  .aiteam-stage:not(.aiteam-stage--narrow) .aiteam-stage-side > .aiteam-card { flex: 0 0 240px; }
+  .aiteam-stage:not(.aiteam-stage--narrow) .aiteam-stage-role { display: none; }
+}

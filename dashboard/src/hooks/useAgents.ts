@@ -1,3 +1,7 @@
+import type { AgentFace } from '../../../src/lib/agents/figure.js';
+
+/** How much an agent decides alone; mirrors `AGENT_AUTONOMY_LEVELS` (src/lib/automations/types.ts). */
+export type AgentAutonomy = 'ask' | 'balanced' | 'free';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 
@@ -58,6 +62,11 @@ export interface AgentSummary {
   reportsTo: string | null;
   /** `team` as written; drawn only on a lead (an agent someone reports to). Unhashed. */
   team: string | null;
+  /** How much it decides alone (the permission mode of its sessions). Optional: an older server
+   *  sends none, which reads as `balanced`. */
+  autonomy?: AgentAutonomy;
+  /** Its figure (stamped face, else the bare hash). */
+  face?: AgentFace;
   approvedForChat: boolean;
   approvedToRun: boolean;
   /** Why it may not run, when `approvedToRun` is false. */
@@ -104,6 +113,8 @@ export interface AgentIdentityDraft {
   learning?: boolean;
   /** How it works. `''` clears it on an edit. Nothing records a template it started from. */
   soul?: string;
+  /** How much it decides alone. Not on create (every new agent starts `balanced`). */
+  autonomy?: AgentAutonomy;
 }
 
 /** An identity edit: every field optional, so a dialog that omits one never blanks it. */
@@ -250,4 +261,39 @@ export function approvalState(a: Pick<AgentSummary, 'approvedForChat' | 'approve
 export function findAgent(agents: readonly AgentSummary[] | undefined, slug: string | null | undefined): AgentSummary | null {
   if (!slug) return null;
   return (agents ?? []).find((a) => a.slug === slug) ?? null;
+}
+
+/** A posted file's kind, as the stage route classifies it. */
+export type StageFileKind = 'doc' | 'board' | 'image' | 'data' | 'other';
+
+/** `GET /api/agents/:slug/stage` — what the agent's stage draws around its live conversation.
+ *  Mirrors `StageView` (src/server/routes/agents.ts). */
+export interface AgentStageView {
+  slug: string;
+  title: string;
+  face: AgentFace;
+  autonomy: AgentAutonomy;
+  homeSessionId: string | null;
+  homeLive: boolean;
+  owner: string | null;
+  liveJobs: { slug: string; title: string; since: number; runId: string | null; lastLine: string | null }[];
+  reports: { slug: string; id: string; runId: string; at: string; text: string; files: string[] }[];
+  files: { path: string; kind: StageFileKind; at: string; slug: string }[];
+  routines: { slug: string; title: string; enabled: boolean; nextFireAt: string | null; cadence: string; face: AgentFace }[];
+  inbox: unknown[];
+}
+
+/** How often the stage re-reads its cards while it is on screen. */
+export const STAGE_POLL_MS = 5000;
+
+/** One agent's stage. Polled while mounted: a routine's run starts and ends on its own. */
+export function useAgentStage(slug: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agents', slug, 'stage'],
+    queryFn: () => api.get<{ stage: AgentStageView }>(`/agents/${encodeURIComponent(slug ?? '')}/stage`).then((r) => r.stage),
+    enabled: !!slug,
+    retry: 0,
+    refetchInterval: STAGE_POLL_MS,
+  });
 }

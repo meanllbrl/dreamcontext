@@ -333,9 +333,10 @@ async function browserLeg(chromium, base) {
   await modeTrigger().click();
   await page.waitForTimeout(300);
   await chip('Draft agent').click();
-  ok('picking it lands on the Agents page', await until(async () => {
+  // The Agents page became the AI Team (its rail item is named so).
+  ok('picking it lands on the AI Team page', await until(async () => {
     const current = page.locator('.sidebar-item[aria-current="page"]');
-    return (await current.count()) > 0 && (await current.first().innerText()).trim().startsWith('Agents');
+    return (await current.count()) > 0 && /^(AI Team|Agents)/.test((await current.first().innerText()).trim());
   }), await page.locator('.sidebar-item[aria-current="page"]').first().innerText().catch(() => '(none)'));
   ok('…and no chat starts for it', !(await sockets()).slice(socketsUnapproved).some((u) => u.includes(`chatAgent=${DRAFT}`)));
   if (shots) await page.screenshot({ path: `${shots}/chat-agent-picker-agents-page.png` });

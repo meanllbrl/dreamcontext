@@ -254,3 +254,29 @@
     transition: none;
   }
 }
+
+/* Approve: beside Object while the strip is open; afterwards the strip folds into chips. */
+.filing-approve-btn {
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+.filing-approve-btn:disabled { opacity: 0.6; cursor: default; }
+.filing-approve-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.filing-error { font-size: var(--font-size-xs); color: var(--color-error-ink); }
+.filing-chips { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); max-width: 720px; }
+.filing-chip--approved { background: var(--color-success-subtle); color: var(--color-success-ink); }
+.filing-chip-btn { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 24px; padding: 0 var(--space-2); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); cursor: pointer; }
+.filing-chip-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.filing-more { position: relative; display: inline-flex; }
+.filing-more-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; display: flex; flex-direction: column; min-width: 180px; padding: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); box-shadow: var(--shadow-md); }
+.filing-more-item { padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-error-ink); font-size: var(--font-size-sm); text-align: left; cursor: pointer; }
+.filing-more-item:hover { background: var(--color-bg-secondary); }
+.filing-text--folded { flex-basis: 100%; }

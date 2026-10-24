@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useContext, useState } from 'react';
+import { QueryClientContext, type QueryClient } from '@tanstack/react-query';
 import { agentPhotoUrl, automationPhotoUrl } from '../../api/client';
 import { useVault } from '../../context/VaultContext';
+import type { AgentFace } from '../../../../src/lib/agents/figure.js';
+import { AgentFigure } from './AgentFigure';
 import './AgentAvatar.css';
 
 /**
@@ -22,7 +25,8 @@ export function initialsFor(title: string): string {
 }
 
 /**
- * An agent's face: its photo when one resolves, its initials otherwise.
+ * An agent's face: its photo when one resolves, its FIGURE otherwise (AgentFigure: the stamped
+ * `face`, else the bare hash of its slug). The initials above stay for surfaces with no slug.
  *
  * `hasPhoto` comes from the server, which has already checked the file is
  * inside the photos directory and exists — but the `<img>` is STILL allowed to
@@ -40,11 +44,12 @@ export function initialsFor(title: string): string {
  */
 export function AgentAvatar({
   slug,
-  title,
+  title: _title,
   hasPhoto,
   size = 40,
   version,
   of = 'automation',
+  face,
 }: {
   slug: string;
   title: string;
@@ -55,9 +60,15 @@ export function AgentAvatar({
   size?: number;
   version?: string | number;
   of?: 'agent' | 'automation';
+  /** Its stamped figure; absent draws the bare hash of `slug`. */
+  face?: AgentFace | null;
 }) {
   const { vault } = useVault();
   const [failed, setFailed] = useState(false);
+  // The stamped face, when the caller did not pass one: read from the agents/automations lists
+  // already in the query cache (no fetch of its own; outside a query client, the bare hash).
+  const qc = useContext(QueryClientContext);
+  const stamped = face ?? cachedFace(qc, slug, of);
   const style = {
     width: size,
     height: size,
@@ -66,9 +77,10 @@ export function AgentAvatar({
   };
 
   if (!hasPhoto || failed) {
+    // Decoration: the agent's name is always written beside its face.
     return (
-      <span className="agent-av" style={style} aria-hidden="true">
-        {initialsFor(title)}
+      <span className="agent-av agent-av--figure" style={style} aria-hidden="true">
+        <AgentFigure slug={slug} face={stamped} size={size} />
       </span>
     );
   }
@@ -81,4 +93,15 @@ export function AgentAvatar({
       />
     </span>
   );
+}
+
+type FaceRow = { slug: string; face?: AgentFace };
+
+/** A face from the lists the page already holds: an agent's for `of="agent"`, else the
+ *  automation's (whose call-target rows are the agents themselves), else the agent of that slug. */
+function cachedFace(qc: QueryClient | undefined, slug: string, of: 'agent' | 'automation'): AgentFace | null {
+  if (!qc || !slug) return null;
+  const find = (key: string): AgentFace | null =>
+    (qc.getQueryData<FaceRow[]>([key]) ?? []).find((r) => r.slug === slug)?.face ?? null;
+  return of === 'agent' ? find('agents') : find('automations') ?? find('agents');
 }

@@ -1,3 +1,4 @@
+import type { AgentFace } from '../../../src/lib/agents/figure.js';
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
@@ -93,6 +94,8 @@ export interface AutomationSummary {
   /** `scheduleLabel` for a scheduled agent, 'When you call it' for an on-call
    *  one. Computed server-side so no surface words a cadence differently. */
   cadenceLabel: string;
+  /** Its figure (stamped face, else the bare hash). Optional: an older server sends none. */
+  face?: AgentFace;
   enabled: boolean;
   schedule: AutomationSchedule | null;
   scheduleLabel: string;

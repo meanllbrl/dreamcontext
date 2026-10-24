@@ -6,6 +6,7 @@ import {
   useCreateAgentIdentity,
   useUpdateAgentIdentity,
   useUploadAgentIdentityPhoto,
+  type AgentAutonomy,
   type AgentEffort,
   type AgentIdentityPatch,
   type AgentSummary,
@@ -31,11 +32,15 @@ export interface IdentityForm {
   learning: boolean;
   /** How it works, free text. `''` is no soul (the default); a template only fills this. */
   soul: string;
+  /** How much it decides alone; sets the permission mode of its sessions. Edit only. */
+  autonomy: AgentAutonomy;
 }
+
+const AUTONOMY_LEVELS: readonly AgentAutonomy[] = ['ask', 'balanced', 'free'];
 
 /** A new agent's form: blank, and learning on (the store's own default for a new agent). */
 export const EMPTY_IDENTITY_FORM: IdentityForm = {
-  title: '', prompt: '', model: '', effort: '', whiteboard: '', learning: true, soul: '',
+  title: '', prompt: '', model: '', effort: '', whiteboard: '', learning: true, soul: '', autonomy: 'balanced',
 };
 
 /** A new agent's form, with its home board preset when the create was asked for from a board. */
@@ -55,6 +60,7 @@ export function formFromAgent(agent: AgentSummary, prompt: string, learning: boo
     whiteboard: agent.whiteboard ?? '',
     learning,
     soul,
+    autonomy: agent.autonomy ?? 'balanced',
   };
 }
 
@@ -93,6 +99,7 @@ export function identityPatch(before: IdentityForm, after: IdentityForm): AgentI
   if (after.whiteboard !== before.whiteboard) patch.whiteboard = after.whiteboard || null;
   if (after.learning !== before.learning) patch.learning = after.learning;
   if (after.soul.trim() !== before.soul.trim()) patch.soul = after.soul.trim();
+  if (after.autonomy !== before.autonomy) patch.autonomy = after.autonomy;
   return patch;
 }
 
@@ -414,6 +421,34 @@ export function AgentIdentityDialog({
           />
           <span>{t('agents.identity.learning')}</span>
         </label>
+
+        {editing && !detail.data?.agent.implicit && (
+          <fieldset className="aid-autonomy" disabled={!ready}>
+            <legend className="aid-label">{t('aiteam.autonomy.title')}</legend>
+            <div className="aid-segmented" role="radiogroup" aria-label={t('aiteam.autonomy.title')}>
+              {AUTONOMY_LEVELS.map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  role="radio"
+                  aria-checked={form.autonomy === level}
+                  className={`aid-segment${form.autonomy === level ? ' is-on' : ''}`}
+                  onClick={() => set('autonomy', level)}
+                  data-autonomy={level}
+                >
+                  {t(`aiteam.autonomy.${level}`)}
+                </button>
+              ))}
+            </div>
+            <ul className="aid-autonomy-lines">
+              {AUTONOMY_LEVELS.map((level) => (
+                <li key={level} className={form.autonomy === level ? 'is-on' : undefined}>
+                  <b>{t(`aiteam.autonomy.${level}`)}</b> {t(`aiteam.autonomy.${level}.desc`)}
+                </li>
+              ))}
+            </ul>
+          </fieldset>
+        )}
 
         <p className="aid-note">{note ?? t('agents.identity.callSettingsNote')}</p>
 

@@ -82,6 +82,7 @@ export function TeamConversation({
   onFocusDone,
   managers = [],
   onSelectAgent,
+  onStage,
 }: {
   row: TeamRow;
   agent: TeamAgent;
@@ -102,6 +103,8 @@ export function TeamConversation({
   managers?: { slug: string; title: string }[];
   /** Open another teammate (a manager on the path). */
   onSelectAgent?: (slug: string) => void;
+  /** Back to the agent's stage (this view is its activity: its routines' runs and posts). */
+  onStage?: () => void;
 }) {
   const { t } = useI18n();
   const api = useApi();
@@ -330,6 +333,9 @@ export function TeamConversation({
           {row.role && <span className="aiteam-convo-role">{row.role}</span>}
         </div>
         <span className="aiteam-spacer" />
+        {onStage && (
+          <button type="button" className="aiteam-pill" onClick={onStage} data-team-stage>{t('aiteam.stage.backToStage')}</button>
+        )}
         <button
           type="button"
           className={`aiteam-pill${panelOpen ? ' aiteam-pill--on' : ''}`}

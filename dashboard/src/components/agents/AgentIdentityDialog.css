@@ -297,3 +297,14 @@
   .aid-chip { transition: none; }
   .aid-btn:active:not(:disabled) { transform: none; }
 }
+
+/* Autonomy: one segmented control, one line per level under it (the chosen one in full ink). */
+.aid-autonomy { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }
+.aid-segmented { display: inline-flex; align-self: flex-start; gap: 2px; padding: 2px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-secondary); }
+.aid-segment { height: 28px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); cursor: pointer; }
+.aid-segment.is-on { background: var(--color-bg); color: var(--color-text); box-shadow: var(--shadow-sm); }
+.aid-segment:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.aid-autonomy-lines { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: var(--font-size-xs); line-height: 1.5; color: var(--color-text-tertiary); }
+.aid-autonomy-lines li.is-on { color: var(--color-text-secondary); }
+.aid-autonomy-lines b { font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); }
+.aid-autonomy-lines li.is-on b { color: var(--color-text); }

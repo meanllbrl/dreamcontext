@@ -6,7 +6,7 @@ import { splitNotchCue, stripNotchCue, presentationOf, type NotchCue } from '../
 import { splitReplyMark } from '../../lib/replyMark';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
-import { chatAgentFor } from '../../lib/chatAgentBinding';
+import { chatAgentFor, isStageChat } from '../../lib/chatAgentBinding';
 import { raiseAskAttention } from '../../lib/attention';
 import {
   parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
@@ -1012,6 +1012,8 @@ export function createChatSession(
   // The agent this Chat tab speaks as, on BOTH URLs for the same reason. Never beside a card.
   const agent = card ? '' : chatAgentFor(claudeId);
   const agentParam = agent ? `&chatAgent=${encodeURIComponent(agent)}` : '';
+  // An agent's stage conversation: the server records its first accepted one as the stage's home.
+  const stageParam = agent && isStageChat(claudeId) ? '&stage=1' : '';
   // On BOTH URLs too: a reconnect that respawns a lean child must respawn it lean.
   const leanParam = leanMcpParam(leanMcp);
   const bypassParam = bypass ? '1' : '0';
@@ -1023,7 +1025,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${leanParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${stageParam}${leanParam}`;
   /** The reconnect after a DROPPED socket: the same conversation, `reattach` so the server
    *  adopts the live child instead of spawning a twin — PASSIVE, because it is automatic: a
    *  live screen holding the chat is never evicted by it (the server answers 4409 instead).
@@ -1032,7 +1034,7 @@ export function createChatSession(
    *  a live permission switch may have moved it. */
   const reconnectUrl = (how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=${how}`
-    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${leanParam}`;
+    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${stageParam}${leanParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
 
