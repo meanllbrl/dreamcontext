@@ -52,3 +52,30 @@ describe('a sectioned reply', () => {
     expect(html).toBe(draw({ item: { ...item, replySections: undefined } }));
   });
 });
+
+// End review 2026-10-24 (edge-cases Major): a section that opens with a ```dream-actions fence
+// showed its head while the opener streamed as text, then lost it once the fence was lifted.
+describe('a head once shown never goes, whatever its section opens with', () => {
+  const ACTIONS = '```dream-actions\n[{"label":"Open the task","action":"task","id":"orbit-tests"}]\n```';
+  for (const [name, raw] of [
+    ['buttons, then words', `<!-- re:aaaaaa -->\nFirst answer.\n<!-- re:bbbbbb -->\n${ACTIONS}\nAfter.`],
+    ['buttons only', `<!-- re:aaaaaa -->\nFirst answer.\n<!-- re:bbbbbb -->\n${ACTIONS}`],
+  ] as const) {
+    it(`${name}: every streamed prefix, then done`, async () => {
+      const { splitReplyMark } = await import('../../dashboard/src/lib/replyMark.js');
+      let shown = 0;
+      for (let n = 1; n <= raw.length + 1; n += 1) {
+        const done = n > raw.length;
+        const split = splitReplyMark(raw.slice(0, Math.min(n, raw.length)));
+        if (split.sections.length < 2) { expect(shown).toBe(0); continue; }
+        const hs = split.sections.map((x, i) => ({ at: x.at, kind: 'reply', count: 1, quotes: [`q${i}`], targetId: `u-${i}` }));
+        const html = draw({ item: { kind: 'text', id: 't-9', index: 0, text: split.body, done, ts: 1, replySections: split.sections }, replyHeads: hs });
+        const heads = count(html, 'data-testid="chat-reply-head"');
+        expect(heads, `prefix ${n}`).toBeGreaterThanOrEqual(shown);
+        shown = heads;
+      }
+      expect(shown).toBe(2);
+    });
+  }
+});
+

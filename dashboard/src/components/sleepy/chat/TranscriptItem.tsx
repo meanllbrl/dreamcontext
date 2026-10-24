@@ -265,14 +265,24 @@ type Unit =
 /**
  * A sectioned reply's segments as units: prose separated only by section markers merges into
  * ONE body with parts (one container, owner pick A); a section that opens with a block gets its
- * head as a row of its own right before it. Without section markers: one unit per segment.
+ * head as a row of its own right before it, and so does a section with nothing drawn in it (its
+ * first line became a `dream-actions` fence, whose buttons sit under the message): a head once
+ * shown never goes when its words turn out to be a fence. Without section markers: one unit per
+ * segment.
  */
 function unitsOf(segments: ChatSegment[], heads: readonly ReplyHead[] | undefined, sectionAt: readonly number[] | undefined): Unit[] {
   const units: Unit[] = [];
   let open: number | null = null;
   const headOf = (i: number) => heads?.find((h) => h.at === sectionAt?.[i]);
+  /** A section that drew nothing: its head alone. */
+  const headAlone = () => {
+    if (open === null) return;
+    const head = headOf(open);
+    units.push({ kind: 'head', ...(head ? { head } : {}), divider: units.length > 0 });
+    open = null;
+  };
   segments.forEach((seg, i) => {
-    if (seg.kind === 'section') { open = seg.index; return; }
+    if (seg.kind === 'section') { headAlone(); open = seg.index; return; }
     const starts = open !== null;
     const divider = starts && units.length > 0;
     const head = starts ? headOf(open!) : undefined;
@@ -286,6 +296,7 @@ function unitsOf(segments: ChatSegment[], heads: readonly ReplyHead[] | undefine
     if (starts) units.push({ kind: 'head', ...(head ? { head } : {}), divider });
     units.push({ kind: 'block', segment: seg });
   });
+  headAlone();
   return units;
 }
 
