@@ -1,0 +1,82 @@
+/* ── The agenda on the hands-free phone (PhoneAgenda.tsx, owner's pick A) ─────────────────
+   One strip under the chat's header with the counts, and a sheet from the bottom holding the
+   desktop's notepad. Tokens only; the sheet's entrance is one-shot and rests under reduced
+   motion. */
+.phone-agenda-strip {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.phone-agenda-strip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.phone-agenda-strip-h {
+  flex: 0 0 auto;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.phone-agenda-strip-part { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.phone-agenda-strip-part + .phone-agenda-strip-part::before { content: '·'; margin-right: var(--space-2); color: var(--color-text-tertiary); }
+.phone-agenda-strip-waiting { display: inline-flex; align-items: center; gap: 6px; color: var(--color-text); font-weight: var(--font-weight-semibold); }
+.phone-agenda-strip-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--mood-waiting); }
+.phone-agenda-strip-chev { flex: 0 0 auto; margin-left: auto; color: var(--color-text-tertiary); }
+
+.phone-agenda-layer { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; justify-content: flex-end; }
+.phone-agenda-backdrop { position: absolute; inset: 0; background: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.phone-agenda-sheet {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  max-height: 82vh;
+  max-height: 82dvh;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-lg);
+  animation: phone-agenda-in 200ms var(--ease-out, ease-out);
+}
+@keyframes phone-agenda-in { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .phone-agenda-sheet { animation: none; } }
+
+.phone-agenda-grip { flex: 0 0 auto; padding: var(--space-2) var(--space-2) 0 var(--space-4); touch-action: none; }
+.phone-agenda-grip-bar { display: block; width: 36px; height: 4px; margin: 0 auto var(--space-2); border-radius: 2px; background: var(--color-border); }
+.phone-agenda-head { display: flex; align-items: center; gap: var(--space-2); }
+.phone-agenda-titles { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.phone-agenda-title { margin: 0; font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); }
+.phone-agenda-sub { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.phone-agenda-close {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.phone-agenda-close:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.phone-agenda-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--space-2) var(--space-2) var(--space-3); }
+.phone-agenda-body .super-agenda { height: auto; overflow: visible; }
+/* A thumb has no hover: the row's ↩ is always there, at the touch floor. */
+.phone-agenda-body .super-agenda-row[data-about='true'] { grid-template-columns: minmax(0, 1fr) 44px; }
+.phone-agenda-body .super-agenda-about { width: 44px; height: 44px; margin-top: 0; opacity: 1; }

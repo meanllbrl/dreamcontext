@@ -761,12 +761,13 @@ export function ChatPane({
    *  vault's logo and name in the sub-agent card, rail and drill-in. */
   const peers = usePeerMentions();
 
-  // The Super Agent's centre (plan r4 D2, D8): each event turn folds into ONE line; the owner
-  // expands one with a click. Any other chat has no context and draws nothing new.
-  const superCtx = useSuperEventContext(session.mode === 'super' ? session.claudeId : null);
   /** This pane shows the Super Agent's conversation: its own window, or the hands-free phone's
    *  mirror of it (`superMirror`, an ordinary chat mode). The reply links read this. */
   const superView = session.mode === 'super' || session.superMirror;
+  // The Super Agent's centre (plan r4 D2, D8): each event turn folds into ONE line; the owner
+  // expands one with a click. The phone's mirror folds too, from the Mac's digest (PhoneAgenda).
+  // Any other chat has no context and draws nothing new.
+  const superCtx = useSuperEventContext(superView ? session.claudeId : null);
   const { t } = useI18n();
   const [openEvents, setOpenEvents] = useState<ReadonlySet<string>>(() => new Set());
   const toggleEvent = useCallback((anchor: string) => setOpenEvents((prev) => {

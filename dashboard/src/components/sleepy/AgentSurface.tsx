@@ -93,7 +93,8 @@ import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
-import { readSuperStateView, type SuperStateView } from '../../lib/superTypes';
+import { readSuperStateView, type SuperDigestWire, type SuperStateView } from '../../lib/superTypes';
+import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
 import { holdSidebarCollapsed } from '../../hooks/useSidebarCollapse';
 import type { PendingQuestion } from './chatSession';
 import { HandoverButton } from './super/HandoverButton';
@@ -1443,6 +1444,15 @@ export function AgentSurface() {
       const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, cid, resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach, lean, mirror);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
+      // The phone's mirror of the Super Agent folds its event turns like the stage does, from
+      // the digest the Mac pushes (it has no record; PhoneAgenda.tsx `phoneEventContext`).
+      if (mirror) {
+        cs.onSuperDigest((d) => {
+          if (!d) return;
+          const { ctx, key } = phoneEventContext(d);
+          publishSuperEventContext(cid, ctx, key);
+        });
+      }
       // Every chat spawned anywhere in this surface follows the signed-in account, for the
       // same reason the permission-mode default is resolved here rather than per call site:
       // one place to arm means no future spawn path can forget to.
@@ -3647,8 +3657,8 @@ export function AgentSurface() {
    * Agent's composer as ONE About chip (a second press replaces it), the draft untouched and the
    * caret in the box. The message he sends opens with the line's block (`agendaAboutBlock`).
    */
-  const writeAboutRow = useCallback((row: AgendaRow) => {
-    const cs = superChatRef.current;
+  /** Stage `row` as an About chip in `cs`'s composer, and focus it. */
+  const writeAboutInto = useCallback((cs: ChatSession | null | undefined, row: AgendaRow) => {
     if (!cs || cs.status === 'closed') return;
     const convId = cs.scratchId || cs.claudeId;
     const text = agendaAboutBlock(row);
@@ -3657,6 +3667,7 @@ export function AgentSurface() {
     setAbout(convId, { id: nextAttachmentId(), kind: 'about', name: agendaAboutChipName(row, words), text });
     requestAnimationFrame(() => cs.focus());
   }, [t]);
+  const writeAboutRow = useCallback((row: AgendaRow) => writeAboutInto(superChatRef.current, row), [writeAboutInto]);
 
   // ── The hand-over and the take-back, with their flights (D17, D18) ─────────────────
   const flightLayerRef = useRef<HTMLDivElement | null>(null);
@@ -4423,6 +4434,8 @@ export function AgentSurface() {
       if (document.querySelector('.super-surface[data-dragging]')) return;
       // A card's corner held for a resize owns Esc the same way (useStageDrag marks the stage).
       if (document.querySelector('[data-resizing]')) return;
+      // The phone's agenda sheet owns Esc: it closes the sheet (PhoneAgenda), not the chat.
+      if (document.querySelector('[data-testid="phone-agenda-sheet"]')) return;
       // A web card in Inspect, or asking whether to clear its page, owns Esc: it leaves Inspect
       // (ZoomPane). A pick never focuses the page (its click is swallowed), so Esc lands here.
       if (document.querySelector('.super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"]')) return;
@@ -4785,6 +4798,20 @@ export function AgentSurface() {
   // can activate that pane too.
   const mobileTabs = paneVMs.flatMap((pane) => pane.tabs.map((t) => ({ ...t, paneId: pane.id })));
   const mobileActive = mobileTabs.find((t) => t.id === activePane?.active) ?? mobileTabs[0];
+  // The phone's Super chat on screen: its agenda strip reads the digest the Mac pushes to it.
+  const phoneSuperChat = (() => {
+    if (!macPhone || !expanded || phoneView !== 'chat' || !mobileActive) return undefined;
+    const s = sessions.current.get(mobileActive.id);
+    return s && s.kind === 'chat' && (s as ChatSession).superMirror ? s as ChatSession : undefined;
+  })();
+  const [phoneDigest, setPhoneDigest] = useState<SuperDigestWire | null>(null);
+  useEffect(() => {
+    if (!phoneSuperChat) { setPhoneDigest(null); return undefined; }
+    return phoneSuperChat.onSuperDigest(setPhoneDigest);
+  }, [phoneSuperChat]);
+  // A row's ↩ on the phone: the About chip goes into THIS phone's composer (the desktop's
+  // `writeAboutRow` writes into the Mac's Super chat, which the phone does not hold).
+  const writePhoneAboutRow = useCallback((row: AgendaRow) => writeAboutInto(phoneSuperChat, row), [phoneSuperChat, writeAboutInto]);
   // Phone (Mac mode): tell each chat whether it is the one on screen, so the server does not
   // push a question or a finished turn for the chat the owner is looking at (D2).
   // On the list no chat is on screen, so every chat may push.
@@ -5326,6 +5353,7 @@ export function AgentSurface() {
             </>
           )}
         </div>
+        {phoneSuperChat && <PhoneAgenda digest={phoneDigest} onWriteAbout={writePhoneAboutRow} />}
         {body}
         {macPhone && expanded && phoneView === 'list' && (
           <PhoneChatList
