@@ -781,6 +781,11 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                     <span className="adp-detail-label">Effort</span>
                     <span className="adp-detail-value">{automation?.effort ?? 'default'}</span>
                   </div>
+                  {/* Hashed when not balanced: how much its agent decides alone. */}
+                  <div className="adp-detail-row">
+                    <span className="adp-detail-label">Autonomy</span>
+                    <span className="adp-detail-value">{automation?.autonomy ?? 'balanced'}</span>
+                  </div>
                   <div className="adp-detail-row">
                     <span className="adp-detail-label">Timeout</span>
                     <span className="adp-detail-value">{summary.timeoutMinutes}m</span>

@@ -1039,6 +1039,16 @@ export const AGENT_BOARD_ENV = 'DREAMCONTEXT_AGENT_BOARD';
 /** Env var naming the running agent's own slug; `automations post|learn|propose`
  *  refuse any other slug while it is set. */
 export const AGENT_SELF_ENV = 'DREAMCONTEXT_AGENT_SELF';
+/** Env var marking a CONVERSATION with an agent (a Chat tab, its stage, a board card): set on
+ *  every such child, so a CLI verb the owner alone may run refuses it as it refuses a run. */
+export const AGENT_CHAT_ENV = 'DREAMCONTEXT_AGENT_CHAT';
+
+/** True inside anything an agent drives: a run (scheduled, called, a task job) or a conversation
+ *  with it. The ONE predicate every owner-only CLI verb asks (autonomy, filing approval, assign). */
+export function insideAgentRun(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined || env[AGENT_CHAT_ENV] !== undefined;
+}
+
 /** Env var naming the per-spawn scratch folder a home-board agent may write. */
 export const AGENT_SCRATCH_ENV = 'DREAMCONTEXT_AGENT_SCRATCH';
 

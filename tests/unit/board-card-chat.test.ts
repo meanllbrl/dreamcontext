@@ -20,7 +20,7 @@ import { BOARD_AGENT_DISALLOWED_TOOLS, boardScopeArgs } from '../../src/lib/auto
 import { chatDeniedToolArgs } from '../../src/server/routes/agent-chat.js';
 import { createAutomation } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
-import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV, type AutomationManifest } from '../../src/lib/automations/types.js';
+import { AGENT_BOARD_ENV, AGENT_CHAT_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV, type AutomationManifest } from '../../src/lib/automations/types.js';
 import { createWhiteboard, nextIndices, readWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
 import type { WhiteboardElement } from '../../src/lib/whiteboards/widgets.js';
@@ -134,13 +134,13 @@ describe('prepareCardChat', () => {
     if (!unapproved.ok) expect(unapproved.reason).toContain('is not approved');
   });
 
-  it('an attached agent keeps the pane envelope: no permission argv, only the card env', () => {
+  it('an attached agent keeps the pane envelope: no permission argv, only the card env (and the conversation marker)', () => {
     makeAgent({ whiteboard: null });
     const prep = prepareCardChat(contextRoot, { agent: 'board-pilot', board }, home);
     expect(prep.ok).toBe(true);
     if (!prep.ok) return;
     expect(prep.permissionArgs).toBeNull();
-    expect(prep.env).toEqual({ [CARD_AGENT_ENV]: 'board-pilot', [CARD_BOARD_ENV]: board });
+    expect(prep.env).toEqual({ [AGENT_CHAT_ENV]: 'board-pilot', [CARD_AGENT_ENV]: 'board-pilot', [CARD_BOARD_ENV]: board });
     expect(prep.briefing).not.toContain('SCOPE:');
   });
 
@@ -272,13 +272,13 @@ describe('prepareAgentChat', () => {
     if (!unapproved.ok) expect(unapproved.reason).toContain('is not approved');
   });
 
-  it('an agent with no board speaks as itself in the tab: no permission argv, no card env', () => {
+  it('an agent with no board speaks as itself in the tab: no permission argv, no card env, the conversation marker', () => {
     const m = makeAgent({ whiteboard: null, learning: true });
     const prep = prepareAgentChat(contextRoot, 'board-pilot', home);
     expect(prep.ok).toBe(true);
     if (!prep.ok) return;
     expect(prep.permissionArgs).toBeNull();
-    expect(prep.env).toEqual({});
+    expect(prep.env).toEqual({ [AGENT_CHAT_ENV]: 'board-pilot' });
     expect(prep.briefing).toBe(agentChatBriefing(m, null));
     expect(prep.briefing).toContain('You are "Board pilot" (the dreamcontext agent `board-pilot`), talking with the owner in a dreamcontext Chat tab.');
     expect(prep.briefing).toContain('Keep the board tidy.');

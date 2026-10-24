@@ -18,6 +18,8 @@ interface Member {
   slug: string;
   path: string;
   face: AgentFace | null;
+  /** Published to the team brain (`shared: true`): other machines hold the same file. */
+  shared: boolean;
   /** Creation order key: the file's birth time, else 0 (then the slug decides). */
   born: number;
 }
@@ -27,7 +29,7 @@ function readMember(path: string): Member | null {
     const st = lstatSync(path);
     if (!st.isFile()) return null;
     const { data } = parseManifestFrontmatter(readFileSync(path, 'utf-8'));
-    return { slug: basename(path, '.md'), path, face: parseFace(data.face), born: st.birthtimeMs || st.mtimeMs || 0 };
+    return { slug: basename(path, '.md'), path, face: parseFace(data.face), shared: data.shared === true, born: st.birthtimeMs || st.mtimeMs || 0 };
   } catch {
     return null;
   }
@@ -54,17 +56,21 @@ export function nextFreeFace(contextRoot: string, slug: string): AgentFace {
  * Stamp `face:` on every agent and automation file that has none, in creation order, each taking
  * the next free pair. Idempotent: a vault whose members are all stamped is not written. Returns the
  * files it stamped (absolute). A file that cannot be written is skipped and retried next time.
+ *
+ * A SHARED file is never stamped here: other machines hold it too, and each would pick its pair
+ * from its own members in its own file order, so two machines could write two faces into one
+ * synced file. It draws the bare hash of its slug until it is stamped where it is written (create).
  */
 export function backfillFaces(contextRoot: string): string[] {
   const members = vaultMembers(contextRoot);
-  if (members.every((m) => m.face)) return [];
+  if (members.every((m) => m.face || m.shared)) return [];
   // Keyed by path, not slug: an agent and its same-slug routine are two members.
   const byPath = new Map(members.map((m) => [m.path, m]));
   const faces = assignFigures(members.map((m) => ({ slug: m.slug, face: m.face, key: m.path })));
   const stamped: string[] = [];
   for (const [path, face] of faces) {
     const member = byPath.get(path);
-    if (!member || member.face) continue;
+    if (!member || member.face || member.shared) continue;
     try {
       patchManifestFrontmatter(path, { face: { shape: face.shape, color: face.color } });
       stamped.push(path);

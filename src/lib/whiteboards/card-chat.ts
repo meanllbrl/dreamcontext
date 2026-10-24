@@ -7,7 +7,7 @@ import {
   buildBoardTurn, buildPatternBlock, buildScopeLine, buildSoulBlock, buildTurnLearningDirective, markerNonce, newTurnNonce,
   sanitizeAutomationPrompt,
 } from '../automations/runner.js';
-import { AGENT_BOARD_ENV, AGENT_SELF_ENV, DEFAULT_AGENT_AUTONOMY, type AutomationManifest } from '../automations/types.js';
+import { AGENT_BOARD_ENV, AGENT_CHAT_ENV, AGENT_SELF_ENV, DEFAULT_AGENT_AUTONOMY, type AutomationManifest } from '../automations/types.js';
 import { levelBrief, levelPermissionArgs } from '../agents/permission.js';
 import { resolveWhiteboardPath } from './store.js';
 import { isValidWhiteboardSlug } from './validate.js';
@@ -114,8 +114,11 @@ function prepareEnvelope(
   const scoped = resolveSpawnScope(contextRoot, target, home, 'identity');
   if (!scoped.ok) return { ok: false, reason: scoped.reason };
   const manifest = identityOnly(target);
+  // Every conversation with an agent is marked, scoped or not: an owner-only CLI verb (autonomy,
+  // filing approval, assigning work) refuses it as it refuses a run (`insideAgentRun`).
+  const marked = (scope: BoardScope | null): Record<string, string> => ({ [AGENT_CHAT_ENV]: target.slug, ...cardEnv(scope) });
   if (!scoped.scope) {
-    return { ok: true, manifest, briefing: briefing(manifest, null), permissionArgs: null, levelArgs: null, env: cardEnv(null), dispose: () => {} };
+    return { ok: true, manifest, briefing: briefing(manifest, null), permissionArgs: null, levelArgs: null, env: marked(null), dispose: () => {} };
   }
   const prepared = prepareScopePaths(contextRoot, scoped.scope);
   if (!prepared.ok) return { ok: false, reason: `could not limit it to its board: ${prepared.reason}` };
@@ -125,7 +128,7 @@ function prepareEnvelope(
     briefing: briefing(manifest, scoped.scope),
     permissionArgs: boardScopeArgs(scoped.scope, prepared.paths),
     levelArgs: null,
-    env: { ...cardEnv(scoped.scope), ...scopeEnv(scoped.scope, prepared.paths) },
+    env: { ...marked(scoped.scope), ...scopeEnv(scoped.scope, prepared.paths) },
     dispose: prepared.paths.dispose,
   };
 }

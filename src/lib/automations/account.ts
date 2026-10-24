@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  agentThresholdFor, autoSwitchEnabled, listClaudeAccounts, resolveConfigDir, switchStrategyFor, switchWeightsFor,
+  agentThresholdFor, autoSwitchEnabled, claudeAccountsFilePath, listClaudeAccounts, resolveConfigDir, switchStrategyFor, switchWeightsFor,
   type ClaudeAccount,
 } from '../claude-accounts.js';
 import {
@@ -383,15 +383,35 @@ export function accountWaitPath(home: string = homedir()): string {
   return join(home, '.dreamcontext', 'automations-account-wait.json');
 }
 
-/** `wakeAt` (epoch ms) while it is still in the future, else null. Never throws. */
+/**
+ * `wakeAt` (epoch ms) while it is still in the future, else null. Never throws.
+ *
+ * A wait is a conclusion about the accounts AS THEY WERE: when the account register changed after
+ * it was recorded (an account added, removed, reordered or signed in again, auto-switch, the
+ * threshold or an "Only mine" mark), the wait no longer holds and reads as none, so the next
+ * start decides afresh.
+ */
 export function readAccountWait(home: string = homedir(), now: number = Date.now()): number | null {
   try {
     const path = accountWaitPath(home);
     if (!lstatSync(path).isFile()) return null;
-    const v = (JSON.parse(readFileSync(path, 'utf-8')) as { wakeAt?: unknown }).wakeAt;
-    return typeof v === 'number' && Number.isFinite(v) && v > now ? v : null;
+    const rec = JSON.parse(readFileSync(path, 'utf-8')) as { wakeAt?: unknown; at?: unknown };
+    const v = rec.wakeAt;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v <= now) return null;
+    const at = typeof rec.at === 'number' && Number.isFinite(rec.at) ? rec.at : 0;
+    if (registerChangedSince(home, at)) return null;
+    return v;
   } catch {
     return null;
+  }
+}
+
+/** Did the account register (`claude-accounts.json`) change after `at`? Missing ⇒ no. */
+function registerChangedSince(home: string, at: number): boolean {
+  try {
+    return statSync(claudeAccountsFilePath(home)).mtimeMs > at;
+  } catch {
+    return false;
   }
 }
 

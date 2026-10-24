@@ -375,7 +375,7 @@ async function browserLeg(WebSocket, port, consoleErrors, failedRequests) {
           await until(async () => /could not be re-read|Updated \d+ account/.test(await page.locator('.dc-acct-foot, .settings-section').first().innerText()), 30000);
           const waitLine = await until(() => page.locator('[data-agent-wait]').isVisible(), 10000);
           const waitText = await page.locator('[data-agent-wait]').innerText().catch(() => '');
-          check(`${tag}: the waiting line shows the wake time`, waitLine && /Agent jobs waiting · wakes \d{1,2}:\d{2}/.test(waitText), waitText);
+          check(`${tag}: the waiting line shows the wake time`, waitLine && /Agent jobs waiting · wakes .*\d{1,2}:\d{2}/.test(waitText), waitText);
           await shotOf('.dc-acct-policy', '7-accounts');
           await shotOf('.dc-acct-list', '7b-accounts-only-mine');
 

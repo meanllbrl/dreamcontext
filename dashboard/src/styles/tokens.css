@@ -388,6 +388,7 @@
   --agent-face-coral: #ff5b36;
   --agent-face-amber: #e08c0c;
   --agent-face-rose: #d63f95;
+  --agent-face-eye: var(--color-snow);
 }
 
 /* ─── Dark Mode — ClickUp doesn't ship a canonical dark, so we derive:
@@ -539,4 +540,5 @@
   --agent-face-coral: #ff7a5c;
   --agent-face-amber: #ffae3b;
   --agent-face-rose: #f472b6;
+  --agent-face-eye: var(--color-snow);
 }

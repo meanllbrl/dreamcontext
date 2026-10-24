@@ -1,7 +1,7 @@
 import { today } from './id.js';
 import { loadStatuses } from './overrides.js';
 import { isCancelled } from './task-status.js';
-import { AGENT_SELF_ENV } from './automations/types.js';
+import { insideAgentRun } from './automations/types.js';
 import type { TaskBackend, TaskData } from './task-backend/types.js';
 
 /**
@@ -23,10 +23,7 @@ export type FilingApprovalResult =
 
 export { readFilingApproved } from './filing-basis.js';
 
-/** True when this process is an agent run (the same check `tasks assign-agent` makes). */
-export function insideAgentRun(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined;
-}
+export { insideAgentRun };
 
 export async function approveFiling(
   contextRoot: string,

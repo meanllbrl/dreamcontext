@@ -144,7 +144,9 @@ export function composeRun(
     whiteboard: agent.whiteboard,
     agent: agent.slug,
     agentTitle: agent.title,
-    autonomy: agent.autonomy,
+    // Only a level other than the default rides the target, so a composed target stays field for
+    // field what a legacy read gives (the hash omits the default either way).
+    ...(agent.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: agent.autonomy } : {}),
   };
   if (job) {
     return {

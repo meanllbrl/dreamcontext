@@ -52,7 +52,7 @@ import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts
 import { superHandoffCommand, superHandoffContext } from '../../lib/super/handoff-task.js';
 import { commitAssignment, logAssignmentResult, prepareAssignment } from '../../lib/agents/task-assignment.js';
 import { runAutomation } from '../../lib/automations/runner.js';
-import { AGENT_SELF_ENV } from '../../lib/automations/types.js';
+import { insideAgentRun } from '../../lib/automations/types.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
@@ -1996,7 +1996,7 @@ export function registerTasksCommand(program: Command): void {
     .description('Assign a task to an agent: sets agent:, moves an open task to in_progress, and runs the agent on it now')
     .action(async (name: string, agentSlug: string | undefined, opts: { note?: string; clear?: boolean }) => {
       // An agent run never hands work to an agent: that is the owner's call.
-      if (process.env[AGENT_SELF_ENV] !== undefined || process.env.DREAMCONTEXT_AUTOMATION_RUN !== undefined) {
+      if (insideAgentRun()) {
         error('An agent run cannot assign tasks to agents. Ask the owner to assign it from the Tasks page.');
         process.exitCode = 1;
         return;

@@ -661,7 +661,7 @@ export function ClaudeAccounts() {
                   className="settings-text-input dc-acct-threshold-input"
                   min={1}
                   max={100}
-                  step={5}
+                  step={1}
                   aria-label={t('accounts.threshold.title')}
                   value={thresholdDraft}
                   disabled={busy !== ''}
@@ -675,7 +675,7 @@ export function ClaudeAccounts() {
           />
           {agentWaitUntil && agentWaitUntil > now && (
             <p className="dc-acct-waiting" data-agent-wait>
-              {t('accounts.waiting').replace('{time}', new Date(agentWaitUntil).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }))}
+              {t('accounts.waiting').replace('{time}', waitWords(agentWaitUntil, locale))}
             </p>
           )}
 
@@ -697,4 +697,13 @@ export function ClaudeAccounts() {
       </div>
     </div>
   );
+}
+
+/** When the wait ends: the time today, else the day and the time (a weekly reset can be days away). */
+function waitWords(at: number, locale: string): string {
+  const d = new Date(at);
+  const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' })} ${time}`;
 }

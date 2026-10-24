@@ -425,13 +425,26 @@ export function AgentIdentityDialog({
         {editing && !detail.data?.agent.implicit && (
           <fieldset className="aid-autonomy" disabled={!ready}>
             <legend className="aid-label">{t('aiteam.autonomy.title')}</legend>
-            <div className="aid-segmented" role="radiogroup" aria-label={t('aiteam.autonomy.title')}>
+            <div
+              className="aid-segmented"
+              role="radiogroup"
+              onKeyDown={(e) => {
+                // One Tab stop; the arrows move the choice (the radio pattern).
+                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                e.preventDefault();
+                const at = AUTONOMY_LEVELS.indexOf(form.autonomy);
+                const next = AUTONOMY_LEVELS[(at + (e.key === 'ArrowRight' ? 1 : AUTONOMY_LEVELS.length - 1)) % AUTONOMY_LEVELS.length];
+                set('autonomy', next);
+                (e.currentTarget.querySelector(`[data-autonomy="${next}"]`) as HTMLButtonElement | null)?.focus();
+              }}
+            >
               {AUTONOMY_LEVELS.map((level) => (
                 <button
                   key={level}
                   type="button"
                   role="radio"
                   aria-checked={form.autonomy === level}
+                  tabIndex={form.autonomy === level ? 0 : -1}
                   className={`aid-segment${form.autonomy === level ? ' is-on' : ''}`}
                   onClick={() => set('autonomy', level)}
                   data-autonomy={level}

@@ -287,6 +287,9 @@ export interface AutomationManifestDetail {
    *  automation's composed hash includes it, so an Approve here grants it too.
    *  `''`, or absent on an older backend, means no soul. */
   soul?: string;
+  /** Hashed when not `balanced`, LAST: its agent's autonomy level, which decides the permission
+   *  mode of every session it runs in. Absent on an older backend, which means `balanced`. */
+  autonomy?: 'ask' | 'balanced' | 'free';
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;

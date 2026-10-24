@@ -1,3 +1,4 @@
+import { pollMs } from '../lib/windowActivity';
 import type { AgentFace } from '../../../src/lib/agents/figure.js';
 
 /** How much an agent decides alone; mirrors `AGENT_AUTONOMY_LEVELS` (src/lib/automations/types.ts). */
@@ -294,6 +295,6 @@ export function useAgentStage(slug: string | null) {
     queryFn: () => api.get<{ stage: AgentStageView }>(`/agents/${encodeURIComponent(slug ?? '')}/stage`).then((r) => r.stage),
     enabled: !!slug,
     retry: 0,
-    refetchInterval: STAGE_POLL_MS,
+    refetchInterval: () => pollMs(STAGE_POLL_MS),
   });
 }

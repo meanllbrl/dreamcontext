@@ -83,7 +83,7 @@ export function AgentStage({
         </div>
         <AutonomyChip level={autonomy} onEdit={() => onEdit(agent.slug)} />
         {narrow ? (
-          <button type="button" className="aiteam-pill" onClick={() => setShow((s) => (s === 'chat' ? 'cards' : 'chat'))} aria-pressed={show === 'cards'}>
+          <button type="button" className="aiteam-pill" onClick={() => setShow((s) => (s === 'chat' ? 'cards' : 'chat'))}>
             {show === 'chat' ? t('aiteam.stage.cards') : t('aiteam.stage.chat')}
           </button>
         ) : (
@@ -159,13 +159,13 @@ function StageChat({ agent, level, homeId, homeLive, ready, vault, bus }: {
   // so the same conversation is respawned at the new level, once the turn in flight has ended.
   const openedAt = session ? stageSessionLevel(vault, agent.slug) : null;
   useEffect(() => {
-    if (!session || session.busy || openedAt === null || openedAt === level) return;
+    if (!ready || !session || session.busy || openedAt === null || openedAt === level) return;
     open('resume');
-  }, [session, session?.busy, openedAt, level, open]);
+  }, [ready, session, session?.busy, openedAt, level, open]);
 
   const label = t('aiteam.stage.chatWith').replace('{name}', agent.title);
   return (
-    <div className="aiteam-stage-chat" aria-label={label}>
+    <div className="aiteam-stage-chat" role="region" aria-label={label}>
       <div className="aiteam-stage-chat-head">
         <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={22} of="agent" face={agent.face} />
         <span className="aiteam-stage-chat-title">{label}</span>

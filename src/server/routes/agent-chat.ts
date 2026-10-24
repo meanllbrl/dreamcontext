@@ -35,6 +35,7 @@ import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
 import { recordStageHomeSession } from '../../lib/local-store.js';
+import { getRunTarget } from '../../lib/automations/store.js';
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
@@ -642,6 +643,16 @@ export function backgroundOutputPath(cwd: string, conversationId: string, taskId
 // that spawns the resumable `claude` process this gate exists to guard — is never reached.
 // (A second, unrelated `spawn` lower in this file opens a file with the OS's default
 // app/file-manager for the file-open HTTP route; it is not part of this WS upgrade path.)
+/**
+ * Will this open run `bypassPermissions`? The pane's flag, or an agent conversation at the Free
+ * level (its level decides its mode, agents/permission.ts, whatever the pane says). The T24 gate
+ * below guards exactly the resumes this is true for.
+ */
+export function resumeRunsBypass(bypass: boolean, contextRoot: string, chatAgent: string | null): boolean {
+  if (bypass) return true;
+  return !!chatAgent && getRunTarget(contextRoot, chatAgent, 'agent')?.autonomy === 'free';
+}
+
 export function shouldRejectAutomationResume(
   bypass: boolean,
   resumeId: string,
@@ -1150,7 +1161,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // called at all (and therefore before `resolveAgentSession`, currently agent-chat.ts:250),
     // so a tab-session mapping can never launder an unbound automation session id into a
     // resumable one.
-    if (shouldRejectAutomationResume(bypass, resumeId, join(projectRoot, '_dream_context'))) {
+    if (shouldRejectAutomationResume(resumeRunsBypass(bypass, join(projectRoot, '_dream_context'), chatAgent), resumeId, join(projectRoot, '_dream_context'))) {
       rejectUpgrade(socket, 403);
       return;
     }

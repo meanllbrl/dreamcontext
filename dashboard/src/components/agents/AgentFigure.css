@@ -3,6 +3,6 @@
 .agent-figure {
   display: inline-block;
   flex-shrink: 0;
-  --fc-facet: color-mix(in srgb, var(--fc-body) 62%, #ffffff);
-  --fc-eye: #ffffff;
+  --fc-facet: color-mix(in srgb, var(--fc-body) 62%, var(--agent-face-eye));
+  --fc-eye: var(--agent-face-eye);
 }

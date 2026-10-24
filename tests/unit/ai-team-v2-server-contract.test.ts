@@ -25,7 +25,8 @@ import { createProgram } from '../../src/cli/program.js';
 import { createAgent, getAgent, withRestamp } from '../../src/lib/agents/store.js';
 import { createAutomation, getRunTarget } from '../../src/lib/automations/store.js';
 import { approveAutomation, checkApproval, manifestHash } from '../../src/lib/automations/registry.js';
-import { AGENT_SELF_ENV } from '../../src/lib/automations/types.js';
+import { AGENT_CHAT_ENV, AGENT_SELF_ENV, insideAgentRun } from '../../src/lib/automations/types.js';
+import { resumeRunsBypass } from '../../src/server/routes/agent-chat.js';
 import { levelBrief, levelPermissionArgs, REVIEW_DISALLOWED_TOOLS } from '../../src/lib/agents/permission.js';
 import { composePrompt } from '../../src/lib/automations/runner.js';
 import { prepareAgentChat } from '../../src/lib/whiteboards/card-chat.js';
@@ -74,6 +75,7 @@ afterEach(() => {
   delete process.env[AGENT_SELF_ENV];
   delete process.env.DREAMCONTEXT_AUTOMATION_RUN;
   delete process.env.DREAMCONTEXT_DESKTOP;
+  delete process.env[AGENT_CHAT_ENV];
   rmSync(projectRoot, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });
@@ -171,20 +173,21 @@ describe('AC-A1-1 autonomy', () => {
     process.env[AGENT_SELF_ENV] = 'scout';
     const refused = await runCli(['agents', 'edit', 'scout', '--autonomy', 'free']);
     expect(refused.code).toBe(1);
-    expect(refused.out).toMatch(/agent run cannot change an autonomy/);
+    expect(refused.out).toMatch(/agent cannot change an autonomy/);
     expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('ask');
   });
 
-  it('the dashboard route sets it, and refuses it inside an agent run', async () => {
+  it('the dashboard route sets it and refuses anything that is not a level', async () => {
+    // The agent-run refusal is the CLI verb's (the server cannot see a caller's environment; a run
+    // that reaches the local API directly is plan-r9's named residual).
     makeAgent();
     const res = fakeRes();
     await handleAgentsUpdate(fakeReq({ autonomy: 'free' }), res, { slug: 'scout' }, contextRoot);
     expect(res.status).toBe(200);
     expect((res.json().agent as { autonomy: string }).autonomy).toBe('free');
-    process.env.DREAMCONTEXT_AUTOMATION_RUN = 'run-1';
-    const refused = fakeRes();
-    await handleAgentsUpdate(fakeReq({ autonomy: 'ask' }), refused, { slug: 'scout' }, contextRoot);
-    expect(refused.status).toBe(400);
+    const bad = fakeRes();
+    await handleAgentsUpdate(fakeReq({ autonomy: 'loud' }), bad, { slug: 'scout' }, contextRoot);
+    expect(bad.status).toBe(400);
     expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('free');
   });
 });
@@ -494,7 +497,10 @@ describe('AC-A1-5 the figure', () => {
     })();
     const older = join(contextRoot, 'agents', `${twin}.md`);
     const newer = join(contextRoot, 'agents', 'alpha.md');
+    // The older file is written first, so its birth time (where the filesystem keeps one) and its
+    // modification time both come first.
     writeFileSync(older, '---\nid: agt_old\ntitle: Old\nshared: false\n---\n\n## Prompt\n\nOld.\n');
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30);
     writeFileSync(newer, '---\nid: agt_new\ntitle: New\nshared: false\n---\n\n## Prompt\n\nNew.\n');
     const past = new Date(NOW.getTime() - 86_400_000);
     utimesSync(older, past, past);
@@ -581,5 +587,64 @@ describe('AC-A1-6 filing approval', () => {
     expect((await runCli(['tasks', 'approve-filing', 'cli-task'])).code).toBe(0);
     expect(readFileSync(join(contextRoot, 'state', 'cli-task.md'), 'utf-8')).toContain('filing_approved:');
     expect((await runCli(['tasks', 'approve-filing', 'mine'])).code).toBe(1);
+  });
+});
+
+// ─── End-review fixes (multi-review r1) ──────────────────────────────────────
+
+describe('review r1: an agent conversation is an agent run for owner-only verbs', () => {
+  it('every agent conversation carries the marker, scoped or not', () => {
+    makeAgent();
+    const prep = prepareAgentChat(contextRoot, 'scout', home);
+    expect(prep.ok && prep.env[AGENT_CHAT_ENV]).toBe('scout');
+    expect(insideAgentRun({ [AGENT_CHAT_ENV]: 'scout' })).toBe(true);
+    expect(insideAgentRun({})).toBe(false);
+  });
+
+  it('`agents edit --autonomy`, `tasks approve-filing` and `tasks assign-agent` refuse it', async () => {
+    makeAgent();
+    writeFileSync(join(contextRoot, 'state', 'opened.md'), ['---', 'id: task_opened', 'name: opened', "description: ''", 'priority: medium', 'urgency: medium', 'status: todo', "created_at: '2026-10-24'", "updated_at: '2026-10-24'", 'tags: []', 'filed_by: agent', '---', '', '## Why', '', 'x', ''].join('\n'));
+    process.env[AGENT_CHAT_ENV] = 'scout';
+    const edit = await runCli(['agents', 'edit', 'scout', '--autonomy', 'free']);
+    expect(edit.code).toBe(1);
+    expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('balanced');
+    expect((await runCli(['tasks', 'approve-filing', 'opened'])).code).toBe(1);
+    expect(readFileSync(join(contextRoot, 'state', 'opened.md'), 'utf-8')).not.toContain('filing_approved');
+    expect((await runCli(['tasks', 'assign-agent', 'opened', 'scout'])).code).toBe(1);
+  });
+
+  it('a Free agent conversation counts as a bypass resume for the T24 gate', () => {
+    makeAgent('roamer', { autonomy: 'free' });
+    makeAgent('middle');
+    expect(resumeRunsBypass(false, contextRoot, 'roamer')).toBe(true);
+    expect(resumeRunsBypass(false, contextRoot, 'middle')).toBe(false);
+    expect(resumeRunsBypass(false, contextRoot, null)).toBe(false);
+    expect(resumeRunsBypass(true, contextRoot, null)).toBe(true);
+  });
+});
+
+describe('review r1: a change to the account register voids a standing wait', () => {
+  it('adding an account after the wait was recorded lets the next start decide afresh', async () => {
+    const t0 = Date.now();
+    recordAccountWait(t0 + 3 * 86_400_000, home, t0 - 1000);
+    expect(readAccountWait(home, t0)).toBe(t0 + 3 * 86_400_000);
+    upsertClaudeAccount({
+      id: 'later', accountUuid: 'u', email: 'later@example.test', organizationUuid: 'o', organizationName: 'O', tier: 'max', configDir: sandboxDirFor('later', home), preferred: true,
+    }, home);
+    expect(readAccountWait(home, t0)).toBeNull();
+  });
+});
+
+describe('review r1: the backfill never stamps a shared file', () => {
+  it('a shared member keeps drawing its bare hash; a private one is stamped', () => {
+    mkdirSync(join(contextRoot, 'agents'), { recursive: true });
+    const shared = join(contextRoot, 'agents', 'team-scout.md');
+    const own = join(contextRoot, 'agents', 'own-scout.md');
+    writeFileSync(shared, '---\nid: agt_s\ntitle: Team scout\nshared: true\n---\n\n## Prompt\n\nS.\n');
+    writeFileSync(own, '---\nid: agt_o\ntitle: Own scout\nshared: false\n---\n\n## Prompt\n\nO.\n');
+    const before = readFileSync(shared, 'utf-8');
+    expect(backfillFaces(contextRoot)).toEqual([own]);
+    expect(readFileSync(shared, 'utf-8')).toBe(before);
+    expect(backfillFaces(contextRoot)).toEqual([]);
   });
 });

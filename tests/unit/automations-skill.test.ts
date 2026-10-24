@@ -316,8 +316,8 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
   });
 });
 
-describe('approval surface — twelve hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the twelve-tuple including effort, learning, review, flow, whiteboard, job and soul', () => {
+describe('approval surface — thirteen hashed fields, everywhere it is claimed', () => {
+  it('APPROVAL_DIFF_FIELDS is the thirteen-tuple including effort, learning, review, flow, whiteboard, job, soul and autonomy', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -343,6 +343,9 @@ describe('approval surface — twelve hashed fields, everywhere it is claimed', 
       // The agent's `## Soul`: how it works. Appended after `job` and omitted
       // when empty, so every agent written before souls existed keeps its hash.
       'soul',
+      // The agent's autonomy level: the permission mode of its sessions. Appended after `soul`
+      // and omitted at the default `balanced`, so every agent that exists keeps its hash.
+      'autonomy',
     ]);
   });
 

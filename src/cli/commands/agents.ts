@@ -32,6 +32,7 @@ import {
   APPROVAL_DIFF_FIELDS,
   AutomationError,
   EFFORT_LEVELS,
+  insideAgentRun,
   type AgentAutonomy,
   type EffortLevel,
 } from '../../lib/automations/types.js';
@@ -39,8 +40,8 @@ import {
 /** An `--autonomy` value. Refused inside an agent run: an agent does not set its own level. */
 function readAutonomyOption(v: string | undefined): AgentAutonomy | undefined {
   if (v === undefined) return undefined;
-  if (process.env[AGENT_SELF_ENV] !== undefined || process.env.DREAMCONTEXT_AUTOMATION_RUN !== undefined) {
-    throw new AutomationError('An agent run cannot change an autonomy level. Ask the owner to set it on the AI Team page.');
+  if (insideAgentRun()) {
+    throw new AutomationError('An agent cannot change an autonomy level. Ask the owner to set it on the AI Team page.');
   }
   if (!(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
     throw new AutomationError(`Invalid autonomy "${v}": expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);

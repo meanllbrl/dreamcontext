@@ -41,7 +41,6 @@ import { isSafeTaskSlug, readTaskFile } from '../../lib/task-backend/local.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import {
   AGENT_AUTONOMY_LEVELS,
-  AGENT_SELF_ENV,
   AutomationError,
   DEFAULT_AGENT_AUTONOMY,
   EFFORT_LEVELS,
@@ -206,13 +205,11 @@ function readSoul(v: unknown): string | undefined {
 }
 
 /** An autonomy level from a request body: absent passes through, anything else must be a level.
- *  Refused from inside an agent run (the server process itself never is one, so this only bites a
- *  run that reached the API through a tool): an agent does not raise its own autonomy. */
+ *  The agent-run refusal lives on the CLI verb (`insideAgentRun`): this server cannot see the
+ *  environment of whoever sent the request, so a run that reaches the local API directly is the
+ *  named residual of plan-r9 (an agent can raise its own autonomy by escaping the check). */
 function readAutonomy(v: unknown): AgentAutonomy | undefined {
   if (v === undefined) return undefined;
-  if (process.env[AGENT_SELF_ENV] !== undefined || process.env.DREAMCONTEXT_AUTOMATION_RUN !== undefined) {
-    throw new AutomationError('An agent run cannot change an autonomy level: the owner sets it on the AI Team page.');
-  }
   if (typeof v !== 'string' || !(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
     throw new AutomationError(`Invalid autonomy: expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);
   }
