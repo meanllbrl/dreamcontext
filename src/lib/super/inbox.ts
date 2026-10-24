@@ -6,6 +6,8 @@ import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
 import { teamLiveRows } from './team.js';
 import { superRestoreHold } from './restore.js';
+import { makeRoom } from './room.js';
+import { bringLiveCard, floatLiveChildren } from './live.js';
 import { keepQuestionsAcrossRelaunch } from './outbox.js';
 import {
   STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, getChat, onChatChange, onOwnerWaitChange, ownerWaitAnswered,
@@ -110,15 +112,25 @@ export function containerIdFor(kind: string, ref: string): string {
 }
 
 /** A child's `chat` card: tall, placed automatically (plan-r8 F1). Floating while the stage has
- *  room (MAX_FLOAT top-level items), in Others when it is full; only a record holding
- *  MAX_CONTAINERS cards adds none (null). */
-export function ensureChatContainer(s: SuperState, sessionId: string, title?: string): string | null {
+ *  room (MAX_FLOAT top-level items), in Others when it is full. A full record first retires its
+ *  oldest finished cards (room.ts); only a record of cards that must all stay adds none (null),
+ *  which every caller reports out loud (`cardOutcome`).
+ *  `runs`: the child runs from now on (delegate, resume, a running adopt, a restarted process): a
+ *  new run, so its card floats whatever the stage holds, back from Others or a group and past an
+ *  owner's hold on the run before; non-live items make room (live.ts). */
+export function ensureChatContainer(s: SuperState, sessionId: string, title?: string, runs = false): string | null {
   const have = s.containers.find((c) => c.kind === 'chat' && c.ref === sessionId);
-  if (have) return have.id;
-  if (s.containers.length >= MAX_CONTAINERS) return null;
+  if (have) {
+    if (runs) bringLiveCard(s, have);
+    return have.id;
+  }
   const id = containerIdFor('chat', sessionId);
+  makeRoom(s, 1, [id]);
+  if (s.containers.length >= MAX_CONTAINERS) return null;
   const place = floatCount(s) < MAX_FLOAT ? 'float' : 'others';
-  s.containers.push({ id, kind: 'chat', ref: sessionId, shape: 'tall', place, ...(title ? { title } : {}) });
+  const card: SuperContainer = { id, kind: 'chat', ref: sessionId, shape: 'tall', place, ...(title ? { title } : {}) };
+  s.containers.push(card);
+  if (runs) bringLiveCard(s, card);
   return id;
 }
 
@@ -307,10 +319,13 @@ export function noteHeld(s: SuperState): boolean {
 }
 
 /** Change the record (locked, sanitized), then push. Every write in wave 2 goes through here.
- *  Every write also notes what a question open with the owner holds back (`noteHeld`). */
+ *  Every write also notes what a question open with the owner holds back (`noteHeld`), and
+ *  floats every live child's card (live.ts: a live job is never in Others or a group unless the
+ *  owner put it there himself). */
 export async function writeSuper(contextRoot: string, fn: (draft: SuperState) => SuperState | void): Promise<SuperState> {
   const next = await updateSuperState(contextRoot, (draft) => {
     const out = fn(draft) ?? draft;
+    floatLiveChildren(out);
     noteHeld(out);
     return out;
   }, superSanitizeOpts());
@@ -1532,7 +1547,13 @@ export function noteChatStarted(sessionId: string): Promise<void> {
 
 async function startedAgain(root: string, sid: string): Promise<void> {
   if ((await readSuperState(root, superSanitizeOpts())).children[sid]?.row !== 'gone') return;
-  await writeSuper(root, (s) => { if (s.children[sid]?.row === 'gone') delete s.children[sid].row; });
+  // A gone child's card may have retired to make room (room.ts): running again, it gets one back.
+  await writeSuper(root, (s) => {
+    const x = s.children[sid];
+    if (x?.row !== 'gone') return;
+    delete x.row;
+    if (s.enabled && x.endedAt === undefined) ensureChatContainer(s, sid, x.brief.slice(0, 120), true);
+  });
 }
 
 async function reopenedByOwner(root: string, sid: string): Promise<void> {
@@ -1542,7 +1563,7 @@ async function reopenedByOwner(root: string, sid: string): Promise<void> {
     delete x.endedAt;
     x.adopted = true;
     if (!s.enabled) return;
-    ensureChatContainer(s, sid, x.brief.slice(0, 120));
+    ensureChatContainer(s, sid, x.brief.slice(0, 120), true);
     s.notes[sid] = 'handover';
   });
 }

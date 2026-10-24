@@ -119,7 +119,8 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
         ddy = dy;
         const h = hotAt(planRef.current, x - origin.left, y - origin.top);
         // Over another tile it would group with: the held card shrinks a little toward it.
-        const tg = h ? null : dropTargetAt(planRef.current, x - origin.left, y - origin.top, id);
+        // Outside the float view a tile is a live job's rail tile: no group target there.
+        const tg = h || planRef.current.mode !== 'float' ? null : dropTargetAt(planRef.current, x - origin.left, y - origin.top, id);
         // A slight lift, kept centred on the card (origin top-left, F6).
         const k = tg ? 0.94 : 1.02;
         el.style.transform = `translate(${dx - (card.rect.width * (k - 1)) / 2}px, ${dy - (card.rect.height * (k - 1)) / 2}px) scale(${k})`;
@@ -131,11 +132,14 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
         setTarget(null);
         const p = planRef.current;
         const h = drop ? hotAt(p, x - origin.left, y - origin.top) : null;
-        const tg = drop && !h ? dropTargetAt(p, x - origin.left, y - origin.top, id) : null;
+        // A live job's rail tile beside a page or a presentation (superLayout): only the centre
+        // and Others take its drop; a drop elsewhere is no move (no hidden position, no group).
+        const floatView = p.mode === 'float';
+        const tg = drop && !h && floatView ? dropTargetAt(p, x - origin.left, y - origin.top, id) : null;
         if (drop && h === 'centre') actions.onAskAbout(id);
         else if (drop && h === 'others') onLayout({ cards: [{ id, place: 'others' }] });
         else if (drop && tg) groupOnto(id, tg);
-        else if (drop) {
+        else if (drop && floatView) {
           const r = { ...card.rect, x: card.rect.x + ddx, y: card.rect.y + ddy };
           onLayout({ cards: [{ id, pos: posFromRect(p.free, r), place: 'float' }] });
           liftOnTop(id);

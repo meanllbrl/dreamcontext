@@ -8,7 +8,12 @@
  * - what the view shows (side by side, presented);
  * - a card the server opened on its own (a dev server, a live browser: they follow their child);
  * - the agenda card (the super's notepad: it lives on the stage until the owner moves it);
- * - a chat whose child works, asks or is stuck, or has any open queue item (a waiting question).
+ * - a chat whose child works, asks, is stuck or waits on the owner, has any open queue item (a
+ *   waiting question), or whose process the registry says is busy, whatever its row still says
+ *   (live.ts: a LIVE job is always a floating card, owner 2026-10-23).
+ * A finished job (done), an ended child, or a gone one moves on the idle clock counted from when
+ * its row last moved: a child gone after an app restart that registers again is live (and its
+ * card comes back, live.ts); one that never does leaves the stage 45 minutes later.
  * A group moves only when every card in it may.
  *
  * "Touched" = opened by the super (`super open`), changed by anyone (place, size, position,
@@ -18,6 +23,7 @@
  */
 import { resolve } from 'node:path';
 import type { SuperState } from './types.js';
+import { chatIsBusy, childIsLive, type BusyTest } from './live.js';
 
 export const TIDY_IDLE_MS = 45 * 60_000;
 export const TIDY_TICK_MS = 60_000;
@@ -84,7 +90,7 @@ export function touchCards(root: string, ids: readonly string[], now = Date.now(
  * The top-level floating items (ungrouped cards, groups) to put in Others now. Pure: `touched`
  * answers when a card or a group was last touched (undefined: just now).
  */
-export function planTidy(s: SuperState, touched: (id: string) => number | undefined, now: number): string[] {
+export function planTidy(s: SuperState, touched: (id: string) => number | undefined, now: number, busy: BusyTest = chatIsBusy): string[] {
   const shown = new Set(shownIds(s));
   const grouped = new Set(s.groups.flatMap((g) => g.cards));
   const openFor = new Set(s.queue.filter((q) => q.state !== 'done').map((q) => q.sessionId));
@@ -100,7 +106,7 @@ export function planTidy(s: SuperState, touched: (id: string) => number | undefi
     if (!c || shown.has(id) || c.by === 'auto' || c.sizeBy === 'owner' || c.kind === 'agenda') return undefined;
     if (c.kind === 'chat' || c.kind === 'browser') {
       const ch = s.children[c.ref];
-      if (openFor.has(c.ref)) return undefined;
+      if (openFor.has(c.ref) || childIsLive(s, c.ref, busy)) return undefined;
       if (ch) {
         if (ch.row !== 'done' && ch.row !== 'gone' && ch.endedAt === undefined) return undefined;
         if (ch.finishedAt !== undefined && ch.seenAt !== undefined && ch.seenAt >= ch.finishedAt && at(id) < ch.seenAt) {

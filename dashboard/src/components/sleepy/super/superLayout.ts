@@ -22,7 +22,7 @@
  */
 import {
   CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, SIZE_UNITS, applyGroupOp, dissolveGroups, leaveGroups, normalizeGroups, viewWithout,
-  type ContainerShape, type ContainerSize, type GroupOp, type SuperContainer, type SuperGroup, type SuperView,
+  type ContainerShape, type ContainerSize, type GroupOp, type SuperContainer, type SuperGroup, type SuperState, type SuperView,
 } from '../../../lib/superTypes';
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -146,6 +146,9 @@ export interface StageItem {
   slot?: number;
   /** The record's size preset (absent = small; a group is always small). */
   size?: ContainerSize;
+  /** A live child's chat card, or a group holding one (task super-canli-kart-sahnede): the last
+   *  to be drawn in Others, and kept beside a side-by-side page or a presentation. */
+  live?: boolean;
 }
 
 /** A card's size from its record: a preset, or small. */
@@ -160,11 +163,30 @@ export function sizePx(size: ContainerSize): { width: number; height: number } {
 }
 
 /**
+ * A live job (the server's rule, src/lib/super/live.ts): a child of the record, not ended or
+ * succeeded, whose row works, asks, is stuck or waits on the owner, or with an open question,
+ * stuck or owner item, or whose chat session works or asks right now (`session`: its status kind).
+ */
+export function childIsLive(
+  s: Pick<SuperState, 'children' | 'queue'>, sid: string, session: string | null | undefined,
+): boolean {
+  const ch = Object.prototype.hasOwnProperty.call(s.children, sid) ? s.children[sid] : undefined;
+  // `succeededBy` is in the server's record, not the window's mirror type: read through a cast.
+  if (!ch || ch.endedAt !== undefined || (ch as { succeededBy?: string }).succeededBy) return false;
+  if (ch.row === 'working' || ch.row === 'asking' || ch.row === 'stuck' || ch.row === 'waiting') return true;
+  if (s.queue.some((q) => q.sessionId === sid && q.state !== 'done' && (q.kind === 'permission' || q.kind === 'question' || q.kind === 'stuck' || q.kind === 'owner'))) return true;
+  return session === 'working' || session === 'asking';
+}
+
+/**
  * The record as the stage sees it: an ungrouped card is itself; a group is one item standing at
  * its first card's place in the record, with the group's own place and drop; its cards are drawn
  * inside it. A grouped card the view shows side by side or presents is drawn there too.
  */
-export function stageItems(containers: readonly SuperContainer[], groups: readonly SuperGroup[], view: SuperView): StageItem[] {
+export function stageItems(
+  containers: readonly SuperContainer[], groups: readonly SuperGroup[], view: SuperView,
+  isLive: (c: SuperContainer) => boolean = () => false,
+): StageItem[] {
   const shown = new Set(view.mode === 'half' && view.card ? [view.card] : view.mode === 'present' ? view.cards ?? [] : []);
   const index = new Map(containers.map((c, i) => [c.id, i] as const));
   const groupOf = new Map<string, SuperGroup>();
@@ -176,10 +198,12 @@ export function stageItems(containers: readonly SuperContainer[], groups: readon
     const size = sizeOf(c);
     // A minimised agenda is its pill in the corner, not a card on the stage (unless the view shows it).
     if (c.min && !shown.has(c.id)) return;
-    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}) });
+    const live = c.kind === 'chat' && isLive(c);
+    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(live ? { live } : {}) });
     if (g && !placed.has(g.id) && g.cards[0] !== undefined && index.has(g.cards[0])) {
       placed.add(g.id);
-      out.push({ id: g.id, kind: 'group', shape: 'square', place: g.place, ...(g.pos ? { pos: g.pos } : {}), slot: index.get(g.cards[0])! });
+      const gLive = g.cards.some((id) => { const k = containers[index.get(id) ?? -1]; return !!k && k.kind === 'chat' && isLive(k); });
+      out.push({ id: g.id, kind: 'group', shape: 'square', place: g.place, ...(g.pos ? { pos: g.pos } : {}), slot: index.get(g.cards[0])!, ...(gLive ? { live: true } : {}) });
     }
   });
   return out.sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
@@ -213,7 +237,12 @@ export const contains = (r: Rect, x: number, y: number) => x >= r.x && x < r.x +
 // ─── The orbit (2026-10-20) ─────────────────────────────────────────────────────
 
 /** One item in a side's list, in record order. `chat`: a child chat (or a group), kept longest. */
-interface Slot { id: string; owner: boolean; chat: boolean }
+interface Slot { id: string; owner: boolean; chat: boolean; live?: boolean }
+
+/** Which item gives way first when a side is too full (lower goes first): every other card, then
+ *  a chat or group, the auto-placed before the owner's; a LIVE job last of all (owner 2026-10-23:
+ *  live jobs win over pictures, tasks and finished cards). */
+const keepRank = (s: Slot): number => (s.live ? 4 : 0) + (s.owner ? 2 : 0) + (s.chat ? 1 : 0);
 
 /** How many tiles one column holds in a column `span` tall. */
 function capacity(span: number): number {
@@ -256,10 +285,11 @@ function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): Fl
   const keep = (slots: readonly Slot[]) => {
     const roomFor = perCol * cols;
     const out = [...slots];
-    // Drop from the end: auto-placed before the owner's, any other card before a chat.
-    for (const [owner, chat] of [[false, false], [false, true], [true, false], [true, true]]) {
+    // Drop from the end, by keepRank: auto-placed before the owner's, any other card before a
+    // chat, and a live job only once nothing else is left.
+    for (let rank = 0; rank < 8; rank++) {
       for (let i = out.length - 1; i >= 0 && out.length > roomFor; i--) {
-        if (out[i].owner === owner && out[i].chat === chat) { overflow.add(out[i].id); out.splice(i, 1); }
+        if (keepRank(out[i]) === rank) { overflow.add(out[i].id); out.splice(i, 1); }
       }
     }
     return out;
@@ -382,14 +412,16 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
       const latest = [...items].reverse();
       const shrink = (owner: boolean) => latest.find((s) => s.owner === owner && SIZE_UNITS[drawn.get(s.id)!].h > 1)
         ?? latest.find((s) => s.owner === owner && drawn.get(s.id) === 'medium' && cols[side] >= 2);
-      const drop = (owner: boolean) => latest.find((s) => s.owner === owner && !s.chat) ?? latest.find((s) => s.owner === owner);
+      // A live job gives its place last of all, after the owner's own cards (owner 2026-10-23).
+      const drop = (owner: boolean, live: boolean) => latest.find((s) => s.owner === owner && !!s.live === live && !s.chat)
+        ?? latest.find((s) => s.owner === owner && !!s.live === live);
       const step = shrink(false) ?? null;
       if (step) { drawn.set(step.id, HEIGHT_STEP[drawn.get(step.id)!]!); continue; }
-      const auto = drop(false);
+      const auto = drop(false, false);
       if (auto) { overflow.add(auto.id); continue; }
       const own = shrink(true);
       if (own) { drawn.set(own.id, HEIGHT_STEP[drawn.get(own.id)!]!); continue; }
-      const last = drop(true);
+      const last = drop(true, false) ?? drop(false, true) ?? drop(true, true);
       if (!last) break;
       overflow.add(last.id);
     }
@@ -607,6 +639,7 @@ function planWith(
   // An item's place in the RECORD (a group stands at its first card's), not in this list: a
   // grouping removes cards from the list and must not move any other card to the other side.
   const z = new Map(list.map((c, i) => [c.id, c.slot ?? i] as const));
+  const liveIds = new Set(list.filter((c) => c.live).map((c) => c.id));
   const cards: Record<string, CardPlan> = {};
   const others: string[] = [];
   const toOthers = (c: StageItem) => {
@@ -614,8 +647,9 @@ function planWith(
     others.push(c.id);
   };
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = []): StagePlan => {
-    // Others in record order, whatever order they were sent there in.
-    others.sort((a, b) => (z.get(a) ?? 0) - (z.get(b) ?? 0));
+    // Others in record order, whatever order they were sent there in; a live job leads it (a
+    // narrow stage, or one the owner put away himself).
+    others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
     return {
       width: f.width, height: f.height, narrow, mode, centre, cards, others,
       othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill), free: f.free,
@@ -628,6 +662,26 @@ function planWith(
   const shown = view.mode === 'present' ? (view.cards ?? []).filter((id) => ids.has(id)).slice(0, MAX_PRESENT) : [];
   if (half || shown.length) {
     const picked = half ? [half] : shown;
+    // Live jobs stay on the stage beside a page or a presentation (owner 2026-10-23): a column of
+    // tiles at the left edge (two at most), the centre and the page share what is left.
+    const rail = narrow ? [] : list.filter((c) => c.live && c.kind === 'chat' && c.place === 'float' && !picked.includes(c.id));
+    const perCol = capacity(f.content.height);
+    let railCols = perCol > 0 ? Math.min(2, Math.ceil(rail.length / perCol)) : 0;
+    // The rail never squeezes what the owner looks at: the centre and the page (or the presented
+    // cards' region) keep at least PRESENT_MIN wide each, else the rail gives up a column and the
+    // jobs it cannot hold lead Others.
+    const keep = 2 * STAGE.PRESENT_MIN + STAGE.GAP;
+    while (railCols > 0 && f.content.width - railCols * (STAGE.TILE + STAGE.GAP) < keep) railCols -= 1;
+    const railW = railCols ? railCols * (STAGE.TILE + STAGE.GAP) : 0;
+    const content: Rect = { ...f.content, x: f.content.x + railW, width: f.content.width - railW };
+    rail.slice(0, railCols * perCol).forEach((c, i) => {
+      const col = Math.floor(i / perCol);
+      const inCol = Math.min(perCol, rail.length - col * perCol);
+      const total = inCol * STAGE.TILE + (inCol - 1) * STAGE.GAP;
+      const y = f.content.y + (f.content.height - total) / 2 + (i % perCol) * (STAGE.TILE + STAGE.GAP);
+      const rect = { x: f.content.x + col * (STAGE.TILE + STAGE.GAP), y, width: STAGE.TILE, height: STAGE.TILE };
+      cards[c.id] = { id: c.id, rect, where: 'float', shape: 'square', size: 'small', owner: false, z: z.get(c.id) ?? 0 };
+    });
     let centre: Rect;
     let region: Rect;
     if (narrow) {
@@ -635,13 +689,14 @@ function planWith(
       const i = STAGE.SHEET_INSET;
       region = { x: centre.x + i, y: centre.y + i, width: centre.width - 2 * i, height: centre.height - 2 * i };
     } else if (half) {
-      const w = (f.content.width - STAGE.GAP) / 2;
-      centre = { x: f.content.x, y: f.content.y, width: w, height: f.content.height };
-      region = { x: f.content.x + w + STAGE.GAP, y: f.content.y, width: w, height: f.content.height };
+      const w = (content.width - STAGE.GAP) / 2;
+      centre = { x: content.x, y: content.y, width: w, height: content.height };
+      region = { x: content.x + w + STAGE.GAP, y: content.y, width: w, height: content.height };
     } else {
-      const w = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * f.width));
-      centre = { x: f.content.x, y: f.content.y, width: w, height: f.content.height };
-      region = { x: f.content.x + w + STAGE.GAP, y: f.content.y, width: f.content.width - w - STAGE.GAP, height: f.content.height };
+      // The centre's share of what the rail leaves (the rail narrows the centre and the cards alike).
+      const w = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
+      centre = { x: content.x, y: content.y, width: w, height: content.height };
+      region = { x: content.x + w + STAGE.GAP, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
     }
     const rects = grid(region, picked.length);
     const where: CardWhere = narrow ? 'sheet' : half ? 'half' : 'present';
@@ -686,7 +741,7 @@ function planWith(
     sideOf.set(mover.id, to);
   }
   const slotsOn = (side: 'left' | 'right'): Slot[] =>
-    floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, owner: isOwner(c), chat: c.kind === 'chat' || c.kind === 'group' }));
+    floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, owner: isOwner(c), chat: c.kind === 'chat' || c.kind === 'group', ...(c.live ? { live: true } : {}) }));
   const sizeById = new Map(floating.map((c) => [c.id, sizeOf(c)] as const));
   const withSize = (sl: Slot): SizedSlot => ({ ...sl, size: sizeById.get(sl.id) ?? 'small', z: z.get(sl.id) ?? 0 });
 
@@ -724,6 +779,8 @@ function planWith(
     else if (covered(at)) moved.push(c);
     else { blocks.push(at); auto(c, at); }
   }
+  // A live job finds its free spot first: it is the last to be drawn in Others.
+  moved.sort((a, b) => Number(!!b.live) - Number(!!a.live));
   for (const c of moved) {
     const rect = reseat(sol.rects.get(c.id)!, f, blocks);
     if (!rect) { toOthers(c); continue; }

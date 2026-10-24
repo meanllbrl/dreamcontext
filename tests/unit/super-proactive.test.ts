@@ -55,13 +55,20 @@ describe('applySignal', () => {
     expect(s.view).toEqual({ mode: 'half', card: s.containers[1].id });
   });
 
-  it('G3: a full stage puts the new automatic card straight into Others; a full record skips it', () => {
+  it('G3: a full stage puts the new automatic card straight into Others; a full record retires its oldest finished card, else skips it', () => {
     const many = Array.from({ length: 12 }, (_, i) => ({ id: `task-${i}`, kind: 'task' as const, ref: `t${i}`, shape: 'square' as const, place: 'float' as const }));
     const s = state({ containers: many });
     applySignal(s, 'k1', web('http://localhost:3000/'), 0);
     expect(s.containers.at(-1)?.place).toBe('others');
-    const full = state({ containers: Array.from({ length: 48 }, (_, i) => ({ id: `task-${i}`, kind: 'task' as const, ref: `t${i}`, shape: 'square' as const, place: 'others' as const })) });
-    expect(applySignal(full, 'k1', web('http://localhost:3000/'), 0)).toBe(false);
+    const others = (pos?: { x: number; y: number }) => Array.from({ length: 48 }, (_, i) => ({ id: `task-${i}`, kind: 'task' as const, ref: `t${i}`, shape: 'square' as const, place: 'others' as const, ...(pos ? { pos } : {}) }));
+    const full = state({ containers: others() });
+    expect(applySignal(full, 'k1', web('http://localhost:3000/'), 0)).toBe(true);
+    expect(full.containers).toHaveLength(48);
+    expect(full.containers.some((c) => c.id === 'task-0')).toBe(false);
+    // Every card placed by the owner: nothing may go, nothing is added.
+    const kept = state({ containers: others({ x: 0.5, y: 0.5 }) });
+    expect(applySignal(kept, 'k1', web('http://localhost:3000/'), 0)).toBe(false);
+    expect(kept.containers).toHaveLength(48);
   });
 
   it('G5: a card the owner closed is not reopened automatically for DISMISS_MS', () => {

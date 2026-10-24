@@ -22,7 +22,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, isLivePage, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { anchoredPos, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan } from './superLayout';
+import { anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
@@ -156,7 +156,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   useLayoutEffect(() => { drawnView.current = view; });
 
   // ── The plan ──
-  const items = useMemo(() => stageItems(state.containers, state.groups, view), [state.containers, state.groups, view]);
+  // A live job's card is the last to be drawn in Others and stays beside a page (superLayout).
+  // Its key changes only when a child's liveness does, so the plan is not redone per frame.
+  const liveJobsKey = state.containers.filter((c) => c.kind === 'chat'
+    && childIsLive(state, c.ref, props.sessionFor(c.ref) ? chatStatus(props.sessionFor(c.ref)).kind : null)).map((c) => c.id).join(',');
+  const items = useMemo(() => {
+    const live = new Set(liveJobsKey ? liveJobsKey.split(',') : []);
+    return stageItems(state.containers, state.groups, view, (c) => live.has(c.id));
+  }, [state.containers, state.groups, view, liveJobsKey]);
   // The agenda minimised to its corner pill (owner 2026-10-22 23:44): not a card on the stage
   // (stageItems leaves it out) unless the view shows it side by side or presented.
   const agendaPill = useMemo(() => {

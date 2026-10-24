@@ -490,6 +490,18 @@ describe('a relaunch brings back no old news (field 2026-10-21)', { timeout: 30_
     expect(s.queue.filter((q) => q.sessionId === 'gone1' && q.kind === 'gone')).toHaveLength(2);
   });
 
+  it('a gone child with no card (retired to make room) gets its card back when it starts again (task super-kart-kaydi)', async () => {
+    makeVault(before);
+    await relaunch();
+    expect((await readSuperState(root)).containers.some((c) => c.ref === 'own1')).toBe(false);
+    reg('own1');
+    await noteChatStarted('own1');
+    await drain();
+    const s = await readSuperState(root);
+    expect(s.children.own1.row).toBeUndefined();
+    expect(s.containers.some((c) => c.kind === 'chat' && c.ref === 'own1')).toBe(true);
+  });
+
   it('a held child left working or asking at the quit is set gone quietly: no event, its question closed, no endless sweep', async () => {
     makeVault({
       children: { shut: kid('shut', { row: 'working' }), shutAsk: kid('shutAsk', { row: 'asking' }) },

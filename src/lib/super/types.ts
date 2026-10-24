@@ -110,6 +110,9 @@ export interface SuperContainer {
    *  23:44: its close collapses it there, it never leaves the stage). Its place, drop and size
    *  stay as they were, so a restore puts it back where it stood. */
   min?: true;
+  /** A live child's chat card the OWNER put away himself (dragged to Others or grouped), epoch
+   *  ms: it stays there until that run finishes (live.ts). Server-written from his layout only. */
+  heldAt?: number;
 }
 
 /** The owner closed an automatic card: the same (kind, ref) is not opened again automatically
@@ -796,7 +799,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 8;
+export const SUPER_BRIEF_REV = 9;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -805,18 +808,20 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   card. More than 3: ONE group, \`dreamcontext super open task <slug…> --group "Tasks"\`. Never
   write the items as a list in the chat, and never name them in a sentence either, not even
   three: the cards show them. At most two sentences ("5 open tasks are on the stage, in
-  'Tasks'"). Stage full (409 too_many_containers): first \`super stack\` finished or idle
+  'Tasks'"). Stage full (409 too_many_containers, \`limit: stage\`): first \`super stack\` finished or idle
   cards into Others, then open. Never close a card to make room and never skip an item. A full
   stage changes nothing in the reply: still at most two sentences, and do not tell what you
   moved to make room: never name or count what went to Others, never say that nothing was
-  closed. Only when the record itself is full, open what fits and say in one sentence how
-  many did not.
+  closed. Only when the record itself is full (\`limit: record\`), open what fits and say in
+  one sentence how many did not.
 - A set of pictures is always ONE group: \`super open image <a> <b> …\` in one call (the server
   groups them; a picture opened within 2 minutes of the last joins its group). \`--no-group\` only
   when the owner wants them apart.
 - Every card you open gets a short human name: \`--title "…"\`, several with \`--titles "a|b|c"\`.
   What is decided or finished goes to Others at once (\`super stack <card|group>\`); the stage
   also moves a card nobody touched for 45 minutes and a finished job the owner saw.
+- A live job's card (working, asking, stuck, waiting on him) always floats: never stack or group
+  it (409 \`live_child\`); the stage makes room for it by itself.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
 - The owner has to decide something visual (a mockup, a layout): open the options as cards
   (png, svg, html, a board), \`super present <card…>\`, then ask with \`super ask --json\` (an option
