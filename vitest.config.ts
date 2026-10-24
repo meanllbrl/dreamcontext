@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { WINDOWS_SKIPS } from './tests/windows-skip';
 
 /**
  * Unit + integration tests live under tests/ as *.test.ts.
@@ -20,7 +21,8 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist', 'e2e', 'dashboard'],
+    // On Windows only, the explicit, commented skip list (tests/windows-skip.ts).
+    exclude: ['node_modules', 'dist', 'e2e', 'dashboard', ...(process.platform === 'win32' ? WINDOWS_SKIPS.map((s) => s.file) : [])],
     // Insulates the suite from a spawned parent: a builder that runs `npm test` must not have
     // its own spawn marker or pane boundary leak into the hook processes the tests launch.
     setupFiles: ['tests/setup/isolate-spawn-env.ts'],

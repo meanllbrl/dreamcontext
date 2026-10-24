@@ -68,12 +68,15 @@ describe('install.ps1 static rules', () => {
 
 // ─── Behaviour, under a real PowerShell ─────────────────────────────────────────
 
+/** An ABSOLUTE pwsh: the cases below run it with a PATH that holds nothing (no node.exe). */
 function findPwsh(): string | null {
   const explicit = process.env.DREAMCONTEXT_TEST_PWSH;
   if (explicit && existsSync(explicit)) return explicit;
   try {
-    execFileSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', '1'], { stdio: 'ignore', timeout: 30_000 });
-    return 'pwsh';
+    const out = execFileSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id $PID).Path'], {
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000,
+    }).trim();
+    return out && existsSync(out) ? out : null;
   } catch {
     return null;
   }
@@ -119,13 +122,20 @@ describe.skipIf(!PWSH)('install.ps1 under PowerShell (private Node.js download)'
   }
 
   function env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+    // The real environment (PowerShell needs SystemRoot and friends on Windows), minus the
+    // installer's own switches and any Path spelling, then this case's home, temp and PATH.
+    const base: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (/^(path|processor_architew6432|dreamcontext_install_.*)$/i.test(k)) continue;
+      base[k] = v;
+    }
     return {
+      ...base,
       // No node.exe reachable: the script must take the private-Node path.
       PATH: join(dir, 'emptybin'),
       USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming'), HOME: home,
       TMPDIR: temp, TMP: temp, TEMP: temp,
       PROCESSOR_ARCHITECTURE: 'AMD64',
-      SystemRoot: process.env.SystemRoot ?? 'C:\\Windows',
       ...extra,
     };
   }
