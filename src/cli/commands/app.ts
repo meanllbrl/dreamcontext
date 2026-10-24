@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { execFileSync, spawnSync, spawn as spawnProcess } from 'node:child_process';
 import {
   existsSync,
@@ -15,6 +15,10 @@ import { join, resolve, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import chalk from 'chalk';
 import { compareVersions } from '../../lib/version-check.js';
+import {
+  clearAppUpdateAvailable, downloadWindowsSetup, isWindowsAppRunning, pendingAppUpdate, readWindowsInstall,
+  recordAppUpdateAvailable, runWindowsSetup, WIN_SETUP_ASSET,
+} from '../../lib/app-windows.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -711,8 +715,10 @@ export function setAppAutoUpdate(enabled: boolean, home: string = homedir()): bo
 export type AppUpdateSpawner = () => void;
 
 function defaultAppUpdateSpawner(): void {
-  // Re-invoke this CLI's `app update` detached so the hot path never blocks.
-  const child = spawnProcess(process.execPath, [process.argv[1], 'app', 'update'], {
+  // Re-invoke this CLI's `app update` detached so the hot path never blocks. Windows passes
+  // --background: an open app is never ended by the installer, the update is offered instead.
+  const args = [process.argv[1], 'app', 'update', ...(process.platform === 'win32' ? ['--background'] : [])];
+  const child = spawnProcess(process.execPath, args, {
     detached: true,
     stdio: 'ignore',
   });
@@ -727,13 +733,24 @@ function defaultAppUpdateSpawner(): void {
  */
 export function maybeTriggerAppUpdate(
   env: NodeJS.ProcessEnv = process.env,
-  deps: { spawner?: AppUpdateSpawner; manifest?: AppManifest | null; selfUpdating?: (m: AppManifest) => boolean; home?: string } = {},
+  deps: {
+    spawner?: AppUpdateSpawner; manifest?: AppManifest | null; selfUpdating?: (m: AppManifest) => boolean; home?: string;
+    platform?: NodeJS.Platform; exists?: (p: string) => boolean;
+  } = {},
 ): boolean {
   try {
-    if (detectPlatform().os !== 'darwin') return false;
+    const os = detectPlatform(deps.platform).os;
+    if (os !== 'darwin' && os !== 'win32') return false;
     if (!appAutoUpdateEnabled(env, deps.home)) return false;
     const installed = deps.manifest !== undefined ? deps.manifest : readAppManifest();
     if (!installed) return false;
+    // Windows has no in-app updater (no signed Windows feed yet): the CLI is the only updater,
+    // for an app that is still there.
+    if (os === 'win32') {
+      if (!desktopAppPresent(installed, 'win32', deps.exists)) return false;
+      (deps.spawner ?? defaultAppUpdateSpawner)();
+      return true;
+    }
     // A published Developer ID release updates itself in-app; a second updater racing it
     // would only download the same bundle twice. A local build has no in-app updater.
     if ((deps.selfUpdating ?? appUpdatesItself)(installed)) return false;
@@ -748,6 +765,10 @@ export function maybeTriggerAppUpdate(
 
 async function doInstall(from: string | undefined, dir: string | undefined): Promise<void> {
   const plat = detectPlatform();
+  if (plat.os === 'win32') {
+    await doWindowsInstall(from, { update: false, background: false });
+    return;
+  }
   if (plat.os !== 'darwin') {
     console.log(chalk.yellow('The desktop app is currently macOS-only. Windows/Linux support is planned.'));
     return;
@@ -807,7 +828,11 @@ async function doInstall(from: string | undefined, dir: string | undefined): Pro
   }
 }
 
-async function doUpdate(from: string | undefined, dir: string | undefined): Promise<void> {
+async function doUpdate(from: string | undefined, dir: string | undefined, background = false): Promise<void> {
+  if (detectPlatform().os === 'win32') {
+    await doWindowsInstall(from, { update: true, background });
+    return;
+  }
   const installed = readAppManifest();
   if (!installed) {
     console.log(chalk.dim('No installed app recorded — running a fresh install.'));
@@ -885,6 +910,10 @@ function doSignSetup(): void {
 }
 
 function doStatus(): void {
+  if (detectPlatform().os === 'win32') {
+    doWindowsStatus();
+    return;
+  }
   const installed = readAppManifest();
   if (!installed) {
     console.log('Desktop app: not installed (run `dreamcontext app install`).');
@@ -904,6 +933,122 @@ function doStatus(): void {
   console.log(`  signing:   ${signing}`);
 }
 
+// ─── Windows (src/lib/app-windows.ts) ─────────────────────────────────────────
+
+export interface WindowsInstallDeps {
+  fetchRelease?: () => Promise<{ tag_name: string; assets: Array<{ name: string; browser_download_url: string }> } | null>;
+  download?: typeof downloadWindowsSetup;
+  runSetup?: (setupPath: string) => void;
+  readInstall?: () => { version: string | null; exePath: string | null } | null;
+  isRunning?: (exePath: string) => boolean;
+  exists?: (p: string) => boolean;
+  home?: string;
+  log?: (line: string) => void;
+}
+
+/**
+ * `app install` / `app update` on Windows: the release's NSIS installer (or `--from <setup.exe>`),
+ * checksum-verified, run silently, then the manifest is written from what NSIS recorded. Sets
+ * process.exitCode on failure (install.ps1 reads it). An update is skipped when the installed
+ * version is current; while the app is open it is refused (the installer would end it), and a
+ * --background run records the newer version for the SessionStart offer instead.
+ */
+export async function doWindowsInstall(
+  from: string | undefined,
+  mode: { update: boolean; background: boolean },
+  deps: WindowsInstallDeps = {},
+): Promise<'installed' | 'current' | 'offered' | 'none' | 'failed'> {
+  const log = deps.log ?? ((l: string) => console.log(l));
+  const home = deps.home ?? homedir();
+  const exists = deps.exists ?? existsSync;
+  const readInstall = deps.readInstall ?? (() => readWindowsInstall({ home }));
+  const isRunning = deps.isRunning ?? ((exe: string) => isWindowsAppRunning(exe));
+  const runSetup = deps.runSetup ?? ((p: string) => runWindowsSetup(p));
+  const fail = (msg: string): 'failed' => { log(chalk.red(msg)); process.exitCode = 1; return 'failed'; };
+
+  const before = readInstall();
+  let setupPath: string;
+  let version: string | null = null;
+  let workDir: string | null = null;
+  let source = 'github';
+  if (from) {
+    setupPath = resolve(from);
+    if (!/\.exe$/i.test(setupPath) || !exists(setupPath)) return fail(`Not an installer: ${setupPath} (expected an existing ${WIN_SETUP_ASSET}-style .exe).`);
+    source = setupPath;
+  } else {
+    if (!mode.background) log(chalk.cyan('Fetching the latest desktop app from GitHub Releases…'));
+    const release = await (deps.fetchRelease ?? (() => fetchLatestRelease()))();
+    if (!release) {
+      if (mode.background) return 'none';
+      log(chalk.yellow('No published desktop release found (offline, or none yet).'));
+      return 'none';
+    }
+    version = versionFromTag(release.tag_name);
+    if (mode.update && before?.version && compareVersions(before.version, version) >= 0) {
+      clearAppUpdateAvailable(home);
+      if (!mode.background) log(chalk.green(`Desktop app is up to date (${before.version}).`));
+      return 'current';
+    }
+    if (before?.exePath && isRunning(before.exePath)) {
+      if (mode.background) { recordAppUpdateAvailable(version, home); return 'offered'; }
+      return fail(`dreamcontext ${version} is ready to install, but the app is open. Close it, then run \`dreamcontext app ${mode.update ? 'update' : 'install'}\` again.`);
+    }
+    let dl: Awaited<ReturnType<typeof downloadWindowsSetup>>;
+    try {
+      dl = await (deps.download ?? downloadWindowsSetup)(release, { repo: APP_RELEASE_REPO });
+    } catch (e) {
+      return fail(`${mode.update ? 'Update' : 'Install'} aborted: ${(e as Error).message}`);
+    }
+    if (!dl) {
+      if (!mode.background) log(chalk.yellow(`Release ${release.tag_name} has no Windows installer (${WIN_SETUP_ASSET}).`));
+      return 'none';
+    }
+    setupPath = dl.setupPath;
+    workDir = dl.workDir;
+  }
+  if (from && before?.exePath && isRunning(before.exePath)) {
+    return fail('The app is open. Close it, then run this again.');
+  }
+
+  try {
+    if (!mode.background) log(chalk.cyan('Running the installer (per-user, silent)…'));
+    runSetup(setupPath);
+  } catch (e) {
+    return fail(`The installer failed: ${(e as Error).message}`);
+  } finally {
+    if (workDir) rmSync(workDir, { recursive: true, force: true });
+  }
+
+  const after = readInstall();
+  if (!after?.exePath) return fail('The installer finished, but the installed app could not be found.');
+  const installedVersion = after.version ?? version ?? 'unknown';
+  writeAppManifest({ version: installedVersion, path: after.exePath, installedAt: Date.now(), source }, home);
+  clearAppUpdateAvailable(home);
+  if (!mode.background) {
+    log(chalk.green(`✓ ${before?.version && before.version !== installedVersion ? `Updated dreamcontext-beta ${before.version} → ${installedVersion}` : `Installed dreamcontext-beta ${installedVersion}`}`) + chalk.dim(` → ${after.exePath}`));
+    log(chalk.dim('Open it from the Start menu (dreamcontext-beta).'));
+  }
+  return 'installed';
+}
+
+function doWindowsStatus(): void {
+  const installed = readWindowsInstall();
+  const manifest = readAppManifest();
+  if (!installed?.exePath && !manifest) {
+    console.log('Desktop app: not installed (run `dreamcontext app install`).');
+    return;
+  }
+  const exe = installed?.exePath ?? manifest?.path ?? '';
+  const version = installed?.version ?? manifest?.version ?? 'unknown';
+  console.log(`Desktop app: ${version}`);
+  console.log(`  path:      ${exe}${exe && existsSync(exe) ? '' : chalk.red('  (missing!)')}`);
+  console.log(`  source:    ${manifest?.source ?? 'unknown'}`);
+  console.log(`  running:   ${exe && isWindowsAppRunning(exe) ? 'yes' : 'no'}`);
+  console.log('  signing:   unsigned (Windows code signing is not set up yet)');
+  const pending = pendingAppUpdate(installed?.version ?? manifest?.version ?? null);
+  if (pending) console.log(chalk.yellow(`  update:    ${pending} available — close the app, then run \`dreamcontext app update\``));
+}
+
 // ─── Registration ────────────────────────────────────────────────────────────
 
 export function registerAppCommand(program: Command): void {
@@ -912,7 +1057,7 @@ export function registerAppCommand(program: Command): void {
   app
     .command('install')
     .description('Install the desktop app (no quarantine, no admin)')
-    .option('--from <path>', 'Install from a local .app, .tar.gz, or .zip instead of GitHub Releases')
+    .option('--from <path>', 'Install from a local .app, .tar.gz, or .zip (Windows: a setup .exe) instead of GitHub Releases')
     .option('--dir <dir>', 'Install directory (default: beside the installed app, else ~/Applications)')
     .action(async (opts: { from?: string; dir?: string }) => {
       await doInstall(opts.from, opts.dir);
@@ -923,8 +1068,10 @@ export function registerAppCommand(program: Command): void {
     .description('Update the installed desktop app to the latest version')
     .option('--from <path>', 'Update from a local artifact instead of GitHub Releases')
     .option('--dir <dir>', 'Install directory (default: beside the installed app, else ~/Applications)')
-    .action(async (opts: { from?: string; dir?: string }) => {
-      await doUpdate(opts.from, opts.dir);
+    // The SessionStart hook's own run (Windows): never ends an open app, records the offer instead.
+    .addOption(new Option('--background').hideHelp())
+    .action(async (opts: { from?: string; dir?: string; background?: boolean }) => {
+      await doUpdate(opts.from, opts.dir, opts.background === true);
     });
 
   app

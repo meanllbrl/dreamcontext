@@ -62,6 +62,7 @@ import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { desktopAppPresent, maybeTriggerAppUpdate, readAppManifest } from './app.js';
+import { appUpdateNotice } from '../../lib/app-windows.js';
 import { runAssetDriftRefresh } from './asset-drift.js';
 import { loadCatalog } from './install-skill.js';
 import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
@@ -2918,6 +2919,12 @@ export function registerHookCommand(program: Command): void {
             // only a new Tauri shell release replaces the bundle; the app runs
             // the global CLI for everything else). No-ops until releases exist.
             maybeTriggerAppUpdate();
+            // Windows: a newer app that the background run could not install (the app was
+            // open) is offered here, at most once a day. Nothing prints anywhere else.
+            if (process.platform === 'win32') {
+              const appNotice = appUpdateNotice(readAppManifest()?.version ?? null);
+              if (appNotice) console.log(appNotice);
+            }
             // Piggyback too: refresh the used-asset drift verdict in a detached
             // process so the SessionStart "stale assets" nag can stay silent when
             // a CLI bump didn't actually change any pack this project installs.
