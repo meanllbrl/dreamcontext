@@ -152,7 +152,8 @@ describe('the server', () => {
   });
 
   it('a reply is "about" its message: the digest and the owner-spoke bookkeeping keep the open ask', () => {
-    expect(chat).toMatch(/const replyHead = isSuper && !aboutHead \? REPLY_TO_RE\.exec\(text\) : null;/);
-    expect(chat).toMatch(/: replyHead \? \{ kind: 'reply' as const, id: replyHead\[1\] \} : null;/);
+    // Every header of the message, a reply's included (`aboutHeads`, kind 'reply'), goes to both.
+    expect(chat).toMatch(/const abouts = isSuper \? aboutHeads\(text\)\.map\(\(\{ kind, id \}\) => \(\{ kind, id \}\)\) : \[\];/);
+    expect(server.aboutHeads('[Reply to message ref=k3f9q0 from=super]\nquote: "x"\n\nok').map((h) => [h.kind, h.id])).toEqual([['reply', 'k3f9q0']]);
   });
 });

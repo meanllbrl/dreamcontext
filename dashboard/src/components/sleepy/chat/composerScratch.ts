@@ -31,6 +31,9 @@
  * either after a restart would show the user a chip that no longer refers to anything.
  */
 
+import { ABOUT_AGENDA_RE, MAX_MESSAGE_REFS, REPLY_TO_RE } from '../../../lib/superTypes';
+import { parseRefTokens, refKey, refTokenId, stripTokens } from './composerRefs';
+
 export interface Attachment {
   id: string;
   /** `ref` is a pointer to a whiteboard element (an agent card's drag-to-ask), not a file:
@@ -38,8 +41,9 @@ export interface Attachment {
    *  content, and `name` is what the chip reads ("Note · Q3 plan"). It has no preview and no
    *  upload, so it is sendable the moment it is staged. `about` is the agenda line the next
    *  message is written about (owner 2026-10-23, the Super Agent's agenda): `text` is the block
-   *  the message opens with (`agendaAboutBlock`), `name` what the chip reads. At most one per
-   *  conversation (`setAbout`); it never makes a message on its own (`countsAsContent`). */
+   *  its part opens with (`agendaAboutBlock`), `name` what the chip reads. Up to MAX_MESSAGE_REFS
+   *  per conversation, each a token in the draft (`insertRef`, composerRefs.ts); it never makes a
+   *  message on its own (`countsAsContent`). */
   kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about';
   name: string;
   /** Image attachments only — an object URL for the pasted `File` blob, so the chip shows
@@ -67,13 +71,29 @@ export interface Attachment {
   /** What a failed chip says instead of the generic refusal (a phone photo this browser could
    *  not decode, a photo the phone's caps refused). */
   note?: string;
+  /** `about` only: staged by `insertRef` and its token not yet in the draft. The composer puts
+   *  it at the caret (or at the end, mounting) and clears this (`markInserted`). */
+  pending?: boolean;
+  /** `about` only: bumped when the same target is pressed again; the composer flashes that chip
+   *  and moves the caret after it. */
+  flash?: number;
 }
 
 export interface ComposerScratch {
   attachments: Attachment[];
   /** The message the next send quotes above its own text, or null. */
   quote: string | null;
+  /** About refs that left the box since the last send (cut, deleted, a damaged token), newest
+   *  last, at most MAX_RECENT: a paste or the same ↩ brings one back with its own id. Absent:
+   *  none. */
+  recent?: Attachment[];
+  /** Bumped when a ↩ was refused because MAX_MESSAGE_REFS chips are already in the box: the
+   *  composer shows its one-line notice. Absent: never. */
+  refused?: number;
 }
+
+/** Refs kept for a paste or a repeated ↩ after they left the box. */
+export const MAX_RECENT = 10;
 
 /** Frozen, and shared by every conversation that has nothing staged: a caller that tried to
  *  reassign a field on it instead of replacing the whole record should fail loudly, not
@@ -106,7 +126,7 @@ export function readScratch(convId: string): ComposerScratch {
 function commit(convId: string, next: ComposerScratch): void {
   // An empty conversation is DELETED rather than stored empty, so a long session that attaches
   // and sends repeatedly does not accumulate a map entry per conversation it has finished with.
-  if (next.attachments.length === 0 && next.quote === null) store.delete(convId);
+  if (next.attachments.length === 0 && next.quote === null && !next.recent?.length && !next.refused) store.delete(convId);
   else store.set(convId, next);
   const settled = readScratch(convId);
   listeners.get(convId)?.forEach((fn) => fn(settled));
@@ -183,10 +203,11 @@ export function removeAttachment(convId: string, id: string): void {
  */
 export function dropSentAttachments(convId: string, opts: { keepAbout?: boolean } = {}): void {
   const cur = readScratch(convId);
-  if (!cur.attachments.length && cur.quote === null) return;
+  if (!cur.attachments.length && cur.quote === null && !cur.recent && !cur.refused) return;
   // A slash command never carries the About block, so its chip stays for the next message.
   const gone = (a: Attachment) => wasSent(a) && !(opts.keepAbout && a.kind === 'about');
   cur.attachments.forEach((a) => { if (gone(a)) revoke(a); });
+  // A send ends what `recent` remembers: a chip cut before it is not pasted back after it.
   commit(convId, { attachments: cur.attachments.filter((a) => !gone(a)), quote: null });
 }
 
@@ -211,20 +232,149 @@ export function setAbout(convId: string, about: Attachment | null): void {
   commit(convId, { ...cur, attachments: about ? [{ ...about, kind: 'about' }, ...rest] : rest });
 }
 
+let flashSeq = 0;
+
+/**
+ * An agenda ↩ or a message ↩ in the Super view (owner 2026-10-24): ADD a reference; never
+ * replace one. The ref is staged `pending` and the composer puts its token at the caret.
+ * - the same target (kind + id: note, item, reply ref) already staged: nothing is added, that
+ *   chip flashes and the caret goes after it (`flash`);
+ * - the same target in `recent` (cut, deleted): that ref comes back with its own id, so a paste
+ *   of its old token afterwards is text, never a second chip;
+ * - MAX_MESSAGE_REFS already staged: nothing is added and `refused` is bumped for the notice.
+ */
+export function insertRef(convId: string, att: Attachment): 'added' | 'flash' | 'max' {
+  const cur = readScratch(convId);
+  const key = refKey(att);
+  const abouts = cur.attachments.filter((a) => a.kind === 'about');
+  const same = key ? abouts.find((a) => refKey(a) === key) : undefined;
+  if (same) {
+    commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a === same ? { ...a, flash: ++flashSeq } : a)) });
+    return 'flash';
+  }
+  if (abouts.length >= MAX_MESSAGE_REFS) {
+    commit(convId, { ...cur, refused: (cur.refused ?? 0) + 1 });
+    return 'max';
+  }
+  const back = key ? (cur.recent ?? []).find((a) => refKey(a) === key) : undefined;
+  const recent = (cur.recent ?? []).filter((a) => a !== back);
+  const staged: Attachment = { ...(back ?? att), kind: 'about', pending: true };
+  commit(convId, { ...withRecent(cur, recent), attachments: [...cur.attachments, staged] });
+  return 'added';
+}
+
+/** The composer has put these pending refs' tokens in the draft. */
+export function markInserted(convId: string, ids: readonly string[]): void {
+  const cur = readScratch(convId);
+  if (!cur.attachments.some((a) => a.pending && ids.includes(a.id))) return;
+  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a.pending && ids.includes(a.id) ? { ...a, pending: false } : a)) });
+}
+
+/** These refs left the box (deleted, cut, a damaged token): unstaged, and kept in `recent`
+ *  until the next send, so a paste can bring one back. */
+export function dropRefs(convId: string, ids: readonly string[]): void {
+  const cur = readScratch(convId);
+  const gone = cur.attachments.filter((a) => a.kind === 'about' && ids.includes(a.id));
+  if (!gone.length) return;
+  const recent = [...(cur.recent ?? []).filter((a) => !ids.includes(a.id)), ...gone.map((a) => ({ ...a, pending: false }))].slice(-MAX_RECENT);
+  commit(convId, { ...withRecent(cur, recent), attachments: cur.attachments.filter((a) => !gone.includes(a)) });
+}
+
+/** A paste brought these refs' tokens back (`sanitizePaste`): staged again, out of `recent`. */
+export function restoreRefs(convId: string, refs: readonly Attachment[]): void {
+  if (!refs.length) return;
+  const cur = readScratch(convId);
+  const ids = refs.map((a) => a.id);
+  const add = refs.filter((r) => !cur.attachments.some((a) => a.id === r.id)).map((a) => ({ ...a, kind: 'about' as const, pending: false }));
+  commit(convId, { ...withRecent(cur, (cur.recent ?? []).filter((a) => !ids.includes(a.id))), attachments: [...cur.attachments, ...add] });
+}
+
+/**
+ * The draft was REPLACED with one whose tokens are these refs (↑ recall, ↓ back to the stash, a
+ * rewind's prefill read back by `draftFromMessage`): the staged About refs no token of `draft`
+ * names leave, the given ones are staged (their tokens are already in the draft, so never
+ * pending). Other chips (files, images) stay.
+ */
+export function stageRefs(convId: string, refs: readonly Attachment[], draft = ''): void {
+  const cur = readScratch(convId);
+  const named = new Set(parseRefTokens(draft).map((t) => t.id));
+  const kept = cur.attachments.filter((a) => a.kind !== 'about' || (!a.pending && named.has(refTokenId(a))));
+  const add = refs.filter((r) => !kept.some((a) => a.id === r.id)).map((a) => ({ ...a, kind: 'about' as const, pending: false }));
+  commit(convId, { ...cur, attachments: [...kept, ...add] });
+}
+
+function withRecent(cur: ComposerScratch, recent: Attachment[]): ComposerScratch {
+  const { recent: _old, ...rest } = cur;
+  return recent.length ? { ...rest, recent } : rest;
+}
+
 /**
  * The message a send writes, from what is in the box. The About block opens it, then the reply
  * quote, then the typed text with its chips (`foldAttachments`). A slash command is sent as
  * typed: no block (`slash`, and the chip stays staged). `quoted` is the message without the
  * block: what must have something in it for a send to happen at all.
+ *
+ * With chips IN the draft (owner 2026-10-24, the Super view) the draft is read left to right
+ * (plan D3, R2-6, R3-5): each token becomes its block, his words stay where he wrote them, parts
+ * set off by blank lines; chips at the very end with no words after them stack before his last
+ * words; one chip is today's exact bytes (block, blank line, all his words); with two or more,
+ * file paths and picked elements open the message, for all of it. In the Super view a line he
+ * TYPED that would read as a header gets a leading U+200B: only chips make headers.
  */
 export function composeOutgoing(
   text: string, attachments: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
+  opts: { superView?: boolean } = {},
 ): { message: string; quoted: string; slash: boolean } {
-  const bodyText = foldAttachments(text, attachments, quotePath);
-  const quoted = quote ? `> ${quote}\n\n${bodyText}` : bodyText;
-  const slash = text.trimStart().startsWith('/');
-  const about = slash ? undefined : attachments.find((a) => a.kind === 'about' && !!a.text);
-  return { message: about?.text ? `${about.text}\n\n${quoted}` : quoted, quoted, slash };
+  const plain = stripTokens(text);
+  const slash = plain.trimStart().startsWith('/');
+  const abouts = attachments.filter((a) => a.kind === 'about' && !!a.text);
+  const byId = new Map(abouts.map((a) => [refTokenId(a), a] as const));
+  const spans = parseRefTokens(text).filter((t) => byId.has(t.id));
+  const guard = (w: string) => (opts.superView ? neutraliseHeaders(w) : w);
+  if (slash || !spans.length) {
+    const bodyText = foldAttachments(guard(plain), attachments, quotePath);
+    const quoted = quote ? `> ${quote}\n\n${bodyText}` : bodyText;
+    // A draft with no tokens keeps today's single staged About (a caller still on `setAbout`).
+    const about = slash || parseRefTokens(text).length ? undefined : abouts[0];
+    return { message: about?.text ? `${about.text}\n\n${quoted}` : quoted, quoted, slash };
+  }
+  // Segments, in order: words, then each chip followed by the words after it.
+  const tidy = (w: string) => stripTokens(w).replace(/[ \t\u00A0]{2,}/g, ' ').trim();
+  const preamble = guard(tidy(text.slice(0, spans[0].start)));
+  const parts = spans.map((t, i) => ({
+    block: (byId.get(t.id) as Attachment).text as string,
+    words: guard(tidy(text.slice(t.end, i + 1 < spans.length ? spans[i + 1].start : text.length))),
+  }));
+  // (b) Chips at the end with no words after them stack before the last words.
+  let last = parts.length - 1;
+  while (last >= 0 && !parts[last].words) last -= 1;
+  if (last >= 0 && last < parts.length - 1) {
+    const words = parts[last].words;
+    parts[last].words = '';
+    parts[parts.length - 1].words = words;
+  } else if (last < 0 && preamble && parts.length) {
+    // Only words before the chips: they are the chips' words.
+    parts[parts.length - 1].words = preamble;
+  }
+  const pre = last < 0 && parts.length ? '' : preamble;
+  if (parts.length === 1) {
+    // (c) One chip: today's bytes, his words joined at the chip's former place.
+    const joined = [pre, parts[0].words].filter(Boolean).join(' ');
+    const bodyText = foldAttachments(joined, attachments, quotePath);
+    const quoted = quote ? `> ${quote}\n\n${bodyText}` : bodyText;
+    return { message: `${parts[0].block}\n\n${quoted}`, quoted, slash: false };
+  }
+  // Two or more: the files and picked elements are for the whole message, so they open it.
+  const head = foldAttachments(pre, attachments, quotePath);
+  const opening = quote ? `> ${quote}${head ? `\n\n${head}` : ''}` : head;
+  const message = [opening, ...parts.flatMap((p) => [p.block, p.words])].filter(Boolean).join('\n\n');
+  const quoted = [opening, ...parts.map((p) => p.words)].filter(Boolean).join('\n\n');
+  return { message, quoted, slash: false };
+}
+
+/** A typed line that would read as a reference header gets a leading U+200B (Super view). */
+export function neutraliseHeaders(words: string): string {
+  return words.split('\n').map((l) => (ABOUT_AGENDA_RE.test(l) || REPLY_TO_RE.test(l) ? `\u200B${l}` : l)).join('\n');
 }
 
 /**
@@ -296,4 +446,5 @@ export function __resetScratchForTests(): void {
   listeners.clear();
   uploads.clear();
   seq = 0;
+  flashSeq = 0;
 }

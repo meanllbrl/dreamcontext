@@ -149,10 +149,14 @@ describe('superBriefing', () => {
   // The owner, 2026-10-24: "questions that need an action must not be asked inside text": a
   // choice he must make lives in a `super ask` card; the text says in one line that one waits.
   const ASK_IN_CARD_2026_10_24 = 150;
+  // The owner, 2026-10-24 (task super-e-tek-mesajda-birden-cok-referans…): several references in
+  // one message, one section per part with that part's ref, stacked parts in one section, and the
+  // pad kept right per line (rev 12, measured +646 characters).
+  const MULTI_REF_2026_10_24 = 650;
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + REPLY_SECTIONS_2026_10_24 + ASK_IN_CARD_2026_10_24);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + REPLY_SECTIONS_2026_10_24 + ASK_IN_CARD_2026_10_24 + MULTI_REF_2026_10_24);
       expect(b).toContain('small|medium|large|wide');
       expect(b).toContain('409 owner_sized');
       expect(b).toContain('`card: "not_opened"` (delegate, resume, adopt) or a `no-card` warning');

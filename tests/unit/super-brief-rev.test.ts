@@ -42,8 +42,19 @@ describe('the briefing carries the jarvis sections and its revision', () => {
     expect(OWNER_VOICE_TEXT.startsWith('<')).toBe(true);
   });
 
+  it('rev 12 (2026-10-24): several references in one message, a section per part', () => {
+    expect(SUPER_BRIEF_REV).toBe(12);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('A message may carry SEVERAL `[About…]`/`[Reply…]` headers');
+      expect(t).toContain('lists `parts="…"`, one ref per header in order');
+      expect(t).toContain("its own section opening `<!-- re:<that part's ref> -->`");
+      expect(t).toContain('(stacked parts: one\nsection, their marks one per line)');
+      expect(t).toContain('files at\nthe top are for the whole message');
+      expect(t).toContain('`note done|drop|add` per line');
+    }
+  });
+
   it('rev 11 (2026-10-24): one section per message, and a choice he must make lives in the card', () => {
-    expect(SUPER_BRIEF_REV).toBe(11);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('one section per\nmessage in the order he wrote them, each opening with its own `<!-- re:<ref> -->` line');
       expect(t).toContain('never\nseveral refs on one line');

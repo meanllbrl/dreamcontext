@@ -53,6 +53,20 @@ describe('super types — server record <-> window mirror', () => {
     expect(client.REPLY_MARK_HEAD_MAX).toBe(server.REPLY_MARK_HEAD_MAX);
     expect(String(client.REPLY_MARK_LINE_RE)).toBe(String(server.REPLY_MARK_LINE_RE));
     for (const t of ['', 'hi', ' Ödev 😀 \n', 'x'.repeat(3000)]) expect(client.msgRef(t)).toBe(server.msgRef(t));
+    expect(client.MAX_MESSAGE_REFS).toBe(server.MAX_MESSAGE_REFS);
+    const slice = (file: string) => {
+      const src = readFileSync(join(ROOT, file), 'utf-8');
+      return src.slice(src.indexOf('export const MAX_MESSAGE_REFS'), src.indexOf('return Array.from({ length: n }'));
+    };
+    // The header rule is one code on both sides: the server's inbox and the window's bubble
+    // must split a message into the same parts, or a section's part ref names nothing.
+    expect(slice('dashboard/src/lib/superTypes.ts')).toBe(slice('src/lib/super/types.ts'));
+    const note = '[About agenda line note=n1 section=now]\nline: "a"';
+    const reply = '[Reply to message ref=k3f9q0 from=super]\nquote: "q"';
+    for (const t of [note, `${note}\n\nhi\n\n${reply}\n\nok`, `x\n\n${note}\n\n${reply}\n\n[About agenda line item=q-1 section=waiting]`]) {
+      expect(client.aboutHeads(t)).toEqual(server.aboutHeads(t));
+      expect(client.partRefs(t)).toEqual(server.partRefs(t));
+    }
   });
 
   it('the group rules are one code on both sides (the window applies the owner\'s drop before the server echoes it)', () => {

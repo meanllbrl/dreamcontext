@@ -4,6 +4,7 @@ import { useVault } from '../../../context/VaultContext';
 import { useOptionalI18n } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { readScopedRaw, writeScopedRaw } from '../../../lib/scopedStorage';
+import type { Attachment } from './composerScratch';
 
 /**
  * Pure, framework-light logic shared by the Agent Chat (beta) redesign's card
@@ -1462,7 +1463,12 @@ export function promptHistory(history: PromptProbe[], items: PromptProbe[]): str
  *  means "not browsing — the textarea holds the user's own draft"; otherwise it is an index
  *  into the newest-first entries list, and `stash` is the draft that was displaced when the
  *  walk began (restored by stepping forward past the newest entry). */
-export interface HistoryNav { index: number | null; stash: string }
+export interface HistoryNav {
+  index: number | null;
+  stash: string;
+  /** The chips the stashed draft held (Super view): ↓ back to it stages them again. */
+  stashRefs?: readonly Attachment[];
+}
 
 export const NO_HISTORY_NAV: HistoryNav = { index: null, stash: '' };
 
@@ -1476,9 +1482,12 @@ export const NO_HISTORY_NAV: HistoryNav = { index: null, stash: '' };
  * convenience, losing what you just typed is not recoverable.
  */
 export function canRecallHistory(
-  draft: string, caret: number, selectionEnd: number, nav: HistoryNav,
+  draft: string, caret: number, selectionEnd: number, nav: HistoryNav, holdsChips = false,
 ): boolean {
   if (nav.index !== null) return true;
+  // A draft holding reference chips is never recalled over: the chips would be orphaned. Only
+  // from outside a walk; walking through recalled entries that carry chips goes on.
+  if (holdsChips) return false;
   if (!draft) return true;
   return caret === 0 && selectionEnd === 0;
 }
@@ -1493,20 +1502,21 @@ export function canRecallHistory(
  * forward past the newest entry hands it back verbatim.
  */
 export function stepHistory(
-  entries: string[], nav: HistoryNav, dir: 'back' | 'forward', draft: string,
-): { nav: HistoryNav; text: string } | null {
+  entries: string[], nav: HistoryNav, dir: 'back' | 'forward', draft: string, refs?: readonly Attachment[],
+): { nav: HistoryNav; text: string; refs?: readonly Attachment[] } | null {
+  const keep = (n: HistoryNav, index: number): HistoryNav => (n.stashRefs ? { index, stash: n.stash, stashRefs: n.stashRefs } : { index, stash: n.stash });
   if (dir === 'back') {
     const next = nav.index === null ? 0 : nav.index + 1;
     if (next >= entries.length) return null;
-    const stash = nav.index === null ? draft : nav.stash;
-    return { nav: { index: next, stash }, text: entries[next] };
+    if (nav.index === null) return { nav: refs?.length ? { index: next, stash: draft, stashRefs: refs } : { index: next, stash: draft }, text: entries[next] };
+    return { nav: keep(nav, next), text: entries[next] };
   }
   if (nav.index === null) return null;
   const next = nav.index - 1;
-  // Walked back out of the history: the draft that was displaced comes back, and the nav
-  // resets so the next ↑ starts a fresh walk (and re-stashes whatever is there by then).
-  if (next < 0) return { nav: NO_HISTORY_NAV, text: nav.stash };
-  return { nav: { index: next, stash: nav.stash }, text: entries[next] };
+  // Walked back out of the history: the draft that was displaced comes back (with its chips),
+  // and the nav resets so the next ↑ starts a fresh walk (and re-stashes whatever is there).
+  if (next < 0) return nav.stashRefs ? { nav: NO_HISTORY_NAV, text: nav.stash, refs: nav.stashRefs } : { nav: NO_HISTORY_NAV, text: nav.stash };
+  return { nav: keep(nav, next), text: entries[next] };
 }
 
 // ─── Stick-to-bottom (transcript auto-scroll) ─────────────────────────────────────

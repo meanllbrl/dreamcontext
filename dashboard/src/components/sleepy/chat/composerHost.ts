@@ -54,6 +54,10 @@ export interface ComposerHost {
   /** Mirror every keystroke back to the host, so an EXTERNAL append (a dropped file's path,
    *  a page-level insert) composes against an accurate draft rather than clobbering it. */
   syncDraft(text: string): void;
+  /** The composer read a rewound draft back as chips (`draftEpochReason: 'rewind'`): the next
+   *  adoption counts as external. OPTIONAL: a host that never rewinds (the agents channel) bumps
+   *  its epoch with no reason, which is external. */
+  clearDraftEpochReason?(): void;
   /** Register the textarea so the host can focus it (click-to-focus on the transcript). */
   setFocusTarget(el: HTMLElement | null): void;
   /**
@@ -106,6 +110,8 @@ export interface ComposerHostModel {
   /** Bumped when the host replaced the draft WHOLESALE; the composer adopts it rather than
    *  keeping what is in the box. */
   draftEpoch: number;
+  /** Why the epoch last moved (chatSession.ts): only `'rewind'` is read back as chips. */
+  draftEpochReason?: 'rewind' | 'external';
   /** Replayed transcript (a resumed conversation) — feeds ↑/↓ prompt history above `items`. */
   history: ChatItem[];
   items: ChatItem[];
