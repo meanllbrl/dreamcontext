@@ -17,6 +17,18 @@ export interface AskCliOpts {
   header?: string;
   multi?: boolean;
   option?: string[];
+  /** `--show <cards…>` (an array), or `--no-show` (false). */
+  show?: string[] | false;
+}
+
+/**
+ * The picture flags a question takes (`super ask`, `super queue ask`; task a-picture-question…):
+ * `--show <cards…>` names the cards the stage presents with it, `--no-show` turns that off.
+ * Combines with `--json`.
+ */
+export function showBody(show: string[] | false | undefined): Record<string, unknown> {
+  if (show === false) return { noShow: true };
+  return Array.isArray(show) && show.length ? { show } : {};
 }
 
 /** Commander's collector for a repeatable `--option`. */
@@ -42,11 +54,11 @@ export function buildAskBody(
     if (text || o.options || o.title || o.description || o.header || o.multi || o.option?.length) {
       throw new Error('--json carries the whole question: give no text or other flags with it');
     }
-    return { ask: readJsonArg(o.json, readStdin) };
+    return { ask: readJsonArg(o.json, readStdin), ...showBody(o.show) };
   }
   if (!text) throw new Error('write the question, or give it whole with --json');
   const rich = o.title !== undefined || o.description !== undefined || o.header !== undefined || o.multi || (o.option?.length ?? 0) > 0;
-  if (!rich) return { text, ...(o.options ? { options: o.options.split('|').map((x) => x.trim()) } : {}) };
+  if (!rich) return { text, ...(o.options ? { options: o.options.split('|').map((x) => x.trim()) } : {}), ...showBody(o.show) };
   if (o.options && o.option?.length) throw new Error('use --option (repeatable) or --options "a|b", not both');
   const labels = o.option?.length
     ? o.option.map((raw) => {
@@ -65,5 +77,6 @@ export function buildAskBody(
         options: labels,
       }],
     },
+    ...showBody(o.show),
   };
 }

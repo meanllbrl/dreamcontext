@@ -9,12 +9,12 @@ import {
 } from '../../lib/window-control.js';
 import { SuperStoreRefused, isReservedId, okMember, readSuperState, superRootOfChild } from '../../lib/super/store.js';
 import {
-  CONTAINER_KINDS, CONTAINER_SHAPES, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
+  CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, AGENDA_SIZE, MAX_PAD, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, dissolveGroups, floatCount, isPageKind, leaveGroups, minSizeFor, viewWithout,
-  MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  type ContainerKind, type ContainerShape, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
+  MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, type PresentLayout,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
 } from '../../lib/super/types.js';
 import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, setTeamLiveSource, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
 import { sayToAgent } from './automations.js';
@@ -34,6 +34,8 @@ import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/
 import { findLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
+import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
+import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
   CLAUDE_SESSIONS_MEANS, delegationAllowed, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
 } from '../../lib/super/capacity.js';
@@ -338,6 +340,114 @@ const TIDY_IO: TidyIo = { read: (root) => readSuperState(root, superSanitizeOpts
 /** The super's last `open image`, per vault (image-group.ts): the next one within the window
  *  joins its group. In memory: a restart only ends a chain. */
 const imageChains = new Map<string, ImageChain>();
+
+/** The file seam the picture-question check reads through (tests swap it). */
+let askShowFs: SrcFs = NODE_SRC_FS;
+export function setAskShowFsForTest(fs: SrcFs | null): void { askShowFs = fs ?? NODE_SRC_FS; }
+
+/**
+ * A picture question's cards, read before its write (task a-picture-question…, D1): `--show`
+ * named cards (any but the agenda), else the option previews' project pictures, else (inside the
+ * write) the recent set. `off` = `--no-show`. Null: refused (the answer is sent).
+ */
+interface AskShowPrep {
+  off: boolean;
+  show: string[];
+  previews: { ref: string; label: string }[];
+  skipped: string[];
+  aspects: Map<string, number | undefined>;
+}
+async function prepareAskShow(
+  c: SuperCaller, b: Record<string, unknown>, res: ServerResponse, images: readonly PreviewImage[], base: string, child?: string,
+): Promise<AskShowPrep | null> {
+  const none: AskShowPrep = { off: true, show: [], previews: [], skipped: [], aspects: new Map() };
+  if (b.noShow === true) return none;
+  const project = dirname(c.who.contextRoot);
+  let show: string[] = [];
+  if (b.show !== undefined) {
+    const raw = Array.isArray(b.show) ? b.show : [];
+    if (!raw.length || raw.length > MAX_FILMSTRIP || raw.some((x) => typeof x !== 'string')) {
+      refuse(res, 400, 'invalid_args', `--show names 1-${MAX_FILMSTRIP} cards`);
+      return null;
+    }
+    show = [...new Set(raw as string[])];
+    for (const id of show) {
+      const k = c.state.containers.find((x) => x.id === id);
+      if (!k) { refuse(res, 404, 'unknown_container', `no such container: ${id} (\`dreamcontext super state\` lists them)`); return null; }
+      if (k.kind === 'agenda') { refuse(res, 400, 'invalid_args', 'the agenda is never shown for a question'); return null; }
+    }
+  }
+  const { found, skipped } = show.length ? { found: [], skipped: [] } : await resolvePreviewImages(project, base, images, askShowFs);
+  // Every picture the question might show, its shape read now (image-aspect.ts).
+  const now = Date.now();
+  const recent = show.length || found.length ? [] : recentAskCards(c.state, child ? { child } : { chain: imageChains.get(c.who.contextRoot) }, now);
+  const refs = [
+    ...found.map((f) => f.ref),
+    ...c.state.containers.filter((k) => k.kind === 'image' && (show.includes(k.id) || recent.includes(k.id))).map((k) => k.ref),
+  ];
+  const aspects = refs.length ? await imageAspects(project, refs) : new Map<string, number | undefined>();
+  // A tidy pass racing the write never moves what the question is about to show.
+  touchCards(c.who.contextRoot, [...show, ...recent]);
+  return { off: false, show, previews: found, skipped, aspects };
+}
+
+/** Inside the question's write: open or pick its cards and record them (ask-show.ts). */
+function applyAskShow(
+  s: SuperState, item: string, prep: AskShowPrep, root: string, now: number, child?: string,
+): { ids: string[]; via: AskShow['via']; opened: string[]; cut: number; chain: ImageChain | null } | null {
+  if (prep.off) return null;
+  const inOthers = (id: string) => {
+    const k = s.containers.find((x) => x.id === id);
+    return !!k && k.kind === 'image' && (k.place === 'others' || s.groups.some((g) => g.cards.includes(id) && g.place === 'others'));
+  };
+  // Pictures the Super (or this child's job) opened in the last minutes are the question's own:
+  // they go back with it (D2a, the recent rule), whichever source named them.
+  const recent = recentAskCards(s, child ? { child } : { chain: imageChains.get(root) }, now);
+  let ids: string[];
+  let via: AskShow['via'];
+  let opened: string[] = [];
+  let cut = 0;
+  let chain: ImageChain | null = null;
+  if (prep.show.length) {
+    via = 'show';
+    ids = prep.show.filter((id) => s.containers.some((k) => k.id === id && k.kind !== 'agenda'));
+    opened = ids.filter(inOthers);
+  } else if (prep.previews.length) {
+    via = 'preview';
+    const r = openImageCards(s, prep.previews.map((p) => ({ ref: p.ref, ...(p.label ? { title: p.label } : {}), aspect: prep.aspects.get(p.ref) })),
+      { ...(child ? { forChild: child } : {}), now, chain: imageChains.get(root) });
+    ids = r.ids; opened = r.made; cut = r.cut; chain = r.chain;
+  } else {
+    via = 'recent';
+    ids = recent;
+    opened = ids.filter(inOthers);
+  }
+  for (const k of s.containers) if (ids.includes(k.id)) setAspect(k, prep.aspects);
+  opened = [...new Set([...opened, ...ids.filter((id) => recent.includes(id))])];
+  if (ids.length) recordAskShow(s, item, ids, opened, via);
+  return { ids, via, opened, cut, chain };
+}
+
+/** After the write: the picture chain, the phone's strip, and what the agent is told (D9). */
+function finishAskShow(
+  c: SuperCaller, state: SuperState, item: string, prep: AskShowPrep, r: ReturnType<typeof applyAskShow>,
+): Record<string, unknown> {
+  if (prep.off) return { cards: [], state: 'none', reason: 'no_show' };
+  if (r?.chain) imageChains.set(c.who.contextRoot, r.chain);
+  // New pictures reach a phone watching this Super Agent once, as `open` sends them (D7).
+  const fresh = (r?.opened ?? []).map((id) => state.containers.find((k) => k.id === id)).filter((k): k is SuperState['containers'][number] => !!k && k.kind === 'image');
+  if (fresh.length && state.session) {
+    const frame = stageMediaFrame(fresh.map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) })));
+    if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
+  }
+  const st = askShowState(state, item);
+  return {
+    cards: r?.ids ?? [], ...(r?.ids.length ? { via: r.via } : {}), state: st,
+    ...(st === 'skipped' ? { reason: 'owner_layout' } : {}),
+    ...(r?.cut ? { cut: r.cut } : {}),
+    ...(prep.skipped.length ? { skipped: prep.skipped } : {}),
+  };
+}
 
 /** Pool rows a `delegate --from` is starting right now, per vault: a second claim is refused. */
 const claims = new Map<string, Set<string>>();
@@ -925,15 +1035,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const aspects = await imageAspects(dirname(c.who.contextRoot),
       c.state.containers.filter((k) => k.kind === 'image' && ids.includes(k.id)).map((k) => k.ref));
     const state = await writeSuper(c.who.contextRoot, (s) => {
-      for (const k of s.containers) if (ids.includes(k.id)) { k.place = 'float'; setAspect(k, aspects); }
-      const prev = s.view;
-      const same = prev.mode === 'present' && sameCardSet(prev.cards ?? [], ids);
-      // The owner's pick for these same cards is his (plan-r2 D10): the agent's order is written,
-      // the layout and the chat bar stay. Other cards are a new presentation.
-      if (same && prev.layoutBy === 'owner') { kept = true; s.view = { ...prev, cards: ids }; return; }
-      // The same cards again with no --layout keep the layout they have (and his chat bar with it).
-      const lay = layout ?? (same ? prev.layout : undefined);
-      s.view = { mode: 'present', cards: ids, ...(lay ? { layout: lay } : {}), ...(same && prev.chat === 'bar' ? { chat: 'bar' as const } : {}) };
+      for (const k of s.containers) if (ids.includes(k.id)) setAspect(k, aspects);
+      // One present (types.ts `presentCards`): the owner's same-set pick and a question the same
+      // cards show stay; other cards are a new presentation.
+      kept = presentCards(s, ids, layout).kept;
     });
     ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout' } : {}) });
   },
@@ -1207,22 +1312,33 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (item.state === 'done') { refuse(res, 409, 'stale_request', 'that question is already answered'); return; }
     const text = oneLine(typeof b.text === 'string' ? b.text : '').slice(0, MAX_OWNER_TEXT);
     if (!text) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
+    // Its pictures (task a-picture-question…): `--show`, the child's own option previews (read
+    // against its worktree, or the project), else the pictures shown for its job lately.
+    const child = item.sessionId;
+    const pq = getChat(child)?.pendingQuestion;
+    const images = pq && !pq.isPermission && pq.requestId === item.requestId ? pq.images ?? [] : [];
+    const prep = await prepareAskShow(c, b, res, images, c.state.children[child]?.worktree ?? dirname(c.who.contextRoot), child);
+    if (!prep) return;
     // Asked inside an event turn: that turn renders in full for the owner (D8).
     const batch = c.state.session ? superOpenBatch(c.state.session) : null;
+    const now = Date.now();
+    let shown: ReturnType<typeof applyAskShow> = null;
     const state = await writeSuper(c.who.contextRoot, (s) => {
       const q = s.queue.find((x) => x.id === id);
       if (q && q.kind === 'question' && q.state !== 'done') {
         q.state = 'escalated';
         q.ownerText = text;
         if (batch) { q.batch = batch; noteOwnerBatch(s, batch); }
+        shown = applyAskShow(s, q.id, prep, c.who.contextRoot, now, s.children[child] ? child : undefined);
       }
     });
+    const show = finishAskShow(c, state, id as string, prep, shown);
     // What reached the owner, told as it is (owner-question.ts). Only a question he has seen
     // makes the turn's end no second ping; one nobody saw keeps the reply's own notch row.
     const reach = ownerQuestionReach(state, id as string);
     if (reach.reached) noteSuperEscalation(c.who.sessionId);
     const head = superQueueHead(state);
-    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach });
+    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach, show });
   },
 
   'queue-done': async (c, b, res) => {
@@ -1354,22 +1470,34 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       spec = askSpecFromLegacy(raw, legacy);
     }
     const { ownerText: raw, options } = askSummary(spec);
+    // Its pictures (task a-picture-question…): `--show`, the option previews, else the last set.
+    const prep = await prepareAskShow(c, b, res, imagesInPreviews(spec.questions), dirname(c.who.contextRoot));
+    if (!prep) return;
     const batch = superOpenBatch(session);
     const id = newQueueId();
+    const now = Date.now();
+    let pushed = false;
+    let shown: ReturnType<typeof applyAskShow> = null;
     const state = await writeSuper(c.who.contextRoot, (s) => {
+      // Refused by a question already open: no card is opened, nothing mirrors (D6).
       if (s.queue.some((q) => q.kind === 'ask' && q.state !== 'done')) return;
       s.queue.push({
-        id, sessionId: session, kind: 'ask', state: 'escalated', ownerText: raw, createdAt: Date.now(),
+        id, sessionId: session, kind: 'ask', state: 'escalated', ownerText: raw, createdAt: now,
         ...(options.length ? { options } : {}), ...(batch ? { batch } : {}), ask: spec,
       });
+      pushed = true;
       noteOwnerBatch(s, batch ?? undefined);
+      shown = applyAskShow(s, id, prep, c.who.contextRoot, now);
     });
-    if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner; wait for his answer'); return; }
+    if (!pushed) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner; wait for his answer'); return; }
+    // The record's queue was full: the store dropped it (its cards are put back on the next write).
+    if (!state.queue.some((q) => q.id === id)) { refuse(res, 409, 'queue_full', 'the owner\'s queue is full; close answered items (`super queue done`) and ask again'); return; }
+    const show = finishAskShow(c, state, id, prep, shown);
     // Its turn's end is no second ping once the question reached him (owner-question.ts).
     const reach = ownerQuestionReach(state, id);
     if (reach.reached) noteSuperEscalation(session);
     const head = superQueueHead(state);
-    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...reach });
+    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...reach, show });
   },
 
   merge: async (c, b, res) => {
@@ -2193,8 +2321,14 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       // The owner's view is his: it never carries the server's "put here on its own" mark.
       if (view !== undefined) {
         s.view = view as SuperState['view'];
-        // His marks on a presentation travel only as the set-guarded fields below.
-        if (s.view && typeof s.view === 'object') for (const k of ['auto', 'layoutBy', 'chat'] as const) delete (s.view as unknown as Record<string, unknown>)[k];
+        // His marks on a presentation travel only as the set-guarded fields below; a question's
+        // presentation is no longer one once he sets the view himself.
+        if (s.view && typeof s.view === 'object') {
+          const raw = s.view as unknown as Record<string, unknown>;
+          for (const k of ['auto', 'layoutBy', 'chat', 'ask', 'by'] as const) delete raw[k];
+          // A side by side or a presentation he sets is his: a picture question never replaces it.
+          if (raw.mode === 'half' || raw.mode === 'present') raw.by = 'owner';
+        }
       }
       // The layout he picked, the chat bar, leaving: each only on the cards he saw (plan-r2 R2-E3).
       s.view = applyOwnerViewFields(s.view, ownerView);

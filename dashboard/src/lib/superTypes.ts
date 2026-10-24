@@ -110,6 +110,10 @@ export interface SuperView {
   layoutBy?: 'owner';
   /** `present` only: the owner folded the agent's chat to its composer bar. */
   chat?: 'bar';
+  /** `present` only: the question whose pictures this presentation shows (server-written). */
+  ask?: string;
+  /** `half`/`present`: the owner set this view himself (server-stamped). */
+  by?: 'owner';
 }
 
 /**
@@ -202,7 +206,7 @@ export function resolveLayout(asked: unknown, cards: readonly LayoutCard[]): Pre
  * resolved, then cut to that layout's most. The owner's mark and the chat bar stay only while the
  * layout read is the layout kept (a closed card that changed it drops both). Null: no card left.
  */
-export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutBy?: unknown; chat?: unknown }, containers: readonly (LayoutCard & { id: string })[]): SuperView | null {
+export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutBy?: unknown; chat?: unknown; ask?: unknown; by?: unknown }, containers: readonly (LayoutCard & { id: string })[]): SuperView | null {
   const byId = new Map(containers.map((c) => [c.id, c] as const));
   const cards: string[] = [];
   for (const x of Array.isArray(raw.cards) ? raw.cards : []) {
@@ -217,6 +221,8 @@ export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutB
     mode: 'present', cards: shown, layout,
     ...(kept && raw.layoutBy === 'owner' ? { layoutBy: 'owner' as const } : {}),
     ...(kept && raw.chat === 'bar' ? { chat: 'bar' as const } : {}),
+    ...(typeof raw.ask === 'string' && /^[a-z0-9-]{1,40}$/.test(raw.ask) ? { ask: raw.ask } : {}),
+    ...(raw.by === 'owner' ? { by: 'owner' as const } : {}),
   };
 }
 

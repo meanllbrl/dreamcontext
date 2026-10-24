@@ -124,6 +124,27 @@ export interface SuperContainer {
   aspect?: number;
 }
 
+/**
+ * A picture question's cards (task a-picture-question…, D2): the question `item` shows `cards`
+ * on the stage while it is the owner's head question, and puts them back after his answer.
+ * `opened` = the pictures THIS question created or brought back from Others (they go to Others
+ * after it); `via` = where the cards came from (`--show`, the option previews, the recent set).
+ * Server-written by `super ask` / `super queue ask`, settled on every write (ask-show.ts).
+ */
+export const ASK_SHOW_VIAS = ['show', 'preview', 'recent'] as const;
+export type AskShowVia = typeof ASK_SHOW_VIAS[number];
+export interface AskShow {
+  item: string;
+  cards: string[];
+  opened: string[];
+  via: AskShowVia;
+  presented?: true;
+  skipped?: 'owner_layout';
+}
+export const MAX_ASK_SHOWS = 4;
+/** `recent`: pictures opened for the job (or the super's last set) at most this long ago. */
+export const ASK_SHOW_RECENT_MS = 10 * 60_000;
+
 /** A picture's aspect outside this is dropped, never clamped (a 1:30 strip is not a mockup). */
 export const ASPECT_MIN = 0.05;
 export const ASPECT_MAX = 20;
@@ -171,6 +192,12 @@ export interface SuperView {
   layoutBy?: 'owner';
   /** `present` only: the owner folded the agent's chat to its composer bar. */
   chat?: 'bar';
+  /** `present` only: the queue item whose pictures this presentation shows (ask-show.ts): the
+   *  stage floats when that question closes. Server-written; a raw owner view drops it. */
+  ask?: string;
+  /** `half`/`present`: the OWNER set this view himself (a side by side, a presentation from his
+   *  window). A picture question never replaces it. Stamped only by his layout POST. */
+  by?: 'owner';
 }
 
 /**
@@ -263,7 +290,7 @@ export function resolveLayout(asked: unknown, cards: readonly LayoutCard[]): Pre
  * resolved, then cut to that layout's most. The owner's mark and the chat bar stay only while the
  * layout read is the layout kept (a closed card that changed it drops both). Null: no card left.
  */
-export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutBy?: unknown; chat?: unknown }, containers: readonly (LayoutCard & { id: string })[]): SuperView | null {
+export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutBy?: unknown; chat?: unknown; ask?: unknown; by?: unknown }, containers: readonly (LayoutCard & { id: string })[]): SuperView | null {
   const byId = new Map(containers.map((c) => [c.id, c] as const));
   const cards: string[] = [];
   for (const x of Array.isArray(raw.cards) ? raw.cards : []) {
@@ -278,7 +305,38 @@ export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutB
     mode: 'present', cards: shown, layout,
     ...(kept && raw.layoutBy === 'owner' ? { layoutBy: 'owner' as const } : {}),
     ...(kept && raw.chat === 'bar' ? { chat: 'bar' as const } : {}),
+    // The question it shows and the owner's mark stay while any card does (ask-show.ts).
+    ...(typeof raw.ask === 'string' && QUEUE_ID_RE.test(raw.ask) ? { ask: raw.ask } : {}),
+    ...(raw.by === 'owner' ? { by: 'owner' as const } : {}),
   };
+}
+
+/**
+ * Present these cards (the `present` verb's write, and a picture question's, ask-show.ts): they
+ * float, and the view shows them. The owner's layout pick for the same cards stays (`kept`), and
+ * so does a question the same cards already show; another set is a new presentation. `ask`
+ * names the question this presentation is for. Mutates `s`.
+ */
+export function presentCards(
+  s: Pick<SuperState, 'containers' | 'view'>, ids: readonly string[], layout?: PresentLayout, ask?: string,
+): { kept: boolean } {
+  for (const k of s.containers) if (ids.includes(k.id)) k.place = 'float';
+  const prev = s.view;
+  const same = prev.mode === 'present' && sameCardSet(prev.cards ?? [], ids);
+  const question = ask ?? (same ? prev.ask : undefined);
+  // The owner's pick for these same cards is his (plan-r2 D10): the agent's order is written,
+  // the layout and the chat bar stay. Other cards are a new presentation.
+  if (same && prev.layoutBy === 'owner') {
+    s.view = { ...prev, cards: [...ids], ...(question ? { ask: question } : {}) };
+    return { kept: true };
+  }
+  // The same cards again with no layout keep the layout they have (and his chat bar with it).
+  const lay = layout ?? (same ? prev.layout : undefined);
+  s.view = {
+    mode: 'present', cards: [...ids], ...(lay ? { layout: lay } : {}), ...(same && prev.chat === 'bar' ? { chat: 'bar' as const } : {}),
+    ...(question ? { ask: question } : {}),
+  };
+  return { kept: false };
 }
 
 /** Two card lists name the same cards (in any order). */
@@ -583,6 +641,8 @@ export interface SuperState {
   pad?: SuperPadItem[];
   /** The last pad id handed out (`n<padSeq>`): ids are never reused, so a stale id names nothing. */
   padSeq?: number;
+  /** Picture questions' cards (ask-show.ts), at most MAX_ASK_SHOWS. Absent = none. */
+  askShows?: AskShow[];
 }
 
 /**
@@ -893,6 +953,32 @@ export interface SuperAskQuestion {
 /** AskUserQuestion's input: `title`, `questions[]`, `metadata.source` (stored as `source`). */
 export interface SuperAskSpec { title?: string; questions: SuperAskQuestion[]; source?: string }
 
+/** A picture an option preview points at: its raw `src` and the option's label. */
+export interface PreviewImage { src: string; label: string }
+const IMG_SRC_RE = /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi;
+
+/**
+ * Every `<img src>` in these options' previews, in option order, deduped, at most MAX_FILMSTRIP
+ * (D1.2): the raw src (≤ 1024 characters) and the option's label. `srcset` is not read. Pure;
+ * the route normalises and checks each src against the project.
+ */
+export function imagesInPreviews(questions: readonly { options?: readonly { label?: unknown; preview?: unknown }[] }[]): PreviewImage[] {
+  const out: PreviewImage[] = [];
+  for (const q of questions) {
+    for (const o of q.options ?? []) {
+      if (typeof o?.preview !== 'string') continue;
+      const label = typeof o.label === 'string' ? o.label : '';
+      for (const m of o.preview.matchAll(IMG_SRC_RE)) {
+        const src = (m[1] ?? m[2] ?? m[3] ?? '').trim();
+        if (!src || src.length > 1024 || out.some((x) => x.src === src)) continue;
+        out.push({ src, label });
+        if (out.length >= MAX_FILMSTRIP) return out;
+      }
+    }
+  }
+  return out;
+}
+
 export const MAX_ASK_QUESTIONS = 4;
 export const MAX_ASK_LABEL = 60;
 export const MAX_ASK_HEADER = 24;
@@ -1045,7 +1131,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 10;
+export const SUPER_BRIEF_REV = 11;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -1070,10 +1156,11 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
 - A live job's card (working, asking, stuck, waiting on him) always floats: never stack or group
   it (409 \`live_child\`); the stage makes room for it by itself.
 - A tracked metric comes up: \`super open insight <slug>\` instead of writing the number.
-- The owner has to decide something visual (a mockup, a layout): open the options as cards
-  (png, svg, html, a board), \`super present <a> <b>\` (two options: side by side), then ask with
-  \`super ask --json\` (an option \`preview\` draws each choice in the card itself); after his
-  answer, \`super present --off\`.
+- The owner has to decide something visual (a mockup, a layout): ask with \`super ask --json\`,
+  each option's \`preview\` an \`<img src="…">\` of a project file (or name cards with
+  \`--show <cards…>\`). The server presents those pictures beside you while he decides and puts
+  them back in Others after his answer: never \`super present\` or \`--off\` around a question.
+  A child's pictures in its worktree: copy them under \`_dream_context/tmp/…\` and \`--show\` them.
 - A site or a long document to look at: \`super present <card>\` (one card: the wide spotlight, the
   site at its desktop width, you a small chat beside it). Pictures, slides or 5+ screenshots:
   \`super present <c1…c8>\` (a filmstrip). A metric stays a large card, never a presentation.

@@ -208,12 +208,14 @@ merges them. Reply: "Started 6 (one messages Ayla), 2 wait for the invites API. 
 1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip, and a page with its own child's chat (and browser) is
 review. A wrong count for a named layout answers 400 naming the range. The owner can switch the layout
 from the stage's top band; an answer with `kept: owner_layout` means he chose it: leave it.
+A picture question presents itself: `super ask`/`queue ask` shows its pictures (`--show`, previews'
+`<img src>`, your last set) and puts them back after his answer; no `present`/`--off` around it.
 
 | Situation | Layout | Command |
 |---|---|---|
 | local dev site to review | spotlight | `present <web>` |
 | a child builds a site, the owner watches | review | `present <web> <child-chat> [<browser>]` |
-| mockup A/B choice | compare + ask | `present <a> <b>` → `super ask --json` (previews) |
+| mockup A/B choice | compare + ask | `super ask --json`, `<img src>` previews |
 | before / after | compare | `present <before> <after>` |
 | 3-4 options or metrics together | grid | `present <c1…c4>` |
 | picture set, deck, 5+ screenshots | filmstrip | `present <c1…c8>` |

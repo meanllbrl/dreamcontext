@@ -35,7 +35,7 @@
  */
 
 import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
-import { stripReplyMark } from '../super/types.js';
+import { imagesInPreviews, stripReplyMark, type PreviewImage } from '../super/types.js';
 
 export const CHAT_STATUSES = ['starting', 'working', 'asking', 'idle', 'gone'] as const;
 export type ChatStatus = typeof CHAT_STATUSES[number];
@@ -71,6 +71,9 @@ export interface PendingQuestion {
   /** The question text / the command being asked about, capped. */
   text: string;
   options: string[];
+  /** An AskUserQuestion's option pictures (`<img src>` in its previews, every question), raw:
+   *  the super route checks each against the project (ask-show). Absent: none. */
+  images?: PreviewImage[];
 }
 
 export interface ChatEntry {
@@ -207,7 +210,10 @@ function emit(e: ChatEntry, from: ChatStatus): void {
 const cap = (s: string, n = TEXT_CAP) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const clone = (e: ChatEntry): ChatEntry => ({
   ...e, lastAssistantText: [...e.lastAssistantText],
-  pendingQuestion: e.pendingQuestion ? { ...e.pendingQuestion, options: [...e.pendingQuestion.options] } : null,
+  pendingQuestion: e.pendingQuestion ? {
+    ...e.pendingQuestion, options: [...e.pendingQuestion.options],
+    ...(e.pendingQuestion.images ? { images: e.pendingQuestion.images.map((i) => ({ ...i })) } : {}),
+  } : null,
   ...(e.ownerWaits ? { ownerWaits: e.ownerWaits.map((w) => ({ ...w })) } : {}),
   ...(e.ownerAnswered ? { ownerAnswered: [...e.ownerAnswered] } : {}),
 });
@@ -351,7 +357,8 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
       ? (first.options as Array<Record<string, unknown>>).map((o) => (typeof o?.label === 'string' ? o.label : '')).filter(Boolean)
       : [];
     const text = qs.map((q) => (typeof q.question === 'string' ? q.question : '')).filter(Boolean).join('\n');
-    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options };
+    const images = imagesInPreviews(qs.map((q) => ({ options: Array.isArray(q.options) ? q.options as Array<{ label?: unknown; preview?: unknown }> : [] })));
+    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options, ...(images.length ? { images } : {}) };
   }
   const described = typeof input.command === 'string' ? input.command
     : typeof input.file_path === 'string' ? input.file_path

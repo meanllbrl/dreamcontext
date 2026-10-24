@@ -9,6 +9,7 @@ import { superRestoreHold } from './restore.js';
 import { makeRoom } from './room.js';
 import { bringLiveCard, floatLiveChildren } from './live.js';
 import { keepQuestionsAcrossRelaunch } from './outbox.js';
+import { settleAskShows } from './ask-show.js';
 import {
   STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, getChat, onChatChange, onOwnerWaitChange, ownerWaitAnswered,
   type ChatChange, type ChatEntry,
@@ -319,14 +320,16 @@ export function noteHeld(s: SuperState): boolean {
 }
 
 /** Change the record (locked, sanitized), then push. Every write in wave 2 goes through here.
- *  Every write also notes what a question open with the owner holds back (`noteHeld`), and
- *  floats every live child's card (live.ts: a live job is never in Others or a group unless the
+ *  Every write also notes what a question open with the owner holds back (`noteHeld`), settles
+ *  picture questions' cards (`settleAskShows`), and floats every live child's card (live.ts: a live job is never in Others or a group unless the
  *  owner put it there himself). */
 export async function writeSuper(contextRoot: string, fn: (draft: SuperState) => SuperState | void): Promise<SuperState> {
   const next = await updateSuperState(contextRoot, (draft) => {
     const out = fn(draft) ?? draft;
     floatLiveChildren(out);
     noteHeld(out);
+    // A picture question's cards: presented at the head, put back once it closes (ask-show.ts).
+    settleAskShows(out, superQueueHead(out));
     return out;
   }, superSanitizeOpts());
   afterSuperWrite(contextRoot, next);

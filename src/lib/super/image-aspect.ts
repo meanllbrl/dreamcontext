@@ -61,13 +61,15 @@ async function jpegSize(fh: FileHandle): Promise<{ width: number; height: number
   let pos = 2;
   let orientation = 1;
   let exifSeen = false;
+  let fill = 0;
   while (pos < JPEG_WALK_MAX) {
     const h = await readAt(fh, pos, 4);
     if (h.length < 2) return null;
     if (h[0] !== 0xff) return null;
     const marker = h[1]!;
     // Fill bytes before a marker.
-    if (marker === 0xff) { pos += 1; continue; }
+    // (a run of them is bounded: a file of 0xFF bytes is no picture).
+    if (marker === 0xff) { if (++fill > 64) return null; pos += 1; continue; }
     if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { pos += 2; continue; }
     // End of image or start of scan before any frame header: nothing to read.
     if (marker === 0xd9 || marker === 0xda) return null;
