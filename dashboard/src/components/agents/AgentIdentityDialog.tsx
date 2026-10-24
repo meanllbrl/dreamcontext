@@ -424,10 +424,11 @@ export function AgentIdentityDialog({
 
         {editing && !detail.data?.agent.implicit && (
           <fieldset className="aid-autonomy" disabled={!ready}>
-            <legend className="aid-label">{t('aiteam.autonomy.title')}</legend>
+            <legend className="aid-label" id="aid-autonomy-legend">{t('aiteam.autonomy.title')}</legend>
             <div
               className="aid-segmented"
               role="radiogroup"
+              aria-labelledby="aid-autonomy-legend"
               onKeyDown={(e) => {
                 // One Tab stop; the arrows move the choice (the radio pattern).
                 if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;

@@ -23,7 +23,7 @@ function FilingRow({ task, onObject, buttonRef }: { task: Task; onObject: () => 
   useEffect(() => {
     if (!menu) return;
     const down = (e: PointerEvent) => { if (!moreRef.current?.contains(e.target as Node)) setMenu(false); };
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setMenu(false); } };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setMenu(false); buttonRef.current?.focus(); } };
     moreRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
     document.addEventListener('pointerdown', down, true);
     document.addEventListener('keydown', key, true);
