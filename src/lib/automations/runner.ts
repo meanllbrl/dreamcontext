@@ -2849,7 +2849,7 @@ export function killRunGroup(
       ageMs,
       runnerAlive,
       groupAlive,
-      refusedReason: 'that process id no longer belongs to the recorded run (Windows reuses ids) — refusing to kill',
+      refusedReason: 'could not confirm that process id still belongs to the recorded run (Windows reuses ids; the check found another parent, or could not run) — refusing to kill',
     };
   }
 

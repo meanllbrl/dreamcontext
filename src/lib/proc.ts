@@ -68,9 +68,11 @@ export function win32System32(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** The PATH of `env` (any key case: `Path`) as drive-qualified or UNC directories only. A relative
- *  entry (`.`, `bin`) would make the lookup depend on the working folder again. */
+ *  entry (`.`, `bin`) would make the lookup depend on the working folder again. With two spellings
+ *  (`{ ...process.env, PATH: augmented }` keeps the inherited `Path` too) the one Node's win32
+ *  spawn keeps wins: the first in sort order, so `PATH` over `Path`. */
 export function win32AbsolutePathDirs(env: NodeJS.ProcessEnv = process.env): string[] {
-  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
+  const key = Object.keys(env).filter((k) => k.toUpperCase() === 'PATH').sort()[0];
   const raw = (key ? env[key] : undefined) ?? '';
   return raw.split(';')
     .map((d) => d.trim().replace(/^"(.*)"$/, '$1'))

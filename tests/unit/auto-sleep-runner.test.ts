@@ -297,7 +297,7 @@ describe('cancelAutoSleep', () => {
     });
     expect(asked).toEqual([[999_999, 4242]]);
     expect(res.killed).toBe(false);
-    expect(res.refusedReason).toMatch(/no longer belongs to the recorded run/);
+    expect(res.refusedReason).toMatch(/still belongs to the recorded run/);
     expect(signals).toEqual([]);
     expect(readAutoSleepSidecar(ctx)?.status).toBe('running');
   });

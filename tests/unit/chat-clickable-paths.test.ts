@@ -80,6 +80,9 @@ describe('looksLikePath — a Windows command line is not a path', () => {
     expect(looksLikePath(String.raw`C:\tools\run.exe --flag x.y`)).toBe(false);
     expect(looksLikePath(String.raw`C:\tools\run.exe -v out.log`)).toBe(false);
     expect(looksLikePath(String.raw`C:\Program Files\App\app.exe`)).toBe(true);
+    // A spaced dash is not a flag: Explorer names a duplicate `notes - Copy.txt`.
+    expect(looksLikePath(String.raw`C:\Users\me\Desktop\notes - Copy.txt`)).toBe(true);
+    expect(looksLikePath(String.raw`C:\a\Screenshot 2026-10-24 -1.png`)).toBe(true);
   });
 });
 

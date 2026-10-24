@@ -132,6 +132,11 @@ describe('resolveBareWin32 — a bare name never runs from the working folder', 
     expect(probed.every((p) => /^C:\\/.test(p))).toBe(true);
   });
 
+  it('with both PATH and Path, reads PATH (the key Node\'s win32 spawn keeps)', () => {
+    expect(win32AbsolutePathDirs({ Path: 'C:\\stale', PATH: 'C:\\fresh' })).toEqual(['C:\\fresh']);
+    expect(win32AbsolutePathDirs({ PATH: 'C:\\fresh', Path: 'C:\\stale' })).toEqual(['C:\\fresh']);
+  });
+
   it('falls back to System32 (ENOENT there), never the bare name', () => {
     expect(resolveBareWin32('claude', env, () => false)).toBe('C:\\Windows\\System32\\claude');
     expect(resolveBareWin32('claude', {}, () => false)).toBe('C:\\Windows\\System32\\claude');

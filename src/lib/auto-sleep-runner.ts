@@ -299,7 +299,7 @@ export function cancelAutoSleep(
   // only while the cycle is still the recorded runner's child. Identity elsewhere.
   const isOurs = opts.isOurs ?? recordedChildIsOurs;
   if (!isOurs(sidecar.pgid, sidecar.runnerPid ?? 0)) {
-    return { found: true, killed: false, pgid: sidecar.pgid, refusedReason: 'that process id no longer belongs to the recorded run (Windows reuses ids) — refusing to kill' };
+    return { found: true, killed: false, pgid: sidecar.pgid, refusedReason: 'could not confirm that process id still belongs to the recorded run (Windows reuses ids; the check found another parent, or could not run) — refusing to kill' };
   }
 
   try { kill(-sidecar.pgid, 'SIGTERM'); } catch { /* already gone */ }

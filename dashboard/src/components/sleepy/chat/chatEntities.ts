@@ -2181,8 +2181,9 @@ export function normalizeDrivePath(text: string, opts: { decode?: boolean } = {}
 export function looksLikePath(text: string): boolean {
   const t = text.trim();
   if (!t || t.length > 200 || t.includes('://')) return false;
-  // ` -x` / ` --flag` is a command line that starts with a program path, not a path.
-  if (isDrivePath(t)) return !/\s-/.test(t) && DRIVE_PATH_RE.test(t);
+  // ` -x` / ` --flag` is a command line that starts with a program path, not a path. Only a
+  // flag-shaped token: `notes - Copy.txt` (Explorer's duplicate name) is still a path.
+  if (isDrivePath(t)) return !/\s--?[A-Za-z]/.test(t) && DRIVE_PATH_RE.test(t);
   if (/\s/.test(t)) return false;
   return PATH_LIKE_RE.test(t);
 }

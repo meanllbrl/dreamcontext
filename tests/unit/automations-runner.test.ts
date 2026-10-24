@@ -1118,7 +1118,7 @@ describe('killRunGroup', () => {
     const killReused = vi.fn();
     const refused = killRunGroup(contextRoot, reused, { killImpl: killReused, nowMs, force: true, isOurs: () => false });
     expect(refused.killed).toBe(false);
-    expect(refused.refusedReason).toMatch(/no longer belongs to the recorded run/);
+    expect(refused.refusedReason).toMatch(/still belongs to the recorded run/);
     expect(killReused).not.toHaveBeenCalledWith(-55556, 'SIGKILL');
 
     const cache = readAutomationCache(contextRoot, slug);

@@ -16,8 +16,8 @@ describe('isWin32SafeTmpPath', () => {
 
   it('rejects anything a shell would interpret, and paths without a drive', () => {
     for (const bad of [
-      "C:\\tmp\\a'b.md", 'C:\\tmp\\a"b.md', 'C:\\tmp\\$(id).md', 'C:\\tmp\\a`id`.md',
-      'C:\\tmp\\a;id.md', 'C:\\tmp\\a|id.md', 'C:\\tmp\\a\nb.md', 'C:\\tmp\\%TEMP%.md',
+      'C:\\tmp\\a"b.md', 'C:\\tmp\\$(id).md', 'C:\\tmp\\a`id`.md', 'C:\\tmp\\a!b.md',
+      'C:\\tmp\\a\nb.md', 'C:\\tmp\\%TEMP%.md', 'C:\\tmp\\a\0b.md',
       '/tmp/a.md', '\\\\server\\share\\a.md', 'tmp\\a.md', '',
     ]) {
       expect(isWin32SafeTmpPath(bad), JSON.stringify(bad)).toBe(false);
@@ -29,11 +29,11 @@ describe('isWin32SafeTmpPath', () => {
       'C:\\Users\\Öğretmen\\AppData\\Local\\Temp\\dreamcontext-chat-settings-1.json',
       'C:\\Users\\me\\Masaüstü\\proje\\.mcp.json',
       'C:\\Users\\Jane Doe\\AppData\\Local\\Temp\\a.json',
+      // Literal inside the hook's bash double quotes, and argv never meets a shell.
+      "C:\\Users\\O'Brien\\AppData\\Local\\Temp\\a.json", 'C:\\Users\\A&B\\a.json', 'C:\\x\\a;b|c.json',
     ]) {
       expect(isWin32SafeTmpPath(ok), ok).toBe(true);
     }
-    expect(isWin32SafeTmpPath('C:\\tmp\\a&b.md')).toBe(false);
-    expect(isWin32SafeTmpPath('C:\\tmp\\a!b.md')).toBe(false);
   });
 
   it('leaves the POSIX guard untouched (a drive path still fails it)', () => {

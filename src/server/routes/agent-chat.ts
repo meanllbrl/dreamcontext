@@ -562,13 +562,14 @@ export function isShellSafePath(p: string): boolean {
  *  silently dropped every Windows chat's briefing, `--agents` and `--settings` files). On win32
  *  the chat argv never goes through a shell (see `chatSpawnCommand`); the only shell that sees
  *  one of these paths is the mode-note hook's `cat "<path>"` (bash), where the double quotes
- *  cover spaces and `~` (8.3 short names). Still no quote, `$`, backtick, `;`, `|`, `&`, `%`,
- *  `!`, line break or NUL. Exported pure for tests. */
+ *  cover spaces, `~` (8.3 short names), `'`, `;`, `|` and `&`. Still no `"`, `$`, backtick,
+ *  `%`, `!`, line break or NUL. Exported pure for tests. */
 export function isWin32SafeTmpPath(p: string): boolean {
-  // Any letter, so a profile or project folder like `Öğretmen` / `Masaüstü` passes (an ASCII
-  // allowlist silently dropped every chat file for those users); what stays out is anything a
-  // shell could read as syntax: quotes, `$`, backtick, `%`, `!`, `;`, `|`, `&`, line breaks, NUL.
-  return /^[A-Za-z]:[\\/][^"'$`%!;|&\r\n\0]*$/u.test(p);
+  // Any letter, so a profile or project folder like `Öğretmen`, `Masaüstü` or `O'Brien` passes
+  // (a stricter list silently dropped every chat file for those users). What stays out is what
+  // is live inside bash double quotes (`"`, `$`, backtick), `%` and `!` (cmd expansion, should a
+  // cmd ever see one), line breaks and NUL. `'`, `;`, `|`, `&` are literal inside the quotes.
+  return /^[A-Za-z]:[\\/][^"$`%!\r\n\0]*$/u.test(p);
 }
 
 /** The path guard for this platform's tmp files. */
@@ -4676,7 +4677,10 @@ export async function handleAgentGrant(
     if (typeof body.path === 'string') target = body.path;
   } catch { /* invalid body → the guard below */ }
 
-  if (!target.startsWith('/') || target.includes('\0') || target.includes('/../') || target.endsWith('/..')) {
+  // win32: a `//host/share` spelling passes the `/` test, and the stat below would send the user's
+  // NTLM hash to that host (see resolveChatReference).
+  if (!target.startsWith('/') || target.includes('\0') || target.includes('/../') || target.endsWith('/..')
+    || (process.platform === 'win32' && /^[\\/]{2}/.test(target))) {
     sendError(res, 400, 'invalid_path', 'An absolute, literal file path is required.');
     return;
   }
