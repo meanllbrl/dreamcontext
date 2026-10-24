@@ -14,6 +14,11 @@
  * no hover), the chip stages, the reply goes through the mirror with its reference header and
  * his bubble draws the ↩ strip; no `<!-- re:` in the DOM; no console error, no 403.
  *
+ * Sections (owner 2026-10-24, pick A): three phone sends, the 2nd and 3rd steered into a busy
+ * turn with a typed agenda About header, answered by ONE streamed block with a section per
+ * message: three heads inside one answer body, each one line, no overflow, a head tap lands on
+ * its message; the same heads after a reload.
+ *
  * Collect, don't fail fast; exit 0 iff every check passed. Screenshots: tmp/verify-super-reply-phone
  */
 
@@ -50,7 +55,20 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const say = (text) => { const message = { role: 'assistant', content: [{ type: 'text', text }] }; row({ type: 'assistant', message }); out({ type: 'assistant', message }); };
 const received = ${JSON.stringify(join(SCRATCH, 'received.ndjson'))};
 const owners = [];
-const refOf = (w) => { for (let i = owners.length - 1; i >= 0; i--) if (owners[i].text.startsWith(w)) return owners[i].ref; return 'zzzzzz'; };
+/** His words without a leading agenda About header. */
+const wordsOf = (t) => t.replace(/^\\[About agenda line [^\\]\\n]*\\]\\nline: "[^\\n]*"\\n\\n/, '');
+const refOf = (w) => { for (let i = owners.length - 1; i >= 0; i--) if (wordsOf(owners[i].text).startsWith(w)) return owners[i].ref; return 'zzzzzz'; };
+/** One block streamed in deltas, then its echo and the turn's end. */
+const streamThenEnd = (pieces) => {
+  out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } });
+  let i = 0;
+  const next = () => {
+    if (i < pieces.length) { out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: pieces[i++] } } }); setTimeout(next, 450); return; }
+    out({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } });
+    say(pieces.join('')); end('ok'); running = false;
+  };
+  next();
+};
 let inited = false; let buf = ''; let running = false;
 const end = (said) => out({ type: 'result', subtype: 'success', is_error: false, result: said, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
 process.stdin.on('data', (c) => {
@@ -77,6 +95,15 @@ process.stdin.on('data', (c) => {
         say('<!-- re:' + refOf('Bir:') + ' -->\\nBirinci mesajına: giriş sayfası düzeldi.');
         end('ok'); running = false;
       }, 4000);
+      continue;
+    }
+    if (text.startsWith('BOLUMLER')) {
+      running = true;
+      say('Bakıyorum.');
+      const id = 'toolu_2';
+      out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'dreamcontext super state', description: 'Read the state' } }] } });
+      out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: 'ok' }] }] } });
+      setTimeout(() => streamThenEnd(['<!-- re:' + refOf('BOLUMLER'), ' -->\\nBOLUMLER mesajına: üçü de elimde.\\n\\n<!-', '- re:' + refOf('Fiyat kartı bitti mi') + ' -->\\n', 'Fiyat kartı: Takım oldu.\\n\\n<!-- re:' + refOf('Dağıtım ne durumda') + ' -->\\n', 'Dağıtım: yeşil.']), 6000);
       continue;
     }
     const said = text.startsWith('[super') ? 'Nothing needs you.' : 'Not aldım.';
@@ -292,6 +319,52 @@ try {
   report.check('still no horizontal overflow', await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await phone.screenshot({ path: join(SHOTS, '390x844-reply-sent.png') });
 
+  console.log('\n── 4b. One answer, a section per message: heads inside one body');
+  const SEC_B = '[About agenda line note=n4k2 section=waiting]\nline: "Fiyat kartının adı"\n\nFiyat kartı bitti mi?';
+  const SEC_C = '[About agenda line note=n7p1 section=waiting]\nline: "Orbit dağıtımı"\n\nDağıtım ne durumda?';
+  await sendText('BOLUMLER: üç işi tek cevapta topla.');
+  await phone.waitForTimeout(1500);
+  await sendText(SEC_B);
+  await phone.waitForTimeout(600);
+  await sendText(SEC_C);
+  report.check('the three reached the super, the 2nd and 3rd folded into its turn with their About header', await until(async () => {
+    const r = received().filter((x) => /^(BOLUMLER|\[About agenda line)/.test(x.blocks[0]));
+    return r.length === 3 && r[1].folded && r[2].folded && r[1].blocks[0] === SEC_B;
+  }, 15000), JSON.stringify(received().slice(-3).map((x) => [x.blocks[0].slice(0, 40), x.folded])));
+  const secRow = () => vis('.chat-msg-assistant-row').filter({ hasText: 'BOLUMLER mesajına' }).last();
+  report.check('the sectioned answer arrived with three heads', await until(async () => (await secRow().locator('[data-testid="chat-reply-head"]').count()) === 3 && (await pane().innerText()).includes('Dağıtım: yeşil'), 30000));
+  await phone.waitForTimeout(800);
+  const headInfo = () => secRow().evaluate((row) => {
+    const hs = [...row.querySelectorAll('[data-testid="chat-reply-head"]')];
+    return {
+      oneBody: new Set(hs.map((h) => h.closest('.chat-msg-assistant-body'))).size === 1,
+      heads: hs.map((h) => { const r = h.getBoundingClientRect(); return { h: Math.round(r.height), right: Math.round(r.right), dot: !!h.querySelector('.chat-msg-about-dot'), text: (h.textContent || '').replace(/\s+/g, ' ').trim() }; }),
+    };
+  });
+  const hi = await headInfo();
+  report.check('three heads inside ONE answer body; 2-3 the About dot + agenda line, 1 "To your message"', hi.oneBody && hi.heads.length === 3
+    && /To your message.*BOLUMLER/.test(hi.heads[0].text) && hi.heads[1].dot && /Fiyat kartının adı/.test(hi.heads[1].text) && hi.heads[2].dot && /Orbit dağıtımı/.test(hi.heads[2].text), JSON.stringify(hi));
+  report.check('each head one line inside the screen', hi.heads.every((h) => h.h <= 26 && h.right <= 390), JSON.stringify(hi.heads));
+  report.check('no strip over it, no "To 3 messages"', !(await pane().innerText()).includes('To 3 messages')
+    && await secRow().evaluate((row) => !document.querySelector(`[data-reply-strip="${row.getAttribute('data-reply-grp')}"]`)));
+  report.check('no horizontal overflow with the heads', await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await secRow().locator('[data-testid="chat-reply-head"]').first().evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  await phone.waitForTimeout(400);
+  await phone.screenshot({ path: join(SHOTS, '390x844-sections.png') });
+  const bRow = vis('.chat-msg-user-row').filter({ hasText: 'Fiyat kartı bitti mi' }).first();
+  const bId = await bRow.getAttribute('data-item-id');
+  await vis('.chat-scroll').first().evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await phone.waitForTimeout(300);
+  await secRow().locator('[data-testid="chat-reply-head"]').nth(1).tap();
+  report.check('a tap on head 2 lands on message 2', await until(() => phone.evaluate((id) => {
+    const row = [...document.querySelectorAll(`[data-item-id="${id}"]`)].find((e) => e.getBoundingClientRect().height > 0);
+    const sc = row?.closest('.chat-scroll');
+    if (!row || !sc) return false;
+    const r = row.getBoundingClientRect(); const v = sc.getBoundingClientRect();
+    return r.bottom > v.top + 8 && r.top < v.bottom - 8;
+  }, bId), 4000), bId);
+  await phone.screenshot({ path: join(SHOTS, '390x844-head-tap.png') });
+
   console.log('\n── 5. A reload: the phone still knows the Super conversation');
   await phone.reload({ waitUntil: 'domcontentloaded' });
   await phone.waitForTimeout(3000);
@@ -301,6 +374,7 @@ try {
     const t = (await pane().innerText().catch(() => '')).replace(/\s+/g, ' ');
     return /To your message Bir: giriş sayfası/.test(t) && (await vis('[data-testid="chat-msg-reply"]').count()) >= 1 && !t.includes('<!--');
   }, 20000), (await pane().innerText().catch(() => '')).replace(/\s+/g, ' ').slice(-300));
+  report.check('…and the sectioned answer draws its three heads again', await until(async () => (await secRow().locator('[data-testid="chat-reply-head"]').count()) === 3, 15000));
   await phone.screenshot({ path: join(SHOTS, '390x844-after-reload.png') });
 
   report.check('no console error on the phone', errors.length === 0, errors.slice(0, 5).join(' | '));

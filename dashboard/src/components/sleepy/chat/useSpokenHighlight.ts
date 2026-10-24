@@ -128,7 +128,11 @@ function textNodes(root: Node): { nodes: Text[]; starts: number[]; all: string }
   const nodes: Text[] = [];
   const starts: number[] = [];
   let all = '';
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  // A sectioned reply's heads (`data-reply-head`) are never spoken: their words stay out of
+  // the text the spoken chunk is matched against, so the highlight never lands on one.
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest('[data-reply-head]') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
     const node = n as Text;
     starts.push(all.length);

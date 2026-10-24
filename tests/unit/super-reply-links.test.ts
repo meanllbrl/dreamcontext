@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { msgRef } from '../../dashboard/src/lib/superTypes.js';
-import { isOwnerMessage, replyGroups } from '../../dashboard/src/components/sleepy/chat/replyLinks.js';
+import { isOwnerMessage, replyGroups, replyHeadsById, sectionHeads } from '../../dashboard/src/components/sleepy/chat/replyLinks.js';
 import { splitReplyMark } from '../../dashboard/src/lib/replyMark.js';
 import type { ChatItem } from '../../dashboard/src/components/sleepy/chatSession.js';
 import { replyGroups0345 } from '../fixtures/super-reply-sections/replyGroups-0345.js';
@@ -343,3 +343,55 @@ describe('a reply in sections (owner 2026-10-24, pick A)', () => {
     expect(run(entries.slice(0, 3), entries.slice(3))).toEqual(whole);
   });
 });
+
+// W2 (owner 2026-10-24, pick A): what each section's head shows, as plain memoized data.
+describe('section heads', () => {
+  const A = 'Is the Orbit checkout form still running its tests?';
+  const B = '[About agenda line note=n4 section=waiting]\nline: "Rename the pricing card"\n\nis it done?';
+  const quote = (items: Map<string, ChatItem>) => (id: string) => {
+    const it = items.get(id) as { text?: string } | undefined;
+    return (it?.text ?? '').replace(/^\[About[^\n]*\nline: "[^\n]*"\n\n/, '');
+  };
+
+  it('an About message heads with its agenda line; a plain one with ↩ and his words; an unresolved one has none', () => {
+    const a = owner(A); const b = owner(B);
+    const items = new Map([[a.id, a], [b.id, b]]);
+    const heads = sectionHeads([{ at: 0, targets: [a.id] }, { at: 20, targets: [b.id] }, { at: 40, targets: [] }, { at: 60, targets: [a.id, b.id] }], items, quote(items));
+    expect(heads).toEqual([
+      { at: 0, kind: 'reply', count: 1, quotes: [A], targetId: a.id },
+      { at: 20, kind: 'about', about: { kind: 'note', id: 'n4', section: 'waiting', line: 'Rename the pricing card' }, count: 1, quotes: ['is it done?'], targetId: b.id },
+      { at: 60, kind: 'reply', count: 2, quotes: [A, 'is it done?'], targetId: a.id },
+    ]);
+  });
+
+  it('only SECTIONED texts get heads, and an unchanged text keeps the SAME array (the row memo holds)', () => {
+    const a = owner(A); const b = owner(B);
+    const answer = marked(`${mark(A)}Running.\n\n${mark(B)}Renamed.`, true, 'live');
+    const single = marked(`${mark(A)}Just one.`, true, 'one');
+    const entries = [a, b, single, answer];
+    const items = new Map(entries.map((it) => [it.id, it] as const));
+    const first = replyHeadsById(replyGroups(entries), items, quote(items));
+    expect([...first.keys()]).toEqual(['live']);
+    // Another stream's token: a new map, the same content, the same arrays.
+    const more = [...entries, owner('later'), marked('Streaming...', false, 'other')];
+    const items2 = new Map(more.map((it) => [it.id, it] as const));
+    const second = replyHeadsById(replyGroups(more), items2, quote(items2), first);
+    expect(second.get('live')).toBe(first.get('live'));
+    // Its own heads changing gives a new array.
+    const third = replyHeadsById(replyGroups(more), items2, (id) => `${quote(items2)(id)}!`, second);
+    expect(third.get('live')).not.toBe(second.get('live'));
+  });
+
+  it('the speech highlight never walks into a head; Copy copies the text, never a head', () => {
+    const ROOT = new URL('../../', import.meta.url).pathname;
+    const speech = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/chat/useSpokenHighlight.ts'), 'utf-8');
+    expect(speech).toMatch(/closest\('\[data-reply-head\]'\) \? NodeFilter\.FILTER_REJECT/);
+    const item = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/chat/TranscriptItem.tsx'), 'utf-8');
+    expect(item).toContain('onClick={() => copyText(item.text)}');
+    expect(readFileSync(join(ROOT, 'dashboard/src/components/sleepy/chat/AgendaAboutStrip.tsx'), 'utf-8')).toMatch(/data-reply-head=""\s+data-testid="chat-reply-head"/);
+    const pane = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/ChatPane.tsx'), 'utf-8');
+    expect(pane).toMatch(/const handleReplyTarget = useCallback\(\(targetId: string\) => \{\s+replyJumpRef\.current\.jumpToReplyTarget\(targetId\);\s+\}, \[\]\);/);
+    expect(pane).toMatch(/replyHeads=\{replyHeads\?\.get\(item\.id\)\}/);
+  });
+});
+

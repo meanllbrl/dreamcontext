@@ -7,7 +7,8 @@ import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
   inlineMediaKind, splitUserBoardRefs, splitUserMedia, revealPath,
 } from './chatEntities';
-import { parseChatActions, type ChatAction } from './chatActions';
+import { parseChatActions, type ChatAction, type ChatSegment } from './chatActions';
+import type { ReplyHead } from './replyLinks';
 import { ActionRow } from './ActionRow';
 import { BoardEmbed } from './BoardEmbed';
 import { MediaEmbed } from './MediaEmbed';
@@ -18,7 +19,7 @@ import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
 import { useSpokenHighlight } from './useSpokenHighlight';
 import { splitAbout } from '../super/superHandover';
-import { AgendaAboutStrip, ReplyStrip } from './AgendaAboutStrip';
+import { AgendaAboutStrip, ReplySectionHead, ReplyStrip } from './AgendaAboutStrip';
 import { useI18n } from '../../../context/I18nContext';
 import type { AgentRoleId } from '../../../lib/agentRoles';
 import type {
@@ -211,8 +212,13 @@ function UserMessage({
 /** Exported for the `#agents` channel, which renders an agent's answer with THIS — the
  *  chat's own card, markdown, leading and clickable paths — rather than a second, plainer
  *  paragraph that reads like a different product. */
-export function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
+export function ProseSegment({ text, parts, superSid = null, onReplyTarget, onOpenFile, caret, session, itemId }: {
   text: string;
+  /** A sectioned Super reply (owner 2026-10-24, pick A): its parts inside this ONE body, each
+   *  opening with its head, a dashed rule before every section after the first thing. */
+  parts?: ProsePart[];
+  superSid?: string | null;
+  onReplyTarget?: (targetId: string) => void;
   onOpenFile?: (path: string) => void;
   /** The blinking cursor. Only the run that is currently being typed gets one. */
   caret?: boolean;
@@ -232,7 +238,14 @@ export function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
 
   return (
     <div className="chat-msg-assistant-body" ref={bodyRef}>
-      <MarkdownPreview content={text} />
+      {parts
+        ? parts.map((p, i) => (
+          <div key={i} className={p.divider ? 'chat-reply-part chat-reply-part--divider' : 'chat-reply-part'}>
+            {p.head && <ReplySectionHead head={p.head} superSid={superSid} onReplyTarget={onReplyTarget} />}
+            <MarkdownPreview content={p.text} />
+          </div>
+        ))
+        : <MarkdownPreview content={text} />}
       {caret && <span className="chat-msg-caret" aria-hidden />}
     </div>
   );
@@ -240,10 +253,50 @@ export function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
 
 // ─── Assistant message (full-width, NO avatar) ─────────────────────────────────────
 
+/** One part of a sectioned reply's prose. */
+interface ProsePart { head?: ReplyHead; text: string; divider: boolean }
+/** What the row draws, in written order: a prose body (its parts), a section's head alone (its
+ *  section opens with a block), or a block. `at` is the segment index the caret rule reads. */
+type Unit =
+  | { kind: 'prose'; parts: ProsePart[]; at: number }
+  | { kind: 'head'; head?: ReplyHead; divider: boolean }
+  | { kind: 'block'; segment: Exclude<ChatSegment, { kind: 'prose' } | { kind: 'section' }> };
+
+/**
+ * A sectioned reply's segments as units: prose separated only by section markers merges into
+ * ONE body with parts (one container, owner pick A); a section that opens with a block gets its
+ * head as a row of its own right before it. Without section markers: one unit per segment.
+ */
+function unitsOf(segments: ChatSegment[], heads: readonly ReplyHead[] | undefined, sectionAt: readonly number[] | undefined): Unit[] {
+  const units: Unit[] = [];
+  let open: number | null = null;
+  const headOf = (i: number) => heads?.find((h) => h.at === sectionAt?.[i]);
+  segments.forEach((seg, i) => {
+    if (seg.kind === 'section') { open = seg.index; return; }
+    const starts = open !== null;
+    const divider = starts && units.length > 0;
+    const head = starts ? headOf(open!) : undefined;
+    open = null;
+    if (seg.kind === 'prose') {
+      const last = units[units.length - 1];
+      const part = { ...(head ? { head } : {}), text: seg.text, divider };
+      if (starts && last?.kind === 'prose') { last.parts.push(part); last.at = i; } else units.push({ kind: 'prose', parts: [part], at: i });
+      return;
+    }
+    if (starts) units.push({ kind: 'head', ...(head ? { head } : {}), divider });
+    units.push({ kind: 'block', segment: seg });
+  });
+  return units;
+}
+
 function AssistantMessage({
-  item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, readOnly, replyGroup,
+  item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, readOnly, replyGroup, replyHeads, onReplyTarget,
 }: {
   item: ChatTextItem;
+  /** A SECTIONED Super reply's heads (ChatPane's replyHeadsById): present, the answer is parsed
+   *  with its section starts and every part opens with the chip of the message it answers. */
+  replyHeads?: ReplyHead[];
+  onReplyTarget?: (targetId: string) => void;
   session?: ChatSession;
   onQuote?: (item: ChatUserItem | ChatTextItem) => void;
   /** The Super answer group this row belongs to (ChatPane's replyGroups): the thin line beside it. */
@@ -275,9 +328,15 @@ function AssistantMessage({
   // cards, checklists) versus what it asked it to READ. Re-derived per token while
   // streaming — parseChatActions is pure and cheap, and hides a half-written fence rather
   // than flashing raw markup.
+  const sectionAt = replyHeads && item.replySections && item.replySections.length >= 2 ? item.replySections.map((x) => x.at) : undefined;
+  const sectionKey = sectionAt?.join(',') ?? '';
   const { segments, actions, boards, notices } = useMemo(
-    () => parseChatActions(item.text), [item.text],
+    () => parseChatActions(item.text, sectionAt ? { sectionAt } : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sectionKey is sectionAt's content
+    [item.text, sectionKey],
   );
+  const units = useMemo(() => unitsOf(segments, replyHeads, sectionAt), [segments, replyHeads, sectionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const superSid = session && (session.mode === 'super' || session.superMirror) ? session.claudeId : null;
 
   // ONE GATE WAS TWO CAPABILITIES, and conflating them cost the surface its main expressive
   // channel on any host without a conversation.
@@ -322,6 +381,7 @@ function AssistantMessage({
   // reading this refactor exists to remove.
   const lastProse = segments.reduce((acc, seg, i) => (seg.kind === 'prose' ? i : acc), -1);
   const caretAt = !item.done && lastProse === segments.length - 1 ? lastProse : -1;
+  // Section markers are not rows: the caret's unit is the prose unit holding that segment.
 
   // Nothing left to show: an empty finished text block, or one that was ONLY a fence/board
   // reference/view whose rendering is handled below. A degraded block that produced only a
@@ -341,24 +401,33 @@ function AssistantMessage({
           was drawn. The row's tight gap is what keeps several bubbles reading as one
           message rather than as several. */}
       {segments.length === 0 && !item.done && <ProseSegment text="…" onOpenFile={onOpenFile} caret />}
-      {segments.map((segment, i) => (
-        segment.kind === 'prose'
+      {units.map((unit, i) => (
+        unit.kind === 'prose'
           ? (
             <ProseSegment
               key={i}
-              text={segment.text}
+              text={unit.parts.map((p) => p.text).join('\n\n')}
+              parts={sectionAt ? unit.parts : undefined}
+              superSid={superSid}
+              onReplyTarget={onReplyTarget}
               onOpenFile={onOpenFile}
-              caret={i === caretAt}
+              caret={unit.at === caretAt}
               session={session}
               itemId={item.id}
             />
           )
-          // A `view` this host cannot resolve renders nothing HERE and a notice below — see
-          // `hostNotices`. Everything else (html and the pending slot for either fence) is
-          // drawn wherever it was written.
-          : segment.kind === 'view' && !viewsAllowed
-            ? null
-            : <ChatBlockSegment key={i} segment={segment} conversationId={conversationId} session={session} />
+          : unit.kind === 'head'
+            ? (
+              <div key={i} className={unit.divider ? 'chat-reply-part chat-reply-part--divider' : 'chat-reply-part'}>
+                {unit.head && <ReplySectionHead head={unit.head} superSid={superSid} onReplyTarget={onReplyTarget} />}
+              </div>
+            )
+            // A `view` this host cannot resolve renders nothing HERE and a notice below — see
+            // `hostNotices`. Everything else (html and the pending slot for either fence) is
+            // drawn wherever it was written.
+            : unit.segment.kind === 'view' && !viewsAllowed
+              ? null
+              : <ChatBlockSegment key={i} segment={unit.segment} conversationId={conversationId} session={session} />
       ))}
       {/* UNGATED, on purpose: the strip is what makes a drop honest, so it cannot itself be
           conditional on the capability that caused the drop. */}
@@ -481,7 +550,7 @@ interface StepStretch {
 
 function ItemViewInner({
   item, session, onOpenFile, onOpenBoard, onAction, conversationId, onQuote, readOnly = false,
-  actor, stretch, stretchRunning, replyGroup, onReplyJump,
+  actor, stretch, stretchRunning, replyGroup, onReplyJump, replyHeads, onReplyTarget,
 }: StepStretch & {
   item: ChatItem;
   /** The live session backing this item — omitted for a read-only drill-in transcript
@@ -501,6 +570,10 @@ function ItemViewInner({
   replyGroup?: string;
   /** A Super view: his reply's strip scrolls to the message it names. */
   onReplyJump?: (ref: string, from: 'super' | 'owner', beforeId: string) => void;
+  /** A Super view: a SECTIONED answer's heads (stable arrays, ChatPane's replyHeadsById). */
+  replyHeads?: ReplyHead[];
+  /** A Super view: a head's click lands on the message it names (one stable callback). */
+  onReplyTarget?: (targetId: string) => void;
   /** Suppresses the mutating hover actions (edit/retry/quote) — Copy always stays,
    *  since it never mutates anything. Used by the sub-agent drill-in. */
   readOnly?: boolean;
@@ -529,6 +602,8 @@ function ItemViewInner({
           conversationId={conversationId}
           readOnly={readOnly}
           replyGroup={replyGroup}
+          replyHeads={replyHeads}
+          onReplyTarget={onReplyTarget}
         />
       );
     // Step lines: where they sit in their speaker's stretch is decided by the transcript

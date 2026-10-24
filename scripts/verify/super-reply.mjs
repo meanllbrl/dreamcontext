@@ -18,6 +18,14 @@
  * no `<!-- re:` anywhere in the DOM. Screenshots at 1440x900 dark and light and 390x844; zero
  * page errors.
  *
+ * Check 5b (owner 2026-10-24, pick A): three new messages, the 2nd and 3rd steered into a busy
+ * turn with a typed agenda About header, answered in ONE streamed block with a section per
+ * message after an unmarked "Bakıyorum.". Polled every 100 ms while it streams: no strip ever
+ * mounts, no head shows before its words, a head once shown never goes. At the end: three heads
+ * inside one answer body (About + agenda line on 2-3, "To your message" on 1), no "To 3
+ * messages"; a head click lands on its message, also while another turn streams; Copy holds no
+ * head; a reload draws the same heads; every head one line at 1440 and 390.
+ *
  * Collect, don't fail fast: every check prints ✓/✗. Exit 0 iff all pass.
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -91,7 +99,9 @@ const toolCall = (name, input, result) => {
 };
 /** Every owner message this process received, with the reference the server sent beside it. */
 const owners = [];
-const refOf = (word) => { for (let i = owners.length - 1; i >= 0; i--) if (owners[i].text.startsWith(word)) return owners[i].ref; return 'zzzzzz'; };
+/** His words without a leading agenda About header (\`[About agenda line …]\\nline: "…"\\n\\n\`). */
+const wordsOf = (t) => t.replace(/^\\[About agenda line [^\\]\\n]*\\]\\nline: "[^\\n]*"\\n\\n/, '');
+const refOf = (word) => { for (let i = owners.length - 1; i >= 0; i--) if (wordsOf(owners[i].text).startsWith(word)) return owners[i].ref; return 'zzzzzz'; };
 const LONG = ${JSON.stringify(LONG)};
 
 async function superTurn(text) {
@@ -112,7 +122,18 @@ async function superTurn(text) {
   }
   if (/^Dördüncü/.test(text)) return 'Tamam, not aldım.';
   // One block answering three messages, a section per message (what the real model writes).
-  if (/^BOLUMLER/.test(text)) return '<!-- re:' + refOf('Birinci') + ' -->\\nBirinciye: yayında.\\n\\n<!-- re:' + refOf('İkinci') + ' -->\\nİkinciye: kart Takım.\\n\\n<!-- re:' + refOf('Üçüncü') + ' -->\\nÜçüncüye: dağıtım yeşil.';
+  // (i) a busy phase the 2nd and 3rd message steer into, (v) an unmarked text first, then the
+  // answer streamed in deltas naming (ii) the refs of the three NEW messages.
+  if (/^BOLUMLER/.test(text)) {
+    say('Bakıyorum.');
+    toolCall('Bash', { command: 'dreamcontext super state', description: 'Read the state' }, 'ok');
+    report({ kind: 'busy3' });
+    await sleep(7000);
+    toolCall('Read', { file_path: 'site/pricing.md' }, '# Pricing');
+    const r1 = refOf('BOLUMLER'); const r2 = refOf('Fiyat kartı bitti mi'); const r3 = refOf('Dağıtım ne durumda');
+    await stream(['<!-- re:' + r1, ' -->\\nBOLUMLER mesajına: üçü de elimde, ', 'sırayla yazıyorum.\\n\\n<!-', '- re:' + r2 + ' -->\\n', 'Fiyat kartı: ', 'Takım oldu, yayında.\\n\\n<!-- re:' + r3 + ' -->\\n', 'Dağıtım: ', 'yeşil, 212 test geçti.']);
+    return null;
+  }
   if (/^UZUN/.test(text)) return LONG;
   if (/^MESGUL/.test(text)) {
     say('Uzun bir iş yapıyorum.');
@@ -281,7 +302,7 @@ async function main() {
   const srv = await startServer(port);
   log(`server on ${base}, scratch ${SCRATCH}`);
   const browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1, colorScheme: 'light', locale: 'en-US' });
+  const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1, colorScheme: 'light', locale: 'en-US', permissions: ['clipboard-read', 'clipboard-write'] });
   await context.addInitScript(() => { try { if (!localStorage.getItem('dreamcontext-theme')) localStorage.setItem('dreamcontext-theme', 'dark'); } catch {} });
   const page = await context.newPage();
   const errors = [];
@@ -347,6 +368,7 @@ async function main() {
     ok('the answer to two messages: one strip, "To 2 messages", both quoted', /To 2 messages.*Birinci.*·.*İkinci/.test(stripOf(tAB?.grp)?.text ?? ''), stripOf(tAB?.grp)?.text);
     ok('the second message\'s answer: its strip names the second message', /To your message.*İkinci: fiyat kartının/.test(stripOf(tB?.grp)?.text ?? ''), stripOf(tB?.grp)?.text);
     ok('no `<!-- re:` anywhere in the DOM', await noMarkInDom(page));
+    ok('…and no section head anywhere: every block there has one section (0.34.5 unchanged)', (await centre(page).locator('[data-testid="chat-reply-head"]').count()) === 0);
     await shot(page, '01-out-of-order-1440-dark.png');
 
     // 2. A strip click scrolls to its message and flashes it.
@@ -411,18 +433,84 @@ async function main() {
     const tD = shape.find((x) => x.kind === 'text' && x.text.includes('Tamam, not aldım'));
     ok('…it is linked (a group) but draws no strip: its message is right above', !!tD?.grp && !shape.some((x) => x.strip === tD.grp), JSON.stringify(tD));
 
-    // 5b. One block, a section per message: one strip naming all three, no mark shown.
-    ok('a block with a section per message arrived', await sendAndWait(page, 'BOLUMLER yaz'));
-    await page.waitForTimeout(500);
+    // 5b. One block, a section per message (owner 2026-10-24, pick A): one container, a head per
+    // section, no strip. The 2nd and 3rd message are steered in with a typed About header (iv).
+    const SEC = {
+      A: 'BOLUMLER: üç işi tek cevapta topla.',
+      B: '[About agenda line note=n4k2 section=waiting]\nline: "Fiyat kartının adı"\n\nFiyat kartı bitti mi?',
+      C: '[About agenda line note=n7p1 section=waiting]\nline: "Orbit dağıtımı"\n\nDağıtım ne durumda?',
+    };
+    const secEnds = turnEnds();
+    await page.evaluate(() => {
+      const w = window; w.__secSamples = [];
+      w.__secTimer = setInterval(() => {
+        const c = document.querySelector('[data-super-slot="centre"]');
+        const row = [...(c?.querySelectorAll('.chat-msg-assistant-row') ?? [])].find((r) => (r.textContent || '').includes('BOLUMLER mesajına'));
+        if (!row) return;
+        const grp = row.getAttribute('data-reply-grp');
+        const text = row.textContent || '';
+        w.__secSamples.push({
+          strip: !!grp && !!c.querySelector(`[data-reply-strip="${grp}"]`),
+          heads: row.querySelectorAll('[data-testid="chat-reply-head"]').length,
+          words: ['BOLUMLER mesajına', 'Fiyat kartı:', 'Dağıtım:'].filter((x) => text.includes(x)).length,
+          mark: text.includes('<!--'),
+        });
+      }, 100);
+    });
+    await send(page, SEC.A);
+    await until(page, async () => reports().some((r) => r.kind === 'busy3'), 15000);
+    const sendTyped = async (text) => {
+      await centreInput(page).fill(text);
+      await page.keyboard.press('Enter');
+    };
+    await centreInput(page).click();
+    await sendTyped(SEC.B);
+    await page.waitForTimeout(600);
+    await sendTyped(SEC.C);
+    ok('the three new messages reached the super, the 2nd and 3rd steered with their About header', await until(page, async () => {
+      const f = superFrames().filter((x) => Object.values(SEC).includes(x.blocks[0]));
+      return f.length === 3 && f[1].folded && f[2].folded && f.every((x) => x.blocks.includes(`<owner-msg ref="${msgRef(x.blocks[0])}"/>`));
+    }, 15000), JSON.stringify(superFrames().slice(-3).map((f) => [f.blocks[0].slice(0, 40), f.folded])));
+    ok('a block with a section per message arrived', await until(page, async () => turnEnds() > secEnds, 40000));
+    await page.waitForTimeout(800);
+    const samples = await page.evaluate(() => { clearInterval(window.__secTimer); return window.__secSamples; });
+    ok(`while it streamed (${samples.length} polls): no strip ever mounted`, samples.length > 10 && samples.every((x) => !x.strip), JSON.stringify(samples.filter((x) => x.strip).slice(0, 2)));
+    ok('…no head before the 2nd section\'s words, never more heads than sections with words', samples.every((x) => (x.words < 2 ? x.heads === 0 : x.heads <= x.words)), JSON.stringify(samples.filter((x) => x.heads > 0 && x.heads > x.words).slice(0, 3)));
+    ok('…a head once shown never went', samples.every((x, i) => i === 0 || x.heads >= samples[i - 1].heads) && samples.some((x) => x.heads >= 2 && x.words < 3), JSON.stringify(samples.map((x) => `${x.words}/${x.heads}`).join(' ')));
+    ok('…no half mark ever showed', samples.every((x) => !x.mark));
+    const secRow = centre(page).locator('.chat-msg-assistant-row').filter({ hasText: 'BOLUMLER mesajına' }).last();
+    const heads = secRow.locator('[data-testid="chat-reply-head"]');
+    const headTexts = (await heads.allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
+    const oneBody = await secRow.evaluate((row) => {
+      const hs = [...row.querySelectorAll('[data-testid="chat-reply-head"]')];
+      const bodies = new Set(hs.map((h) => h.closest('.chat-msg-assistant-body')));
+      return hs.length === 3 && bodies.size === 1 && !bodies.has(null);
+    });
+    ok('three heads inside ONE answer body', oneBody, JSON.stringify(headTexts));
+    ok('…head 1: "To your message" + his words', /To your message.*BOLUMLER: üç işi/.test(headTexts[0] ?? ''), headTexts[0]);
+    ok('…heads 2-3: the pink About dot + the agenda line + his words', (await heads.nth(1).locator('.chat-msg-about-dot').count()) === 1 && (await heads.nth(2).locator('.chat-msg-about-dot').count()) === 1
+      && /About.*Fiyat kartının adı.*Fiyat kartı bitti mi/.test(headTexts[1] ?? '') && /About.*Orbit dağıtımı.*Dağıtım ne durumda/.test(headTexts[2] ?? ''), JSON.stringify(headTexts));
     shape = await transcriptShape(page);
-    const tS = shape.find((x) => x.kind === 'text' && x.text.includes('Birinciye: yayında'));
-    ok('…one strip "To 3 messages" over it; every section shown, no mark', !!tS && /To 3 messages.*Birinci.*İkinci.*Üçüncü/.test(shape.find((x) => x.strip === tS.grp)?.text ?? '')
-      && /Birinciye: yayında.*İkinciye: kart Takım.*Üçüncüye: dağıtım yeşil/.test(tS.text) && await noMarkInDom(page), JSON.stringify({ tS, strip: shape.find((x) => x.strip === tS?.grp) }));
-    await centre(page).locator(`[data-reply-strip="${tS?.grp}"]`).evaluate((el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
+    const tS = shape.find((x) => x.kind === 'text' && x.text.includes('BOLUMLER mesajına'));
+    ok('…no strip over it and no "To 3 messages" anywhere', !!tS && !shape.some((x) => x.strip === tS.grp) && !(await centre(page).innerText()).includes('To 3 messages'), JSON.stringify(tS));
+    ok('…no `<!--` anywhere in the DOM', await noMarkInDom(page) && !(await page.evaluate(() => document.body.innerHTML.includes('&lt;!--'))));
+    await heads.first().evaluate((el) => el.scrollIntoView({ block: 'center' }));
     await page.waitForTimeout(300);
     await shot(page, '03b-sections-1440-dark.png');
+    // A head click lands on the message it names and flashes it.
+    const bSel = await userRowSel(page, 'Fiyat kartı bitti mi');
+    await scroller(page).evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await page.waitForTimeout(300);
+    await heads.nth(1).click();
+    ok('clicking head 2 lands on message 2 and flashes it', await until(page, async () => !!bSel && await inView(page, bSel)
+      && await page.locator(`${bSel}[data-reply-flash]`).count() === 1, 4000), bSel);
+    // Copy: the words, never a head or a mark.
+    await secRow.hover();
+    await secRow.locator('[aria-label="Copy"]').click();
+    const copied = await page.evaluate(() => navigator.clipboard.readText()).catch((e) => `unreadable: ${e}`);
+    ok('Copy holds the answer without any head text or mark', copied.includes('BOLUMLER mesajına') && copied.includes('Dağıtım: yeşil') && !copied.includes('To your message') && !copied.includes('Fiyat kartının adı') && !copied.includes('<!--'), copied.slice(0, 200));
 
-    // 6. A strip click while a turn streams: the view stays on the message.
+        // 6. A strip click while a turn streams: the view stays on the message.
     await send(page, 'MESGUL kal');
     await until(page, async () => reports().some((r) => r.kind === 'busy2'), 15000);
     await scroller(page).evaluate((el) => { el.scrollTop = el.scrollHeight; });
@@ -433,6 +521,19 @@ async function main() {
     await until(page, async () => reports().filter((r) => r.kind === 'turn-end' && r.said === 'Bitti.').length > 0, 20000);
     await page.waitForTimeout(800);
     ok('…and after the turn ends it is still there', await inView(page, aSel));
+    // The same while ANOTHER turn streams, from a section head (its own busy turn).
+    const busyBefore = reports().filter((r) => r.kind === 'busy2').length;
+    await send(page, 'MESGUL kal yine');
+    await until(page, async () => reports().filter((r) => r.kind === 'busy2').length > busyBefore, 15000);
+    const s1Sel = await userRowSel(page, 'BOLUMLER: üç işi');
+    await scroller(page).evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await page.waitForTimeout(300);
+    await secRow.locator('[data-testid="chat-reply-head"]').first().click();
+    await page.waitForTimeout(2500);
+    ok('a head clicked while a turn runs: the view stays on its message', !!s1Sel && await inView(page, s1Sel), s1Sel);
+    await until(page, async () => reports().filter((r) => r.kind === 'turn-end' && r.said === 'Bitti.').length > 1, 20000);
+    await page.waitForTimeout(800);
+    ok('…and after that turn ends it is still there', !!s1Sel && await inView(page, s1Sel));
 
     // 7. The message above the 20-card window: the click reveals it, then scrolls to it.
     ok('a long stretch of rows arrived', await sendAndWait(page, 'DOLDUR'));
@@ -466,6 +567,13 @@ async function main() {
     ok('…his reply bubbles draw their ↩ strip again, only his words in the bubble', (await centre(page).locator('[data-testid="chat-msg-reply"]').count()) >= 2
       && !(await centre(page).locator('.chat-msg-user-bubble').allInnerTexts()).some((t) => t.includes('[Reply to message')));
     ok('…and no `<!-- re:` anywhere in the DOM', await noMarkInDom(page));
+    const headsAfter = (await centre(page).locator('.chat-msg-assistant-row').filter({ hasText: 'BOLUMLER mesajına' }).last()
+      .locator('[data-testid="chat-reply-head"]').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
+    ok('…the sectioned answer draws the same three heads again', JSON.stringify(headsAfter) === JSON.stringify(headTexts), JSON.stringify({ headTexts, headsAfter }));
+    const headsAt = async (block = 'center') => centre(page).locator('[data-testid="chat-reply-head"]').first().evaluate((el, b) => el.scrollIntoView({ block: b }), block).catch(() => {});
+    await headsAt();
+    await page.waitForTimeout(400);
+    await shot(page, '03e-sections-after-reload-1440.png');
 
     // 9. Screenshots: 1440 light, then 390x844.
     await page.evaluate(() => localStorage.setItem('dreamcontext-theme', 'light'));
@@ -481,12 +589,16 @@ async function main() {
     }
     await page.waitForTimeout(500);
     await shot(page, '05-out-of-order-1440-light.png');
-    const oneLine = async (w) => page.evaluate((vw) => [...document.querySelectorAll('[data-super-slot="centre"] .chat-reply-strip, [data-super-slot="centre"] [data-testid="chat-msg-reply"]')]
+    for (let i = 0; i < 6; i++) { const more = centre(page).locator('.chat-window-more'); if (!(await more.count())) break; await more.click(); await page.waitForTimeout(400); }
+    await headsAt();
+    await page.waitForTimeout(400);
+    await shot(page, '03c-sections-1440-light.png');
+    const oneLine = async (w) => page.evaluate((vw) => [...document.querySelectorAll('[data-super-slot="centre"] .chat-reply-strip, [data-super-slot="centre"] [data-testid="chat-msg-reply"], [data-super-slot="centre"] [data-testid="chat-reply-head"]')]
       .map((el) => { const r = el.getBoundingClientRect(); return { h: Math.round(r.height), right: Math.round(r.right), w: Math.round(r.width) }; })
       .filter((r) => r.w > 0)
       .map((r) => ({ ...r, ok: r.h <= 26 && r.right <= vw + 0.5 })), w);
     const s1440 = await oneLine(W);
-    ok('1440: every strip one line, inside the window', s1440.length > 0 && s1440.every((r) => r.ok), JSON.stringify(s1440));
+    ok('1440: every strip and head one line, inside the window', s1440.length > 0 && s1440.every((r) => r.ok), JSON.stringify(s1440));
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(1500);
@@ -495,8 +607,12 @@ async function main() {
     if (sel390) await page.locator(sel390).evaluate((el) => el.scrollIntoView({ block: 'start' })).catch(() => {});
     await page.waitForTimeout(600);
     await shot(page, '06-390-strips.png');
+    for (let i = 0; i < 6; i++) { const more = centre(page).locator('.chat-window-more'); if (!(await more.count())) break; await more.click(); await page.waitForTimeout(400); }
+    await headsAt('start');
+    await page.waitForTimeout(500);
+    await shot(page, '03d-sections-390.png');
     const s390 = await oneLine(390);
-    ok('390: every strip one line, inside the screen', s390.length > 0 && s390.every((r) => r.ok), JSON.stringify(s390));
+    ok('390: every strip and head one line, inside the screen', s390.length > 0 && s390.every((r) => r.ok) && (await centre(page).locator('[data-testid="chat-reply-head"]').count()) >= 3, JSON.stringify(s390));
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     ok('390: no horizontal overflow', overflow <= 1, `over by ${overflow}`);
     for (const theme of ['dark']) {

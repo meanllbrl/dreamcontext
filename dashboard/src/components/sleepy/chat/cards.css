@@ -236,6 +236,34 @@ button.chat-msg-about--reply:focus-visible { outline: 2px solid var(--color-acce
   margin-bottom: calc(-1 * var(--space-3));
 }
 .chat-reply-strip .chat-msg-about { align-self: flex-start; padding-left: 0; }
+/* One Super reply answering several messages (owner 2026-10-24, pick A): inside the one answer
+   body every part opens with a head naming the message it answers, the same chip his bubble
+   wears (the About dot and line, or ↩ "To your message"). One line, clipped; a dashed rule
+   between parts. The hit area grows under touch without making the line taller. */
+.chat-reply-part--divider {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--color-border);
+}
+.chat-msg-about.chat-reply-head {
+  position: relative;
+  align-self: flex-start;
+  display: flex;
+  padding: 0;
+  margin-bottom: var(--space-1);
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-reply-head-quote { color: var(--color-text-tertiary); }
+.chat-msg-about.chat-reply-head:hover .chat-msg-about-text,
+.chat-msg-about.chat-reply-head:focus-visible .chat-msg-about-text { color: var(--color-text); text-decoration: underline; }
+.chat-msg-about.chat-reply-head:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; border-radius: var(--radius-sm); }
+@media (hover: none) {
+  .chat-msg-about.chat-reply-head::after { content: ''; position: absolute; inset: calc(-1 * var(--space-2)) 0; }
+}
 /* A group's thin line on its left, from the strip to its last row (one element per group,
    measured by ChatPane over the rows: tool cards clip their own overflow, so a per-row
    pseudo-element could not reach outside them). Out of flow, never hit. */

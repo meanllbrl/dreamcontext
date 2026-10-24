@@ -32,7 +32,7 @@
  */
 import { msgRef } from '../../../lib/superTypes';
 import type { ChatItem, ChatUserItem } from '../chatSession';
-import { superEventOf } from '../super/superHandover';
+import { splitAbout, superEventOf, type AgendaAbout } from '../super/superHandover';
 
 /** An owner message: a user item that is not an injected super event turn, live (`superEvent`)
  *  or replayed (its `[super …]` prefix). A question card's answer is his words too. */
@@ -167,3 +167,67 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
   }
   return out;
 }
+
+/**
+ * What one section's head shows (owner 2026-10-24, pick A), as plain data: the chip of the
+ * message it answers. `about` when that message was written about an agenda line (the pink dot
+ * and the line), `reply` otherwise (↩ "To your message" or "To N messages"). No translated text:
+ * the head translates itself, so a language switch redraws it.
+ */
+export interface ReplyHead {
+  /** Where its section starts in the text (`replySections[i].at`). */
+  at: number;
+  kind: 'about' | 'reply';
+  about?: AgendaAbout;
+  count: number;
+  /** His words, at most three, clipped. */
+  quotes: string[];
+  /** The message a click lands on. */
+  targetId: string;
+}
+
+/** A SECTIONED text's heads: one per section whose refs resolved (an unresolved one keeps only
+ *  its divider). `quoteOf(id, max)` reads his words for a message. */
+export function sectionHeads(
+  sections: ReadonlyArray<{ at: number; targets: string[] }>,
+  items: ReadonlyMap<string, ChatItem>,
+  quoteOf: (id: string, max: number) => string,
+): ReplyHead[] {
+  return sections.flatMap((s) => {
+    if (!s.targets.length) return [];
+    const first = items.get(s.targets[0]);
+    const about = s.targets.length === 1 && first?.kind === 'user' ? splitAbout(first.text).about : null;
+    const agenda = about && (about.kind === 'note' || about.kind === 'item') ? about : null;
+    const many = s.targets.length > 1;
+    return [{
+      at: s.at, kind: agenda ? 'about' as const : 'reply' as const, ...(agenda ? { about: agenda } : {}),
+      count: s.targets.length, quotes: s.targets.slice(0, 3).map((id) => quoteOf(id, many ? 40 : 80)), targetId: s.targets[0],
+    }];
+  });
+}
+
+const headsKey = (heads: readonly ReplyHead[]) => heads.map((h) => (
+  `${h.at}:${h.kind}:${h.count}:${h.targetId}:${h.quotes.join('\u0001')}:${h.about ? `${h.about.kind}/${h.about.id}/${h.about.line ?? ''}` : ''}`
+)).join('|');
+
+/**
+ * Every SECTIONED text's heads, by text id. An array keeps its identity while its content is
+ * unchanged (`cache` is the previous call's result), so the memoized row of a sectioned answer
+ * is not re-rendered by anything but its own text or heads.
+ */
+export function replyHeadsById(
+  replyMap: ReadonlyMap<string, ReplyGroup>,
+  items: ReadonlyMap<string, ChatItem>,
+  quoteOf: (id: string, max: number) => string,
+  cache: ReadonlyMap<string, ReplyHead[]> = new Map(),
+): Map<string, ReplyHead[]> {
+  const out = new Map<string, ReplyHead[]>();
+  for (const [id, g] of replyMap) {
+    if (!g.sections) continue;
+    const heads = sectionHeads(g.sections, items, quoteOf);
+    const prev = cache.get(id);
+    out.set(id, prev && headsKey(prev) === headsKey(heads) ? prev : heads);
+  }
+  return out;
+}
+
