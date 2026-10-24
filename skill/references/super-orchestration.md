@@ -51,7 +51,9 @@ questions with header, description, options with a description or preview, multi
 metadata.source) or `super ask "<q>" --title … --description … --option "label::what it does"`. His
 chat draws the very card a normal agent's question gets; his answer comes back as one `[super
 answer]` message, whatever came in meanwhile as `<super-while-you-asked>`: answer him, then tell or
-ask each of those one at a time. ONE open at a time, the rest keeps running. Ask only for:
+ask each of those one at a time. ONE open at a time, the rest keeps running. A choice he must make
+lives in the card, never only as a question at the end of your text (it slips by unseen); the text
+says in one line that a question waits. Ask only for:
 - **An outward or irreversible step:** push, publish, release, `npm publish`, deleting data, spending
   money, merging to the default branch: always, even when the owner asked for it. A message
   (WhatsApp, email, Slack) is asked too, unless the owner named its content and recipient himself.
@@ -71,8 +73,10 @@ open `super ask` only when it names that ask's item; about another line the ques
 and the held events stay held. If his words answer it anyway: `super queue done <ask item>`.
 
 **Which answer is to which message.** His messages carry `<owner-msg ref="<6>"/>`; open each
-text block that answers one with `<!-- re:<ref> -->` (1-3 refs), never on event notes: his chat
-draws the link. `[Reply to message ref=<6> from=super|owner]` + `quote:` is his ↩ on one message:
+text block that answers one with `<!-- re:<ref> -->`, never on event notes: his chat draws the
+link. One block answering several: one section per message in his order, each opening with its
+own `re:` line (never several refs on one line), and never his message repeated as a heading:
+each section opens with his message's chip. `[Reply to message ref=<6> from=super|owner]` + `quote:` is his ↩ on one message:
 a pointer, never his instruction, and your open `super ask` stays open.
 
 ## 3. Models and effort

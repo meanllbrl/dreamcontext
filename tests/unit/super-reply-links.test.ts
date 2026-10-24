@@ -9,7 +9,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { msgRef } from '../../dashboard/src/lib/superTypes.js';
 import { isOwnerMessage, replyGroups } from '../../dashboard/src/components/sleepy/chat/replyLinks.js';
+import { splitReplyMark } from '../../dashboard/src/lib/replyMark.js';
 import type { ChatItem } from '../../dashboard/src/components/sleepy/chatSession.js';
+import { replyGroups0345 } from '../fixtures/super-reply-sections/replyGroups-0345.js';
 
 let seq = 0;
 const owner = (text: string, id = `u${++seq}`): ChatItem => ({ kind: 'user', id, text, ts: 1 });
@@ -204,5 +206,140 @@ describe('the bubble and the queue draw a reply as a strip', () => {
     }
     const css = read('dashboard/src/components/sleepy/chat/molecules.css');
     expect(css).toMatch(/@media \(hover: none\) \{\s*\.chat-msg-user-row:focus-within \.chat-m-hoverbar,/);
+  });
+});
+
+/** A Super text as the session holds it: the raw marked text split the way chatSession does. */
+const marked = (raw: string, done = true, id = `t${++seq}`): ChatItem => {
+  const split = splitReplyMark(raw);
+  return {
+    kind: 'text', id, index: 0, text: split.body, done, ts: 1,
+    ...(split.refs.length ? { replyTo: split.refs } : {}),
+    ...(split.sections.length ? { replySections: split.sections } : {}),
+  };
+};
+const mark = (...words: string[]) => `<!-- re:${words.map((w) => msgRef(w)).join(' ')} -->\n`;
+/** The live map without the new field: what 0.34.5 can be compared on. */
+const without = (m: ReturnType<typeof replyGroups>) => [...m.entries()].map(([id, g]) => [id, { groupId: g.groupId, first: g.first, targets: g.targets, strip: g.strip }]);
+
+/**
+ * Streams `raw` as item `id` after `before`, one character at a time (every prefix, done=false),
+ * then done. At every prefix: no strip on a group it opened, and a section shown once keeps its place and
+ * targets. Returns the done map.
+ */
+function stream(before: ChatItem[], raw: string, id = 'live', each?: (m: ReturnType<typeof replyGroups>) => void) {
+  const shown = new Map<number, string>();
+  const check = (m: ReturnType<typeof replyGroups>, done: boolean) => {
+    const g = m.get(id);
+    // A group whose first text streams draws no strip (one it continues keeps its own).
+    if (!done && g?.groupId === `rg-${id}`) for (const v of m.values()) if (v.groupId === g.groupId) expect(v.strip).toBe(false);
+    for (const [at, targets] of shown) expect(g?.sections?.find((x) => x.at === at)?.targets.join()).toBe(targets);
+    for (const x of g?.sections ?? []) shown.set(x.at, x.targets.join());
+    if (g?.sections) for (const v of m.values()) if (v.groupId === g.groupId) expect(v.strip).toBe(false);
+    each?.(m);
+  };
+  for (let n = 1; n <= raw.length; n += 1) check(replyGroups([...before, marked(raw.slice(0, n), false, id)]), false);
+  const done = replyGroups([...before, marked(raw, true, id)]);
+  check(done, true);
+  return done;
+}
+
+describe('a reply in sections (owner 2026-10-24, pick A)', () => {
+  const A = 'Is the Orbit checkout form still running its tests?';
+  const B = '[About agenda line note=n4 section=waiting]\nline: "Rename the pricing card"\n\nis it done?';
+  const C = '[About agenda line note=n9 section=waiting]\nline: "Ship the Orbit deploy"\n\nand the deploy?';
+  const BODY = (a = A, b = B, c = C) => `${mark(a)}The checkout tests are still running.\n\n${mark(b)}Yes, the card is renamed.\n\n${mark(c)}The deploy is green.`;
+  const turn = () => {
+    const a = owner(A); const k1 = tool(); const b = owner(B); const k2 = tool(); const c = owner(C); const k3 = tool();
+    return { a, b, c, k3, before: [a, k1, b, k2, c, k3] };
+  };
+
+  it('three sections resolve to the three owner messages, steered About ones included: one group, no strip', () => {
+    const { a, b, c, k3, before } = turn();
+    const m = stream(before, BODY());
+    expect(m.get('live')).toMatchObject({ groupId: 'rg-live', strip: false, targets: [a.id, b.id, c.id] });
+    expect(m.get('live')?.sections?.map((x) => x.targets)).toEqual([[a.id], [b.id], [c.id]]);
+    expect(m.get(k3.id)).toMatchObject({ groupId: 'rg-live', first: true, strip: false });
+    expect([...m.values()].filter((g) => g.strip)).toEqual([]);
+  });
+
+  it('every prefix, eight shapes: no strip while it streams, a head shown never goes, and at done the heads', () => {
+    const variants: Array<[string, (t: ReturnType<typeof turn>) => [ChatItem[], string]]> = [
+      ['measured', (t) => [t.before, BODY()]],
+      ['preamble', (t) => [t.before, `Looking at all three.\n\n${BODY()}`]],
+      ['stacked', (t) => [t.before, `${mark(A)}\n${mark(B)}Both are fine.\n\n${mark(C)}The deploy is green.`]],
+      ['mixed', (t) => [t.before, `${mark(A)}Still running.\n\n${mark(B, C)}Both done.`]],
+      ['0-ref line', (t) => [t.before, `${mark(A)}Still running.\n\n<!-- re: -->\nAnd one more thing.`]],
+      ['unmarked first', (t) => [[...t.before, marked('Bakıyorum.'), tool(), tool()], BODY()]],
+      ['1 waiting, non-adjacent', () => {
+        const a = owner(A); const done = marked(`${mark(A)}Tests started.`); const b = owner(B);
+        return [[a, done, b, tool()], `${mark(A)}Still running.\n\n${mark(B)}Renamed.`];
+      }],
+    ];
+    for (const [name, make] of variants) {
+      const [before, raw] = make(turn());
+      const m = stream(before, raw, `live-${name}`);
+      const secs = m.get(`live-${name}`)?.sections;
+      expect(secs?.length, name).toBeGreaterThanOrEqual(2);
+      expect(m.get(`live-${name}`)?.strip, name).toBe(false);
+    }
+  });
+
+  it('the eighth: a text that continued a group and then becomes SECTIONED leaves that group as it was', () => {
+    const a = owner(A); const b = owner(B);
+    const first = marked(`${mark(A)}Tests started.`);
+    const k1 = tool(); const k2 = tool();
+    const before = [a, b, first, k1, k2];
+    const base = replyGroups(before);
+    const members = (m: ReturnType<typeof replyGroups>) => [...m.entries()].filter(([id, g]) => id !== 'live' && g.groupId === `rg-${first.id}`).map(([id, g]) => [id, g.strip, g.first]);
+    expect(base.get(first.id)).toMatchObject({ strip: true, targets: [a.id] });
+    const want = members(base);
+    const m = stream(before, `${mark(A)}More on the tests.\n\n${mark(B)}And the card is renamed.`, 'live', (mm) => expect(members(mm)).toEqual(want));
+    expect(m.get('live')).toMatchObject({ groupId: 'rg-live', first: true, strip: false });
+    expect(m.get(k1.id)?.groupId).toBe(`rg-${first.id}`);
+  });
+
+  it('a single answer still streaming draws no strip; at done it gets exactly its 0.34.5 strip', () => {
+    const a = owner(A); const b = owner(B); const c = owner(C);
+    const raw = `${mark(A)}The checkout tests are still running.`;
+    const m = stream([a, b, c, tool()], raw);
+    const ref0345 = replyGroups0345([a, b, c, marked(raw, true, 'live')]);
+    expect(m.get('live')?.strip).toBe(ref0345.get('live')?.strip);
+    expect(m.get('live')).toMatchObject({ strip: true, targets: [a.id] });
+  });
+
+  it('every block ending with fewer than two sections: the done map is 0.34.5\'s', () => {
+    const a = owner('Fix the Orbit login page'); const b = owner('And rename the pricing card'); const c = owner('What is the deploy status?');
+    const shapes: ChatItem[][] = [
+      // out of order: an answer right under its message shows nothing, its siblings their strips
+      [a, b, c, marked(`${mark(c.text as string)}Green.`), marked(`${mark(a.text as string)}Fixed.`), tool(), marked(`${mark(b.text as string)}Renamed.`)],
+      // one mark, one message waiting
+      [owner('one'), marked(`${mark('one')}Done.`)],
+      // the old combined head mark ("To N")
+      [owner('one'), owner('two'), marked(`${mark('two', 'one')}Both done.`)],
+      // a single non-adjacent answer with two waiting
+      [owner('x1'), owner('x2'), tool(), marked(`${mark('x1')}About x1.`)],
+      // stale waiting after a turn with no text
+      [owner('s1'), tool(), owner('s2'), marked('Unmarked.'), tool()],
+      // a preamble and one section
+      [owner('p1'), owner('p2'), marked(`Looking.\n\n${mark('p1')}About p1.`)],
+    ];
+    for (const entries of shapes) {
+      const m = replyGroups(entries);
+      expect(without(m)).toEqual([...replyGroups0345(entries).entries()]);
+      for (const g of m.values()) expect(g.sections).toBeUndefined();
+    }
+  });
+
+  it('an unresolved section ref gives targets []; the map is the same over the three cuts', () => {
+    const { a, before } = turn();
+    const raw = `${mark(A)}Running.\n\n<!-- re:zzzzzz -->\nNobody asked this.`;
+    const m = replyGroups([...before, marked(raw, true, 'live')]);
+    expect(m.get('live')?.sections?.map((x) => x.targets)).toEqual([[a.id], []]);
+    const entries = [...before, marked(raw, true, 'live')];
+    const run = (h: ChatItem[], i: ChatItem[]) => [...replyGroups([...h, ...i]).entries()];
+    const whole = run(entries, []);
+    expect(run([], entries)).toEqual(whole);
+    expect(run(entries.slice(0, 3), entries.slice(3))).toEqual(whole);
   });
 });

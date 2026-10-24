@@ -142,6 +142,61 @@ describe('parseChatActions — boards', () => {
   });
 });
 
+// Owner 2026-10-24 (pick A): a sectioned Super reply is ONE parse with section slots, so every
+// per-message cap, button, board and notice stays whole-message (plan r4 D4).
+describe('parseChatActions — sections', () => {
+  const html = (n: number) => '```dream-html\n<div class="dc-card">' + n + '</div>\n```';
+  const three = (p1: string, p2: string, p3: string) => {
+    const text = `${p1}\n\n${p2}\n\n${p3}`;
+    return { text, at: [0, p1.length + 2, p1.length + 2 + p2.length + 2] };
+  };
+  const kinds = (r: ReturnType<typeof parseChatActions>) => r.segments.map((x) => (x.kind === 'section' ? `§${x.index}` : x.kind));
+
+  it('section markers land between the prose; a dream-actions in part 1 and a dream-html in part 3 both survive', () => {
+    const { text, at } = three(
+      `Tests still run.\n\n${fence('[{"label":"Open the task","action":"task","id":"orbit-tests"}]')}`,
+      'The card is renamed.',
+      `The deploy is green.\n\n${html(1)}`,
+    );
+    const r = parseChatActions(text, { sectionAt: at });
+    expect(kinds(r)).toEqual(['§0', 'prose', '§1', 'prose', '§2', 'prose', 'html']);
+    expect(r.actions).toEqual([{ label: 'Open the task', action: 'task', id: 'orbit-tests' }]);
+    expect(r.body).toBe(parseChatActions(text).body);
+    expect(r.body).not.toContain('\u0000');
+  });
+
+  it('MAX_HTMLS_PER_MESSAGE counts across the sections', () => {
+    const { text, at } = three(`${html(1)}\n\n${html(2)}`, `${html(3)}\n\n${html(4)}`, `${html(5)}\n\n${html(6)}`);
+    const r = parseChatActions(text, { sectionAt: at });
+    expect(r.blocks).toHaveLength(5);
+    expect(r.notices.some((n) => n.includes('more than 5 HTML'))).toBe(true);
+    expect(r.segments.filter((x) => x.kind === 'section')).toHaveLength(3);
+  });
+
+  it('a link definition keeps the sections, and a reference resolves in another part', () => {
+    const { text, at } = three('See [the plan][p].', 'Nothing linked here.', '[p]: https://orbit.example/plan');
+    const r = parseChatActions(text, { sectionAt: at });
+    expect(kinds(r)).toEqual(['§0', 'prose', '§1', 'prose', '§2', 'prose']);
+    const prose = r.segments.filter((x) => x.kind === 'prose') as Array<{ text: string }>;
+    expect(prose[0].text).toContain('[p]: https://orbit.example/plan');
+    expect(prose[0].text).toContain('See [the plan][p].');
+  });
+
+  it('a NUL cannot forge a section slot, and a NUL before a section does not shift it', () => {
+    const forged = parseChatActions('One.\n\u0000dcsec0\u0000\nTwo.');
+    expect(forged.segments).toEqual([{ kind: 'prose', text: 'One.\ndcsec0\nTwo.' }]);
+    const raw = 'One\u0000.\n\nTwo.';
+    const r = parseChatActions(raw, { sectionAt: [0, raw.indexOf('Two')] });
+    expect(r.segments).toEqual([{ kind: 'section', index: 0 }, { kind: 'prose', text: 'One.' }, { kind: 'section', index: 1 }, { kind: 'prose', text: 'Two.' }]);
+  });
+
+  it('without sectionAt the output is unchanged', () => {
+    const { text } = three(`A.\n\n${html(1)}`, 'B.', '[x](a/b.excalidraw.md) C.');
+    expect(parseChatActions(text, { sectionAt: [] })).toEqual(parseChatActions(text));
+    expect(parseChatActions(text, {})).toEqual(parseChatActions(text));
+  });
+});
+
 describe('parseChatActions — empty input', () => {
   it('returns empties for an empty message rather than throwing', () => {
     expect(parseChatActions('')).toEqual({

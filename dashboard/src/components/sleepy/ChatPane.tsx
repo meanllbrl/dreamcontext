@@ -182,13 +182,15 @@ function primaryToolPath(input: unknown): string | null {
 /** What the quest model reads of the live items, as a memo key. A streamed token replaces the
  *  items array but changes only an unfinished block's text, which the quest never reads (it
  *  reads which items exist, a call's status, and whether a block is finished and non-empty;
- *  the reply links also read a Super block's `replyTo`, which its head settles once).
+ *  the reply links also read a Super block's `replyTo` and `replySections`, which change only
+ *  when a mark closes or a section gets its first words).
  *  Keying on this keeps the whole-conversation quest pass off the per-token render path. */
 function questItemsKey(items: readonly ChatItem[]): string {
   return items.map((it) => (
     it.kind === 'tool' || it.kind === 'compact' ? `${it.id}:${it.status}`
       : it.kind === 'user' ? it.id
-        : `${it.id}:${it.done ? 1 : 0}${it.text ? 1 : 0}${it.kind === 'text' && it.replyTo ? it.replyTo.join() : ''}`
+        : `${it.id}:${it.done ? 1 : 0}${it.text ? 1 : 0}${it.kind === 'text' && it.replyTo ? it.replyTo.join() : ''}${
+          it.kind === 'text' && it.replySections ? `/${it.replySections.map((s) => `${s.at}:${s.refs.join()}`).join(';')}` : ''}`
   )).join('|');
 }
 
