@@ -1682,7 +1682,7 @@ function dispatcherView(check: InstallCheck, contextRoot: string): DispatcherVie
   const notifier = inspectNotifier();
   const heartbeat = readDispatcherHeartbeat();
   return {
-    supported: process.platform === 'darwin',
+    supported: process.platform === 'darwin' || process.platform === 'win32',
     platform: process.platform,
     installed,
     current: installed && check.plistCurrent && check.wrapperCurrent,

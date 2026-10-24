@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
-import { claudeAwarePath } from './claude-path.js';
+import { claudeAwarePath, claudeDirectCommand } from './claude-path.js';
+import { treeKillRealChild } from './proc.js';
 import { SPAWNED_ENV } from './session-origin.js';
 import { listConnections } from './connections.js';
 import { currentVaultTarget } from './federation-recall.js';
@@ -241,7 +242,11 @@ export function runPeerHeadless(
   const shell = process.env.SHELL || '/bin/zsh';
 
   return new Promise<LiveRunResult>((resolve) => {
-    const child = spawn(shell, ['-ilc', script, prompt], {
+    // Windows: no login shell, so the prompt rides as a plain argv element to claude itself.
+    const direct = process.platform === 'win32'
+      ? claudeDirectCommand(['-p', prompt, ...argv.slice(2)])
+      : null;
+    const child = spawn(direct ? direct.file : shell, direct ? direct.args : ['-ilc', script, prompt], {
       cwd: peer.projectRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
       // Marked spawned: a headless run in the peer vault adds no sleep debt there and gets
@@ -260,6 +265,8 @@ export function runPeerHeadless(
     };
 
     const timer = setTimeout(() => {
+      // The win32 child is not a group leader: take claude's hooks and tools down with it.
+      treeKillRealChild(child, 'SIGKILL');
       try { child.kill('SIGKILL'); } catch { /* already gone */ }
       finish({
         ok: false,

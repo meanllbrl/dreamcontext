@@ -11,6 +11,7 @@ import {
 } from '../claude-path.js';
 import { ensureCliInstalled, type EnsureCliResult } from '../ensure-cli.js';
 import { cliAwarePath } from '../automations/cli-path.js';
+import { killPortable } from '../proc.js';
 import { withNodeDirOnPath } from '../git-sync/credentials.js';
 import { commandLineToolsInstalled, gitAvailable } from '../git-sync/git.js';
 import { DownloadError, downloadVerified } from './download.js';
@@ -109,8 +110,8 @@ export interface FixDeps {
 // ─── Process plumbing ──────────────────────────────────────────────────────────
 
 function killGroup(pid: number): void {
-  try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ }
-  setTimeout(() => { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } }, 3_000).unref();
+  try { killPortable(-pid, 'SIGTERM'); } catch { /* gone */ }
+  setTimeout(() => { try { killPortable(-pid, 'SIGKILL'); } catch { /* gone */ } }, 3_000).unref();
 }
 
 const OUTPUT_CAP = 16_000;
@@ -124,7 +125,7 @@ function defaultRun(file: string, args: string[], o: RunOptions, sink: RunSink, 
     let timedOut = false;
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(file, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+      child = spawn(file, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     } catch (err) {
       resolve({ ok: false, stdout: '', stderr: (err as Error).message, code: null });
       return;

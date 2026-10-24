@@ -156,6 +156,10 @@ pub(crate) fn parse_node_version(s: &str) -> Option<(u32, u32, u32)> {
 }
 
 pub(crate) fn home_dir() -> Option<PathBuf> {
+    // Windows names the home folder USERPROFILE; HOME is only set by shells like Git Bash.
+    #[cfg(windows)]
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
+    #[cfg(not(windows))]
     let home = std::env::var("HOME").ok()?;
     let path = PathBuf::from(home);
     (path.is_absolute() && path != Path::new("/")).then_some(path)
@@ -173,9 +177,22 @@ pub(crate) fn npm_global_dir(home: &Path) -> PathBuf {
     home.join(".dreamcontext").join("npm-global")
 }
 
+/// Windows: start `cmd` without a console window. The app is a GUI process (main.rs), so
+/// every console program it starts would otherwise get a NEW, visible console. Identity
+/// elsewhere.
+pub(crate) fn no_console(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Run a command with a deadline; `Some(stdout)` only on a zero exit within it.
 fn output_with_timeout(cmd: &mut Command, timeout: Duration) -> Option<String> {
-    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut child = no_console(cmd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
@@ -200,11 +217,42 @@ fn probe_version(path: &str) -> Option<(u32, u32, u32)> {
 }
 
 /// The user's login shell's `node`: what their nvm/brew/volta setup puts first.
+#[cfg(not(windows))]
 fn login_shell_node() -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let out = output_with_timeout(Command::new(&shell).args(["-lc", "command -v node"]), SHELL_PROBE_TIMEOUT)?;
     let path = out.trim().to_string();
     (!path.is_empty()).then_some(path)
+}
+
+/// Windows has no login shell: `where node` answers from the PATH the user's session has.
+#[cfg(windows)]
+fn login_shell_node() -> Option<String> {
+    let out = output_with_timeout(Command::new("where.exe").arg("node"), SHELL_PROBE_TIMEOUT)?;
+    out.lines().map(str::trim).find(|l| l.to_ascii_lowercase().ends_with(".exe")).map(str::to_string)
+}
+
+/// The usual Windows install locations, each only when its environment variable is set.
+#[cfg(windows)]
+fn windows_node_candidates(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    let at = |key: &str, rest: &[&str]| -> Option<String> {
+        let base = var(key).filter(|v| !v.is_empty())?;
+        let mut p = PathBuf::from(base);
+        for part in rest {
+            p.push(part);
+        }
+        Some(p.to_string_lossy().into_owned())
+    };
+    [
+        at("ProgramFiles", &["nodejs", "node.exe"]),
+        at("LOCALAPPDATA", &["Programs", "nodejs", "node.exe"]),
+        at("NVM_SYMLINK", &["node.exe"]),
+        at("LOCALAPPDATA", &["Volta", "bin", "node.exe"]),
+        at("USERPROFILE", &["scoop", "apps", "nodejs", "current", "node.exe"]),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// Every place a Node may live, most-preferred first. The private copy is last: a user's own
@@ -217,10 +265,18 @@ fn candidate_paths(home: Option<&Path>) -> Vec<(String, bool)> {
     if let Some(p) = login_shell_node() {
         out.push((p, false));
     }
-    out.push(("/opt/homebrew/bin/node".into(), false));
-    out.push(("/usr/local/bin/node".into(), false));
-    out.push(("/usr/bin/node".into(), false));
+    #[cfg(windows)]
+    for p in windows_node_candidates(&|k| std::env::var(k).ok()) {
+        out.push((p, false));
+    }
+    #[cfg(not(windows))]
+    {
+        out.push(("/opt/homebrew/bin/node".into(), false));
+        out.push(("/usr/local/bin/node".into(), false));
+        out.push(("/usr/bin/node".into(), false));
+    }
     if let Some(home) = home {
+        #[cfg(not(windows))]
         out.push((home.join(".volta/bin/node").to_string_lossy().into_owned(), false));
         out.push((managed_node_bin(home).to_string_lossy().into_owned(), true));
     }
@@ -484,11 +540,20 @@ fn swap_current(root: &Path, version: &str) -> Result<(), SetupError> {
         }
     }
     let tmp = root.join(format!(".current-{}-{}", std::process::id(), unix_nanos()));
-    std::os::unix::fs::symlink(version, &tmp).map_err(|e| io_error(e, "Could not create the current link"))?;
-    fs::rename(&tmp, &current).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        io_error(e, "Could not switch the current link")
-    })
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(version, &tmp).map_err(|e| io_error(e, "Could not create the current link"))?;
+        fs::rename(&tmp, &current).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            io_error(e, "Could not switch the current link")
+        })
+    }
+    // Unreachable in practice: there is no Windows pin, so `pin_for_host` refuses first.
+    #[cfg(not(unix))]
+    {
+        let _ = (tmp, version);
+        Err(SetupError::Other("A private Node.js install is not supported on Windows yet.".into()))
+    }
 }
 
 /// Remove old copies: only entries named like a version (or a version moved aside), only real
@@ -652,6 +717,7 @@ pub(crate) fn install_managed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     /// A scratch folder removed on drop (no tempfile crate in this workspace).
@@ -676,6 +742,7 @@ mod tests {
 
     /// A tar.gz shaped like Node's: `node-v24.21.0-test/bin/node`, where `node` is a script
     /// answering `--version` like the real binary.
+    #[cfg(unix)]
     fn fake_node_archive(dir: &Path) -> (PathBuf, PinEntry) {
         let top = dir.join("src").join("node-v24.21.0-test").join("bin");
         fs::create_dir_all(&top).unwrap();
@@ -701,12 +768,32 @@ mod tests {
         (archive, pin)
     }
 
+    #[cfg(unix)]
     fn copy_fetch(src: PathBuf) -> impl Fn(&Path, &dyn Fn(u64), &AtomicBool) -> Result<(), SetupError> {
         move |dest: &Path, progress: &dyn Fn(u64), _cancel: &AtomicBool| {
             let n = fs::copy(&src, dest).map_err(|e| SetupError::Other(e.to_string()))?;
             progress(n);
             Ok(())
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_candidates_follow_the_install_locations_that_are_set() {
+        let vars = |k: &str| match k {
+            "ProgramFiles" => Some(r"C:\Program Files".to_string()),
+            "LOCALAPPDATA" => Some(r"C:\Users\me\AppData\Local".to_string()),
+            "NVM_SYMLINK" => Some(String::new()),
+            _ => None,
+        };
+        assert_eq!(
+            windows_node_candidates(&vars),
+            vec![
+                r"C:\Program Files\nodejs\node.exe".to_string(),
+                r"C:\Users\me\AppData\Local\Programs\nodejs\node.exe".to_string(),
+                r"C:\Users\me\AppData\Local\Volta\bin\node.exe".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -805,6 +892,7 @@ mod tests {
         assert!(s.0.join(&aside[0]).join("lib").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn current_swaps_atomically_and_a_real_current_folder_is_refused() {
         let s = Scratch::new("current");
@@ -821,6 +909,7 @@ mod tests {
         assert!(t.0.join("current").is_dir());
     }
 
+    #[cfg(unix)]
     #[test]
     fn npmrc_points_global_packages_outside_the_version_folder() {
         let home = Path::new("/Users/öğretmen");
@@ -828,6 +917,7 @@ mod tests {
         assert!(npmrc_contents(Path::new("/Users/a\nb")).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn pruning_removes_only_old_version_folders() {
         let s = Scratch::new("prune");
@@ -853,6 +943,7 @@ mod tests {
         assert!(!version_at_least("12.7", "13.5"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn installs_end_to_end_and_cleans_the_staging_folder() {
         let s = Scratch::new("install");
@@ -883,6 +974,7 @@ mod tests {
         assert_eq!(seen.last(), Some(&Phase::Done));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_bad_download_installs_nothing() {
         let s = Scratch::new("bad");
@@ -898,6 +990,7 @@ mod tests {
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0, "staging folder left behind");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_cancel_stops_before_anything_is_placed() {
         let s = Scratch::new("cancel");
@@ -910,6 +1003,7 @@ mod tests {
         assert_eq!(fs::read_dir(managed_root(&home)).unwrap().count(), 0);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_linked_dreamcontext_folder_is_refused() {
         let s = Scratch::new("link");

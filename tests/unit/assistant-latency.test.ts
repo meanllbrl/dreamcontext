@@ -92,7 +92,8 @@ vi.mock('node:child_process', async (importOriginal) => {
     ...real,
     spawn: vi.fn((_cmd: string, args: string[], opts: { env?: Record<string, string> }) => {
       const child = new FakeChild();
-      child.script = args[args.length - 1] ?? '';
+      // win32 spawns claude directly (no login shell): rebuild the script the POSIX path would carry.
+      child.script = process.platform === 'win32' ? `exec claude ${args.map((x) => `"${x}"`).join(' ')}` : (args[args.length - 1] ?? '');
       child.env = opts?.env ?? {};
       spawned.push(child);
       return child as unknown as import('node:child_process').ChildProcess;

@@ -30,6 +30,15 @@
       "../../dist": "dist",
       "../../skill-packs": "skill-packs",
       "../../skill": "skill",
+      "../../agents": "agents",
+      "../../assets": "assets",
+      "../../cloud": "cloud",
+      "../../skill-initializer": "skill-initializer",
+      "../../skill-curator": "skill-curator",
+      "../../skill-deep-research": "skill-deep-research",
+      "../../skill-sync": "skill-sync",
+      "../../skill-patterns": "skill-patterns",
+      "../../skill-agent-core": "skill-agent-core",
       "sleepy": "sleepy"
     },
     "macOS": {
