@@ -1054,7 +1054,11 @@ async function windowsInstallLocked(
   } catch (e) {
     return fail(`The installer failed: ${(e as Error).message}`);
   } finally {
-    if (workDir) rmSync(workDir, { recursive: true, force: true });
+    // Best-effort: a process the installer started (an old uninstaller, a WebView2 bootstrapper)
+    // can still hold a file in its private TEMP, and a failed clean-up must not turn a finished
+    // install into an error that skips the manifest. The folder is private; the next run's
+    // staging is a new one.
+    if (workDir) { try { rmSync(workDir, { recursive: true, force: true }); } catch { /* left for later */ } }
   }
 
   const after = readInstall();
