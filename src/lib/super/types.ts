@@ -118,7 +118,15 @@ export interface SuperContainer {
   forChild?: string;
   /** When it was (last) shown for that job (epoch ms), beside `forChild`. */
   forAt?: number;
+  /** A picture's width/height (3 decimals), read by the SERVER from the file's header whenever
+   *  an agent opens, presents or asks with it (image-aspect.ts); never written by the owner's
+   *  layout. Images only, in [ASPECT_MIN, ASPECT_MAX]; absent = unknown (drawn as today). */
+  aspect?: number;
 }
+
+/** A picture's aspect outside this is dropped, never clamped (a 1:30 strip is not a mockup). */
+export const ASPECT_MIN = 0.05;
+export const ASPECT_MAX = 20;
 
 /** The owner closed an automatic card: the same (kind, ref) is not opened again automatically
  *  until `until` (G5). */

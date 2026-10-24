@@ -58,6 +58,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-app-dir-',
   'dc-app-link-home-',
   'dc-app-link-proj-',
+  'dc-aspect-',
+  'dc-aspect-out-',
   'dc-assign-route-',
   'dc-assign-route-home-',
   'dc-assistant-latency-home-',

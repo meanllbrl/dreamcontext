@@ -67,6 +67,8 @@ export interface SuperContainer {
   /** A picture shown for this child's job: it goes to Others once the job moves on. */
   forChild?: string;
   forAt?: number;
+  /** A picture's width/height, server-read from its file header (absent = unknown). */
+  aspect?: number;
 }
 
 export interface SuperDismissed { kind: ContainerKind; ref: string; until: number }

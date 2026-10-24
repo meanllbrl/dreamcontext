@@ -33,6 +33,7 @@ import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJo
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
+import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
 import {
   CLAUDE_SESSIONS_MEANS, delegationAllowed, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
 } from '../../lib/super/capacity.js';
@@ -759,6 +760,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     let kept: string[] = [];
     // Touched before the write too, so a tidy pass racing it never moves what is being opened.
     touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
+    // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
+    // time, so a mockup overwritten at the same path gets its new shape.
+    const aspects = kind === 'image' ? await imageAspects(dirname(root), refs) : new Map<string, number | undefined>();
     // The child `--for` named left the record meanwhile (an ended one past the history cap):
     // refused, never opened unlinked as if for its job.
     let childGone = false;
@@ -789,6 +793,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
           // Shown again: for the job named now, else still for the one it was shown for.
           if (forChild && s.children[forChild]) { have.forChild = forChild; have.forAt = now; }
           else if (have.forChild) have.forAt = now;
+          setAspect(have, aspects);
           return;
         }
         // The agenda opens at the size that holds its four sections, unless a size is named.
@@ -799,6 +804,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
           ...(size !== 'small' ? { size } : {}),
           place: 'float', ...(titleOf(ref) ? { title: titleOf(ref) } : {}),
           ...(forChild && s.children[forChild] ? { forChild, forAt: now } : {}),
+          ...(kind === 'image' && aspects.get(ref) !== undefined ? { aspect: aspects.get(ref) } : {}),
         });
       });
       // A page the agent opens is shown side by side at once (owner 2026-10-22: "if it adds a
@@ -915,8 +921,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     let kept = false;
+    // The presented pictures' shapes, read before the write (image-aspect.ts).
+    const aspects = await imageAspects(dirname(c.who.contextRoot),
+      c.state.containers.filter((k) => k.kind === 'image' && ids.includes(k.id)).map((k) => k.ref));
     const state = await writeSuper(c.who.contextRoot, (s) => {
-      for (const k of s.containers) if (ids.includes(k.id)) k.place = 'float';
+      for (const k of s.containers) if (ids.includes(k.id)) { k.place = 'float'; setAspect(k, aspects); }
       const prev = s.view;
       const same = prev.mode === 'present' && sameCardSet(prev.cards ?? [], ids);
       // The owner's pick for these same cards is his (plan-r2 D10): the agent's order is written,
