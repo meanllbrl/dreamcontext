@@ -303,6 +303,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/agent/session-stats': allow(`${CHAT}: one chat's token stats; side-effect free`),
   'GET /api/agent/chat-history': allow(`${CHAT}: one chat's transcript; side-effect free`),
   'GET /api/agent/live-chats': allow(`${CHAT}: this project's running chats (names, never paths); side-effect free`),
+  'GET /api/agent/super-questions': allow(`${CHAT}: a handed-over project's open Super Agent questions, each with its card (the child's question as it asks it); side-effect free`),
+  'POST /api/agent/super-answer': allow(`${CHAT}: the owner answers a child's question the Super Agent escalated; the Mac window answers it through the child's own session`),
   'GET /api/agent/slash-commands': allow(`${CHAT}: the slash command list; side-effect free`),
   'GET /api/agent/chat-sessions': allow(`${CHAT}: this project's past chats; side-effect free`),
   'GET /api/agent/bg-output': allow(`${CHAT}: a background shell's output; side-effect free`),

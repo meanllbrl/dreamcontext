@@ -11,6 +11,13 @@ import type { SendOutcome, PushSubscriptionLike } from './push.js';
  *   permission  → asking, a tool permission prompt (the TOOL NAME only, never its command/path)
  *   turn        → working|asking → idle on a top-level result the owner did not interrupt
  *
+ * SUPER AGENT HANDED OVER (owner 2026-10-24): in that project only the Super Agent's own chat
+ * pushes (its turn, its prompt) plus the questions it puts to the owner (`pushOwnerQuestion`: its
+ * `super ask`, a child question it escalated). Its children and every other chat of the project
+ * stay quiet on the phone, as on the laptop: they report to the Super, not to him. The one
+ * exception is the laptop's too: a child's PERMISSION prompt (only the owner may answer one),
+ * opening the Super's chat. A project not handed over pushes as before.
+ *
  * Nothing else pushes. Only while Mac mode is on, only the chosen projects' chats, never
  * twice for one requestId or one turn, at most {@link PER_DEVICE_PER_MIN} a minute per device,
  * and never to a device whose phone shows that chat on screen right now (D2: the suppression is
@@ -38,6 +45,9 @@ export interface PushNotifierDeps {
   /** The device whose phone has this chat (registry session id) open on screen, if any. */
   showingDevice: (sessionId: string) => string | null;
   send: (sub: PushSubscriptionLike, payload: PushPayload) => Promise<SendOutcome>;
+  /** The handed-over Super Agent session (pin id) of a project, or null when it is not handed
+   *  over. Absent = never handed over. */
+  superSession?: (vault: string) => string | null;
   now?: () => number;
 }
 
@@ -78,6 +88,12 @@ export function pushFor(change: ChatChange): { key: string; payload: Omit<PushPa
   return null;
 }
 
+/** May this chat push while its project's Super Agent is `superSession` (null = not handed over)?
+ *  Only the Super's own chat does. */
+export function superAllows(superSession: string | null, e: Pick<ChatEntry, 'sessionId' | 'conversationId'>): boolean {
+  return !superSession || e.sessionId === superSession || e.conversationId === superSession;
+}
+
 /** One line per push that did not land: the push service's host and the device's hash prefix, never
  *  the endpoint path (it is the subscription's secret capability). */
 function logPushMiss(kind: string, out: { status: number | null; gone: boolean; error?: string }, endpoint: string, device: string): void {
@@ -102,6 +118,16 @@ export class PushNotifier {
     if (!exposed.length) return 0;
     const p = pushFor(change);
     if (!p || !p.payload.vault || !exposed.includes(p.payload.vault)) return 0;
+    const sup = this.d.superSession?.(p.payload.vault) ?? null;
+    if (!superAllows(sup, change.entry)) {
+      // The one exception, as on the laptop (the queue head's permission rings): a permission is
+      // the owner's alone (the Super is refused one) and the phone draws it nowhere (the mirror
+      // strips prompts), so a child would wait on it unseen. It pushes even to a phone showing the
+      // Super's chat (suppressed only by the CHILD's own screen, which the phone never shows),
+      // says where it is answered, and the tap opens the Super's chat, the only one listed then.
+      if (!sup || p.payload.kind !== 'permission') return 0;
+      return this.deliver(p.key, change.entry.sessionId, { ...p.payload, conversationId: sup, body: clip(`${p.payload.body} · answer it on the Mac`) }).done;
+    }
     return this.deliver(p.key, change.entry.sessionId, p.payload).done;
   }
 
