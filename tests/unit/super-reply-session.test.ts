@@ -174,6 +174,32 @@ describe('a text cut mid-stream is closed by the turn\'s end', () => {
     });
   }
 
+  it('a cut block only takes ITS late echo: an empty cut text never swallows a later turn\'s reply; thinking too', async () => {
+    const { s, ws } = await open('basic');
+    start(ws);
+    s.interrupt(); result(ws);
+    expect(texts(s)[0]).toMatchObject({ text: '', done: true, cut: true });
+    // Every echo "starts with" an empty text: it is never the cut block's own.
+    echo(ws, 'A later reply.');
+    expect(texts(s).map((t) => t.text)).toEqual(['', 'A later reply.']);
+    // A cut text is not replaced across his next message either.
+    const b = await open('basic');
+    start(b.ws); delta(b.ws, 'Half'); result(b.ws);
+    (b.s as unknown as { send: (t: string) => void }).send('next question');
+    expect((b.s as unknown as Model).getModel().items.map((it) => it.kind)).toEqual(['text', 'user']);
+    echo(b.ws, 'Half and more.');
+    expect((b.s as unknown as Model).getModel().items.map((it) => `${it.kind}:${it.text}`)).toEqual(['text:Half', 'user:next question', 'text:Half and more.']);
+    // A thinking block cut mid-stream takes its late echo in place, never a second copy.
+    const c = await open('basic');
+    thinkStart(c.ws);
+    frame(c.ws, { type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'thinking_delta', thinking: 'Weigh' } } });
+    meta(c.ws, 'exit');
+    frame(c.ws, { type: 'assistant', message: { role: 'assistant', model: 'claude-opus', content: [{ type: 'thinking', thinking: 'Weigh both options.', signature: 'x' }] } });
+    const th = (c.s as unknown as Model).getModel().items.filter((it) => it.kind === 'thinking');
+    expect(th).toHaveLength(1);
+    expect(th[0]).toMatchObject({ text: 'Weigh both options.', done: true });
+  });
+
   it('a finished text is left as it was, and an echo that is not its continuation still appends', async () => {
     const { s, ws } = await open('super');
     start(ws);

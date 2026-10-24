@@ -113,7 +113,8 @@ describe('super queue ask reaches the owner off the Super stage', () => {
     const r = await verb('queue-ask', { item: 'q-ask1', text: 'Postgres or sqlite?' });
     expect(result(r)).toMatchObject({ escalated: true, shown: true, reached: false, via: [] });
     expect(String(result(r).note)).toMatch(/NOT seen/);
-    expect(String(result(r).note)).toMatch(/do not tell him you asked/);
+    // Owner 2026-10-24: the text says in one line that a question waits; the choice is the card's.
+    expect(String(result(r).note)).toMatch(/say in one line that a question waits; the choice stays in the card/);
     expect(takeSuperEscalation(SUPER)).toBe(false);
   });
 
@@ -246,7 +247,7 @@ describe('the briefing sends every owner question down the non-blocking path', (
     expect(SUPER_SHOW_SECTION).not.toMatch(/ask with AskUserQuestion/);
     expect(SUPER_SHOW_SECTION).toMatch(/super ask/);
     expect(BATCH_LAST_LINE).toMatch(/never AskUserQuestion/);
-    expect(BATCH_LAST_LINE).toMatch(/write him that question in this turn/);
+    expect(BATCH_LAST_LINE).toMatch(/in this turn say in one line that a question waits; the choice stays in the card, never only in your text/);
   });
 
   it('a running super session is re-briefed (the revision moved)', () => {

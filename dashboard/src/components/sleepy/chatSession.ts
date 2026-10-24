@@ -106,7 +106,11 @@ export interface ChatTextItem {
 /** One Assistant text block as the notch should show it (`ChatSession.onPresent`). A block with
  *  no cue is an answer: `present`, not staying. */
 export interface NotchPresentation { itemId: string; kind: NotchCue['kind']; stay: boolean; text: string }
-export interface ChatThinkingItem { kind: 'thinking'; id: string; index: number; text: string; done: boolean; ts: number }
+export interface ChatThinkingItem {
+  kind: 'thinking'; id: string; index: number; text: string; done: boolean; ts: number;
+  /** Closed by the turn's end, not its own block-stop (see `ChatTextItem.cut`). */
+  cut?: true;
+}
 /** A tool call THIS conversation's agent made. There is deliberately no `parentToolUseId`
  *  field: a sub-agent's tool calls never become items at all (the reducer drops every frame
  *  carrying one), so the transcript is main-agent-only by construction. The field used to
@@ -1138,7 +1142,7 @@ export function createChatSession(
     if (!conv.items.some((it) => (it.kind === 'text' || it.kind === 'thinking') && !it.done)) return;
     const items = conv.items.map((it) => (
       it.kind === 'text' && !it.done ? { ...it, done: true, cut: true as const }
-        : it.kind === 'thinking' && !it.done ? { ...it, done: true } : it
+        : it.kind === 'thinking' && !it.done ? { ...it, done: true, cut: true as const } : it
     ));
     conv = { ...conv, items };
   }
@@ -1628,12 +1632,15 @@ export function createChatSession(
           const echoed = kind !== 'text' ? ev.text
             : superView ? splitReplyMark(ev.text).body : mode === 'assistant' ? stripNotchCue(ev.text) : ev.text;
           if (last && (last as ChatTextItem | ChatThinkingItem).text === echoed) return;
-          // The full echo of a text the turn's end cut short: it replaces that text in place,
-          // never a second copy. Not spoken: the turn it belonged to is over.
-          if (last?.kind === 'text' && last.cut && echoed.startsWith(last.text)) {
-            const at = conv.items.indexOf(last);
+          // The full echo of a block the turn's end cut short: it replaces that block in place,
+          // never a second copy. Only the cut block itself (written, and nothing of his after
+          // it), so a later turn's echo never lands on an old one. Not spoken: its turn is over.
+          const at = last ? conv.items.lastIndexOf(last) : -1;
+          if (last && (last as ChatTextItem | ChatThinkingItem).cut && last.kind === kind
+            && (last as ChatTextItem | ChatThinkingItem).text && echoed.startsWith((last as ChatTextItem | ChatThinkingItem).text)
+            && !conv.items.slice(at + 1).some((it) => it.kind === 'user')) {
             const items = conv.items.slice();
-            items[at] = withReplyTo({ ...last, text: cueBody(last.id, ev.text) });
+            items[at] = last.kind === 'text' ? withReplyTo({ ...last, text: cueBody(last.id, ev.text) }) : { ...(last as ChatThinkingItem), text: ev.text };
             conv = { ...conv, items };
             return;
           }

@@ -207,7 +207,7 @@ describe('how the super agent talks to the owner', () => {
   });
 
   it('every event last line, the handover and the recap carry the same rules', () => {
-    for (const rule of ['one subject', 'the result or what you need from him first', '2-4 short sentences', 'no ids, hashes, paths, commands or inside jargon unless he asks', 'at most one question and only at the end', 'in plain words']) {
+    for (const rule of ['one subject', 'the result or what you need from him first', '2-4 short sentences', 'no ids, hashes, paths, commands or inside jargon unless he asks', 'a choice he must make asked in a `super ask` card and never only as a question in your text', 'in plain words']) {
       expect(OWNER_VOICE).toContain(rule);
     }
     const s = { ...emptySuperState(), session: 'sup', enabled: true };

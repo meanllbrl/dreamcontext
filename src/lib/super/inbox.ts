@@ -721,7 +721,7 @@ export function superAnswerDigest(sessionId: string, now = Date.now(), about: Ag
 
 /** How the super agent writes to the owner (plan r4 D13). Shipped to every user: worded for
  *  anyone juggling many things, it names no condition. */
-export const OWNER_VOICE = 'in the language the owner writes to you in, never the language of this note, in plain words, one subject, the result or what you need from him first, 2-4 short sentences, no ids, hashes, paths, commands or inside jargon unless he asks, what still runs said plainly, never with a time, at most one question and only at the end; name any irreversible or outward action (a push, a merge, a delete, a message sent) in plain words';
+export const OWNER_VOICE = 'in the language the owner writes to you in, never the language of this note, in plain words, one subject, the result or what you need from him first, 2-4 short sentences, no ids, hashes, paths, commands or inside jargon unless he asks, what still runs said plainly, never with a time, a choice he must make asked in a `super ask` card and never only as a question in your text (the text says in one line that one waits); name any irreversible or outward action (a push, a merge, a delete, a message sent) in plain words';
 
 /** The last line of every `[super events]` turn. Silence is the rule for events: the owner
  *  reads the job list, and an event turn shows him as one line. A model asked to write "nothing
@@ -729,7 +729,7 @@ export const OWNER_VOICE = 'in the language the owner writes to you in, never th
  *  the rule says no text at all, in so many words. */
 export const BATCH_LAST_LINE = [
   'These events already updated the job list the owner reads; he sees this turn as ONE line unless it gives him an awaited=owner result, and every result of an awaited=owner job is one, the second and later ones too.',
-  'A question: answer it with `dreamcontext super answer <child> <question id> "<option>"` only when the brief and the project settle it; otherwise escalate ONE clear question with `dreamcontext super queue ask <item> "<question>"` (never AskUserQuestion: it locks your turn until he answers) and write him that question in this turn too: an escalating turn shows in full. Its reply says whether it `reached` him.',
+  'A question: answer it with `dreamcontext super answer <child> <question id> "<option>"` only when the brief and the project settle it; otherwise escalate ONE clear question with `dreamcontext super queue ask <item> "<question>"` (never AskUserQuestion: it locks your turn until he answers) and in this turn say in one line that a question waits; the choice stays in the card, never only in your text: an escalating turn shows in full. Its reply says whether it `reached` him.',
   'Done, stuck or closed: set the row with `dreamcontext super brief <child> "<doing / next>"`; when a slot frees, start the next job with `dreamcontext super delegate --from <pool id>`. Apart from an awaited=owner result or a question you escalate, write no text at all in this turn: no summary, no note, not one line; the commands are the whole turn.',
   `If the owner writes to you during this turn, answer him normally (${OWNER_VOICE}); the no-message rule covers only your notes about the events. Then end your turn.`,
 ].join('\n');

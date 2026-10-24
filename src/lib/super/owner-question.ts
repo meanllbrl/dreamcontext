@@ -111,9 +111,9 @@ function noteFor(item: SuperQueueItem, shown: boolean, ahead: number, via: Owner
     ? 'His pick goes to the child directly, or he writes to you.'
     : 'His answer is his next message to you.';
   if (!reached) {
-    return `NOT seen: he is not on your stage and no banner or phone push could reach him${via.includes('notch') ? ' (only the notch lists it)' : ''}. It waits as a card in your chat and at the head of his bar; do not tell him you asked. Write him the question in this turn too: your reply reaches him when he is back. ${answer}`;
+    return `NOT seen: he is not on your stage and no banner or phone push could reach him${via.includes('notch') ? ' (only the notch lists it)' : ''}. It waits as a card in your chat and at the head of his bar. In this turn say in one line that a question waits; the choice stays in the card, never only in your text: your reply reaches him when he is back. ${answer}`;
   }
-  return `Reached him (${via.join(', ')}): it waits as a card in your chat and at the head of his bar, with its buttons. Write him the question in this turn too, then end your turn; never wait for it. ${answer}`;
+  return `Reached him (${via.join(', ')}): it waits as a card in your chat and at the head of his bar, with its buttons. In this turn say in one line that a question waits; the choice stays in the card, never only in your text, then end your turn; never wait for it. ${answer}`;
 }
 
 /** How many owner items come before a question at the head: every open permission, then the

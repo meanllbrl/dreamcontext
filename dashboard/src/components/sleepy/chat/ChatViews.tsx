@@ -72,6 +72,9 @@ export function ChatBlockSegment({ segment, conversationId, session, report }: {
     case 'pending':
       if (segment.fence === 'html') return <HtmlPending partial={segment.partial} />;
       return <PendingViewPill />;
+    // A sectioned reply's section start draws its head in the transcript, never a block.
+    case 'section':
+      return null;
   }
 }
 
