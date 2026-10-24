@@ -141,7 +141,9 @@ export interface AskShow {
   presented?: true;
   skipped?: 'owner_layout';
 }
-export const MAX_ASK_SHOWS = 4;
+/** One per question that can be open at once: each live child's and the Super's own (end review:
+ *  a cap under that dropped the presented head's entry, and its pictures never went back). */
+export const MAX_ASK_SHOWS = MAX_LIVE_CHILDREN + 1;
 /** `recent`: pictures opened for the job (or the super's last set) at most this long ago. */
 export const ASK_SHOW_RECENT_MS = 10 * 60_000;
 
@@ -641,7 +643,7 @@ export interface SuperState {
   pad?: SuperPadItem[];
   /** The last pad id handed out (`n<padSeq>`): ids are never reused, so a stale id names nothing. */
   padSeq?: number;
-  /** Picture questions' cards (ask-show.ts), at most MAX_ASK_SHOWS. Absent = none. */
+  /** Picture questions' cards (ask-show.ts), at most MAX_ASK_SHOWS (the presented one never dropped). Absent = none. */
   askShows?: AskShow[];
 }
 
@@ -955,21 +957,36 @@ export interface SuperAskSpec { title?: string; questions: SuperAskQuestion[]; s
 
 /** A picture an option preview points at: its raw `src` and the option's label. */
 export interface PreviewImage { src: string; label: string }
-const IMG_SRC_RE = /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi;
+/** One tag's `src` (the tag alone is matched: linear in its length). */
+const TAG_SRC_RE = /(?:^|\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+/** The longest `<img …>` tag read; a longer one is skipped. */
+const MAX_IMG_TAG = 4096;
 
 /**
  * Every `<img src>` in these options' previews, in option order, deduped, at most MAX_FILMSTRIP
  * (D1.2): the raw src (≤ 1024 characters) and the option's label. `srcset` is not read. Pure;
- * the route normalises and checks each src against the project.
+ * the route normalises and checks each src against the project. A child's previews reach here
+ * uncapped (`readPendingQuestion`), so only the first MAX_ASK_PREVIEW characters of each and
+ * MAX_ASK_PREVIEWS in all are read, tag by tag (`indexOf`, never a regex over the whole text).
  */
 export function imagesInPreviews(questions: readonly { options?: readonly { label?: unknown; preview?: unknown }[] }[]): PreviewImage[] {
   const out: PreviewImage[] = [];
+  let budget = MAX_ASK_PREVIEWS;
   for (const q of questions) {
     for (const o of q.options ?? []) {
-      if (typeof o?.preview !== 'string') continue;
+      if (typeof o?.preview !== 'string' || budget <= 0) continue;
+      const text = o.preview.slice(0, Math.min(MAX_ASK_PREVIEW, budget));
+      budget -= text.length;
+      const lower = text.toLowerCase();
       const label = typeof o.label === 'string' ? o.label : '';
-      for (const m of o.preview.matchAll(IMG_SRC_RE)) {
-        const src = (m[1] ?? m[2] ?? m[3] ?? '').trim();
+      for (let at = lower.indexOf('<img'); at >= 0; at = lower.indexOf('<img', at + 4)) {
+        const next = text[at + 4];
+        if (next !== undefined && !/[\s/>]/.test(next)) continue;
+        const end = text.indexOf('>', at);
+        const tag = text.slice(at + 4, end < 0 ? text.length : end);
+        if (tag.length > MAX_IMG_TAG) continue;
+        const m = TAG_SRC_RE.exec(tag);
+        const src = (m?.[1] ?? m?.[2] ?? m?.[3] ?? '').trim();
         if (!src || src.length > 1024 || out.some((x) => x.src === src)) continue;
         out.push({ src, label });
         if (out.length >= MAX_FILMSTRIP) return out;

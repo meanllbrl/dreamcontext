@@ -32,7 +32,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, readPendingQuestion, registerChat } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState, sanitizeView } from '../../src/lib/super/store.js';
 import {
-  MAX_CONTAINERS, SUPER_STATE_VERSION, emptySuperState, imagesInPreviews, presentCards, resolvePresent,
+  MAX_ASK_SHOWS, MAX_CONTAINERS, SUPER_STATE_VERSION, emptySuperState, imagesInPreviews, presentCards, resolvePresent,
   type AskShow, type SuperContainer, type SuperGroup, type SuperQueueItem, type SuperState,
 } from '../../src/lib/super/types.js';
 import { recentAskCards, recordAskShow, settleAskShows } from '../../src/lib/super/ask-show.js';
@@ -61,6 +61,14 @@ describe('imagesInPreviews', () => {
       { options: [{ label: 'C', preview: '<img src=c.png><img src="a.png">' }, { label: 'D' }] },
     ]);
     expect(out).toEqual([{ src: 'a.png', label: 'A' }, { src: 'b.png', label: 'B' }, { src: 'c.png', label: 'C' }]);
+  });
+  it('a huge preview is read in linear time and capped (a child\'s previews come uncapped)', () => {
+    const big = '<img '.repeat(200_000 / 5);
+    const t0 = Date.now();
+    expect(imagesInPreviews([{ options: [{ label: 'x', preview: big + '<img src="late.png">' }, { label: 'y', preview: big }] }])).toEqual([]);
+    expect(Date.now() - t0).toBeLessThan(200);
+    // srcset alone is no src; data-src is no src.
+    expect(imagesInPreviews([{ options: [{ label: 'z', preview: '<img srcset="a.png 2x"><img data-src="b.png"><IMG SRC="c.png">' }] }])).toEqual([{ src: 'c.png', label: 'z' }]);
   });
   it('at most 8', () => {
     const many = Array.from({ length: 12 }, (_, i) => `<img src="p${i}.png">`).join('');
@@ -196,10 +204,22 @@ describe('settleAskShows: presenting', () => {
     // image-a, opened by the first ask, is not lost to the sweep.
     expect(s.containers.every((c) => c.place === 'others')).toBe(true);
   });
-  it('at most 4 entries: the oldest goes', () => {
-    const items = ['q1', 'q2', 'q3', 'q4', 'q5'];
-    const s = settle(stage({ containers: [img('image-a')], queue: items.map((id, i) => ask(id, { createdAt: i })), askShows: items.map((id) => entry(id, ['image-a'])) }));
-    expect(s.askShows?.map((e) => e.item)).toEqual(['q2', 'q3', 'q4', 'q5']);
+  it('one entry per question that can be open; over that the oldest NOT presented goes, never the head\'s', () => {
+    expect(MAX_ASK_SHOWS).toBe(16);
+    const items = Array.from({ length: MAX_ASK_SHOWS + 1 }, (_, i) => `q${i}`);
+    const s = settle(stage({ containers: [img('image-a'), img('image-b')], queue: items.map((id, i) => ask(id, { createdAt: i })), askShows: items.map((id) => entry(id, ['image-a', 'image-b'])) }));
+    // q0 is the head: presented, kept; q1 (the oldest waiting) went.
+    expect(s.askShows).toHaveLength(MAX_ASK_SHOWS);
+    expect(s.askShows?.[0]).toMatchObject({ item: 'q0', presented: true });
+    expect(s.askShows?.some((e) => e.item === 'q1')).toBe(false);
+    // The head's answer still puts its pictures back (the next head, q1, lost its entry: nothing presents).
+    s.queue[0].state = 'done';
+    settle(s);
+    expect(s.containers.map((c) => c.place)).toEqual(['others', 'others']);
+    expect(s.view).toEqual({ mode: 'float' });
+    // The store keeps the presented one too when a record holds too many.
+    const raw = { v: SUPER_STATE_VERSION, containers: [img('image-a')], askShows: [{ ...entry('qp', ['image-a']), presented: true }, ...items.map((id) => entry(id, ['image-a']))] };
+    expect(sanitizeSuperState(raw).askShows?.[0].item).toBe('qp');
   });
 });
 
@@ -443,9 +463,27 @@ describe('super ask presents its pictures and answers show', () => {
   it('the Super forgot everything: its last picture set within 10 minutes (recent)', async () => {
     makeVault();
     expect((await verb('open', { kind: 'image', refs: ['mock/a.png', 'mock/b.png'] })).status).toBe(200);
+    expect(mirror.frames).toHaveLength(1);
     const r = await verb('ask', { text: 'Which one?', options: ['A', 'B'] });
     expect(r.json.show).toMatchObject({ via: 'recent', state: 'presented' });
     expect((r.json.show as Show).cards).toHaveLength(2);
+    // Its own `open` already sent these to the phone: the question sends them no second time.
+    expect(mirror.frames).toHaveLength(1);
+  });
+  it('a restart keeps a presented question on the record, and its close after the restart puts the pictures back', async () => {
+    makeVault();
+    const r = await verb('ask', pictureAsk(['mock/a.png', 'mock/b.png']));
+    expect(r.json.show).toMatchObject({ state: 'presented' });
+    // A restart: every in-memory index and chain gone, the record read back from disk.
+    resetSuperIndex();
+    _resetSuperInbox();
+    const s = await readSuperState(root);
+    expect(s.askShows).toEqual([expect.objectContaining({ item: r.json.item, presented: true })]);
+    expect(s.view.ask).toBe(r.json.item);
+    expect((await verb('queue-done', { item: r.json.item })).status).toBe(200);
+    const after = await readSuperState(root);
+    expect(after.view).toEqual({ mode: 'float' });
+    expect(after.groups[0].place).toBe('others');
   });
   it('an owner view: answered skipped (owner_layout), his view untouched', async () => {
     makeVault({ containers: [{ id: 'task-x', kind: 'task', ref: 'x', shape: 'square', place: 'float' }] });
@@ -488,6 +526,19 @@ describe('super ask presents its pictures and answers show', () => {
 });
 
 describe('super queue ask: a child\'s pictures', () => {
+  it('a repeat queue ask: new cards replace the entry; a repeat --no-show says the state it left', async () => {
+    makeVault({
+      children: { c1: { sessionId: 'c1', brief: 'mockups', adopted: false, startedAt: 1 } },
+      queue: [{ id: 'q-c1', sessionId: 'c1', kind: 'question', requestId: 'r1', state: 'delivered', createdAt: 1 }],
+    });
+    await verb('open', { kind: 'image', refs: ['mock/c.png', 'mock/d.png'], for: 'c1' });
+    await verb('stack', { container: (await readSuperState(root)).groups[0].id });
+    const first = await verb('queue-ask', { item: 'q-c1', text: 'Which?' });
+    expect(first.json.show).toMatchObject({ via: 'recent', state: 'presented' });
+    const again = await verb('queue-ask', { item: 'q-c1', text: 'Which, again?', noShow: true });
+    expect(again.json.show).toMatchObject({ state: 'presented', cards: (first.json.show as Show).cards });
+    expect((await readSuperState(root)).view.ask).toBe('q-c1');
+  });
   it('the child\'s own AskUserQuestion previews; its answer puts them back', async () => {
     makeVault({
       children: { c1: { sessionId: 'c1', brief: 'mockups', adopted: false, startedAt: 1 } },

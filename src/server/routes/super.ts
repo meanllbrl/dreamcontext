@@ -394,7 +394,7 @@ async function prepareAskShow(
 /** Inside the question's write: open or pick its cards and record them (ask-show.ts). */
 function applyAskShow(
   s: SuperState, item: string, prep: AskShowPrep, root: string, now: number, child?: string,
-): { ids: string[]; via: AskShow['via']; opened: string[]; cut: number; chain: ImageChain | null } | null {
+): { ids: string[]; via: AskShow['via']; opened: string[]; fresh: string[]; cut: number; chain: ImageChain | null } | null {
   if (prep.off) return null;
   const inOthers = (id: string) => {
     const k = s.containers.find((x) => x.id === id);
@@ -423,19 +423,23 @@ function applyAskShow(
     opened = ids.filter(inOthers);
   }
   for (const k of s.containers) if (ids.includes(k.id)) setAspect(k, prep.aspects);
+  // What this write itself put on the stage (made, or back from Others): the phone gets these
+  // once; a recent picture its own `open` already mirrored is not sent again (end review).
+  const fresh = [...opened];
   opened = [...new Set([...opened, ...ids.filter((id) => recent.includes(id))])];
   if (ids.length) recordAskShow(s, item, ids, opened, via);
-  return { ids, via, opened, cut, chain };
+  return { ids, via, opened, fresh, cut, chain };
 }
 
 /** After the write: the picture chain, the phone's strip, and what the agent is told (D9). */
 function finishAskShow(
   c: SuperCaller, state: SuperState, item: string, prep: AskShowPrep, r: ReturnType<typeof applyAskShow>,
 ): Record<string, unknown> {
-  if (prep.off) return { cards: [], state: 'none', reason: 'no_show' };
+  // A repeat `queue ask --no-show` leaves an earlier entry of the item as it was: say its state.
+  if (prep.off) return askShowState(state, item) === 'none' ? { cards: [], state: 'none', reason: 'no_show' } : { cards: state.askShows?.find((e) => e.item === item)?.cards ?? [], state: askShowState(state, item) };
   if (r?.chain) imageChains.set(c.who.contextRoot, r.chain);
   // New pictures reach a phone watching this Super Agent once, as `open` sends them (D7).
-  const fresh = (r?.opened ?? []).map((id) => state.containers.find((k) => k.id === id)).filter((k): k is SuperState['containers'][number] => !!k && k.kind === 'image');
+  const fresh = (r?.fresh ?? []).map((id) => state.containers.find((k) => k.id === id)).filter((k): k is SuperState['containers'][number] => !!k && k.kind === 'image');
   if (fresh.length && state.session) {
     const frame = stageMediaFrame(fresh.map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) })));
     if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);

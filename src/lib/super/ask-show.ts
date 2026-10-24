@@ -89,8 +89,8 @@ export function settleAskShows(s: SuperState, head: SuperQueueItem | null): void
       entries = entries.map((x) => (x === e ? { ...x, cards, presented: true as const } : x));
     }
   }
-  // c. A few at most: the oldest goes.
-  entries = entries.slice(-MAX_ASK_SHOWS);
+  // c. At most MAX_ASK_SHOWS: the oldest that is not presented goes (never the head's).
+  entries = capAskShows(entries);
   if (entries.length) s.askShows = entries; else delete s.askShows;
 }
 
@@ -128,5 +128,16 @@ export function recordAskShow(s: SuperState, item: string, cards: readonly strin
   const prev = s.askShows?.find((x) => x.item === item);
   const rest = (s.askShows ?? []).filter((x) => x.item !== item);
   const entry: AskShow = { item, cards: [...cards], opened: [...new Set([...(prev?.opened ?? []), ...opened])], via };
-  s.askShows = [...rest, entry].slice(-MAX_ASK_SHOWS);
+  s.askShows = capAskShows([...rest, entry]);
+}
+
+/** At most MAX_ASK_SHOWS entries, the oldest NOT presented dropped first: a presented entry is
+ *  the one whose pictures must go back when it closes. */
+export function capAskShows(entries: readonly AskShow[]): AskShow[] {
+  const out = [...entries];
+  while (out.length > MAX_ASK_SHOWS) {
+    const i = out.findIndex((e) => !e.presented);
+    out.splice(i >= 0 ? i : 0, 1);
+  }
+  return out;
 }
