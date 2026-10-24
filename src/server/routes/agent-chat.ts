@@ -34,6 +34,7 @@ import { advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRu
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
+import { recordStageHomeSession } from '../../lib/local-store.js';
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
@@ -1140,6 +1141,9 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     const agentAsked = url.searchParams.has('chatAgent');
     const chatAgent = agentAsked && !assistant && !card ? parseChatAgent(url.searchParams.get('chatAgent')) : null;
     if (agentAsked && !chatAgent) { rejectUpgrade(socket, 400); return; }
+    // The agent's STAGE (AI Team page): an agent chat whose first accepted conversation becomes
+    // the stage's home session, recorded once in the machine-local store (lib/local-store.ts).
+    const stageAgent = chatAgent && url.searchParams.get('stage') === '1' ? chatAgent : null;
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
@@ -1235,7 +1239,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
         let accepted = false;
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+        const onAccepted = (): void => {
+          accepted = true;
+          const conversation = sessionId || resumeId;
+          if (!stageAgent || !conversation) return;
+          try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
+        };
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
         settleSupersede(accepted);
       });
     })();
@@ -1866,7 +1876,9 @@ export function startChatSession(
     '--permission-prompt-tool', 'stdio',
     // A home-board card runs under its board's rules (dontAsk, project settings only, an exact
     // allowlist), in place of the pane's mode, exactly as its runs do (board-scope.ts).
-    ...(envelope?.permissionArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
+    // An agent in a Chat tab (its stage included) runs at its autonomy level (agents/permission.ts),
+    // decided above from its manifest; the pane's bypass flag never reaches it.
+    ...(envelope?.permissionArgs ?? agentChat?.levelArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
     ...briefingArg,
     ...agentsArg,
     // The `--settings` file is a flag source the scope cannot narrow: a scoped card goes without.
@@ -3821,7 +3833,8 @@ export function startChatSession(
     // new mode) is LOAD-BEARING for every switch INTO bypass, not just a courtesy for an older
     // CLI. Verified end to end: the respawned `--resume` session boots on `bypassPermissions`.
     // The Assistant's permission mode is its AUTONOMY setting — a pane switch must not move it.
-    if (msg.type === 'setPermissionMode' && !isAssistant && !scopedCard && (msg.mode === 'auto' || msg.mode === 'bypass')) {
+    // An agent's mode is its autonomy level, so a pane switch must not move it either.
+    if (msg.type === 'setPermissionMode' && !isAssistant && !scopedCard && !agentChat?.levelArgs && (msg.mode === 'auto' || msg.mode === 'bypass')) {
       const requestId = sanitizeControlId(msg.requestId) || randomUUID();
       writeStdin({
         type: 'control_request',

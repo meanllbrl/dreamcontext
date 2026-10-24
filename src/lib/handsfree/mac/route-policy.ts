@@ -124,6 +124,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/tasks/:slug/changelog': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/assign-agent': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/objection': allow(PROJECT_WRITE),
+  'POST /api/tasks/:slug/filing-approval': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/insert': allow(PROJECT_WRITE),
 
   // Sleep
@@ -293,6 +294,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/accounts/remove': deny(SIGN_IN),
   'POST /api/agent/accounts/auto-switch': agnostic(`${CHAT}: switch accounts at a limit`),
   'POST /api/agent/accounts/switch-policy': agnostic(`${CHAT}: how accounts are switched`),
+  'POST /api/agent/accounts/owner-only': agnostic(`${CHAT}: which accounts unattended agent work may use`),
+  'POST /api/agent/accounts/agent-threshold': agnostic(`${CHAT}: how full an account may be before unattended agent work waits`),
   'GET /api/agent/mcp': allow(`${CHAT}: the MCP servers and their state (no credentials); side-effect free`),
   'POST /api/agent/mcp/login': deny(SIGN_IN),
   'POST /api/agent/mcp/logout': deny(SIGN_IN),
@@ -418,6 +421,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agents/:slug/delete': allow(PROJECT_WRITE),
   'POST /api/agents/:slug/approve': allow('the owner approves this project\'s agent, as on the laptop'),
   'POST /api/agents/:slug/place': allow(PROJECT_WRITE),
+  'GET /api/agents/:slug/stage': allow('read: an agent\'s stage (its live work, reports, files, routines); side-effect free'),
   'GET /api/agents/:slug/photo': allow('read: an agent photo (png/jpeg/gif/webp by magic bytes); side-effect free', 'media'),
   'POST /api/agents/:slug/photo': allow(PROJECT_WRITE),
 

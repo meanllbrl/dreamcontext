@@ -15,7 +15,10 @@ import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox, ensureSharedMcpConfig } from '../claude-account-sandbox.js';
 import { recordAccountRejection } from '../claude-limit-rejections.js';
 import type { ProbeOutcome } from '../claude-usage-probe.js';
-import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAccount } from './account.js';
+import { levelBrief } from '../agents/permission.js';
+import {
+  automationAccountWithoutProbe, pickAutomationAccount, protectedAutomationAccount, recordAccountWait, type AutomationAccount,
+} from './account.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, checkApproval, getApproval, renderApprovalReview } from './registry.js';
@@ -56,6 +59,7 @@ import {
   AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES,
   AUTOMATIONS_REVIEW_GITIGNORE_ENTRIES_ROOT,
   AutomationError,
+  DEFAULT_AGENT_AUTONOMY,
   KILL_GRACE_MS,
   MAX_PROMPT_BYTES,
   MAX_STDOUT_BYTES,
@@ -614,6 +618,9 @@ export function composePrompt(
   // The assigned task: DATA under its own fresh nonce, after every approved block
   // and before the owner's live note.
   if (task) parts.push('', buildTaskAssignmentBlock(task, newTurnNonce()));
+  // A task job carries its agent's autonomy rules (agents/permission.ts): nobody is watching it,
+  // so a denied step becomes a question and the run stops.
+  if (task) parts.push('', levelBrief(m.autonomy ?? DEFAULT_AGENT_AUTONOMY, true));
   // LAST, and deliberately so. Everything above is standing configuration a
   // human approved at some point in the past; this is that same human typing
   // right now. When the two disagree, the live instruction wins — which is
@@ -1449,7 +1456,7 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
 
 /** Orchestration tools removed from the question envelope. Mirrors
  *  the same list — same hazard, same answer. */
-const QUESTION_DISALLOWED_TOOLS = [
+export const QUESTION_DISALLOWED_TOOLS = [
   'Task', 'Skill', 'Agent', 'TaskCreate', 'TaskUpdate', 'TaskStop', 'Workflow',
   'CronCreate', 'CronDelete', 'CronList', 'SendMessage', 'RemoteTrigger',
   'PushNotification', 'DesignSync', 'EnterWorktree', 'ExitWorktree', 'Monitor',
@@ -1554,6 +1561,9 @@ interface RunOptionsBase extends BoardTurnInput {
   override?: SpawnModelOverride | null;
   /** Injectable so no test spawns a real `claude /usage` while the account is picked. */
   probeUsage?: (configDir: string) => Promise<ProbeOutcome>;
+  /** Nobody is watching this start (the scheduler, a task job): account protection applies
+   *  (`protectedAutomationAccount`). A person's own run, ask or answer never sets it. */
+  unattended?: boolean;
 }
 
 type RunHostOpts =
@@ -2014,6 +2024,26 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     );
   }
 
+  // Step 4.6 — ACCOUNT PROTECTION, for an unattended start only (owner, 2026-10-24): the first
+  // account in the owner's order with both windows under the threshold, never an "Only mine"
+  // one. None left: the fire waits (owed, its watermark untouched, queued like a busy lock) and
+  // the machine records when the earliest account frees up, so the tick skips every unattended
+  // start until then instead of probing a full machine every five minutes.
+  let protectedAccount: AutomationAccount | null = null;
+  if (opts.unattended) {
+    const pick = await protectedAutomationAccount({ home: accountsHome, probe: opts.probeUsage, now: nowFn().getTime() });
+    if ('waitUntil' in pick) {
+      try {
+        recordAccountWait(pick.waitUntil, accountsHome, nowFn().getTime());
+        if (!opts.target && !opts.task) enqueueFire(projectRoot, slug, fireAt.toISOString(), home);
+      } catch (err) {
+        logFn(`warning: could not record the account wait for "${slug}": ${(err as Error).message}`);
+      }
+      return shortCircuit('deferred', `every account is near its usage limit; it waits until ${new Date(pick.waitUntil).toISOString()}`);
+    }
+    protectedAccount = pick.account;
+  }
+
   // Step 5 — the per-slug run lock (self-overlap guard).
   //
   // The approval question lives INSIDE this lock, not before it. It spawns a
@@ -2102,7 +2132,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // chat turn makes (`account.ts`). A single-account machine returns at once, with no probe.
     // `?? await` so the common case spawns in this same tick, exactly as it did before.
     const accountDeps = { home: accountsHome, probe: opts.probeUsage };
-    let account = automationAccountWithoutProbe(accountDeps) ?? await pickAutomationAccount(accountDeps);
+    let account = protectedAccount ?? automationAccountWithoutProbe(accountDeps) ?? await pickAutomationAccount(accountDeps);
     ensureSandbox(account.configDir, accountsHome);
 
     // Step 6.5 — the approval question, when the manifest changed under an
@@ -2361,7 +2391,13 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       } catch (err) {
         logFn(`automation "${slug}": could not record the account refusal: ${(err as Error).message}`);
       }
-      const next = await pickAutomationAccount({ home: accountsHome, probe: opts.probeUsage, exclude: tried });
+      // An unattended run moves only to an account protection allows; with none, it ends here
+      // and the usage-limit gate below reports the refusal.
+      const nextPick = opts.unattended
+        ? await protectedAutomationAccount({ home: accountsHome, probe: opts.probeUsage, exclude: tried, now: nowFn().getTime() })
+        : { account: await pickAutomationAccount({ home: accountsHome, probe: opts.probeUsage, exclude: tried }) };
+      if ('waitUntil' in nextPick) break;
+      const next = nextPick.account;
       if (next.id === null || tried.includes(next.id)) break;
       // Every attempt shares the ONE timeout the manifest approved: the run lock goes stale on
       // that budget, so a retry allowed its own full timeout could overlap the next fire.

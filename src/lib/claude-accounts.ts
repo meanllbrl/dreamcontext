@@ -53,6 +53,9 @@ export interface ClaudeAccount {
   configDir: string | null;
   /** New sessions start on the preferred account unless told otherwise. At most one. */
   preferred: boolean;
+  /** "Only mine": no unattended agent work (routines, task jobs) ever starts on it; the owner's
+   *  own chats still may. Absent = false. */
+  ownerOnly?: boolean;
 }
 
 /** On-disk shape of `~/.dreamcontext/claude-accounts.json`. */
@@ -79,7 +82,13 @@ export interface ClaudeAccountRegistry {
   switchStrategy?: SwitchStrategy;
   /** The `score` strategy's coefficients. Each falls back to its default on its own. */
   switchWeights?: SwitchWeights;
+  /** Account protection for unattended agent work: it starts only on an account whose 5-hour
+   *  and weekly windows are BOTH under this percent. Absent = {@link DEFAULT_AGENT_THRESHOLD}. */
+  agentThreshold?: number;
 }
+
+/** The default account-protection threshold, in percent (owner, 2026-10-24). */
+export const DEFAULT_AGENT_THRESHOLD = 80;
 
 export class ClaudeAccountError extends Error {
   constructor(message: string) {
@@ -163,6 +172,7 @@ function parseAccount(raw: unknown, home: string): ClaudeAccount | null {
     tier: str(o.tier),
     configDir,
     preferred: o.preferred === true,
+    ...(o.ownerOnly === true ? { ownerOnly: true } : {}),
   };
 }
 
@@ -257,6 +267,41 @@ export function setSwitchPolicy(
   return next;
 }
 
+function isAgentThreshold(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 100;
+}
+
+/** The account-protection threshold for unattended agent work, in percent (1..100). */
+export function agentThresholdFor(home: string = homedir()): number {
+  const v = readRegistry(home)?.agentThreshold;
+  return isAgentThreshold(v) ? v : DEFAULT_AGENT_THRESHOLD;
+}
+
+/** Set the account-protection threshold; the accounts and every other setting are kept. */
+export function setAgentThreshold(percent: number, home: string = homedir()): number {
+  if (!isAgentThreshold(percent)) throw new ClaudeAccountError('The threshold must be a whole percent from 1 to 100.');
+  const filePath = claudeAccountsFilePath(home);
+  const current = readRegistry(home) ?? {};
+  const registry = { ...current, accounts: listClaudeAccounts(home), autoSwitch: autoSwitchEnabled(home), switchStrategy: switchStrategyFor(home), switchWeights: switchWeightsFor(home), agentThreshold: percent };
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  writeFileSync(tmp, JSON.stringify(registry, null, 2) + '\n', 'utf-8');
+  renameSync(tmp, filePath);
+  return percent;
+}
+
+/** Mark an account "Only mine" (or clear it), in place. Unknown id ⇒ throws. */
+export function setAccountOwnerOnly(id: string, ownerOnly: boolean, home: string = homedir()): ClaudeAccount {
+  const accounts = listClaudeAccounts(home);
+  const index = accounts.findIndex((a) => a.id === id);
+  if (index === -1) throw new ClaudeAccountError(`No such account: ${id}`);
+  const { ownerOnly: _drop, ...rest } = accounts[index];
+  const next: ClaudeAccount = ownerOnly ? { ...rest, ownerOnly: true } : rest;
+  accounts[index] = next;
+  writeClaudeAccounts(accounts, home);
+  return next;
+}
+
 /** The account new sessions start on: the preferred one, else account #0, else null. */
 export function preferredClaudeAccount(home?: string): ClaudeAccount | null {
   const accounts = listClaudeAccounts(home);
@@ -284,11 +329,13 @@ export function writeClaudeAccounts(
   // able to silently reset the switch policy to its defaults.
   const keep = autoSwitch === undefined ? autoSwitchEnabled(home) : autoSwitch;
   const keepPolicy = policy ?? { strategy: switchStrategyFor(home), weights: switchWeightsFor(home) };
+  const threshold = readRegistry(home)?.agentThreshold;
   const registry: ClaudeAccountRegistry = {
     accounts,
     autoSwitch: keep,
     switchStrategy: keepPolicy.strategy,
     switchWeights: keepPolicy.weights,
+    ...(isAgentThreshold(threshold) ? { agentThreshold: threshold } : {}),
   };
   const text = JSON.stringify(registry, null, 2) + '\n';
   mkdirSync(dirname(filePath), { recursive: true });
@@ -315,11 +362,15 @@ export function upsertClaudeAccount(account: ClaudeAccount, home?: string): Clau
   if (!isSafeAccountId(account.id)) {
     throw new ClaudeAccountError(`Not a usable account id: ${JSON.stringify(account.id)}`);
   }
-  const accounts = listClaudeAccounts(home).filter((a) => a.id !== account.id);
-  const next = account.preferred ? accounts.map((a) => ({ ...a, preferred: false })) : accounts;
-  next.push(account);
+  const all = listClaudeAccounts(home);
+  // A re-add (adopt, sign-in) does not know the owner's "Only mine" choice: it is kept.
+  const prior = all.find((a) => a.id === account.id);
+  const kept = prior?.ownerOnly && account.ownerOnly === undefined ? { ...account, ownerOnly: true } : account;
+  const accounts = all.filter((a) => a.id !== account.id);
+  const next = kept.preferred ? accounts.map((a) => ({ ...a, preferred: false })) : accounts;
+  next.push(kept);
   writeClaudeAccounts(next, home ?? homedir());
-  return account;
+  return kept;
 }
 
 /**

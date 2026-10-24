@@ -88,6 +88,7 @@ const SAY_MAX_CHARS = 2000;
 import {
   AutomationError,
   AUTOMATION_MODES,
+  DEFAULT_AGENT_AUTONOMY,
   EFFORT_LEVELS,
   MAX_TIMEOUT_MINUTES,
   WEEKDAYS,
@@ -461,6 +462,9 @@ export async function handleAutomationsShow(
         // Hashed when non-empty, and LAST in APPROVAL_DIFF_FIELDS: the agent's
         // `## Soul`, how it works. A reviewer approving here must see it.
         soul: manifest.soul,
+        // Hashed when not `balanced`, and LAST in APPROVAL_DIFF_FIELDS: how much its agent
+        // decides alone, which is the permission mode of its sessions.
+        autonomy: manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY,
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:

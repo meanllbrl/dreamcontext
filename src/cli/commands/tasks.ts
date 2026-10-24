@@ -1,3 +1,4 @@
+import { approveFiling } from '../../lib/task-filing-approval.js';
 import { Command } from 'commander';
 import { join, basename, dirname } from 'node:path';
 import chalk from 'chalk';
@@ -1606,6 +1607,25 @@ export function registerTasksCommand(program: Command): void {
       else if (!task.filed_by) fields.filed_by = 'agent';
       await backend.updateFields(slug, fields);
       success(`${slug}: basis ${filing.basis?.kind}${filing.basis?.verified ? ' (quote found in this session)' : ''}${fields.filed_by ? `, filed_by ${fields.filed_by}` : ''}`);
+    });
+
+  // Approval: the owner keeps a task an agent opened (lib/task-filing-approval.ts).
+  tasks
+    .command('approve-filing')
+    .argument('<name>', 'Task slug or name')
+    .description('Approve a task an agent opened: keep it as it is (the counterpart of `tasks object`); the status does not change')
+    .action(async (name: string) => {
+      const backend = getTaskBackend();
+      const root = ensureContextRoot();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) { process.exitCode = 1; return; }
+      const result = await approveFiling(root, backend, slug);
+      if (!result.ok) {
+        error(result.message);
+        process.exitCode = 1;
+        return;
+      }
+      success(result.already ? `${slug} was already approved.` : `Approved ${slug}.`);
     });
 
   // Objections: the owner says a task an agent opened was wrong (lib/task-objection.ts).

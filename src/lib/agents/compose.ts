@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  DEFAULT_AGENT_AUTONOMY,
   DEFAULT_CATCHUP_HOURS,
   type ApprovalBinding,
   type AutomationJob,
@@ -71,6 +72,9 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     // A legacy file holds no team placement: it stays a root until it is split.
     reportsTo: null,
     team: null,
+    // A legacy file holds no autonomy (the default) and no stamped face.
+    autonomy: m.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    face: null,
     call: isCall
       ? {
           timeoutMinutes: m.timeoutMinutes,
@@ -140,6 +144,7 @@ export function composeRun(
     whiteboard: agent.whiteboard,
     agent: agent.slug,
     agentTitle: agent.title,
+    autonomy: agent.autonomy,
   };
   if (job) {
     return {

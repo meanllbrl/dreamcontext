@@ -73,6 +73,8 @@ export const KNOWN_LOCAL_ONLY_TASK_FIELDS: readonly string[] = [
   // Who opened the task and why (lib/filing-basis.ts): no remote has a field for either.
   'filed_by',
   'filing_basis',
+  // The owner's approval of an agent-opened task (lib/task-filing-approval.ts): no remote field.
+  'filing_approved',
 ];
 
 /** Identity fields the mirror-rebuild path mints fresh rather than restoring. */

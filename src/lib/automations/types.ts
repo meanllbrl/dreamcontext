@@ -68,6 +68,20 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 export const REVIEW_MODES = ['off', 'agent', 'output'] as const;
 export type ReviewMode = (typeof REVIEW_MODES)[number];
 
+/**
+ * How much an agent decides on its own (owner, 2026-10-24): `ask` asks before acting,
+ * `balanced` (the default) acts and asks when unsure, `free` decides. It maps to the claude
+ * permission mode of every session the agent runs in (`agents/permission.ts`).
+ */
+export const AGENT_AUTONOMY_LEVELS = ['ask', 'balanced', 'free'] as const;
+export type AgentAutonomy = (typeof AGENT_AUTONOMY_LEVELS)[number];
+export const DEFAULT_AGENT_AUTONOMY: AgentAutonomy = 'balanced';
+
+/** A stored `autonomy:` value, or the default for anything that is not one of the levels. */
+export function parseAutonomy(v: unknown): AgentAutonomy {
+  return (AGENT_AUTONOMY_LEVELS as readonly unknown[]).includes(v) ? (v as AgentAutonomy) : DEFAULT_AGENT_AUTONOMY;
+}
+
 /** Lowercase 3-letter weekday keys, `Date.getDay()`-ordered (0=Sun..6=Sat). */
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];
@@ -461,6 +475,13 @@ export interface AutomationManifest {
    * so its approved hash stays exactly what it was.
    */
   soul: string;
+  /**
+   * The agent's autonomy level (identity, from the agent through `composeRun`). Optional so a
+   * hand-built manifest reads as the default. IS approval-hashed, OMITTED when `balanced` and
+   * LAST (after `soul`), so every manifest that exists today keeps its exact hash: only a move
+   * to `ask` or `free` costs a re-approval, and a synced edit to it must block.
+   */
+  autonomy?: AgentAutonomy;
   /** For an agent's call target only: every automation bound to the agent, as
    *  its current composed hash. `[]` for an automation. Rule (c) of
    *  `checkApproval` reads it, for an `'identity'` use only. */
@@ -1007,6 +1028,9 @@ export interface ApprovalPayloadFields {
    *  beside its prompt in every run and conversation. Present as `''` when
    *  absent, for the same display reason as `flow`. */
   soul: string;
+  /** Hashed because it decides the permission mode every session of the agent runs in.
+   *  Always present here (as `balanced` when unset), for the same display reason as `flow`. */
+  autonomy: AgentAutonomy;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1086,6 +1110,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'whiteboard',
   'job',
   'soul',
+  'autonomy',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

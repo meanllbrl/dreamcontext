@@ -6,6 +6,7 @@ import {
   APPROVAL_DIFF_FIELDS,
   APPROVAL_PAYLOAD_VERSION,
   AutomationError,
+  DEFAULT_AGENT_AUTONOMY,
   type ApprovalPayloadFields,
   type ApprovalUse,
   type AutomationManifest,
@@ -415,6 +416,12 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // and conversation behaves, so a synced edit must block until someone here
     // re-approves. Normalized before the emptiness check, like `job`.
     ...(soulText(m) ? { soul: soulText(m) } : {}),
+    // OMITTED at the default `balanced` (and when absent), and LAST, for the same append-only
+    // reason as `soul`: every agent that exists today reads `balanced`, so its payload stays
+    // byte-for-byte what it was and an upgrade re-blocks nobody. `ask` or `free` decides the
+    // permission mode of every session the agent runs in, so moving to either, or a synced edit
+    // between them, must block until someone here re-approves.
+    ...(m.autonomy && m.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: m.autonomy } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -473,6 +480,8 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     // Always present (as '' when absent): the reviewer reads how the agent is
     // told to behave, beside what it is told to do.
     soul: typeof m.soul === 'string' ? m.soul : '',
+    // Always present (as the default when absent): the reviewer sees how much it may decide alone.
+    autonomy: m.autonomy ?? DEFAULT_AGENT_AUTONOMY,
   };
 }
 

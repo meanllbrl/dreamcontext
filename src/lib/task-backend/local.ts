@@ -8,7 +8,7 @@ import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../f
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
 import { normalizeRice } from '../rice.js';
-import { isFiledBy, readFilingBasis } from '../filing-basis.js';
+import { isFiledBy, readFilingApproved, readFilingBasis } from '../filing-basis.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
 import { appendTombstone } from '../task-tombstones.js';
@@ -275,6 +275,7 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
         : {},
     filed_by: isFiledBy(data.filed_by) ? data.filed_by : null,
     filing_basis: readFilingBasis(data.filing_basis),
+    ...(readFilingApproved(data.filing_approved) ? { filing_approved: readFilingApproved(data.filing_approved) as { at: string } } : {}),
     why: readSectionSafe(filePath, 'Why'),
     user_stories: readSectionSafe(filePath, 'User Stories'),
     acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),

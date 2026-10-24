@@ -31,7 +31,7 @@ import { handleWindowCommand } from './routes/window-control.js';
 import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
-import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksFilingApproval, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
 import { handleTaskAssetsList, handleTaskAssetRaw, handleTaskAssetUpload } from './routes/task-assets.js';
 import { handleSleepEvalLabelsGet, handleSleepEvalLabelsPost } from './routes/sleep-eval.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
@@ -156,7 +156,7 @@ import {
   handleAgentsDelete,
   handleAgentsApprove,
   handleAgentsPlace,
-  handleAgentsPhotoGet,
+  handleAgentsPhotoGet, handleAgentsStage,
   handleAgentsPhotoUpload,
 } from './routes/agents.js';
 import {
@@ -202,7 +202,7 @@ import { claimOwnedPort } from './owned-ports.js';
 import { closeAllWebSessions } from './web-session-proxy.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
-  handleAgentAccountsSwitchPolicy, handleAgentAccountsList,
+  handleAgentAccountsSwitchPolicy, handleAgentAccountsList, handleAgentAccountsOwnerOnly, handleAgentAccountsAgentThreshold,
   handleAgentAccountsLogin, handleAgentAccountsRelogin, handleAgentAccountsPreferred, handleAgentAccountsRefresh,
   handleAgentAccountsReorder, handleAgentAccountsRemove,
 } from './routes/agent-accounts.js';
@@ -344,6 +344,7 @@ export function buildRouter(): Router {
   // call-target run with the task as data (409 when it is not approved to run).
   router.post('/api/tasks/:slug/assign-agent', handleTasksAssignAgent);
   router.post('/api/tasks/:slug/objection', handleTasksObjection);
+  router.post('/api/tasks/:slug/filing-approval', handleTasksFilingApproval);
   router.post('/api/tasks/:slug/insert', handleTasksInsert);
 
   // Sleep
@@ -569,6 +570,8 @@ export function buildRouter(): Router {
   router.post('/api/agent/accounts/remove', handleAgentAccountsRemove);
   router.post('/api/agent/accounts/auto-switch', handleAgentAccountsAutoSwitch);
   router.post('/api/agent/accounts/switch-policy', handleAgentAccountsSwitchPolicy);
+  router.post('/api/agent/accounts/owner-only', handleAgentAccountsOwnerOnly);
+  router.post('/api/agent/accounts/agent-threshold', handleAgentAccountsAgentThreshold);
   // The MCP panel behind `/mcp` in Chat. Deliberately NOT vault-agnostic: a server can be
   // PROJECT-scoped (the repo's `.mcp.json`, how a team shares servers), and that scope is
   // resolved from the working directory — so every leg needs the project.
@@ -782,6 +785,7 @@ export function buildRouter(): Router {
   router.post('/api/agents/:slug/approve', handleAgentsApprove);
   router.post('/api/agents/:slug/place', handleAgentsPlace);
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
+  router.get('/api/agents/:slug/stage', handleAgentsStage);
   router.post('/api/agents/:slug/photo', handleAgentsPhotoUpload);
   router.get('/api/automations', handleAutomationsList);
   // Create is a POST on the COLLECTION, so it shares no shape with any `/:slug`

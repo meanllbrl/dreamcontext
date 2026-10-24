@@ -27,12 +27,26 @@ import {
   registerProject,
 } from '../../lib/automations/registry.js';
 import {
+  AGENT_AUTONOMY_LEVELS,
   AGENT_SELF_ENV,
   APPROVAL_DIFF_FIELDS,
   AutomationError,
   EFFORT_LEVELS,
+  type AgentAutonomy,
   type EffortLevel,
 } from '../../lib/automations/types.js';
+
+/** An `--autonomy` value. Refused inside an agent run: an agent does not set its own level. */
+function readAutonomyOption(v: string | undefined): AgentAutonomy | undefined {
+  if (v === undefined) return undefined;
+  if (process.env[AGENT_SELF_ENV] !== undefined || process.env.DREAMCONTEXT_AUTOMATION_RUN !== undefined) {
+    throw new AutomationError('An agent run cannot change an autonomy level. Ask the owner to set it on the AI Team page.');
+  }
+  if (!(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
+    throw new AutomationError(`Invalid autonomy "${v}": expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);
+  }
+  return v as AgentAutonomy;
+}
 
 /** The env vars a Claude session or an agent run carries. */
 const SELF_APPROVAL_ENVS = ['CLAUDECODE', AGENT_SELF_ENV, 'DREAMCONTEXT_AUTOMATION_RUN'] as const;
@@ -191,14 +205,14 @@ export function registerAgentsCommand(program: Command): void {
           agent: {
             slug: agent.slug, title: agent.title, prompt: agent.prompt, soul: agent.soul, pattern, model: agent.model, effort: agent.effort,
             learning: agent.learning, whiteboard: agent.whiteboard, shared: agent.shared, implicit: agent.implicit,
-            reportsTo: agent.reportsTo, team: agent.team,
+            reportsTo: agent.reportsTo, team: agent.team, autonomy: agent.autonomy,
             approvedForChat: v.chat, approvedToRun: v.run, usedBy: usage,
           },
         }, null, 2));
         return;
       }
       console.log(header(`${agent.title} (${agent.slug})`));
-      console.log(`  model: ${agent.model ?? 'default'}  effort: ${agent.effort ?? 'default'}  learning: ${agent.learning ? 'on' : 'off'}`);
+      console.log(`  model: ${agent.model ?? 'default'}  effort: ${agent.effort ?? 'default'}  learning: ${agent.learning ? 'on' : 'off'}  autonomy: ${agent.autonomy}`);
       if (agent.whiteboard) console.log(`  home board: ${agent.whiteboard}`);
       console.log(`  reports to: ${agent.reportsTo ?? 'you'}${agent.team ? `  team: ${agent.team}` : ''}`);
       console.log(`  chat: ${v.chat ? 'approved' : 'not approved'}  run: ${v.run ? 'approved' : 'not approved'}`);
@@ -263,7 +277,8 @@ export function registerAgentsCommand(program: Command): void {
     .option('--no-learning', 'Stop keeping a pattern of lessons')
     .option('--reports-to <agent>', 'The agent it reports to ("none" = straight to you). Unhashed: changes only how the team is drawn')
     .option('--team <name>', 'Its team\'s name, carried by a lead and inherited by its reports ("none" removes it). Unhashed')
-    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; learning?: boolean; reportsTo?: string; team?: string }) => {
+    .option('--autonomy <level>', `How much it decides alone (${AGENT_AUTONOMY_LEVELS.join(', ')}); sets the permission mode of its sessions`)
+    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
       const root = ensureContextRoot();
       try {
         const patch: AgentIdentityPatch = {};
@@ -276,6 +291,8 @@ export function registerAgentsCommand(program: Command): void {
         if (effort !== undefined) patch.effort = effort;
         if (opts.whiteboard !== undefined) patch.whiteboard = opts.whiteboard || null;
         if (opts.learning !== undefined) patch.learning = opts.learning;
+        const autonomy = readAutonomyOption(opts.autonomy);
+        if (autonomy !== undefined) patch.autonomy = autonomy;
         const place: AgentPlacementPatch = {};
         if (opts.reportsTo !== undefined) place.reportsTo = opts.reportsTo === 'none' ? null : opts.reportsTo;
         if (opts.team !== undefined) place.team = opts.team;

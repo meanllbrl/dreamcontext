@@ -16,6 +16,7 @@ import {
   slotFromFrontmatter,
 } from '../agents/slot.js';
 import { composeRun, legacyPair } from '../agents/compose.js';
+import { nextFreeFace } from '../agents/faces.js';
 import {
   agentCallTarget,
   agentPath,
@@ -1522,6 +1523,8 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
     id: generateId('auto'),
     title: i.title.trim(),
     agent: agentSlug,
+    // Its figure, stamped once at create (unhashed, like `photo`).
+    face: nextFreeFace(contextRoot, slug),
     mode: 'sched',
     enabled: i.enabled ?? true,
     schedule: serializeSchedule(scheduleFromInput(i)),
@@ -1570,6 +1573,7 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     id: generateId('auto'),
     title: i.title.trim(),
     mode,
+    face: nextFreeFace(contextRoot, slug),
     // Written explicitly (as `null` when absent) rather than omitted, so the
     // capture protocol and a human reading the manifest both see the field
     // exists. Neither key is approval-hashed, so writing them cannot change

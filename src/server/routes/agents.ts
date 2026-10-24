@@ -19,8 +19,13 @@ import {
   type AgentManifest,
   type AgentPlacementPatch,
 } from '../../lib/agents/types.js';
-import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
-import { getRunTarget, parsePattern, resolveAutomationPhoto } from '../../lib/automations/store.js';
+import { isSafeAutomationSlug, readManifestFrontmatter } from '../../lib/agents/slot.js';
+import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutomationPhoto } from '../../lib/automations/store.js';
+import { readThread } from '../../lib/automations/threads.js';
+import { readStageHomeSession } from '../../lib/local-store.js';
+import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
+import { agentActivity } from '../automation-job.js';
+import { isAgentRequest } from '../desktop.js';
 import { roleLineOf, soulExcerpt } from '../../lib/agents/soul.js';
 import {
   approvalFields,
@@ -34,8 +39,12 @@ import { loadStatuses } from '../../lib/overrides.js';
 import { isSafeTaskSlug, readTaskFile } from '../../lib/task-backend/local.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import {
+  AGENT_AUTONOMY_LEVELS,
+  AGENT_SELF_ENV,
   AutomationError,
+  DEFAULT_AGENT_AUTONOMY,
   EFFORT_LEVELS,
+  type AgentAutonomy,
   type AutomationManifest,
   type EffortLevel,
 } from '../../lib/automations/types.js';
@@ -81,6 +90,10 @@ export interface AgentSummary {
   reportsTo: string | null;
   /** `team` as written; drawn only on a lead. Unhashed. */
   team: string | null;
+  /** How much it decides alone; decides the permission mode of its sessions. */
+  autonomy: AgentAutonomy;
+  /** Its figure: the stamped face, else the bare hash of its slug. */
+  face: AgentFace;
   approvedForChat: boolean;
   approvedToRun: boolean;
   /** Why it may not run, when it may not (`approvedToRun` false). */
@@ -141,6 +154,8 @@ export function summarizeAgent(
     shared: agent?.shared ?? false,
     reportsTo: agent?.reportsTo ?? null,
     team: agent?.team ?? null,
+    autonomy: target.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    face: faceOf(target.slug, agent?.face ?? null),
     approvedForChat: forChat.approved,
     approvedToRun: toRun.approved,
     approvalReason: toRun.approved ? null : toRun.reason,
@@ -187,6 +202,20 @@ function readSoul(v: unknown): string | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== 'string') throw new AutomationError('Invalid soul: expected text.');
   return v;
+}
+
+/** An autonomy level from a request body: absent passes through, anything else must be a level.
+ *  Refused from inside an agent run (the server process itself never is one, so this only bites a
+ *  run that reached the API through a tool): an agent does not raise its own autonomy. */
+function readAutonomy(v: unknown): AgentAutonomy | undefined {
+  if (v === undefined) return undefined;
+  if (process.env[AGENT_SELF_ENV] !== undefined || process.env.DREAMCONTEXT_AUTOMATION_RUN !== undefined) {
+    throw new AutomationError('An agent run cannot change an autonomy level: the owner sets it on the AI Team page.');
+  }
+  if (typeof v !== 'string' || !(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
+    throw new AutomationError(`Invalid autonomy: expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);
+  }
+  return v as AgentAutonomy;
 }
 
 function readWhiteboard(v: unknown): string | null | undefined {
@@ -357,6 +386,8 @@ export async function handleAgentsUpdate(
     // GET detail, and the summary's excerpt is never a form source. '' clears.
     const soul = readSoul(body.soul);
     if (soul !== undefined) patch.soul = soul;
+    const autonomy = readAutonomy(body.autonomy);
+    if (autonomy !== undefined) patch.autonomy = autonomy;
     if (Object.keys(patch).length > 0) withRestamp(contextRoot, dirname(contextRoot), params.slug, patch);
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
@@ -493,5 +524,127 @@ export async function handleAgentsPhotoUpload(
     sendSummary(res, contextRoot, slug);
   } catch (err) {
     sendWriteError(res, err, 'photo_failed', 'Failed to save the photo.');
+  }
+}
+
+// ─── The agent's STAGE (AI Team v2) ─────────────────────────────────────────────────────────
+
+const STAGE_REPORTS = 5;
+const STAGE_FILES = 8;
+/** How many day files of each thread a stage read looks at: a bound, not a filter. */
+const STAGE_THREAD_DAYS = 14;
+
+export type StageFileKind = 'doc' | 'board' | 'image' | 'data' | 'other';
+
+/** A posted file's kind, from its brain-relative path. */
+export function stageFileKind(path: string): StageFileKind {
+  const p = path.toLowerCase();
+  if (p.endsWith('.excalidraw.md') || p.startsWith('whiteboards/')) return 'board';
+  if (/\.(md|markdown|txt|pdf|html?)$/.test(p)) return 'doc';
+  if (/\.(png|jpe?g|gif|webp|svg)$/.test(p)) return 'image';
+  if (/\.(json|csv|tsv|ya?ml)$/.test(p)) return 'data';
+  return 'other';
+}
+
+export interface StageView {
+  slug: string;
+  title: string;
+  face: AgentFace;
+  autonomy: AgentAutonomy;
+  /** The conversation the stage's chat resumes; null before its first one. Machine-local. */
+  homeSessionId: string | null;
+  /** Whose agent it is (arrives with the brain sync); null on this build. */
+  owner: string | null;
+  /** What it is doing right now: one row per target of it holding its run lock. */
+  liveJobs: { slug: string; title: string; since: number; runId: string | null; lastLine: string | null }[];
+  /** Its latest posts, newest first. */
+  reports: { slug: string; id: string; runId: string; at: string; text: string; files: string[] }[];
+  /** The latest files it posted, newest first, de-duplicated. */
+  files: { path: string; kind: StageFileKind; at: string; slug: string }[];
+  /** Its routines (scheduled automations that run as it). */
+  routines: { slug: string; title: string; enabled: boolean; nextFireAt: string | null; cadence: string; face: AgentFace }[];
+  /** Rows waiting on the owner about this agent (the owner inbox arrives with task assignment). */
+  inbox: unknown[];
+}
+
+/** The stage view of `slug`, or null when there is no such agent. Read-only. */
+export function buildStageView(contextRoot: string, slug: string, now: Date = new Date()): StageView | null {
+  const target = agentTarget(contextRoot, slug);
+  if (!target) return null;
+  const agent = getAgent(contextRoot, slug);
+  const routines = listAutomations(contextRoot).filter((m) => m.runKind !== 'agent' && m.mode === 'sched' && (m.agent ?? m.slug) === slug);
+  // Its own call target and every routine that runs as it: the slugs its work happens under.
+  const slugs = [slug, ...routines.map((m) => m.slug).filter((s) => s !== slug)];
+  const titleOf = (s: string): string => (s === slug ? target.agentTitle || target.title : routines.find((m) => m.slug === s)?.title ?? s);
+
+  const liveJobs: StageView['liveJobs'] = [];
+  for (const s of slugs) {
+    const a = agentActivity(contextRoot, s, now.getTime());
+    if (a) liveJobs.push({ slug: s, title: titleOf(s), since: a.since, runId: a.runId, lastLine: null });
+  }
+
+  const posts = slugs.flatMap((s) => readThread(contextRoot, s, { days: STAGE_THREAD_DAYS })
+    .filter((e) => e.kind === 'agent')
+    .map((e) => ({ slug: s, e })));
+  posts.sort((a, b) => (a.e.id < b.e.id ? 1 : a.e.id > b.e.id ? -1 : 0));
+  const reports = posts.slice(0, STAGE_REPORTS).map(({ slug: s, e }) => ({
+    slug: s, id: e.id, runId: e.runId, at: e.at, text: e.text, files: e.files ?? [],
+  }));
+  const seen = new Set<string>();
+  const files: StageView['files'] = [];
+  for (const { slug: s, e } of posts) {
+    for (const path of e.files ?? []) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      files.push({ path, kind: stageFileKind(path), at: e.at, slug: s });
+      if (files.length >= STAGE_FILES) break;
+    }
+    if (files.length >= STAGE_FILES) break;
+  }
+
+  return {
+    slug,
+    title: target.agentTitle || target.title,
+    face: faceOf(slug, agent?.face ?? null),
+    autonomy: target.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    homeSessionId: readStageHomeSession(dirname(contextRoot), slug),
+    owner: null,
+    liveJobs,
+    reports,
+    files,
+    routines: routines.map((m) => ({
+      slug: m.slug,
+      title: m.title,
+      enabled: m.enabled,
+      nextFireAt: !m.enabled || m.schedule === null ? null : (nextFire(m.schedule, now)?.toISOString() ?? null),
+      cadence: cadenceLabel(m),
+      face: faceOf(m.slug, parseFace(readManifestFrontmatter(m.path)?.data.face)),
+    })),
+    inbox: [],
+  };
+}
+
+/** GET /api/agents/:slug/stage — the stage's data, read-only. The desktop app only: the stage
+ *  opens a live conversation, which only the desktop hosts. */
+export async function handleAgentsStage(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!isAgentRequest(req)) {
+    sendError(res, 403, 'forbidden', 'An agent\'s stage is available in the desktop app only.');
+    return;
+  }
+  try {
+    const view = buildStageView(contextRoot, params.slug);
+    if (!view) {
+      sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+      return;
+    }
+    sendJson(res, 200, { stage: view });
+  } catch (err) {
+    console.error('[agents] stage failed', err);
+    sendError(res, 500, 'stage_failed', 'Failed to read the agent\'s stage.');
   }
 }

@@ -47,7 +47,8 @@
         "--effort",
         "--whiteboard",
         "--reports-to",
-        "--team"
+        "--team",
+        "--autonomy"
       ]
     },
     {
@@ -3415,6 +3416,13 @@
       "desc": "Create tasks, log progress, insert into sections, and mark complete",
       "args": [],
       "group": true
+    },
+    {
+      "path": "tasks approve-filing",
+      "desc": "Approve a task an agent opened: keep it as it is (the counterpart of `tasks object`); the status does not change",
+      "args": [
+        "<name>"
+      ]
     },
     {
       "path": "tasks assign-agent",

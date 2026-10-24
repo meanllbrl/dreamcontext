@@ -25,6 +25,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'chat-seed-home-',
   'come-home-',
   'dc-2w-',
+  'dc-a1-',
+  'dc-a1-home-',
   'dc-a6-',
   'dc-a6-pkg-',
   'dc-accounts-',

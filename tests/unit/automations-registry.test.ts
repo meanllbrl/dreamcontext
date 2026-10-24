@@ -340,6 +340,7 @@ describe('approvalFields', () => {
       whiteboard: null,
       job: '',
       soul: '',
+      autonomy: 'balanced',
     });
   });
 
@@ -356,20 +357,20 @@ describe('approvalFields', () => {
 });
 
 describe('APPROVAL_DIFF_FIELDS', () => {
-  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review/flow/whiteboard/job/soul, in that exact order', () => {
+  it('is prompt/outputInstructions/model/effort/timeoutMinutes/outputDir/learning/review/flow/whiteboard/job/soul/autonomy, in that exact order', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning', 'review', 'flow',
-      'whiteboard', 'job', 'soul',
+      'whiteboard', 'job', 'soul', 'autonomy',
     ]);
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(12);
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(13);
   });
 
-  it('keeps `flow`, `whiteboard`, `job` then `soul` LAST — the position is what preserves every legacy hash', () => {
+  it('keeps `flow`, `whiteboard`, `job`, `soul` then `autonomy` LAST — the position is what preserves every legacy hash', () => {
     // `canonicalApprovalPayload` appends `flow`, then `whiteboard`, then `job`, to
     // the end of its literal, and JSON.stringify emits keys in insertion order.
     // Any other position would shift the serialization of the fields around it
     // and re-block every already-approved automation on upgrade.
-    expect(APPROVAL_DIFF_FIELDS.slice(-4)).toEqual(['flow', 'whiteboard', 'job', 'soul']);
+    expect(APPROVAL_DIFF_FIELDS.slice(-5)).toEqual(['flow', 'whiteboard', 'job', 'soul', 'autonomy']);
   });
 });
 

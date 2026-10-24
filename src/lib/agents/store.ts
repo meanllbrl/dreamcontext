@@ -6,6 +6,7 @@ import { ensureGitignoreEntries } from '../gitignore.js';
 import { generateId } from '../id.js';
 import {
   AutomationError,
+  DEFAULT_AGENT_AUTONOMY,
   DEFAULT_TIMEOUT_MINUTES,
   MAX_TIMEOUT_MINUTES,
   PATTERN_HEADING,
@@ -14,9 +15,13 @@ import {
   type ApprovalBinding,
   type AutomationJob,
   type AutomationManifest,
+  parseAutonomy,
   type ReviewMode,
   type RunKind,
 } from '../automations/types.js';
+import { parseFace } from './figure.js';
+import { nextFreeFace } from './faces.js';
+import { forgetAgentLocal } from '../local-store.js';
 import {
   assertRegularFile,
   automationFileTarget,
@@ -148,6 +153,8 @@ export function readAgentFile(filePath: string): AgentManifest {
     reportsTo: typeof data.reports_to === 'string' && isSafeAutomationSlug(data.reports_to.trim()) ? data.reports_to.trim() : null,
     team: readTeamLabel(data.team),
     call: callSettings,
+    autonomy: parseAutonomy(data.autonomy),
+    face: parseFace(data.face),
     migratedFrom: strOrNull(data.migrated_from),
     implicit: false,
     path: filePath,
@@ -175,6 +182,8 @@ export function placeholderAgent(slug: string): AgentManifest {
     reportsTo: null,
     team: null,
     call: { ...DEFAULT_CALL_SETTINGS },
+    autonomy: DEFAULT_AGENT_AUTONOMY,
+    face: null,
     migratedFrom: null,
     implicit: false,
     path: '',
@@ -308,14 +317,14 @@ export function ensureAgentsGitignore(contextRoot: string): void {
   }
 }
 
-const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'photo']);
+const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'photo', 'autonomy']);
 
 /** An identity patch at runtime too: a caller passing call settings (or anything
  *  else) through an untyped surface is refused, never silently dropped. */
 function assertIdentityPatch(patch: AgentIdentityPatch): void {
   for (const key of Object.keys(patch)) {
     if (!IDENTITY_PATCH_KEYS.has(key)) {
-      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board and photo.`);
+      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board, photo and autonomy.`);
     }
   }
 }
@@ -334,6 +343,7 @@ function applyIdentityPatch(agent: AgentManifest, patch: AgentIdentityPatch): Ag
     learning: patch.learning === undefined ? agent.learning : patch.learning,
     whiteboard: patch.whiteboard === undefined ? agent.whiteboard : patch.whiteboard,
     photo: patch.photo === undefined ? agent.photo : patch.photo,
+    autonomy: patch.autonomy === undefined ? agent.autonomy : parseAutonomy(patch.autonomy),
   };
 }
 
@@ -371,6 +381,8 @@ function identityFrontmatter(a: AgentManifest): Record<string, unknown> {
     ...(a.effort ? { effort: a.effort } : {}),
     ...(a.learning ? { learning: true } : {}),
     ...(a.whiteboard ? { whiteboard: a.whiteboard } : {}),
+    // Only a level other than the default is written, so an ordinary agent's file is unchanged.
+    ...(a.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: a.autonomy } : {}),
   };
 }
 
@@ -399,6 +411,7 @@ export function createAgent(contextRoot: string, input: AgentInput, opts: Create
     whiteboard: input.whiteboard ?? null,
     photo: input.photo ?? null,
     shared: input.shared === true,
+    autonomy: parseAutonomy(input.autonomy),
   };
   validateIdentity(contextRoot, draft);
   const path = agentPath(contextRoot, slug);
@@ -412,6 +425,9 @@ export function createAgent(contextRoot: string, input: AgentInput, opts: Create
     title: draft.title,
     ...identityFrontmatter(draft),
     shared: draft.shared,
+    // Stamped once, here: the next free face in this vault (agents + automations), so adding a
+    // member never moves anyone else's face.
+    face: nextFreeFace(contextRoot, slug),
   };
   const soul = draft.soul ? `\n## Soul\n\n${draft.soul}\n` : '';
   createManifestText(path, matter.stringify(`## Prompt\n\n${draft.prompt}\n${soul}`, frontmatter));
@@ -435,6 +451,9 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
   const next = applyIdentityPatch(agent, patch);
   validateIdentity(contextRoot, next);
+  if (agent.implicit && patch.autonomy !== undefined && next.autonomy !== agent.autonomy) {
+    throw new AutomationError(`"${slug}" still lives in its old automation file, which cannot hold an autonomy level: run \`dreamcontext update\` (it splits old files into an agent and its routine), then try again.`);
+  }
 
   if (agent.implicit) {
     const fields: Record<string, unknown> = {};
@@ -449,7 +468,7 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
     assertRegularFile(agent.path);
     const { data, content } = parseManifestFrontmatter(readFileSync(agent.path, 'utf-8'));
     const nextData: Record<string, unknown> = { ...data, title: next.title };
-    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard']) delete nextData[key];
+    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard', 'autonomy']) delete nextData[key];
     rewriteManifestText(agent.path, matter.stringify(content, { ...nextData, ...identityFrontmatter(next) }));
   }
   if (patch.prompt !== undefined) {
@@ -517,6 +536,8 @@ export function removeAgent(contextRoot: string, slug: string, opts: { home?: st
     }
   }
   revokeAgent(dirname(contextRoot), slug, automationFileTarget(contextRoot, slug), opts.home);
+  // Its machine-local entries die with it (the stage's home session).
+  forgetAgentLocal(dirname(contextRoot), slug, opts.home);
   reparentReports(contextRoot, slug, agent.reportsTo);
   return { removed: true };
 }
@@ -721,5 +742,6 @@ function withIdentity(target: AutomationManifest, agent: AgentManifest): Automat
     effort: agent.effort,
     learning: agent.learning,
     whiteboard: agent.whiteboard,
+    autonomy: agent.autonomy,
   };
 }

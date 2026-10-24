@@ -34,7 +34,7 @@ import { homedir } from 'node:os';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
-import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAccount } from './account.js';
+import { automationAccountWithoutProbe, pickAutomationAccount, withoutOwnerOnly, type AutomationAccount } from './account.js';
 import { appendThreadEntry } from './threads.js';
 import { latestBoundSession, readAutomationSession, retireAutomationSession } from './session-registry.js';
 import {
@@ -802,10 +802,12 @@ function spawnSessionResume(
   // the caller: nothing in `opts.env` can name a board, a self or a scratch folder.
   const scopeVars = resume ? scopeEnv(resume.scope, resume.paths) : {};
   const scopeArgs = resume ? boardScopeArgs(resume.scope, resume.paths) : null;
+  // Never an "Only mine" account (account protection): the owner's reply resumes agent work, so
+  // it leaves the accounts they keep for themself alone; the threshold does not gate it.
   const quick = automationAccountWithoutProbe({ home: opts.home });
   return quick
-    ? spawnOn(quick)
-    : pickAutomationAccount({ home: opts.home }).then(spawnOn);
+    ? spawnOn(withoutOwnerOnly(quick, { home: opts.home }))
+    : pickAutomationAccount({ home: opts.home }).then((a) => spawnOn(withoutOwnerOnly(a, { home: opts.home })));
 
   function spawnOn(account: AutomationAccount): Promise<ClaudeExecution> {
     ensureSandbox(account.configDir, opts.home);

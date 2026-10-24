@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { today, slugify } from '../../lib/id.js';
 import { assertTaskFilingBar, isSleepCycleLive, recordCycleTaskFiled } from '../../lib/task-filing-bar.js';
 import { decideFiling, filingFields } from '../../lib/filing-basis.js';
+import { approveFiling } from '../../lib/task-filing-approval.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { currentSyncJob, startSyncJob } from '../sync-job.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
@@ -1013,6 +1014,34 @@ export async function handleTasksObjection(
     outcome: result.outcome,
     task: task ? toApiTask(task, await objectionReadCtx(contextRoot, backend)) : null,
   });
+}
+
+/**
+ * POST /api/tasks/:slug/filing-approval — the owner keeps a task an agent opened ("Approve",
+ * beside "Object"). One engine with `dreamcontext tasks approve-filing` (lib/task-filing-approval.ts):
+ * 200 with the task (also when it was already approved), 409 `filed_by_owner` / `cancelled`,
+ * 403 `agent_run`, 404. The status never changes.
+ */
+export async function handleTasksFilingApproval(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  const backend = backendFor(contextRoot);
+  const result = await approveFiling(contextRoot, backend, slug);
+  if (!result.ok) { sendError(res, result.status, result.code, result.message); return; }
+  if (!result.already) {
+    recordDashboardChange(contextRoot, {
+      entity: 'task',
+      action: 'update',
+      target: `state/${slug}.md`,
+      summary: `Approved '${result.task.name}'`,
+    });
+  }
+  sendJson(res, 200, { task: toApiTask(result.task, await objectionReadCtx(contextRoot, backend)), already: result.already });
 }
 
 /**
