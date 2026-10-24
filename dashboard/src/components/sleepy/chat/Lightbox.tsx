@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { ImageViewer } from '../../layout/ImageViewer';
 import { FileActions } from './FileActions';
 import { FileUnavailable } from './FileUnavailable';
@@ -47,7 +48,9 @@ export function Lightbox({
       src={url}
       alt={caption ?? ''}
       caption={caption}
-      actions={path ? <FileActions path={path} compact /> : undefined}
+      // The hands-free phone cannot hand a file to the Mac's OS (laptop-only routes): no buttons
+      // that could only fail there.
+      actions={path && !isMacPhoneSurface() ? <FileActions path={path} compact /> : undefined}
       // Only a picture with a file behind it can be explained or granted; a URL-only image
       // falls through to the viewer's own "couldn't load" line.
       fallback={path ? <FileUnavailable src={url} kind="image" onGranted={() => setReload((n) => n + 1)} /> : undefined}

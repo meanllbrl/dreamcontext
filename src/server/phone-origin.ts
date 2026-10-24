@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { isTailnetAddress } from './remote-access.js';
 import { listVaults } from '../lib/vaults.js';
 import { registeredOwnerCandidates, resetOwnerCandidates, transcriptOwnerCheck } from '../lib/transcript-locate.js';
+import { resetPhoneMediaRoots } from '../lib/handsfree/mac/phone-media-roots.js';
 
 /**
  * Per-request ORIGIN: which listener a request arrived on.
@@ -77,6 +78,7 @@ export function macProbeNonce(): string | null {
 // ─── The exposed projects (chosen at start) ─────────────────────────────────
 
 let exposedVaults: readonly string[] = [];
+let exposedEpoch = 0;
 
 /** Set per start (Mac session): the registered names of the projects the owner chose. The phone
  *  sees and reaches only these; an empty list (Mac mode off) exposes nothing. */
@@ -84,6 +86,15 @@ export function setMacExposedVaults(names: readonly string[]): void {
   exposedVaults = Object.freeze([...new Set(names)]);
   // A start re-reads every project's worktrees (one may have been added since the last run).
   resetOwnerCandidates();
+  resetPhoneMediaRoots();
+  // Every start and stop is a new epoch: the phone's one-tap file grants of the last run end here
+  // (phone-file-grants.ts reads it).
+  exposedEpoch++;
+}
+
+/** Bumped by every Mac-mode start and stop. */
+export function macExposedEpoch(): number {
+  return exposedEpoch;
 }
 
 export function macExposedVaults(): readonly string[] {

@@ -168,7 +168,6 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'GET /api/onboarding/readiness',
   'POST /api/onboarding/fix',
   'POST /api/onboarding/fix/cancel',
-  'POST /api/agent/drop',
   'GET /api/notifications',
   'POST /api/notify',
   'POST /api/agent/secret',

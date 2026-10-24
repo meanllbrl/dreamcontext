@@ -18,7 +18,7 @@
  * throwing — a caller shows the attachment as un-sendable; nothing about a failed upload
  * should take a message down with it.
  */
-export async function uploadAgentFile(vault: string | null, file: File | Blob, name: string): Promise<string | null> {
+export async function uploadAgentFile(vault: string | null, file: File | Blob, name: string, signal?: AbortSignal): Promise<string | null> {
   try {
     const body = await file.arrayBuffer();
     const res = await fetch('/api/agent/drop', {
@@ -29,6 +29,7 @@ export async function uploadAgentFile(vault: string | null, file: File | Blob, n
         ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}),
       },
       body,
+      ...(signal ? { signal } : {}),
     });
     if (!res.ok) return null;
     const { path } = await res.json() as { path?: string };

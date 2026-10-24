@@ -61,6 +61,9 @@ export interface Attachment {
   /** Image attachments only — the upload was refused (not the desktop app, over the 25 MB
    *  cap, unwritable temp dir). The chip says so instead of pretending it will be sent. */
   failed?: boolean;
+  /** What a failed chip says instead of the generic refusal (a phone photo this browser could
+   *  not decode, a photo the phone's caps refused). */
+  note?: string;
 }
 
 export interface ComposerScratch {
@@ -132,15 +135,29 @@ export function addAttachments(convId: string, added: Attachment[]): void {
  * A no-op for an id that is no longer staged: the user can remove a chip while its bytes are
  * still in flight, and the resolution must not resurrect it.
  */
-export function settleAttachment(convId: string, id: string, path: string | null): void {
+export function settleAttachment(convId: string, id: string, path: string | null, note?: string): void {
   const cur = readScratch(convId);
   if (!cur.attachments.some((a) => a.id === id)) return;
   commit(convId, {
     ...cur,
     attachments: cur.attachments.map((a) => (a.id === id
-      ? { ...a, path: path ?? undefined, uploading: false, failed: !path }
+      ? { ...a, path: path ?? undefined, uploading: false, failed: !path, ...(!path && note ? { note } : {}) }
       : a)),
   });
+}
+
+/**
+ * Give an image chip its preview once there is one worth showing (the hands-free phone shows
+ * the small re-encoded JPEG, never the 24 MP original — decoding six of those for 44 px chips is
+ * what gets a phone tab evicted). Revokes the URL it replaces. A no-op for a chip that has gone,
+ * and the URL is revoked then, since nothing will.
+ */
+export function setAttachmentPreview(convId: string, id: string, url: string): void {
+  const cur = readScratch(convId);
+  const found = cur.attachments.find((a) => a.id === id);
+  if (!found) { try { URL.revokeObjectURL(url); } catch { /* no DOM */ } return; }
+  revoke(found);
+  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a.id === id ? { ...a, url } : a)) });
 }
 
 /** Drop one chip (its ✕), revoking its preview. */

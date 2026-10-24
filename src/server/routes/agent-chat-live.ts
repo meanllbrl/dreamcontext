@@ -98,6 +98,9 @@ export interface LiveChatEntry {
   mirrorRoom?: (device: { store: 'mac'; idHash: string }) => boolean;
   /** Close every phone mirror (the take-back: the phone talks to the Super Agent no more). */
   closeMirrors?: () => void;
+  /** One `_meta` frame (already serialised) to every phone mirror, never the holder: the stage
+   *  pictures the phone cannot otherwise see (`stageMediaFrame`, lib/super/phone-mirror.ts). */
+  mirrorFrame?: (serialised: string) => void;
 }
 
 /** How long a cut child gets between SIGTERM and SIGKILL. */

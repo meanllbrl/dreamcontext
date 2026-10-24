@@ -96,6 +96,37 @@ export function ownerEchoFrame(text: string): string {
   return JSON.stringify({ type: '_meta', subtype: 'owner_echo', text });
 }
 
+/** At most this many pictures in one `stage_media` frame. */
+export const STAGE_MEDIA_MAX = 6;
+
+/** One picture the Super Agent has on its stage: the card's project-relative ref and its title. */
+export interface StageMediaItem { ref: string; title?: string }
+
+/**
+ * The `_meta` frame that tells a phone mirror which pictures the Super Agent opened on the Mac's
+ * stage (task hands-free-phone-shows-every-picture…, D2). The phone has no stage; it draws these
+ * as a strip in the chat. `snapshot`: what the stage holds as the phone joins, not a new open.
+ *
+ * Only `image` cards, whose refs `super open` already confines to project-relative paths with no
+ * `..` (super.ts `refFor`), so the phone loads them through the ordinary inside-project rule of
+ * `GET /api/agent/file`. Null when there is nothing to send.
+ */
+export function stageMediaFrame(items: readonly StageMediaItem[], snapshot = false): string | null {
+  const clean = items
+    .filter((i) => typeof i.ref === 'string' && i.ref && !i.ref.startsWith('/') && !i.ref.split('/').includes('..'))
+    .slice(-STAGE_MEDIA_MAX)
+    .map((i) => ({ ref: i.ref, ...(i.title ? { title: i.title.slice(0, 120) } : {}) }));
+  if (!clean.length) return null;
+  return JSON.stringify({ type: '_meta', subtype: 'stage_media', items: clean, ...(snapshot ? { snapshot: true } : {}) });
+}
+
+/** The image cards floating on a stage now (not resting in Others), oldest first. */
+export function stageImageItems(state: { containers: ReadonlyArray<{ kind: string; ref: string; place: string; title?: string }> }): StageMediaItem[] {
+  return state.containers
+    .filter((k) => k.kind === 'image' && k.place === 'float')
+    .map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) }));
+}
+
 export class MirrorSet<D> {
   private readonly mirrors = new Set<Mirror<D>>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;

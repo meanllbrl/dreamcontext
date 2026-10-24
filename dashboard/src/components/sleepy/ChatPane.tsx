@@ -71,6 +71,7 @@ import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/super
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
+import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext } from './super/superJobsStore';
 import './super/SuperSurface.css';
 import './chat/cards.css';
@@ -1725,6 +1726,10 @@ export function ChatPane({
       }
       return <SuperEventChip key={item.id} text={item.text} />;
     }
+    // Pictures the Super Agent opened on the Mac's stage, as the phone sees them: a strip.
+    if (item.kind === 'user' && item.stageMedia) {
+      return <StageMediaStrip key={item.id} items={item.stageMedia} snapshot={!!item.stageSnapshot} onOpenFile={handleOpenFile} />;
+    }
     // The owner's answer to a question card in the super chat: the card's receipt, never a bubble.
     if (item.kind === 'user' && session.mode === 'super' && parseSuperAnswer(item.text)) {
       return <SuperAnswerReceipt key={item.id} text={item.text} />;
@@ -1911,7 +1916,7 @@ export function ChatPane({
     const errorAt = conv.lastErrorAt ?? conv.items.length;
     const cut = noticeCut(errorAt, itemsFrom, conv.items.length, false);
     if (cut !== null) {
-      const movedOn = conv.items.slice(errorAt).some((it) => it.kind === 'user');
+      const movedOn = conv.items.slice(errorAt).some((it) => it.kind === 'user' && !it.stageMedia);
       // Wrapped, not passed: `retryLastMessage` is declared further down this render, and the
       // wrapper only reads it on click.
       notices.push({
@@ -2008,7 +2013,8 @@ export function ChatPane({
   const isEmpty = !working
     && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
 
-  const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user');
+  // A stage strip is not something the owner sent (ChatUserItem.stageMedia).
+  const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia);
 
   // Sending is unambiguous intent to watch the answer, so it re-arms sticking: a reply that
   // streams in off-screen because you had scrolled up is a bug, not a feature. Keyed on the

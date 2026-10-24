@@ -215,7 +215,7 @@ import {
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
 import { handleAppMachine } from './routes/machine.js';
-import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
+import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentPhoneGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
@@ -605,6 +605,7 @@ export function buildRouter(): Router {
   router.post('/api/agent/reveal', handleAgentReveal);
   // The user allowing ONE named file outside the project root to be shown inline.
   router.post('/api/agent/grant', handleAgentGrant);
+  router.post('/api/agent/phone-grant', handleAgentPhoneGrant);
   router.get('/api/agent/loopback-grants', handleLoopbackGrantsGet);
   router.post('/api/agent/loopback-grant', handleLoopbackGrantSet);
   router.post('/api/agent/web-session', handleWebSessionOpen);

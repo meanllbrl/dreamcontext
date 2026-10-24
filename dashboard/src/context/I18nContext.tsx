@@ -2812,6 +2812,24 @@ const translations: Record<string, Record<string, string>> = {
     'settings.super.sounds': 'Super Agent sounds',
     'settings.super.soundsNote': 'A short sound when the Super Agent delegates, opens or closes a card.',
     'super.child.readOnly': 'The Super Agent is running this chat. Talk to Claude in the centre.',
+    'chat.stageMedia.one': 'Super opened a picture on the Mac',
+    'chat.stageMedia.many': 'Super opened {n} pictures on the Mac',
+    'chat.stageMedia.snapshot': 'On the Mac\'s stage now',
+    'chat.media.show': 'Show',
+    'chat.media.showing': 'Showing…',
+    'chat.media.outside': 'outside the project',
+    'chat.media.otherProject': 'in a project this phone can\'t open',
+    'chat.media.cantShow': 'can\'t be shown on the phone',
+    'chat.media.gone': 'isn\'t there any more',
+    'chat.media.unreachable': 'couldn\'t load',
+    'chat.media.retry': 'Try again',
+    'chat.media.checking': 'Checking…',
+    'chat.photo.add': 'Add photos',
+    'chat.photo.count.one': '1 photo',
+    'chat.photo.count.many': '{n} photos',
+    'chat.photo.uploading': '{n} uploading…',
+    'chat.photo.max': 'Up to 6 photos in one message',
+    'chat.photo.unreadable': 'this format can\'t be opened',
     'super.terminals.label': 'Terminals',
     'super.terminals.open': 'Take the screen back and open this terminal',
     'super.event.question': 'A chat asked something',
@@ -4433,6 +4451,24 @@ const TR_PARTIAL: Record<string, string> = {
   'settings.super.sounds': 'Süper Ajan sesleri',
   'settings.super.soundsNote': 'Süper Ajan görev devrettiğinde, kart açıp kapattığında kısa bir ses.',
   'super.child.readOnly': 'Bu sohbeti Süper Ajan yürütüyor. Ortadaki Claude ile konuş.',
+  'chat.stageMedia.one': 'Super Mac ekranında bir görsel açtı',
+  'chat.stageMedia.many': 'Super Mac ekranında {n} görsel açtı',
+  'chat.stageMedia.snapshot': 'Şu an Mac ekranında',
+  'chat.media.show': 'Göster',
+  'chat.media.showing': 'Açılıyor…',
+  'chat.media.outside': 'proje dışında',
+  'chat.media.otherProject': 'telefonun açamadığı bir projede',
+  'chat.media.cantShow': 'telefonda gösterilemiyor',
+  'chat.media.gone': 'artık orada değil',
+  'chat.media.unreachable': 'yüklenemedi',
+  'chat.media.retry': 'Tekrar dene',
+  'chat.media.checking': 'Bakılıyor…',
+  'chat.photo.add': 'Fotoğraf ekle',
+  'chat.photo.count.one': '1 fotoğraf',
+  'chat.photo.count.many': '{n} fotoğraf',
+  'chat.photo.uploading': '{n} tanesi yükleniyor…',
+  'chat.photo.max': 'Bir mesajda en fazla 6 fotoğraf',
+  'chat.photo.unreadable': 'bu biçim açılamadı',
   'super.terminals.label': 'Terminaller',
   'super.terminals.open': 'Ekranı geri al ve bu terminali aç',
   'super.event.question': 'Bir sohbet soru sordu',
@@ -4521,6 +4557,12 @@ export function ScopedLocale({ locale, children }: { locale: ScopedLocaleId; chi
       {children}
     </I18nContext.Provider>
   );
+}
+
+/** The same context, or null outside a provider: for hooks shared with windows that may not
+ *  mount one (the inline media pass runs in viewer windows too). */
+export function useOptionalI18n(): I18nContextValue | null {
+  return useContext(I18nContext);
 }
 
 export function useI18n(): I18nContextValue {

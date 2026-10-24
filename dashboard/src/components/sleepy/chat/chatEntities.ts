@@ -1,6 +1,8 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { agentFileUrl } from '../../../api/client';
 import { useVault } from '../../../context/VaultContext';
+import { useOptionalI18n } from '../../../context/I18nContext';
+import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { readScopedRaw, writeScopedRaw } from '../../../lib/scopedStorage';
 
 /**
@@ -2472,6 +2474,10 @@ export { revealPath } from '../../../lib/reveal';
  * Marks each processed node so the pass on every render never double-wraps one. Scoped to
  * this directory, so knowledge and task pages are unaffected.
  */
+/** Why an inline picture is a card instead: the desktop's consent (`grant`), the phone's one
+ *  tap (`phone-grant`), never on this phone (`other-project`, `refused`), or just unreadable. */
+type FallbackReason = 'grant' | 'open' | 'phone-grant' | 'other-project' | 'refused' | 'gone' | 'unreachable';
+
 export function useInlineMedia(
   ref: RefObject<HTMLElement | null>,
   handlers: {
@@ -2488,6 +2494,16 @@ export function useInlineMedia(
   // module-level `rawUrl` below — the effect it feeds runs on every render, so it always builds
   // its `src` against the project whose transcript is on screen.
   const { vault } = useVault();
+  // The hands-free phone (task hands-free-phone-shows-every-picture…): its outside pictures
+  // follow its own rules (`needs_phone_grant` → "Show", `other_project` → no button), and it
+  // never offers "Open ↗" — handing a file to the Mac's OS is laptop-only.
+  const i18n = useOptionalI18n();
+  const say = (key: string, fallback: string): string => {
+    const v = i18n?.t(key);
+    return v && v !== key ? v : fallback;
+  };
+  const sayRef = useRef(say);
+  sayRef.current = say;
   // The elements this pass has built, by path. A media element that is merely DETACHED still
   // holds its decoded frames and its buffer, so putting the same one back is free where
   // building a new one costs a fresh request for the whole clip. That is the difference the
@@ -2518,7 +2534,8 @@ export function useInlineMedia(
      * grant written against the notation instead of the file would never match on the next
      * read. Falls back to the reference itself when the server sent nothing.
      */
-    const buildFallback = (path: string, reason: 'grant' | 'open', grantPath: string): HTMLElement => {
+    const buildFallback = (path: string, reason: FallbackReason, grantPath: string): HTMLElement => {
+      const phone = isMacPhoneSurface();
       const card = document.createElement('span');
       card.className = 'chat-md-blocked';
       card.title = path;
@@ -2541,8 +2558,53 @@ export function useInlineMedia(
       };
 
       /** What the card says when nothing has gone wrong (yet). */
-      const standingNote = reason === 'grant' ? 'outside the project' : null;
+      const standingNote = reason === 'grant' ? 'outside the project'
+        : reason === 'phone-grant' ? sayRef.current('chat.media.outside', 'outside the project')
+          : reason === 'other-project' ? sayRef.current('chat.media.otherProject', 'in a project this phone can\u2019t open')
+            : reason === 'gone' && phone ? sayRef.current('chat.media.gone', 'isn\u2019t there any more')
+              : reason === 'unreachable' && phone ? sayRef.current('chat.media.unreachable', 'couldn\u2019t load')
+            : reason === 'refused' || phone ? sayRef.current('chat.media.cantShow', 'can\u2019t be shown on the phone')
+              : null;
       setNote(standingNote);
+
+      // The phone's one tap: grants THIS file for this device (POST /agent/phone-grant, wired by
+      // the caller's `onGrant`), then loads the real thing in place.
+      if (reason === 'phone-grant') {
+        const show = document.createElement('button');
+        show.type = 'button';
+        show.className = 'chat-md-blocked-allow';
+        const label = sayRef.current('chat.media.show', 'Show');
+        show.textContent = label;
+        const activate = (): void => {
+          if (show.disabled) return;
+          show.disabled = true;
+          show.textContent = sayRef.current('chat.media.showing', 'Showing…');
+          void (live.current.onGrant?.(grantPath) ?? Promise.resolve(false)).then((ok) => {
+            if (ok) card.replaceWith(buildMedia(path));
+            else { show.disabled = false; show.textContent = label; }
+          });
+        };
+        show.addEventListener('click', activate);
+        // A finger acts where it LIFTS. Leaving the phone's composer reflows the transcript before
+        // the browser's synthesized click arrives (measured 57 px), so that click lands on the
+        // text beside the card and the button never hears it. A scroll ends in pointercancel,
+        // never pointerup, so this is a tap only; the disabled button ignores the click after.
+        show.addEventListener('pointerup', (e) => { if (e.pointerType !== 'mouse') activate(); });
+        card.append(show);
+      }
+      // A dropped connection (the tunnel, a moving phone) is not a verdict: try again in place.
+      if (phone && reason === 'unreachable') {
+        const again = document.createElement('button');
+        again.type = 'button';
+        again.className = 'chat-md-blocked-allow';
+        again.textContent = sayRef.current('chat.media.retry', 'Try again');
+        const retry = (): void => { if (!again.disabled) { again.disabled = true; card.replaceWith(buildMedia(path)); } };
+        again.addEventListener('click', retry);
+        again.addEventListener('pointerup', (e) => { if (e.pointerType !== 'mouse') retry(); });
+        card.append(again);
+      }
+      // Nothing on the phone can hand a file to the Mac's OS: the card ends at its reason.
+      if (phone) return card;
 
       if (reason === 'grant') {
         const allow = document.createElement('button');
@@ -2634,12 +2696,19 @@ export function useInlineMedia(
         // The 403 body also carries the file the server RESOLVED the reference to, which is
         // what "Allow access" has to grant — see `buildFallback`.
         void fetch(rawUrl(vault, path), { headers: { Range: 'bytes=0-0' } })
-          .then(async (r): Promise<{ reason: 'grant' | 'open'; grantPath: string }> => {
+          .then(async (r): Promise<{ reason: FallbackReason; grantPath: string }> => {
+            if (r.status === 404) return { reason: 'gone', grantPath: path };
+            if (r.status >= 500) return { reason: 'unreachable', grantPath: path };
             if (r.status !== 403) return { reason: 'open', grantPath: path };
-            const body = await r.json().catch(() => null) as { path?: unknown } | null;
-            return { reason: 'grant', grantPath: typeof body?.path === 'string' ? body.path : path };
+            const body = await r.json().catch(() => null) as { path?: unknown; error?: unknown } | null;
+            const grantPath = typeof body?.path === 'string' ? body.path : path;
+            // The phone's own answers (agent-chat.ts `phoneOutsideMedia`).
+            if (body?.error === 'needs_phone_grant') return { reason: 'phone-grant', grantPath };
+            if (body?.error === 'other_project') return { reason: 'other-project', grantPath: path };
+            if (body?.error === 'phone_media_only') return { reason: 'refused', grantPath: path };
+            return { reason: 'grant', grantPath };
           })
-          .catch((): { reason: 'grant' | 'open'; grantPath: string } => ({ reason: 'open', grantPath: path }))
+          .catch((): { reason: FallbackReason; grantPath: string } => ({ reason: 'unreachable', grantPath: path }))
           // The probe is async, and the block around a still-streaming reference re-renders in
           // the meantime. Swapping a DETACHED element does nothing except drop the fallback on
           // the floor, so only replace one that is still on the page; the next pass rebuilds it.

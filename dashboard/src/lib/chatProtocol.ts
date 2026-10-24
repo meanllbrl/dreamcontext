@@ -380,6 +380,10 @@ export type ChatEvent =
   /** The owner's words typed on ANOTHER surface of the same Super Agent chat (the phone's mirror,
    *  or the window when the phone watches): drawn as the owner's own bubble. */
   | { kind: 'owner-echo'; text: string }
+  /** Pictures the Super Agent opened on the Mac's stage, sent to a phone mirror only (the phone
+   *  has no stage): project-relative refs, at most six. `snapshot`: what the stage held as the
+   *  phone joined, not a new open (lib/super/phone-mirror.ts `stageMediaFrame`). */
+  | { kind: 'stage-media'; items: Array<{ ref: string; title?: string }>; snapshot: boolean }
   /** The server's fresh-session branch guard reporting what it did to the working tree.
    *  `warn` for a refusal, `info` for a move it made. See `fromMeta`. */
   | { kind: 'branch-start'; tone: 'info' | 'warn'; message: string }
@@ -1209,6 +1213,15 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     if (!verb) return ignored('_meta:super_cue');
     const ids = Array.isArray(obj.ids) ? obj.ids.filter((x): x is string => typeof x === 'string').slice(0, 48) : [];
     return { kind: 'super-cue', verb, ids };
+  }
+  if (subtype === 'stage_media') {
+    const items = Array.isArray(obj.items)
+      ? (obj.items as unknown[]).filter(isRecord).slice(0, 6)
+        .map((i) => ({ ref: str(i.ref) ?? '', title: str(i.title) }))
+        .filter((i, n, all) => i.ref && !i.ref.startsWith('/') && !i.ref.split('/').includes('..') && all.findIndex((j) => j.ref === i.ref) === n)
+        .map((i) => (i.title ? { ref: i.ref, title: i.title } : { ref: i.ref }))
+      : [];
+    return items.length ? { kind: 'stage-media', items, snapshot: obj.snapshot === true } : ignored('_meta:stage_media');
   }
   if (subtype === 'owner_echo') {
     const text = str(obj.text);

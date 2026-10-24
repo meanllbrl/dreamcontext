@@ -1839,3 +1839,30 @@
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* ── The hands-free phone's photos (Composer.tsx PhotoButton) ──────────────────── */
+
+.chat-cmp-photobtn { color: var(--color-accent); }
+.chat-cmp-photo-meta {
+  padding: 0 var(--space-3);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+/* A phone photo still on its way says so with a ring beside its name (the desktop's pasted
+   image keeps its words only). `.chat-cmp-photo-pending` is set by the phone composer alone. */
+.chat-cmp-photo-pending .chat-cmp-attachment-glyph {
+  display: inline-block;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-accent-soft);
+  border-top-color: var(--color-accent);
+  color: transparent;
+  font-size: 0;
+  overflow: hidden;
+  animation: chat-cmp-photo-spin 0.9s linear infinite;
+}
+@keyframes chat-cmp-photo-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-cmp-photo-pending .chat-cmp-attachment-glyph { animation: none; }
+}
