@@ -3272,9 +3272,12 @@
     },
     {
       "path": "super present",
-      "desc": "Presentation: you move left, 1-4 cards fill the right; --off returns to the floating cards",
+      "desc": "Presentation of 1-8 cards in a named layout: spotlight (1), compare (2), grid (2-4), filmstrip (2-8), review (a page with its child's chat); without --layout the cards pick it; --off returns to the floating cards",
       "args": [
         "[cards...]"
+      ],
+      "valueFlags": [
+        "--layout"
       ]
     },
     {

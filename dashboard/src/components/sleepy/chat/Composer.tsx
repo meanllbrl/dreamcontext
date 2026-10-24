@@ -47,7 +47,7 @@ import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
 } from './chatEntities';
 import {
-  addAttachments, composeOutgoing, countsAsContent, dropSentAttachments, foldAttachments, nextAttachmentId, pendingUploads,
+  addAttachments, composeOutgoing, countsAsContent, dropSentAttachments, nextAttachmentId, pendingUploads,
   readScratch, removeAttachment, setAttachmentPreview, settleAttachment, subscribeScratch, type Attachment,
 } from './composerScratch';
 import { Popover } from '../SkillPickerPopover';

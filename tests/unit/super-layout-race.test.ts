@@ -76,8 +76,9 @@ describe('the window: a pending owner gesture over the agent\'s pushes', () => {
       const after = server(staged(view), patch);
       expect(patchEchoed(after, patch), JSON.stringify([view, patch])).toBe(true);
     }
-    // The 8-card filmstrip really holds 8.
-    expect(server(staged({ mode: 'present', cards: ids(8) }), {}).view).toEqual({ mode: 'present', cards: ids(8), layout: 'filmstrip' });
+    // The 8-card filmstrip really holds 8. (A patch with no stage change, not `{}`: a look-only
+    // patch, an empty one included, writes nothing at all, on the server and in the window.)
+    expect(server(staged({ mode: 'present', cards: ids(8) }), { cards: [] }).view).toEqual({ mode: 'present', cards: ids(8), layout: 'filmstrip' });
   });
 
   it('a removal re-resolves on the window with the store\'s rules (range and review identity)', () => {

@@ -1869,7 +1869,8 @@
   color: transparent;
   font-size: 0;
   overflow: hidden;
-  animation: chat-cmp-photo-spin 0.9s linear infinite;
+  animation: var(--dc-motion-status-name, chat-cmp-photo-spin) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-cmp-photo-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {

@@ -122,7 +122,7 @@ describe('the card zoom (super/ZoomPane.tsx)', () => {
     // its zoom bridge in every state, so its srcdoc (and frame) never changes with the card.
     expect(card).toMatch(/const live = isLivePage\(c\);/);
     expect(card).toMatch(/<ZoomPane live=\{live\} interactive=\{p\.large\} control=\{live \? control : undefined\}>/);
-    expect(card).toMatch(/control=\{live \? control : undefined\} zoomBridge=\{!live\} \/>/);
+    expect(card).toMatch(/control=\{live \? control : undefined\} zoomBridge=\{!live\} desktop=\{desktop\} \/>/);
     // …which is harmless while the card floats: the pane reads a bridge message only while
     // interactive (the card shown large).
     expect(pane).toMatch(/const onMessage = \(event: MessageEvent\) => \{\s*\n\s*if \(!interactive\) return;/);
