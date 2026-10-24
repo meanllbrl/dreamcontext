@@ -154,12 +154,14 @@ describe('the composer and the server use it', () => {
   const chat = read('src/server/routes/agent-chat.ts');
 
   it('the composer sends composeOutgoing\'s message; the chip alone never enables Send', () => {
-    expect(composer).toMatch(/composeOutgoing\(text, readScratch\(convId\)\.attachments, liveQuote, quotePath\)/);
+    expect(composer).toMatch(/composeOutgoing\(text, readScratch\(convId\)\.attachments, liveQuote, quotePath, \{ superView \}\)/);
     expect(composer).toMatch(/if \(!quoted\.trim\(\)\) return;/);
     expect(composer).toMatch(/const sendableAttachments = attachments\.filter\(countsAsContent\);/);
-    // Sign-in and MCP are judged on what he typed, not on the folded message.
-    expect(composer).toMatch(/isSignInCommand\(text\)/);
-    expect(composer).toMatch(/isMcpCommand\(text\)/);
+    // Sign-in and MCP are judged on what he typed, not on the folded message, and without the
+    // chips in it (owner 2026-10-24, plan R3-4: `words` is the draft with its tokens stripped).
+    expect(composer).toMatch(/const words = superView \? stripTokens\(text\) : text;/);
+    expect(composer).toMatch(/isSignInCommand\(words\)/);
+    expect(composer).toMatch(/isMcpCommand\(words\)/);
     // A slash send keeps the About chip staged.
     expect(composer).toMatch(/dropSentAttachments\(convId, \{ keepAbout: slash \}\)/);
   });

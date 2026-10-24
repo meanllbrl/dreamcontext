@@ -509,7 +509,10 @@ export function partRefs(text: string): string[] {
 /** The super's mark on an answer's first line, `<!-- re:<ref> -->` (lib/replyMark.ts parses it). */
 export const REPLY_MARK_RE = /^\s*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/;
 export const REPLY_MARK_HEAD_MAX = 120;
-export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/g;
+/** A mark line keeps its newline when the next line is another mark, so marks stacked one per
+ *  line (a section answering several parts, rev 12) are each read; one would otherwise eat the
+ *  newline the next one starts with. */
+export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n(?![ \t]*<!--\s*re:))?/g;
 
 export interface SuperStateView extends SuperState {
   vault: string;

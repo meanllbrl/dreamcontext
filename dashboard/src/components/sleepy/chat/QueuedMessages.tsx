@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatSession } from '../chatSession';
 import { useI18n } from '../../../context/I18nContext';
-import { agendaAboutStrip, splitAbout } from '../super/superHandover';
+import { agendaAboutStrip, splitAbout, splitAboutParts } from '../super/superHandover';
+import { RefChip } from './AgendaAboutStrip';
 import { queueAutoDrainable, visibleQueued } from './chatQueue';
 
 /**
@@ -30,10 +31,13 @@ import { queueAutoDrainable, visibleQueued } from './chatQueue';
  */
 
 function QueuedRow({
-  index, text, sendNowTitle, onSendNow, onSave, onRemove,
+  index, text, superSid, sendNowTitle, onSendNow, onSave, onRemove,
 }: {
   index: number;
   text: string;
+  /** The Super view's session: a row with several references shows their chips inline. Its
+   *  editor still edits the RAW text, so every header survives a save. */
+  superSid: string | null;
   /** Why "Send now" is unavailable, or `null` when it is available — the row renders it as
    *  the button's tooltip rather than just greying out with no reason given. */
   sendNowTitle: string | null;
@@ -47,6 +51,8 @@ function QueuedRow({
   // A message about an agenda line, or a reply to one message, shows that line or the quote,
   // never the raw block (the edit box keeps it).
   const split = splitAbout(text);
+  const multi = superSid ? splitAboutParts(text) : null;
+  const parts = multi && multi.parts.length >= 2 ? multi : null;
   const about = !split.about ? null
     : split.about.kind === 'reply'
       ? { label: t(split.about.from === 'super' ? 'super.reply.toSuper' : 'super.reply.toOwn'), text: split.about.quote, reply: true }
@@ -115,8 +121,20 @@ function QueuedRow({
         onClick={() => setEditing(true)}
         title="Edit this queued message"
       >
-        {about && <span className="chat-queue-about" data-testid="chat-queue-about">{'reply' in about ? <span aria-hidden>↩</span> : <span className="chat-msg-about-dot" aria-hidden />} {about.label}: {about.text} · </span>}
-        {about ? split.text : text}
+        {parts ? (
+          <>
+            {parts.preamble && `${parts.preamble} `}
+            {parts.parts.map((p, i) => (
+              // eslint-disable-next-line react/no-array-index-key -- parts are positional in one text
+              <span key={i}><RefChip about={p.about} slot={i + 1} superSid={superSid} />{p.words && ` ${p.words} `}</span>
+            ))}
+          </>
+        ) : (
+          <>
+            {about && <span className="chat-queue-about" data-testid="chat-queue-about">{'reply' in about ? <span aria-hidden>↩</span> : <span className="chat-msg-about-dot" aria-hidden />} {about.label}: {about.text} · </span>}
+            {about ? split.text : text}
+          </>
+        )}
       </button>
       <span className="chat-queue-actions">
         {/* Jump the line. First in the row because it is the action a queued message most
@@ -226,6 +244,7 @@ export function QueuedMessages({ session }: { session: ChatSession }) {
             key={q.id}
             index={i}
             text={q.text}
+            superSid={session.mode === 'super' || session.superMirror ? session.claudeId : null}
             sendNowTitle={sendNowTitle}
             onSendNow={() => session.sendQueuedNow(q.id)}
             onSave={(next) => session.editQueued(q.id, next)}

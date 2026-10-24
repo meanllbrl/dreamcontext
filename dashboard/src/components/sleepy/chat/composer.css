@@ -463,6 +463,80 @@
   pointer-events: none;
   user-select: none;
 }
+/* A reference chip in the Super composer (owner 2026-10-24): its token is text in the textarea;
+   the mirror paints the slot's TINT behind it (never a fill: the words keep --color-text). The
+   k-th chip wears --ref-slot-k, the same slot its bubble and the Super's section head show. */
+.chat-cmp-hl-ref { --ref-slot: var(--ref-slot-1); }
+.chat-cmp-hl-ref[data-slot="2"] { --ref-slot: var(--ref-slot-2); }
+.chat-cmp-hl-ref[data-slot="3"] { --ref-slot: var(--ref-slot-3); }
+.chat-cmp-hl-ref[data-slot="4"] { --ref-slot: var(--ref-slot-4); }
+.chat-cmp-hl-ref[data-slot="5"] { --ref-slot: var(--ref-slot-5); }
+.chat-cmp-hl-ref {
+  color: transparent;
+  background: color-mix(in srgb, var(--ref-slot) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ref-slot) 45%, transparent);
+  border-radius: var(--radius-sm);
+}
+/* The same target pressed again, or a pasted copy of a chip already here: the chip it has. */
+.chat-cmp-hl-ref.is-flash {
+  background: color-mix(in srgb, var(--ref-slot) 40%, transparent);
+  box-shadow: inset 0 0 0 2px var(--ref-slot);
+}
+/* After a trailing chip: what the textarea's own placeholder can no longer say. */
+.chat-cmp-hl-hint { color: var(--color-text-placeholder); }
+
+/* A chip's popover: its whole line or quote, where it came from, Remove, Go to message. */
+.chat-cmp-ref-pop {
+  position: fixed;
+  /* Over the agent overlay it is opened from (1100), under the viewers (1200). */
+  z-index: 1150;
+  max-width: min(320px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-sm);
+}
+.chat-cmp-ref-pop { --ref-slot: var(--ref-slot-1); }
+.chat-cmp-ref-pop[data-slot="2"] { --ref-slot: var(--ref-slot-2); }
+.chat-cmp-ref-pop[data-slot="3"] { --ref-slot: var(--ref-slot-3); }
+.chat-cmp-ref-pop[data-slot="4"] { --ref-slot: var(--ref-slot-4); }
+.chat-cmp-ref-pop[data-slot="5"] { --ref-slot: var(--ref-slot-5); }
+.chat-cmp-ref-pop-source { color: var(--color-text-secondary); display: flex; gap: var(--space-1); align-items: baseline; }
+.chat-cmp-ref-pop-glyph { color: var(--ref-slot); }
+.chat-cmp-ref-pop-text { color: var(--color-text); overflow-wrap: anywhere; }
+.chat-cmp-ref-pop-actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
+.chat-cmp-ref-pop-btn {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+.chat-cmp-ref-pop-btn:hover { background: var(--color-bg-tertiary); }
+/* The sixth ↩: one line under the field, for three seconds. */
+.chat-cmp-ref-notice {
+  padding: 0 var(--space-2) var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+/* The chips for a screen reader (the mirror is aria-hidden): read, never seen. */
+.chat-cmp-refs-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .chat-cmp-hl-mention {
   color: transparent;
   background: color-mix(in srgb, var(--color-accent) 20%, transparent);

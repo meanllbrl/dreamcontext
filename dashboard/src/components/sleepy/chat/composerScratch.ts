@@ -77,6 +77,9 @@ export interface Attachment {
   /** `about` only: bumped when the same target is pressed again; the composer flashes that chip
    *  and moves the caret after it. */
   flash?: number;
+  /** `about` only: the name its token was drawn with (clipped to fit the field), once it is in
+   *  the box; a paste of that token is matched against it. */
+  chip?: string;
 }
 
 export interface ComposerScratch {
@@ -263,11 +266,14 @@ export function insertRef(convId: string, att: Attachment): 'added' | 'flash' | 
   return 'added';
 }
 
-/** The composer has put these pending refs' tokens in the draft. */
-export function markInserted(convId: string, ids: readonly string[]): void {
+/** The composer has put these pending refs' tokens in the draft, each drawn with `chips[id]`. */
+export function markInserted(convId: string, ids: readonly string[], chips: Readonly<Record<string, string>> = {}): void {
   const cur = readScratch(convId);
   if (!cur.attachments.some((a) => a.pending && ids.includes(a.id))) return;
-  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a.pending && ids.includes(a.id) ? { ...a, pending: false } : a)) });
+  commit(convId, {
+    ...cur,
+    attachments: cur.attachments.map((a) => (a.pending && ids.includes(a.id) ? { ...a, pending: false, ...(chips[a.id] ? { chip: chips[a.id] } : {}) } : a)),
+  });
 }
 
 /** These refs left the box (deleted, cut, a damaged token): unstaged, and kept in `recent`

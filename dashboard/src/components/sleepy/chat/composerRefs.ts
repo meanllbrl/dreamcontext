@@ -80,13 +80,21 @@ function graphemes(s: string): string[] {
   return Array.from(s);
 }
 
-/** The chip's name as the token carries it: format characters gone (so pad text can never break
- *  parsing), one line, clipped to REF_LABEL_MAX graphemes with `…`, spaces as NBSP. */
-export function refLabel(att: Pick<Attachment, 'name'>): string {
+/**
+ * The chip's name as the token carries it: format characters gone (so pad text can never break
+ * parsing), one line, clipped to REF_LABEL_MAX graphemes with `…`, spaces as NBSP. `fits` (the
+ * composer's measure: the chip at most 60% of its field, plan criterion 8) clips it further, so a
+ * label of wide letters still fits the phone. A ref whose token is already in the box answers
+ * with the name it was drawn with (`chip`), so a paste's label check matches it.
+ */
+export function refLabel(att: Pick<Attachment, 'name' | 'chip'>, fits?: (label: string) => boolean): string {
+  if (att.chip) return att.chip;
   const flat = (att.name ?? '').replace(/[\p{Cf}\u0000-\u001f\u007f\u2028\u2029]/gu, '').replace(/\s+/g, ' ').trim();
   const g = graphemes(flat);
-  const clipped = g.length > REF_LABEL_MAX ? `${g.slice(0, REF_LABEL_MAX - 1).join('').trimEnd()}…` : flat;
-  return clipped.replace(/ /g, NBSP);
+  const clip = (n: number) => (g.length > n ? `${g.slice(0, n - 1).join('').trimEnd()}…` : flat).replace(/ /g, NBSP);
+  let n = Math.min(g.length, REF_LABEL_MAX);
+  while (fits && n > 2 && !fits(clip(n))) n -= 1;
+  return clip(Math.max(n, Math.min(g.length, 2)));
 }
 
 /** The glyph a ref's chip opens with: ↩ for a reply, ● for an agenda line. */
@@ -94,9 +102,9 @@ export function refGlyph(att: Pick<Attachment, 'text'>): string {
   return REPLY_TO_RE.test(att.text ?? '') ? GLYPH_REPLY : GLYPH_NOTE;
 }
 
-/** The token a staged ref is drawn as in the draft. */
-export function refToken(att: Pick<Attachment, 'id' | 'name' | 'text'>): string {
-  return `${FSI}${refGlyph(att)}${NBSP}${refLabel(att)}${encodeId(refTokenId(att))}${PDI}`;
+/** The token a staged ref is drawn as in the draft (`fits`: see {@link refLabel}). */
+export function refToken(att: Pick<Attachment, 'id' | 'name' | 'text' | 'chip'>, fits?: (label: string) => boolean): string {
+  return `${FSI}${refGlyph(att)}${NBSP}${refLabel(att, fits)}${encodeId(refTokenId(att))}${PDI}`;
 }
 
 /** Every well-formed token in the draft, in order. */
@@ -173,6 +181,26 @@ export function insertTokenAt(draft: string, caret: number, token: string): { dr
   const right = after.startsWith(' ') ? '' : ' ';
   const next = `${before}${left}${token}${right}${after}`;
   return { draft: next, caret: before.length + left.length + token.length + 1 };
+}
+
+/**
+ * A voice take into a draft that holds chips (plan R2-2): INSERTED at `caret` (after a ↩ that is
+ * right after the new chip), never replacing the draft, so the chips and any words typed before
+ * the take stay. A caret that is unknown or inside a token goes after the last token. Padded with
+ * a space on each side where the neighbour is not one; the caret lands after the take.
+ */
+export function insertTakeAt(draft: string, caret: number | null, take: string): { draft: string; caret: number } {
+  const spans = parseRefTokens(draft);
+  let c = caret == null ? (spans.length ? spans[spans.length - 1].end : draft.length) : Math.max(0, Math.min(caret, draft.length));
+  const inside = spans.find((t) => t.start < c && c < t.end);
+  if (inside) c = inside.end;
+  const words = take.trim();
+  if (!words) return { draft, caret: c };
+  const before = draft.slice(0, c);
+  const after = draft.slice(c);
+  const left = before && !/\s$/.test(before) ? ' ' : '';
+  const right = after && !/^\s/.test(after) ? ' ' : '';
+  return { draft: `${before}${left}${words}${right}${after}`, caret: before.length + left.length + words.length };
 }
 
 interface Edit { s: number; e: number; rep: string }
@@ -370,7 +398,7 @@ const NEUTRALISED_RE = /(^|\n)\u200B(?=\[(?:About agenda line |Reply to message 
  */
 export function draftFromMessage(
   message: string,
-  opts: { mint: () => string; words?: RefLabelWords; label?: (about: MessageAbout) => string | undefined },
+  opts: { mint: () => string; words?: RefLabelWords; label?: (about: MessageAbout) => string | undefined; fits?: (label: string) => boolean },
 ): { draft: string; refs: Attachment[] } {
   const text = typeof message === 'string' ? message : '';
   const heads = aboutHeads(text);
@@ -385,7 +413,8 @@ export function draftFromMessage(
     const next = i + 1 < heads.length ? heads[i + 1].at : text.length;
     const words = text.slice(h.end, next).replace(/^\n+/, '').replace(/\n+$/, '');
     if (about) {
-      const att: Attachment = { id: opts.mint(), kind: 'about', name: opts.label?.(about) ?? refNameFor(about, opts.words), text: block };
+      const named: Attachment = { id: opts.mint(), kind: 'about', name: opts.label?.(about) ?? refNameFor(about, opts.words), text: block };
+      const att: Attachment = { ...named, chip: refLabel(named, opts.fits) };
       refs.push(att);
       pieces.push(refToken(att));
     } else pieces.push(block);

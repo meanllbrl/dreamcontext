@@ -47,9 +47,14 @@ import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
 } from './chatEntities';
 import {
-  addAttachments, composeOutgoing, countsAsContent, dropSentAttachments, nextAttachmentId, pendingUploads,
-  readScratch, removeAttachment, setAttachmentPreview, settleAttachment, subscribeScratch, type Attachment,
+  addAttachments, composeOutgoing, countsAsContent, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, pendingUploads,
+  readScratch, removeAttachment, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, subscribeScratch, type Attachment,
 } from './composerScratch';
+import {
+  deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, parseRefTokens, reconcileRefs, refLabel, refToken, refTokenId, sanitizePaste,
+  snapSelection, stripTokens, tokensOnly,
+} from './composerRefs';
+import { RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
@@ -529,7 +534,7 @@ export function Composer({
   idlePlaceholder, unavailable,
   showModel = true,
   modelMenu,
-  activeAccountId = '', onAccountChange,
+  activeAccountId = '', onAccountChange, superView = false, onRefJump,
   contextHandoff, onContextHandoffChange,
 }: {
   session: ComposerHost;
@@ -719,6 +724,14 @@ export function Composer({
   /** Absent ⇒ the picker's rows are read-only. Present ⇒ picking one RESPAWNS this
    *  conversation on that account, at the turn boundary. */
   onAccountChange?: (accountId: string) => void;
+  /**
+   * The Super view (owner 2026-10-24): an agenda ↩ or a message ↩ drops a reference chip INTO
+   * the text at the caret (composerRefs.ts), several per message. Off everywhere else: a normal
+   * chat's ↩ is still the quote above the box, and its text is sent as typed.
+   */
+  superView?: boolean;
+  /** A reply chip's "Go to message": scroll the transcript to the message it names. */
+  onRefJump?: (ref: string, from: 'super' | 'owner') => void;
 }) {
   // Which project a pasted image is uploaded into. From THIS subtree, never a module global:
   // with several projects live in one window the bytes would otherwise land in the temp dir of
@@ -780,10 +793,18 @@ export function Composer({
     pendingCaret.current = { pos: text.length, scrollToEnd: true };
   };
   const recall = (dir: 'back' | 'forward'): boolean => {
-    const stepped = stepHistory(historyEntries, nav, dir, draft);
+    const staged = superView ? readScratch(convId).attachments.filter((a) => a.kind === 'about' && !a.pending) : undefined;
+    const stepped = stepHistory(historyEntries, nav, dir, draft, staged);
     if (!stepped) return false;
     setNavBoth(stepped.nav);
-    applyRecalled(stepped.text);
+    if (!superView) { applyRecalled(stepped.text); return true; }
+    // The Super view: a sent message comes back with its chips, never its header text; ↓ back
+    // to the stash stages the chips it held.
+    const back = stepped.refs
+      ? { draft: stepped.text, refs: [...stepped.refs] }
+      : draftFromMessage(stepped.text, { mint: nextAttachmentId, words: refLabelWords, fits: chipFits() });
+    stageRefs(convId, back.refs, back.draft);
+    applyRecalled(back.draft);
     return true;
   };
 
@@ -797,7 +818,25 @@ export function Composer({
   const draftEpoch = session.getModel().draftEpoch;
   useEffect(() => {
     if (draftEpoch > 0) {
-      setDraft(session.getModel().draft);
+      let adopted = session.getModel().draft;
+      if (superView) {
+        if (session.getModel().draftEpochReason === 'rewind') {
+          // A rewound message comes back with its chips (plan R3-2): read once, written back to
+          // the session, and the reason consumed, so a remount never converts it again.
+          const back = draftFromMessage(adopted, { mint: nextAttachmentId, words: refLabelWords, fits: chipFits() });
+          adopted = back.draft;
+          session.syncDraft(adopted);
+          stageRefs(convId, back.refs, adopted);
+          session.clearDraftEpochReason?.();
+        } else {
+          // An external append (a dropped file, a respawn's carried draft): its tokens are
+          // matched by id against what this conversation has staged.
+          const r = reconcileRefs(adopted, readScratch(convId).attachments);
+          if (r.draft !== adopted) { adopted = r.draft; session.syncDraft(adopted); }
+          if (r.dropped.length) dropRefs(convId, r.dropped.map((a) => a.id));
+        }
+      }
+      setDraft(adopted);
       // The session replaced the draft wholesale (a rewind prefill, a dropped file's path), so
       // any history walk in progress is over — its stash describes a draft that no longer
       // exists, and ↓ restoring it would throw the new text away.
@@ -823,10 +862,171 @@ export function Composer({
   // share a bucket (a file staged in one reappearing in the other).
   const convId = session.scratchId || session.claudeId;
   const [attachments, setAttachments] = useState<Attachment[]>(() => readScratch(convId).attachments);
+  /** `refused` as last seen: a NEW refusal (a sixth ↩) shows the max notice, a remount does not. */
+  const refusedSeenRef = useRef(readScratch(convId).refused ?? 0);
+  const [maxNotice, setMaxNotice] = useState(0);
   useEffect(() => {
     setAttachments(readScratch(convId).attachments);
-    return subscribeScratch(convId, (next) => setAttachments(next.attachments));
+    refusedSeenRef.current = readScratch(convId).refused ?? 0;
+    return subscribeScratch(convId, (next) => {
+      setAttachments(next.attachments);
+      const refused = next.refused ?? 0;
+      if (refused > refusedSeenRef.current) setMaxNotice((n) => n + 1);
+      refusedSeenRef.current = refused;
+    });
   }, [convId]);
+
+  // ── Inline reference chips (the Super view, owner 2026-10-24) ─────────────────────────
+  // A chip is a token in the draft (composerRefs.ts); these keep it whole. The caret never
+  // stops inside one, a delete takes it whole, a paste never forges one, and a ↩ puts its
+  // token where the caret last was, even when the box was not focused (the agenda's ↩).
+  const superViewRef = useRef(superView);
+  superViewRef.current = superView;
+  /** Where a ↩ or a voice take lands: the caret as of the last select, change or blur. */
+  const lastCaretRef = useRef<number | null>(null);
+  /** The caret before the last selection change: which way a caret travelled into a token. */
+  const prevCaretRef = useRef(0);
+  /** An IME composition is open: the caret and the text are the IME's until it ends. */
+  const composingRef = useRef(false);
+  const [fieldFocused, setFieldFocused] = useState(false);
+  /** The chip flashing (the same target pressed again, a pasted copy of one): its attachment id. */
+  const [flashing, setFlashing] = useState<string | null>(null);
+  const refLabelWords = { question: t('super.agenda.aboutAQuestion'), super: t('super.ref.super'), own: t('super.ref.own') };
+
+  /**
+   * A chip's widest share of its field (plan criterion 8): a label is clipped further until its
+   * chip, measured in the textarea's own font, is at most 60% of the field. Keeps the phone's
+   * chips on one line whatever the letters are; on a wide field the grapheme cap binds first.
+   */
+  const measureRef = useRef<CanvasRenderingContext2D | null>(null);
+  const chipFits = (): ((label: string) => boolean) | undefined => {
+    const ta = taRef.current;
+    const field = ta?.parentElement?.getBoundingClientRect().width ?? 0;
+    if (!ta || field <= 0) return undefined;
+    measureRef.current ??= document.createElement('canvas').getContext('2d');
+    const ctx = measureRef.current;
+    if (!ctx) return undefined;
+    // From the longhands: the computed `font` shorthand is '' in some engines, and a canvas
+    // left on its default font would measure every label as fitting.
+    const cs = getComputedStyle(ta);
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    return (label) => ctx.measureText(`● ${label}`).width <= 0.6 * field;
+  };
+
+  /** Flash a staged chip and put the caret right after it. */
+  const flashRef = (attId: string) => {
+    const att = readScratch(convId).attachments.find((a) => a.id === attId);
+    const ta = taRef.current;
+    if (!att || !ta) return;
+    const span = parseRefTokens(ta.value).find((x) => x.id === refTokenId(att));
+    setFlashing(attId);
+    window.setTimeout(() => setFlashing((cur) => (cur === attId ? null : cur)), 700);
+    if (!span) return;
+    const pos = Math.min(ta.value.length, span.end + (ta.value[span.end] === ' ' ? 1 : 0));
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+    lastCaretRef.current = pos;
+  };
+
+  // A ↩ staged a ref (`insertRef`, pending): its token goes in at the caret, then it is staged
+  // for good. A walk through ↑ history ends here (a recalled entry is now his draft, with a chip).
+  const flashSeenRef = useRef(new Map<string, number>());
+  useEffect(() => {
+    if (!superView) return;
+    for (const a of attachments) {
+      if (a.kind !== 'about' || !a.flash || flashSeenRef.current.get(a.id) === a.flash) continue;
+      flashSeenRef.current.set(a.id, a.flash);
+      flashRef(a.id);
+    }
+    const pending = attachments.filter((a) => a.kind === 'about' && a.pending);
+    if (!pending.length) return;
+    let next = liveRef.current.draft;
+    let caret = lastCaretRef.current ?? next.length;
+    caret = snapSelection(next, caret, caret, caret).start;
+    const fits = chipFits();
+    const chips: Record<string, string> = {};
+    for (const a of pending) {
+      chips[a.id] = refLabel(a, fits);
+      ({ draft: next, caret } = insertTokenAt(next, caret, refToken({ ...a, chip: chips[a.id] })));
+    }
+    markInserted(convId, pending.map((a) => a.id), chips);
+    setDraft(next);
+    session.syncDraft(next);
+    setNavBoth(NO_HISTORY_NAV);
+    lastCaretRef.current = caret;
+    pendingCaret.current = { pos: caret };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to staged refs only; the draft is read live
+  }, [attachments, superView]);
+
+  /** Backspace at a chip's end, Delete at its start: the whole chip goes. False when the caret
+   *  is at no chip's edge (the key does what it always did). */
+  const deleteRefAt = (dir: 'backward' | 'forward'): boolean => {
+    const ta = taRef.current;
+    if (!superViewRef.current || !ta || composingRef.current || ta.selectionStart !== ta.selectionEnd) return false;
+    const r = deleteTokenAt(ta.value, ta.selectionStart ?? 0, dir);
+    if (!r) return false;
+    const gone = readScratch(convId).attachments.filter((a) => a.kind === 'about' && refTokenId(a) === r.id).map((a) => a.id);
+    setDraft(r.draft);
+    session.syncDraft(r.draft);
+    if (gone.length) dropRefs(convId, gone);
+    lastCaretRef.current = r.caret;
+    pendingCaret.current = { pos: r.caret };
+    return true;
+  };
+  const deleteRefAtRef = useRef(deleteRefAt);
+  deleteRefAtRef.current = deleteRefAt;
+  // React's onBeforeInput does not fire for delete input types; the native event does, and it is
+  // what a phone keyboard sends (its keydown says nothing). `onKeyDown` is the fallback.
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta || !superView) return;
+    const onBeforeInput = (e: InputEvent) => {
+      if (e.isComposing) return;
+      const dir = e.inputType === 'deleteContentBackward' || e.inputType === 'deleteWordBackward' ? 'backward'
+        : e.inputType === 'deleteContentForward' || e.inputType === 'deleteWordForward' ? 'forward' : null;
+      if (dir && deleteRefAtRef.current(dir)) e.preventDefault();
+    };
+    ta.addEventListener('beforeinput', onBeforeInput);
+    return () => ta.removeEventListener('beforeinput', onBeforeInput);
+  }, [superView]);
+
+  /** Take one chip out (its popover's Remove, the screen reader's list): the token and one
+   *  space beside it. */
+  const removeRef = (attId: string) => {
+    const att = readScratch(convId).attachments.find((a) => a.id === attId);
+    const cur = liveRef.current.draft;
+    const span = att && parseRefTokens(cur).find((x) => x.id === refTokenId(att));
+    if (att) dropRefs(convId, [attId]);
+    if (!span) return;
+    const r = deleteTokenAt(cur, span.end, 'backward');
+    if (!r) return;
+    setDraft(r.draft);
+    session.syncDraft(r.draft);
+    lastCaretRef.current = r.caret;
+    pendingCaret.current = { pos: r.caret };
+  };
+
+  /** The chip whose popover is open, and where it is anchored in the field. */
+  const [refPop, setRefPop] = useState<{ id: string; slot: number; left: number; bottom: number } | null>(null);
+  const closeRefPop = useCallback(() => setRefPop(null), []);
+  /** A click or tap on a chip (the pointer inside its mark in the mirror) opens its popover. */
+  const openRefAt = (x: number, y: number) => {
+    if (!superView || !hlRef.current) return;
+    for (const m of Array.from(hlRef.current.querySelectorAll<HTMLElement>('mark[data-ref-id]'))) {
+      for (const r of Array.from(m.getClientRects())) {
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+        // Viewport coordinates: the popover is portaled to the body, above the chip.
+        setRefPop({ id: m.dataset.refId ?? '', slot: Number(m.dataset.slot) || 1, left: Math.max(8, Math.min(r.left, window.innerWidth - 328)), bottom: window.innerHeight - r.top + 6 });
+        return;
+      }
+    }
+  };
+  // Not past this many milliseconds: the max notice says its sentence, then goes.
+  useEffect(() => {
+    if (!maxNotice) return;
+    const id = window.setTimeout(() => setMaxNotice(0), 3000);
+    return () => window.clearTimeout(id);
+  }, [maxNotice]);
 
   const pickPaths = async (kind: 'files' | 'folders', close: () => void) => {
     const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
@@ -855,6 +1055,29 @@ export function Composer({
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
+    // A paste never forges a chip (plan R3-1): a copied chip of THIS conversation that is not
+    // already in the box comes back with its reference (moving a chip = cut + paste); any other
+    // token becomes text, and a copy of a chip already here flashes that one.
+    const pasted = superView ? e.clipboardData.getData('text/plain') : '';
+    if (pasted && /[\u2068\u2069\u2061-\u2064]/.test(pasted) && !Array.from(items).some((it) => it.kind === 'file')) {
+      e.preventDefault();
+      const ta = e.currentTarget;
+      const s0 = ta.selectionStart ?? ta.value.length;
+      const s1 = ta.selectionEnd ?? s0;
+      const sc = readScratch(convId);
+      const r = sanitizePaste(pasted, { draft: ta.value, selStart: s0, selEnd: s1, staged: sc.attachments, recent: sc.recent ?? [] });
+      restoreRefs(convId, r.restore);
+      const joined = ta.value.slice(0, s0) + r.text + ta.value.slice(s1);
+      const rec = reconcileRefs(joined, readScratch(convId).attachments, s0 + r.text.length);
+      if (rec.dropped.length) dropRefs(convId, rec.dropped.map((a) => a.id));
+      setDraft(rec.draft);
+      session.syncDraft(rec.draft);
+      lastCaretRef.current = rec.caret;
+      pendingCaret.current = { pos: rec.caret };
+      if (r.flash.length) flashRef(r.flash[0]);
+      if (r.max) setMaxNotice((n) => n + 1);
+      return;
+    }
     let addedImage = false;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -1307,7 +1530,9 @@ export function Composer({
   // An About chip (the agenda line the message is about) is not content: alone it sends nothing.
   const sendableAttachments = attachments.filter(countsAsContent);
   // Only an About chip staged and nothing typed: the box asks for the words about that line.
-  const aboutOnly = !draft.trim() && attachments.length > 0 && attachments.every((a) => a.kind === 'about');
+  // The Super view's chips are text in the draft, but never words of his: tested without them.
+  const plainDraft = superView ? stripTokens(draft) : draft;
+  const aboutOnly = !plainDraft.trim() && attachments.length > 0 && attachments.every((a) => a.kind === 'about');
   // A reply chip (its ↩ on one message, owner 2026-10-23) asks for his answer, not "about".
   const aboutPlaceholder = attachments.some((a) => a.kind === 'about' && REPLY_TO_RE.test(a.text ?? ''))
     ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder');
@@ -1321,7 +1546,7 @@ export function Composer({
       photoCapNote ? t('chat.photo.max') : '',
     ].filter(Boolean).join(' · ')
     : null;
-  const hasSendableContent = !!draft.trim() || sendableAttachments.length > 0
+  const hasSendableContent = !!plainDraft.trim() || sendableAttachments.length > 0
     || uploadingCount > 0;
 
   /** Everything `commit` builds the message from, re-read AFTER the await below — this
@@ -1443,6 +1668,20 @@ export function Composer({
    */
   const onTranscript = useCallback((text: string) => {
     const typed = liveRef.current.draft;
+    // Chips in the box (the Super view, plan R2-2): the take is INSERTED at the caret (after a
+    // ↩, right after the new chip), never replacing the draft; words typed before the take stay
+    // and the auto-send still runs, so "↩, then hold and speak" sends the chip's block with them.
+    if (superViewRef.current && parseRefTokens(typed).length) {
+      const untouchedWords = stripTokens(typed) === stripTokens(draftAtTakeRef.current);
+      const ins = insertTakeAt(typed, lastCaretRef.current, text);
+      setDraft(ins.draft);
+      session.syncDraft(ins.draft);
+      setNavBoth(NO_HISTORY_NAV);
+      lastCaretRef.current = ins.caret;
+      if (!untouchedWords) { setVoiceNotice(ADDED_TO_DRAFT_NOTICE); return; }
+      setVoiceSubmitTick((n) => n + 1);
+      return;
+    }
     // AC3f: an async transcript NEVER overwrites what the owner typed while it was in flight.
     // The busy guard stops a second TAKE, but it cannot stop a keyboard, so the arriving text
     // has to notice. Untouched, it becomes the message. Touched, it is appended and LEFT for
@@ -1501,8 +1740,23 @@ export function Composer({
               : 'idle';
 
   /** THE MIRROR: an overlay that marks the owner's @mentions, recomputed from the draft. */
-  const hlSegments = mentionSegments(draft, peers);
-  const hlActive = hlSegments.some((s) => s.mention);
+  const hlSegments = superView
+    ? refMirrorSegments(draft, peers, attachments)
+    : mentionSegments(draft, peers).map((m) => ({ text: m.text, kind: m.mention ? 'mention' as const : 'text' as const }));
+  const hlActive = hlSegments.some((s) => s.kind !== 'text');
+  // A chip at the very end with nothing after it, while he is in the box: the mirror writes
+  // what the textarea's own placeholder can no longer show ("Write about this line…").
+  const lastToken = superView ? parseRefTokens(draft).at(-1) : undefined;
+  const trailingRef = lastToken && !draft.slice(lastToken.end).trim()
+    ? attachments.find((a) => a.kind === 'about' && refTokenId(a) === lastToken.id) : undefined;
+  /** The chips in the order they stand, for the screen reader's list; the row above the box
+   *  keeps everything else. */
+  const srRefs = superView ? refsInOrder(draft, attachments) : [];
+  const chipRow = superView ? attachments.filter((a) => a.kind !== 'about') : attachments;
+  const srListId = `${convId}-refs`;
+  const refHint = trailingRef && fieldFocused
+    ? (REPLY_TO_RE.test(trailingRef.text ?? '') ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder'))
+    : '';
 
   useEffect(() => {
     // A mirror that just appeared — a completed mention — starts at scrollTop 0 even when the
@@ -1661,26 +1915,30 @@ export function Composer({
     // A `ref` chip's path is a token the server matches (`dcref:wb/<board>/<id>`), not a
     // filesystem path: it goes out as written, never shell-quoted.
     // A message about an agenda line opens with its block (the About chip), before the quote.
-    const { message, quoted, slash } = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath);
+    const { message, quoted, slash } = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath, { superView });
     if (!quoted.trim()) return;
+    // Every test below reads his words without the chips; every path that clears the box keeps
+    // them for the next message (they were not sent) and never hands a token to a peer.
+    const words = superView ? stripTokens(text) : text;
+    const kept = superView ? tokensOnly(text) : '';
 
     // `/login` is the one command this surface must not forward. The headless engine replies
     // "/login isn't available in this environment." (verified on CLI 2.1.220) — a dead end for
     // the user typing exactly the right thing. Hand it to the terminal instead, and keep the
     // draft: if the sign-in tab isn't what they wanted, their text is still here.
-    if (isSignInCommand(text)) { onSignIn(); return; }
+    if (isSignInCommand(words)) { onSignIn(); return; }
 
     // `/mcp` is the other one, and it fails worse: the engine ANSWERS it, with a result frame
     // whose text tells the user to use a terminal for the details. So it opens the MCP panel
     // instead of spending a turn to deliver that.
-    if (onMcpPanel && isMcpCommand(text)) {
+    if (onMcpPanel && isMcpCommand(words)) {
       onMcpPanel();
       // Cleared, unlike the sign-in above, and the difference is the message itself: `/login`
       // may be sitting in front of a half-written sentence worth keeping, while a draft that
       // IS the command has nothing left in it once the command has been obeyed. Leaving it
       // would mean the user's next message silently begins with `/mcp`.
-      setDraft('');
-      session.syncDraft('');
+      setDraft(kept);
+      session.syncDraft(kept);
       setSlashQuery(null);
       setNavBoth(NO_HISTORY_NAV);
       return;
@@ -1694,8 +1952,8 @@ export function Composer({
     const addressed = onPeerMessage ? addressedPeer(quoted, peers) : null;
     if (addressed && addressed.body) {
       onPeerMessage?.(addressed.peer, addressed.body);
-      setDraft('');
-      session.syncDraft('');
+      setDraft(kept);
+      session.syncDraft(kept);
       setNavBoth(NO_HISTORY_NAV);
       setSlashQuery(null);
       setMentionQuery(null);
@@ -1731,8 +1989,9 @@ export function Composer({
     if (mode === 'queue') session.enqueue(message);
     else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
     else if (session.send(message) === false) return;
-    setDraft('');
-    session.syncDraft('');
+    // A slash command carried no chip, so its chips stay in the box for the next message.
+    setDraft(slash ? kept : '');
+    session.syncDraft(slash ? kept : '');
     setNavBoth(NO_HISTORY_NAV);
     setSlashQuery(null);
     // Sent chips go (their previews with them); anything that could NOT be attached stays, so
@@ -1994,19 +2253,47 @@ export function Composer({
           paint) — composer.css's own two-line fallback holds the box until then, rather
           than a JS constant that would drift from the tokens the moment one moved. */}
       <div className="chat-cmp-body" ref={bodyRef} data-instant={instantH ? '1' : undefined} style={bodyHeight == null ? undefined : { ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
-        <ComposerChips quote={quote} attachments={attachments} convId={convId} onClearQuote={stableClearQuote} photoMeta={photoMeta} />
+        {/* The Super view's references are chips IN the text (below); the rest stay above. */}
+        <ComposerChips quote={quote} attachments={chipRow} convId={convId} onClearQuote={stableClearQuote} photoMeta={photoMeta} />
 
         <div className="chat-cmp-row" ref={rowRef}>
           <div className="chat-cmp-field">
           {hlActive && (
             <div className="chat-cmp-hl" ref={hlRef} aria-hidden>
               {hlSegments.map((s, i) => {
-                const cls = s.mention ? 'chat-cmp-hl-mention' : '';
                 // eslint-disable-next-line react/no-array-index-key -- positional split of one string
-                return cls ? <mark className={cls} key={i}>{s.text}</mark> : <span key={i}>{s.text}</span>;
+                if (s.kind === 'mention') return <mark className="chat-cmp-hl-mention" key={i}>{s.text}</mark>;
+                if (s.kind === 'ref') {
+                  return (
+                    <mark
+                      // eslint-disable-next-line react/no-array-index-key -- positional split of one string
+                      key={i}
+                      className={`chat-cmp-hl-ref${s.refId && s.refId === flashing ? ' is-flash' : ''}`}
+                      data-slot={String(s.slot ?? 1)}
+                      data-ref-id={s.refId}
+                    >{s.text}</mark>
+                  );
+                }
+                // eslint-disable-next-line react/no-array-index-key -- positional split of one string
+                return <span key={i}>{s.text}</span>;
               })}
+              {refHint && <span className="chat-cmp-hl-hint">{draft.endsWith(' ') ? '' : ' '}{refHint}</span>}
             </div>
           )}
+          {refPop && (() => {
+            const att = attachments.find((a) => a.id === refPop.id);
+            return att ? (
+              <RefPopover
+                att={att}
+                slot={refPop.slot}
+                left={refPop.left}
+                bottom={refPop.bottom}
+                onRemove={() => removeRef(att.id)}
+                onGoTo={onRefJump}
+                onClose={closeRefPop}
+              />
+            ) : null;
+          })()}
           {/* IN THE SAME SLOT as the placeholder, overlaid rather than inserted: an element
               in the flow would grow the card on every mic press, which is the re-flow this
               whole direction exists to end. The textarea keeps its size, its value and its
@@ -2037,14 +2324,33 @@ export function Composer({
             value={draft}
             disabled={disabled}
             onChange={(e) => {
-              setDraft(e.target.value);
-              session.syncDraft(e.target.value);
+              // Cut, drag, autocorrect: the chips are read again from what is in the box (a
+              // damaged one goes whole, a chip that left goes to `recent` for a paste back).
+              let value = e.target.value;
+              if (superView) {
+                const staged = readScratch(convId).attachments;
+                if (/[\u2068\u2069\u2061-\u2064]/.test(value) || staged.some((a) => a.kind === 'about' && !a.pending)) {
+                  const r = reconcileRefs(value, staged, e.target.selectionStart ?? value.length);
+                  let next = r.draft;
+                  const at = r.caret;
+                  if (r.dropped.length) {
+                    dropRefs(convId, r.dropped.map((a) => a.id));
+                    // A chip cut out leaves its two pads side by side: one goes (plan R2-6a),
+                    // only there; spacing he typed elsewhere is his.
+                    if (next[at - 1] === ' ' && next[at] === ' ') { next = next.slice(0, at) + next.slice(at + 1); }
+                  }
+                  if (next !== value) { value = next; pendingCaret.current = { pos: at }; }
+                }
+                lastCaretRef.current = e.target.selectionStart ?? value.length;
+              }
+              setDraft(value);
+              session.syncDraft(value);
               // Editing a recalled prompt ends the walk: the text is the user's own draft from
               // here on, so ↓ must not silently discard the edit to go "forward" to it, and the
               // next ↑ re-stashes what is actually in the box. BEFORE `syncSlash`, which reads
               // the walk to decide whether a leading `/` may open the menu.
               if (navRef.current.index !== null) setNavBoth(NO_HISTORY_NAV);
-              syncSlash(e.target.value, e.target.selectionStart ?? e.target.value.length);
+              syncSlash(value, e.target.selectionStart ?? value.length);
             }}
             // Moving the caret with the mouse or arrows can carry it into (or out of) a
             // leading `/…`, so the menu is re-derived on selection changes too, not only on
@@ -2052,9 +2358,29 @@ export function Composer({
             // event that actually fires for both cases.
             onSelect={(e) => {
               const el = e.currentTarget;
+              if (superView && !composingRef.current) {
+                // The caret never stops inside a chip: it goes to the far edge the way it was
+                // travelling; a selection touching one grows to cover it.
+                const a = el.selectionStart ?? 0;
+                const b = el.selectionEnd ?? a;
+                const snapped = snapSelection(el.value, a, b, prevCaretRef.current);
+                if (snapped.start !== a || snapped.end !== b) el.setSelectionRange(snapped.start, snapped.end);
+                prevCaretRef.current = snapped.start === snapped.end ? snapped.start : prevCaretRef.current;
+                lastCaretRef.current = snapped.end;
+              }
               syncSlash(el.value, el.selectionStart ?? el.value.length);
             }}
-            onBlur={() => { setSlashQuery(null); setMentionQuery(null); }}
+            onFocus={() => setFieldFocused(true)}
+            onBlur={(e) => {
+              setSlashQuery(null);
+              setMentionQuery(null);
+              setFieldFocused(false);
+              if (superView) lastCaretRef.current = e.currentTarget.selectionEnd ?? e.currentTarget.value.length;
+            }}
+            onCompositionStart={() => { composingRef.current = true; }}
+            onCompositionEnd={() => { composingRef.current = false; }}
+            onClick={(e) => openRefAt(e.clientX, e.clientY)}
+            aria-describedby={superView && srRefs.length ? srListId : undefined}
             onPaste={onPaste}
             onKeyDown={(e) => {
               // The `@` arm sits FIRST and returns: the two menus are mutually exclusive by
@@ -2094,6 +2420,13 @@ export function Composer({
                   return;
                 }
               }
+              // A chip's popover is open: Esc closes it, and only it (never the surface too).
+              if (refPop && e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                setRefPop(null);
+                return;
+              }
               // Prompt history — AFTER the slash arm, which owns ↑/↓ while its menu is open.
               if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 const el = e.currentTarget;
@@ -2103,7 +2436,7 @@ export function Composer({
                   // ↓ is only ever a history key while a walk is in progress — otherwise it is
                   // the caret moving down through a multi-line draft.
                   ? nav.index !== null
-                  : canRecallHistory(draft, caret, end, nav);
+                  : canRecallHistory(draft, caret, end, nav, superView && parseRefTokens(draft).length > 0);
                 // `recall` returns false at the end of the history, and then the keystroke is
                 // left to the textarea rather than swallowed.
                 if (recallable && recall(e.key === 'ArrowUp' ? 'back' : 'forward')) {
@@ -2111,13 +2444,22 @@ export function Composer({
                   return;
                 }
               }
+              // A chip goes whole: Backspace at its end, Delete at its start (the native
+              // `beforeinput` covers keyboards that send no key, a phone's).
+              if ((e.key === 'Backspace' || e.key === 'Delete') && !e.nativeEvent.isComposing
+                && deleteRefAt(e.key === 'Backspace' ? 'backward' : 'forward')) {
+                e.preventDefault();
+                return;
+              }
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
             }}
             // Keep the mirror aligned when the field scrolls (a draft past the height cap).
             onScroll={(e) => { if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop; }}
           />
+          {superView && <RefSrList id={srListId} refs={srRefs} onRemove={removeRef} />}
           </div>
         </div>
+        {maxNotice > 0 && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-ref-notice">{t('super.ref.max')}</div>}
       </div>
 
       <div className="chat-cmp-toolbar">

@@ -170,3 +170,17 @@ describe('the server copy', () => {
     }
   });
 });
+
+// Owner 2026-10-24 (rev 12): stacked parts are answered in ONE section whose marks stand one per
+// line. Each line is a mark; a line used to eat the newline the next one starts with, so the
+// second part was never named.
+describe('marks stacked one per line', () => {
+  it('every stacked mark is read, and they open one section', () => {
+    const s = splitReplyMark('<!-- re:aaaaaa -->\n<!-- re:bbbbbb -->\nboth fine\n<!-- re:cccccc -->\n<!-- re:dddddd -->\nnext');
+    expect(s.refs).toEqual(['aaaaaa', 'bbbbbb', 'cccccc', 'dddddd']);
+    expect(s.sections.map((x) => x.refs)).toEqual([['aaaaaa', 'bbbbbb'], ['cccccc', 'dddddd']]);
+    expect(s.body).not.toContain('<!--');
+    expect(s.body).toContain('both fine');
+    expect(s.body).toContain('next');
+  });
+});

@@ -715,7 +715,10 @@ export const REPLY_MARK_RE = /^\s*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/;
 export const REPLY_MARK_HEAD_MAX = 120;
 /** A mark on its own line anywhere in a block: one block answering several messages opens a
  *  section per message (measured with the real model, 2026-10-23). */
-export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/g;
+/** A mark line keeps its newline when the next line is another mark, so marks stacked one per
+ *  line (a section answering several parts, rev 12) are each read; one would otherwise eat the
+ *  newline the next one starts with. */
+export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n(?![ \t]*<!--\s*re:))?/g;
 /** The text without its reply marks (the server's text readers: chat-registry). */
 export function stripReplyMark(raw: string): string {
   return (raw ?? '').replace(REPLY_MARK_LINE_RE, '$1');

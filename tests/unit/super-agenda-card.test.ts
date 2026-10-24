@@ -310,7 +310,8 @@ describe('the agenda row\'s Write about this icon', () => {
     const agent = readFileSync(new URL('dashboard/src/components/sleepy/AgentSurface.tsx', ROOT_URL), 'utf-8');
     const body = agent.slice(agent.indexOf('const writeAboutRow'), agent.indexOf('const writeAboutRow') + 900);
     expect(body).toMatch(/const convId = cs\.scratchId \|\| cs\.claudeId;/);
-    expect(body).toMatch(/setAbout\(convId, \{ id: nextAttachmentId\(\), kind: 'about', name: agendaAboutChipName\(row, words\), text \}\);/);
+    // Owner 2026-10-24: a ↩ ADDS a chip at the caret (several references in one message).
+    expect(body).toMatch(/insertRef\(convId, \{ id: nextAttachmentId\(\), kind: 'about', name: agendaRefName\(row, words\), text \}\);/);
     expect(body).toMatch(/requestAnimationFrame\(\(\) => cs\.focus\(\)\)/);
     expect(agent).toMatch(/onWriteAbout=\{writeAboutRow\}/);
   });

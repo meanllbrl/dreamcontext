@@ -613,6 +613,14 @@ export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid'
   return `${words.about}: ${who}`;
 }
 
+/** What an inline chip reads for an agenda row (owner 2026-10-24): the line's own words, or for
+ *  a question "<child>'s question" / "Super's question". No "About:": the chip's ● says it, and
+ *  the composer clips the name to its own width (composerRefs `refLabel`). */
+export function agendaRefName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text'>, words: AboutWords = ABOUT_WORDS_EN): string {
+  if (row.note) return aboutLine(row.text);
+  return row.sid ? words.question.replace('{name}', () => aboutLine(row.text)) : words.superQuestion;
+}
+
 /**
  * The strip above a sent bubble: a note reads its line as he saw it; a question reads whose it
  * is only while it is still open in the live record (the super's own: "Super's question"), and

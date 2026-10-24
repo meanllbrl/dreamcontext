@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  GLYPH_NOTE, GLYPH_REPLY, REF_LABEL_MAX, deleteTokenAt, draftFromMessage, insertTokenAt, parseRefTokens, reconcileRefs,
+  GLYPH_NOTE, GLYPH_REPLY, REF_LABEL_MAX, deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, parseRefTokens, reconcileRefs,
   refLabel, refToken, refTokenId, sanitizePaste, snapSelection, stripTokens, tokensOnly,
 } from '../../dashboard/src/components/sleepy/chat/composerRefs.js';
 import {
@@ -316,5 +316,52 @@ describe('↑ recall never orphans chips', () => {
     expect(fwd).toEqual({ nav: NO_HISTORY_NAV, text: d, refs: [a] });
     // Without chips the stash is today's: no refs field at all.
     expect(stepHistory(['old'], NO_HISTORY_NAV, 'back', 'wip')).toEqual({ nav: { index: 0, stash: 'wip' }, text: 'old' });
+  });
+});
+
+describe('a voice take keeps the chips (R2-2)', () => {
+  it('↩ then a spoken take: inserted after the chip, the message carries the block and the words', () => {
+    const a = note('n1', 'Windows tests');
+    const ins = insertTokenAt('', 0, refToken(a));
+    const take = insertTakeAt(ins.draft, ins.caret, ' yes, CLI only ');
+    expect(take.draft).toBe(`${refToken(a)} yes, CLI only`);
+    expect(composeOutgoing(take.draft, [a], null, q, { superView: true }).message).toBe(`${a.text}\n\nyes, CLI only`);
+  });
+
+  it('two chips, the caret after the first: the words go to that part; typed words stay', () => {
+    const a = note('n1', 'A');
+    const b = note('n2', 'B');
+    let d = insertTokenAt('typed first', 11, refToken(a)).draft;
+    const afterA = d.indexOf(refToken(a)) + refToken(a).length + 1;
+    d = insertTokenAt(d, d.length, refToken(b)).draft + 'about B';
+    const take = insertTakeAt(d, afterA, 'spoken for A');
+    expect(take.draft).toBe(`typed first ${refToken(a)} spoken for A ${refToken(b)} about B`);
+    const msg = composeOutgoing(take.draft, [a, b], null, q, { superView: true }).message;
+    expect(msg).toBe(`typed first\n\n${a.text}\n\nspoken for A\n\n${b.text}\n\nabout B`);
+  });
+
+  it('an unknown caret goes after the last chip; a caret inside a token goes to its end', () => {
+    const a = note('n1', 'A');
+    const d = `x ${refToken(a)} y`;
+    expect(insertTakeAt(d, null, 'z').draft).toBe(`x ${refToken(a)} z y`);
+    expect(insertTakeAt(d, 4, 'z').draft).toBe(`x ${refToken(a)} z y`);
+  });
+});
+
+describe('a chip fits its field (criterion 8)', () => {
+  it('the composer\'s measure clips a label further; the grapheme cap still binds first', () => {
+    const wide = note('n1', 'x', 'W'.repeat(40));
+    const tenAtMost = (label: string) => Array.from(label).length <= 10;
+    expect(Array.from(refLabel(wide, tenAtMost))).toHaveLength(10);
+    expect(refLabel(wide, tenAtMost).endsWith('…')).toBe(true);
+    expect(Array.from(refLabel(wide, () => true))).toHaveLength(REF_LABEL_MAX);
+  });
+
+  it('a ref in the box answers with the name it was drawn with, so its pasted token is restored', () => {
+    const a = { ...note('n1', 'Windows için otomatik test eklensin mi'), chip: 'Windows\u00A0iç…' };
+    expect(refLabel(a)).toBe('Windows\u00A0iç…');
+    const r = sanitizePaste(refToken(a), { draft: '', selStart: 0, selEnd: 0, staged: [], recent: [a] });
+    expect(r.restore).toEqual([a]);
+    expect(r.text).toBe(refToken(a));
   });
 });

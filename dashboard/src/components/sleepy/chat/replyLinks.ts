@@ -24,15 +24,20 @@
  * Everything else is as before. While a text streams, its refs are read from its sections, so a
  * closed mark with no words under it yet moves nothing.
  *
+ * PARTS (owner 2026-10-24): a message with two or more references (`partRefs`) also answers to one
+ * ref per part, so a section can name ONE chip inside it. A part ref resolves to its message with
+ * that part's number; the message's own ref resolves as before (a Super still on rev 11). Stacked
+ * marks naming parts of one message are one section with several parts.
+ *
  * Two owner messages with the same words share a ref; "nearest preceding" may then point an
  * out-of-order answer at the later copy. Accepted: same words, same strip.
  *
  * Runs ONCE per render over the whole conversation (`[...history, ...items]`), so a window cut,
  * the history divider or a notice never changes the answer; the render only looks it up.
  */
-import { msgRef } from '../../../lib/superTypes';
+import { msgRef, partRefs } from '../../../lib/superTypes';
 import type { ChatItem, ChatUserItem } from '../chatSession';
-import { splitAbout, superEventOf, type AgendaAbout } from '../super/superHandover';
+import { splitAbout, splitAboutParts, superEventOf, type AgendaAbout, type MessageAbout } from '../super/superHandover';
 
 /** An owner message: a user item that is not an injected super event turn, live (`superEvent`)
  *  or replayed (its `[super …]` prefix). A question card's answer is his words too. */
@@ -50,14 +55,17 @@ export interface ReplyGroup {
   /** Draw the strip: there are targets, they are not just the message right above, and the
    *  group's first text is done. Never on a SECTIONED group. */
   strip: boolean;
+  /** The parts of its single target it names (1-based, in mark order), when every ref was a
+   *  part ref of that one message: the strip shows those chips. */
+  parts?: number[];
   /** On a SECTIONED text's own entry: each section's start in its text and the owner messages
-   *  it answers ([] when its refs resolve to nothing). */
-  sections?: Array<{ at: number; targets: string[] }>;
+   *  it answers ([] when its refs resolve to nothing), with `parts` as above. */
+  sections?: Array<{ at: number; targets: string[]; parts?: number[] }>;
 }
 
 interface Building {
-  groupId: string; members: string[]; targets: string[]; strip: boolean;
-  sections?: { id: string; list: Array<{ at: number; targets: string[] }> };
+  groupId: string; members: string[]; targets: string[]; strip: boolean; parts?: number[];
+  sections?: { id: string; list: Array<{ at: number; targets: string[]; parts?: number[] }> };
 }
 
 const isStep = (it: ChatItem) => it.kind === 'tool' || it.kind === 'thinking';
@@ -65,8 +73,8 @@ const sameTargets = (a: readonly string[], b: readonly string[]) => a.length ===
 
 export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGroup> {
   const groups: Building[] = [];
-  /** Every owner message so far, oldest first, with its reference. */
-  const owners: Array<{ id: string; ref: string }> = [];
+  /** Every owner message so far, oldest first, with its reference and its parts' refs. */
+  const owners: Array<{ id: string; ref: string; parts: string[] }> = [];
   /** Owner messages since the previous non-empty Super text (pick 2A). */
   let waiting: string[] = [];
   /** Step rows waiting for the text they lead to. */
@@ -79,17 +87,26 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
   /** The turn was opened by an injected event, not by him. */
   let eventTurn = false;
 
-  /** Refs to owner message ids: the nearest preceding message with that ref; unresolved drop. */
-  const resolve = (refs: readonly string[]): string[] => {
-    const targets: string[] = [];
+  /** Refs to owner messages: the nearest preceding message whose ref, or one of whose part
+   *  refs, it is (`part` then its number); unresolved refs drop. */
+  const hits = (refs: readonly string[]): Array<{ id: string; part?: number }> => {
+    const out: Array<{ id: string; part?: number }> = [];
     for (const ref of refs) {
       for (let i = owners.length - 1; i >= 0; i -= 1) {
-        if (owners[i].ref !== ref) continue;
-        if (!targets.includes(owners[i].id)) targets.push(owners[i].id);
+        const part = owners[i].parts.indexOf(ref);
+        if (owners[i].ref !== ref && part < 0) continue;
+        out.push(part < 0 ? { id: owners[i].id } : { id: owners[i].id, part: part + 1 });
         break;
       }
     }
-    return targets;
+    return out;
+  };
+  const resolve = (refs: readonly string[]): string[] => [...new Set(hits(refs).map((h) => h.id))];
+  /** The parts named, when every resolved ref is a part of the same one message. */
+  const partsOf = (refs: readonly string[]): number[] | undefined => {
+    const h = hits(refs);
+    if (!h.length || h.some((x) => !x.part || x.id !== h[0].id)) return undefined;
+    return [...new Set(h.map((x) => x.part as number))];
   };
 
   const closeTurn = () => {
@@ -105,7 +122,7 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
       textSinceUser = false;
       eventTurn = !isOwnerMessage(it);
       if (!eventTurn) {
-        owners.push({ id: it.id, ref: msgRef(it.text) });
+        owners.push({ id: it.id, ref: msgRef(it.text), parts: partRefs(it.text) });
         waiting.push(it.id);
       }
       continue;
@@ -123,7 +140,13 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
       const members: string[] = continuing ? [it.id] : [...pending, it.id];
       last = {
         groupId: `rg-${it.id}`, members, targets: resolve(it.replyTo ?? []), strip: false,
-        sections: { id: it.id, list: sections.map((s) => ({ at: s.at, targets: resolve(s.refs) })) },
+        sections: {
+          id: it.id,
+          list: sections.map((s) => {
+            const parts = partsOf(s.refs);
+            return { at: s.at, targets: resolve(s.refs), ...(parts ? { parts } : {}) };
+          }),
+        },
       };
       groups.push(last);
       pending = [];
@@ -149,7 +172,8 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
       last.members.push(...pending, it.id);
     } else {
       const adjacent = targets.length === 1 && targets[0] === lastUser && !textSinceUser;
-      last = { groupId: `rg-${it.id}`, members: [...pending, it.id], targets, strip: it.done && targets.length > 0 && !adjacent };
+      const parts = refs?.length ? partsOf(refs) : undefined;
+      last = { groupId: `rg-${it.id}`, members: [...pending, it.id], targets, strip: it.done && targets.length > 0 && !adjacent, ...(parts ? { parts } : {}) };
       groups.push(last);
     }
     pending = [];
@@ -161,7 +185,7 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
   const out = new Map<string, ReplyGroup>();
   for (const g of groups) {
     g.members.forEach((id, i) => out.set(id, {
-      groupId: g.groupId, first: i === 0, targets: g.targets, strip: g.strip,
+      groupId: g.groupId, first: i === 0, targets: g.targets, strip: g.strip, ...(g.parts ? { parts: g.parts } : {}),
       ...(g.sections?.id === id ? { sections: g.sections.list } : {}),
     }));
   }
@@ -184,18 +208,49 @@ export interface ReplyHead {
   quotes: string[];
   /** The message a click lands on. */
   targetId: string;
+  /** A head naming PARTS of that message (rev 12): their numbers, in mark order; the first is
+   *  the one a click flashes. Each part's chip wears the slot of its number. */
+  parts?: number[];
+  /** What each of those parts is about, in the same order. */
+  partAbouts?: MessageAbout[];
 }
+
+/** One part of an owner message as a head or strip reads it: what it is about and his words
+ *  (a stacked part shares the words of the part it is stacked on). */
+export function messagePart(it: ChatItem | undefined, part: number): { about: MessageAbout; words: string } | null {
+  if (!it || it.kind !== 'user') return null;
+  const parts = splitAboutParts(it.text).parts;
+  if (parts.length < 2 || part < 1 || part > parts.length) return null;
+  let words = '';
+  for (let j = part - 1; j < parts.length && !words; j += 1) words = parts[j].words;
+  return { about: parts[part - 1].about, words };
+}
+
+const clipWords = (s: string, max: number) => {
+  const flat = s.replace(/\s+/g, ' ').trim();
+  const chars = Array.from(flat);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : flat;
+};
 
 /** A SECTIONED text's heads: one per section whose refs resolved (an unresolved one keeps only
  *  its divider). `quoteOf(id, max)` reads his words for a message. */
 export function sectionHeads(
-  sections: ReadonlyArray<{ at: number; targets: string[] }>,
+  sections: ReadonlyArray<{ at: number; targets: string[]; parts?: number[] }>,
   items: ReadonlyMap<string, ChatItem>,
   quoteOf: (id: string, max: number) => string,
 ): ReplyHead[] {
-  return sections.flatMap((s) => {
+  return sections.flatMap((s): ReplyHead[] => {
     if (!s.targets.length) return [];
     const first = items.get(s.targets[0]);
+    const named = s.parts?.map((j) => messagePart(first, j));
+    if (s.parts && named && named.every(Boolean)) {
+      const ps = named as Array<{ about: MessageAbout; words: string }>;
+      const words = ps.map((p) => p.words).filter((w, i, all) => w && all.indexOf(w) === i).join(' · ');
+      return [{
+        at: s.at, kind: ps[0].about.kind === 'reply' ? 'reply' as const : 'about' as const, count: 1,
+        quotes: [clipWords(words, 80)], targetId: s.targets[0], parts: s.parts, partAbouts: ps.map((p) => p.about),
+      }];
+    }
     const about = s.targets.length === 1 && first?.kind === 'user' ? splitAbout(first.text).about : null;
     const agenda = about && (about.kind === 'note' || about.kind === 'item') ? about : null;
     const many = s.targets.length > 1;
@@ -207,7 +262,7 @@ export function sectionHeads(
 }
 
 const headsKey = (heads: readonly ReplyHead[]) => heads.map((h) => (
-  `${h.at}:${h.kind}:${h.count}:${h.targetId}:${h.quotes.join('\u0001')}:${h.about ? `${h.about.kind}/${h.about.id}/${h.about.line ?? ''}` : ''}`
+  `${h.at}:${h.kind}:${h.count}:${h.targetId}:${h.quotes.join('\u0001')}:${h.about ? `${h.about.kind}/${h.about.id}/${h.about.line ?? ''}` : ''}:${h.parts?.join(',') ?? ''}`
 )).join('|');
 
 /**

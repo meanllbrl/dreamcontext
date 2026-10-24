@@ -199,6 +199,18 @@
   --chart-7: #d63f95;
   --chart-8: #0ea5a5;
 
+  /* ─── Reference chip slots (owner 2026-10-24: several references in one message) ───
+     The k-th chip in a message wears slot k in the composer, the sent bubble and the Super's
+     section heads, so the same colour names the same chip everywhere. Aliases only, so they
+     follow theme and brand. Slot 1 is today's single chip (the agenda's Waiting pink); green is
+     last so the common 2-3 chip case never echoes the agenda's Now dot. --chart-1 (the accent)
+     and --chart-3 (reads as an error) are not used. */
+  --ref-slot-1: var(--mood-waiting);
+  --ref-slot-2: var(--chart-2);
+  --ref-slot-3: var(--chart-5);
+  --ref-slot-4: var(--chart-8);
+  --ref-slot-5: var(--chart-4);
+
   /* ─── Nav SECTION IDENTITY ───
      Static chrome, never a status. The ★★★ rule is colour = MOOD, movement = MODE, and
      this does not contend with it: a group hue never changes at runtime and never carries
@@ -429,6 +441,13 @@
   --chart-6: #c8ccd9;
   --chart-7: #f472b6;
   --chart-8: #22d3ee;
+
+  /* Reference chip slots on dark: re-declared beside the scale they alias, like the nav hues. */
+  --ref-slot-1: var(--mood-waiting);
+  --ref-slot-2: var(--chart-2);
+  --ref-slot-3: var(--chart-5);
+  --ref-slot-4: var(--chart-8);
+  --ref-slot-5: var(--chart-4);
 
   /* Nav section identity — see the :root block for why these are aliases AND why they are
      re-declared here rather than left to inherit through --chart-*. */
