@@ -294,6 +294,20 @@ describe('a message about one agenda line', () => {
     }, W);
   });
 
+  // Owner 2026-10-23: his ↩ on one message (`[Reply to message ref=…]`) is about that message,
+  // never the answer to the open question.
+  it('a reply to one message: the question stays open, the pile stays held, no held block rides with it', async () => {
+    const delivered = await heldWhileAsked();
+    const reply = { kind: 'reply' as const, id: 'k3f9q0' };
+    expect(superAnswerDigest(SUPER, Date.now(), reply)).toBeNull();
+    superOwnerSpoke(SUPER, Date.now(), [], reply);
+    await new Promise((r) => setTimeout(r, 120));
+    const s = await readSuperState(root);
+    expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('escalated');
+    expect(s.held?.map((h) => h.item)).toEqual(['q-done-c1']);
+    expect(delivered).toHaveLength(0);
+  });
+
   it('a plain message (no About header) still answers the open question', async () => {
     await heldWhileAsked();
     expect(superAnswerDigest(SUPER)).not.toBeNull();

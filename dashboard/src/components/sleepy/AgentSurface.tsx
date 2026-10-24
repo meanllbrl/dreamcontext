@@ -86,6 +86,7 @@ import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, pu
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
 import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire } from '../handsfree/macContract';
+import { isSuperMirrorId, rememberSuperMirrorIds } from './superMirrorIds';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
@@ -1431,7 +1432,10 @@ export function AgentSurface() {
       // on EVERY spawn of its conversation (Resume, account switch, reconnect), from its record.
       const cid = claudeId ?? newClaudeId();
       const lean = mode === 'super' ? null : leanMcpFor(superStateRef.current, cid, leanOpeningRef.current);
-      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, cid, resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach, lean);
+      // The phone's Super conversation is a mirror in an ordinary chat mode: told here, on every
+      // spawn of it, that it shows the Super (reply strips, groups, the ↩ chip).
+      const mirror = mode !== 'super' && isSuperMirrorId(cid);
+      const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, cid, resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach, lean, mirror);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
       // Every chat spawned anywhere in this surface follows the signed-in account, for the
@@ -2288,6 +2292,7 @@ export function AgentSurface() {
   // Mac decides it is a MIRROR (agent-chat.ts `phoneSuperOpen`): never `reattach=1`, so not even a
   // Mac that had stopped recognising the session would evict the window that holds it.
   const openSuperOnPhone = useCallback((row: SuperChatWire) => {
+    rememberSuperMirrorIds([row.conversationId]);
     // The product's name, the same in every language (`handsfree.super.title`).
     resumePastSession({ id: row.conversationId, title: 'Super Agent', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, 'passive');
   }, [resumePastSession]);

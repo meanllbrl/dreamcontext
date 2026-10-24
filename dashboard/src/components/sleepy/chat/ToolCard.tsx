@@ -92,7 +92,7 @@ function GenericBody({ item }: { item: ChatToolItem }) {
 }
 
 function ToolCardInner({
-  item, onOpenFile, actor = 'lead', stretch, stretchRunning = false,
+  item, onOpenFile, actor = 'lead', stretch, stretchRunning = false, replyGroup,
 }: {
   item: ChatToolItem;
   onOpenFile: (path: string) => void;
@@ -103,6 +103,8 @@ function ToolCardInner({
   stretch?: 'lead' | 'follow';
   /** A step anywhere in this row's stretch is running: its avatar works. */
   stretchRunning?: boolean;
+  /** The Super answer group it belongs to (a thin line beside it). */
+  replyGroup?: string;
 }) {
   // Only an EDIT opens on its own: what changed in your files is the one tool body you
   // always want to see. Everything else — Bash above all — stays a one-line receipt you
@@ -155,6 +157,7 @@ function ToolCardInner({
         actor={actor}
         stretch={stretch}
         stretchRunning={stretchRunning}
+        replyGroup={replyGroup}
       />
     );
   }
@@ -168,6 +171,7 @@ function ToolCardInner({
       data-quiet={action.quiet || undefined}
       data-stretch={stretch}
       data-open={open || undefined}
+      data-reply-grp={replyGroup}
     >
       <ToolHeader
         status={item.status}

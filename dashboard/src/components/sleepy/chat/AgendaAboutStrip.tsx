@@ -20,3 +20,22 @@ export function AgendaAboutStrip({ about, superSid }: { about: AgendaAbout; supe
     </div>
   );
 }
+
+/**
+ * The reply variant (owner 2026-10-23): "↩ To Super: <quote>" above his reply, or "↩ Your
+ * message: <quote>" above a Super answer group. The same strip, a ↩ where the dot is; a click
+ * scrolls to the message it names. One line, the quote clipped.
+ */
+export function ReplyStrip({ label, quotes, onJump }: { label: string; quotes: readonly string[]; onJump?: () => void }) {
+  const text = quotes.join(' · ');
+  const body = (
+    <>
+      <span className="chat-msg-about-glyph" aria-hidden>↩</span>
+      <span className="chat-msg-about-label">{label}</span>
+      <span className="chat-msg-about-text" title={text}>{text}</span>
+    </>
+  );
+  return onJump
+    ? <button type="button" className="chat-msg-about chat-msg-about--reply" data-testid="chat-msg-reply" onClick={onJump}>{body}</button>
+    : <div className="chat-msg-about chat-msg-about--reply" data-testid="chat-msg-reply">{body}</div>;
+}

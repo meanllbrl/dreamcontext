@@ -7,6 +7,7 @@ import { useChrome } from '../layout/WindowChrome';
 import { SuperAgentIcon } from '../layout/NavIcons';
 import { pollMs } from '../../lib/windowActivity';
 import type { LiveChatWire, LiveChatsWire, SuperChatWire } from '../handsfree/macContract';
+import { rememberSuperMirrorIds } from './superMirrorIds';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { HandsfreeBackdrop, HandsfreeMark } from '../brand/HandsfreeMark';
 import { PushOptIn } from '../handsfree/phone/PushOptIn';
@@ -98,7 +99,12 @@ export function PhoneChatList({
   const projects = (vaultsResp?.vaults ?? []).filter((v) => v.exists);
   const { data: live } = useQuery({
     queryKey: ['mac-live-chats'],
-    queryFn: () => api.get<LiveChatsWire>('/agent/live-chats'),
+    queryFn: async () => {
+      const wire = await api.get<LiveChatsWire>('/agent/live-chats');
+      // Every Super conversation the Mac names is shown as the Super's, however it is opened.
+      rememberSuperMirrorIds((wire.supers ?? []).map((x) => x.conversationId));
+      return wire;
+    },
     enabled: active,
     refetchInterval: active ? () => pollMs(3_000) : false,
     staleTime: 2_000,

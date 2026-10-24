@@ -80,8 +80,10 @@ describe('super-orchestration guide: shape', () => {
   // +500 (2026-10-22): §2 says how to ask the way any agent asks (`super ask --json`, the answer
   // message, what came in meanwhile). +150 (2026-10-23): a child's pictures carry `--for <child>`.
   // +1,500 (2026-10-23): §7 Presentation layouts, the when-which table.
-  it('is at most 16,150 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(16_150);
+  // +1200 (2026-10-23): §2's message about one agenda line (~770, super-ajanda-madde-not) and
+  // which answer is to which message (`<owner-msg ref>`, `<!-- re: -->`, the ↩ reply, ~360).
+  it('is at most 17,350 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(17_350);
   });
 
   it('has the seven sections in order', () => {

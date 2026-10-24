@@ -65,7 +65,7 @@ const { join } = await import('node:path');
 const { startChatSession, superUpgradeRefusal, superAllowedTools } = await import('../../src/server/routes/agent-chat.js');
 const { _resetChatRegistry, getChat } = await import('../../src/lib/assistant/chat-registry.js');
 const { SUPER_STATE_REL, peekSuperNote, readSuperState, resetSuperIndex } = await import('../../src/lib/super/store.js');
-const { SUPER_NOTE_TEXT, emptySuperState } = await import('../../src/lib/super/types.js');
+const { SUPER_NOTE_TEXT, emptySuperState, ownerMsgBlock, msgRef } = await import('../../src/lib/super/types.js');
 const { _resetSuperInbox, _superInboxFor, isSuperEventTurn, markSuperEventTurn } = await import('../../src/lib/super/inbox.js');
 
 class FakeWs extends EventEmitter {
@@ -194,10 +194,27 @@ describe('the super chat\'s event turns (plan r4 D4, D8, D10)', () => {
     owner(ws, 'two');
     owner(ws, 'three');
     await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(4));
-    expect(userFrames(proc)).toEqual([['[super events] batch=b-1 items=1'], ['one'], ['two'], ['three']]);
+    // Each owner message carries its reference block (owner 2026-10-23); the event turn none.
+    expect(userFrames(proc)).toEqual([['[super events] batch=b-1 items=1'], ...['one', 'two', 'three'].map((t) => [t, ownerMsgBlock(t)])]);
     result(proc);
     await new Promise((r) => setTimeout(r, 30));
     expect(userFrames(proc)).toHaveLength(4);
+  });
+
+  it('an owner message carries `<owner-msg ref>` after his text; a slash command none; a child chat none (owner 2026-10-23)', async () => {
+    await record({ enabled: true });
+    const { ws, child: proc } = start({ sessionId: SUPER, mode: 'super' });
+    owner(ws, 'Fix the Orbit login page');
+    await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(1));
+    expect(userFrames(proc)[0]).toEqual(['Fix the Orbit login page', `<owner-msg ref="${msgRef('Fix the Orbit login page')}"/>`]);
+    result(proc);
+    owner(ws, '/compact');
+    await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(2));
+    expect(userFrames(proc)[1]).toEqual(['/compact']);
+    const kid = start({ sessionId: CHILD, mode: 'basic' });
+    owner(kid.ws, 'hello');
+    await vi.waitFor(() => expect(userFrames(kid.child)).toHaveLength(1));
+    expect(userFrames(kid.child)[0]).toEqual(['hello']);
   });
 
   it('the super_event frame carries the batch and its items, before the turn is written', async () => {

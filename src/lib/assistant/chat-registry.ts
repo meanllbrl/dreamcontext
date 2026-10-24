@@ -35,6 +35,7 @@
  */
 
 import { answeredBy, MAX_OWNER_WAITS, ownerCardsIn, takeSuperSend, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
+import { stripReplyMark } from '../super/types.js';
 
 export const CHAT_STATUSES = ['starting', 'working', 'asking', 'idle', 'gone'] as const;
 export type ChatStatus = typeof CHAT_STATUSES[number];
@@ -450,7 +451,8 @@ export function registerChat(init: { sessionId: string; conversationId: string |
             if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !cards.some((c) => waitKey(c) === k));
             setOwnerWaits(e, [...keep, ...cards]);
           }
-          e.lastAssistantText.push(cap(text));
+          // The Super's reply mark (`<!-- re:<ref> -->`) is for the window, never a last line.
+          e.lastAssistantText.push(cap(stripReplyMark(text)));
           if (e.lastAssistantText.length > TEXT_RING) e.lastAssistantText.splice(0, e.lastAssistantText.length - TEXT_RING);
           e.updatedAt = new Date().toISOString();
         }

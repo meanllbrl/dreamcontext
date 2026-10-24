@@ -895,3 +895,6 @@ body[data-phone] .agent-dock { display: none; }
 }
 .mlist-foot-btn--primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
 .mlist-foot-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
+
+/* The reply groups' line (cards.css) sits inside the phone's narrower gutter. */
+.agent-surface[data-mobile] .chat-reply-line { left: calc(-1 * var(--space-2)); }

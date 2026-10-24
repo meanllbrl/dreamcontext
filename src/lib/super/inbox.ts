@@ -627,8 +627,9 @@ export function superOwnerSpoke(sessionId: string, now = Date.now(), told: reado
   void track(closeOpenAsks(key, sessionId, told));
 }
 
-/** The agenda line an owner message is written about (its `[About agenda line …]` header). */
-export interface AgendaAbout { kind: 'note' | 'item'; id: string }
+/** The agenda line an owner message is written about (its `[About agenda line …]` header), or
+ *  the message it replies to (`[Reply to message ref=…]`, `id` its ref): not the question. */
+export interface AgendaAbout { kind: 'note' | 'item' | 'reply'; id: string }
 
 /**
  * A message about ONE agenda line (owner 2026-10-23) answers the super's open question only when

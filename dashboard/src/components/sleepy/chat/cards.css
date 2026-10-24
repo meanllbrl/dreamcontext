@@ -212,6 +212,52 @@
 .chat-msg-about-label { flex: 0 0 auto; font-weight: var(--font-weight-semibold); color: var(--color-text-tertiary); }
 .chat-msg-about-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ── Reply links (owner 2026-10-23): which Super answer is to which message ────────────
+   The About strip's reply variant: a ↩ where the dot is, and a click scrolls to the message
+   it names. Above his reply it hangs right like his bubble; above a Super answer group it is
+   its own transcript row, left. One line at any width, the quote clipped. */
+.chat-msg-about--reply {
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+button.chat-msg-about--reply { cursor: pointer; }
+button.chat-msg-about--reply:hover .chat-msg-about-text,
+button.chat-msg-about--reply:focus-visible .chat-msg-about-text { color: var(--color-text); text-decoration: underline; }
+button.chat-msg-about--reply:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.chat-msg-about-glyph { flex: 0 0 auto; color: var(--color-text-tertiary); }
+.chat-reply-strip {
+  display: flex;
+  min-width: 0;
+  max-width: var(--chat-line-width, 100%);
+  /* Closer to the group it heads than the transcript's row gap. */
+  margin-bottom: calc(-1 * var(--space-3));
+}
+.chat-reply-strip .chat-msg-about { align-self: flex-start; padding-left: 0; }
+/* A group's thin line on its left, from the strip to its last row (one element per group,
+   measured by ChatPane over the rows: tool cards clip their own overflow, so a per-row
+   pseudo-element could not reach outside them). Out of flow, never hit. */
+.chat-scroll-inner--reply { position: relative; }
+.chat-reply-lines { position: absolute; inset: 0; pointer-events: none; }
+.chat-reply-line {
+  position: absolute;
+  left: calc(-1 * var(--space-3));
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+}
+/* The message a strip just scrolled to. */
+[data-reply-flash] {
+  border-radius: var(--radius-md);
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+}
+/* A message row takes focus on a tap (touch shows its action bar then); no ring for that. */
+.chat-msg-user-row:focus,
+.chat-msg-assistant-row:focus { outline: none; }
+
 /* What the user ATTACHED, above their own words — a sent screenshot has to be visible as a
    screenshot, not as the path the message quoted for the agent's benefit. */
 .chat-msg-user-media {

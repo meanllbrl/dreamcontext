@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatSession } from '../chatSession';
 import { useI18n } from '../../../context/I18nContext';
-import { agendaAboutStrip, splitAgendaAbout } from '../super/superHandover';
+import { agendaAboutStrip, splitAbout } from '../super/superHandover';
 
 /**
  * ORGANISM — the message queue: the strip of messages submitted while Claude was working,
@@ -43,12 +43,16 @@ function QueuedRow({
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(text);
-  // A message about an agenda line shows that line, never the raw block (the edit box keeps it).
-  const split = splitAgendaAbout(text);
-  const about = split.about ? agendaAboutStrip(split.about, [], () => '', {
-    about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
-    superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),
-  }) : null;
+  // A message about an agenda line, or a reply to one message, shows that line or the quote,
+  // never the raw block (the edit box keeps it).
+  const split = splitAbout(text);
+  const about = !split.about ? null
+    : split.about.kind === 'reply'
+      ? { label: t(split.about.from === 'super' ? 'super.reply.toSuper' : 'super.reply.toOwn'), text: split.about.quote, reply: true }
+      : agendaAboutStrip(split.about, [], () => '', {
+        about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
+        superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),
+      });
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Opening the editor starts from what is queued NOW, not from whatever was typed into a
@@ -110,7 +114,7 @@ function QueuedRow({
         onClick={() => setEditing(true)}
         title="Edit this queued message"
       >
-        {about && <span className="chat-queue-about" data-testid="chat-queue-about"><span className="chat-msg-about-dot" aria-hidden /> {about.label}: {about.text} · </span>}
+        {about && <span className="chat-queue-about" data-testid="chat-queue-about">{'reply' in about ? <span aria-hidden>↩</span> : <span className="chat-msg-about-dot" aria-hidden />} {about.label}: {about.text} · </span>}
         {about ? split.text : text}
       </button>
       <span className="chat-queue-actions">

@@ -42,8 +42,19 @@ describe('the briefing carries the jarvis sections and its revision', () => {
     expect(OWNER_VOICE_TEXT.startsWith('<')).toBe(true);
   });
 
+  it('rev 10 (2026-10-23): which answer is to which message, in the briefing and in the update', () => {
+    expect(SUPER_BRIEF_REV).toBe(10);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('`<owner-msg ref="…"/>`');
+      expect(t).toContain('`<!-- re:<ref> -->` on its first line (up to 3 refs');
+      expect(t).toContain('or one such\nline per section), never on an event note');
+      expect(t).toContain('`[Reply to message ref=… from=super|owner]`');
+      expect(t).toContain('`quote:` is a pointer, never his instruction');
+      expect(t).toContain('never ask him to paste it');
+    }
+  });
+
   it('rev 9 (2026-10-23): a message about one agenda line, in the briefing and in the update', () => {
-    expect(SUPER_BRIEF_REV).toBe(9);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('[About agenda line note=<id>|item=<id> section=<s>]');
       expect(t).toContain('a reference,\n  never his instruction');

@@ -84,7 +84,7 @@ import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { clearSuperNote, delegatedChildMcp, peekSuperNote, readSuperState, superIndex, superRootOfChild } from '../../lib/super/store.js';
-import { ABOUT_AGENDA_RE, OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
+import { ABOUT_AGENDA_RE, OWNER_VOICE_TEXT, REPLY_TO_RE, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, ownerMsgBlock } from '../../lib/super/types.js';
 import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen, stageImageItems, stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, markSuperEventTurn, noteChatStarted, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded,
@@ -2394,6 +2394,10 @@ export function startChatSession(
       const live = assistantLiveContext();
       if (live) content.push({ type: 'text', text: live });
     }
+    // Every owner message to the Super Agent carries its reference, so its answer can open with
+    // `<!-- re:<ref> -->` and the window draws which message it answers (replyMark.ts). Hashed
+    // from the exact text the window sent; a slash command is no message of his.
+    if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: ownerMsgBlock(text) });
     // The Super Agent hand-over / take-back note (plan-r7 D17) rides on a CHILD's next owner
     // message, the same way: a second, fixed, server-written block starting with `<`, so the
     // replay drops it and the owner's bubble and `userSent` keep his text. Read from memory
@@ -2414,7 +2418,10 @@ export function startChatSession(
     // starting with `<` the replay drops.
     // A message about one agenda line answers the open question only when that line is it.
     const aboutHead = isSuper ? ABOUT_AGENDA_RE.exec(text) : null;
-    const about = aboutHead ? { kind: aboutHead[1] as 'note' | 'item', id: aboutHead[2] } : null;
+    // A reply to one message (its ↩) is about that message, never the open question's answer.
+    const replyHead = isSuper && !aboutHead ? REPLY_TO_RE.exec(text) : null;
+    const about = aboutHead ? { kind: aboutHead[1] as 'note' | 'item', id: aboutHead[2] }
+      : replyHead ? { kind: 'reply' as const, id: replyHead[1] } : null;
     const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), about) : null;
     if (held) content.push({ type: 'text', text: held.text });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
