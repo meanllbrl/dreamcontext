@@ -15,6 +15,7 @@ import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/ser
 import { groupSuperEventTurns, type SuperEventGroup } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import { placeQuestionCards } from '../../dashboard/src/components/sleepy/super/superQuestions.js';
 import type { ChatItem } from '../../dashboard/src/components/sleepy/chatSession.js';
+import { fileURLToPath } from 'node:url';
 
 vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   useI18n: () => ({
@@ -30,7 +31,7 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
 
 const { SuperRecapCard } = await import('../../dashboard/src/components/sleepy/super/SuperRecapCard.js');
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 
 const user = (id: string, text: string) => ({ kind: 'user', id, text });

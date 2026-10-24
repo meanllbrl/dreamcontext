@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 (globalThis as { window?: unknown }).window ??= new EventTarget();
 
@@ -24,7 +25,7 @@ const { QueryObserver } = await import('../../dashboard/node_modules/@tanstack/q
 const wa = await import('../../dashboard/src/lib/windowActivity.js');
 const iq = await import('../../dashboard/src/lib/instanceQueryClient.js');
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf-8');
 
 // ─── The call sites ──────────────────────────────────────────────────────────────

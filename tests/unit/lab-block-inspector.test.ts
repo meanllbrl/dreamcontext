@@ -20,9 +20,10 @@ import {
   parseListField, parseNumberField, parseSortField, parseWhereField, removeBlock, removeTab, renameTab, setBinding,
   setInputs, setOption, typeChoices, updateBlock,
 } from '../../dashboard/src/components/lab/board/editorModel';
+import { fileURLToPath } from 'node:url';
 
 const catalog = catalogJson as unknown as BlockCatalog;
-const SRC = join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/board');
+const SRC = join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/board');
 const ctx = { insight: 'daily-signups', tabLabel: 'Tab 1', htmlStarter: '<p>Hi</p>' };
 
 const card = (blocks?: Block[], insight: string | null = 'daily-signups'): Card => ({

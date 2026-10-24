@@ -9,6 +9,7 @@ import {
   menusToClose,
   type BarFit,
 } from '../../dashboard/src/components/tasks/toolbarCollapse';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The Tasks toolbar's overflow collapse must settle.
@@ -92,7 +93,7 @@ describe('toolbar collapse: closing menus', () => {
 
 describe('toolbar collapse: BoardToolbar wiring', () => {
   const src = readFileSync(
-    join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/tasks/BoardToolbar.tsx'),
+    join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/tasks/BoardToolbar.tsx'),
     'utf-8',
   );
 

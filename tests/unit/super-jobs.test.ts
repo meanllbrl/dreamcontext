@@ -19,8 +19,9 @@ import {
 } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import { toChatEvent } from '../../dashboard/src/lib/chatProtocol.js';
 import type { SuperState } from '../../dashboard/src/lib/superTypes.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 const SUPER = 'dashboard/src/components/sleepy/super';
 

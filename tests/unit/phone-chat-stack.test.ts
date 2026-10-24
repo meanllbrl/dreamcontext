@@ -9,8 +9,9 @@ import { join } from 'node:path';
 import { chatLastLine, stackRows, stackTap, type StackTab } from '../../dashboard/src/components/sleepy/phoneStack.js';
 import type { LiveChatWire } from '../../dashboard/src/components/handsfree/macContract.js';
 import { liveChatLastLine } from '../../src/server/routes/agent-chat.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const code = (p: string) => readFileSync(join(ROOT, p), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 
 const info = (kind: 'working' | 'asking' | 'ready', label = kind) => ({ kind, label }) as unknown as StackTab['info'];

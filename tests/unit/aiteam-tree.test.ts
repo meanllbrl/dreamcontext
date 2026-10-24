@@ -13,8 +13,9 @@ import {
   readRosterView, rollupOf, teamTreeOf, treeSections, visibleTreeLines, writeRosterView, type TeamPlacement,
 } from '../../dashboard/src/components/aiteam/teamTree';
 import type { TeamRow, TeamStatus } from '../../dashboard/src/components/aiteam/teamModel';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = join(new URL('../../', import.meta.url).pathname);
+const ROOT = join(fileURLToPath(new URL('../../', import.meta.url)));
 
 function row(slug: string, title: string, status: TeamStatus = 'idle'): TeamRow {
   return {

@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import type { Frame } from '../../dashboard/src/generated/frameOps.js';
 import type { Block, BlockProps } from '../../dashboard/src/components/lab/board/boardTypes.js';
+import { fileURLToPath } from 'node:url';
 
 vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   useI18n: () => ({ locale: 'en', setLocale: () => {}, t: (key: string) => (key === 'lab.blocks.filter.total' ? '{n} rows, total {v}' : key) }),
@@ -29,7 +30,7 @@ const { TabsBlock } = await import('../../dashboard/src/components/lab/blocks/Ta
 const { statFromSeries } = await import('../../dashboard/src/components/lab/blocks/frameAdapters.js');
 const { shapeBlockFrame } = await import('../../dashboard/src/components/lab/blocks/frameShape.js');
 
-const BLOCKS = join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/blocks');
+const BLOCKS = join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/blocks');
 const html = (el: ReactElement) => renderToStaticMarkup(el);
 function render(Component: unknown, b: Block, props: Partial<BlockProps> = {}): string {
   return html(createElement(Component as never, { frame: null, ...props, options: b.options, block: b }));

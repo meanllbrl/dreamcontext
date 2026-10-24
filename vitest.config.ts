@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import { WINDOWS_SKIPS } from './tests/windows-skip';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Unit + integration tests live under tests/ as *.test.ts.
@@ -16,7 +17,7 @@ export default defineConfig({
       // spec). `marked` is a DASHBOARD dependency — the root package does not and should not
       // depend on it — so point the bare specifier at the dashboard's own copy rather than
       // hoisting the package up a level just to make a test resolve.
-      marked: new URL('./dashboard/node_modules/marked/', import.meta.url).pathname,
+      marked: fileURLToPath(new URL('./dashboard/node_modules/marked/', import.meta.url)),
     },
   },
   test: {
@@ -25,7 +26,9 @@ export default defineConfig({
     exclude: ['node_modules', 'dist', 'e2e', 'dashboard', ...(process.platform === 'win32' ? WINDOWS_SKIPS.map((s) => s.file) : [])],
     // Insulates the suite from a spawned parent: a builder that runs `npm test` must not have
     // its own spawn marker or pane boundary leak into the hook processes the tests launch.
-    setupFiles: ['tests/setup/isolate-spawn-env.ts'],
+    // windows-home: on win32 only, a HOME a test sets is mirrored into USERPROFILE (what
+    // os.homedir() reads there), so the suite's home isolation holds on Windows too.
+    setupFiles: ['tests/setup/isolate-spawn-env.ts', 'tests/setup/windows-home.ts'],
     // `forks` (process IPC rather than worker threads) and the teardown margin
     // date from the v0.11.0 CI-red episode and are kept because they are cheap
     // and the suite is process-heavy either way.

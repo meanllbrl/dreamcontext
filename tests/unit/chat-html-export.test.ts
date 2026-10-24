@@ -20,9 +20,10 @@ import {
   CHAT_HTML_KIT_CSS, HEIGHT_BRIDGE, KIT_BEHAVIOUR,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
 import { SANDBOX_CSP } from '../../dashboard/src/lib/sandboxHtml.js';
+import { fileURLToPath } from 'node:url';
 
 const CHAT_DIR = join(
-  new URL('../../', import.meta.url).pathname,
+  fileURLToPath(new URL('../../', import.meta.url)),
   'dashboard/src/components/sleepy/chat',
 );
 

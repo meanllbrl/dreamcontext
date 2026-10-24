@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { msgRef } from '../../dashboard/src/lib/superTypes.js';
 import { isOwnerMessage, replyGroups } from '../../dashboard/src/components/sleepy/chat/replyLinks.js';
 import type { ChatItem } from '../../dashboard/src/components/sleepy/chatSession.js';
+import { fileURLToPath } from 'node:url';
 
 let seq = 0;
 const owner = (text: string, id = `u${++seq}`): ChatItem => ({ kind: 'user', id, text, ts: 1 });
@@ -151,7 +152,7 @@ describe('replyGroups', () => {
 });
 
 describe('ChatPane reads it once per render', () => {
-  const pane = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/sleepy/ChatPane.tsx'), 'utf-8');
+  const pane = readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/sleepy/ChatPane.tsx'), 'utf-8');
   it('over the whole conversation, only in a Super view, and its memo key reads replyTo', () => {
     expect(pane).toMatch(/const replyMap = useMemo\(\(\) => \(superView \? replyGroups\(questEntries\) : null\), \[superView, questEntries\]\);/);
     expect(pane).toMatch(/it\.kind === 'text' && it\.replyTo \? it\.replyTo\.join\(\) : ''/);
@@ -161,7 +162,7 @@ describe('ChatPane reads it once per render', () => {
 describe('the bubble and the queue draw a reply as a strip', () => {
   // The transcript's markdown stack reads the worker global `self` at import; node has none.
   (globalThis as { self?: unknown }).self ??= globalThis;
-  const ROOT = new URL('../../', import.meta.url).pathname;
+  const ROOT = fileURLToPath(new URL('../../', import.meta.url));
   const read = (f: string) => readFileSync(join(ROOT, f), 'utf-8');
 
   it('his reply: a ↩ strip with the quote above his own words; malformed stays text; an agenda About still draws', async () => {

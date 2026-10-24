@@ -15,7 +15,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import {
   reconcileRemoteScene,
@@ -30,7 +30,7 @@ type El = { id: string; type: string; version: number; versionNonce: number; ind
 type Restore = (els: readonly unknown[], local: readonly unknown[] | null) => El[];
 type Reconcile = (local: readonly El[], remote: readonly El[], appState: unknown) => El[];
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const EXCALIDRAW = join(ROOT, 'dashboard/node_modules/@excalidraw/excalidraw/dist/prod/index.js');
 
 const g = globalThis as Record<string, unknown>;

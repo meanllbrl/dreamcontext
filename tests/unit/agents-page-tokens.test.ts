@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * THE AGENTS PAGE SPEAKS ONLY IN TOKENS — every colour, text size, weight, duration and curve
@@ -17,7 +18,7 @@ import { join } from 'node:path';
  * and `cubic-bezier(`. `tokens.css` itself is where those literals belong and is not scanned.
  */
 
-const ROOT = process.env.AGENTS_CSS_ROOT ?? join(new URL('../../', import.meta.url).pathname, 'dashboard/src');
+const ROOT = process.env.AGENTS_CSS_ROOT ?? join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src');
 
 const FILES = [
   'components/agents/AgentsFeed.css',

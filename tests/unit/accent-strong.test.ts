@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * TEXT ON AN ACCENT FILL takes the strong accent — app-wide, and this file is what keeps it so.
@@ -23,7 +24,7 @@ import { join, relative } from 'node:path';
  * TEXT with the gradient (`background-clip: text`) is not a fill and is skipped.
  */
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const SRC = join(ROOT, 'dashboard/src');
 
 function walk(dir: string, exts: string[], out: string[] = []): string[] {

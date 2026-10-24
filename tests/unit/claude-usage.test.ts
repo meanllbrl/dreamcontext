@@ -24,6 +24,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readUsageLimits, EMPTY_USAGE_LIMITS } from '../../src/lib/claude-usage.js';
+import { fileURLToPath } from 'node:url';
 
 const FIXTURE_HOME = mkdtempSync(join(tmpdir(), 'dc-claude-usage-'));
 const CLAUDE_JSON = join(FIXTURE_HOME, '.claude.json');
@@ -242,7 +243,7 @@ describe('readUsageLimits — the `limits[]` fallback', () => {
  * value reaching the reader without having been through that gate.
  */
 describe('the route lets a request choose the ACCOUNT, never the PATH', () => {
-  const repoRoot = new URL('../../', import.meta.url).pathname;
+  const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
   const source = readFileSync(join(repoRoot, 'src/server/routes/agent-usage.ts'), 'utf-8');
 
   it('reads only a directory that came out of resolveConfigDir', () => {

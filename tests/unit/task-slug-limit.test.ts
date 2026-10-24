@@ -21,8 +21,9 @@ import { isValidRef, isValidWidgetRef } from '../../src/lib/whiteboards/validate
 import { isValidWidgetRef as dashboardWidgetRef } from '../../dashboard/src/components/whiteboard/widgetModel.js';
 import { targetPath } from '../../dashboard/src/components/whiteboard/pagePopupModel.js';
 import { MAX_SLUG_CHARS } from '../../dashboard/src/lib/chatViewSpec.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const slugOf = (n: number): string => 'a'.repeat(n);
 
 describe('the limit', () => {

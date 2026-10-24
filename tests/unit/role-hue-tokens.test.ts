@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The quest party's colour tokens (tokens.css): three role hue families and two status inks.
@@ -13,7 +14,7 @@ import { join } from 'node:path';
  * the ratios live in the comment next to them.
  */
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOKENS = join(ROOT, 'dashboard/src/styles/tokens.css');
 
 /** The declarations inside one CSS block, keyed by custom-property name. */

@@ -22,6 +22,7 @@ import {
   DEFAULT_MAX_CANDIDATES,
 } from '../../src/lib/reflection.js';
 import { buildExcludedExtra } from '../../src/cli/commands/reflect.js';
+import { fileURLToPath } from 'node:url';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -493,7 +494,7 @@ describe('reflection.ts — AC7: no AI/network calls in source', () => {
       'reflection.ts',
     );
     // Use __dirname-style resolution robust to test runner location
-    const resolvedSrc = new URL('../../src/lib/reflection.ts', import.meta.url).pathname;
+    const resolvedSrc = fileURLToPath(new URL('../../src/lib/reflection.ts', import.meta.url));
     const source = readFileSync(resolvedSrc, 'utf-8');
     expect(source).not.toMatch(/\bfetch\s*\(/);
     expect(source).not.toMatch(/\bspawn\s*\(/);
@@ -503,7 +504,7 @@ describe('reflection.ts — AC7: no AI/network calls in source', () => {
   });
 
   it('reflection.ts only imports from node:fs, node:path, and recall.ts', () => {
-    const resolvedSrc = new URL('../../src/lib/reflection.ts', import.meta.url).pathname;
+    const resolvedSrc = fileURLToPath(new URL('../../src/lib/reflection.ts', import.meta.url));
     const source = readFileSync(resolvedSrc, 'utf-8');
     // Extract import statements
     const importLines = source

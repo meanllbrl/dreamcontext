@@ -13,6 +13,7 @@ import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import { funnelSlice, stepDrops, type FunnelFrame } from '../../dashboard/src/generated/frameOps.js';
 import type { Block } from '../../dashboard/src/components/lab/board/boardTypes.js';
+import { fileURLToPath } from 'node:url';
 
 const COPY: Record<string, string> = {
   'lab.blocks.funnel.ofPrev': '{pct} of prev. step',
@@ -354,7 +355,7 @@ describe('Lanes at the 8x7 Steps card (fix round): rows never collapse', () => {
   });
 
   it('a narrow one-line lane head keeps the name and lets the users go (they stay in the title)', () => {
-    const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
+    const css = readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
     const q = css.slice(css.indexOf('@container lanehead'));
     expect(q).toContain('.funnel-lanes[data-dense] .funnel-lanes-users { display: none; }');
     expect(q.slice(0, q.indexOf('\n}'))).not.toContain('.funnel-lanes-name');
@@ -362,7 +363,7 @@ describe('Lanes at the 8x7 Steps card (fix round): rows never collapse', () => {
   });
 
   it('lane-head numbers use the breakdown lane badges\' pair: white on the strong accent (5.64:1), never on accent-soft', () => {
-    const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
+    const css = readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
     const at = css.indexOf('.funnel-lanes-num {');
     const rule = css.slice(at, css.indexOf('}', at));
     expect(rule).toContain('background: var(--color-accent-strong)');
@@ -371,7 +372,7 @@ describe('Lanes at the 8x7 Steps card (fix round): rows never collapse', () => {
   });
 
   it('three levels and air: whitespace (not a rule) under the heads, 4px between rows with room, shares and head users tertiary', () => {
-    const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
+    const css = readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
     const rule = (sel: string) => { const at = css.indexOf(`${sel} {`); expect(at, sel).toBeGreaterThan(-1); return css.slice(at, css.indexOf('}', at)); };
     expect(rule('.funnel-lanes-head-row')).not.toContain('border');
     expect(rule('.funnel-lanes-head-row')).toContain('margin-bottom: var(--space-2)');
@@ -383,7 +384,7 @@ describe('Lanes at the 8x7 Steps card (fix round): rows never collapse', () => {
   });
 
   it('narrow lanes drop the users first, then the share; the bar and the drop stay', () => {
-    const css = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
+    const css = readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/funnel/FunnelLanes.css'), 'utf8');
     const mid = css.slice(css.indexOf('@container lane (max-width: 190px)'), css.indexOf('@container lane (max-width: 120px)'));
     const narrow = css.slice(css.indexOf('@container lane (max-width: 120px)'));
     expect(mid).toContain('.funnel-lanes-value { display: none; }');
@@ -492,7 +493,7 @@ describe('selectionLabel', () => {
 });
 
 describe('the explorer stylesheets speak only in tokens', () => {
-  const ROOT = join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel');
+  const ROOT = join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/funnel');
   for (const file of ['FunnelFlow.css', 'FunnelLanes.css']) {
     it(file, () => {
       const text = readFileSync(join(ROOT, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
