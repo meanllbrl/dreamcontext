@@ -247,7 +247,7 @@ describe('circuit breaker', () => {
     tripBreaker('network', env.home);
     const path = join(env.home, '.dreamcontext', 'recall-cloud-health.json');
     expect(existsSync(path)).toBe(true);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('an auth failure stays open until the key is replaced', async () => {

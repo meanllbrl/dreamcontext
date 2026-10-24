@@ -104,8 +104,8 @@ describe('the pinned cloudflared binary (AC3)', () => {
     const p = await ensureCloudflared({ home, pins: pinsFor(archive), arch: 'arm64', baseOverride: base });
     expect(p).toBe(join(home, '.dreamcontext', 'bin', 'cloudflared-9.9.9'));
     expect(readFileSync(p)).toEqual(BIN);
-    expect(statSync(p).mode & 0o777).toBe(0o700);
-    expect(statSync(join(home, '.dreamcontext', 'bin')).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(p).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
+    if (process.platform !== 'win32') expect(statSync(join(home, '.dreamcontext', 'bin')).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
     expect(binLeftovers()).toEqual(['cloudflared-9.9.9']);
     // A second call reuses it (no download: the server has nothing now).
     served.clear();
@@ -229,7 +229,7 @@ describe('fixed address (AC16)', () => {
     const yaml = readFileSync(p, 'utf8');
     expect(yaml).toContain('  - hostname: phone.example.com\n    service: http://127.0.0.1:40123\n  - service: http_status:404\n');
     expect(yaml.indexOf('http_status:404')).toBeGreaterThan(yaml.indexOf('40123'));
-    expect(statSync(p).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(p).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(() => fixedConfigYaml({ ...rec, hostname: 'bad host' }, '/c', 1)).toThrow();
   });
 
@@ -258,7 +258,7 @@ describe('fixed address (AC16)', () => {
     expect(calls[0]).toEqual({ args: ['tunnel', 'login'], home: join(macDir, 'cf-login') });
     expect(calls[1].args).toEqual(['tunnel', '--origincert', join(macDir, 'cf-login', '.cloudflared', 'cert.pem'), 'create', '--credentials-file', join(macDir, 'tunnel.json'), 'dreamcontext-hf']);
     expect(calls[2].args).toEqual(['tunnel', '--origincert', join(macDir, 'cf-login', '.cloudflared', 'cert.pem'), 'route', 'dns', 'dreamcontext-hf', 'phone.example.com']);
-    expect(statSync(join(macDir, 'tunnel.json')).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(join(macDir, 'tunnel.json')).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(existsSync(join(macDir, 'cf-login'))).toBe(false);
     const leftovers = readdirSync(macDir, { recursive: true }).map(String);
     expect(leftovers.some((f) => f.endsWith('cert.pem'))).toBe(false);

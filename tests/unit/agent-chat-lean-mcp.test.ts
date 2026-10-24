@@ -200,8 +200,8 @@ describe('the spawn', () => {
     const f = files[0];
     expect(f.startsWith(leanMcpDir(fakeHome) + '/')).toBe(true);
     expect(JSON.parse(readFileSync(f, 'utf-8'))).toEqual({ mcpServers: { whatsapp: USER_SERVERS.whatsapp } });
-    expect(statSync(f).mode & 0o777).toBe(0o600);
-    expect(statSync(leanMcpDir(fakeHome)).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(f).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
+    if (process.platform !== 'win32') expect(statSync(leanMcpDir(fakeHome)).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
     // The shared config (every user server) never rides along.
     expect(a.join(' ')).not.toContain('mcp-config.json');
     // Removed when the child exits.

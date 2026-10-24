@@ -519,7 +519,7 @@ describe('the log', () => {
     const path = join(home, 'thermal.log');
     for (let i = 0; i < 50; i++) appendThermalLog(path, `line-${String(i).padStart(3, '0')} xxxxxxxxxxxxxxxxxxxx`, 400);
     const text = readFileSync(path, 'utf8');
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(text.length).toBeLessThanOrEqual(400 + 40);
     expect(text).toContain('line-049');
     expect(text).not.toContain('line-000');

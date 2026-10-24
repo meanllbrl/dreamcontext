@@ -587,7 +587,7 @@ describe('per-automation credentials', () => {
 
   it('is written 0600 — the token is a capability, not a preference', () => {
     writeTelegramConfigForSlug('eod-digest', CFG, home);
-    expect(statSync(telegramConfigPathForSlug('eod-digest', home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(telegramConfigPathForSlug('eod-digest', home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('one automation cannot read another\'s bot', () => {

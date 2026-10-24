@@ -228,7 +228,7 @@ describe('what the split writes around the files', () => {
     const key = createHash('sha256').update(proj, 'utf8').digest('hex').slice(0, 16);
     const dir = join(home, '.dreamcontext', 'backups', 'agents-split', key);
     expect(readFileSync(join(dir, 'digest.md'), 'utf-8')).toBe(SCHED_FILE);
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
-    expect(statSync(join(dir, 'digest.md')).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(dir).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
+    if (process.platform !== 'win32') expect(statSync(join(dir, 'digest.md')).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
   });
 });

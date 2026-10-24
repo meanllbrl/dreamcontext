@@ -32,9 +32,9 @@ describe('mac prefs', () => {
   it('write then read: the choice is remembered, 0600, no temp file left, the folder made 0700', () => {
     writeMacPrefs(home, { bagMode: false });
     expect(readMacPrefs(home)).toEqual({ bagMode: false });
-    expect(statSync(macPrefsPathOf(home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(macPrefsPathOf(home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     const dir = dirname(macPrefsPathOf(home));
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(dir).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
     expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
     writeMacPrefs(home, { bagMode: true });
     expect(readMacPrefs(home)).toEqual({ bagMode: true });

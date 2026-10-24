@@ -99,8 +99,8 @@ describe('POST /api/handsfree/phone-log', { timeout: 60_000 }, () => {
     expect(r).toEqual({ status: 201, body: { ok: true, events: 5 } });
     expect(files()).toHaveLength(1);
     const file = join(phoneLogsDir(home), files()[0]);
-    expect(statSync(phoneLogsDir(home)).mode & 0o777).toBe(0o700);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(phoneLogsDir(home)).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(files()[0]).toMatch(new RegExp(`-${auth.sha256Hex(id).slice(0, 8)}\\.json$`));
     expect(JSON.parse(readFileSync(file, 'utf-8'))).toEqual(LOG);
   });

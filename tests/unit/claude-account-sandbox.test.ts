@@ -168,7 +168,7 @@ describe('the seed is a WHITELIST — no MCP configuration is ever copied', () =
 describe('the isolated `.claude.json` is CREATE-ONCE and 0600', () => {
   it('is written 0600 on creation', () => {
     ensureSandbox(SANDBOX, HOME);
-    expect(statSync(join(SANDBOX, '.claude.json')).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(join(SANDBOX, '.claude.json')).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('is NOT rewritten on a later call — the account\'s identity and usage cache survive', () => {
@@ -195,7 +195,7 @@ describe('the isolated `.claude.json` is CREATE-ONCE and 0600', () => {
 
     ensureSandbox(SANDBOX, HOME);
 
-    expect(statSync(isolated).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(isolated).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(readFileSync(isolated, 'utf-8')).toBe('{"oauthAccount":{"accountUuid":"uuid-b"}}');
   });
 });
@@ -260,7 +260,7 @@ describe('the MCP config is shared BY REFERENCE — one 0600 file, never N copie
   it('writes the top-level mcpServers to one file, 0600, and returns its path', () => {
     const path = ensureSharedMcpConfig(HOME);
     expect(path).toBe(join(HOME, '.dreamcontext', 'claude-accounts', 'mcp-config.json'));
-    expect(statSync(path!).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(path!).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     const written = JSON.parse(readFileSync(path!, 'utf-8')) as { mcpServers: Record<string, unknown> };
     expect(Object.keys(written.mcpServers)).toEqual(['top-level-server']);
   });
