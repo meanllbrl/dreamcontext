@@ -9,6 +9,7 @@ import { pollMs } from '../../lib/windowActivity';
 import type { LiveChatWire, LiveChatsWire, SuperChatWire } from '../handsfree/macContract';
 import { rememberSuperMirrorIds } from './superMirrorIds';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
+import { PhoneBagNote } from '../handsfree/phone/PhoneBagNote';
 import { HandsfreeBackdrop, HandsfreeMark } from '../brand/HandsfreeMark';
 import { PushOptIn } from '../handsfree/phone/PushOptIn';
 import { PhoneLogSend } from '../handsfree/phone/PhoneLogSend';
@@ -236,6 +237,7 @@ export function PhoneChatList({
           <h1 className="mlist-h" tabIndex={-1}>{t('handsfree.list.title')}</h1>
           <PhoneChip />
         </div>
+        <PhoneBagNote />
         {projects.length > 1 && (
           <div className="mlist-projects" data-testid="list-projects">
             {projects.map((p) => (
@@ -307,6 +309,7 @@ export function PhoneChatList({
           </svg>
         </button>
       </div>
+      <PhoneBagNote />
       {projects.length > 1 && (
         // Several chosen projects (AC16): switch between exactly those, no tabs.
         <div className="mlist-projects" data-testid="list-projects">

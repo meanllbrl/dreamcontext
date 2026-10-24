@@ -44,6 +44,27 @@ describe('the phone chip (AC10)', () => {
   });
 });
 
+describe('the phone chip: very hot and in the bag (heat task)', () => {
+  const s = (over: object) => parsePhonePayload({ ...base, ...over })!;
+
+  it('order: low battery > very hot > cooling > in the bag > battery', () => {
+    expect(phoneChipView(s({ sleepAllowed: true, bagMode: true, thermal: { state: 'serious', slowed: 2 } }))).toMatchObject({ key: 'handsfree.mac.chipLow' });
+    expect(phoneChipView(s({ bagMode: true, thermal: { state: 'serious', slowed: 2 } }))).toEqual({ mac: 'warm', key: 'handsfree.mac.chipHot', pct: null });
+    expect(phoneChipView(s({ thermal: { state: 'critical', slowed: 0 } }))).toEqual({ mac: 'warm', key: 'handsfree.mac.chipHot', pct: null });
+    expect(phoneChipView(s({ bagMode: true, thermal: { state: 'fair', slowed: 1 } }))).toMatchObject({ key: 'handsfree.mac.chipWarm' });
+    expect(phoneChipView(s({ bagMode: true, battery: { percent: 40, charging: false }, thermal: { state: 'nominal', slowed: 0 } }))).toEqual({ mac: 'ok', key: 'handsfree.mac.chipBag', pct: null });
+  });
+
+  it('tr + en carry every new key', () => {
+    const src = readFileSync(join(__dirname, '../../dashboard/src/context/I18nContext.tsx'), 'utf8');
+    for (const key of ['bagHint', 'bagNote', 'heatLine', 'chipHot', 'chipBag', 'phoneBagNote', 'ok']) {
+      expect(src.split(`'handsfree.mac.${key}':`).length - 1, key).toBe(2);
+    }
+    expect(src).toContain("'handsfree.mac.heatLine': 'Mac got very hot · heavy steps run one at a time'");
+    expect(src).toContain("'handsfree.mac.chipBag': 'Mac · çantada'");
+  });
+});
+
 describe('the CLI status line (AC11)', () => {
   it('thermal: nominal / thermal: serious, N slowed', () => {
     expect(thermalLine({ thermal: { state: 'nominal', slowed: 0 } })).toBe('thermal: nominal');
@@ -65,11 +86,11 @@ describe('the strings (AC10)', () => {
     const src = readFileSync(join(__dirname, '../../dashboard/src/context/I18nContext.tsx'), 'utf8');
     for (const line of [
       "'handsfree.mac.bag': 'Bag mode'",
-      "'handsfree.mac.bagHint': 'Heavy jobs slow down when the Mac gets hot; off means full performance.'",
+      "'handsfree.mac.bagHint': 'Turn on if the lid goes shut in a bag.'",
       "'handsfree.mac.bagOn': 'Bag mode · heavy jobs slow down when the Mac gets hot. Return and start again to change it.'",
       "'handsfree.mac.bagOff': 'Normal mode · full performance, nothing is slowed. Return and start again to change it.'",
       "'handsfree.mac.bag': 'Çanta modu'",
-      "'handsfree.mac.bagHint': 'Isınınca ağır işlemler yavaşlar; kapalıyken tam performans'",
+      "'handsfree.mac.bagHint': 'Kapağı kapatıp çantaya koyacaksan aç.'",
       "'handsfree.mac.bagOn': 'Çanta modu · Mac ısınınca ağır işlemler yavaşlar. Değiştirmek için dönüp yeniden başlat.'",
       "'handsfree.mac.bagOff': 'Normal mod · tam performans, hiçbir şey yavaşlatılmaz. Değiştirmek için dönüp yeniden başlat.'",
     ]) expect(src).toContain(line);

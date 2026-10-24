@@ -159,6 +159,6 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // "ask the way any agent asks", +1,500 on 2026-10-23 for §7's presentation layouts, +150 on
     // 2026-10-23 for a child's pictures (`--for <child>`), +1,200 on 2026-10-23 for the agenda
     // About and reply links.
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(17_350);
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(17_450);
   });
 });

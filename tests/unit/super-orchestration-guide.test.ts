@@ -82,8 +82,9 @@ describe('super-orchestration guide: shape', () => {
   // +1,500 (2026-10-23): §7 Presentation layouts, the when-which table.
   // +1200 (2026-10-23): §2's message about one agenda line (~770, super-ajanda-madde-not) and
   // which answer is to which message (`<owner-msg ref>`, `<!-- re: -->`, the ↩ reply, ~360).
-  it('is at most 17,350 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(17_350);
+  // +100 (2026-10-24): heat limits heavy STEPS, never children; verify scripts take the heavy lock.
+  it('is at most 17,450 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(17_450);
   });
 
   it('has the seven sections in order', () => {
@@ -256,5 +257,22 @@ describe('super-orchestration guide: dreamcontext install ships it', () => {
     const installed = join(projectRoot, SUPER_ORCHESTRATION_GUIDE_PATH);
     expect(existsSync(installed)).toBe(true);
     expect(readFileSync(installed, 'utf-8')).toBe(GUIDE);
+  });
+});
+
+describe('heat and the heavy lock (the heat task, AC5)', () => {
+  const FLAT = readFileSync(join(__dirname, '../../skill/references/super-orchestration.md'), 'utf8').replace(/\s+/g, ' ');
+  it('per-project lock wording, heat limits steps not children, verify scripts through builder heavy in the background', () => {
+    expect(FLAT).toContain('Heavy steps run one at a time per project, at most 2 projects at once, 1 while the Mac is very hot');
+    expect(FLAT).toContain('Heat limits heavy STEPS, never children');
+    expect(FLAT).toContain('run tsc, builds, tests AND browser verify scripts only through `dreamcontext builder heavy -- <cmd>` or `builder test`');
+    expect(FLAT).toContain('a verify script in the background: `dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/<x>.mjs`');
+    expect(FLAT).not.toContain('heavy checks share 2 machine-wide slots');
+  });
+  it('the Develop recipe and goal-skill route verify scripts through the heavy lock', async () => {
+    const goal = readFileSync(join(__dirname, '../../skill-packs/goal-skill/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(goal).toContain('`dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/<x>.mjs`, never beside tests');
+    const src = readFileSync(join(__dirname, '../../src/lib/develop-recipe.ts'), 'utf8');
+    expect(src).toContain('A browser verify script\n  runs through the heavy lock too, in the background, never beside tests');
   });
 });

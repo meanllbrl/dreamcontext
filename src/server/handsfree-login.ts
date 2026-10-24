@@ -331,11 +331,11 @@ export function redirectToMacChat(req: IncomingMessage, res: ServerResponse): bo
   return true;
 }
 
-let macPhoneSource: () => MacPhonePayload = () => ({ mode: 'mac', battery: { percent: null, charging: true }, sleepAllowed: false, thermal: { state: null, slowed: 0 } });
+let macPhoneSource: () => MacPhonePayload = () => ({ mode: 'mac', battery: { percent: null, charging: true }, sleepAllowed: false, thermal: { state: null, slowed: 0 }, bagMode: false, startedAt: null });
 
 /** The Mac session registers the reader of its battery/sleep state for the phone's chip. */
 export function setMacPhoneSource(source: (() => MacPhonePayload) | null): void {
-  macPhoneSource = source ?? (() => ({ mode: 'mac', battery: { percent: null, charging: true }, sleepAllowed: false, thermal: { state: null, slowed: 0 } }));
+  macPhoneSource = source ?? (() => ({ mode: 'mac', battery: { percent: null, charging: true }, sleepAllowed: false, thermal: { state: null, slowed: 0 }, bagMode: false, startedAt: null }));
 }
 
 // ─── Offline page ───────────────────────────────────────────────────────────

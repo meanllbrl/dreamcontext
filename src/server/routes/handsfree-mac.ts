@@ -23,7 +23,7 @@ import { PushNotifier, type PushNotifierDeps } from '../../lib/handsfree/mac/pus
 import { setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
 import { MacModeError, MacSession, type MacSessionDeps } from '../../lib/handsfree/mac/session.js';
 import { isValidHostname } from '../../lib/handsfree/mac/tunnel.js';
-import type { MacErrorCode } from '../../lib/handsfree/mac/contract.js';
+import { MAC_THERMAL_STATES, type MacErrorCode, type MacThermalState } from '../../lib/handsfree/mac/contract.js';
 import { PHONE_LOG_INTERVAL_MS, PHONE_LOG_MAX_BYTES, parsePhoneLog, writePhoneLog } from '../../lib/handsfree/mac/phone-log.js';
 
 /**
@@ -107,7 +107,7 @@ function verifyPushSeam(): void {
   try { if (/^http:\/\/127\.0\.0\.1:\d+$/.test(new URL(origin).origin)) setVerifyPushOrigin(new URL(origin).origin); } catch { /* not a URL */ }
 }
 
-function verifyPowerSeam(): Partial<MacSessionDeps> {
+export function verifyPowerSeam(): Partial<MacSessionDeps> {
   const log = process.env.DREAMCONTEXT_MAC_VERIFY_POWER_LOG;
   if (!log) return {};
   if (!homeInTmp()) return {};
@@ -129,12 +129,23 @@ function verifyPowerSeam(): Partial<MacSessionDeps> {
     }
     return { code: 0, stdout: '', stderr: '' };
   };
-  // A verify must never slow the owner's real processes: the thermal reading stays nominal.
+  // A verify must never slow the owner's real processes: the reading is `<log>.thermal` when that
+  // holds exactly one of the four states (the verify flips it to `serious`), else nominal, and no
+  // real process may ever become a root (no `taskpolicy -b`), whatever the reading.
   return {
     powerRun: run, batteryPollMs: 2000, sudoersInstalled: () => true, installSudoers: async () => 'ok', removeSudoers: async () => 'ok',
-    readThermal: async () => 'nominal',
+    readThermal: async () => verifyThermalReading(log),
+    thermalFilter: () => false,
+    thermalPollMs: 2000,
     ...verifyFakeTunnelSeam(),
   };
+}
+
+/** The verify's thermal reading: `<log>.thermal`, one of the four states exactly, else nominal. */
+export function verifyThermalReading(log: string): MacThermalState {
+  let t = '';
+  try { t = readFileSync(`${log}.thermal`, 'utf8').trim(); } catch { /* missing: nominal */ }
+  return (MAC_THERMAL_STATES as readonly string[]).includes(t) ? t as MacThermalState : 'nominal';
 }
 
 /**
@@ -192,6 +203,23 @@ export function macSession(): MacSession {
       releasePhoneSessions,
       landPhoneTabs,
       notify,
+      // The first very-hot reading of a run: one phone push (the owner-question pattern below).
+      onHeat: (_s, run) => {
+        try {
+          const r = armPushNotifier().pushMacHeat({
+            key: `heat:${run.startedAt}`,
+            title: 'Mac is very hot',
+            body: run.bagMode
+              ? 'Heavy steps now run one at a time. If you can, take the Mac out of the bag.'
+              : 'Heavy steps now run one at a time; nothing was stopped.',
+          });
+          void r.done.catch((err) => { console.warn('[handsfree-push] heat push failed:', (err as Error)?.message ?? err); });
+          return r.targeted;
+        } catch (err) {
+          console.warn('[handsfree-push] heat push failed:', (err as Error)?.message ?? err);
+          return 0;
+        }
+      },
       ...verifyPowerSeam(),
     };
     session = new MacSession(deps);

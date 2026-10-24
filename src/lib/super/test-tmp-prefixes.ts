@@ -201,6 +201,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-graph-outside-',
   'dc-graph-outsidedir-',
   'dc-heal-',
+  'dc-heat-bag-',
+  'dc-heavy-heat-',
   'dc-heavy-slots-',
   'dc-hedge-',
   'dc-history-',

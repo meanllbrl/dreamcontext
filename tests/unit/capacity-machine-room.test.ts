@@ -115,3 +115,38 @@ describe('machineNotes (information for super state, never a hold)', () => {
     expect(machineNotes(machineRoom({ ...ok, swapUsedGb: null, swapTotalGb: null }, { platform: 'darwin' }))).toEqual([]);
   });
 });
+
+describe('heat in the machine facts (the heat task, AC4)', () => {
+  const ok: CapacityFacts = { availMemGb: 6, diskFreeGb: 80, load1: 1, totalMemGb: 16, swapUsedGb: 1, swapTotalGb: 4, claudeSessions: 3 };
+  const base: CapacityDeps = {
+    platform: 'darwin', vmStat: async () => 'nope', freeMem: () => 4 * GB,
+    statfs: async () => ({ bavail: 0, bsize: 4096 }), loadavg: () => [1], worktreeRoot: '/', now: () => 1,
+  };
+
+  it('injected readers fill heat {thermal, heavyLimit, bag}; none injected = null (no spawn)', async () => {
+    resetCapacityForTests();
+    const f = await readCapacityFacts({ ...base, thermal: async () => 'serious', bagMode: () => true });
+    expect(f.heat).toEqual({ thermal: 'serious', heavyLimit: 1, bag: true });
+    resetCapacityForTests();
+    const g = await readCapacityFacts({ ...base, thermal: async () => 'fair', bagMode: () => false });
+    expect(g.heat).toEqual({ thermal: 'fair', heavyLimit: 2, bag: false });
+    resetCapacityForTests();
+    const h = await readCapacityFacts({ ...base, thermal: async () => { throw new Error('x'); }, bagMode: () => { throw new Error('y'); } });
+    expect(h.heat).toEqual({ thermal: null, heavyLimit: 2, bag: false });
+    resetCapacityForTests();
+    expect((await readCapacityFacts(base)).heat).toBeNull();
+    resetCapacityForTests();
+  });
+
+  it('the very-hot and bag notes appear only in their states', () => {
+    const room = machineRoom(ok, { platform: 'darwin' });
+    expect(machineNotes(room, undefined, { thermal: 'fair', heavyLimit: 2, bag: false })).toEqual([]);
+    expect(machineNotes(room, undefined, null)).toEqual([]);
+    expect(machineNotes(room, undefined, { thermal: 'critical', heavyLimit: 1, bag: false })).toEqual([
+      'the Mac is very hot (macOS thermal state critical): heavy steps of different projects run one at a time machine-wide; builder heavy/test queue them by themselves; children are not limited, keep delegating',
+    ]);
+    expect(machineNotes(room, undefined, { thermal: 'nominal', heavyLimit: 2, bag: true })).toEqual([
+      'the Mac is in a bag (hands-free Bag mode): heavy processes slow down while it is warm',
+    ]);
+  });
+});

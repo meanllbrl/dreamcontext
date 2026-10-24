@@ -407,6 +407,9 @@ export interface GovernorOpts {
   clamp?: boolean;
   /** The ledger after every batch of changes (→ state.json). */
   onChange?: (ledger: LedgerEntry[]) => void;
+  /** Every reading, in both modes, before any clamping (the session's heat push). A throw
+   *  never skips the clamp step. */
+  onState?: (s: MacThermalState | null) => void;
   /** The log file; null = no log. Defaults to `~/.dreamcontext/handsfree-mac/thermal.log`. */
   logPath?: string | null;
   logCap?: number;
@@ -509,6 +512,7 @@ export class ThermalGovernor {
     if (level === null) { this.nullStreak++; this.nominalStreak = 0; }
     else if (level === 'nominal') { this.nominalStreak++; this.nullStreak = 0; }
     else { this.nominalStreak = 0; this.nullStreak = 0; }
+    try { this.o.onState?.(level); } catch { /* the heat push is best-effort */ }
 
     // Normal mode: the reading above is all; no ps, no clamp.
     if (this.o.clamp === false) return;

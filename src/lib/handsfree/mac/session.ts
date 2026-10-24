@@ -17,8 +17,8 @@ import { execFileSync } from 'node:child_process';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  MAC_BATTERY_FLOOR_PERCENT, MAC_BATTERY_POLL_MS, MAC_LOGIN_TOKEN_PARAM, MAC_PROBE_HEADER,
-  type MacBattery, type MacDevice, type MacErrorCode, type MacPhase, type MacStatus, type MacThermal, type MacThermalState,
+  HEAT_HOT, MAC_BATTERY_FLOOR_PERCENT, MAC_BATTERY_POLL_MS, MAC_LOGIN_TOKEN_PARAM, MAC_PROBE_HEADER,
+  type MacBattery, type MacDevice, type MacErrorCode, type MacPhase, type MacPhonePayload, type MacStatus, type MacThermal, type MacThermalState,
 } from './contract.js';
 import * as power from './power.js';
 import { readMacPrefs, writeMacPrefs } from './prefs.js';
@@ -75,7 +75,7 @@ export interface MacSessionDeps {
   /** The phone listener's public origin / probe value / chip source (phone-origin.ts). */
   setPublicOrigin: (origin: string | null) => void;
   setProbeNonce: (nonce: string | null) => void;
-  setPhoneSource: (src: (() => { mode: 'mac'; battery: MacBattery; sleepAllowed: boolean; thermal: MacThermal }) | null) => void;
+  setPhoneSource: (src: (() => MacPhonePayload) | null) => void;
   /** The project the phone may see and reach (phone-origin.ts); null when Mac mode is off. */
   setExposedVaults?: (names: readonly string[]) => void;
   /** Return semantics on the chat registry: phone-held sessions let go, nothing cut. */
@@ -93,6 +93,9 @@ export interface MacSessionDeps {
   thermalPollMs?: number;
   readThermal?: () => Promise<MacThermalState | null>;
   thermalFilter?: (row: thermal.HeavyRow) => boolean;
+  /** The first very-hot reading of a run (serious/critical): the phone push. Returns how many
+   *  devices it targeted; 0 (no phone subscribed yet) consumes nothing, the next one retries. */
+  onHeat?: (s: MacThermalState, run: { bagMode: boolean; startedAt: string }) => number;
   ensureBinary?: () => Promise<string>;
   setupFixedTunnel?: typeof tunnel.setupFixedTunnel;
   makeSupervisor?: (o: ConstructorParameters<typeof tunnel.TunnelSupervisor>[0], e: tunnel.SupervisorEvents) => Pick<tunnel.TunnelSupervisor, 'start' | 'stop' | 'pid' | 'url'>;
@@ -217,6 +220,9 @@ export class MacSession {
   private bagMode: boolean | null = null;
   /** What the last end did, for the notification that reports it. */
   private lastEnd: MacEnd = { revoked: true, powerRestored: true };
+  /** This run's very-hot push went out to at least one phone (reset at every start). */
+  private heatPushed = false;
+  private heatWarned = false;
   /** The tunnel gave up while start was still arming: start ends Mac mode once it is on. */
   private gaveUpWhileStarting = false;
   private readonly home: string;
@@ -251,6 +257,20 @@ export class MacSession {
       // While on: the run's own mode, not the file it was started from.
       bagMode: this.phase !== 'off' && this.bagMode !== null ? this.bagMode : readMacPrefs(this.home).bagMode,
     };
+  }
+
+  /** Every governor reading: the first very-hot one of a run pushes the phone (once a device
+   *  was actually targeted). Never throws: the governor's tick goes on. */
+  private onHeatReading(level: MacThermalState | null): void {
+    if (this.heatPushed || !this.d.onHeat || !this.state || !level || !(HEAT_HOT as readonly string[]).includes(level)) return;
+    let targeted = 0;
+    try {
+      targeted = this.d.onHeat(level, { bagMode: this.bagMode === true, startedAt: this.state.startedAt });
+    } catch (err) {
+      if (!this.heatWarned) { this.heatWarned = true; console.warn('[handsfree-mac] heat push failed:', (err as Error)?.message ?? err); }
+      targeted = 0;
+    }
+    this.heatPushed = targeted > 0;
   }
 
   private thermalReleaseOpts(): Omit<thermal.ReleaseOpts, 'deadline'> {
@@ -414,6 +434,8 @@ export class MacSession {
       const quick = { firstAskAfterMs: tunnel.QUICK_DNS_GRACE_MS, budgetMs: tunnel.QUICK_PROBE_BUDGET_MS };
       const ok = await (this.d.probe ?? ((u, n) => tunnel.probeReachable(u, n, { header: MAC_PROBE_HEADER, ...(fixed ? {} : quick) })))(url, nonce);
       if (!ok) throw new MacModeError('mac_probe_failed', 'The tunnel did not reach the phone listener.');
+      this.heatPushed = false;
+      this.heatWarned = false;
       // State BEFORE power, so a crash right after arming is still repaired at the next boot.
       this.state = {
         on: true, serverPid: this.d.serverPid ?? process.pid, tunnelPid: this.supervisor.pid, tunnelBin: bin,
@@ -425,6 +447,7 @@ export class MacSession {
         serverPid: this.d.serverPid ?? process.pid, home: this.home, run: this.d.thermalRun,
         readThermal: this.d.readThermal, pollMs: this.d.thermalPollMs, filter: this.d.thermalFilter,
         clamp: bagMode,
+        onState: (level) => this.onHeatReading(level),
         onChange: (clamped) => { if (this.state) { this.state = { ...this.state, clamped }; writeState(this.home, this.state); } },
       });
       this.governor.start();
@@ -443,6 +466,7 @@ export class MacSession {
       this.d.setPhoneSource(() => ({
         mode: 'mac', battery: { ...this.battery!.last }, sleepAllowed: this.battery!.sleepAllowed,
         thermal: this.governor?.snapshot() ?? { state: null, slowed: 0 },
+        bagMode, startedAt: this.state?.startedAt ?? null,
       }));
       this.phase = 'on';
       if (this.gaveUpWhileStarting) {

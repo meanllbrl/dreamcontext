@@ -1,12 +1,16 @@
 import { useI18n } from '../../../context/I18nContext';
 import { fill } from '../HandsfreeParts';
 import { LiveBadge } from '../LiveBadge';
+import { isHotState } from '../macContract';
 import { usePhoneLink, type PhoneState } from './phoneState';
 
-/** What the chip says: a low battery first (the Mac may sleep), then cooling down, then the battery. */
+/** What the chip says: a low battery first (the Mac may sleep), then very hot (heavy steps run
+ *  one at a time), then cooling down, then in the bag, then the battery. */
 export function phoneChipView(s: PhoneState): { mac: 'low' | 'warm' | 'ok'; key: string; pct: number | null } {
   if (s.sleepAllowed) return { mac: 'low', key: 'handsfree.mac.chipLow', pct: null };
+  if (isHotState(s.thermal.state)) return { mac: 'warm', key: 'handsfree.mac.chipHot', pct: null };
   if (s.thermal.slowed > 0) return { mac: 'warm', key: 'handsfree.mac.chipWarm', pct: null };
+  if (s.bagMode) return { mac: 'ok', key: 'handsfree.mac.chipBag', pct: null };
   const pct = s.battery.percent;
   return pct !== null && !s.battery.charging ? { mac: 'ok', key: 'handsfree.mac.chipBattery', pct } : { mac: 'ok', key: 'handsfree.mac.chip', pct: null };
 }

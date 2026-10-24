@@ -76,7 +76,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/health': agnostic('public: the build version only on a phone socket (and the reachability probe value); side-effect free'),
   'POST /api/handsfree/login': agnostic('public: the phone signs in (rate-limited, scrypt-gated)'),
   'POST /api/handsfree/logout': agnostic('the phone signs itself out (only its own device)'),
-  'GET /api/handsfree/phone': agnostic('the phone\'s Mac chip (battery, sleep allowed); side-effect free'),
+  'GET /api/handsfree/phone': agnostic('the phone\'s Mac chip (battery, sleep allowed, heat state, Bag mode and when the run started); side-effect free'),
   'GET /api/handsfree/push/key': agnostic('the VAPID public key the phone subscribes with; side-effect free'),
   'PUT /api/handsfree/push/subscription': agnostic('the phone stores its own push subscription (device id from its cookie, never the body)'),
   'DELETE /api/handsfree/push/subscription': agnostic('the phone removes its own push subscription'),

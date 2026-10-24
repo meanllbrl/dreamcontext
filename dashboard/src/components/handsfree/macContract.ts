@@ -58,7 +58,13 @@ export interface MacStatus {
 
 export interface MacDevice { id: string; label: string; createdAt: string }
 
-export interface MacPhonePayload { mode: 'mac'; battery: MacBattery; sleepAllowed: boolean; thermal: MacThermal }
+export interface MacPhonePayload { mode: 'mac'; battery: MacBattery; sleepAllowed: boolean; thermal: MacThermal; bagMode: boolean; startedAt: string | null }
+
+/** The readings that mean "very hot": the panel's hot line and the phone's hot chip. */
+export const HEAT_HOT = ['serious', 'critical'] as const;
+export function isHotState(s: MacThermalState | null | undefined): boolean {
+  return s != null && (HEAT_HOT as readonly string[]).includes(s);
+}
 
 export interface LiveChatWire { conversationId: string; vault: string | null; title: string | null; busy: boolean; state: 'working' | 'asking' | 'idle'; lastLine: string | null; updatedAt: number | null }
 

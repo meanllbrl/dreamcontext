@@ -464,6 +464,9 @@ try {
     await phone.locator('[data-testid="list-dashboard"]').click();
     await until(async () => (await phone.locator('[data-testid="phone-bar"]:visible').count()) === 1, 8000);
     for (const [key, label] of PAGES) {
+      // A page the drawer no longer lists is already red in the AC11 check above: skip it here
+      // instead of timing out on its click, so the checks after this loop still run.
+      if (!labels.includes(label)) { report.note(`(skipped ${key}: "${label}" is not in the drawer)`); continue; }
       await phone.locator('[data-testid="phone-menu"]').click();
       await until(async () => (await phone.locator('.sidebar--phone[data-open]').count()) === 1, 5000);
       await drawerItem(phone, label).click();
@@ -895,7 +898,8 @@ try {
     const r = (el) => (el ? el.getBoundingClientRect() : null);
     const rs = r(sheet); const rr = r(row); const rw = r(sw);
     return {
-      afterChecklist: row?.previousElementSibling?.getAttribute('data-testid') === 'hf-mac-projects',
+      // The checklist sits inside its own card: the row's previous sibling is that card.
+      afterChecklist: !!row?.previousElementSibling?.matches('[data-testid="hf-mac-projects"], :has(> [data-testid="hf-mac-projects"])'),
       sheetOverflow: sheet ? sheet.scrollWidth > sheet.clientWidth + 1 : true,
       pageOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
       inSheet: !!(rs && rr && rr.left >= rs.left - 1 && rr.right <= rs.right + 1),
@@ -906,7 +910,7 @@ try {
   report.check('Bag mode: the row shows before Start', await until(async () => await bagRow.isVisible(), 10000));
   const bagText = (await bagRow.textContent().catch(() => '')) ?? '';
   report.check('Bag mode: the row reads "Bag mode" with its one-line hint',
-    bagText.includes('Bag mode') && bagText.includes('Heavy jobs slow down when the Mac gets hot; off means full performance.'), bagText);
+    bagText.includes('Bag mode') && bagText.includes('Turn on if the lid goes shut in a bag.'), bagText);
   report.check('Bag mode: the switch is on by default (never chosen, or a start that sent no choice)', await bagSwitch.isChecked().catch(() => false));
   const g1440 = await bagGeom(desk);
   report.check('Bag mode: the row sits directly under the project checklist', g1440.afterChecklist, JSON.stringify(g1440));
@@ -956,6 +960,98 @@ try {
     try { prefs = JSON.parse(readFileSync(join(HOME, '.dreamcontext', 'handsfree-mac', 'prefs.json'), 'utf8')); } catch (e) { prefs = String(e); }
     report.check('Bag mode: prefs.json holds { bagMode: false }', JSON.stringify(prefs) === '{"bagMode":false}', JSON.stringify(prefs));
     await desk.screenshot({ path: join(SHOTS, '1440-mac-panel-remembered.png') });
+
+    // ── Heat (the heat task): the Bag note, the phone chip + note, the very-hot line. ONE server
+    // run; the governor reads `<POWER_LOG>.thermal` (the seam), so `serious` is a file write and
+    // the seam's filter keeps every real process unslowed (no clamp line in thermal.log).
+    console.log('\n── Heat: Bag note, phone chip, very hot');
+    const THERMAL = `${POWER_LOG}.thermal`;
+    writeFileSync(THERMAL, 'nominal');
+    const bagNote = desk.locator('[data-testid="hf-mac-bag-note"]');
+    report.check('Heat: Bag switch off → no Bag note', await until(async () => (await bagNote.count()) === 0, 3000));
+    await bagSwitch.click();
+    report.check('Heat: Bag switch on → the Bag note shows under it',
+      await until(async () => (await bagNote.isVisible().catch(() => false)) && ((await bagNote.textContent()) ?? '').includes('In a bag the Mac cools slowly'), 3000)
+      && await desk.evaluate(() => document.querySelector('[data-testid="hf-mac-bag-row"]')?.nextElementSibling?.getAttribute('data-testid') === 'hf-mac-bag-note'));
+    await desk.waitForTimeout(400); // the switch's slide, so the shot shows it on
+    await desk.screenshot({ path: join(SHOTS, '1440-mac-panel-bag-note.png') });
+    await bagSwitch.click();
+    report.check('Heat: Bag switch off again → the note is gone', await until(async () => (await bagNote.count()) === 0, 3000));
+    await bagSwitch.click();
+    await desk.locator('[data-testid="hf-mac-start"]').click();
+    report.check('Heat: Mac mode starts in Bag mode',
+      await until(async () => (await desk.locator('[data-testid="hf-mac-panel"][data-phase="on"]').count()) > 0 && (await mac(port, 'GET', 'status')).json.bagMode === true, 30000));
+
+    /** A phone signed in through the run's own QR link, on the phone listener (a real phone socket). */
+    const signInPhone = async (tag) => {
+      const link = (await mac(port, 'POST', 'qr')).json.url;
+      const c = await browser.newContext({ ...devices['iPhone 13'], viewport: { width: 390, height: 844 } });
+      const p = await c.newPage();
+      watchers.push(watch(p, tag));
+      await p.goto(link, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      await p.waitForTimeout(3000);
+      await dismiss(p);
+      return { c, p };
+    };
+    const chipText = (p) => p.locator('[data-testid="phone-live-badge"]:visible').first().textContent().catch(() => '');
+    let ph = await signInPhone('phone-heat');
+    const phoneNote = ph.p.locator('[data-testid="phone-bag-note"]:visible');
+    report.check('Heat: phone 390: the chip reads "Mac · in the bag"', await until(async () => ((await chipText(ph.p)) ?? '').includes('Mac · in the bag'), 20000), await chipText(ph.p));
+    report.check('Heat: phone 390: the Bag note shows under the header', await until(async () => (await phoneNote.count()) === 1, 10000));
+    const pm = await ph.p.evaluate(() => ({ overflowX: document.documentElement.scrollWidth > window.innerWidth + 1 }));
+    report.check('Heat: phone 390: no horizontal overflow', !pm.overflowX, JSON.stringify(pm));
+    await ph.p.screenshot({ path: join(SHOTS, '390-phone-bag.png') });
+    await ph.p.locator('[data-testid="phone-bag-note-ok"]:visible').click();
+    report.check('Heat: phone: OK hides the note', await until(async () => (await phoneNote.count()) === 0, 3000));
+    await ph.p.reload({ waitUntil: 'domcontentloaded' });
+    await ph.p.waitForTimeout(3000);
+    report.check('Heat: phone: after a reload the note stays dismissed for this run',
+      await until(async () => ((await chipText(ph.p)) ?? '').includes('in the bag'), 20000) && (await phoneNote.count()) === 0);
+
+    writeFileSync(THERMAL, 'serious');
+    const hotLine = desk.locator('[data-testid="hf-mac-heat"]');
+    report.check('Heat: Mac panel 1440: the very-hot line shows after macOS says serious',
+      await until(async () => ((await hotLine.textContent().catch(() => '')) ?? '').includes('Mac got very hot · heavy steps run one at a time'), 20000));
+    await desk.screenshot({ path: join(SHOTS, '1440-mac-panel-hot.png') });
+    await ph.p.reload({ waitUntil: 'domcontentloaded' });
+    report.check('Heat: phone 390: the chip reads "Mac very hot"', await until(async () => ((await chipText(ph.p)) ?? '').includes('Mac very hot'), 20000), await chipText(ph.p));
+    await ph.p.screenshot({ path: join(SHOTS, '390-phone-hot.png') });
+    const hotNarrowCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const hotNarrow = await hotNarrowCtx.newPage();
+    watchers.push(watch(hotNarrow, 'desktop-390-hot'));
+    await hotNarrow.addInitScript(() => { Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true }); });
+    await hotNarrow.goto(`${base}/?vault=proj&page=tasks`, { waitUntil: 'domcontentloaded' });
+    await hotNarrow.waitForTimeout(4000);
+    await dismiss(hotNarrow);
+    for (let i = 0; i < 3; i++) { await hotNarrow.keyboard.press('Escape'); await hotNarrow.waitForTimeout(200); }
+    const hotBtn = hotNarrow.locator('[data-testid="hf-button"]:visible').first();
+    if (await hotBtn.count()) {
+      await hotBtn.click();
+      const shown = await until(async () => await hotNarrow.locator('[data-testid="hf-mac-heat"]').isVisible().catch(() => false), 15000);
+      const ov = await hotNarrow.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+      report.check('Heat: Mac panel 390: the very-hot line shows, no horizontal overflow', shown && !ov, JSON.stringify({ shown, ov }));
+      await hotNarrow.screenshot({ path: join(SHOTS, '390-mac-panel-hot.png') });
+    } else {
+      report.note('Heat: the Hands-free button is not shown at 390 px: no 390 hot panel');
+    }
+    await hotNarrowCtx.close();
+    let tlog = '';
+    try { tlog = readFileSync(join(HOME, '.dreamcontext', 'handsfree-mac', 'thermal.log'), 'utf8'); } catch { /* none: nothing clamped */ }
+    report.check('Heat: the scratch thermal.log has no clamp line (the seam slows nothing)', !/ clamp /.test(tlog), tlog.split('\n').filter((l) => / clamp /.test(l)).slice(0, 3).join(' | '));
+
+    // Return + start: a new run shows the note again (the phone signs in again: Return signs it out).
+    writeFileSync(THERMAL, 'nominal');
+    await desk.locator('[data-testid="hf-mac-return"]').click();
+    await until(async () => (await desk.locator('[data-testid="hf-mac-panel"][data-phase="off"]').count()) > 0, 20000);
+    await ph.c.close();
+    await desk.locator('[data-testid="hf-mac-start"]').click();
+    await until(async () => (await desk.locator('[data-testid="hf-mac-panel"][data-phase="on"]').count()) > 0, 30000);
+    ph = await signInPhone('phone-heat-2');
+    report.check('Heat: phone: after Return + start the Bag note shows again',
+      await until(async () => (await ph.p.locator('[data-testid="phone-bag-note"]:visible').count()) === 1, 20000));
+    await ph.c.close();
+    await desk.locator('[data-testid="hf-mac-return"]').click();
+    await until(async () => (await desk.locator('[data-testid="hf-mac-panel"][data-phase="off"]').count()) > 0, 20000);
   } else {
     report.note('(Bag mode: Start / running / remembered run only under --local: a full run starts no second quick tunnel)');
   }
@@ -978,6 +1074,17 @@ try {
     report.check('Bag mode: 390 px: the row shows inside the panel, no horizontal overflow',
       shown && g390.inSheet && !g390.sheetOverflow && !g390.pageOverflow, JSON.stringify(g390));
     await narrow.screenshot({ path: join(SHOTS, '390-mac-panel-bag.png') });
+    if (LOCAL) {
+      const nSwitch = narrow.locator('[data-testid="hf-mac-bag-row"] input[role="switch"]');
+      const nNote = narrow.locator('[data-testid="hf-mac-bag-note"]');
+      if (!(await nSwitch.isChecked())) await nSwitch.click();
+      const on = await until(async () => await nNote.isVisible().catch(() => false), 3000);
+      const ov = await narrow.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+      await narrow.screenshot({ path: join(SHOTS, '390-mac-panel-bag-note.png') });
+      await nSwitch.click();
+      const off = await until(async () => (await nNote.count()) === 0, 3000);
+      report.check('Heat: Mac panel 390: the Bag note shows with the switch on, hides off, no overflow', on && off && !ov, JSON.stringify({ on, off, ov }));
+    }
   } else {
     report.note('Bag mode: the Hands-free button is not shown at 390 px (the window chrome hides it): no 390 panel');
   }

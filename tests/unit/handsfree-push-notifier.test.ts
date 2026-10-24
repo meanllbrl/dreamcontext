@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { onChatChange, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
-import { PushNotifier, pushFor, pushUrl, type PushPayload } from '../../src/lib/handsfree/mac/push-notifier.js';
+import { MAC_HEAT_SESSION, PushNotifier, pushFor, pushUrl, type PushPayload } from '../../src/lib/handsfree/mac/push-notifier.js';
 import { PushStore } from '../../src/lib/handsfree/mac/push-store.js';
 import { parseAppLink } from '../../dashboard/src/lib/appLink.js';
 
@@ -217,5 +217,64 @@ describe('the registry records how a turn ended', () => {
     expect(changes[1].seq!).toBeGreaterThan(changes[0].seq!);
     // pushFor reads the same thing.
     expect(pushFor({ entry: { sessionId: 'x', conversationId: null, vault: 'proj', mode: 'basic', title: '', status: 'idle', lastAssistantText: [], pendingQuestion: null, updatedAt: '', lastFrameAt: '', toolsInFlight: 0, lastTurn: { endedAt: '', interrupted: true, resultSeq: 1 } }, from: 'working' })).toBeNull();
+  });
+});
+
+describe('the Mac heat push (the heat task, AC7)', () => {
+  const make = (send: (sub: unknown, p: PushPayload) => Promise<{ ok: boolean; status: number | null; gone: boolean }>, now = () => 1_000) => new PushNotifier({
+    exposed: () => (project ? [project, 'other'] : []),
+    store: () => store,
+    deviceValid: (h) => valid.has(h),
+    // The phone shows some chat; the heat push's sentinel session is no chat, so never suppressed.
+    showingDevice: (sid) => (sid === MAC_HEAT_SESSION ? null : PHONE),
+    send: send as never,
+    now,
+  });
+  const heat = { key: 'heat:2026-10-24T20:00:00.000Z', title: 'Mac is very hot', body: 'Heavy steps now run one at a time. If you can, take the Mac out of the bag.' };
+  const ok = async (sub: unknown, p: PushPayload) => { sent.push({ endpoint: (sub as { endpoint: string }).endpoint, payload: p }); return { ok: true, status: 201, gone: false }; };
+
+  it('nothing exposed: 0, nothing sent', async () => {
+    project = null;
+    const r = make(ok).pushMacHeat(heat);
+    expect(r.targeted).toBe(0);
+    expect(await r.done).toBe(0);
+    expect(sent).toEqual([]);
+  });
+
+  it('no device: the key is NOT consumed; once a device subscribes it pushes; the same key never again', async () => {
+    const n = make(ok);
+    store.remove(PHONE); store.remove(IPAD);
+    expect(n.pushMacHeat(heat).targeted).toBe(0);
+    store.put(PHONE, { endpoint: 'https://web.push.apple.com/phone', keys: KEYS });
+    const r = n.pushMacHeat(heat);
+    expect(r.targeted).toBe(1);
+    expect(await r.done).toBe(1);
+    expect(n.pushMacHeat(heat).targeted).toBe(0);
+    expect(sent).toHaveLength(1);
+    const p = sent[0].payload;
+    expect(p).toEqual({ kind: 'mac', vault: 'proj', conversationId: null, title: heat.title, body: heat.body, url: pushUrl('proj', null) });
+    // No path, command or chat text: the project page and the two fixed lines only.
+    expect(p.url).toBe('/?vault=proj');
+    expect(JSON.stringify(p)).not.toMatch(/\/Users|scripts\/|tsc|vitest/);
+  });
+
+  it('an invalid device is pruned and skipped; the rate limit applies', async () => {
+    valid = new Set([PHONE]);
+    const r = make(ok).pushMacHeat(heat);
+    expect(r.targeted).toBe(1);
+    await r.done;
+    expect(store.entries().map(([d]) => d)).toEqual([PHONE]);
+    sent = [];
+    // The phone used its whole minute already: no target, the key stays unspent.
+    const n = make(ok, () => 5_000);
+    for (let i = 0; i < 30; i++) (n as unknown as { allow: (d: string) => boolean }).allow(PHONE);
+    expect(n.pushMacHeat({ ...heat, key: 'heat:b' }).targeted).toBe(0);
+    expect(sent).toEqual([]);
+  });
+
+  it('a rejecting send resolves done with a rejection the caller catches; nothing throws synchronously', async () => {
+    const r = make(async () => { throw new Error('push service down'); }).pushMacHeat(heat);
+    expect(r.targeted).toBe(2);
+    await expect(r.done).rejects.toThrow('push service down');
   });
 });

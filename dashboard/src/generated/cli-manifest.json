@@ -691,7 +691,7 @@
     },
     {
       "path": "builder heavy",
-      "desc": "Run a type-check, build or test run holding this repo's heavy lock and one of the machine's 2 heavy slots (every repo together), one at a time per repo (exit: the command's, or 75 = busy, nothing ran)",
+      "desc": "Run a type-check, build, test run or browser verify script holding this repo's heavy lock and one of the machine's 2 heavy slots (every repo together; 1 while macOS says the Mac is very hot), one at a time per repo (exit: the command's, or 75 = busy, nothing ran)",
       "args": [
         "<command...>"
       ],

@@ -743,3 +743,100 @@ describe('an end that could not restore power or sign the phones out says so, an
     expect(existsSync(powerPendingPathOf(home))).toBe(false);
   });
 });
+
+describe('the heat push in the session (the heat task, AC6, AC9)', () => {
+  beforeEach(async () => { auth.store.setPassphrase(await hashPassphrase('a b c d e f')); });
+
+  function heatSession(level: { v: 'nominal' | 'fair' | 'serious' | 'critical' | null }, onHeat: MacSessionDeps['onHeat'], over: Partial<MacSessionDeps> = {}) {
+    let phone: (() => unknown) | null = null;
+    const s = new MacSession(deps({
+      thermalPollMs: 5, readThermal: async () => level.v, onHeat,
+      setPhoneSource: (src) => { phone = src; }, ...over,
+    }));
+    return { s, phone: () => phone?.() as Record<string, unknown> };
+  }
+  const ticks = (n = 6) => new Promise((r) => setTimeout(r, 5 * n + 20));
+
+  it('never at fair; a hot reading with 0 targeted consumes nothing and the next one retries; once targeted, never again this run', async () => {
+    const level = { v: 'fair' as const as 'fair' | 'serious' };
+    let targeted = 0;
+    const calls: Array<{ s: string; bagMode: boolean; startedAt: string }> = [];
+    const { s } = heatSession(level, (st, run) => { calls.push({ s: st, ...run }); return targeted; });
+    await s.start({ vaults: ['proj'], bagMode: false });
+    await ticks();
+    expect(calls).toEqual([]);
+    level.v = 'serious';
+    await vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(2), { timeout: 2000 });
+    expect(calls[0]).toMatchObject({ s: 'serious', bagMode: false, startedAt: s.status().startedAt });
+    targeted = 1;
+    const before = calls.length;
+    await vi.waitFor(() => expect(calls.length).toBe(before + 1), { timeout: 2000 });
+    await ticks();
+    expect(calls.length).toBe(before + 1);
+    // A new run pushes again.
+    await s.stop();
+    await s.start({ vaults: ['proj'], bagMode: false });
+    await vi.waitFor(() => expect(calls.length).toBe(before + 2), { timeout: 2000 });
+    await s.stop();
+  });
+
+  it('an onHeat that throws: the tick goes on, warned once per run', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let n = 0;
+    const { s } = heatSession({ v: 'critical' }, () => { n++; throw new Error('push broke'); });
+    await s.start({ vaults: ['proj'], bagMode: false });
+    await vi.waitFor(() => expect(n).toBeGreaterThanOrEqual(3), { timeout: 2000 });
+    expect(s.status().thermal.state).toBe('critical');
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('heat push failed'))).toHaveLength(1);
+    warn.mockRestore();
+    await s.stop();
+  });
+
+  it('the phone payload carries bagMode and startedAt', async () => {
+    const { s, phone } = heatSession({ v: 'nominal' }, () => 0);
+    await s.start({ vaults: ['proj'], bagMode: true });
+    expect(phone()).toMatchObject({ mode: 'mac', bagMode: true, startedAt: s.status().startedAt });
+    expect(typeof phone().startedAt).toBe('string');
+    await s.stop();
+  });
+});
+
+describe('the verify thermal seam (the heat task, AC8)', () => {
+  beforeEach(async () => { auth.store.setPassphrase(await hashPassphrase('a b c d e f')); });
+
+  it('reads <POWER_LOG>.thermal (four states only, else nominal); with its filter, Bag on + serious runs no taskpolicy -b', async () => {
+    const { verifyPowerSeam, verifyThermalReading } = await import('../../src/server/routes/handsfree-mac.js');
+    const log = join(home, 'power.log');
+    expect(verifyThermalReading(log)).toBe('nominal');
+    for (const [text, want] of [['serious', 'serious'], ['critical\n', 'critical'], ['hot', 'nominal'], ['serious; rm -rf', 'nominal']] as const) {
+      writeFileSync(`${log}.thermal`, text);
+      expect(verifyThermalReading(log)).toBe(want);
+    }
+    // Outside a scratch HOME, or without POWER_LOG, the seam gives nothing.
+    const oldLog = process.env.DREAMCONTEXT_MAC_VERIFY_POWER_LOG;
+    const oldHome = process.env.HOME;
+    try {
+      delete process.env.DREAMCONTEXT_MAC_VERIFY_POWER_LOG;
+      expect(verifyPowerSeam()).toEqual({});
+      process.env.DREAMCONTEXT_MAC_VERIFY_POWER_LOG = log;
+      process.env.HOME = '/Users/someone';
+      expect(verifyPowerSeam()).toEqual({});
+      process.env.HOME = home;
+      const seam = verifyPowerSeam();
+      expect(seam.thermalFilter?.({} as never)).toBe(false);
+      writeFileSync(`${log}.thermal`, 'serious');
+      expect(await seam.readThermal!()).toBe('serious');
+      // The seam's filter in a real session: Bag on, serious, a burner — never a -b.
+      world.add({ pid: 10 });
+      const s = new MacSession(deps({ thermalPollMs: 5, readThermal: seam.readThermal, thermalFilter: seam.thermalFilter }));
+      await s.start({ vaults: ['proj'], bagMode: true });
+      await vi.waitFor(() => expect(s.status().thermal.state).toBe('serious'), { timeout: 2000 });
+      await new Promise((r) => setTimeout(r, 60));
+      expect(world.calls.filter((c) => c.includes('taskpolicy -b'))).toEqual([]);
+      await s.stop();
+    } finally {
+      if (oldLog === undefined) delete process.env.DREAMCONTEXT_MAC_VERIFY_POWER_LOG; else process.env.DREAMCONTEXT_MAC_VERIFY_POWER_LOG = oldLog;
+      process.env.HOME = oldHome;
+    }
+  });
+});
