@@ -401,7 +401,9 @@ function isSuperCommand(it: EventItemLike): boolean {
  * Fold each event turn of a slice into ONE line (pure). A turn runs from its injected item to
  * the next user item (an owner message, steered or not, ends it and renders as his bubble) or
  * the next injected one. A turn whose batch is in `ownerBatches`, or that the owner expanded,
- * keeps every item. Built per windowed slice, so a group never straddles a window edge.
+ * keeps every item. A recap is never kept flat: its whole turn is drawn inside the recap card,
+ * which is open by default (owner 2026-10-23). Built per windowed slice, so a group never
+ * straddles a window edge.
  */
 export function groupSuperEventTurns<T extends EventItemLike>(
   items: readonly T[],
@@ -415,7 +417,7 @@ export function groupSuperEventTurns<T extends EventItemLike>(
     const ev = it.kind === 'user' && typeof it.text === 'string' ? superBatchOf(it.text) : null;
     if (it.kind === 'user') open = null;
     if (ev) {
-      const full = (ev.batch !== null && owner.has(ev.batch)) || opts.expanded.has(it.id);
+      const full = ev.kind !== 'recap' && ((ev.batch !== null && owner.has(ev.batch)) || opts.expanded.has(it.id));
       open = { anchor: it.id, kind: ev.kind, batch: ev.batch, items: ev.items, commands: 0, full, folded: [] };
       groups.set(it.id, open);
       kept.push(it);
