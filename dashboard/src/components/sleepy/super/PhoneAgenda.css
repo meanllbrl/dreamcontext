@@ -32,12 +32,13 @@
 }
 .phone-agenda-strip-part { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .phone-agenda-strip-part + .phone-agenda-strip-part::before { content: '·'; margin-right: var(--space-2); color: var(--color-text-tertiary); }
-.phone-agenda-strip-waiting { display: inline-flex; align-items: center; gap: 6px; color: var(--color-text); font-weight: var(--font-weight-semibold); }
-.phone-agenda-strip-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--mood-waiting); }
+.phone-agenda-strip-waiting { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-text); font-weight: var(--font-weight-semibold); }
+.phone-agenda-strip-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--mood-waiting); }
 .phone-agenda-strip-chev { flex: 0 0 auto; margin-left: auto; color: var(--color-text-tertiary); }
 
 .phone-agenda-layer { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; justify-content: flex-end; }
-.phone-agenda-backdrop { position: absolute; inset: 0; background: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.phone-agenda-backdrop { position: absolute; inset: 0; /* Dims in both themes: the palette's charcoal, never the (light in dark) text colour. */
+  background: color-mix(in srgb, var(--color-ink) 55%, transparent); }
 .phone-agenda-sheet {
   position: relative;
   box-sizing: border-box;
@@ -56,7 +57,7 @@
 @media (prefers-reduced-motion: reduce) { .phone-agenda-sheet { animation: none; } }
 
 .phone-agenda-grip { flex: 0 0 auto; padding: var(--space-2) var(--space-2) 0 var(--space-4); touch-action: none; }
-.phone-agenda-grip-bar { display: block; width: 36px; height: 4px; margin: 0 auto var(--space-2); border-radius: 2px; background: var(--color-border); }
+.phone-agenda-grip-bar { display: block; width: 36px; height: 4px; margin: 0 auto var(--space-2); border-radius: var(--radius-full); background: var(--color-border); }
 .phone-agenda-head { display: flex; align-items: center; gap: var(--space-2); }
 .phone-agenda-titles { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .phone-agenda-title { margin: 0; font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); }

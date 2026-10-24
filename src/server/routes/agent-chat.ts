@@ -767,8 +767,12 @@ const mirrorFrames = new WeakSet<Buffer>();
 /** The agenda digest each Super Agent's phone mirrors were last sent, by session: an unchanged
  *  one is not sent again. Cleared when no mirror is joined and whenever one joins. */
 const digestKeys = new Map<string, string>();
-/** Digests sent per session: a join snapshot read before a newer push is not sent after it. */
+/** When each session's last digest went ({@link digestClock}): a join snapshot read before a
+ *  newer push is not sent after it. */
 const digestSeq = new Map<string, number>();
+/** One clock for every session's pushes and joins: only ever goes up, so a successor under the
+ *  same session id (a restart in place) never reads an older chat's count as its own. */
+let digestClock = 0;
 // Every push of a super record tells that vault's live Super Agent's phone mirrors its agenda
 // (lib/super/inbox.ts `pushSuperState`), computed only when a mirror of THIS project is joined.
 setSuperDigestSink((contextRoot, state) => {
@@ -779,9 +783,10 @@ setSuperDigestSink((contextRoot, state) => {
   if (entry.mirrorCount() === 0) { digestKeys.delete(sid); return; }
   const d = superDigest(state);
   if (digestKeys.get(sid) === d.key) return;
-  digestKeys.set(sid, d.key);
-  digestSeq.set(sid, (digestSeq.get(sid) ?? 0) + 1);
+  digestSeq.set(sid, ++digestClock);
   entry.mirrorFrame(superDigestFrame(d));
+  // Marked sent only once it went: a send that threw is tried again by the next push.
+  digestKeys.set(sid, d.key);
 });
 let deviceRevocationArmed = false;
 
@@ -2225,7 +2230,7 @@ export function startChatSession(
     // The next push tells every mirror in full (this one included), and a digest sent from here
     // on makes the snapshot below stale.
     digestKeys.delete(pinId);
-    const seq = digestSeq.get(pinId) ?? 0;
+    const joinedAt = ++digestClock;
     // The pictures on the Mac's stage right now, once: the phone has no stage, and an image card
     // opened before it joined would otherwise never reach it (D2). And the agenda as it stands.
     // Best-effort and async — a missing or unreadable super record just means neither.
@@ -2234,7 +2239,7 @@ export function startChatSession(
         if (!mirrors.has(sock) || sock.readyState !== sock.OPEN) return;
         const frame = stageMediaFrame(stageImageItems(st), true);
         if (frame) sock.send(frame);
-        if ((digestSeq.get(pinId) ?? 0) === seq) sock.send(superDigestFrame(superDigest(st)));
+        if ((digestSeq.get(pinId) ?? 0) < joinedAt) sock.send(superDigestFrame(superDigest(st)));
       })
       .catch(() => { /* no record, no strip */ });
     return true;

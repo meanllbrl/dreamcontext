@@ -105,7 +105,8 @@ describe('hand over / take back (D5, D9, D17)', () => {
     expect(answer).toMatch(/cs\.answerQuestion\(requestId, q\.questions, picks\.picked, picks\.notes\)/);
     // The only raw answer is the card's own "Unclear — ask again" (a deny, as SurveyCard sends
     // it), never an allow that would skip the card's `{questions, answers}` shape.
-    expect(answer.match(/\.answer\(requestId, \{ behavior: '(\w+)'/g) ?? []).toEqual(["cs.answer(requestId, { behavior: 'deny'"].map((x) => x.slice(2)));
+    expect(answer.match(/\.answer\(requestId\b/g) ?? []).toHaveLength(1);
+    expect(answer).toMatch(/cs\.answer\(requestId, \{ behavior: 'deny', message: args\.unclear \|\| /);
   });
 
   it('homing is suspended while handed over: only the centre and the shown child are placed', () => {

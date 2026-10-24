@@ -57,6 +57,21 @@ vi.mock('../../src/lib/claude-usage-probe.js', async (importOriginal) => {
   const probe = vi.fn(async () => ({ status: 'healthy-unmeasured', reason: 'test' }));
   return { ...real, probeAccountUsage: probe, probeAccountForDecision: probe };
 });
+/** A join's record read can be held (the stale-snapshot case): the next read waits on it. */
+const holdRead: { next: Promise<void> | null } = { next: null };
+vi.mock('../../src/lib/super/store.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/lib/super/store.js')>();
+  return {
+    ...real,
+    readSuperState: async (...args: Parameters<typeof real.readSuperState>) => {
+      const gate = holdRead.next;
+      holdRead.next = null;
+      const st = await real.readSuperState(...args);
+      if (gate) await gate;
+      return st;
+    },
+  };
+});
 vi.mock('../../src/server/handsfree-auth.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/server/handsfree-auth.js')>();
   return { ...real, macHandsfreeAuth: () => ({ store: { isValidDeviceHash: (h: string) => signedIn.has(h) } }) };
@@ -496,15 +511,18 @@ describe('the agenda digest on a phone mirror (task hands-free-telefonda-super-a
   it('a join snapshot read before a newer push is not sent after it', async () => {
     await record({ enabled: true, pad: [{ id: 'n1', section: 'now', text: 'old', at: 1 }] });
     startSuper();
+    await new Promise((r) => setTimeout(r, 300)); // the start's own reads and pushes settle
+    // The join's read takes the OLD record and is held while a newer write is pushed.
+    let release = (): void => {};
+    holdRead.next = new Promise<void>((r) => { release = r; });
     const phone = mirror();
-    // The snapshot's read is still in flight: a write (record + push) lands first.
     const next = st([{ id: 'n1', section: 'done', text: 'new', at: 2 }]);
     writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(next));
     pushSuperState(root, next);
-    const texts = () => digests(phone).map((d) => (d.pad as Array<{ text: string }>)[0].text);
-    await vi.waitFor(() => expect(texts()).toContain('new'), { timeout: 10_000 });
+    release();
     await new Promise((r) => setTimeout(r, 150));
-    // Nothing older follows the newer agenda.
-    expect(texts().slice(texts().indexOf('new'))).not.toContain('old');
+    const texts = digests(phone).map((d) => (d.pad as Array<{ text: string }>)[0].text);
+    // The held snapshot (old) is dropped: the newer push is all the phone got.
+    expect(texts).toEqual(['new']);
   });
 });

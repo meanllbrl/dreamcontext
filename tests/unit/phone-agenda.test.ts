@@ -70,7 +70,7 @@ describe('the phone agenda is the desktop notepad', () => {
     expect(look.titleFor('c1')).toBe('Pricing card · develop');
     expect(look.nameFor!('c2')).toBe('Fix the login copy');
     expect(look.nameFor!('zz')).toBe('');
-    expect(look.titleFor('zz')).toBe('zz');
+    expect(look.titleFor('0123456789abcdef')).toBe('01234567');
     expect(look.superTitle).toBe('Claude');
   });
 
@@ -123,6 +123,7 @@ describe('event turns on the phone fold from the digest', () => {
     const after = phoneEventContext(wire(record({ children: { ...record().children, c3: { sessionId: 'c3', brief: 'New job', adopted: false, startedAt: 3 } } })));
     expect(after.key).not.toBe(before.key);
     expect(before.ctx.titleFor('c3')).toBe('c3');
+    expect(before.ctx.titleFor('a1b2c3d4-e5f6-4000-8000-000000000000')).toBe('a1b2c3d4');
     expect(after.ctx.titleFor('c3')).toBe('New job');
   });
 

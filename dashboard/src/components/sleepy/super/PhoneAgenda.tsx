@@ -19,7 +19,7 @@ import './PhoneAgenda.css';
  */
 
 /** The digest as the desktop notepad's input. Pure: `text` is the item's `ownerText`, a name is
- *  the Mac's job card title (a session id when the digest names none). */
+ *  the Mac's job card title (the short session id when the digest names none). */
 export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { state: Pick<SuperState, 'queue' | 'pad'>; look: JobLook } {
   const queue: SuperQueueItem[] = d.waiting.map((w) => ({
     id: w.id, kind: w.kind, state: w.state, createdAt: w.createdAt, sessionId: w.sessionId,
@@ -29,7 +29,7 @@ export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { 
     state: { queue, pad: d.pad },
     look: {
       live: () => null,
-      titleFor: (c) => d.names[c] ?? c,
+      titleFor: (c) => d.names[c] ?? c.slice(0, 8),
       nameFor: (c) => d.names[c] ?? '',
       superTitle,
     },
@@ -42,7 +42,9 @@ export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { 
  *  always does. */
 export function phoneEventContext(d: SuperDigestWire): { ctx: SuperEventContext; key: string } {
   return {
-    ctx: { ownerBatches: d.ownerBatches, titleFor: (c) => d.names[c] ?? c },
+    // An unnamed child (dropped from the record, past the digest's cap) reads as the desktop's
+    // short id, never the whole session id.
+    ctx: { ownerBatches: d.ownerBatches, titleFor: (c) => d.names[c] ?? c.slice(0, 8) },
     key: `${d.ownerBatches.join(',')}\u0002${JSON.stringify(d.names)}`,
   };
 }
@@ -111,7 +113,8 @@ export function PhoneAgenda({ digest, onWriteAbout }: {
         data-waiting={counts.waiting > 0 ? 'true' : undefined}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={t('super.phoneAgenda.open')}
+        // Its name is what it shows (the counts); the title only says what a tap does.
+        title={t('super.phoneAgenda.open')}
         onClick={() => setOpen(true)}
       >
         <span className="phone-agenda-strip-h">{t('super.phoneAgenda.strip')}</span>
