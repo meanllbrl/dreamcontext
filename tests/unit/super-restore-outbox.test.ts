@@ -265,8 +265,30 @@ describe('Resume on a dormant super child (AgentSurface.tsx, checked against the
   // AgentSurface is a React module root vitest cannot load; the rule is held by the source.
   const src = require('node:fs').readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/AgentSurface.tsx'), 'utf-8') as string;
   it('a dormant chat with a saved mode comes back as that chat, its agent bound, under its own bypass', () => {
-    expect(src).toContain("const asChat = parked ? parked.transport === 'chat' : meta.kind === 'chat' && !!meta.mode;");
+    // The rule lives in resumePlan (chatLaunch.ts), shared with `super resume`'s report.
+    const plan = require('node:fs').readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/chatLaunch.ts'), 'utf-8') as string;
+    expect(plan).toContain("const asChat = meta.parked ? meta.parked.transport === 'chat' : meta.kind === 'chat' && !!meta.mode;");
     expect(src).toMatch(/if \(asChat\) bindChatAgent\(meta\.claudeId, meta\.agent \?\? ''\);/);
-    expect(src).toMatch(/: asChat\s*\n\s*\? spawn\(meta\.bypass, meta\.claudeId, true, 'chat', '', parked\?\.model \?\? '', true, '', false, parked\?\.effort \?\? '', true, meta\.mode \?\? DEFAULT_CHAT_MODE/);
+    // On the model, effort and account it ran on: parked first, else the roster's (resumePlan).
+    expect(src).toContain('const plan = resumePlan(meta, claudeKind);');
+    expect(src).toMatch(/: asChat\s*\n\s*\? spawn\(meta\.bypass, meta\.claudeId, true, 'chat', '', launch\.model \?\? '', true, '', false, launch\.effort \?\? '', true, meta\.mode \?\? DEFAULT_CHAT_MODE, launch\.account \?\? ''\)/);
+  });
+
+  it('a relaunch resumes a chat on the model, effort and account the roster saved, and saves them back', () => {
+    // The live restore spawns with them; a dormant one keeps them for its Resume.
+    expect(src).toContain("const s = spawn(m.bypass, m.sessionId, true, kind, '', launch.model ?? '', true, '', false, launch.effort ?? '', true, savedMode, launch.account ?? '', '', 'passive');");
+    expect(src).toContain('const launch = launchFromSaved(m);');
+    expect(src).toMatch(/\.\.\.\(Object\.keys\(launch\)\.length \? \{ launch \} : \{\}\)/);
+    expect(src).not.toContain('The roster keeps no model, effort or account');
+    // Every save writes a running chat's own settings, else the dormant or parked tab's.
+    expect(src).toContain('...savedChatLaunch(m.kind, liveChatLaunch(m.id), dormantLaunch(m.parked, m.launch)),');
+  });
+
+  it('`super resume` of a dormant child reports from the same plan Resume spawns from, so the record keeps what runs', () => {
+    expect(src).toContain('const plan = resumePlan(existing, claudeKind);');
+    expect(src).toContain("if (plan.spawnKind !== 'chat') return { ok: true, result: { sessionId: child } };");
+    expect(src).toContain("model: plan.launch.model ?? '', effort: plan.launch.effort ?? '' } };");
+    // A dormant child reopening as a chat in Basic (no saved mode) gets the plan's settings too.
+    expect(src).toContain("spawn(meta.bypass, meta.claudeId, true, plan.spawnKind as SessionKind, '', launch.model ?? '', true, '', false, launch.effort ?? '', false, DEFAULT_CHAT_MODE, launch.account ?? '');");
   });
 });

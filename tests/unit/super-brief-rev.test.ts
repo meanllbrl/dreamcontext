@@ -42,8 +42,19 @@ describe('the briefing carries the jarvis sections and its revision', () => {
     expect(OWNER_VOICE_TEXT.startsWith('<')).toBe(true);
   });
 
+  it('rev 11 (2026-10-24): model and effort per job, in the briefing and in the update', () => {
+    expect(SUPER_BRIEF_REV).toBe(11);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      // The owner: xhigh for a truly important plan that must think through edge cases; else what fits.
+      expect(t).toContain('`xhigh` only for a critical plan whose risk is edge cases');
+      expect(t).toContain('never develop');
+      expect(t).toContain('Develop `medium`; `high` for security, money\n  or data migration');
+      expect(t).toContain('brain chores: `--model sonnet`');
+      expect(t).not.toContain('the default is high, medium in basic');
+    }
+  });
+
   it('rev 10 (2026-10-23): which answer is to which message, in the briefing and in the update', () => {
-    expect(SUPER_BRIEF_REV).toBe(10);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('`<owner-msg ref="…"/>`');
       expect(t).toContain('`<!-- re:<ref> -->` on its first line (up to 3 refs');

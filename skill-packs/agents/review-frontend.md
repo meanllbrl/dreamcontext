@@ -21,6 +21,7 @@ description: >
   </commentary>
   </example>
 model: opus
+effort: high
 color: green
 tools:
   - Read

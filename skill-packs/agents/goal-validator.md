@@ -19,6 +19,7 @@ description: >
   </commentary>
   </example>
 model: opus
+effort: high
 tools:
   - Read
   - Glob

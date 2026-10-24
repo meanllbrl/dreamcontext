@@ -44,7 +44,7 @@ describe('phone drawer (AC9)', () => {
   });
 
   it('the roster restore (hydrate) opens every restored chat PASSIVELY', () => {
-    expect(surface).toMatch(/const s = spawn\(m\.bypass, m\.sessionId, true, kind, '', '', true, '', false, '', true, savedMode, '', '', 'passive'\)/);
+    expect(surface).toMatch(/const s = spawn\(m\.bypass, m\.sessionId, true, kind, '', launch\.model \?\? '', true, '', false, launch\.effort \?\? '', true, savedMode, launch\.account \?\? '', '', 'passive'\)/);
   });
 });
 

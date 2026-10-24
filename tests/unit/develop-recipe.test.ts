@@ -84,7 +84,7 @@ describe('develop: the lead builds, checks each wave, and ONE clean reviewer jud
   it('ONE end reviewer on Opus over every changed path by name, in parallel with the final check', () => {
     const end = dSection('## 3.', '## 4.');
     expect(end).toMatch(/The end review and the final check run\s+at the same time, dispatched in ONE message/);
-    expect(end).toMatch(/ONE `reviewer` sub-agent \(Agent tool, model opus, not in the background\)/);
+    expect(end).toMatch(/ONE `reviewer` sub-agent \(Agent tool, model opus, effort high, not in the background\)/);
     expect(end).toMatch(/every path you changed, enumerated by name, with START and NOW, never a\s+bare `git diff` against a ref/);
     expect(end).toMatch(/never paste a diff/);
     expect(end).toMatch(/Record the verdict BEFORE anything else/);
@@ -460,6 +460,34 @@ describe('no tick without evidence, in both recipes', () => {
  * FAIL -> fix -> fresh re-review loop runs either way. The lead merges a team's reports but,
  * being the author, never drops or downgrades a blocking finding.
  */
+/**
+ * 2026-10-24 (owner, model-efor report): a judge with no effort named inherited the lead's, so a
+ * medium lead had medium reviewers. Every judge dispatch names its own: Opus high, the router
+ * Sonnet low, and the agent definitions pin the same (skill-packs/agents frontmatter).
+ */
+describe('every judge names its model and effort, in both recipes', () => {
+  for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
+    it(`${name}: reviewers, the team and the validator run Opus high; the router Sonnet low`, () => {
+      const judges = [...recipe.matchAll(/`(reviewer|goal-validator)` (?:sub-agent )?\(([^)]*)\)/g)];
+      expect(judges.length).toBeGreaterThanOrEqual(2);
+      for (const [, , opts] of judges) expect(opts).toMatch(/model opus, effort high/);
+      expect(recipe).toMatch(/sub-agent each \(model opus, effort high, not in the background\)/);
+      expect(recipe).toContain('ONE `review-router` sub-agent (Agent tool, model sonnet, effort low)');
+      expect(recipe).not.toMatch(/model opus(?!, effort)/);
+    });
+  }
+
+  it('the agent definitions pin the same efforts', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const fm = (agent: string) => readFileSync(join(__dirname, '../../skill-packs/agents', `${agent}.md`), 'utf-8').split('\n---')[0];
+    for (const judge of ['reviewer', 'review-security', 'review-edge-cases', 'review-frontend', 'review-cloud-functions', 'goal-plan-reviewer', 'goal-validator']) {
+      expect(fm(judge), judge).toMatch(/^model: opus\neffort: high$/m);
+    }
+    expect(fm('review-router')).toMatch(/^model: sonnet\neffort: low$/m);
+  });
+});
+
 describe('the end review the diff picks, in both recipes', () => {
   for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
     const end = recipe.slice(recipe.indexOf('## 3.'), recipe.indexOf('## 4.'));

@@ -14,7 +14,7 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
 4. **Dependencies.** B depends on A when B consumes A's output (an API, a task, a decision). Wave 1 =
    every unit with no unmet dependency; start them ALL now, in one message of `delegate` calls.
 5. **Per unit** pick mode, model, effort, worktree (§3, §4). Name `--model` and `--effort` on every
-   `delegate`; an omitted effort is set by the server (basic `medium`, plan and develop `high`), never
+   `delegate`; an omitted effort is set by the server (basic and develop `medium`, plan `high`), never
    inherited from the owner's own setting. `xhigh` and `max` only when you name them (§3).
 6. **Capacity.** At most 15 live children: the 16th `delegate` answers `held` (reason `cap`) and
    KEEPS the job in the pool (its id in the answer; `--from` starts it when a slot frees). The cap
@@ -85,19 +85,20 @@ Current models, latest of each via the alias (`--model opus|sonnet|haiku|fable`)
 | Sonnet 5.5 | sonnet | claude-sonnet-5-5 | fast | 2 / 10 | high |
 | Haiku 5.5 | haiku | claude-haiku-5-5 | fastest | 0.1 / 0.5 | medium |
 
-Work type → setting:
+Work type → setting (the owner: `xhigh` only where edge cases are the risk, else what fits):
 - lookup, status, summary, rename, formatting, a mechanical edit with an exact spec → `haiku` / `low`
-- a small clear fix (1-3 files), docs, brain writes (tasks, knowledge), an insight or a whiteboard →
-  `sonnet` / `medium`
-- Develop of a planned task, multi-file refactor, a bug with a repro, tests → `opus` / `high`
-  (`xhigh` only on a contract, hot path or data migration)
-- Plan of non-trivial work, research synthesis → `opus` / `high`
-- architecture, security, money, data migrations, long-horizon ambiguity, or a unit that already failed
-  once on Opus → `fable` / `high` (`xhigh` only when correctness beats cost)
+- merge, build, install, brain chores, a small clear fix (1-3 files), docs, an insight or a
+  whiteboard → `sonnet` / `medium`
+- support, analysis, content, research → `opus` / `medium` (`high` for a deep comparison)
+- Develop of a reviewed plan, multi-file refactor, a bug with a repro, tests → `opus` / `medium`;
+  touching security, money or a data migration → `opus` / `high`; never `xhigh`
+- Plan of non-trivial work → `opus` / `high`; `xhigh` only for a critical plan whose risk is edge
+  cases (contract, money, data migration, security design)
+- architecture, long-horizon ambiguity, or a unit that already failed once on Opus → `fable` / `high`
 
-`xhigh` is for the few jobs that earn it: a contract, a hot path, a data migration, security. Everything
-else runs `high` or `medium`; `max` is the owner's word. No `--effort` = `medium` in basic, `high` in plan
-and develop (the server's default, not the owner's global setting).
+`max` is the owner's word. No `--effort` = `medium` in basic and develop, `high` in plan (the server's
+default, not the owner's global setting). The judges (reviewer, review-*, plan reviewers, validator)
+run Opus `high` whatever the child's effort.
 
 Rules: raise effort before switching to a bigger model. After a failure go up ONE tier; never retry the
 same setting. Fable costs 2.5x Opus per token and is slower: only for its row. Reviewers and
