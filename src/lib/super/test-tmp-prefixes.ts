@@ -559,6 +559,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-live-card-',
   'super-live-card-home-',
   'super-mirror-home-',
+  'super-mirror-other-',
   'super-mirror-proj-',
   'super-outbox-home-',
   'super-owner-q-',

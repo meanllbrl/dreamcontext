@@ -679,3 +679,41 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     ...(v.rotating === true ? { rotating: true } : {}),
   };
 }
+
+// ─── The phone's agenda digest (src/lib/super/phone-mirror.ts `superDigest`) ───────────
+
+/** Mirrors `SUPER_DIGEST_FIELDS` in src/lib/super/phone-mirror.ts (super-types-mirror test). */
+export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'names', 'key'] as const;
+
+/** What a phone mirror is told of the Super Agent's agenda (a `super_digest` frame): enough to
+ *  draw the desktop's `SuperAgenda` and fold the event turns, never the record. */
+export interface SuperDigestWire {
+  pad: SuperPadItem[];
+  /** Open with the owner, or queued behind an open question. `text`: the item's `ownerText`
+   *  (plain text; an `owner` item's is a child's card, untrusted), '' on a permission. */
+  waiting: Array<{ id: string; kind: QueueKind; state: QueueState; createdAt: number; sessionId: string; text: string }>;
+  ownerBatches: string[];
+  /** Child session id → the Mac's job card title. */
+  names: Record<string, string>;
+  key: string;
+}
+
+/** A `super_digest` frame's body, or null when it is not one. Drops what it does not know. */
+export function readSuperDigest(v: unknown): SuperDigestWire | null {
+  if (!isRecord(v) || typeof v.key !== 'string' || !v.key) return null;
+  const pad = Array.isArray(v.pad) ? v.pad.filter((p): p is SuperPadItem => isRecord(p) && typeof p.id === 'string'
+    && oneOf(PAD_SECTIONS, p.section) && typeof p.text === 'string' && p.text !== '' && typeof p.at === 'number').slice(0, 40) : [];
+  const waiting = Array.isArray(v.waiting) ? v.waiting.filter((q): q is SuperDigestWire['waiting'][number] => isRecord(q)
+    && typeof q.id === 'string' && oneOf(QUEUE_KINDS, q.kind) && oneOf(QUEUE_STATES, q.state)
+    && typeof q.createdAt === 'number' && typeof q.sessionId === 'string' && typeof q.text === 'string').slice(0, 40) : [];
+  const ownerBatches = Array.isArray(v.ownerBatches) ? v.ownerBatches.filter((b): b is string => typeof b === 'string').slice(-50) : [];
+  const names: Record<string, string> = {};
+  if (isRecord(v.names)) {
+    for (const [sid, name] of Object.entries(v.names).slice(0, 40)) if (typeof name === 'string' && name) names[sid] = name;
+  }
+  return {
+    pad: pad.map((p) => ({ id: p.id, section: p.section, text: p.text, at: p.at })),
+    waiting: waiting.map((q) => ({ id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text })),
+    ownerBatches, names, key: v.key,
+  };
+}

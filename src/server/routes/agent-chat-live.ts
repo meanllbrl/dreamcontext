@@ -101,6 +101,8 @@ export interface LiveChatEntry {
   /** One `_meta` frame (already serialised) to every phone mirror, never the holder: the stage
    *  pictures the phone cannot otherwise see (`stageMediaFrame`, lib/super/phone-mirror.ts). */
   mirrorFrame?: (serialised: string) => void;
+  /** How many phone mirrors are joined now (0 = no agenda digest is worth computing). */
+  mirrorCount?: () => number;
 }
 
 /** How long a cut child gets between SIGTERM and SIGKILL. */

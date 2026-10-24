@@ -85,9 +85,9 @@ import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { clearSuperNote, delegatedChildMcp, peekSuperNote, readSuperState, superIndex, superRootOfChild } from '../../lib/super/store.js';
 import { ABOUT_AGENDA_RE, OWNER_VOICE_TEXT, REPLY_TO_RE, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, ownerMsgBlock } from '../../lib/super/types.js';
-import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen, stageImageItems, stageMediaFrame } from '../../lib/super/phone-mirror.js';
+import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -764,6 +764,25 @@ const superMirrorSets = new Set<MirrorSet<DeviceTag>>();
 /** Owner frames that came from a phone mirror (written at once like every owner frame, or
  *  re-fed to a successor; the mark rides on the frame itself). */
 const mirrorFrames = new WeakSet<Buffer>();
+/** The agenda digest each Super Agent's phone mirrors were last sent, by session: an unchanged
+ *  one is not sent again. Cleared when no mirror is joined and whenever one joins. */
+const digestKeys = new Map<string, string>();
+/** Digests sent per session: a join snapshot read before a newer push is not sent after it. */
+const digestSeq = new Map<string, number>();
+// Every push of a super record tells that vault's live Super Agent's phone mirrors its agenda
+// (lib/super/inbox.ts `pushSuperState`), computed only when a mirror of THIS project is joined.
+setSuperDigestSink((contextRoot, state) => {
+  const sid = state.session;
+  const entry = sid ? findLiveChat(sid) : null;
+  if (!sid || !entry?.mirrorFrame || !entry.mirrorCount) return;
+  if (resolve(join(entry.projectRoot, '_dream_context')) !== resolve(contextRoot)) return;
+  if (entry.mirrorCount() === 0) { digestKeys.delete(sid); return; }
+  const d = superDigest(state);
+  if (digestKeys.get(sid) === d.key) return;
+  digestKeys.set(sid, d.key);
+  digestSeq.set(sid, (digestSeq.get(sid) ?? 0) + 1);
+  entry.mirrorFrame(superDigestFrame(d));
+});
 let deviceRevocationArmed = false;
 
 export function tagDeviceSocket(ws: object, tag: DeviceTag): void {
@@ -2193,6 +2212,7 @@ export function startChatSession(
       mirrorRoom: (device: DeviceTag) => mirrors.room(device),
       closeMirrors: () => { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super taken back'); },
       mirrorFrame: (serialised: string) => { mirrors.frame(serialised); },
+      mirrorCount: () => mirrors.size,
     } : {}),
   } : null;
   if (live) registerLiveChat(live);
@@ -2202,13 +2222,19 @@ export function startChatSession(
     if (!mirrors || !alive || handedOff || lingerTimer || lingerKillTimer) return false;
     if (!mirrors.add(sock, device)) return false;
     try { sock.send(JSON.stringify({ type: '_meta', subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 })); } catch { /* gone */ }
+    // The next push tells every mirror in full (this one included), and a digest sent from here
+    // on makes the snapshot below stale.
+    digestKeys.delete(pinId);
+    const seq = digestSeq.get(pinId) ?? 0;
     // The pictures on the Mac's stage right now, once: the phone has no stage, and an image card
-    // opened before it joined would otherwise never reach it (D2). Best-effort and async — a
-    // missing or unreadable super record just means no strip.
+    // opened before it joined would otherwise never reach it (D2). And the agenda as it stands.
+    // Best-effort and async — a missing or unreadable super record just means neither.
     void readSuperState(contextRoot, superSanitizeOpts())
       .then((st) => {
+        if (!mirrors.has(sock) || sock.readyState !== sock.OPEN) return;
         const frame = stageMediaFrame(stageImageItems(st), true);
-        if (frame && sock.readyState === sock.OPEN) sock.send(frame);
+        if (frame) sock.send(frame);
+        if ((digestSeq.get(pinId) ?? 0) === seq) sock.send(superDigestFrame(superDigest(st)));
       })
       .catch(() => { /* no record, no strip */ });
     return true;
@@ -2549,7 +2575,7 @@ export function startChatSession(
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     stopPing();
     if (live) unregisterLiveChat(live);
-    if (mirrors) { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super ended'); superMirrorSets.delete(mirrors); }
+    if (mirrors) { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super ended'); superMirrorSets.delete(mirrors); digestKeys.delete(pinId); digestSeq.delete(pinId); }
     unregisterPark();
     parkAsk?.settle('already');
     untrack();

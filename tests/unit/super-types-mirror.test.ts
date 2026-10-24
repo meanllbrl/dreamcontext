@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
 import * as ownerWait from '../../src/lib/super/owner-wait.js';
+import * as phoneMirror from '../../src/lib/super/phone-mirror.js';
 
 const ROOT = new URL('../../', import.meta.url).pathname;
 
@@ -162,6 +163,10 @@ describe('super types — server record <-> window mirror', () => {
     expect(client.readOwnerViewFields(body)).toEqual(server.readOwnerViewFields(body));
     const view = { mode: 'present' as const, cards: ['w', 'c'], layout: 'compare' as const };
     expect(client.applyOwnerViewFields(view, client.readOwnerViewFields(body))).toEqual(server.applyOwnerViewFields(view, server.readOwnerViewFields(body)));
+  });
+
+  it('the phone\'s agenda digest has the same fields on both sides', () => {
+    expect(client.SUPER_DIGEST_FIELDS).toEqual(phoneMirror.SUPER_DIGEST_FIELDS);
   });
 
   it('both files carry the MIRRORED comment that sends the next reader to the other one', () => {
