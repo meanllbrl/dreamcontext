@@ -246,6 +246,7 @@ try {
   report.check(`the strip is one line under the header (${Math.round(stripBox?.height ?? 0)}px)`, !!stripBox && !!headBox && stripBox.height <= 48 && Math.abs(stripBox.y - (headBox.y + headBox.height)) <= 2 && stripBox.width <= 390);
   report.check('no horizontal overflow with the strip', await noOverflow());
   await shot('390x844-light-strip.png');
+  const stripBgLight = await strip.evaluate((el) => getComputedStyle(el).backgroundColor);
 
   console.log('\n── 2. The sheet: the desktop\'s rows, in the desktop\'s order');
   await strip.tap();
@@ -272,12 +273,17 @@ try {
   report.check('no horizontal overflow with the sheet open', await noOverflow());
   await shot('390x844-light-sheet.png');
   // The Super's own question, while it is open (his next message settles it).
-  const hasCard = (await phone.locator(`[data-testid="super-question-card"][data-item="${ask?.id}"]`).count()) > 0;
+  // The phone may draw its card a moment after the row (usePhoneSuperQuestions polls): judge by
+  // what is on the page once the tap settles, both outcomes are the rule.
+  const card = phone.locator(`[data-testid="super-question-card"][data-item="${ask?.id}"]`);
+  await until(async () => (await card.count()) > 0, 8000);
+  const drawn = (await card.count()) > 0;
   await sheet.locator(`[data-row="q:${ask?.id}"] .super-agenda-row-btn`).tap();
-  if (hasCard) {
-    report.check('the question row lands on its card in the chat (the sheet closes)', await until(async () => (await sheet.count()) === 0, 3000));
+  await phone.waitForTimeout(600);
+  if (drawn) {
+    report.check('the question row lands on its card in the chat (the sheet closes, the card is in view)', (await sheet.count()) === 0
+      && await card.first().evaluate((el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < window.innerHeight; }));
   } else {
-    await phone.waitForTimeout(500);
     report.check('the question row with no card drawn keeps the sheet open', (await sheet.count()) === 1);
   }
   if ((await sheet.count()) === 0) { await strip.tap(); await until(async () => (await sheet.count()) === 1, 3000); }
@@ -333,9 +339,13 @@ try {
   console.log('\n── 6. An event turn is ONE line; an answer is a receipt');
   plain.ws.send(JSON.stringify({ type: 'user', text: 'sürüm notlarını topla' }));
   const line = vis('[data-testid="super-event-line"]');
-  report.check('the child\'s finished turn reaches the phone as ONE event line (its command folded)', await until(async () => (await line.count()) >= 1, 90000)
+  const finished = line.filter({ hasText: 'finished' });
+  report.check('the child\'s finished turn reaches the phone as ONE event line (its command folded)', await until(async () => (await finished.count()) === 1, 120000)
     && !(await vis('.chat-pane').first().innerText()).includes('git log --oneline -3'), (await vis('.chat-pane').first().innerText().catch(() => '')).slice(-300));
-  await line.first().locator('.super-event-line-name').first().tap().catch(() => {});
+  const name = finished.locator('.super-event-line-name').first();
+  report.check('the event line names the child (Sürüm notları)', (await name.count()) === 1 && /Sürüm notları/.test(await name.innerText()),
+    JSON.stringify(await line.evaluateAll((els) => els.map((e) => e.outerHTML.slice(0, 400)))));
+  await name.tap();
   await phone.waitForTimeout(400);
   report.check('a tap on the child\'s name opens nothing and throws nothing', errors.filter((e) => e.startsWith('pageerror')).length === 0);
   win.ws.send(JSON.stringify({ type: 'user', text: `[super answer] item=${ask?.id}\nUser has answered your questions: "Yeni fiyat kartı bu akşam yayına girsin mi?"="Evet". You can now continue with the user's answers in mind.` }));
@@ -349,12 +359,17 @@ try {
   console.log('\n── 7. Dark');
   await phone.emulateMedia({ colorScheme: 'dark' });
   await phone.waitForTimeout(600);
-  const bgLight = await phone.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  report.check('the page follows the dark scheme', await phone.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches), bgLight);
+  // Read the strip's own surface in both schemes: the app must actually repaint, not only report dark.
+  const bgDark = await strip.evaluate((el) => getComputedStyle(el).backgroundColor);
+  report.check('the strip repaints for the dark scheme', bgDark !== stripBgLight, `${stripBgLight} -> ${bgDark}`);
   await shot('390x844-dark-strip.png');
   await strip.tap();
   await until(async () => (await sheet.count()) === 1, 3000);
   await phone.waitForTimeout(500); // the sheet's one-shot entrance settles before the shot
+  // The scrim dims in dark too: darker than the page behind it, never a lightening wash.
+  const lum = (c) => { const m = c.match(/[\d.]+/g)?.map(Number) ?? [0, 0, 0]; return 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]; };
+  const scrim = await phone.locator('[data-testid="phone-agenda-backdrop"]').evaluate((el) => getComputedStyle(el).backgroundColor);
+  report.check('dark: the backdrop is a dark scrim', lum(scrim) < 80, scrim);
   report.check('dark: no horizontal overflow with the sheet open', await noOverflow());
   await shot('390x844-dark-sheet.png');
   await phone.keyboard.press('Escape');
