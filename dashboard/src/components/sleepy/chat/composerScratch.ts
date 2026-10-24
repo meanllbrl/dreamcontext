@@ -325,7 +325,8 @@ export function composeOutgoing(
   text: string, attachments: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
   opts: { superView?: boolean } = {},
 ): { message: string; quoted: string; slash: boolean } {
-  const plain = stripTokens(text);
+  // Tokens live only in the Super view's draft; a normal chat's text is read exactly as typed.
+  const plain = opts.superView ? stripTokens(text) : text;
   const slash = plain.trimStart().startsWith('/');
   const abouts = attachments.filter((a) => a.kind === 'about' && !!a.text);
   const byId = new Map(abouts.map((a) => [refTokenId(a), a] as const));
@@ -338,8 +339,10 @@ export function composeOutgoing(
     const about = slash || parseRefTokens(text).length ? undefined : abouts[0];
     return { message: about?.text ? `${about.text}\n\n${quoted}` : quoted, quoted, slash };
   }
-  // Segments, in order: words, then each chip followed by the words after it.
-  const tidy = (w: string) => stripTokens(w).replace(/[ \t\u00A0]{2,}/g, ' ').trim();
+  // Segments, in order: words, then each chip followed by the words after it. Only a segment's
+  // edges (the padding beside a chip) are trimmed; spacing inside his words (indented code, an
+  // aligned table) goes out as he typed it.
+  const tidy = (w: string) => stripTokens(w).trim();
   const preamble = guard(tidy(text.slice(0, spans[0].start)));
   const parts = spans.map((t, i) => ({
     block: (byId.get(t.id) as Attachment).text as string,

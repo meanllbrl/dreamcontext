@@ -124,6 +124,11 @@ describe('composeOutgoing: the message in draft order', () => {
         expect(composeOutgoing(draft, atts, null, q, { superView: true })).toEqual(legacyComposeOutgoing(words, atts, null, q));
       }
     }
+    // Spacing inside his words is his: indented code and an aligned table go out untouched.
+    const code = 'fix this:\n    if x:\n        return 1\n| a  | b |';
+    expect(composeOutgoing(`${t} ${code}`, [a], null, q, { superView: true })).toEqual(legacyComposeOutgoing(code, [a], null, q));
+    const b2 = about(NOTE('n2'));
+    expect(composeOutgoing(`${t} ${code} ${refToken(b2)} ok`, [a, b2], null, q, { superView: true }).message).toContain(`${a.text}\n\n${code}\n\n`);
     const r = about(REPLY('k3f9q0', 'Here is the plan'));
     expect(composeOutgoing(`ok ${refToken(r)} go`, [r], null, q, { superView: true }).message).toBe(`${r.text}\n\nok go`);
   });
@@ -164,6 +169,8 @@ describe('composeOutgoing: the message in draft order', () => {
     const solo = composeOutgoing(typed, [], null, q, { superView: true }).message;
     expect(aboutHeads(solo)).toEqual([]);
     expect(composeOutgoing(typed, [], null, q).message).toBe(typed);
+    // A normal chat never reads tokens: isolate characters he pasted there go out as they are.
+    expect(composeOutgoing('hi \u2068Bob\u2069 there', [], null, q).message).toBe('hi \u2068Bob\u2069 there');
     expect(composeOutgoing('hello\nworld', [file('/a')], 'quoted', q)).toEqual(legacyComposeOutgoing('hello\nworld', [file('/a')], 'quoted', q));
   });
 
