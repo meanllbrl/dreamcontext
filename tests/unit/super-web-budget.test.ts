@@ -57,8 +57,9 @@ describe('webBudget', () => {
     expect(src).toMatch(/return cp\.where !== 'float' \|\| cp\.size === 'large' \|\| cp\.size === 'wide'/);
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
     // Past the budget a web container is a title + Load placeholder, never an iframe.
-    expect(container).toMatch(/p\.webLive\s*\?\s*<div className="super-card-view super-card-view--web"><WebWidget/);
-    expect(container).toMatch(/: <WebPlaceholder/);
+    expect(container).toMatch(/const frame = p\.webLive && p\.viewReady;/);
+    expect(container).toMatch(/\{frame\s*\n\s*\? <div className="super-card-view super-card-view--web"><WebWidget/);
+    expect(container).toMatch(/\{p\.viewReady && !p\.webLive && !tile && !p\.parked && <WebPlaceholder/);
   });
 
   // Owner 2026-10-22: a page must not reload when its card moves. A card that loaded its page
@@ -84,8 +85,9 @@ describe('webBudget', () => {
     expect(src).toMatch(/const parkedAt = !ghost && off && liveWeb\.has\(c\.id\) && isLivePage\(c\)/);
     expect(src).toMatch(/parked=\{parked\}/);
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
-    // A page from a server is ONE tree in every state (tile, float, large, parked).
-    expect(container).toMatch(/\{isLivePage\(c\)\s*\n?\s*\/\/[^\n]*\n[^\n]*\n\s*\? <WebCardBody/);
+    // A web card is ONE tree in every state (tile, float, large, parked): a page from a server
+    // and, since 2026-10-23, a project page (it reloaded on its way to side by side).
+    expect(container).toMatch(/\{c\.kind === 'web'\s*\n(\s*\/\/[^\n]*\n)+\s*\? <WebCardBody/);
     expect(container).toMatch(/data-stage-key=\{props\.parked \? undefined : c\.id\}/);
   });
 });

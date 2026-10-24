@@ -138,4 +138,14 @@ describe('the sandbox is unchanged and both project-page frames use the inlining
       expect(src).toContain('LINK_GUARD');
     });
   }
+
+  // Owner 2026-10-23: a project page on a Super card reloaded on its own. The file is read again
+  // only when WHAT is read changes: never on the i18n provider's new `t` (a refetch unmounts the
+  // page's frame and loads it again).
+  it('the file read depends on the api, the path and the vault switch only', () => {
+    const src = readFileSync('dashboard/src/components/appLink/DocumentReader.tsx', 'utf8');
+    const hook = src.slice(src.indexOf('export function useFileContent'), src.indexOf('return state;', src.indexOf('export function useFileContent')));
+    expect(hook).toMatch(/\}, \[api, path, vaultReads\]\);/);
+    expect(hook).toMatch(/tRef\.current\('viewer\.failed'\)/);
+  });
 });

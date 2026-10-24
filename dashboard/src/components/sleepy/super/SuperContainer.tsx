@@ -256,9 +256,11 @@ export function SuperContainer(props: SuperContainerProps) {
     >
       <div className="super-card-lift" aria-hidden />
       <div className="super-card-clip">
-        {isLivePage(c)
-          // A page from a server keeps ONE tree whatever the card does, so its frame never
-          // remounts (owner 2026-10-22: "every reload loses what I did").
+        {c.kind === 'web'
+          // A web card keeps ONE tree whatever the card does, so its frame never remounts: a
+          // page from a server keeps what the owner did in it (owner 2026-10-22: "every reload
+          // loses what I did"), a project page loads once (owner 2026-10-23: it reloaded on
+          // its way to side by side, its pictures went blank and came back).
           ? <WebCardBody {...props} status={status} onFrameAllowed={setAllowedHref} large={large && !props.parked} />
           : large
             ? <LargeBody {...props} status={status} onFrameAllowed={setAllowedHref} />
@@ -539,8 +541,8 @@ function LargeBody(p: BodyProps): ReactNode {
         {c.kind === 'chat'
           ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
           : zoomsInPlace(c)
-            // A picture, a page or a live browser zooms where it is (owner 2026-10-22).
-            ? <ZoomPane key={c.id} live={isLivePage(c)}>{viewFor(p, true)}</ZoomPane>
+            // A picture or a live browser zooms where it is (owner 2026-10-22); a page does in WebCardBody.
+            ? <ZoomPane key={c.id}>{viewFor(p)}</ZoomPane>
             : viewFor(p)}
       </div>
     </div>
@@ -552,13 +554,19 @@ function LargeBody(p: BodyProps): ReactNode {
 const KEEP_DEFAULT = { w: 960, h: 640 };
 
 /**
- * A live page's card body (owner 2026-10-22), the same elements in every state: a tile (its
- * KindTile drawn over the hidden page), a large floating card, side by side or presented, parked
- * off the stage. The frame mounts while the card holds one (`webLive`) and is never rebuilt by a
- * move; hidden, it keeps the last size it was drawn at. Picks from Inspect go to the composer.
+ * A web card's body (owner 2026-10-22), the same elements in every state: a tile (its KindTile
+ * drawn over the hidden page), a large floating card, side by side or presented, parked off the
+ * stage. The frame mounts while the card holds one (`webLive`) and is never rebuilt by a move;
+ * hidden, it keeps the last size it was drawn at.
+ *
+ * A live page (a site, a dev server) gets the bar (Reload, Clear cache, Inspect) and its picks go
+ * to the composer. A project page is read by the board's reader with its zoom bridge in EVERY
+ * state (the pane reads it only while interactive), so its srcdoc never changes and the frame
+ * never reloads; it is never parked (webBudget: a project file holds a frame only on screen).
  */
 function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
   const c = p.container;
+  const live = isLivePage(c);
   const size = p.plan.size ?? 'small';
   const tile = !p.large && !p.parked && SIZE_UNITS[size].h === 1;
   const hidden = tile || !!p.parked;
@@ -594,13 +602,14 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
       {!tile && <CardHead kind={c.kind} title={p.title} container={c} />}
       <div className="super-card-large-body super-web-body">
         <div ref={keepRef} className="super-web-keep" style={keepStyle}>
-          <ZoomPane live interactive={p.large} control={control}>
+          <ZoomPane live={live} interactive={p.large} control={live ? control : undefined}>
             {frame
-              ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={widgetSize(p.plan)} onFrameAllowed={p.onFrameAllowed} control={control} desktop={desktop} /></div>
+              ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={widgetSize(p.plan)} onFrameAllowed={p.onFrameAllowed} control={live ? control : undefined} zoomBridge={!live} desktop={desktop} /></div>
               : null}
           </ZoomPane>
         </div>
-        {!frame && !tile && !p.parked && <WebPlaceholder title={c.title || c.ref} onLoad={() => p.onLoadWeb(c.id)} />}
+        {/* Past the budget: its title and Load (never during the layout flight, when no view draws yet). */}
+        {p.viewReady && !p.webLive && !tile && !p.parked && <WebPlaceholder title={c.title || c.ref} onLoad={() => p.onLoadWeb(c.id)} />}
         {tile && <div className="super-web-tile"><KindTile container={c} title={p.title} viewReady={p.viewReady} wide={size === 'medium'} /></div>}
       </div>
     </div>
@@ -616,7 +625,8 @@ function CardHead({ kind, title, container }: { kind: Container['kind']; title: 
   );
 }
 
-/** The cards whose large view zooms in place: a picture, a web page or file, a live browser. */
+/** The cards whose large view zooms in place: a picture, a web page or file (in WebCardBody's own
+ *  pane), a live browser. */
 export function zoomsInPlace(c: Container): boolean {
   return c.kind === 'image' || c.kind === 'web' || c.kind === 'browser';
 }
@@ -626,8 +636,8 @@ export function isLivePage(c: Container): boolean {
   return c.kind === 'web' && /^https?:\/\//i.test(c.ref);
 }
 
-/** `zoomBridge`: the view sits in a ZoomPane, so a project page posts its pinch and wheel. */
-function viewFor(p: BodyProps, zoomBridge = false): ReactNode {
+/** A card's own view. A web card never comes here: it draws through {@link WebCardBody}. */
+function viewFor(p: BodyProps): ReactNode {
   const c = p.container;
   // The agenda reads the pushed record only (no fetch, no layout of its own): it draws at once.
   if (c.kind === 'agenda') return p.agenda?.('full', false) ?? null;
@@ -656,10 +666,6 @@ function viewFor(p: BodyProps, zoomBridge = false): ReactNode {
         ? <div className="super-card-view"><TaskWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'task', ref: c.ref, title: c.title }} active={false} size={size} /></div>
         : <div className="super-card-view"><KnowledgeWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'knowledge', ref: c.ref, title: c.title }} active={false} size={size} /></div>;
     }
-    case 'web':
-      return p.webLive
-        ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={size} onFrameAllowed={p.onFrameAllowed} zoomBridge={zoomBridge} /></div>
-        : <WebPlaceholder title={c.title || c.ref} onLoad={() => p.onLoadWeb(c.id)} />;
     case 'image':
       return <div className="super-card-view"><DocumentReader path={c.ref} onOpen={() => { /* read-only: links stay closed */ }} embedded /></div>;
     case 'browser':

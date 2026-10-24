@@ -1368,6 +1368,9 @@
 .super-web-keep { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .super-web-tile { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--color-bg-elevated); }
 .super-web-tile > * { flex: 1 1 auto; min-height: 0; }
+/* Past the budget the title and Load sit at the top of the card, over the empty pane (a project
+   page drew them there before it shared this body, 2026-10-23). */
+.super-web-body > .super-web-placeholder { position: absolute; inset: 0; }
 /* Kept alive off the stage (Others, a group): never seen, never hit, never in the tab order. */
 .super-card-frame--parked { visibility: hidden; pointer-events: none; }
 .super-card-frame--parked .super-card-actions { display: none; }

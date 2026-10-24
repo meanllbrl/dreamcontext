@@ -249,7 +249,11 @@ type VaultContent =
  *  with the full-screen page viewer (layout/FrameViewer.tsx). */
 export function useFileContent(path: string, vaultReads = false) {
   const api = useApi();
+  // Read through a ref: the provider hands out a new `t` on every render of its own, and a
+  // refetch blanks the reader (an HTML page's frame unmounts and loads again).
   const { t } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
   const [state, setState] = useState<{ loading: boolean; data: FileContent | null; error: string | null; tooLarge?: boolean }>(
     { loading: true, data: null, error: null },
   );
@@ -267,10 +271,10 @@ export function useFileContent(path: string, vaultReads = false) {
     request
       .then((data) => { if (!cancelled) setState({ loading: false, data, error: null }); })
       .catch((err: Error & { status?: number }) => {
-        if (!cancelled) setState({ loading: false, data: null, error: err.message || t('viewer.failed'), tooLarge: err.status === 413 });
+        if (!cancelled) setState({ loading: false, data: null, error: err.message || tRef.current('viewer.failed'), tooLarge: err.status === 413 });
       });
     return () => { cancelled = true; };
-  }, [api, path, t, vaultReads]);
+  }, [api, path, vaultReads]);
   return state;
 }
 
