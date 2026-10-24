@@ -15,11 +15,12 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { closeSync, existsSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { resolveAgentSession } from './agent-session-map.js';
 import { listVaults } from './vaults.js';
+import { canonicalPath } from './paths.js';
 
 export interface TranscriptLocation {
   mainPath: string | null;
@@ -304,7 +305,7 @@ export function transcriptLaunchCwd(path: string): string | null {
 }
 
 function real(p: string): string | null {
-  try { return realpathSync(p); } catch { return null; }
+  try { return canonicalPath(p); } catch { return null; }
 }
 
 /** Is `p` the dir `root` or inside it (realpaths; never a bare string prefix)? */

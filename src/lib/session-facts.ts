@@ -1,8 +1,8 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { currentBranch, isGitRepo } from './git-sync/git.js';
+import { canonicalPath } from './paths.js';
 import { worktreeIsolationAllowed } from './worktree-gate.js';
 import type { EditsElsewhere } from './session-edits.js';
 
@@ -107,7 +107,7 @@ function gitLine(cwd: string, args: string[]): string | null {
 /** A path with every symlink resolved, or the input unchanged if it cannot be resolved.
  *  See {@link readWorktree} for why the comparison there cannot skip this. */
 function canonical(path: string): string {
-  try { return realpathSync(path); } catch { return path; }
+  try { return canonicalPath(path); } catch { return path; }
 }
 
 /**

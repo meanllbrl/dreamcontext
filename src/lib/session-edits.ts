@@ -1,7 +1,8 @@
-import { realpathSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { dirname, sep } from 'node:path';
 import { repoToplevel } from './git-sync/git.js';
 import { isGovernedCheckout } from './session-cwd.js';
+import { canonicalPath } from './paths.js';
 
 /**
  * WHERE a session's WRITES are landing, counted per checkout.
@@ -96,7 +97,7 @@ function nearestExisting(dir: string): string | null {
  *  session under a symlinked path as writing "elsewhere" — into the checkout it is standing in.
  *  Exactly the trap `session-facts.ts`'s `readWorktree` documents. */
 function canonical(path: string): string {
-  try { return realpathSync(path); } catch { return path; }
+  try { return canonicalPath(path); } catch { return path; }
 }
 
 /** Is this path one of the brain's own files? See the header — this is the exclusion that

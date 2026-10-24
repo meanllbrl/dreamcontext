@@ -88,7 +88,11 @@ vi.mock('node:child_process', async (importOriginal) => {
     ...real,
     spawn: vi.fn((_cmd: string, args: string[], opts: { env?: Record<string, string> }) => {
       const child = new FakeChild();
-      child.script = args[args.length - 1] ?? '';
+      // win32 spawns the chat's claude directly (argv starts with -p, chatSpawnCommand): present it
+      // as the POSIX login-shell script these tests read.
+      child.script = process.platform === 'win32' && args[0] === '-p'
+        ? `exec claude ${args.map((x) => `"${x}"`).join(' ')}`
+        : args[args.length - 1] ?? '';
       child.env = opts?.env ?? {};
       spawned.push(child);
       return child as unknown as import('node:child_process').ChildProcess;

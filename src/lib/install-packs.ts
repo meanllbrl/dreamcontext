@@ -43,6 +43,7 @@ import {
 } from './sleep-specialist-frontmatter.js';
 import { findPackageDir } from './catalog.js';
 import type { SleepSpecialist } from './setup-config.js';
+import { relPosix } from './paths.js';
 
 /**
  * Dependency-free install/uninstall core for skill packs and standalone skills.
@@ -258,7 +259,7 @@ function installPackFiles(
   const packSourceDir = join(packsDir, pack.name);
   const skillRoot = platformSkillRoot(projectRoot, platform);
   const skillDestDir = join(skillRoot, pack.name);
-  const skillRootRel = skillRoot.replace(projectRoot + sep, '');
+  const skillRootRel = relPosix(projectRoot, skillRoot);
 
   // Install base SKILL.md
   const baseSrc = join(packSourceDir, 'SKILL.md');
@@ -334,7 +335,7 @@ function installStandaloneFiles(
 
   const skillRoot = platformSkillRoot(projectRoot, platform);
   const destDir = join(skillRoot, standalone.name);
-  const skillRootRel = skillRoot.replace(projectRoot + sep, '');
+  const skillRootRel = relPosix(projectRoot, skillRoot);
   mkdirSync(destDir, { recursive: true });
 
   // Code-bearing skills: copy the whole source dir (scripts, examples, libs,
@@ -378,7 +379,7 @@ function installEntryAssets(
 ): string[] {
   const installed: string[] = [];
   const assetRoot = platformAssetRoot(projectRoot, platform);
-  const assetRootRel = assetRoot.replace(projectRoot + sep, '').split('\\').join('/');
+  const assetRootRel = relPosix(projectRoot, assetRoot);
 
   for (const asset of entry.assets ?? []) {
     const src = join(sourceDir, asset.file);
@@ -521,7 +522,7 @@ function collectSkillFiles(
   skillDirAbs: string,
 ): string[] {
   const skillRoot = platformSkillRoot(projectRoot, platform);
-  const skillRootRel = skillRoot.replace(projectRoot + sep, '').split('\\').join('/');
+  const skillRootRel = relPosix(projectRoot, skillRoot);
   const prefix = `${skillRootRel}/${name}/`;
 
   const fromManifest = Object.entries(manifest.files)
@@ -598,7 +599,7 @@ export function uninstallPack(
   for (const asset of entry?.assets ?? []) {
     for (const platform of platforms) {
       const assetRoot = platformAssetRoot(projectRoot, platform);
-      const assetRootRel = assetRoot.replace(projectRoot + sep, '').split('\\').join('/');
+      const assetRootRel = relPosix(projectRoot, assetRoot);
       const destAbs = safeChildPath(assetRoot, asset.dest);
       if (!destAbs || destAbs === resolve(assetRoot)) continue;
       candidates.add(`${assetRootRel}/${asset.dest.split('\\').join('/')}`);

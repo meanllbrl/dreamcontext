@@ -33,3 +33,20 @@ describe('relPosix', () => {
     expect(rel.match(/(?:^|\/)knowledge\/products\/([^/]+)\//)?.[1]).toBe('alpha');
   });
 });
+
+describe('canonicalPath', () => {
+  it('is realpathSync off Windows (macOS keeps its /private/var resolution unchanged)', async () => {
+    const { canonicalPath } = await import('../../src/lib/paths.js');
+    const { realpathSync, mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const d = mkdtempSync(join(tmpdir(), 'dc-canon-'));
+    try {
+      expect(canonicalPath(d, 'darwin')).toBe(realpathSync(d));
+      expect(canonicalPath(d, 'win32')).toBe(realpathSync.native(d));
+      expect(() => canonicalPath(join(d, 'missing'), 'darwin')).toThrow();
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
