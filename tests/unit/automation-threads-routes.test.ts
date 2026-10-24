@@ -224,7 +224,7 @@ describe('GET /api/automations/:slug/thread — the run\'s whole answer', () => 
     recordFinished(doc);
     const answer = await answerOf();
     expect(answer).not.toBeNull();
-    expect(answer!.path).toBe(join('automations', 'output', 'digest', '2026-09-20.md'));
+    expect(answer!.path).toBe('automations/output/digest/2026-09-20.md'); // brain-relative: POSIX on every OS
     expect(answer!.text.startsWith('WAU is down 4%.')).toBe(true);
     expect(answer!.text).toContain('Three cohorts moved.');
     expect(answer!.truncated).toBe(false);

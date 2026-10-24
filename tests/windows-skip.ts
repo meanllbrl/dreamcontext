@@ -306,4 +306,14 @@ export const WINDOWS_SKIPS: readonly WindowsSkip[] = [
     file: 'tests/integration/hook-tsc-concurrency.test.ts',
     reason: 'Fakes tsc as a POSIX sh script in node_modules/.bin and asserts POSIX kill signals on the hook (SIGKILL); on Windows the hook now runs node_modules/typescript/bin/tsc through node (tsc-check.ts), which this fixture does not provide.',
   },
+  {
+    file: 'tests/integration/automations-cli.test.ts',
+    test: 'create → list → show → run --force → approve',
+    reason: 'Needs a spawnable stand-in for claude: on POSIX the `$SHELL -ilc` fallback starts a process even with no claude installed (SAFE_PATH hides it), so the run spawns and then fails. On Windows with no claude the spawn fails synchronously, which by design (the same branch POSIX takes on a synchronous spawn failure) leaves the watermark for the next tick.',
+  },
+  {
+    file: 'tests/integration/automations-cli.test.ts',
+    test: 'on a flow-hitl question resumes the asking session',
+    reason: 'Needs a spawnable stand-in for claude: on POSIX the `$SHELL -ilc` fallback starts a process even with no claude installed (SAFE_PATH hides it), so the run spawns and then fails. On Windows with no claude the spawn fails synchronously, which by design (the same branch POSIX takes on a synchronous spawn failure) leaves the question pending for the next tick.',
+  },
 ];

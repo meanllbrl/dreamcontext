@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import fg from './glob.js';
 import matter from 'gray-matter';
 
@@ -59,7 +59,7 @@ function liveTaskLinks(contextRoot: string): Map<string, Set<string>> {
     try {
       const data = matter(readFileSync(file, 'utf-8')).data as Record<string, unknown>;
       const links = Array.isArray(data.objectives) ? data.objectives.map((s) => String(s).trim()) : [];
-      out.set(file.slice(file.lastIndexOf('/') + 1, -3), new Set(links.filter(Boolean)));
+      out.set(basename(file, '.md'), new Set(links.filter(Boolean)));
     } catch { /* unreadable task — other doctor checks own that */ }
   }
   return out;
