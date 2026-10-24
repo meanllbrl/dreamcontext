@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
 import { relPosix } from './paths.js';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { readFrontmatter } from './frontmatter.js';
 import { AGENT_CORE_SKILL } from './catalog.js';
 import { readJsonArray } from './json-file.js';

@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import matter from 'gray-matter';
 import { defaultGitTrackedCheck, type GitTrackedCheck } from '../git-tracked.js';
 import { basename, dirname, join, normalize, resolve, sep } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../glob.js';
 import { generateId } from '../id.js';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { formatSchedule, parseScheduleDetailed, parseSlot, serializeSchedule, serializeSlot } from './schedule.js';

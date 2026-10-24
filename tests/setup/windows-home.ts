@@ -68,7 +68,21 @@ if (process.platform === 'win32') {
   // ENOTEMPTY on a test's cleanup). A recursive rmSync gets Node's own retry there.
   const fs = createRequire(import.meta.url)('node:fs') as Record<string, unknown>;
   const rmOrig = fs.rmSync as (p: unknown, o?: Record<string, unknown>) => void;
-  fs.rmSync = (p: unknown, o?: Record<string, unknown>) =>
-    rmOrig(p, o && o.recursive && o.maxRetries === undefined ? { ...o, maxRetries: 10, retryDelay: 100 } : o);
+  // A folder that a still-running background child (an auto-sleep run, a hanging sync CLI) uses
+  // as its working directory cannot be removed until it exits; a test's forced cleanup leaves it
+  // on the runner rather than failing the test after it passed.
+  fs.rmSync = (p: unknown, o?: Record<string, unknown>) => {
+    if (!o || !o.recursive) { rmOrig(p, o); return; }
+    try {
+      rmOrig(p, o.maxRetries === undefined ? { ...o, maxRetries: 10, retryDelay: 100 } : o);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (o.force && (code === 'EBUSY' || code === 'ENOTEMPTY' || code === 'EPERM')) {
+        process.stderr.write(`[windows-home] cleanup left ${String(p)} behind (${code})\n`);
+        return;
+      }
+      throw err;
+    }
+  };
   syncBuiltinESMExports();
 }

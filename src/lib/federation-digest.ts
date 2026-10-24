@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import {
   buildCorpus,
   bm25Search,

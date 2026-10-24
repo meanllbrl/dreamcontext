@@ -39,6 +39,8 @@
 
 /** A directive the caller should apply. `null` — the answer for nearly every frame — means
  *  this text said nothing about a checkout. */
+import { isAbsolute } from 'node:path';
+
 export type CheckoutDirective =
   | { kind: 'set'; dir: string }
   | { kind: 'reset' };
@@ -190,7 +192,7 @@ export function readEditPaths(frame: Record<string, unknown>): string[] {
     if (!input || typeof input !== 'object') continue;
     for (const field of fields) {
       const value = (input as Record<string, unknown>)[field];
-      if (typeof value === 'string' && value.startsWith('/')) paths.push(value);
+      if (typeof value === 'string' && isAbsolute(value)) paths.push(value);
     }
   }
   return paths;

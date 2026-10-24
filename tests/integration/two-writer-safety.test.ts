@@ -41,7 +41,7 @@ describe('two processes logging to the SAME task', () => {
     const writer = (tag: string) => `
       const { execFileSync } = require('node:child_process');
       for (let i = 0; i < 50; i++) {
-        execFileSync(process.execPath, ['${CLI}', 'tasks', 'log', 'the-contended-task', '${tag}-' + i],
+        execFileSync(process.execPath, [${JSON.stringify(CLI)}, 'tasks', 'log', 'the-contended-task', '${tag}-' + i],
           { cwd: ${JSON.stringify(root)}, stdio: 'ignore' });
       }
     `;
@@ -63,7 +63,7 @@ describe('two processes logging to the SAME task', () => {
     const writer = `
       const { execFileSync } = require('node:child_process');
       for (let i = 0; i < 15; i++) {
-        execFileSync(process.execPath, ['${CLI}', 'tasks', 'log', 'another-contended-task', 'x-' + i],
+        execFileSync(process.execPath, [${JSON.stringify(CLI)}, 'tasks', 'log', 'another-contended-task', 'x-' + i],
           { cwd: ${JSON.stringify(root)}, stdio: 'ignore' });
       }
     `;
@@ -92,7 +92,7 @@ describe('two processes writing DIFFERENT sessions into .sleep.json', () => {
   it('keeps both session records', () => {
     const add = (tag: string) => `
       const { execFileSync } = require('node:child_process');
-      execFileSync(process.execPath, ['${CLI}', 'sleep', 'add', '3', '${tag}'],
+      execFileSync(process.execPath, [${JSON.stringify(CLI)}, 'sleep', 'add', '3', '${tag}'],
         { cwd: ${JSON.stringify(root)}, stdio: 'ignore' });
     `;
     // Serial writes through the lock, then a concurrent pair — both must land.
@@ -118,7 +118,7 @@ describe('a concurrent create of the SAME slug', () => {
     const writer = `
       const { execFileSync } = require('node:child_process');
       try {
-        execFileSync(process.execPath, ['${CLI}', 'tasks', 'create', 'the same task name',
+        execFileSync(process.execPath, [${JSON.stringify(CLI)}, 'tasks', 'create', 'the same task name',
           '--why', 'Two processes file this identical name at the same moment.'],
           { cwd: ${JSON.stringify(root)}, stdio: 'pipe' });
         process.exit(0);

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { readFrontmatter, writeFrontmatter } from './frontmatter.js';
 
 export const OLD_DATA_STRUCTURES_DIR = join('core', 'data-structures');

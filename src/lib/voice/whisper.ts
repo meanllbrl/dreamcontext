@@ -147,7 +147,7 @@ export const MODEL_HOME = MODEL_DIRS[0];
 
 /** `…/ggml-large-v3-turbo.bin` → `large-v3-turbo`. */
 export function modelName(path: string): string {
-  return path.split('/').pop()!.replace(/^ggml-/, '').replace(/\.bin$/, '');
+  return path.split(process.platform === 'win32' ? /[\\/]/ : '/').pop()!.replace(/^ggml-/, '').replace(/\.bin$/, '');
 }
 
 // ─── The warm server ──────────────────────────────────────────────────────────────────

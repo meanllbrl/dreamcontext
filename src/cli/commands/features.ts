@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import chalk from 'chalk';
-import fg from 'fast-glob';
+import fg from '../../lib/glob.js';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { readFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { insertToSection } from '../../lib/markdown.js';

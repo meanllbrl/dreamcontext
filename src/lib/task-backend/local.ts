@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../glob.js';
 import matter from 'gray-matter';
 import { loadStatuses, loadTaskOverride } from '../overrides.js';
 import { DEFAULT_STATUSES, normalizeStatusKey, statusKeys, type StatusDef } from '../task-status.js';

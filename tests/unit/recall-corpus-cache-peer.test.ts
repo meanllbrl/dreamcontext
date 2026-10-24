@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { buildCorpus } from '../../src/lib/recall.js';
 import { buildCorpusCached, peerCacheDir } from '../../src/lib/recall-corpus-cache.js';
@@ -53,8 +53,8 @@ describe('peerCacheDir', () => {
     const a = makeVault('alpha');
     const b = makeVault('beta');
     const dir = peerCacheDir(a, home);
-    expect(dir.startsWith(join(home, '.dreamcontext', 'recall-cache') + '/')).toBe(true);
-    expect(dir.slice(dir.lastIndexOf('/') + 1)).toMatch(/^[0-9a-f]{16}$/);
+    expect(dir.startsWith(join(home, '.dreamcontext', 'recall-cache') + sep)).toBe(true);
+    expect(dir.slice(dir.lastIndexOf(sep) + 1)).toMatch(/^[0-9a-f]{16}$/);
     expect(peerCacheDir(a, home)).toBe(dir);
     expect(peerCacheDir(b, home)).not.toBe(dir);
   });

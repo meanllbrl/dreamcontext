@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 
 /**
  * The owner's "Always allow localhost:PORT" (jarvis plan r9, K4): which loopback ports a web
@@ -43,7 +43,7 @@ function readAll(home: string): Record<string, LoopbackGrant[]> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const out: Record<string, LoopbackGrant[]> = {};
   for (const [vault, list] of Object.entries(raw as Record<string, unknown>)) {
-    if (!vault.startsWith('/') || !Array.isArray(list)) continue;
+    if (!isAbsolute(vault) || !Array.isArray(list)) continue;
     const seen = new Set<number>();
     const grants: LoopbackGrant[] = [];
     for (const g of list) {
@@ -87,7 +87,7 @@ export function setLoopbackGrant(
   vaultRealPath: string, port: number, op: 'grant' | 'revoke', owned: ReadonlySet<number>,
   home: string = homedir(), now: number = Date.now(),
 ): LoopbackGrant[] {
-  if (!vaultRealPath.startsWith('/')) throw new Error('a vault is named by its real path');
+  if (!isAbsolute(vaultRealPath)) throw new Error('a vault is named by its real path');
   if (!isPort(port)) throw new Error('not a port');
   if (op === 'grant' && owned.has(port)) throw new Error('owned-port');
   const all = readAll(home);

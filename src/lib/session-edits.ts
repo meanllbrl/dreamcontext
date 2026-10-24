@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs';
-import { dirname, sep } from 'node:path';
+import { dirname, sep, isAbsolute } from 'node:path';
 import { repoToplevel } from './git-sync/git.js';
 import { isGovernedCheckout } from './session-cwd.js';
 import { canonicalPath } from './paths.js';
@@ -120,7 +120,7 @@ export function recordSessionEdit(
   path: string,
   projectRoot: string,
 ): string | null {
-  if (!sessionKey || !path || !path.startsWith('/')) return null;
+  if (!sessionKey || !path || !isAbsolute(path)) return null;
   if (isBrainPath(path)) return null;
 
   const dir = dirname(path);

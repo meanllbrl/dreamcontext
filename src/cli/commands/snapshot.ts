@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../../lib/glob.js';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { resolveVaultContextRoot, VaultError } from '../../lib/vaults.js';
 import { error } from '../../lib/format.js';

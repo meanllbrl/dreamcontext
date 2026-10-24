@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const fakeHome = vi.hoisted(() => {
@@ -202,7 +202,7 @@ describe('the spawn', () => {
     const files = mcpFiles(a);
     expect(files).toHaveLength(1);
     const f = files[0];
-    expect(f.startsWith(leanMcpDir(fakeHome) + '/')).toBe(true);
+    expect(f.startsWith(leanMcpDir(fakeHome) + sep)).toBe(true);
     expect(JSON.parse(readFileSync(f, 'utf-8'))).toEqual({ mcpServers: { whatsapp: USER_SERVERS.whatsapp } });
     if (process.platform !== 'win32') expect(statSync(f).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     if (process.platform !== 'win32') expect(statSync(leanMcpDir(fakeHome)).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits

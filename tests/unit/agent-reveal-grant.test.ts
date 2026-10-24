@@ -323,7 +323,7 @@ describe('handleAgentReveal — a reference whose climb lands nowhere', () => {
     writeFileSync(script, '#!/bin/sh\necho hi\n', 'utf-8');
     try {
       const { res, status } = makeRes();
-      await handleAgentReveal(makePost({ path: `../../../${dir.split('/').pop()}/setup.sh` }), res, {}, contextRoot);
+      await handleAgentReveal(makePost({ path: `../../../${basename(dir)}/setup.sh` }), res, {}, contextRoot);
       expect(status()).toBe(200);
       expect(lastSpawn().args).not.toEqual([script]);
       if (process.platform === 'darwin') expect(lastSpawn().args).toEqual(['-R', script]);

@@ -242,4 +242,68 @@ export const WINDOWS_SKIPS: readonly WindowsSkip[] = [
     test: 'concurrent appends from two processes',
     reason: 'Spawns `npx` without a shell; on Windows npx is npx.cmd, which Node will not spawn shell-less (ENOENT).',
   },
+  {
+    file: 'tests/unit/task-journal-fold.test.ts',
+    test: 'its only card unreadable',
+    reason: 'Makes the card unreadable with chmod 0o000; Windows ignores POSIX modes, so the card is still read.',
+  },
+  {
+    file: 'tests/unit/agent-file-read.test.ts',
+    test: 'a page within its cap',
+    reason: 'Makes the bytes unreadable with chmod 0o000; Windows ignores POSIX modes.',
+  },
+  {
+    file: 'tests/unit/agent-file-realpath.test.ts',
+    test: 'FAILS CLOSED on a realpath error that is not ENOENT',
+    reason: 'Uses a path THROUGH a regular file as its stand-in for a non-ENOENT realpath error (ENOTDIR on POSIX); Windows reports ENOENT there, so the stand-in does not exist on Windows.',
+  },
+  {
+    file: 'tests/unit/tsc-check.test.ts',
+    test: 'a base dir others can write to is not trusted',
+    reason: 'Builds the untrusted base dir with chmod 0o777; Windows has no POSIX group/other write bits to detect.',
+  },
+  {
+    file: 'tests/unit/ensure-cli.test.ts',
+    test: 'EACCES fallback',
+    reason: 'The npm EACCES fallback retries into a POSIX user prefix and writes it into a shell profile; asserted with POSIX paths.',
+  },
+  {
+    file: 'tests/unit/agent-sessions-generation.test.ts',
+    test: 'a roster lock left by a DEAD process is reclaimed at once',
+    reason: 'Gets a dead pid by spawning /usr/bin/true.',
+  },
+  {
+    file: 'tests/unit/board-card-chat.test.ts',
+    test: 'prepareCardChat',
+    reason: 'Board scope refuses every path that contains a backslash (FORBIDDEN_PATH_CHARS: inside a Claude permission rule it is quoting), and every Windows path does, so a board-scoped agent fails closed on Windows. Making it work needs the rule spelling Claude Code accepts on Windows, measured on a real machine: a product follow-up.',
+  },
+  {
+    file: 'tests/unit/board-card-chat.test.ts',
+    test: 'a card spawn and the native plan-mode deny',
+    reason: 'Board scope refuses every path that contains a backslash (FORBIDDEN_PATH_CHARS: inside a Claude permission rule it is quoting), and every Windows path does, so a board-scoped agent fails closed on Windows. Making it work needs the rule spelling Claude Code accepts on Windows, measured on a real machine: a product follow-up.',
+  },
+  {
+    file: 'tests/unit/board-card-chat.test.ts',
+    test: 'prepareAgentChat',
+    reason: 'Board scope refuses every path that contains a backslash (FORBIDDEN_PATH_CHARS: inside a Claude permission rule it is quoting), and every Windows path does, so a board-scoped agent fails closed on Windows. Making it work needs the rule spelling Claude Code accepts on Windows, measured on a real machine: a product follow-up.',
+  },
+  {
+    file: 'tests/unit/assistant-latency.test.ts',
+    test: 'a scoped home-board card carries only its board scope',
+    reason: 'Board scope refuses every path that contains a backslash (FORBIDDEN_PATH_CHARS: inside a Claude permission rule it is quoting), and every Windows path does, so a board-scoped agent fails closed on Windows. Making it work needs the rule spelling Claude Code accepts on Windows, measured on a real machine: a product follow-up.',
+  },
+  {
+    file: 'tests/integration/auto-sleep-end-to-end.test.ts',
+    test: 'DISPATCHES once armed and over the trigger',
+    reason: 'Needs a spawnable claude to record a live job: on POSIX the `$SHELL -ilc` fallback stands in for it, Windows has no such stand-in and the CI runner has no claude, so nothing is dispatched (correctly).',
+  },
+  {
+    file: 'tests/integration/task-assets-api.test.ts',
+    test: '413 at the streaming cap',
+    reason: 'UNEXPLAINED, needs a real Windows machine: the test waits on the socket the server closes at the cap, and on the Windows runner it hangs to the 30 s timeout (CI round 5, run 40117911619). The cap itself is enforced server-side; how Windows reports the closed socket to the client is not established.',
+  },
+  {
+    file: 'tests/integration/hook-tsc-concurrency.test.ts',
+    reason: 'Fakes tsc as a POSIX sh script in node_modules/.bin and asserts POSIX kill signals on the hook (SIGKILL); on Windows the hook now runs node_modules/typescript/bin/tsc through node (tsc-check.ts), which this fixture does not provide.',
+  },
 ];

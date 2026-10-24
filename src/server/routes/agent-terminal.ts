@@ -1444,17 +1444,21 @@ const GOAL_LIVE_NAMED_RE = /^\.goal-skill-live\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f
 // minute at most, so the tmp listing is kept per directory mtime and each file's parse per
 // (inode, size, mtime); the 3 h age check still runs on every call.
 const LIVE_CACHE_MAX = 256;
-const liveDirNames = new Map<string, { mtimeMs: number; names: string[] }>();
+const liveDirNames = new Map<string, { mtimeMs: number; names: string[]; listedAt: number }>();
 const liveFiles = new Map<string, { ino: number; size: number; mtimeMs: number; value: unknown; bad: boolean }>();
 
 /** The goal-live file names in `dir` (throws when there is no dir). */
 function goalLiveNames(dir: string): string[] {
   const st = statSync(dir);
   const hit = liveDirNames.get(dir);
-  if (hit && hit.mtimeMs === st.mtimeMs) return hit.names;
+  // Windows' clock is coarse: a file created in the same tick as the listing leaves the folder's
+  // mtime where it was, so there a listing is trusted only once it is clearly newer than the
+  // folder's last change. Elsewhere the mtime alone decides, as before.
+  const settled = process.platform !== 'win32' || (hit !== undefined && hit.listedAt - st.mtimeMs > 100);
+  if (hit && hit.mtimeMs === st.mtimeMs && settled) return hit.names;
   const names = readdirSync(dir).filter((n) => GOAL_LIVE_FILE_RE.test(n));
   if (liveDirNames.size >= LIVE_CACHE_MAX) liveDirNames.clear();
-  liveDirNames.set(dir, { mtimeMs: st.mtimeMs, names });
+  liveDirNames.set(dir, { mtimeMs: st.mtimeMs, names, listedAt: Date.now() });
   return names;
 }
 

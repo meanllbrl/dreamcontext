@@ -106,7 +106,14 @@ export const defaultTscRunner: TscRunner = (projectRoot, timeoutMs) => {
   const args = ['--noEmit', '--pretty', 'false', '--incremental'];
   const bin = localBin('tsc', projectRoot);
   try {
-    if (bin) {
+    if (process.platform === 'win32') {
+      // npm's `.bin/tsc` is a POSIX script (plus tsc.cmd), and `npx` is npx.cmd: neither can be
+      // started without a shell. The project's own compiler entry runs under node instead; no
+      // local TypeScript means no check, exactly as a missing `.bin/tsc` + failed npx did.
+      const entry = join(projectRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+      if (!existsSync(entry)) return { output: null, ms: Date.now() - started };
+      execFileSync(process.execPath, [entry, ...args], { cwd: projectRoot, timeout: timeoutMs, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    } else if (bin) {
       execFileSync(bin, args, { cwd: projectRoot, timeout: timeoutMs, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
     } else {
       execFileSync('npx', ['tsc', ...args], { cwd: projectRoot, timeout: timeoutMs, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });

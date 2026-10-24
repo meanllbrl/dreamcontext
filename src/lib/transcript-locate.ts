@@ -17,7 +17,7 @@
 import { execFileSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { resolveAgentSession } from './agent-session-map.js';
 import { listVaults } from './vaults.js';
 import { canonicalPath } from './paths.js';
@@ -310,7 +310,8 @@ function real(p: string): string | null {
 
 /** Is `p` the dir `root` or inside it (realpaths; never a bare string prefix)? */
 function within(p: string, root: string): boolean {
-  return p === root || p.startsWith(root.endsWith('/') ? root : root + '/');
+  // The platform separator: both sides are canonical native paths (`C:\…` on Windows).
+  return p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
 /**

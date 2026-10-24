@@ -21,7 +21,7 @@ const decoy = vi.hoisted(() => {
 import {
   mkdirSync, rmSync, realpathSync, existsSync, readFileSync, writeFileSync, appendFileSync, symlinkSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import {
@@ -57,7 +57,17 @@ const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
  * ENOENT) with NO network call, no API cost, and no dependence on a live
  * authenticated `claude` being present wherever this suite happens to run.
  */
-const SAFE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
+const SAFE_PATH = process.platform === 'win32' ? win32SafePath() : '/usr/bin:/bin:/usr/sbin:/sbin';
+
+/** The Windows twin: git's own folder and System32, still no `claude` (`where` finds git). */
+function win32SafePath(): string {
+  const sys = join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+  let gitDir = '';
+  try {
+    gitDir = dirname(execFileSync(join(sys, 'where.exe'), ['git'], { encoding: 'utf-8' }).split(/\r?\n/)[0].trim());
+  } catch { /* no git: the git-backed cases fail on their own */ }
+  return [gitDir, sys].filter(Boolean).join(';');
+}
 
 function makeTmpDir(prefix: string): string {
   const raw = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);

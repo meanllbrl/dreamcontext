@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { readFrontmatter, updateFrontmatterFields } from './frontmatter.js';
 import { today } from './id.js';
 import { featuresDir } from './features-path.js';

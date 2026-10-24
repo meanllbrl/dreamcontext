@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../glob.js';
 import matter from 'gray-matter';
 import { foldAscii } from '../fold-ascii.js';
 import { splitChangelogEntries } from './clickup-map.js';

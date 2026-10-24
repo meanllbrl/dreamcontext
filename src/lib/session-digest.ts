@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { readFrontmatter } from './frontmatter.js';
 import type { DistilledSection } from '../cli/commands/transcript.js';
 import {
