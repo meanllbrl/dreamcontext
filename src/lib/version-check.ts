@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import { execFileSync, spawn } from 'node:child_process';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -348,7 +349,7 @@ export const WIN_HIDDEN_RUNNER =
 export interface AutoUpgradeLaunch {
   file: string;
   args: string[];
-  options: { detached: true; stdio: 'ignore'; shell: boolean; windowsHide?: true };
+  options: { detached: true; stdio: 'ignore'; shell: boolean; windowsHide?: true; cwd?: string };
 }
 
 /**
@@ -361,13 +362,16 @@ export interface AutoUpgradeLaunch {
  * DETACHED_PROCESS (no console), and the cmd it started would allocate a NEW visible console on
  * every SessionStart that triggers an upgrade. So the detached child is our own node running
  * {@link WIN_HIDDEN_RUNNER}, which starts cmd/npm hidden. Args are fixed literals, so
- * `shell: true` inside the runner is safe.
+ * `shell: true` inside the runner is safe. It runs in the home folder: cmd looks for `npm` in the
+ * working folder before PATH, and the hook that triggers this runs inside a project, where a
+ * committed `npm.cmd` would otherwise run in place of npm.
  */
 export function autoUpgradeLaunch(
   cmd: string,
   args: string[],
   platform: NodeJS.Platform = process.platform,
   execPath: string = process.execPath,
+  home: string = homedir(),
 ): AutoUpgradeLaunch {
   if (platform !== 'win32') {
     return { file: cmd, args, options: { detached: true, stdio: 'ignore', shell: false } };
@@ -375,7 +379,7 @@ export function autoUpgradeLaunch(
   return {
     file: execPath,
     args: ['-e', WIN_HIDDEN_RUNNER, [cmd, ...args].join(' ')],
-    options: { detached: true, stdio: 'ignore', shell: false, windowsHide: true },
+    options: { detached: true, stdio: 'ignore', shell: false, windowsHide: true, cwd: home },
   };
 }
 

@@ -1,6 +1,6 @@
 // Windows claude resolution — pure: path.win32 + injected exists/listDir, so it runs on any host.
 import { describe, it, expect } from 'vitest';
-import { resolveWin32ClaudeBin, whichOnPathWin32 } from '../../src/lib/claude-path.js';
+import { resolveWin32ClaudeBin, whichOnPathWin32, win32ClaudeFallback } from '../../src/lib/claude-path.js';
 
 const HOME = 'C:\\Users\\me';
 const ENV = { LOCALAPPDATA: `${HOME}\\AppData\\Local`, APPDATA: `${HOME}\\AppData\\Roaming` };
@@ -69,5 +69,17 @@ describe('whichOnPathWin32', () => {
 
   it('returns null when absent', () => {
     expect(whichOnPathWin32(['npm.cmd'], { PATH: 'C:\\x' }, () => false)).toBeNull();
+  });
+
+  it('never looks in a relative PATH entry (that is the working folder again)', () => {
+    const probed: string[] = [];
+    whichOnPathWin32(['npm.cmd'], { PATH: '.;bin;C:\\x' }, (p) => { probed.push(p); return false; });
+    expect(probed).toEqual(['C:\\x\\npm.cmd']);
+  });
+});
+
+describe('win32ClaudeFallback', () => {
+  it('is an absolute path under the profile, never the bare name', () => {
+    expect(win32ClaudeFallback('C:\\Users\\me')).toBe('C:\\Users\\me\\.local\\bin\\claude.exe');
   });
 });

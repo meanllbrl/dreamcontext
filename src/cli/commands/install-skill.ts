@@ -850,6 +850,12 @@ export async function installCoreForPlatform(
   if (missingCore.length > 0) {
     throw new Error(`${missingCore.join(', ')} not found in package. Try reinstalling dreamcontext.`);
   }
+  // Checked here, before anything is written, for the same reason (see the agents loop below):
+  // a throw after the writes would leave files on disk that the saved manifest does not list.
+  const agentsSourceDir = findPackageDir('agents');
+  if (!agentsSourceDir) {
+    throw new Error('agents/ not found in package. Try reinstalling dreamcontext.');
+  }
 
   if (manifest) recordPlatform(manifest, platform);
 
@@ -1021,10 +1027,6 @@ export async function installCoreForPlatform(
   // Required, like SKILL.md above. A missing `agents/` used to be skipped silently, and `update`
   // reads "in the old manifest, not in this install" as "retired" and DELETES the project's
   // core agents (reproduced with the desktop app's resources layout, which shipped no `agents/`).
-  const agentsSourceDir = findPackageDir('agents');
-  if (!agentsSourceDir) {
-    throw new Error('agents/ not found in package. Try reinstalling dreamcontext.');
-  }
   const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
   for (const file of agentFiles) {
     const source = join(agentsSourceDir, file);

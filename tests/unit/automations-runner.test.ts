@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep, win32 } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import {
@@ -1107,6 +1107,20 @@ describe('killRunGroup', () => {
     expect(result.childPgid).toBe(55555);
     expect(killImpl).toHaveBeenCalledWith(-55555, 'SIGKILL');
 
+    // The same sidecar, but the pid now belongs to another program (Windows reuses pids and the
+    // kill is a tree kill): refused even though every other guard passes, and --force does not lift it.
+    const reused = 'operator-kill-reused-pid';
+    createApproved(reused);
+    writeRunSidecar(contextRoot, reused, {
+      slug: reused, runnerPid: 999999, childPid: 55556, childPgid: 55556,
+      fireAt, startedAt, timeoutAt: '2026-07-26T17:15:00.000Z',
+    });
+    const killReused = vi.fn();
+    const refused = killRunGroup(contextRoot, reused, { killImpl: killReused, nowMs, force: true, isOurs: () => false });
+    expect(refused.killed).toBe(false);
+    expect(refused.refusedReason).toMatch(/no longer belongs to the recorded run/);
+    expect(killReused).not.toHaveBeenCalledWith(-55556, 'SIGKILL');
+
     const cache = readAutomationCache(contextRoot, slug);
     expect(cache?.lastFireAt).toBe(fireAt); // watermark ADVANCED
     const event = cache?.history[0];
@@ -1473,7 +1487,9 @@ describe('executeClaudeDetached — win32', () => {
     const lines: string[] = [];
     try {
       const out = await executeClaudeDetached(['-p', 'x'], { cwd: empty, home: empty, timeoutMs: 1_000, spawnImpl, log: (l) => lines.push(l) });
-      expect(seen).toEqual([{ file: 'claude', detached: false }]); // bare name, never /bin/zsh
+      // An absolute path, never /bin/zsh and never the bare name (a bare name is looked up in
+      // the working folder first on Windows, where a project could plant a claude.exe).
+      expect(seen).toEqual([{ file: win32.join(empty, '.local', 'bin', 'claude.exe'), detached: false }]);
       expect(out.spawned).toBe(false);
       expect(out.stderrTail).toMatch(/claude was not found/);
       expect(lines.some((l) => /claude was not found/.test(l))).toBe(true);

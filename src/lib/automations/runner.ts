@@ -9,8 +9,8 @@ import { recordNotification } from '../notification-log.js';
 import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
-import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
-import { killPortable } from '../proc.js';
+import { claudeAwarePath, findClaudeBin, win32ClaudeFallback } from '../claude-path.js';
+import { killPortable, recordedChildIsOurs } from '../proc.js';
 import { readEnvelopeLimitSignal, type LimitSignal } from '../claude-limit-signal.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox, ensureSharedMcpConfig } from '../claude-account-sandbox.js';
@@ -1386,7 +1386,7 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
   const child: ChildProcess = claudeBin
     ? spawnFn(claudeBin, argv, spawnOptions)
     : process.platform === 'win32'
-      ? spawnFn('claude', argv, spawnOptions)
+      ? spawnFn(win32ClaudeFallback(), argv, spawnOptions)
       : spawnFn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...argv], spawnOptions);
   // Async 'error' events (agent-terminal.ts:803) must always have a listener
   // even though spawn-failure detection below is synchronous — an unhandled
@@ -2739,7 +2739,11 @@ export interface KillRunResult {
 export function killRunGroup(
   contextRoot: string,
   slug: string,
-  opts?: { killImpl?: KillImpl; nowMs?: number; force?: boolean; log?: (l: string) => void },
+  opts?: {
+    killImpl?: KillImpl; nowMs?: number; force?: boolean; log?: (l: string) => void;
+    /** Test seam for the win32 pid-reuse guard ({@link recordedChildIsOurs}). */
+    isOurs?: (childPid: number, runnerPid: number) => boolean;
+  },
 ): KillRunResult {
   const killFn: KillImpl = opts?.killImpl ?? ((pid, signal) => { killPortable(pid, signal); });
   const nowMs = opts?.nowMs ?? Date.now();
@@ -2831,6 +2835,21 @@ export function killRunGroup(
       runnerAlive,
       groupAlive,
       refusedReason: `the sidecar is ${Math.round(ageMs / 60_000)} minutes old — the recorded pgid may have been recycled; pass --force to kill anyway`,
+    };
+  }
+
+  // Guard 4b — Windows only (identity elsewhere): the kill is `taskkill /T /F` on whatever
+  // process owns that pid NOW, and Windows reuses pids quickly. Allowed only while it is still
+  // the recorded runner's child; --force does not lift this (age is not the question here).
+  if (!(opts?.isOurs ?? recordedChildIsOurs)(sidecar.childPgid, sidecar.runnerPid)) {
+    return {
+      found: true,
+      killed: false,
+      childPgid: sidecar.childPgid,
+      ageMs,
+      runnerAlive,
+      groupAlive,
+      refusedReason: 'that process id no longer belongs to the recorded run (Windows reuses ids) — refusing to kill',
     };
   }
 

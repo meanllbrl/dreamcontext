@@ -16,10 +16,12 @@ describe('autoUpgradeLaunch', () => {
   });
 
   it('on Windows the detached child is our node running the hidden runner, never cmd/npm directly', () => {
-    const l = autoUpgradeLaunch('npm', ARGS, 'win32', 'C:\\Program Files\\nodejs\\node.exe');
+    const l = autoUpgradeLaunch('npm', ARGS, 'win32', 'C:\\Program Files\\nodejs\\node.exe', 'C:\\Users\\me');
     expect(l.file).toBe('C:\\Program Files\\nodejs\\node.exe');
     expect(l.args).toEqual(['-e', WIN_HIDDEN_RUNNER, 'npm install -g dreamcontext@latest']);
-    expect(l.options).toEqual({ detached: true, stdio: 'ignore', shell: false, windowsHide: true });
+    // In the home folder: cmd looks for `npm` in the working folder before PATH, and the hook
+    // that triggers this runs inside a project.
+    expect(l.options).toEqual({ detached: true, stdio: 'ignore', shell: false, windowsHide: true, cwd: 'C:\\Users\\me' });
   });
 
   it('the runner starts the command hidden, through a shell, and waits for it', () => {

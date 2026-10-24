@@ -174,8 +174,8 @@ const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
  */
 export function stageUpload(convId: string, file: File, upload: (f: File) => Promise<string | null>): void {
   const id = nextAttachmentId();
-  const name = file.name || 'Pasted image';
-  const isImage = file.type.startsWith('image/') || IMAGE_NAME_RE.test(name);
+  const isImage = file.type.startsWith('image/') || IMAGE_NAME_RE.test(file.name);
+  const name = file.name || (isImage ? 'Pasted image' : 'Pasted file');
   let url: string | undefined;
   if (isImage) { try { url = URL.createObjectURL(file); } catch { /* no DOM */ } }
   addAttachments(convId, [{ id, kind: isImage ? 'image' : 'file', name, url, uploading: true }]);

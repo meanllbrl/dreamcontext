@@ -2167,18 +2167,22 @@ export function isDrivePath(text: string): boolean {
  * knows `/`. Anything else is returned untouched — a backslash is a legal filename character
  * on macOS and must not be rewritten there.
  */
-export function normalizeDrivePath(text: string): string {
+export function normalizeDrivePath(text: string, opts: { decode?: boolean } = {}): string {
   if (!/^[A-Za-z]:/.test(text)) return text;
   let out = text;
   // marked percent-encodes a link destination, so `[x](C:\a\b.png)` arrives as `C:%5Ca%5Cb.png`.
-  try { out = decodeURI(out); } catch { /* a stray `%` is just a character in a file name */ }
+  // Code text was never encoded: there a `%20` is part of the file's name (`decode: false`).
+  if (opts.decode !== false) {
+    try { out = decodeURI(out); } catch { /* a stray `%` is just a character in a file name */ }
+  }
   return isDrivePath(out) ? out.replace(/\\/g, '/') : text;
 }
 
 export function looksLikePath(text: string): boolean {
   const t = text.trim();
   if (!t || t.length > 200 || t.includes('://')) return false;
-  if (isDrivePath(t)) return DRIVE_PATH_RE.test(t);
+  // ` -x` / ` --flag` is a command line that starts with a program path, not a path.
+  if (isDrivePath(t)) return !/\s-/.test(t) && DRIVE_PATH_RE.test(t);
   if (/\s/.test(t)) return false;
   return PATH_LIKE_RE.test(t);
 }
@@ -2208,7 +2212,7 @@ export function useClickablePaths(
       if (code.closest('pre')) return;
       const text = (code.textContent ?? '').trim();
       if (!looksLikePath(text)) return;
-      const target = normalizeDrivePath(text);
+      const target = normalizeDrivePath(text, { decode: false });
       code.classList.add('chat-md-path');
       code.setAttribute('role', 'button');
       code.setAttribute('tabindex', '0');

@@ -4633,7 +4633,16 @@ export function AgentSurface() {
       const target = s0 as ChatSession;
       const convId = target.scratchId || target.claudeId;
       if (convId) {
-        for (const file of files) stageUpload(convId, file, (f) => uploadAgentFile(vault, f, f.name));
+        // Every chip at once, the bytes one file at a time (as the path-text drop did): a drop of
+        // forty files must not open forty uploads to the loopback server together.
+        let chain: Promise<unknown> = Promise.resolve();
+        for (const file of files) {
+          stageUpload(convId, file, (f) => {
+            const job = chain.then(() => uploadAgentFile(vault, f, f.name));
+            chain = job.catch(() => null);
+            return job;
+          });
+        }
         target.focus();
         return;
       }

@@ -562,10 +562,13 @@ export function isShellSafePath(p: string): boolean {
  *  silently dropped every Windows chat's briefing, `--agents` and `--settings` files). On win32
  *  the chat argv never goes through a shell (see `chatSpawnCommand`); the only shell that sees
  *  one of these paths is the mode-note hook's `cat "<path>"` (bash), where the double quotes
- *  cover spaces and `~` (8.3 short names). Still no quote, `$`, backtick, `;`, `|` or `%`.
- *  Exported pure for tests. */
+ *  cover spaces and `~` (8.3 short names). Still no quote, `$`, backtick, `;`, `|`, `&`, `%`,
+ *  `!`, line break or NUL. Exported pure for tests. */
 export function isWin32SafeTmpPath(p: string): boolean {
-  return /^[A-Za-z]:[\\/][A-Za-z0-9\\/._ ~-]*$/.test(p);
+  // Any letter, so a profile or project folder like `Öğretmen` / `Masaüstü` passes (an ASCII
+  // allowlist silently dropped every chat file for those users); what stays out is anything a
+  // shell could read as syntax: quotes, `$`, backtick, `%`, `!`, `;`, `|`, `&`, line breaks, NUL.
+  return /^[A-Za-z]:[\\/][^"'$`%!;|&\r\n\0]*$/u.test(p);
 }
 
 /** The path guard for this platform's tmp files. */

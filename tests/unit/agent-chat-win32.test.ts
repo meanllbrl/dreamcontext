@@ -24,6 +24,18 @@ describe('isWin32SafeTmpPath', () => {
     }
   });
 
+  it('admits a non-ASCII profile or project folder (Öğretmen, Masaüstü) and spaces', () => {
+    for (const ok of [
+      'C:\\Users\\Öğretmen\\AppData\\Local\\Temp\\dreamcontext-chat-settings-1.json',
+      'C:\\Users\\me\\Masaüstü\\proje\\.mcp.json',
+      'C:\\Users\\Jane Doe\\AppData\\Local\\Temp\\a.json',
+    ]) {
+      expect(isWin32SafeTmpPath(ok), ok).toBe(true);
+    }
+    expect(isWin32SafeTmpPath('C:\\tmp\\a&b.md')).toBe(false);
+    expect(isWin32SafeTmpPath('C:\\tmp\\a!b.md')).toBe(false);
+  });
+
   it('leaves the POSIX guard untouched (a drive path still fails it)', () => {
     expect(isShellSafePath('C:\\Users\\x\\a.md')).toBe(false);
     expect(isShellSafePath('/tmp/dc_x-1.md')).toBe(true);

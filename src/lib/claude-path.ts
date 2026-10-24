@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join, win32 } from 'node:path';
+import { win32AbsolutePathDirs } from './proc.js';
 
 /**
  * Finding `claude` when the shell can't — and the one-line rc export that fixes
@@ -87,10 +88,10 @@ function safeReaddir(dir: string): string[] {
   try { return readdirSync(dir); } catch { return []; }
 }
 
-/** The PATH of `env` as Windows directories (the key's case varies: `Path`), unquoted. */
+/** The PATH of `env` as Windows directories (any key case: `Path`), unquoted, absolute only: a
+ *  relative entry would make the lookup depend on the working folder (see lib/proc.ts). */
 function win32PathDirs(env: NodeJS.ProcessEnv): string[] {
-  const raw = env.PATH ?? env.Path ?? '';
-  return raw.split(';').map((d) => d.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
+  return win32AbsolutePathDirs(env);
 }
 
 /**
@@ -144,7 +145,17 @@ export function whichOnPathWin32(
  * resolve `claude`, so argv goes straight to the binary and no quoting layer exists.
  */
 export function claudeDirectCommand(args: string[]): { file: string; args: string[] } {
-  return { file: findClaudeBin() ?? 'claude', args };
+  return { file: findClaudeBin() ?? (process.platform === 'win32' ? win32ClaudeFallback() : 'claude'), args };
+}
+
+/**
+ * What win32 spawns when no `claude.exe` was found: the native installer's absolute location,
+ * never the bare name. A bare name is looked up in the child's working folder first (libuv), so a
+ * `claude.exe` committed to a project root would run; this path fails ENOENT instead, the same
+ * "claude was not found" the caller already reports.
+ */
+export function win32ClaudeFallback(home: string = process.env.USERPROFILE || homedir()): string {
+  return win32.join(home, '.local', 'bin', 'claude.exe');
 }
 
 /**

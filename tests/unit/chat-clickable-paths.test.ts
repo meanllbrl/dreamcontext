@@ -75,11 +75,23 @@ describe('looksLikePath — Windows absolute paths', () => {
   });
 });
 
+describe('looksLikePath — a Windows command line is not a path', () => {
+  it('refuses a program path followed by flags', () => {
+    expect(looksLikePath(String.raw`C:\tools\run.exe --flag x.y`)).toBe(false);
+    expect(looksLikePath(String.raw`C:\tools\run.exe -v out.log`)).toBe(false);
+    expect(looksLikePath(String.raw`C:\Program Files\App\app.exe`)).toBe(true);
+  });
+});
+
 describe('normalizeDrivePath', () => {
   it('turns backslashes into forward slashes and undoes marked\'s encoding', () => {
     expect(normalizeDrivePath(String.raw`C:\Users\me\a.png`)).toBe('C:/Users/me/a.png');
     expect(normalizeDrivePath('C:%5CUsers%5Cme%5Ca.png')).toBe('C:/Users/me/a.png');
     expect(normalizeDrivePath('C:/Users/me/My%20shot.png')).toBe('C:/Users/me/My shot.png');
+  });
+
+  it('does not decode code text, where a `%20` is part of the file name', () => {
+    expect(normalizeDrivePath(String.raw`C:\a%20b.txt`, { decode: false })).toBe('C:/a%20b.txt');
   });
 
   it('leaves every non-drive reference exactly as written', () => {

@@ -309,6 +309,11 @@ describe('stageUpload — one door for a paste and a drop', () => {
     expect(pendingUploads('conv-u')).toHaveLength(0);
   });
 
+  it('a nameless non-image paste is labelled a file, not an image', () => {
+    stageUpload('conv-n', new File(['x'], '', { type: 'application/pdf' }), () => new Promise(() => {}));
+    expect(readScratch('conv-n').attachments[0]).toMatchObject({ kind: 'file', name: 'Pasted file' });
+  });
+
   it('a non-image file is a file chip, and a rejected upload is marked failed', async () => {
     stageUpload('conv-f', new File(['%PDF'], 'brief.pdf', { type: 'application/pdf' }), () => Promise.reject(new Error('x')));
     await Promise.allSettled(pendingUploads('conv-f'));

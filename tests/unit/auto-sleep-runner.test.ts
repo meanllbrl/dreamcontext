@@ -286,6 +286,21 @@ describe('cancelAutoSleep', () => {
     expect(signals).toEqual([[-999_999, 'SIGTERM'], [-999_999, 'SIGKILL']]);
     expect(readAutoSleepSidecar(ctx)?.status).toBe('cancelled');
   });
+
+  it('REFUSES when the pid no longer belongs to the recorded run (Windows pid reuse)', () => {
+    running({ pid: process.pid, pgid: 999_999, runnerPid: 4242 });
+    const signals: unknown[] = [];
+    const asked: Array<[number, number]> = [];
+    const res = cancelAutoSleep(ctx, {
+      killImpl: (pid, sig) => { signals.push([pid, sig]); },
+      isOurs: (child, runner) => { asked.push([child, runner]); return false; },
+    });
+    expect(asked).toEqual([[999_999, 4242]]);
+    expect(res.killed).toBe(false);
+    expect(res.refusedReason).toMatch(/no longer belongs to the recorded run/);
+    expect(signals).toEqual([]);
+    expect(readAutoSleepSidecar(ctx)?.status).toBe('running');
+  });
 });
 
 describe('every sleep-state lock site RE-READS inside the lock', () => {

@@ -96,10 +96,16 @@ export function resolveChatReference(
   projectRoot: string | null | undefined,
   contextRoot: string | null | undefined,
   rawPath: string,
+  platform: NodeJS.Platform = process.platform,
 ): ResolvedReference | null {
   // A null byte is not a mistyped path, it is an attempt to end one early — never resolved,
   // never recovered, never guessed at.
   if (!rawPath || rawPath.includes('\0')) return null;
+  // Windows: `\\host\share\…` / `//host/share/…` (and `\\?\`, `\\.\`) is a network or device
+  // path, and even a stat of one makes Windows connect to that host and offer the user's NTLM
+  // hash. An answer can name one in an image, which renders with no click, so it is refused
+  // before any filesystem call. A local file never needs this spelling.
+  if (platform === 'win32' && /^[\\/]{2}/.test(rawPath)) return null;
 
   // No project to anchor to (no vault resolved for this request): only an ALREADY absolute
   // reference means anything. Anchoring on the server PROCESS's cwd is precisely the bug

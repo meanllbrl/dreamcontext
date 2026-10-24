@@ -31,6 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { win32PowerShell } from '../proc.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
@@ -127,7 +128,7 @@ export function defaultAncestryProbe(pid: number): number[] | null {
     // orphan, so a dead parent's pid can be reused; the chain must still contain the run's
     // recorded child pid, so a false admit needs that exact pid reused as an ancestor.
     out = process.platform === 'win32'
-      ? execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_PROCESS_TABLE], {
+      ? execFileSync(win32PowerShell(), ['-NoProfile', '-NonInteractive', '-Command', WIN_PROCESS_TABLE], {
         encoding: 'utf-8',
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 15_000,

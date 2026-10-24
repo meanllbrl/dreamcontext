@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { promisify } from 'node:util';
 import {
   withHiddenWindow, installHiddenWindowDefaults, killPortable, killChildTree,
+  resolveBareWin32, withResolvedFile, recordedChildIsOurs, win32AbsolutePathDirs,
 } from '../../src/lib/proc.js';
 
 const H = { windowsHide: true };
@@ -74,7 +75,7 @@ describe('installHiddenWindowDefaults', () => {
 
   it('wraps every launcher on win32 and defaults windowsHide', () => {
     const { cp, raw, calls } = fakeCp();
-    expect(installHiddenWindowDefaults(cp, 'win32')).toBe(true);
+    expect(installHiddenWindowDefaults(cp, 'win32', (f) => f)).toBe(true);
     for (const name of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']) {
       expect((raw[name] as (...a: unknown[]) => unknown)('cmd')).toBe(name);
       expect(calls[name][0]).toEqual(['cmd', H]);
@@ -93,9 +94,74 @@ describe('installHiddenWindowDefaults', () => {
 
   it('routes promisify(execFile) through the custom symbol with windowsHide', async () => {
     const { cp, raw, calls } = fakeCp();
-    installHiddenWindowDefaults(cp, 'win32');
+    installHiddenWindowDefaults(cp, 'win32', (f) => f);
     await promisify(raw.execFile as never)('git', ['--version']);
     expect(calls.execFilePromisified[0]).toEqual(['git', ['--version'], H]);
+  });
+
+  it('runs a bare name through the resolver on the four FILE launchers only', async () => {
+    const { cp, raw, calls } = fakeCp();
+    installHiddenWindowDefaults(cp, 'win32', (f) => `C:\\abs\\${f}.exe`);
+    for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync']) {
+      (raw[name] as (...a: unknown[]) => unknown)('git', ['status']);
+      expect(calls[name][0][0], name).toBe('C:\\abs\\git.exe');
+    }
+    for (const name of ['exec', 'execSync', 'fork']) {
+      (raw[name] as (...a: unknown[]) => unknown)('git status');
+      expect(calls[name][0][0], name).toBe('git status');
+    }
+    await promisify(raw.execFile as never)('git', ['--version']);
+    expect(calls.execFilePromisified[0][0]).toBe('C:\\abs\\git.exe');
+  });
+});
+
+describe('resolveBareWin32 — a bare name never runs from the working folder', () => {
+  const env = { Path: 'C:\\Program Files\\Git\\cmd;.;bin;"C:\\Tools"', SystemRoot: 'C:\\Windows' };
+  const onDisk = (...files: string[]) => (p: string) => files.includes(p);
+
+  it('takes the first absolute PATH hit, .com before .exe, any key case', () => {
+    expect(resolveBareWin32('git', env, onDisk('C:\\Program Files\\Git\\cmd\\git.exe'))).toBe('C:\\Program Files\\Git\\cmd\\git.exe');
+    expect(resolveBareWin32('x', env, onDisk('C:\\Tools\\x.com', 'C:\\Tools\\x.exe'))).toBe('C:\\Tools\\x.com');
+    expect(resolveBareWin32('claude.exe', env, onDisk('C:\\Tools\\claude.exe'))).toBe('C:\\Tools\\claude.exe');
+  });
+
+  it('ignores relative PATH entries (., bin): they are the working folder again', () => {
+    expect(win32AbsolutePathDirs(env)).toEqual(['C:\\Program Files\\Git\\cmd', 'C:\\Tools']);
+    const probed: string[] = [];
+    resolveBareWin32('git', env, (p) => { probed.push(p); return false; });
+    expect(probed.every((p) => /^C:\\/.test(p))).toBe(true);
+  });
+
+  it('falls back to System32 (ENOENT there), never the bare name', () => {
+    expect(resolveBareWin32('claude', env, () => false)).toBe('C:\\Windows\\System32\\claude');
+    expect(resolveBareWin32('claude', {}, () => false)).toBe('C:\\Windows\\System32\\claude');
+  });
+
+  it('leaves a path with a separator or a drive alone', () => {
+    for (const f of ['C:\\x\\git.exe', '.\\git', 'tools/git', 'D:git']) {
+      expect(resolveBareWin32(f, env, () => true)).toBe(f);
+    }
+  });
+
+  it('withResolvedFile skips a shell call and reads PATH from the call\'s own env', () => {
+    const seen: Array<string | undefined> = [];
+    const r = (f: string, e: NodeJS.ProcessEnv) => { seen.push(e.PATH); return `R:${f}`; };
+    expect(withResolvedFile(['npm install', { shell: true }], r)).toEqual(['npm install', { shell: true }]);
+    expect(withResolvedFile(['git', ['a'], { env: { PATH: 'C:\\only' } }], r)[0]).toBe('R:git');
+    expect(seen).toEqual(['C:\\only']);
+  });
+});
+
+describe('recordedChildIsOurs — Windows reuses pids, and the kill is a tree kill', () => {
+  it('is always true off win32 (a recycled pid there fails ESRCH harmlessly)', () => {
+    expect(recordedChildIsOurs(123, 0, 'darwin', () => { throw new Error('never asked'); })).toBe(true);
+  });
+
+  it('on win32: only while the recorded runner is still the parent', () => {
+    expect(recordedChildIsOurs(500, 42, 'win32', () => 42)).toBe(true);
+    expect(recordedChildIsOurs(500, 42, 'win32', () => 9001)).toBe(false); // reused by someone else
+    expect(recordedChildIsOurs(500, 42, 'win32', () => null)).toBe(false); // gone / unreadable
+    expect(recordedChildIsOurs(500, 0, 'win32', () => 0)).toBe(false); // no runner on record
   });
 });
 
