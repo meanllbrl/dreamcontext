@@ -10,6 +10,7 @@
  *   isMeta: true                     skill loaders, peer hand-backs, local-command caveats
  *   promptSource: 'system'           task notifications, peer and scheduled turns
  *   turnOrigin: task_notification | peer | system | scheduled
+ *   isCompactSummary / isVisibleInTranscriptOnly: the summary a compaction writes
  *
  * Those fields are what this module trusts first. Older transcripts lack them, so the
  * text shapes in {@link isSystemNoiseMessage} stay as the fallback.
@@ -33,8 +34,17 @@ export const INJECTED_TURN_ORIGINS: ReadonlySet<string> = new Set([
  * none of them; the text fallback handles those).
  */
 export function isInjectedUserRecord(rec: object): boolean {
-  const r = rec as { isMeta?: unknown; promptSource?: unknown; turnOrigin?: unknown };
+  const r = rec as {
+    isMeta?: unknown;
+    promptSource?: unknown;
+    turnOrigin?: unknown;
+    isCompactSummary?: unknown;
+    isVisibleInTranscriptOnly?: unknown;
+  };
   if (r.isMeta === true) return true;
+  // A compaction summary is written on the user role, but it is the harness paraphrasing the
+  // whole session: quoting it as "the owner asked" would turn an agent's summary into an ask.
+  if (r.isCompactSummary === true || r.isVisibleInTranscriptOnly === true) return true;
   if (r.promptSource === 'system') return true;
   return typeof r.turnOrigin === 'string' && INJECTED_TURN_ORIGINS.has(r.turnOrigin);
 }

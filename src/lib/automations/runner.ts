@@ -9,7 +9,8 @@ import { recordNotification } from '../notification-log.js';
 import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
-import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
+import { claudeAwarePath, findClaudeBin, win32ClaudeFallback } from '../claude-path.js';
+import { killPortable, recordedChildIsOurs } from '../proc.js';
 import { readEnvelopeLimitSignal, type LimitSignal } from '../claude-limit-signal.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox, ensureSharedMcpConfig } from '../claude-account-sandbox.js';
@@ -24,6 +25,7 @@ import { foreignRunEvidence, recordAutomationSession } from './session-registry.
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
 import { appendThreadEntry, plainPostText, readThreadRun } from './threads.js';
+import { buildRecentHistoryBlock, HISTORY_MAX_BYTES } from './history.js';
 import { fireSlotLabel, formatLocalFire, formatSchedule } from './schedule.js';
 import { fetchTransport, notifyTelegram, readTelegramConfigForSlug } from './telegram.js';
 import {
@@ -65,8 +67,10 @@ import {
   type AutomationManifest,
   type RunKind,
   type BoardTurnInput,
+  type EffortLevel,
   type RunEvent,
   type RunStatus,
+  type SpawnModelOverride,
   type ThreadSystemEvent,
 } from './types.js';
 
@@ -146,6 +150,28 @@ export function askClause(m: Pick<AutomationManifest, 'slug' | 'review'>): strin
     : ' This automation cannot stop to ask (review is off, so `propose` refuses): do not call it. ' +
       'When something needs the human, post what it is and what you recommend; they reply in the ' +
       'thread, and a command they must run goes in a run card.';
+}
+
+/**
+ * How a CONVERSATION sets up a routine (AI Team): the owner asks for something on a schedule,
+ * the agent proposes it with buttons and stops, and only the owner pressing the first one lets
+ * it run `automations create`. The CLI holds it to that: inside a run, `create` needs
+ * `--answer <question id>` naming this agent's routine proposal, answered with its first
+ * choice. `propose --routine` works in a conversation turn whatever `review` says, since the
+ * owner is right there; it is the one proposal a `review: off` agent may make.
+ *
+ * Only in the ask and thread-reply briefs. A scheduled run never sets up routines.
+ */
+export function routineClause(m: Pick<AutomationManifest, 'slug'> & Partial<Pick<AutomationManifest, 'agent'>>): string {
+  const agent = m.agent || m.slug;
+  return [
+    'ROUTINES: if they ask for something to happen on a schedule ("every morning", "each Monday"),',
+    'do not set it up yet. Propose it and stop (this works even when you cannot otherwise propose):',
+    `  dreamcontext automations propose ${m.slug} --routine --title "<routine name>" --body "<what it does, and when>" --choice "Set it up" --choice "Change it"`,
+    'Only after they press the FIRST choice, create it as yourself, naming that question:',
+    `  dreamcontext automations create <routine-slug> --agent ${agent} --answer <question id> --title "<routine name>" --job "<what it does>" --slot mon-fri@09:00`,
+    'Then post one line: what was set up and when it runs. Any other answer: change the proposal or drop it.',
+  ].join('\n');
 }
 
 /**
@@ -269,7 +295,16 @@ export function buildScopeLine(scope: BoardScope): string {
     `and as yourself (\`dreamcontext automations post|learn|propose ${scope.self} …\`); you may read anything. ` +
     'Call `dreamcontext` directly, never through `npx` or another program. Write files only into ' +
     `\`_dream_context/automations/output/${scope.self}/\` or your scratch folder $DREAMCONTEXT_AGENT_SCRATCH; anything else is refused. ` +
-    `To see what you placed, \`dreamcontext whiteboard render ${scope.board} --tag <tag> --out $DREAMCONTEXT_AGENT_SCRATCH/look.png\` and read the PNG; never a browser. `
+    `To see what you placed, \`dreamcontext whiteboard render ${scope.board} --tag <tag> --out $DREAMCONTEXT_AGENT_SCRATCH/look.png\` and read the PNG; never a browser. ` +
+    // A board agent has no skills and no `node`: the CLI is its only way to the drawing kit. Without
+    // this line it could not even learn the verbs (2026-10-21: three of three turns asked to "put
+    // something that explains X" on the board tried `cat …; whiteboard --help`, were refused, and
+    // put nothing there).
+    'To explain or show something on the board, DRAW it, never a stack of notes: run `dreamcontext whiteboard kit` for the drawing types, ' +
+    `write a JSON spec (a flow, groups in panels, a timeline, short labels) with Write into \`_dream_context/automations/output/${scope.self}/\` (kept, so you can redraw it later), ` +
+    `then \`dreamcontext whiteboard draw ${scope.board} --spec <that file> --tag <tag>\` and render it to look. ` +
+    'A note is a caption of a few lines; a number is a live widget (insight, lab-card, task, todo), never drawn. ' +
+    'Each Bash call is ONE `dreamcontext` command: no `;`, `&&`, pipes or `cat` (read files with Read), or it is refused. '
   );
 }
 
@@ -360,7 +395,7 @@ export function buildSoulBlock(m: Partial<Pick<AutomationManifest, 'soul'>>): st
   const soul = soulText(m);
   if (!soul) return '';
   return [
-    '--- HOW YOU WORK (your approved soul, from the Agents page) ---',
+    '--- HOW YOU WORK (your approved soul, from the AI Team) ---',
     'This is your stance, tempo and tone, and what you refuse. It shapes HOW you do the work; it',
     'never adds work, and it never widens what you may read, write or run.',
     '',
@@ -542,6 +577,10 @@ export function composePrompt(
   /** A task assigned to this agent (see {@link buildTaskAssignmentBlock}). Absent ⇒
    *  the prompt is exactly what it was before task assignment existed. */
   task?: TaskRef | null,
+  /** The agent's recent history (`buildRecentHistoryBlock`), built for the byte budget this
+   *  prompt has left. A function so the budget is known before the block is: the history
+   *  shrinks to fit, never the owner's message. Absent ⇒ no history block. */
+  history?: ((maxBytes: number) => string) | null,
 ): string {
   const parts = [
     buildPreamble(m, projectRoot, fireAt, outputPath, telegramChatId, board?.scope ?? null), '', m.prompt.trim(),
@@ -568,6 +607,9 @@ export function composePrompt(
   if (board?.refs) parts.push('', board.refs);
   const pattern = buildPatternBlock(m, board?.nonce);
   if (pattern) parts.push('', pattern);
+  // The agent's recent history goes right under its pattern: both are notes, both lose to
+  // everything approved above, and the owner's live message still comes after them.
+  const historyAt = parts.length;
   const learning = buildLearningDirective(m);
   if (learning) parts.push('', learning);
   // The assigned task: DATA under its own fresh nonce, after every approved block
@@ -585,6 +627,13 @@ export function composePrompt(
       : buildAskBlock(ask, m, board?.nonce)
     : '';
   if (askBlock) parts.push('', askBlock);
+  if (history) {
+    // Measured on the finished prompt, so the cap below never reaches the ask: a prompt
+    // with no room left gets no history at all.
+    const room = MAX_PROMPT_BYTES - Buffer.byteLength(parts.join('\n'), 'utf-8') - 2;
+    const block = room > 0 ? history(Math.min(room, HISTORY_MAX_BYTES)) : '';
+    if (block) parts.splice(historyAt, 0, '', block);
+  }
   return sanitizeAutomationPrompt(parts.join('\n'));
 }
 
@@ -696,7 +745,7 @@ function buildTaskNoteBlock(
  */
 export function buildAskBlock(
   ask: string,
-  m?: Pick<AutomationManifest, 'slug' | 'review'>,
+  m?: Pick<AutomationManifest, 'slug' | 'review'> & Partial<Pick<AutomationManifest, 'agent'>>,
   /** The turn's nonce in a board turn, so board text cannot forge this fence. */
   nonce?: string | null,
   /** `'task'` ⇒ the owner's note on a task assigned to this agent: no channel
@@ -734,6 +783,7 @@ export function buildAskBlock(
         'and stop. That is drawn as buttons; a question written as plain text has nothing to press.',
       ]
       : ['If something needs their go-ahead before it happens, do not do it: say so in your post and stop.']),
+    ...(m ? [routineClause(m)] : []),
     THREAD_BLOCKS.trim(),
     // The channel's `/` menu offers this project's skills and commands, so a `/name`
     // in the ask is a PICK from that menu, not punctuation. Inside a `-p` brief the
@@ -954,21 +1004,47 @@ const CONTINUE_AFTER_SWITCH_PROMPT = [
   'exactly as the original instructions say, ending with the final document they ask for.',
 ].join(' ');
 
-/** Resume the run's own session under the same approved envelope (model, effort, scope). */
-export function buildContinueArgs(m: AutomationManifest, sessionId: string, scopeArgs?: readonly string[] | null): string[] {
-  return ['--resume', sessionId, ...buildClaudeArgs(m, CONTINUE_AFTER_SWITCH_PROMPT, scopeArgs)];
+/** Resume the run's own session under the same envelope (model, effort, scope) the run
+ *  started with, the owner's temporary model included. */
+export function buildContinueArgs(
+  m: AutomationManifest,
+  sessionId: string,
+  scopeArgs?: readonly string[] | null,
+  override?: SpawnModelOverride | null,
+): string[] {
+  return ['--resume', sessionId, ...buildClaudeArgs(m, CONTINUE_AFTER_SWITCH_PROMPT, scopeArgs, override)];
+}
+
+/**
+ * The model and effort a spawn runs on: the manifest's, unless the owner picked another for
+ * THIS message (the AI Team's temporary model). The pick is the owner typing right now, the
+ * same present-tense authority that lets their words into the prompt (`sayToAgent`); it is
+ * validated against the model list before it gets here and is never stored, so a scheduled
+ * fire, which carries no override, always runs on exactly what was approved.
+ */
+export function spawnModel(
+  m: Pick<AutomationManifest, 'model' | 'effort'>,
+  override?: SpawnModelOverride | null,
+): { model: string | null; effort: EffortLevel | null } {
+  return { model: override?.model || m.model, effort: override?.effort || m.effort };
 }
 
 /** `scopeArgs` (from `boardScopeArgs`) replace `--permission-mode bypassPermissions` for a
  *  home-board agent; absent, the argv is byte-for-byte what it always was. */
-export function buildClaudeArgs(m: AutomationManifest, prompt: string, scopeArgs?: readonly string[] | null): string[] {
+export function buildClaudeArgs(
+  m: AutomationManifest,
+  prompt: string,
+  scopeArgs?: readonly string[] | null,
+  override?: SpawnModelOverride | null,
+): string[] {
   const permission = scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
   const args = ['-p', prompt, ...permission, '--output-format', 'json'];
-  if (m.model) args.push('--model', m.model);
+  const { model, effort } = spawnModel(m, override);
+  if (model) args.push('--model', model);
   // `effort` is hashed alongside `model` (both execution-envelope levers on an
   // already-approved prompt) and, like `model`, is OMITTED ENTIRELY when
   // null — never a placeholder token — so `claude` picks its own default.
-  if (m.effort) args.push('--effort', m.effort);
+  if (effort) args.push('--effort', effort);
   return args;
 }
 
@@ -1001,6 +1077,12 @@ function defaultNotify(
   } catch {
     /* best-effort */
   }
+}
+
+/** A run's banner title: "<teammate> · <routine>" for a routine run as an agent, else its own title. */
+export function bannerTitle(m: Pick<AutomationManifest, 'title' | 'agentTitle'>): string {
+  const who = (m.agentTitle ?? '').trim();
+  return who && who !== m.title ? `${who} · ${m.title}` : m.title;
 }
 
 /**
@@ -1104,7 +1186,7 @@ export function pathUnderAny(path: string, roots: readonly string[]): boolean {
 
 function signalAlive(target: number): boolean {
   try {
-    process.kill(target, 0);
+    killPortable(target, 0);
     return true;
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'EPERM';
@@ -1181,7 +1263,7 @@ export async function cutProcessGroups(leaders: readonly number[], graceMs = CUT
   ])];
   const signal = (sig: NodeJS.Signals): void => {
     for (const t of targets) {
-      try { process.kill(t, sig); } catch { /* ESRCH: already gone */ }
+      try { killPortable(t, sig); } catch { /* ESRCH: already gone */ }
     }
   };
   const allGone = (): boolean => !targets.some(signalAlive);
@@ -1276,7 +1358,7 @@ export interface ClaudeExecution {
  */
 export async function executeClaudeDetached(args: string[], opts: ClaudeExecOptions): Promise<ClaudeExecution> {
   const spawnFn: SpawnImpl = opts.spawnImpl ?? nodeSpawn;
-  const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
+  const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { killPortable(pid, signal); });
   const logFn = opts.log ?? (() => {});
   const nowFn = opts.now ?? (() => new Date());
 
@@ -1289,15 +1371,23 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     // was started from the app, whose environment has no login-shell PATH — see cli-path.ts.
     env: { ...process.env, PATH: cliAwarePath(claudeAwarePath()), ...(opts.env ?? {}) },
     stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
-    detached: true,
+    // Windows has no process groups to lead, and a DETACHED_PROCESS child has no console: every
+    // hook and tool claude starts would open its own visible one. Not detached, the child gets a
+    // hidden console (windowsHide, src/lib/proc.ts) its tree inherits, and the `-pid` kills below
+    // become `taskkill /T` (killPortable), which reaches that tree.
+    detached: process.platform !== 'win32',
   };
   // `--mcp-config` is variadic: it must stay the LAST argv element or it swallows what follows.
   const mcpConfig = opts.sharedMcpHome && opts.env?.CLAUDE_CONFIG_DIR ? ensureSharedMcpConfig(opts.sharedMcpHome) : null;
   const argv = mcpConfig ? [...args, '--mcp-config', mcpConfig] : args;
   const claudeBin = findClaudeBin();
+  // Windows has no login shell to fall back to: with no resolved binary the bare name is tried and
+  // its ENOENT is reported below, instead of a /bin/zsh that does not exist.
   const child: ChildProcess = claudeBin
     ? spawnFn(claudeBin, argv, spawnOptions)
-    : spawnFn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...argv], spawnOptions);
+    : process.platform === 'win32'
+      ? spawnFn(win32ClaudeFallback(), argv, spawnOptions)
+      : spawnFn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...argv], spawnOptions);
   // Async 'error' events (agent-terminal.ts:803) must always have a listener
   // even though spawn-failure detection below is synchronous — an unhandled
   // 'error' event crashes the whole Node process.
@@ -1306,12 +1396,19 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
   const startedAt = nowFn();
 
   if (child.pid == null) {
+    // The async ENOENT has not fired yet, so say why from what is known: on Windows the only
+    // way here is a `claude` that findClaudeBin could not locate. Logged AND returned, so the
+    // run's own error line carries it (runAutomation, step 8), not just a silent failure.
+    const why = process.platform === 'win32' && !claudeBin
+      ? 'claude was not found: install Claude Code (npm i -g @anthropic-ai/claude-code, or winget install Anthropic.ClaudeCode) and try again'
+      : '';
+    if (why) logFn(why);
     return {
       spawned: false,
       timedOut: false,
       exitCode: null,
       stdout: '',
-      stderrTail: '',
+      stderrTail: why,
       startedAt,
       finishedAt: nowFn(),
       result: null,
@@ -1468,6 +1565,9 @@ interface RunOptionsBase extends BoardTurnInput {
    *  `--note`), so it is data too. A task run keeps every flow and review gate:
    *  it is not a conversation even when `ask` carries the owner's note. */
   task?: TaskRef | null;
+  /** The owner's temporary model for THIS message (see {@link spawnModel}). Only a
+   *  person's ask sets it; the scheduler never does. */
+  override?: SpawnModelOverride | null;
   /** Injectable so no test spawns a real `claude /usage` while the account is picked. */
   probeUsage?: (configDir: string) => Promise<ProbeOutcome>;
 }
@@ -1510,22 +1610,17 @@ export const OUTPUT_WRITE_FAILURE_REASON = 'could not write output file — see 
  * (`ok`/`failed`/`timeout`/`blocked`/`deferred`/`orphaned`) is a RESOLVED
  * RunOutcome, so a caller looping over many automations (`tick`) never needs
  * a try/catch around a normal run. It DOES reject (throw, for an async
- * function) on the two precondition violations below — a wrong platform or a
- * broken `host` contract are programmer errors, not run outcomes.
+ * function) on the precondition violation below — a broken `host` contract is
+ * a programmer error, not a run outcome.
  */
 export async function runAutomation(contextRoot: string, slug: string, opts: RunOptions = {}): Promise<RunOutcome> {
-  if (process.platform === 'win32') {
-    throw new AutomationError(
-      'Automations require POSIX process-group signalling (detached spawn + negative-PID kill); Windows is not supported.',
-    );
-  }
   if (opts.host === 'server' && typeof opts.registerChild !== 'function') {
     throw new AutomationError('host:"server" requires registerChild.');
   }
 
   const nowFn = opts.now ?? (() => new Date());
   const spawnFn: SpawnImpl = opts.spawnImpl ?? nodeSpawn;
-  const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
+  const killFn: KillImpl = opts.killImpl ?? ((pid, signal) => { killPortable(pid, signal); });
   const logFn = opts.log ?? (() => {});
   // `opts.home` is threaded through so a test that does NOT inject `notify`
   // still cannot reach into the developer's real ~/.dreamcontext.
@@ -1720,8 +1815,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // file for the viewer. The absolute path stays the fallback, so a machine
         // without the desktop app still opens the document as before.
         const clickFile = params.reviewCardId ? params.reviewStagedPath ?? null : params.outputPath;
+        // Named as the AI Team page names it: the teammate first, then the routine that ran.
+        const who = bannerTitle(manifest);
         notifyFn(
-          params.reviewCardId ? `${manifest.title} — needs your verdict` : manifest.title,
+          params.reviewCardId ? `${who} — needs your verdict` : who,
           summary,
           NOTIFY_SOUND_OK,
           clickFile,
@@ -1733,7 +1830,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // truncate — badly, mid-word, with no ellipsis.
         const reason = params.error ?? `the run ended ${params.status}`;
         notifyFn(
-          `${manifest.title} — ${params.status}`,
+          `${bannerTitle(manifest)} — ${params.status}`,
           reason.length <= NOTIFY_BODY_MAX_CHARS
             ? reason
             : `${reason.slice(0, NOTIFY_BODY_MAX_CHARS - 1).trimEnd()}…`,
@@ -1850,10 +1947,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       isAgentTarget
         ? // Names the page, never a command: an agent run must not be one shell
           // line away from approving itself.
-          `not approved (${approval.reason}) — ${manifest.agentTitle || manifest.title} needs approval on the Agents page`
+          `not approved (${approval.reason}) — ${manifest.agentTitle || manifest.title} needs approval on the AI Team page`
         : // The same page-not-command rule as the snapshot's blocked line: this
           // error reaches run history and threads an agent session reads.
-          `not approved (${approval.reason}) — needs approval on the Automations page in the dashboard`,
+          `not approved (${approval.reason}) — needs approval on the AI Team page in the dashboard`,
     );
   }
   const needsApprovalQuestion = !approval.approved;
@@ -1923,7 +2020,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       isAgentTarget
         ? // Names the page, never a command: the questions listing prints the
           // approve line, one shell line from an agent approving itself.
-          `a question is waiting for your answer ("${openQuestion.question.slice(0, 120)}") — answer it on the Agents page`
+          `a question is waiting for your answer ("${openQuestion.question.slice(0, 120)}") — answer it on the AI Team page`
         : `a question is waiting for your answer ("${openQuestion.question.slice(0, 120)}") — answer it in the app, or run \`dreamcontext automations questions ${slug}\``,
     );
   }
@@ -2155,6 +2252,11 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       // sentence that says the board could not be read.
       turn ? { ...turn, scope } : null,
       opts.task ?? null,
+      // What the agent and the owner said lately, private agents only. This fire's own
+      // entries (the ask that started it) are already in the prompt.
+      (maxBytes) => buildRecentHistoryBlock(contextRoot, manifest.agent, {
+        nonce: newTurnNonce(), now: nowFn(), totalBytes: maxBytes, excludeRunId: fireAt.toISOString(),
+      }),
     );
 
     // Steps 7–12 — spawn (detached, own process group), wire the host, collect,
@@ -2162,7 +2264,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // `executeClaudeDetached`; the sidecar and host wiring happen in `onSpawned`,
     // which it calls synchronously before any await for exactly that reason.
     const timeoutMs = manifest.timeoutMinutes * 60_000;
-    const claudeArgs = buildClaudeArgs(manifest, prompt, scopeArgs);
+    const claudeArgs = buildClaudeArgs(manifest, prompt, scopeArgs, opts.override);
     // Per-automation account PINNING stays out of scope by owner decision (no manifest field,
     // parser or UI for it): the account is the one `pickAutomationAccount` chose above, and a
     // limit met mid-run moves the run to the next one below. `firstSpawn` keeps the thread's
@@ -2297,7 +2399,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       // since there is nothing to continue and a resume of an empty session can fail.
       const sessionId = execution.result.sessionId;
       const args = sessionId && (execution.result.numTurns ?? 0) > 1
-        ? buildContinueArgs(manifest, sessionId, scopeArgs)
+        ? buildContinueArgs(manifest, sessionId, scopeArgs, opts.override)
         : claudeArgs;
       execution = await runOn(next, args, budgetMs);
     }
@@ -2309,7 +2411,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     if (!execution.spawned) {
       return await finalize({
         status: 'failed',
-        error: 'spawn failed — the claude binary could not be launched',
+        error: 'spawn failed — the claude binary could not be launched' + (execution.stderrTail ? ` (${execution.stderrTail})` : ''),
         outputPath: null,
         exitCode: null,
         sessionId: null,
@@ -2637,9 +2739,13 @@ export interface KillRunResult {
 export function killRunGroup(
   contextRoot: string,
   slug: string,
-  opts?: { killImpl?: KillImpl; nowMs?: number; force?: boolean; log?: (l: string) => void },
+  opts?: {
+    killImpl?: KillImpl; nowMs?: number; force?: boolean; log?: (l: string) => void;
+    /** Test seam for the win32 pid-reuse guard ({@link recordedChildIsOurs}). */
+    isOurs?: (childPid: number, runnerPid: number) => boolean;
+  },
 ): KillRunResult {
-  const killFn: KillImpl = opts?.killImpl ?? ((pid, signal) => { process.kill(pid, signal); });
+  const killFn: KillImpl = opts?.killImpl ?? ((pid, signal) => { killPortable(pid, signal); });
   const nowMs = opts?.nowMs ?? Date.now();
   const logFn = opts?.log ?? (() => {});
 
@@ -2729,6 +2835,21 @@ export function killRunGroup(
       runnerAlive,
       groupAlive,
       refusedReason: `the sidecar is ${Math.round(ageMs / 60_000)} minutes old — the recorded pgid may have been recycled; pass --force to kill anyway`,
+    };
+  }
+
+  // Guard 4b — Windows only (identity elsewhere): the kill is `taskkill /T /F` on whatever
+  // process owns that pid NOW, and Windows reuses pids quickly. Allowed only while it is still
+  // the recorded runner's child; --force does not lift this (age is not the question here).
+  if (!(opts?.isOurs ?? recordedChildIsOurs)(sidecar.childPgid, sidecar.runnerPid)) {
+    return {
+      found: true,
+      killed: false,
+      childPgid: sidecar.childPgid,
+      ageMs,
+      runnerAlive,
+      groupAlive,
+      refusedReason: 'could not confirm that process id still belongs to the recorded run (Windows reuses ids; the check found another parent, or could not run) — refusing to kill',
     };
   }
 

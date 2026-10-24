@@ -18,7 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { resetSuperIndex, SUPER_STATE_REL } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
-import { handleSuperEnable, handleSuperStateGet, handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperEnable, handleSuperFresh, handleSuperSeen, handleSuperStateGet, handleSuperVerb } from '../../src/server/routes/super.js';
 import { handleWindowCommand } from '../../src/server/routes/window-control.js';
 import { markPhoneSocket } from '../../src/server/phone-origin.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
@@ -157,6 +157,15 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
     expect((await owner(handleSuperStateGet, { method: 'GET', headers: { origin: 'https://evil.example' } })).status).toBe(403);
   });
 
+  it('a page on another loopback port (an approved dev server in a web card) → 403; the CLI and the app pass (jarvis T0)', async () => {
+    expect((await owner(handleSuperEnable, { headers: { origin: 'http://localhost:5173' } })).status).toBe(403);
+    expect((await owner(handleSuperStateGet, { method: 'GET', headers: { origin: 'http://127.0.0.1:5173' } })).status).toBe(403);
+    expect((await owner(handleSuperStateGet, { method: 'GET', headers: { 'sec-fetch-site': 'same-site' } })).status).toBe(403);
+    expect((await owner(handleSuperStateGet, { method: 'GET', headers: { host: 'evil.test:4173', origin: 'http://evil.test:4173' } })).status).toBe(403);
+    expect((await owner(handleSuperStateGet, { method: 'GET' })).status).toBe(200);
+    expect((await owner(handleSuperStateGet, { method: 'GET', headers: { origin: 'http://127.0.0.1:4173', 'sec-fetch-site': 'same-origin' } })).status).toBe(200);
+  });
+
   it('outside the desktop app, from another host, under a foreign Host header, or from the phone → 403', async () => {
     delete process.env.DREAMCONTEXT_DESKTOP;
     expect((await owner(handleSuperEnable)).status).toBe(403);
@@ -164,19 +173,28 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
     expect((await owner(handleSuperEnable, { remote: '192.168.1.9' })).status).toBe(403);
     expect((await owner(handleSuperEnable, { headers: { host: 'rebound.example:4173' } })).status).toBe(403);
     expect((await owner(handleSuperEnable, { phone: true })).status).toBe(403);
+    // The owner's New session goes through the same door.
+    expect((await owner(handleSuperFresh, { headers: { origin: 'https://evil.example' } })).status).toBe(403);
+    expect((await owner(handleSuperFresh, { phone: true })).status).toBe(403);
+    // The agenda's "seen" too (task super-agent-ajandasi-…).
+    expect((await owner(handleSuperSeen, { headers: { origin: 'https://evil.example' } })).status).toBe(403);
+    expect((await owner(handleSuperSeen, { remote: '192.168.1.9' })).status).toBe(403);
+    expect((await owner(handleSuperSeen, { phone: true })).status).toBe(403);
   });
 
   it('every super route is denied on the phone/tunnel surface, on the server and in the page', () => {
     const rows = Object.entries(ROUTE_POLICY).filter(([k]) => k.includes('/api/super/'));
     expect(rows.map(([k]) => k).sort()).toEqual([
       'GET /api/super/state', 'POST /api/super/activity', 'POST /api/super/disable', 'POST /api/super/enable',
-      'POST /api/super/layout', 'POST /api/super/recap', 'POST /api/super/v/:verb',
+      'POST /api/super/end', 'POST /api/super/fresh', 'POST /api/super/layout', 'POST /api/super/recap', 'POST /api/super/seen', 'POST /api/super/v/:verb',
     ]);
     for (const [k, row] of rows) expect(row.allow, k).toBe(false);
     setPhoneSurfaceForTests('mac');
     try {
       expect(phoneAllows('POST', '/api/super/enable')).toBe(false);
       expect(phoneAllows('GET', '/api/super/state')).toBe(false);
+      expect(phoneAllows('POST', '/api/super/fresh')).toBe(false);
+      expect(phoneAllows('POST', '/api/super/seen')).toBe(false);
       expect(phoneAllows('POST', '/api/super/v/state')).toBe(false);
     } finally { setPhoneSurfaceForTests(null); }
   });

@@ -1,0 +1,6 @@
+{ "elements": [ { "type": "stack", "x": 0, "y": 0, "gap": 0, "items": [
+  { "type": "appBar", "w": 360, "title": "Sync", "back": true },
+  { "type": "listRow", "w": 360, "leading": "cloud", "title": "Last sync", "trailing": "12:04" },
+  { "type": "listRow", "w": 360, "leading": "upload", "title": "Waiting to send", "trailing": "3 changes" },
+  { "type": "listRow", "w": 360, "leading": "refresh", "title": "Sync now", "trailing": "toggle" }
+] } ] }

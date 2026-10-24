@@ -1,3 +1,4 @@
+import { isFiledBy, readFilingBasis, type FiledBy, type FilingBasis } from './filing-basis.js';
 import { normalizeRice, type RiceFields } from './rice.js';
 import { DEFAULT_STATUSES, isTerminal, sortByOrder, type StatusDef } from './task-status.js';
 
@@ -28,6 +29,10 @@ export interface TaskRecord {
    * native and unstamped tasks — the common case.
    */
   source_project: string | null;
+  /** Who opened the task (lib/filing-basis.ts); null on tasks older than the field. */
+  filed_by: FiledBy | null;
+  /** Why it was opened; null when nothing was recorded. */
+  filing_basis: FilingBasis | null;
   created_at: string;
   updated_at: string;
   file: string;
@@ -142,6 +147,8 @@ export function toTaskRecord(
         ? (data.custom_fields as Record<string, string | number | null>)
         : {},
     source_project: strOrNull(data.source_project),
+    filed_by: isFiledBy(data.filed_by) ? data.filed_by : null,
+    filing_basis: readFilingBasis(data.filing_basis),
     created_at: str(data.created_at, '-'),
     updated_at: str(data.updated_at ?? data.created_at, '-'),
     file,

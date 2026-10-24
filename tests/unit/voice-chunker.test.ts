@@ -316,7 +316,9 @@ describe('the speech queue', () => {
     const q = makeQueue(fetcherThat(['two']));
     q.push('one here. two here. three here. ');
     await settle();
-    // One 429 costs a sentence. It does not stall the queue and it does not kill the reply.
+    // A chunk that really cannot be spoken costs that sentence, and only that one: it does not
+    // stall the queue or kill the reply. (A 429 is NOT such a chunk any more — the fetcher waits
+    // a busy route out; see voice-no-skip.test.ts.)
     expect(FakeAudio.played).toEqual(['one here.', 'three here.']);
   });
 
@@ -436,20 +438,26 @@ describe('chunk boundaries follow PUNCTUATION, in Turkish and English alike', ()
     expect(whole(sentence)).toEqual([sentence]);
   });
 
-  it('takes a CLAUSE break in a long sentence, so a paragraph is not one enormous chunk', () => {
-    const long = 'Uyku dongusu tamamlandi ve butun gorevler guncellendi, ardindan iki karar kaydedildi ve rapor hazir.';
+  it('takes a CLAUSE break only in a sentence too long to wait for', () => {
+    // 100 characters is a sentence, read whole (it used to be cut at its comma). Past the
+    // first-chunk trigger, the cut lands AT a comma, never before a word.
+    const sentence = 'Uyku dongusu tamamlandi ve butun gorevler guncellendi, ardindan iki karar kaydedildi ve rapor hazir.';
+    expect(whole(sentence)).toEqual([sentence]);
+    const long = `${'Uyku dongusu tamamlandi ve butun gorevler guncellendi, ardindan iki karar kaydedildi '}`
+      + 've sonra rapor da hazirlandi, bundan sonra yalnizca ozet kaldi ve onu da birazdan yazacagim.';
+    expect(long.length).toBeGreaterThan(FIRST_CLAUSE_CHUNK_CHARS);
     const chunks = whole(long);
     expect(chunks.length).toBe(2);
-    expect(chunks[0].endsWith(',')).toBe(true);     // cut AT the comma, not before a word
+    expect(chunks[0].endsWith(',')).toBe(true);
     expect(chunks.join(' ')).toBe(long);
   });
 
-  it('lets the FIRST chunk go early — time-to-first-word is the latency that is felt', () => {
+  it('lets the FIRST chunk go earlier than later ones — but only for a long sentence', () => {
     expect(FIRST_CLAUSE_CHUNK_CHARS).toBeLessThan(CLAUSE_CHUNK_CHARS);
     const c = createSpeechChunker();
-    const first = c.push('Uyku dongusu tamamlandi, ardindan iki karar kaydedildi ve rapor hazir ');
-    expect(first.length).toBe(1);
-    expect(first[0]).toBe('Uyku dongusu tamamlandi,');
+    // A first sentence under the trigger is NOT cut at its comma any more: generation cost is
+    // nearly flat in length (measured), so the cut bought ~0.2 s and broke the sentence.
+    expect(c.push('Uyku dongusu tamamlandi, ardindan iki karar kaydedildi ve rapor hazir ')).toEqual([]);
   });
 
   it('will NOT carve out a fragment too small to be worth a round trip', () => {
@@ -484,8 +492,10 @@ describe('chunk boundaries follow PUNCTUATION, in Turkish and English alike', ()
     expect(c.push('Tamam. ')).toEqual(['Tamam.']);
   });
 
-  it('breaks on an em dash — the punctuation this project\'s own prose actually uses', () => {
-    const long = 'Uyku dongusu tamamlandi ve her sey guncel — geriye yalnizca ozet kaldi.';
+  it('prefers an em dash to a comma when a long sentence must be cut', () => {
+    const long = 'Uyku dongusu tamamlandi, gorevler guncellendi ve her sey artik guncel durumda — geriye '
+      + 'yalnizca ozet kaldi, onu da birazdan yazip sana gonderecegim ve sonra bekleyecegim.';
+    expect(long.length).toBeGreaterThan(FIRST_CLAUSE_CHUNK_CHARS);
     const chunks = whole(long);
     expect(chunks.length).toBe(2);
     expect(chunks[0].endsWith('—')).toBe(true);

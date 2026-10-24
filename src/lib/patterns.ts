@@ -55,7 +55,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import matter from 'gray-matter';
 import { foldAscii } from './fold-ascii.js';

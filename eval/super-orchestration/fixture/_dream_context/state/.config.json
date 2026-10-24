@@ -1,0 +1,12 @@
+{
+  "platforms": ["claude"],
+  "packs": [],
+  "multiProduct": false,
+  "setupVersion": "0.32.0",
+  "taskBackend": "local",
+  "brainRepo": { "mode": "in-tree", "enabled": false },
+  "linkedRepos": [
+    { "name": "orbit-app", "gitRemoteUrl": "" },
+    { "name": "orbit-api", "gitRemoteUrl": "" }
+  ]
+}

@@ -80,6 +80,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/handsfree/push/key': agnostic('the VAPID public key the phone subscribes with; side-effect free'),
   'PUT /api/handsfree/push/subscription': agnostic('the phone stores its own push subscription (device id from its cookie, never the body)'),
   'DELETE /api/handsfree/push/subscription': agnostic('the phone removes its own push subscription'),
+  'POST /api/handsfree/phone-log': agnostic('the phone sends its own connection log to this Mac (signed-in phone only, 64 KB, shape-checked, no message text)'),
   'GET /api/handsfree/mac/status': deny(MAC_ADMIN),
   'POST /api/handsfree/mac/setup': deny(MAC_ADMIN),
   'POST /api/handsfree/mac/start': deny(MAC_ADMIN),
@@ -113,12 +114,16 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'DELETE /api/task-overrides/fields/:key': allow(PROJECT_WRITE),
   'POST /api/task-overrides/statuses': allow(PROJECT_WRITE),
   'DELETE /api/task-overrides/statuses/:key': allow(PROJECT_WRITE),
+  'GET /api/tasks/:slug/assets': allow(READ),
+  'GET /api/tasks/:slug/assets/raw': allow('read of a file in this project (a task attachment): a raster image, audio, video or PDF from a fixed type table (anything else is 415), images sandboxed, never the PDF', 'media'),
+  'POST /api/tasks/:slug/assets': deny('laptop-only: attaching a file to a task is a desktop/laptop upload, like the agent file drop'),
   'GET /api/tasks/:slug': allow(READ),
   'GET /api/tasks/:slug/readiness': allow(READ),
   'DELETE /api/tasks/:slug': allow(PROJECT_WRITE),
   'PATCH /api/tasks/:slug': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/changelog': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/assign-agent': allow(PROJECT_WRITE),
+  'POST /api/tasks/:slug/objection': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/insert': allow(PROJECT_WRITE),
 
   // Sleep
@@ -266,6 +271,9 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/super/layout': deny(SUPER),
   'POST /api/super/activity': deny(SUPER),
   'POST /api/super/recap': deny(SUPER),
+  'POST /api/super/fresh': deny(SUPER),
+  'POST /api/super/end': deny(SUPER),
+  'POST /api/super/seen': deny(SUPER),
 
   // The chat's mascot
   'GET /api/sleepy/video': agnostic('read: the mascot clip (mp4 from a fixed set); side-effect free', 'media'),
@@ -298,10 +306,17 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/agent/slash-commands': allow(`${CHAT}: the slash command list; side-effect free`),
   'GET /api/agent/chat-sessions': allow(`${CHAT}: this project's past chats; side-effect free`),
   'GET /api/agent/bg-output': allow(`${CHAT}: a background shell's output; side-effect free`),
-  'GET /api/agent/file': allow(`${CHAT}: a file inside this project (grants refused on the phone): JSON, or (raw=1) media from a fixed type table; an SVG goes out sandboxed`, 'media'),
+  'GET /api/agent/file': allow(`${CHAT}: a file inside this project: JSON, or (raw=1) media from a fixed type table, an SVG sandboxed. Outside the project the phone reads MEDIA only (raster image, audio, video), decided on the real path: under this project's own linked repos and their worktrees without asking, anywhere else after a one-tap phone grant; a file inside a project not chosen at start is refused. Desktop grants never count here`, 'media'),
   'GET /api/agent/board-assets': allow(`${CHAT}: a board's images inside this project; side-effect free`),
   'POST /api/agent/reveal': deny(DESKTOP),
   'POST /api/agent/grant': deny(DESKTOP),
+  // The phone's own one-tap consent for ONE outside media file (task hands-free-phone-shows-every-
+  // picture…): held in memory for that device only, never written to the desktop's grant file,
+  // and refused for a file inside a project not chosen at start.
+  'POST /api/agent/phone-grant': allow(`${CHAT}: the phone allows one media file outside the project for this device only (in memory, ends with its session); other projects refused`),
+  'GET /api/agent/loopback-grants': deny(DESKTOP),
+  'POST /api/agent/loopback-grant': deny(DESKTOP),
+  'POST /api/agent/web-session': deny(DESKTOP),
   'GET /api/agent/goal-live': allow(`${CHAT}: a Develop run's live map; side-effect free`),
   'GET /api/agent/teammates': allow(`${CHAT}: the chat's sub-agents; side-effect free`),
   'GET /api/agent/teammate-history': allow(`${CHAT}: one sub-agent's transcript; side-effect free`),
@@ -315,11 +330,18 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/onboarding/fix': deny(ONBOARDING),
   'POST /api/onboarding/fix/cancel': deny(ONBOARDING),
   'POST /api/agent/prompt': filtered(`${CHAT}: hands an opening prompt to a new chat (the body's vault is checked with isMacExposed)`),
-  'POST /api/agent/drop': deny(DESKTOP),
+  // A photo from the phone (task hands-free-phone-shows-every-picture…): images only, decided by
+  // their bytes; the server names and places the file (the project's gitignored tmp), capped per
+  // device in the handler (10 MB, 2 in flight, 30 a minute, 500 MB of phone files per project).
+  'POST /api/agent/drop': allow(`${CHAT}: a photo from the phone (PNG/JPEG/WebP/GIF by magic bytes, server-named into this project's gitignored tmp; phone caps: 10 MB, 2 in flight, 30/min per device)`),
   'GET /api/notifications': deny(DESKTOP),
   'POST /api/notify': deny(DESKTOP),
   'POST /api/agent/secret': deny(SECRET),
-  'POST /api/agent/voice/stt': deny(VOICE),
+  // The ONE voice route the phone reaches (task the-hands-free-phone-sends-a-voice-message…): its
+  // take, recorded on the phone, transcribed by this Mac's local whisper. Capped per phone socket
+  // in the handler (4 MB, 2 minutes by the WAV header, 1 in flight, 12 a minute); the vocabulary
+  // that primes whisper is the request project's. Read-aloud, warm, focus and setup stay here.
+  'POST /api/agent/voice/stt': allow(`${CHAT}: a voice message from the phone, transcribed by this Mac's local whisper (phone caps: 4 MB, 2 min, 1 in flight, 12/min)`),
   'POST /api/agent/voice/tts': deny(VOICE),
   'POST /api/agent/voice/warm': deny(VOICE),
   'POST /api/agent/voice/log': deny(VOICE),
@@ -395,6 +417,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agents/:slug/update': allow(PROJECT_WRITE),
   'POST /api/agents/:slug/delete': allow(PROJECT_WRITE),
   'POST /api/agents/:slug/approve': allow('the owner approves this project\'s agent, as on the laptop'),
+  'POST /api/agents/:slug/place': allow(PROJECT_WRITE),
   'GET /api/agents/:slug/photo': allow('read: an agent photo (png/jpeg/gif/webp by magic bytes); side-effect free', 'media'),
   'POST /api/agents/:slug/photo': allow(PROJECT_WRITE),
 

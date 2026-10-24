@@ -267,7 +267,7 @@ export function motionEasing(): string {
 // ─── Layout motion (plan-r8 F8, §0 FE2/FE3, round 2) ───────────────────────────
 
 /** Where a stage key is drawn (`superLayout`'s CardWhere, plus the centre). */
-export type StageWhere = 'centre' | 'float' | 'others' | 'half' | 'present' | 'sheet';
+export type StageWhere = 'centre' | 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab';
 
 export interface StageBox { rect: Rect; where: StageWhere }
 
@@ -331,7 +331,8 @@ const near = (a: number, b: number, tol = 0.5) => Math.abs(a - b) <= tol;
 const sameRect = (a: Rect, b: Rect) => near(a.x, b.x) && near(a.y, b.y) && near(a.width, b.width) && near(a.height, b.height);
 const sameSize = (a: Rect, b: Rect) =>
   b.width > 0 && b.height > 0 && Math.abs(a.width / b.width - 1) <= LAYOUT.sizeTolerance && Math.abs(a.height / b.height - 1) <= LAYOUT.sizeTolerance;
-const onStage = (w: StageWhere | undefined) => !!w && w !== 'others';
+// A card behind a narrow sheet's tab is kept, not shown: it moves like one in Others.
+const onStage = (w: StageWhere | undefined) => !!w && w !== 'others' && w !== 'tab';
 
 /**
  * What every key does between two layouts. `before` holds the rects MEASURED in the snapshot
@@ -402,14 +403,17 @@ export function planLayoutMotion(
         });
       }
     } else if (bOn && b && a?.where === 'others') {
+      // Into the stack it rests in: Others, or the minimised agenda's corner pill (its rect).
+      const to = a.rect.width > 0 ? a.rect : opts.othersRect;
       steps.push({
-        key: k, kind: 'toOthers', box: opts.othersRect, from: b.rect, to: opts.othersRect, delay: 0, duration: D, easing: 'spring', standIn: true,
-        keyframes: [{ transform: transformOf(flipTransform(b.rect, opts.othersRect)), opacity: 1 }, { transform: IDENTITY, opacity: 0 }],
+        key: k, kind: 'toOthers', box: to, from: b.rect, to, delay: 0, duration: D, easing: 'spring', standIn: true,
+        keyframes: [{ transform: transformOf(flipTransform(b.rect, to)), opacity: 1 }, { transform: IDENTITY, opacity: 0 }],
       });
     } else if (aOn && a && b?.where === 'others') {
+      const from = b.rect.width > 0 ? b.rect : opts.othersRect;
       steps.push({
-        key: k, kind: 'fromOthers', box: a.rect, from: opts.othersRect, to: a.rect, delay: delayOf(k), duration: D, easing: 'spring', standIn: true,
-        keyframes: [{ transform: transformOf(flipTransform(opts.othersRect, a.rect)), opacity: 0.4 }, { transform: IDENTITY, opacity: 1 }],
+        key: k, kind: 'fromOthers', box: a.rect, from, to: a.rect, delay: delayOf(k), duration: D, easing: 'spring', standIn: true,
+        keyframes: [{ transform: transformOf(flipTransform(from, a.rect)), opacity: 0.4 }, { transform: IDENTITY, opacity: 1 }],
         contentFadeAt: delayOf(k) + D,
       });
     } else if (aOn && a && !b) {

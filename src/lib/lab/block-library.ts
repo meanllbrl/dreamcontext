@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../glob.js';
 import matter from 'gray-matter';
 import { isSafeInsightSlug, labDir, resolveContainedLabFile, type LabFileKind } from './store.js';
 import { LabError, MAX_HTML_BYTES } from './types.js';

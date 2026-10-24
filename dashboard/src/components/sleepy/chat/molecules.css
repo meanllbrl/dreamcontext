@@ -428,6 +428,16 @@ button.chat-m-compact-head:focus-visible { outline: 2px solid var(--color-border
 @media (prefers-reduced-motion: reduce) {
   .chat-m-hoverbar { transition: none; }
 }
+/* Touch has no hover: a tapped message shows its bar (the row takes focus on tap), so ↩
+   and Copy are reachable on the phone (owner 2026-10-23). */
+@media (hover: none) {
+  .chat-msg-user-row:focus-within .chat-m-hoverbar,
+  .chat-msg-assistant-row:focus-within .chat-m-hoverbar {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+}
 
 .chat-m-confirm {
   display: flex;

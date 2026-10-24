@@ -68,9 +68,20 @@ describe('the route policy is exhaustive', () => {
     for (const k of [
       'POST /api/handsfree/mac/start', 'POST /api/window/:verb', 'GET /api/assistant/status', 'POST /api/agent/open-terminal',
       'POST /api/launcher/register', 'POST /api/launcher/unregister', 'POST /api/agent/secret', 'POST /api/recall/cloud/key',
-      'POST /api/admin/shutdown', 'POST /api/agent/voice/tts', 'POST /api/notify', 'POST /api/agent/drop', 'POST /api/brain/auth/token',
-      'GET /api/launcher/status', 'POST /api/peer/send',
+      'POST /api/admin/shutdown', 'POST /api/agent/voice/tts', 'POST /api/notify', 'POST /api/brain/auth/token',
+      'GET /api/launcher/status', 'POST /api/peer/send', 'POST /api/agent/grant', 'POST /api/agent/reveal',
     ]) expect(ROUTE_POLICY[k]?.allow, k).toBe(false);
+  });
+
+  it('the phone sends a photo and allows one outside picture for itself, never through the desktop\'s grant file', () => {
+    // Task hands-free-phone-shows-every-picture… (owner 2026-10-23): the drop takes a phone photo
+    // (its caps live in the handler), and the phone's one-tap consent is its own route; the
+    // desktop's grant (a file every surface would read) stays laptop-only.
+    for (const k of ['POST /api/agent/drop', 'POST /api/agent/phone-grant']) {
+      expect(ROUTE_POLICY[k]?.allow, k).toBe(true);
+      expect(ROUTE_POLICY[k]?.scope, k).toBe('request');
+    }
+    expect(ROUTE_POLICY['POST /api/agent/grant'].allow).toBe(false);
   });
 
   it('an unclassified, unmatched or undecodable route is refused at runtime; a public one is public', () => {

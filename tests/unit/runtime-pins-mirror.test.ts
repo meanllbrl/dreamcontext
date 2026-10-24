@@ -52,3 +52,41 @@ describe('install.sh mirrors assets/runtime-pins.json', () => {
     expect(scalar('NODE_RC_MARKER')).toBe(NODE_RC_MARKER);
   });
 });
+
+/**
+ * install.ps1 is fetched on its own too (`irm … | iex`), so it carries its own copy of the
+ * Windows pins. They live in `nodeWindows`, apart from `node.files`: the desktop app validates
+ * every `node.files` entry as a `.tar.gz` it can unpack, and a `.zip` there would fail it.
+ */
+describe('install.ps1 mirrors assets/runtime-pins.json', () => {
+  const ps1 = readFileSync(join(REPO_ROOT, 'install.ps1'), 'utf-8');
+  const winPins = (JSON.parse(readFileSync(join(REPO_ROOT, 'assets', 'runtime-pins.json'), 'utf-8')) as {
+    nodeWindows: { files: Record<string, NodePinFile> };
+  }).nodeWindows.files;
+  const psScalar = (name: string) => new RegExp(`^\\s*\\$${name} = '([^']*)'$`, 'm').exec(ps1)?.[1];
+  const psRows = (): Record<string, NodePinFile> => {
+    const rows: Record<string, NodePinFile> = {};
+    const re = /^\s*'(win-[a-z0-9]+)' = @\{ File = '([^']+)'; Sha256 = '([0-9a-f]{64})'; Size = (\d+) \}$/gm;
+    for (let m = re.exec(ps1); m; m = re.exec(ps1)) rows[m[1]] = { file: m[2], sha256: m[3], size: Number(m[4]) };
+    return rows;
+  };
+
+  it('names the same Node.js version and download base as install.sh and the app', () => {
+    expect(psScalar('NodeVersion')).toBe(pins.node.version);
+    expect(psScalar('NodeBaseUrl')).toBe(pins.node.base);
+  });
+
+  it('pins the same file, checksum and size for every Windows build, and no others', () => {
+    expect(Object.keys(winPins).sort()).toEqual(['win-arm64', 'win-x64']);
+    expect(psRows()).toEqual(winPins);
+    for (const pin of Object.values(winPins)) expect(pin.file).toMatch(new RegExp(`^node-v${pins.node.version.replace(/\./g, '\\.')}-win-[a-z0-9]+\\.zip$`));
+  });
+
+  it('keeps the Windows zips out of node.files (the app unpacks those as .tar.gz)', () => {
+    expect(Object.values(pins.node.files).every((f) => f.file.endsWith('.tar.gz'))).toBe(true);
+  });
+
+  it('is pure ASCII (Windows PowerShell 5.1 reads a BOM-less script as the ANSI code page)', () => {
+    expect([...ps1].every((c) => c.charCodeAt(0) < 128)).toBe(true);
+  });
+});

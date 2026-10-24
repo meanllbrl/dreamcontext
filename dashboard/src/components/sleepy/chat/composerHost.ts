@@ -87,6 +87,9 @@ export interface ComposerHost {
    * press and from Stop; a host without it simply has nothing playing.
    */
   bargeInSpeech?(): void;
+  /** The next message written with exactly this text was SPOKEN (a push-to-talk take sent
+   *  untouched): its frame carries `voice: true`, so the Super Agent answers aloud (K1). */
+  armSpoken?(text: string): void;
   /**
    * Subscribe to "is this turn speaking". Returns the unsubscribe.
    *

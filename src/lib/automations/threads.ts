@@ -54,10 +54,17 @@ import {
  *
  * NEVER IMPORTS `runner.ts` OR `verdict.ts` — they import this.
  *
- * THE THREAD FILE IS NEVER INJECTED INTO A PROMPT. It is a teammate-writable
- * synced file; treating it as an instruction source would make "anyone who can
- * push to the brain can steer a bypassPermissions run" true. It is a record to
- * be READ by humans and rendered by the dashboard, nothing else.
+ * THE THREAD FILE IS NEVER INJECTED INTO A PROMPT VERBATIM, AND NEVER FOR A
+ * SHARED AGENT. A shared thread is a teammate-writable synced file; treating it
+ * as an instruction source would make "anyone who can push to the brain can
+ * steer a bypassPermissions run" true. It is a record to be READ by humans and
+ * rendered by the dashboard.
+ *
+ * The one exception is `history.ts`: a PRIVATE agent's own recent agent/owner
+ * lines (its threads are gitignored, so only this machine writes them),
+ * flattened to plain text, capped, and fenced under a fresh nonce as a record
+ * that loses to the instructions. A shared agent, or a shared automation of a
+ * private one, contributes nothing.
  */
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
@@ -187,7 +194,7 @@ function parseEntry(json: string): ThreadEntry | null {
       text: typeof r.text === 'string' ? r.text : '',
       ...(files && files.length > 0 ? { files } : {}),
       ...(summary && summary.length > 0 ? { summary } : {}),
-      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant')
+      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant' || r.via === 'super')
         ? (r.via as ThreadVia)
         : 'runner',
     };
@@ -257,6 +264,9 @@ export interface ReadThreadOptions {
    * per-run read should do.
    */
   days?: number;
+  /** Read only day files dated on or after this YYYY-MM-DD (an I/O bound for a run whose
+   *  entries cannot be older than its fire day). */
+  fromDay?: string;
 }
 
 /**
@@ -280,6 +290,7 @@ export function readThread(contextRoot: string, slug: string, opts: ReadThreadOp
   if (opts.days !== undefined && opts.days >= 0 && files.length > opts.days) {
     files = files.slice(files.length - opts.days);
   }
+  if (opts.fromDay && /^\d{4}-\d{2}-\d{2}$/.test(opts.fromDay)) files = files.filter((f) => f.slice(0, 10) >= opts.fromDay!);
 
   const byId = new Map<string, ThreadEntry>();
   for (const name of files) {

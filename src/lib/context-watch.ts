@@ -31,6 +31,8 @@ import { ensureGitignoreEntries } from './gitignore.js';
 import { isSafeSessionId } from './transcript-locate.js';
 import { readSetupConfig, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
 import { HANDOFF_FIELDS } from './handoff-readiness.js';
+import { superHandoffCommand, superHandoffContext, superNudgeLine } from './super/handoff-task.js';
+import { SUPER_HANDOFF_REL, SUPER_HANDOFF_TASK } from './super/handoff-file.js';
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -355,18 +357,26 @@ export function renderNudge(
   cfg: ResolvedContextHandoff,
   activeSlug: string | null,
   tone: NudgeTone = nudgeTone(contextTokens, cfg),
+  opts: { superAgent?: boolean } = {},
 ): string {
   const slug = activeSlug || '<task-slug>';
+  // The Super Agent hands off into its own FILE, never a task (super/handoff-file.ts).
+  const into = opts.superAgent ? 'your handoff file' : 'the task';
   const next = Math.max(contextTokens, cfg.nudgeAt) + cfg.remindEvery;
   // ONE command carrying every part. It refuses while any part is missing (see
   // lib/handoff-readiness.ts) — the old two-step `log` then `handoff` let a session pin
   // the task having skipped the log.
-  const steps = [
-    `  dreamcontext tasks handoff ${slug} ${HANDOFF_FIELDS.map((f) => `${f.flag} "<${f.hint}>"`).join(' ')}`,
-    activeSlug
-      ? ''
-      : '  (no task is in progress — `dreamcontext tasks create` one first, or skip the handoff)',
-  ];
+  const steps = opts.superAgent
+    ? [`  ${superHandoffCommand(HANDOFF_FIELDS)}`]
+    : [
+      `  dreamcontext tasks handoff ${slug} ${HANDOFF_FIELDS.map((f) => `${f.flag} "<${f.hint}>"`).join(' ')}`,
+      activeSlug
+        ? ''
+        : '  (no task is in progress — `dreamcontext tasks create` one first, or skip the handoff)',
+    ];
+  const written = opts.superAgent
+    ? 'It writes all of that into your handoff file as one entry and refuses while any part is missing; a fresh session opens on the same stage and reads that file first.'
+    : 'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.';
 
   const lines = tone === 'severe'
     ? [
@@ -374,7 +384,7 @@ export function renderNudge(
       '',
       'Finish the turn you are in, then hand off before starting anything new:',
       ...steps,
-      'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
+      written,
       '',
       'This is still your call, but it is no longer a quiet one: if you are continuing in this session anyway, TELL THE USER in your next message and say why. Do not continue silently.',
       `(Next reminder at ~${k(next)}.)`,
@@ -382,9 +392,9 @@ export function renderNudge(
     : [
       `[context handoff] This session is carrying ~${k(contextTokens)} context tokens, past the ${k(cfg.nudgeAt)} handoff threshold. Every further turn re-reads all of it, so the same remaining work costs roughly 2–3× more from here than it would in a fresh session.`,
       '',
-      'Hand off unless you have a reason not to — write your whole state into the task in one command:',
+      `Hand off unless you have a reason not to — write your whole state into ${into} in one command:`,
       ...steps,
-      'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.',
+      written,
       '',
       `There are two good reasons to keep going: the task is nearly done, or the state genuinely cannot be written down. "I am in the middle of something" is not one of them — that is what --done and --next are for. Past ${k(cfg.hardAt)} this gets blunter.`,
       `(Next reminder at ~${k(next)}.)`,
@@ -589,8 +599,10 @@ export function maybeNudge(
 
     const tone = nudgeTone(ctx, cfg);
     writeNudgeState(contextRoot, sessionId, ctx, tone);
-    const active = activeTaskForNudge(contextRoot);
-    return renderNudge(ctx, cfg, active?.slug ?? null, tone);
+    // The Super Agent hands off into its own file, never a task (super/handoff-task.ts).
+    const sup = superHandoffContext(contextRoot, [tab, sessionId]);
+    if (sup) return `${renderNudge(ctx, cfg, null, tone, { superAgent: true })}\n${superNudgeLine(sup)}`;
+    return renderNudge(ctx, cfg, activeTaskForNudge(contextRoot)?.slug ?? null, tone);
   } catch {
     return null;
   }
@@ -617,6 +629,9 @@ export interface HandoffRecord {
   contextTokens: number | null;
   fromSession: string;
   tab: string | null;
+  /** `super`: the Super Agent's handoff, written to its FILE (super/handoff-file.ts), not a task.
+   *  Absent = a task handoff. `task` then holds the file's path stem (`.super/handoff`). */
+  kind?: 'super';
   actedAt?: string;
   consumedAt?: string;
 }
@@ -662,6 +677,7 @@ export function readHandoffRecord(contextRoot: string, key: string): HandoffReco
     contextTokens: typeof parsed.contextTokens === 'number' ? parsed.contextTokens : null,
     fromSession: typeof parsed.fromSession === 'string' ? parsed.fromSession : '',
     tab: typeof parsed.tab === 'string' && parsed.tab ? parsed.tab : null,
+    ...(parsed.kind === 'super' ? { kind: 'super' as const } : {}),
     ...(typeof parsed.actedAt === 'string' ? { actedAt: parsed.actedAt } : {}),
     ...(typeof parsed.consumedAt === 'string' ? { consumedAt: parsed.consumedAt } : {}),
   };
@@ -691,6 +707,58 @@ export function stampHandoffRecord(contextRoot: string, key: string, patch: Part
  */
 export function shouldRotateForHandoff(record: HandoffRecord | null | undefined): boolean {
   return !!record && !record.actedAt && !record.consumedAt;
+}
+
+/**
+ * What a pane does at a main `result` frame — decided ONCE per frame, so the record path and the
+ * Super Agent's "New session" fallback can never both rotate (task super-agent-devrini-…).
+ *
+ *  - a limit refusal (this frame's, or one read earlier in the turn) → `none` for both paths: the
+ *    turn did not run, and the pane is about to be switched; a record stays un-acted for the next
+ *    good result;
+ *  - an un-acted record → `record`, whatever `isError` says (today's behaviour for every pane);
+ *  - no record, the fresh latch held and a clean result → `fallback` (the super wrote no handoff:
+ *    the server writes the record itself, then the same rotation runs);
+ *  - otherwise `none` (an errored fresh turn with no record does not rotate).
+ */
+export type RotationDecision = 'record' | 'fallback' | 'none';
+export function rotationDecision(input: {
+  record: HandoffRecord | null | undefined;
+  latch: boolean;
+  isError: boolean;
+  isLimit: boolean;
+}): RotationDecision {
+  if (input.isLimit) return 'none';
+  if (shouldRotateForHandoff(input.record)) return 'record';
+  if (input.latch && !input.isError) return 'fallback';
+  return 'none';
+}
+
+/** The fallback record the server writes when the super's fresh turn ended without a handoff. */
+export function superFallbackRecord(pane: string, fromSession: string, contextTokens: number | null, now: Date = new Date()): HandoffRecord {
+  return {
+    task: SUPER_HANDOFF_TASK,
+    title: 'Super Agent',
+    at: now.toISOString(),
+    contextTokens,
+    fromSession,
+    tab: pane,
+    kind: 'super',
+  };
+}
+
+const SUPER_FILE = `_dream_context/${SUPER_HANDOFF_REL.split('\\').join('/')}`;
+
+/** The user frame that continues a rotated pane: the task's, or the Super Agent's own. */
+export function handoffContinuePrompt(record: Pick<HandoffRecord, 'task' | 'title' | 'kind'>, opts: { fallback?: boolean } = {}): string {
+  if (record.kind === 'super') {
+    return `Handoff: you are the Super Agent's fresh session, on the same stage with the same children, pool and cards. `
+      + `Read ${SUPER_FILE} first (its top entry is the handoff`
+      + (opts.fallback ? '; the previous session wrote none this time, so it may be older than the latest work — rebuild from `super state` where it is' : '')
+      + '), run `dreamcontext super state`, then tell the owner in one short sentence that you are back and what runs.';
+  }
+  return `Handoff: continue task ${record.title} (${record.task}). `
+    + `Read _dream_context/state/${record.task}.md first, then carry on from its latest changelog entry.`;
 }
 
 /** Every readable record, with its key. Used by the tab-less `source=clear` fallback. */
@@ -762,6 +830,12 @@ export function selectHandoffForSessionStart(
 /** The SessionStart banner. Printed BEFORE the snapshot so it is the first thing read. */
 export function renderHandoffBanner(record: HandoffRecord): string {
   const size = record.contextTokens ? ` that reached ${k(record.contextTokens)} tokens` : '';
+  if (record.kind === 'super') {
+    return [
+      `>> HANDOFF: you are the Super Agent's fresh session, continuing from a session${size}.`,
+      `Read ${SUPER_FILE} — its top entry is the handoff — then run \`dreamcontext super state\`, before anything else.`,
+    ].join('\n');
+  }
   return [
     `>> HANDOFF: continuing task ${record.title} (${record.task}) from a session${size}.`,
     `Read _dream_context/state/${record.task}.md — its latest changelog entry is the handoff — before anything else.`,

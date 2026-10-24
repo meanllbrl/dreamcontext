@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
-import { isLoopback } from './agent-spawn-shared.js';
+import { isLoopback, isSameOriginStrict } from './agent-spawn-shared.js';
 import {
   ASSISTANT_VAULT, assistantContextRoot, assistantExists, assistantProjectRoot, isAssistantVault,
   readAssistantConfig, writeAssistantConfig, sanitizeConfigPatch, notchOnlyPatch,
@@ -25,6 +25,7 @@ import {
 import { listVaults } from '../../lib/vaults.js';
 import { isSuperChild } from '../../lib/super/store.js';
 import { isSuperManaged, superAttentionRows } from '../../lib/super/inbox.js';
+import { noteNotchPoll } from '../../lib/super/owner-question.js';
 import { dismissDelegation, listDelegations, recordDelegation } from '../../lib/assistant/delegations.js';
 import { notifyAssistantAutonomy } from './agent-chat.js';
 import { captureScreens } from '../../lib/assistant/screen.js';
@@ -69,6 +70,18 @@ function ownerGate(req: IncomingMessage, res: ServerResponse): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * The route that GRANTS a permission (`/api/assistant/answer`) asks more than loopback: a
+ * permission is the owner's to give, never an agent's, and any process here can reach loopback —
+ * an agent's `curl` included, the Super Agent's too, which knows its children's request ids. The
+ * app's own page (the notch) sends its Origin on every POST; a bare client sends none. Header
+ * forgery still passes, as it does on the chat socket: a secret only the shell holds is the
+ * stronger fix (separate task).
+ */
+function fromOwnerPage(req: IncomingMessage): boolean {
+  return typeof req.headers.origin === 'string' && isSameOriginStrict(req);
 }
 
 /** Named refusals, in the words the assistant will repeat to the owner. */
@@ -751,13 +764,15 @@ export async function handleAssistantGlance(req: IncomingMessage, res: ServerRes
       ? { id: d.pending.id, kind: d.pending.kind, tool: d.pending.tool, text: wrapUntrusted(d.vault, clip(d.pending.text)) }
       : null,
   }));
+  // A notch is reading the rows: a Super Agent question at the head will show in it.
+  noteNotchPoll();
   sendJson(res, 200, { chats: [...superGlanceRows(clip), ...chats].slice(0, GLANCE_MAX), delegations });
 }
 
 /**
  * At most ONE row per handed-over project (D16): its queue head, when that is a permission
- * (drawn from the child's own pending request) or a question the Super Agent escalated (its
- * words, fenced like project text: they may echo the child).
+ * (drawn from the child's own pending request), a question the Super Agent escalated (its
+ * words, fenced like project text: they may echo the child), or its own `ask`.
  */
 function superGlanceRows(clip: (s: string) => string): Array<Record<string, unknown>> {
   const rows: Array<Record<string, unknown>> = [];
@@ -770,6 +785,13 @@ function superGlanceRows(clip: (s: string) => string): Array<Record<string, unkn
         sessionId: c.sessionId, vault, activity: 'asking', since: c.updatedAt, super: true,
         title: c.title ? wrapUntrusted(vault, clip(c.title)) : '',
         ask: { id: pq.requestId, kind: 'permission', tool: pq.toolName, text: wrapUntrusted(vault, clip(pq.text)) },
+      });
+    } else if (item.kind === 'ask') {
+      // The Super Agent's OWN question (plan r4 D7): no child id, no child title; its words fenced.
+      rows.push({
+        sessionId: item.sessionId, vault, activity: 'asking', since: new Date(item.createdAt).toISOString(), super: true,
+        title: '',
+        ask: { id: item.id, kind: 'question', tool: 'SuperAsk', text: wrapUntrusted(vault, clip(item.ownerText ?? '')), ...(item.options?.length ? { options: item.options } : {}) },
       });
     } else {
       rows.push({
@@ -909,10 +931,15 @@ export async function handleAssistantDelegationDismiss(req: IncomingMessage, res
  * POST /api/assistant/answer {sessionId, question, choice: 'allow'|'deny'} — the owner pressed
  * Allow or Deny on a permission row in the notch. The OWNER decided, so no autonomy gate and no
  * proposal: it rides the same `answer` relay the assistant's verb does (claimed by the project
- * window that holds the chat), and is not recorded as a delegation.
+ * window that holds the chat), and is not recorded as a delegation. Handed over, the chat may be
+ * the Super Agent's or a child's: the Super never answers a permission, the owner always may.
  */
 export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!ownerGate(req, res)) return;
+  if (!fromOwnerPage(req)) {
+    sendError(res, 403, 'owner_page_only', 'Only the app\'s own page answers a permission prompt for the owner.');
+    return;
+  }
   holdOpen(req);
   const b = (await parseJsonBody(req)) ?? {};
   const sessionId = typeof b.sessionId === 'string' && b.sessionId.length <= 100 ? b.sessionId : '';
@@ -923,7 +950,10 @@ export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: Serv
   if (!chat) { sendError(res, 404, 'unknown_session', `No live chat "${sessionId}".`); return; }
   // Only the prompt the registry still shows: a stale row must not answer a newer one.
   if (chat.pendingQuestion?.requestId !== question) { sendError(res, 409, 'not_waiting', 'that prompt is no longer waiting'); return; }
-  const r = await relayCommand('answer', { sessionId, question, choice, text: null, vault: chat.vault });
+  // `by: 'owner'` is what lets the window answer a chat the Assistant may not touch (the Super
+  // Agent and, handed over, its children): only this owner-gated route sets it, `pickUiArgs`
+  // never passes it through, and the window claims the args from the server, never the doorbell.
+  const r = await relayCommand('answer', { sessionId, question, choice, text: null, vault: chat.vault, by: 'owner' });
   if (r.ok) sendJson(res, 200, { ok: true, result: r.result });
   else sendJson(res, r.error === 'no_surface' ? 409 : 200, { ok: false, error: r.error });
 }

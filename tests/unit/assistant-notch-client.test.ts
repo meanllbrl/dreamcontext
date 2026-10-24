@@ -88,8 +88,8 @@ describe('a project answering its doorbell (runVerb)', () => {
       send: vi.fn(),
       steer: vi.fn(() => true),
       enqueue: vi.fn(),
-      answer: vi.fn(),
-      answerQuestion: vi.fn(),
+      answer: vi.fn(() => true),
+      answerQuestion: vi.fn(() => true),
       getModel: () => ({ pending }),
     };
   }
@@ -100,6 +100,7 @@ describe('a project answering its doorbell (runVerb)', () => {
     deps = {
       vault: 'acme',
       findChat: vi.fn((id: string) => (id === 'c-1' ? chat as never : null)),
+      findOwnerChat: vi.fn(() => null),
       openChat: vi.fn(() => ({ claudeId: 'new-1' }) as never),
       reveal: vi.fn(),
       openPage: vi.fn(),

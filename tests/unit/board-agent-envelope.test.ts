@@ -202,6 +202,7 @@ describe('boardScopeArgs: the pinned scoped envelope', () => {
       'Bash(dreamcontext whiteboard list:*)',
       'Bash(dreamcontext whiteboard show:*)',
       'Bash(dreamcontext whiteboard place:*)',
+      'Bash(dreamcontext whiteboard kit:*)',
       'Bash(dreamcontext whiteboard nav list:*)',
       'Bash(dreamcontext automations list:*)',
       'Bash(dreamcontext automations show:*)',
@@ -301,6 +302,10 @@ describe('the scoped envelope on every spawn path', () => {
     expect(prompt).toContain('Ship the Q4 plan');
     expect(prompt).toContain(`SCOPE: you act only on your whiteboard "${board}"`);
     expect(prompt).toContain('automations/output/board-pilot/');
+    // No skills and no `node`: the scope line is how a board agent learns to DRAW (2026-10-21).
+    expect(prompt).toContain('DRAW it, never a stack of notes: run `dreamcontext whiteboard kit`');
+    expect(prompt).toContain(`\`dreamcontext whiteboard draw ${board} --spec <that file> --tag <tag>\``);
+    expect(prompt).toContain('Each Bash call is ONE `dreamcontext` command');
     expect(prompt.indexOf(`--- END WHITEBOARD ${nonce} ---`)).toBeGreaterThan(prompt.indexOf('Keep the board tidy.'));
     expect(prompt).toContain(`--- THE OWNER JUST ASKED YOU THIS, IN THE #agents CHANNEL ${nonce} ---`);
     expect(prompt.indexOf(`--- END OF WHAT THEY SAID ${nonce} ---`)).toBeGreaterThan(prompt.indexOf(`--- END WHITEBOARD ${nonce} ---`));

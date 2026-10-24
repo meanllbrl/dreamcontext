@@ -26,15 +26,6 @@ export { ModelBadge } from './src/components/council/ModelBadge';
 export { StatTile } from './src/components/council/StatTile';
 export { PersonaAvatar } from './src/components/council/PersonaAvatar';
 // task primitives
-export { TaskCard } from './src/components/tasks/TaskCard';
-export { KanbanColumn } from './src/components/tasks/KanbanColumn';
-export { SubGroupSection } from './src/components/tasks/SubGroupSection';
-export { MiniCalendar } from './src/components/tasks/MiniCalendar';
 export { SearchableSelect } from './src/components/tasks/SearchableSelect';
-export { MultiSelectFilter } from './src/components/tasks/MultiSelectFilter';
 export { FilterPopover } from './src/components/tasks/FilterPopover';
 export { CustomFieldInput } from './src/components/tasks/CustomFieldInput';
-export { ActivityHeatmap } from './src/components/tasks/ActivityHeatmap';
-export { EisenhowerMatrix } from './src/components/tasks/EisenhowerMatrix';
-export { RiceScatter } from './src/components/tasks/RiceScatter';
-export { VersionFilter } from './src/components/tasks/VersionFilter';

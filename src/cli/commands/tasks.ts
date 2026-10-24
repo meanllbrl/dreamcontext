@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { join, basename, dirname } from 'node:path';
 import chalk from 'chalk';
-import fg from 'fast-glob';
+import fg from '../../lib/glob.js';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { readSection, extractMermaidNodes, nodeStatus, countCheckboxes } from '../../lib/markdown.js';
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
@@ -10,7 +10,19 @@ import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
-import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
+import { assertTaskFilingBar, isSleepCycleLive, recordCycleTaskFiled } from '../../lib/task-filing-bar.js';
+import { decideFiling, filingFields } from '../../lib/filing-basis.js';
+import {
+  OBJECTION_KINDS,
+  MIN_OBJECTION_NOTE_CHARS,
+  appliedObjectionIds,
+  objectToTask,
+  readObjectionsSafe,
+  readObjectionsStrict,
+  type ObjectionRecord,
+} from '../../lib/task-objection.js';
+import { RULES_REL_PATH, mergeRule, readRules, revertRule, setRule, unlearnedIds } from '../../lib/task-filing-rules.js';
+import { inheritFromParent, isMappedWaveChild, openChildren, validateParentLink, waveChildren } from '../../lib/task-parent.js';
 import { appendDedupLogEntry } from '../../lib/embeddings/dedup-log.js';
 import {
   appendDeclined,
@@ -24,26 +36,22 @@ import { writeBrainLocal } from '../../lib/setup-config.js';
 import {
   handoffKey,
   writeHandoffRecord,
-  lastMainChainContext,
   type HandoffRecord,
 } from '../../lib/context-watch.js';
-import { liveTranscriptPath, findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import {
   HANDOFF_FIELDS,
   contextHandoffGaps,
   renderHandoffEntry,
   developHandoffGaps,
+  developHandoffNotes,
   formatGaps,
   type HandoffFields,
 } from '../../lib/handoff-readiness.js';
-import { distillTranscript } from './transcript.js';
+import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
+import { superHandoffCommand, superHandoffContext } from '../../lib/super/handoff-task.js';
 import { commitAssignment, logAssignmentResult, prepareAssignment } from '../../lib/agents/task-assignment.js';
 import { runAutomation } from '../../lib/automations/runner.js';
 import { AGENT_SELF_ENV } from '../../lib/automations/types.js';
-import { buildDigest, writeDigest } from '../../lib/session-digest.js';
-import { appendCompactionRecord } from '../../lib/sleep-consolidation.js';
-import { readSleepState, writeSleepState } from './sleep.js';
-import { withSleepStateLock } from '../../lib/sleep-state-lock.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
@@ -67,6 +75,7 @@ import {
   uninstallTaskSyncHooks,
   TaskBackendError,
   type TaskBackend,
+  type TaskData,
 } from '../../lib/task-backend/index.js';
 import { planDedup, applyDedup, type DedupPlan } from '../../lib/task-backend/dedup.js';
 import { ProgressBar } from '../../lib/progress.js';
@@ -523,7 +532,11 @@ async function resolveTaskSlug(backend: TaskBackend, name: string): Promise<stri
  */
 async function blockOnSleepEvalGate(backend: TaskBackend, root: string, slug: string): Promise<boolean> {
   const task = await backend.get(slug);
-  const gate = checkCloseGate(root, slug, task?.parent_task ?? null);
+  // A wave of a plan (its parent's newest WAVE MAP names it) does not pay for its own eval run:
+  // the parent's run measures the whole plan.
+  const parentTask = task?.parent_task ? await backend.get(task.parent_task) : null;
+  const exempt = !!(task && parentTask && isMappedWaveChild(parentTask, task));
+  const gate = checkCloseGate(root, slug, task?.parent_task ?? null, { exempt });
   if (!gate.applies) return false;
   if (gate.ok) {
     info(gate.message);
@@ -532,6 +545,36 @@ async function blockOnSleepEvalGate(backend: TaskBackend, root: string, slug: st
   error(gate.message);
   process.exitCode = 1;
   return true;
+}
+
+/**
+ * A parent closes only after its sub-tasks: done-kind is refused while any child is still open
+ * (cancelled children never block). Prints the open children and returns true to refuse.
+ */
+async function blockOnOpenChildren(backend: TaskBackend, slug: string): Promise<boolean> {
+  const all = (await backend.list()).map((t) => ({ slug: t.name, parent_task: t.parent_task, status: t.status }));
+  const open = openChildren(all, slug, statusSet());
+  if (open.length === 0) return false;
+  error(`"${slug}" has ${open.length} open sub-task(s): ${open.map((t) => `${t.slug} (${t.status})`).join(', ')}. `
+    + 'Close or cancel them first, or move the parent to in_review.');
+  process.exitCode = 1;
+  return true;
+}
+
+/** `--rests-on a, b` → ['a', 'b']. */
+function splitIds(raw: string): string[] {
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/** The applied objection ids, or null after printing why the ledger cannot be read. */
+function appliedSet(root: string): Set<string> | null {
+  try {
+    return new Set(appliedObjectionIds(readObjectionsStrict(root)));
+  } catch (err) {
+    error((err as Error).message);
+    process.exitCode = 1;
+    return null;
+  }
 }
 
 export function registerTasksCommand(program: Command): void {
@@ -557,10 +600,11 @@ export function registerTasksCommand(program: Command): void {
     .option('--long', 'Show tags + version inline in human output')
     .option('--tags', 'List distinct tags with counts (respects -s/--all; ignores other filters)')
     .option('--json', 'Emit the filtered tasks as JSON (flat array)')
+    .option('--parent <slug>', 'Only the sub-tasks of this task; with --json each carries its wave number (null when it is not a wave)')
     .action(async (opts: {
       status?: string; all?: boolean; tag?: string[]; anyTag?: string[];
       version?: string; priority?: string; feature?: string; objective?: string;
-      since?: string; until?: string;
+      since?: string; until?: string; parent?: string;
       groupBy?: string; long?: boolean; tags?: boolean; json?: boolean;
     }) => {
       const backend = getTaskBackend();
@@ -613,10 +657,28 @@ export function registerTasksCommand(program: Command): void {
         since: opts.since,
         until: opts.until,
       };
-      const matched = await backend.list(filter);
+      let matched = await backend.list(filter);
+
+      // --parent: the sub-tasks of one task. A child's `wave` is computed over ALL of its
+      // siblings, closed ones included, so wave 2 stays wave 2 after wave 1 closes.
+      let waveOf: Map<string, number | null> | null = null;
+      if (opts.parent !== undefined) {
+        const parentSlug = await resolveTaskSlug(backend, opts.parent);
+        if (!parentSlug) { process.exitCode = 1; return; }
+        const parentTask = await backend.get(parentSlug);
+        const siblings: TaskData[] = [];
+        for (const t of (await backend.list()).filter((r) => r.parent_task === parentSlug)) {
+          const full = await backend.get(t.name);
+          if (full) siblings.push(full);
+        }
+        waveOf = new Map(siblings.map((t) => [t.slug, null]));
+        for (const w of waveChildren(parentTask ?? {}, siblings)) waveOf.set(w.child.slug, w.wave);
+        matched = matched.filter((t) => t.parent_task === parentSlug);
+      }
 
       if (opts.json) {
-        console.log(JSON.stringify(matched, null, 2));
+        const rows = waveOf ? matched.map((t) => ({ ...t, wave: waveOf!.get(t.name) ?? null })) : matched;
+        console.log(JSON.stringify(rows, null, 2));
         return;
       }
 
@@ -684,10 +746,14 @@ export function registerTasksCommand(program: Command): void {
     .option('--feature <name>', 'Feature PRD this task belongs to (sets related_feature + the feature\'s related_tasks)')
     .option('--field <key=value...>', 'Set a declared custom field (repeatable): --field team=platform --field story_points=8')
     .option('--allow-missing-required', 'Create even when required custom fields are unset (intentional draft)')
-    .option('--by <actor>', 'Who is filing: human | sleep. During a sleep cycle a task filed as anything but `human` must clear the filing bar')
+    .option('--by <actor>', 'Who is filing: human | agent | sleep. During a sleep cycle a task filed with no --by counts as sleep and must clear the filing bar; a wave sub-task is --basis plan with --parent')
+    .option('--parent <slug>', 'Open it as a sub-task of this task (two levels max; the parent must be open). Inherits version and feature')
+    .option('--basis <kind>', 'Why it is opened: ask | defect | change | bookmark | plan | note. Sleep needs ask (with --quote) or defect (with --evidence) for a new top-level task')
+    .option('--quote <text>', "The owner's own words (ask), what changed (change), the bookmark (bookmark), or the wave map part (plan)")
+    .option('--evidence <text>', 'The failing output, verbatim (defect)')
     .option('--neighbor-checked <slug>', 'The nearest existing task you looked at and judged a separate concern (lifts a review-band filing-bar refusal)')
     .option('--declined-checked <key>', 'The declined idea you read and judged different from this task (lifts a semantic declined-match refusal)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean; by?: string; neighborChecked?: string; declinedChecked?: string }) => {
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean; by?: string; parent?: string; basis?: string; quote?: string; evidence?: string; neighborChecked?: string; declinedChecked?: string }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -699,16 +765,52 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
 
+      const contextRoot = ensureContextRoot();
+
+      // A sub-task (`--parent`): the same link rules the dashboard applies (lib/task-parent.ts),
+      // checked BEFORE anything is written. A closed parent takes no new children.
+      let parent: TaskData | null = null;
+      if (opts.parent !== undefined) {
+        const parentSlug = await resolveTaskSlug(backend, opts.parent);
+        if (!parentSlug) { process.exitCode = 1; return; }
+        const all = (await backend.list()).map((t) => ({ slug: t.name, parent_task: t.parent_task, status: t.status }));
+        const link = validateParentLink(all, slug, parentSlug, statusSet());
+        if (!link.ok) { error(link.message); process.exitCode = 1; return; }
+        parent = await backend.get(parentSlug);
+        if (!parent) { error(`Task not found: ${parentSlug}`); process.exitCode = 1; return; }
+      }
+      const inherited = parent ? inheritFromParent(parent) : null;
+      const givenWhy = (opts.why ?? '').trim() || inherited?.why || '';
+
+      // Who is filing, and on what basis (lib/filing-basis.ts). A caller with no --by during a
+      // live cycle IS sleep: it needs a basis, and a new top-level task only for an owner ask
+      // or a defect.
+      const filing = decideFiling({
+        contextRoot,
+        surface: 'cli',
+        by: opts.by,
+        basis: opts.basis,
+        quote: opts.quote,
+        evidence: opts.evidence,
+        parent: parent?.slug ?? null,
+        parentTechnicalDetails: parent?.technical_details ?? null,
+        why: givenWhy,
+        sleepLive: isSleepCycleLive(contextRoot),
+      });
+      if (!filing.ok) {
+        error(filing.message);
+        process.exitCode = 1;
+        return;
+      }
+
       // The filing bar. Applies whenever a sleep cycle is live (or under
-      // DREAMCONTEXT_AUTO_SLEEP) unless the caller says it is a person — see
+      // DREAMCONTEXT_AUTO_SLEEP) unless the caller says who it is — see
       // src/lib/task-filing-bar.ts for why this is checked here and not in the
       // storage layer.
-      const actor: FilingActor = opts.by === 'human' ? 'human' : opts.by === 'sleep' ? 'sleep' : 'unknown';
-      const contextRoot = ensureContextRoot();
       const verdict = await assertTaskFilingBar({
         contextRoot,
-        actor,
-        why: opts.why,
+        actor: filing.barActor,
+        why: givenWhy,
         slug,
         name,
         // `opts.description`, NOT the `description` computed further down (which
@@ -780,8 +882,9 @@ export function registerTasksCommand(program: Command): void {
       }
       // Every task records why it exists (created_at covers the "when") — a
       // task whose reason is missing is unreadable months later, so an empty
-      // scaffold cannot be created.
-      const why = (opts.why ?? '').trim();
+      // scaffold cannot be created. A sub-task's Why may be omitted: being part
+      // of its parent IS why it exists.
+      const why = givenWhy;
       if (!why) {
         error('Every task must say why it exists — pass -w/--why "<reason>".');
         // Exit non-zero: this refusal used to return 0, so a script (or a sleep
@@ -789,7 +892,7 @@ export function registerTasksCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
-      const version = opts.version || getActivePlanningVersion();
+      const version = opts.version || inherited?.version || getActivePlanningVersion();
 
       const riceInput: RiceInput = {};
       if (opts.reach !== undefined) riceInput.reach = Number(opts.reach);
@@ -829,12 +932,13 @@ export function registerTasksCommand(program: Command): void {
       // Resolve --feature BEFORE creating so an unknown/ambiguous reference
       // refuses the link up front instead of persisting a dangling slug.
       let feature: { slug: string } | null = null;
-      if (opts.feature !== undefined) {
-        const resolved = resolveFeature(ensureContextRoot(), opts.feature);
+      const featureRef = opts.feature ?? inherited?.related_feature ?? undefined;
+      if (featureRef !== undefined) {
+        const resolved = resolveFeature(ensureContextRoot(), featureRef);
         if (!resolved.ok) {
           error(resolved.reason === 'ambiguous'
-            ? `Ambiguous feature "${opts.feature}". Did you mean: ${resolved.candidates.join(', ')}?`
-            : `Unknown feature: "${opts.feature}". Check: ls _dream_context/knowledge/features/`);
+            ? `Ambiguous feature "${featureRef}". Did you mean: ${resolved.candidates.join(', ')}?`
+            : `Unknown feature: "${featureRef}". Check: ls _dream_context/knowledge/features/`);
           return;
         }
         feature = { slug: resolved.slug };
@@ -881,6 +985,7 @@ export function registerTasksCommand(program: Command): void {
           due_date: opts.due ?? null,
           ...(objectives ? { objectives } : {}),
           ...(customFields ? { custom_fields: customFields } : {}),
+          local_fields: { ...(parent ? { parent_task: parent.slug } : {}), ...filingFields(filing) },
           variant: 'cli',
         });
       } catch (err) {
@@ -921,6 +1026,8 @@ export function registerTasksCommand(program: Command): void {
       }
       success(`Task created: ${slug}.md`);
       printBarNotices();
+      for (const w of filing.warnings) console.log(chalk.dim(`  ${w}`));
+      if (parent) console.log(chalk.dim(`  sub-task of: ${parent.slug}`));
       if (feature) {
         console.log(chalk.dim(`  feature: ${feature.slug} (related_tasks updated)`));
       }
@@ -1417,6 +1524,219 @@ export function registerTasksCommand(program: Command): void {
       success(`${slug} → feature: ${resolved.slug}${notes.length > 0 ? ` (${notes.join('; ')})` : ''}`);
     });
 
+  // Sub-task link (parent_task): the same rules as the dashboard (lib/task-parent.ts)
+  tasks
+    .command('parent')
+    .argument('<name>', 'Task slug or name')
+    .argument('[parent]', 'Parent task to SET, or "clear" / omit to print')
+    .description('Print, set, or clear the parent of a sub-task (two levels max; the parent must be open)')
+    .action(async (name: string, parentRef: string | undefined) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) { process.exitCode = 1; return; }
+      const task = await backend.get(slug);
+      if (!task) { error(`Task not found: ${name}`); process.exitCode = 1; return; }
+
+      if (parentRef === undefined) {
+        const all = await backend.list();
+        const kids = all.filter((t) => t.parent_task === slug).map((t) => `${t.name} (${t.status})`);
+        console.log(task.parent_task ? `${slug} → parent: ${task.parent_task}` : chalk.dim(`${slug} has no parent.`));
+        if (kids.length > 0) console.log(`  sub-tasks: ${kids.join(', ')}`);
+        return;
+      }
+
+      let target: string | null = null;
+      if (parentRef.trim().toLowerCase() !== 'clear') {
+        target = await resolveTaskSlug(backend, parentRef);
+        if (!target) { process.exitCode = 1; return; }
+      }
+      if (target === task.parent_task) {
+        console.log(chalk.dim(`${slug} already ${target ? `sits under ${target}` : 'has no parent'}.`));
+        return;
+      }
+      const all = (await backend.list()).map((t) => ({ slug: t.name, parent_task: t.parent_task, status: t.status }));
+      const link = validateParentLink(all, slug, target, statusSet());
+      if (!link.ok) { error(link.message); process.exitCode = 1; return; }
+      await backend.updateFields(slug, { parent_task: target, updated_at: today() });
+      success(target ? `${slug} → parent: ${target}` : `Cleared parent on ${slug}`);
+    });
+
+  // Record why an existing task was opened (filing_basis); --basis plan marks a wave sub-task.
+  tasks
+    .command('basis')
+    .argument('<name>', 'Task slug or name')
+    .requiredOption('--basis <kind>', 'ask | defect | change | bookmark | plan | note')
+    .option('--quote <text>', "The owner's own words (ask), what changed, the bookmark, or the wave map part (plan)")
+    .option('--evidence <text>', 'The failing output, verbatim (defect)')
+    .description('Record why an existing task was opened; --basis plan also marks it as a plan\'s wave (filed_by: plan)')
+    .action(async (name: string, opts: { basis: string; quote?: string; evidence?: string }) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) { process.exitCode = 1; return; }
+      const task = await backend.get(slug);
+      if (!task) { error(`Task not found: ${name}`); process.exitCode = 1; return; }
+      // An awake fix-up: during a live cycle it would be a way to stamp an unchecked basis after
+      // the filing bar already ran.
+      if (isSleepCycleLive(ensureContextRoot())) {
+        error('tasks basis records a basis awake; it is refused while a sleep cycle is live. Run it after the cycle.');
+        process.exitCode = 1;
+        return;
+      }
+      if (opts.basis === 'plan' && !task.parent_task) {
+        error('--basis plan marks a wave of a plan, and a wave is a sub-task: set its parent first (dreamcontext tasks parent <slug> <parent>).');
+        process.exitCode = 1;
+        return;
+      }
+      // Recorded by an awake caller: the quote is looked up in this session and stamped
+      // verified when found, never refused (decideFiling's awake-agent branch).
+      const filing = decideFiling({
+        contextRoot: ensureContextRoot(),
+        surface: 'cli',
+        by: opts.basis === 'plan' ? 'plan' : 'agent',
+        basis: opts.basis,
+        quote: opts.quote,
+        evidence: opts.evidence,
+        parent: task.parent_task,
+        why: task.why.trim(),
+        sleepLive: false,
+      });
+      if (!filing.ok) { error(filing.message); process.exitCode = 1; return; }
+      const fields: Record<string, unknown> = { filing_basis: filing.basis, updated_at: today() };
+      if (filing.filedBy === 'plan') fields.filed_by = 'plan';
+      else if (!task.filed_by) fields.filed_by = 'agent';
+      await backend.updateFields(slug, fields);
+      success(`${slug}: basis ${filing.basis?.kind}${filing.basis?.verified ? ' (quote found in this session)' : ''}${fields.filed_by ? `, filed_by ${fields.filed_by}` : ''}`);
+    });
+
+  // Objections: the owner says a task an agent opened was wrong (lib/task-objection.ts).
+  tasks
+    .command('object')
+    .argument('<name>', 'Task slug or name')
+    .option('--as <kind>', `What it really was: ${OBJECTION_KINDS.join(' | ')}`)
+    .option('--target <slug>', 'The task it points at (subtask-of, criterion-on, duplicate-of)')
+    .option('--note <text>', `Why, in at least ${MIN_OBJECTION_NOTE_CHARS} characters: sleep learns the rule from it`)
+    .option('--resume <id>', 'Finish an unfinished objection (obj_…)')
+    .description('Object to a task an agent opened: put it under another task, make it a criterion, mark it a duplicate, or decline it')
+    .action(async (name: string, opts: { as?: string; target?: string; note?: string; resume?: string }) => {
+      const backend = getTaskBackend();
+      const root = ensureContextRoot();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) { process.exitCode = 1; return; }
+      let target: string | null = null;
+      if (opts.target) {
+        target = await resolveTaskSlug(backend, opts.target);
+        if (!target) { process.exitCode = 1; return; }
+      }
+      let as = opts.as ?? '';
+      let note = opts.note ?? '';
+      if (opts.resume) {
+        const rec = readObjectionsSafe(root).find((r) => r.id === opts.resume);
+        if (rec) { as = rec.as; target = rec.target; note = rec.note; }
+      }
+      const result = await objectToTask(root, backend, {
+        task: slug,
+        as,
+        target,
+        note,
+        by: process.env.CLAUDE_CODE_SESSION_ID ? 'agent' : 'owner',
+        via: 'agent',
+        ...(opts.resume ? { resume: opts.resume } : {}),
+      });
+      if (!result.ok) {
+        error(result.message);
+        process.exitCode = 1;
+        return;
+      }
+      const r = result.record;
+      success(result.outcome === 'already_applied'
+        ? `${r.id} was already applied (${r.as}${r.target ? ` → ${r.target}` : ''}).`
+        : `${r.id}: ${slug} ${r.as}${r.target ? ` → ${r.target}` : ''} (steps: ${r.steps.join(', ')}).`);
+      info('The next sleep learns a rule from it: dreamcontext tasks objections --unlearned');
+    });
+
+  tasks
+    .command('objections')
+    .option('--unlearned', 'Only applied objections no rule rests on yet (what the next sleep distils)')
+    .option('--json', 'Emit JSON')
+    .description('List objections to tasks, newest first')
+    .action(async (opts: { unlearned?: boolean; json?: boolean }) => {
+      const root = ensureContextRoot();
+      let records: ObjectionRecord[];
+      try {
+        records = readObjectionsStrict(root);
+      } catch (err) {
+        error((err as Error).message);
+        process.exitCode = 1;
+        return;
+      }
+      if (opts.unlearned) {
+        const read = readRules(root);
+        if (read.state === 'unreadable') {
+          error(`Rules could not be read: ${read.reason}`);
+          process.exitCode = 1;
+          return;
+        }
+        const ids = new Set(unlearnedIds(read.doc, appliedObjectionIds(records)));
+        records = records.filter((r) => ids.has(r.id));
+      }
+      const rows = [...records].sort((a, b) => (a.at < b.at ? 1 : -1));
+      if (opts.json) { console.log(JSON.stringify(rows, null, 2)); return; }
+      if (rows.length === 0) { console.log(chalk.dim(opts.unlearned ? 'No unlearned objections.' : 'No objections.')); return; }
+      console.log(header(opts.unlearned ? 'Unlearned objections' : 'Objections'));
+      for (const r of rows) {
+        const state = r.applied ? 'applied' : r.error ? `stopped: ${r.error}` : 'unfinished';
+        console.log(`  ${r.id}  ${r.task}  ${chalk.bold(r.as)}${r.target ? ` → ${r.target}` : ''}  ${chalk.dim(`${r.at.slice(0, 10)} · ${state}`)}`);
+        console.log(chalk.dim(`    «${r.snapshot.name}» filed by ${r.snapshot.filed_by ?? 'unknown'} · ${r.note}`));
+      }
+    });
+
+  const rules = tasks
+    .command('rules')
+    .description(`Task filing rules learned from objections (${RULES_REL_PATH}); the only writer of that file`);
+
+  rules
+    .command('set')
+    .requiredOption('--title <text>', 'The rule in a few words')
+    .requiredOption('--dont <text>', 'What not to file')
+    .requiredOption('--do <text>', 'What to do instead')
+    .requiredOption('--rests-on <ids>', 'Comma-separated applied objection ids (obj_…)')
+    .description('Add a rule learned from one or more applied objections')
+    .action((opts: { title: string; dont: string; do: string; restsOn: string }) => {
+      const root = ensureContextRoot();
+      const applied = appliedSet(root);
+      if (!applied) return;
+      const res = setRule(root, { title: opts.title, dont: opts.dont, do: opts.do, restsOn: splitIds(opts.restsOn) }, applied);
+      if (!res.ok) { error(res.message); process.exitCode = 1; return; }
+      success(`${res.rule.id} · ${res.rule.title} (rests on ${res.rule.rests_on.join(', ')})`);
+    });
+
+  rules
+    .command('merge')
+    .argument('<id>', 'The rule (R<n>)')
+    .requiredOption('--rests-on <ids>', 'Comma-separated applied objection ids to add')
+    .option('--title <text>', 'New wording for the title')
+    .option('--dont <text>', 'New wording for Don\'t')
+    .option('--do <text>', 'New wording for Do')
+    .description('Add objections to an existing rule (and optionally reword it)')
+    .action((id: string, opts: { restsOn: string; title?: string; dont?: string; do?: string }) => {
+      const root = ensureContextRoot();
+      const applied = appliedSet(root);
+      if (!applied) return;
+      const res = mergeRule(root, id, { restsOn: splitIds(opts.restsOn), title: opts.title, dont: opts.dont, do: opts.do }, applied);
+      if (!res.ok) { error(res.message); process.exitCode = 1; return; }
+      success(`${res.rule.id} · ${res.rule.title} (rests on ${res.rule.rests_on.join(', ')})`);
+    });
+
+  rules
+    .command('revert')
+    .argument('<id>', 'The rule (R<n>)')
+    .description('Drop a rule; the objections it rested on are dismissed and never learned again')
+    .action((id: string) => {
+      const res = revertRule(ensureContextRoot(), id);
+      if (!res.ok) { error(res.message); process.exitCode = 1; return; }
+      success(`Reverted ${res.rule.id}; dismissed: ${res.rule.rests_on.join(', ')}`);
+    });
+
   // Tag management on existing tasks (person:<slug> tags drive remote assignees)
   tasks
     .command('tag')
@@ -1541,6 +1861,7 @@ export function registerTasksCommand(program: Command): void {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
+      if (await blockOnOpenChildren(backend, slug)) return;
 
       let summary: string;
       if (summaryParts.length > 0) {
@@ -1590,6 +1911,7 @@ export function registerTasksCommand(program: Command): void {
         if (blockOnMissingRequired(isDone(defs, newStatus) ? 'complete' : `move to ${newStatus}`, slug, cur?.custom_fields, ensureContextRoot(),
             (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
       }
+      if (isDone(defs, newStatus) && await blockOnOpenChildren(backend, slug)) return;
       if (isDone(defs, newStatus) && await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
 
       const reason = reasonParts.join(' ').trim();
@@ -1755,6 +2077,14 @@ export function registerTasksCommand(program: Command): void {
   for (const f of HANDOFF_FIELDS) handoffCmd.option(`${f.flag} <text>`, `${f.label}: ${f.hint}`);
   handoffCmd
     .action(async (name: string, noteParts: string[], opts: HandoffFields) => {
+      // The Super Agent hands off into its OWN file, never a task (super/handoff-file.ts).
+      // Its sub-agents share its pane env and are routed the same way.
+      if (superHandoffContext(ensureContextRoot(), [process.env.DREAMCONTEXT_TAB_SESSION, process.env.CLAUDE_CODE_SESSION_ID])) {
+        error('Handoff refused: you are the Super Agent — your handoff goes into your own file, never a task.');
+        info(`Run instead:\n  ${superHandoffCommand(HANDOFF_FIELDS)}`);
+        process.exitCode = 1;
+        return;
+      }
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
@@ -1792,11 +2122,8 @@ export function registerTasksCommand(program: Command): void {
       //    Pane first (it survives a rotation via the session map), conversation id
       //    second. Null is fine everywhere downstream: a session whose transcript has
       //    not flushed yet still hands off, just without a measured size.
-      const tab = process.env.DREAMCONTEXT_TAB_SESSION ?? '';
-      const sessionId = process.env.CLAUDE_CODE_SESSION_ID ?? '';
-      const transcript = (tab ? liveTranscriptPath(root, tab) : null)
-        ?? (sessionId ? findTranscriptBySessionId([sessionId]) : null);
-      const contextTokens = transcript ? lastMainChainContext(transcript) : null;
+      const session = locateHandoffSession(root);
+      const { tab, sessionId, contextTokens } = session;
 
       // 4. The record the fresh session (and the Chat server) reads. Keyed by pane
       //    when there is one, so a second pane's handoff can never be mistaken for
@@ -1812,32 +2139,11 @@ export function registerTasksCommand(program: Command): void {
       const key = handoffKey();
       writeHandoffRecord(root, key, record);
 
-      // 5. A PARTIAL digest, exactly as pre-compact writes one. Same reason: the
-      //    session is about to end with its decisions un-captured, and the Stop-hook
-      //    path is hours away. Marked partial so the SessionStart catch-up re-digests
-      //    the full transcript over it. Best-effort — never block the handoff.
-      try {
-        if (transcript && sessionId) {
-          writeDigest(root, sessionId, buildDigest(distillTranscript(transcript)), { partial: true });
-        }
-      } catch { /* the digest is a safety net, not the handoff itself */ }
-
-      // 6. The compaction log finally records handoffs alongside compactions, with
-      //    the size that triggered them — the number the whole context-ceiling
-      //    research is about. Locked like every other writer of sleep state.
-      try {
-        withSleepStateLock(root, () => {
-          const state = readSleepState(root);
-          writeSleepState(root, appendCompactionRecord(state, {
-            timestamp: new Date().toISOString(),
-            trigger: 'handoff',
-            debt_at_compaction: state.debt,
-            sessions_count: state.sessions.length,
-            bookmarks_count: state.bookmarks.length,
-            ...(contextTokens !== null ? { context_tokens: contextTokens } : {}),
-          }));
-        });
-      } catch { /* the log is a record, never a gate on the handoff */ }
+      // 5 + 6. A PARTIAL digest, exactly as pre-compact writes one (the session is about to
+      //    end with its decisions un-captured; marked partial so the SessionStart catch-up
+      //    re-digests the full transcript over it), and the compaction log's `handoff` entry
+      //    with the size that triggered it. Both best-effort (handoff-artifacts.ts).
+      writeHandoffArtifacts(root, session);
 
       success(`Handoff recorded for ${slug}${contextTokens !== null ? ` at ~${Math.round(contextTokens / 1000)}k tokens` : ''}.`);
       // The two surfaces differ in ONE way that matters to the agent: whether
@@ -1871,6 +2177,14 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
       success(`${slug} is ready for development.`);
+      if (task) {
+        const children: TaskData[] = [];
+        for (const c of (await backend.list()).filter((t) => t.parent_task === slug)) {
+          const full = await backend.get(c.name);
+          if (full) children.push(full);
+        }
+        for (const note of developHandoffNotes(task, children)) info(note);
+      }
     });
 
   // Sync with the remote backend (no-op for local)

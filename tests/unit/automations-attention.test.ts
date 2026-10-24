@@ -363,7 +363,7 @@ describe('the watermark — machine-local, monotonic, and never consumed by a re
     ackAttention(PROJECT, '2026-08-28T09:00:00.000Z', home, NOW);
     const path = attentionWatermarkPath(home);
     expect(path).toBe(join(home, '.dreamcontext', 'automations-tabs.json'));
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(() => statSync(`${path}.tmp`)).toThrow();
   });
 

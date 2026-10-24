@@ -3,6 +3,7 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runCliWithStdin } from '../helpers/cli-stdin.js';
 
 /**
  * A3's acceptance criterion, proved through the REAL binary rather than by
@@ -41,13 +42,7 @@ function cli(args: string): string {
 
 function promptHook(): string {
   const input = JSON.stringify({ session_id: '11111111-1111-1111-1111-111111111111', prompt: 'hi' });
-  try {
-    return execSync(`printf '%s' '${input}' | node ${CLI} hook user-prompt-submit 2>/dev/null`, {
-      cwd: root, encoding: 'utf-8', timeout: 20000, shell: '/bin/bash',
-    });
-  } catch (e: any) {
-    return (e.stdout ?? '') + (e.stderr ?? '');
-  }
+  return runCliWithStdin(CLI, ['hook', 'user-prompt-submit'], input, { cwd: root, timeout: 20000 });
 }
 
 function setDebt(debt: number): void {

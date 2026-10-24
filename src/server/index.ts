@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
-import { handleCors, isCrossSiteWrite, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
+import { handleCors, isCrossSiteWrite, refuseForeignFrame, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
 import { carriesCloudflareHeaders, isPhoneSocket, macExposedVaults, markPhoneSocket } from './phone-origin.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
@@ -21,13 +21,18 @@ import {
   handleAssistantRecall, handleAssistantIndex, handleAssistantRead,
   handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
-import { wireNotchInbox } from '../lib/assistant/notch-inbox.js';
+import { lookingAt, lookingAtSession, setSuperFinishBanner, wireNotchInbox } from '../lib/assistant/notch-inbox.js';
+import { setOwnerQuestionSinks } from '../lib/super/owner-question.js';
+import { notifyViaBundle } from '../lib/automations/notifier.js';
 import { startSuperInbox } from '../lib/super/inbox.js';
+import { parkedSince } from './chat-park.js';
+import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
-import { handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperLayout, handleSuperRecap, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
+import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
-import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleTaskAssetsList, handleTaskAssetRaw, handleTaskAssetUpload } from './routes/task-assets.js';
 import { handleSleepEvalLabelsGet, handleSleepEvalLabelsPost } from './routes/sleep-eval.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
@@ -150,6 +155,7 @@ import {
   handleAgentsUpdate,
   handleAgentsDelete,
   handleAgentsApprove,
+  handleAgentsPlace,
   handleAgentsPhotoGet,
   handleAgentsPhotoUpload,
 } from './routes/agents.js';
@@ -192,6 +198,8 @@ import {
 } from './routes/agent-terminal.js';
 import { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
+import { claimOwnedPort } from './owned-ports.js';
+import { closeAllWebSessions } from './web-session-proxy.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
   handleAgentAccountsSwitchPolicy, handleAgentAccountsList,
@@ -207,7 +215,7 @@ import {
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
 import { handleAppMachine } from './routes/machine.js';
-import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
+import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentPhoneGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
@@ -323,6 +331,10 @@ export function buildRouter(): Router {
   router.delete('/api/task-overrides/fields/:key', handleTaskOverrideRemoveField);
   router.post('/api/task-overrides/statuses', handleTaskOverrideAddStatus);
   router.delete('/api/task-overrides/statuses/:key', handleTaskOverrideRemoveStatus);
+  // Attachments (state/assets/<slug>/, local): before the generic :slug matchers.
+  router.get('/api/tasks/:slug/assets', handleTaskAssetsList);
+  router.get('/api/tasks/:slug/assets/raw', handleTaskAssetRaw);
+  router.post('/api/tasks/:slug/assets', handleTaskAssetUpload);
   router.get('/api/tasks/:slug', handleTasksGet);
   router.get('/api/tasks/:slug/readiness', handleTasksReadiness);
   router.delete('/api/tasks/:slug', handleTasksDelete);
@@ -331,6 +343,7 @@ export function buildRouter(): Router {
   // Assign to agent: sets `agent:`, applies the status rule, starts the agent's
   // call-target run with the task as data (409 when it is not approved to run).
   router.post('/api/tasks/:slug/assign-agent', handleTasksAssignAgent);
+  router.post('/api/tasks/:slug/objection', handleTasksObjection);
   router.post('/api/tasks/:slug/insert', handleTasksInsert);
 
   // Sleep
@@ -450,6 +463,13 @@ export function buildRouter(): Router {
   router.post('/api/assistant/delegations/dismiss', handleAssistantDelegationDismiss);
   // The notch inbox: finished chats, automation posts and runs, account notices (notch-inbox.ts).
   wireNotchInbox();
+  // The Super Agent's reply while handed over is also a banner a click routes to its stage.
+  setSuperFinishBanner((title, body, link) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link }); });
+  // A question the Super Agent puts to the owner reaches him whatever page the window shows.
+  setOwnerQuestionSinks({
+    presence: () => ({ vault: lookingAt(), session: lookingAtSession() }),
+    banner: (title, body, link) => isDesktop() && notifyViaBundle(title, body, undefined, { link }),
+  });
   router.get('/api/assistant/inbox', handleAssistantInbox);
   router.post('/api/assistant/inbox/dismiss', handleAssistantInboxDismiss);
   router.post('/api/assistant/inbox/seen', handleAssistantInboxSeen);
@@ -488,6 +508,9 @@ export function buildRouter(): Router {
   router.post('/api/super/layout', handleSuperLayout);
   router.post('/api/super/activity', handleSuperActivity);
   router.post('/api/super/recap', handleSuperRecap);
+  router.post('/api/super/fresh', handleSuperFresh);
+  router.post('/api/super/end', handleSuperEnd);
+  router.post('/api/super/seen', handleSuperSeen);
   router.post('/api/assistant/look', handleAssistantLook);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
@@ -582,6 +605,10 @@ export function buildRouter(): Router {
   router.post('/api/agent/reveal', handleAgentReveal);
   // The user allowing ONE named file outside the project root to be shown inline.
   router.post('/api/agent/grant', handleAgentGrant);
+  router.post('/api/agent/phone-grant', handleAgentPhoneGrant);
+  router.get('/api/agent/loopback-grants', handleLoopbackGrantsGet);
+  router.post('/api/agent/loopback-grant', handleLoopbackGrantSet);
+  router.post('/api/agent/web-session', handleWebSessionOpen);
   router.get('/api/agent/goal-live', handleAgentGoalLive);
   // Headless teammates: registered/launched `claude -p` runs, read off their own transcripts.
   router.get('/api/agent/teammates', handleAgentTeammates);
@@ -753,6 +780,7 @@ export function buildRouter(): Router {
   router.post('/api/agents/:slug/update', handleAgentsUpdate);
   router.post('/api/agents/:slug/delete', handleAgentsDelete);
   router.post('/api/agents/:slug/approve', handleAgentsApprove);
+  router.post('/api/agents/:slug/place', handleAgentsPlace);
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
   router.post('/api/agents/:slug/photo', handleAgentsPhotoUpload);
   router.get('/api/automations', handleAutomationsList);
@@ -1127,6 +1155,8 @@ export function mainLaptopGate(req: IncomingMessage, res: ServerResponse, networ
     return false;
   }
   if (networkToken && !checkNetworkAuth(req, res, networkToken)) return false;
+  // Clickjacking / frame redirect: a foreign frame never loads anything from this origin.
+  if (refuseForeignFrame(req, res)) return false;
   // Handle CORS preflight
   if (handleCors(req, res)) return false;
   // CSRF defense: reject state-changing requests from a cross-site origin.
@@ -1221,6 +1251,9 @@ export async function startPhoneListener(opts: { port?: number } = {}): Promise<
       resolvePort(a && typeof a === 'object' ? a.port : 0);
     });
   });
+  // Its port is ours while it listens: no web card may load it (T1).
+  const release = claimOwnedPort(port);
+  server.once('close', release);
   phoneListener = { server, port, sockets };
   return { port };
 }
@@ -1296,6 +1329,11 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     server.setTimeout(30000);
 
     const onListening = () => {
+      // The dashboard's own port: no web card may load it (T1). Released when it closes.
+      {
+        const a = server.address();
+        if (a && typeof a === 'object') server.once('close', claimOwnedPort(a.port));
+      }
       const shownHost = host === '127.0.0.1' ? 'localhost' : host;
       const url = `http://${shownHost}:${port}`;
       console.log(`\n  Dashboard: ${url}\n`);
@@ -1343,6 +1381,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
           killTrackedChildren();
           // Nothing the owner has not approved is sent: pending Assistant proposals are declined.
           declineAllProposals();
+          // The web cards' session proxies (their ports were claimed as owned).
+          void closeAllWebSessions();
           server.close(() => process.exit(0));
         });
         setTimeout(() => process.exit(1), 5000);
@@ -1381,8 +1421,11 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // The Super Agent's in-memory index and inbox come up BEFORE the server listens, so before
     // any chat can register (plan-r7 D16): a handed-over child's first question is already
     // kept out of the notch, and children the window restores get their re-adoption grace.
-    void startSuperInbox(listVaults().map((v) => join(v.path, '_dream_context')))
+    // A parked child is not coming back on its own: it gets no re-adoption grace.
+    void startSuperInbox(listVaults().map((v) => join(v.path, '_dream_context')), { parked: (sid) => parkedSince(sid) !== null })
       .catch((err) => console.warn(`[super] boot failed: ${(err as Error).message}`))
+      // Queued super sends a relaunch must not lose (lib/super/outbox.ts).
+      .then(() => { armSuperOutbox(); armSuperSuccession(); })
       .finally(() => server.listen(port, host, onListening));
   });
 }

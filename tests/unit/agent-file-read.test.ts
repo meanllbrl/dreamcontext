@@ -337,3 +337,142 @@ describe('handleAgentFile — X-Content-Type-Options: nosniff on every response'
     expect(header('X-Content-Type-Options')).toBe('nosniff');
   });
 });
+
+/** A web page carrying a picture inline as base64, about `bytes` long. */
+const pageOf = (bytes: number) => `<!doctype html><img src="data:image/png;base64,${'A'.repeat(bytes)}">`;
+
+// Owner 2026-10-22: a 596 KB mockup with its pictures inline as base64 read as "could not be
+// read" in a Super Agent web card — .html is no raw type, so it fell to the 512 KB text cap.
+describe('handleAgentFile — a web page has its own cap, and a 413 says how big', () => {
+  it('serves a ~596 KB .html (the owner\'s mockup size) as text, raw=1 or not', async () => {
+    writeFileSync(join(projectRoot, 'mockup.html'), pageOf(596 * 1024), 'utf-8');
+    for (const q of ['', '&raw=1']) {
+      const { res, status, body } = makeRes();
+      await handleAgentFile(makeReq(`/api/agent/file?path=mockup.html${q}`), res, {}, contextRoot);
+      expect(status()).toBe(200);
+      expect(body().type).toBe('text');
+      expect(body().content.length).toBeGreaterThan(596 * 1024);
+    }
+  });
+
+  it('a .htm counts as a web page too', async () => {
+    writeFileSync(join(projectRoot, 'mockup.htm'), pageOf(600 * 1024), 'utf-8');
+    const { res, status } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=mockup.htm'), res, {}, contextRoot);
+    expect(status()).toBe(200);
+  });
+
+  it('a page over 8 MiB is refused 413 with its size and the limit', async () => {
+    writeFileSync(join(projectRoot, 'big.html'), pageOf(9 * 1024 * 1024), 'utf-8');
+    const { res, status, body } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=big.html'), res, {}, contextRoot);
+    expect(status()).toBe(413);
+    expect(body().error).toBe('too_large');
+    expect(body().limit).toBe(8 * 1024 * 1024);
+    expect(body().size).toBeGreaterThan(9 * 1024 * 1024);
+  });
+
+  it('any other text keeps the 512 KB cap, and its 413 names it', async () => {
+    const { res, status, body } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=huge.txt'), res, {}, contextRoot);
+    expect(status()).toBe(413);
+    expect(body().limit).toBe(512 * 1024);
+    expect(body().size).toBe(600 * 1024);
+  });
+});
+
+// Owner 2026-10-23: `super open whiteboard super-sunum-duzenleri` drew "couldn't be read" —
+// the 202-element board was 827 KB, over the 512 KB text cap every board card reads through.
+describe('handleAgentFile — an Excalidraw board shares the larger cap', () => {
+  const boardOf = (bytes: number) => `---\nexcalidraw-plugin: parsed\n---\n\n%%\n## Drawing\n\`\`\`json\n{"elements":[],"pad":"${'x'.repeat(bytes)}"}\n\`\`\`\n%%\n`;
+
+  it('serves an ~827 KB whiteboard at its slug-folder path', async () => {
+    const dir = join(contextRoot, 'whiteboards', 'big-board');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'big-board.excalidraw.md'), boardOf(827 * 1024), 'utf-8');
+    const { res, status, body } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=_dream_context/whiteboards/big-board/big-board.excalidraw.md'), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    expect(body().type).toBe('markdown');
+    expect(body().content.length).toBeGreaterThan(827 * 1024);
+  });
+
+  it('a plain .md of the same size keeps the 512 KB cap', async () => {
+    writeFileSync(join(projectRoot, 'notes-big.md'), 'x'.repeat(827 * 1024), 'utf-8');
+    const { res, status, body } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=notes-big.md'), res, {}, contextRoot);
+    expect(status()).toBe(413);
+    expect(body().limit).toBe(512 * 1024);
+  });
+});
+
+// `?probe=1`: the card asks "will this load?" without the file being read (it used to read a
+// whole page twice: once for a ranged probe the text branch ignored, once for the reader).
+describe('handleAgentFile — probe=1 answers every gate and its branch\'s cap, reading nothing', () => {
+  it('a page within its cap: 200 {size, limit} with no content — even when the bytes are unreadable', async () => {
+    const file = join(projectRoot, 'locked.html');
+    writeFileSync(file, pageOf(10), 'utf-8');
+    const { chmodSync } = await import('node:fs');
+    chmodSync(file, 0o000);
+    try {
+      const probe = makeRes();
+      await handleAgentFile(makeReq('/api/agent/file?path=locked.html&raw=1&probe=1'), probe.res, {}, contextRoot);
+      expect(probe.status()).toBe(200);
+      expect(probe.body()).toMatchObject({ probe: true, limit: 8 * 1024 * 1024 });
+      expect(probe.body().content).toBeUndefined();
+      // The same file read for real fails: the probe above did not read it. (Root reads
+      // anything, so only assert the contrast where the permission bites.)
+      const read = makeRes();
+      await handleAgentFile(makeReq('/api/agent/file?path=locked.html'), read.res, {}, contextRoot);
+      if (process.getuid?.() !== 0) expect(read.status()).toBe(500);
+    } finally {
+      chmodSync(file, 0o644);
+    }
+  });
+
+  it('over its cap: the probe is the 413 a read would be', async () => {
+    writeFileSync(join(projectRoot, 'big.html'), pageOf(9 * 1024 * 1024), 'utf-8');
+    const { res, status, body } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=big.html&raw=1&probe=1'), res, {}, contextRoot);
+    expect(status()).toBe(413);
+    expect(body().limit).toBe(8 * 1024 * 1024);
+  });
+
+  it('follows the request\'s real route: a PDF raw is media (2 GiB), without raw it is text (512 KB)', async () => {
+    writeFileSync(join(projectRoot, 'handbook.pdf'), '%PDF-1.7\n%%EOF\n', 'utf-8');
+    const raw = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=handbook.pdf&raw=1&probe=1'), raw.res, {}, contextRoot);
+    expect(raw.status()).toBe(200);
+    expect(raw.body()).toMatchObject({ probe: true, size: 15, limit: 2 * 1024 * 1024 * 1024 });
+    const text = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=handbook.pdf&probe=1'), text.res, {}, contextRoot);
+    expect(text.body()).toMatchObject({ probe: true, size: 15, limit: 512 * 1024 });
+  });
+
+  it('a raw SVG probes against its own 512 KB cap', async () => {
+    const { res, status, body } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=icon.svg&raw=1&probe=1'), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    expect(body()).toMatchObject({ probe: true, limit: 512 * 1024 });
+  });
+
+  it('a folder still answers its listing; an outside path still asks for consent; a missing file is 404', async () => {
+    const dir = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=src&probe=1'), dir.res, {}, contextRoot);
+    expect(dir.body().type).toBe('dir');
+    const outside = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=' + encodeURIComponent('/etc/passwd') + '&probe=1'), outside.res, {}, contextRoot);
+    expect(outside.status()).toBe(403);
+    expect(outside.body().error).toBe('needs_grant');
+    const gone = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=ghost.html&probe=1'), gone.res, {}, contextRoot);
+    expect(gone.status()).toBe(404);
+  });
+
+  it('outside the desktop app the probe is refused like a read', async () => {
+    delete process.env.DREAMCONTEXT_DESKTOP;
+    const { res, status } = makeRes();
+    await handleAgentFile(makeReq('/api/agent/file?path=notes.md&probe=1'), res, {}, contextRoot);
+    expect(status()).toBe(403);
+  });
+});

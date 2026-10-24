@@ -1,6 +1,7 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, delimiter, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, join, win32 } from 'node:path';
+import { win32AbsolutePathDirs } from './proc.js';
 
 /**
  * Finding `claude` when the shell can't — and the one-line rc export that fixes
@@ -26,10 +27,15 @@ import { basename, delimiter, dirname, join } from 'node:path';
  *  • `ensureClaudeOnShellPath()` — perform the missing echo, idempotently and in
  *    a marked block, so the user's OWN terminals (and the "Open in Terminal"
  *    hand-off, which we don't control the env of) find it too.
+ *
+ * Windows has no login shell and no rc file, so only the first half applies: `findClaudeBin()`
+ * returns an absolute `claude.exe` (PATH, npm's global bin, WinGet) and every spawn hands argv
+ * straight to it. A `.cmd` shim is never returned: spawning one without a shell throws EINVAL,
+ * so the shim is resolved to the `claude.exe` it wraps instead.
  */
 
 /** Executable names to look for, per platform. */
-const BIN_NAMES = process.platform === 'win32' ? ['claude.cmd', 'claude.exe'] : ['claude'];
+const BIN_NAMES = ['claude'];
 
 /** Comment header written above the export so the block is recognisable + greppable. */
 export const RC_MARKER = '# dreamcontext: Claude Code CLI on PATH';
@@ -59,6 +65,9 @@ export function claudeBinDirs(): string[] {
  * `existsSync` calls is far cheaper than the login-shell spawn it rescues.
  */
 export function findClaudeBin(): string | null {
+  if (process.platform === 'win32') {
+    return resolveWin32ClaudeBin({ env: process.env, home: homedir(), exists: existsSync, listDir: safeReaddir });
+  }
   for (const dir of claudeBinDirs()) {
     for (const name of BIN_NAMES) {
       const bin = join(dir, name);
@@ -66,6 +75,87 @@ export function findClaudeBin(): string | null {
     }
   }
   return null;
+}
+
+export interface Win32ClaudeProbe {
+  env: NodeJS.ProcessEnv;
+  home: string;
+  exists: (p: string) => boolean;
+  listDir: (dir: string) => string[];
+}
+
+function safeReaddir(dir: string): string[] {
+  try { return readdirSync(dir); } catch { return []; }
+}
+
+/** The PATH of `env` as Windows directories (any key case: `Path`), unquoted, absolute only: a
+ *  relative entry would make the lookup depend on the working folder (see lib/proc.ts). */
+function win32PathDirs(env: NodeJS.ProcessEnv): string[] {
+  return win32AbsolutePathDirs(env);
+}
+
+/**
+ * Absolute path to a spawnable `claude.exe` on Windows, or null. Looks on PATH first (an
+ * existing `claude` always wins), then the known install folders. A `claude.cmd` npm shim is
+ * followed to the `bin\claude.exe` it wraps; one without that target is skipped.
+ */
+export function resolveWin32ClaudeBin(probe: Win32ClaudeProbe): string | null {
+  const { env, home, exists, listDir } = probe;
+  const local = env.LOCALAPPDATA || win32.join(home, 'AppData', 'Local');
+  const roaming = env.APPDATA || win32.join(home, 'AppData', 'Roaming');
+  const dirs = [...new Set([
+    ...win32PathDirs(env),
+    win32.join(home, '.local', 'bin'),
+    win32.join(roaming, 'npm'),
+    win32.join(local, 'Microsoft', 'WinGet', 'Links'),
+  ])];
+  for (const dir of dirs) {
+    const exe = win32.join(dir, 'claude.exe');
+    if (exists(exe)) return exe;
+    if (exists(win32.join(dir, 'claude.cmd'))) {
+      const wrapped = win32.join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+      if (exists(wrapped)) return wrapped;
+    }
+  }
+  const packages = win32.join(local, 'Microsoft', 'WinGet', 'Packages');
+  for (const name of listDir(packages).filter((n) => n.startsWith('Anthropic.ClaudeCode_')).sort()) {
+    const exe = win32.join(packages, name, 'claude.exe');
+    if (exists(exe)) return exe;
+  }
+  return null;
+}
+
+/** First `<PATH dir>\<name>` that exists, for tools (npm.cmd, dreamcontext.cmd) the shell would find. */
+export function whichOnPathWin32(
+  names: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (p: string) => boolean = existsSync,
+): string | null {
+  for (const dir of win32PathDirs(env)) {
+    for (const name of names) {
+      const p = win32.join(dir, name);
+      if (exists(p)) return p;
+    }
+  }
+  return null;
+}
+
+/**
+ * file + argv for running `claude` with no shell in between. Windows has no login shell to
+ * resolve `claude`, so argv goes straight to the binary and no quoting layer exists.
+ */
+export function claudeDirectCommand(args: string[]): { file: string; args: string[] } {
+  return { file: findClaudeBin() ?? (process.platform === 'win32' ? win32ClaudeFallback() : 'claude'), args };
+}
+
+/**
+ * What win32 spawns when no `claude.exe` was found: the native installer's absolute location,
+ * never the bare name. A bare name is looked up in the child's working folder first (libuv), so a
+ * `claude.exe` committed to a project root would run; this path fails ENOENT instead, the same
+ * "claude was not found" the caller already reports.
+ */
+export function win32ClaudeFallback(home: string = process.env.USERPROFILE || homedir()): string {
+  return win32.join(home, '.local', 'bin', 'claude.exe');
 }
 
 /**

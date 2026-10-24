@@ -20,6 +20,7 @@
  */
 
 import { countCheckboxes, isPlaceholderLine } from './markdown.js';
+import { waveChildren, waveCount, type WaveChildInput } from './task-parent.js';
 
 /** One thing the handoff is missing, phrased as the fix. */
 export interface HandoffGap {
@@ -123,6 +124,25 @@ export function developHandoffGaps(task: DevelopReadinessInput): HandoffGap[] {
     gaps.push({ field: 'technical_details', problem: 'names no file — the plan must point at exact paths' });
   }
   return gaps;
+}
+
+/**
+ * Information for the Develop handoff that never refuses it: a plan of two or more waves on a
+ * top-level task with no wave sub-tasks yet. Develop opens them itself (its recipe's case b),
+ * and an older plan that already logged `wN green` lines keeps running as it did (case c), so
+ * this is a note, never a gap: a gap would refuse every plan written before waves were tasks.
+ */
+export function developHandoffNotes(
+  task: { slug: string; parent_task?: string | null; technical_details?: string | null },
+  children: readonly WaveChildInput[],
+): string[] {
+  if (task.parent_task) return [];
+  const waves = waveCount(task.technical_details);
+  if (waves < 2 || waveChildren(task, children).length > 0) return [];
+  return [
+    `the wave map names ${waves} waves and no wave sub-tasks exist yet; Develop opens them: `
+      + `dreamcontext tasks create "Wave N: <what it delivers>" --parent ${task.slug} --basis plan --quote "<the WN part>"`,
+  ];
 }
 
 /** The gaps as indented lines, for a CLI refusal or an alert. */

@@ -36,8 +36,11 @@ export interface Attachment {
   /** `ref` is a pointer to a whiteboard element (an agent card's drag-to-ask), not a file:
    *  its `path` is the `dcref:wb/<board>/<id>` token the server expands into the element's
    *  content, and `name` is what the chip reads ("Note · Q3 plan"). It has no preview and no
-   *  upload, so it is sendable the moment it is staged. */
-  kind: 'image' | 'file' | 'folder' | 'ref';
+   *  upload, so it is sendable the moment it is staged. `about` is the agenda line the next
+   *  message is written about (owner 2026-10-23, the Super Agent's agenda): `text` is the block
+   *  the message opens with (`agendaAboutBlock`), `name` what the chip reads. At most one per
+   *  conversation (`setAbout`); it never makes a message on its own (`countsAsContent`). */
+  kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about';
   name: string;
   /** Image attachments only — an object URL for the pasted `File` blob, so the chip shows
    *  the picture itself while its bytes are still on their way to disk. Revoked when the entry
@@ -50,12 +53,20 @@ export interface Attachment {
    *  vault temp dir got when its bytes were uploaded (`uploadAgentFile`). The chat protocol
    *  is text-only, so this path IS the attachment as far as the agent is concerned. */
   path?: string;
+  /** `element`: an element the owner picked in a web card's page with Inspect (owner
+   *  2026-10-22). `text` is the block the message carries (page, selector, element, text, React
+   *  components, box); `url` is its picture as a data URL (the chip's thumbnail), and `path`,
+   *  once uploaded, the picture the agent can open. It is sendable without a picture. */
+  text?: string;
   /** Image attachments only — bytes still in flight, so there is no `path` to send yet.
    *  `submit` waits for these rather than sending a message that references nothing. */
   uploading?: boolean;
   /** Image attachments only — the upload was refused (not the desktop app, over the 25 MB
    *  cap, unwritable temp dir). The chip says so instead of pretending it will be sent. */
   failed?: boolean;
+  /** What a failed chip says instead of the generic refusal (a phone photo this browser could
+   *  not decode, a photo the phone's caps refused). */
+  note?: string;
 }
 
 export interface ComposerScratch {
@@ -127,15 +138,48 @@ export function addAttachments(convId: string, added: Attachment[]): void {
  * A no-op for an id that is no longer staged: the user can remove a chip while its bytes are
  * still in flight, and the resolution must not resurrect it.
  */
-export function settleAttachment(convId: string, id: string, path: string | null): void {
+export function settleAttachment(convId: string, id: string, path: string | null, note?: string): void {
   const cur = readScratch(convId);
   if (!cur.attachments.some((a) => a.id === id)) return;
   commit(convId, {
     ...cur,
     attachments: cur.attachments.map((a) => (a.id === id
-      ? { ...a, path: path ?? undefined, uploading: false, failed: !path }
+      ? { ...a, path: path ?? undefined, uploading: false, failed: !path, ...(!path && note ? { note } : {}) }
       : a)),
   });
+}
+
+/**
+ * Give an image chip its preview once there is one worth showing (the hands-free phone shows
+ * the small re-encoded JPEG, never the 24 MP original — decoding six of those for 44 px chips is
+ * what gets a phone tab evicted). Revokes the URL it replaces. A no-op for a chip that has gone,
+ * and the URL is revoked then, since nothing will.
+ */
+export function setAttachmentPreview(convId: string, id: string, url: string): void {
+  const cur = readScratch(convId);
+  const found = cur.attachments.find((a) => a.id === id);
+  if (!found) { try { URL.revokeObjectURL(url); } catch { /* no DOM */ } return; }
+  revoke(found);
+  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a.id === id ? { ...a, url } : a)) });
+}
+
+const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+
+/**
+ * Stage a `File` whose bytes still have to reach disk: an `uploading` chip now (a thumbnail
+ * for an image), settled with the path `upload` resolves. One door for a pasted screenshot
+ * AND a dropped file, so a drop on a chat pane becomes a chip like a paste does instead of
+ * raw path text in the draft (owner report 10-16, Windows). The job is registered with
+ * {@link trackUpload}, so a send waits for it through {@link pendingUploads}.
+ */
+export function stageUpload(convId: string, file: File, upload: (f: File) => Promise<string | null>): void {
+  const id = nextAttachmentId();
+  const isImage = file.type.startsWith('image/') || IMAGE_NAME_RE.test(file.name);
+  const name = file.name || (isImage ? 'Pasted image' : 'Pasted file');
+  let url: string | undefined;
+  if (isImage) { try { url = URL.createObjectURL(file); } catch { /* no DOM */ } }
+  addAttachments(convId, [{ id, kind: isImage ? 'image' : 'file', name, url, uploading: true }]);
+  trackUpload(convId, upload(file).catch(() => null).then((path) => { settleAttachment(convId, id, path); }));
 }
 
 /** Drop one chip (its ✕), revoking its preview. */
@@ -156,11 +200,86 @@ export function removeAttachment(convId: string, id: string): void {
  * case this module exists for: a chip pasted just before a respawn is `uploading` with no path
  * and no `failed` flag, and the old rule would have dropped it as though it had been sent.
  */
-export function dropSentAttachments(convId: string): void {
+export function dropSentAttachments(convId: string, opts: { keepAbout?: boolean } = {}): void {
   const cur = readScratch(convId);
   if (!cur.attachments.length && cur.quote === null) return;
-  cur.attachments.forEach((a) => { if (a.path) revoke(a); });
-  commit(convId, { attachments: cur.attachments.filter((a) => !a.path), quote: null });
+  // A slash command never carries the About block, so its chip stays for the next message.
+  const gone = (a: Attachment) => wasSent(a) && !(opts.keepAbout && a.kind === 'about');
+  cur.attachments.forEach((a) => { if (gone(a)) revoke(a); });
+  commit(convId, { attachments: cur.attachments.filter((a) => !gone(a)), quote: null });
+}
+
+/** A chip a send carries: one with a path, a picked element or an About line (its block is the
+ *  content). */
+export function wasSent(a: Attachment): boolean {
+  return !!a.path || ((a.kind === 'element' || a.kind === 'about') && !!a.text);
+}
+
+/** A chip that is something to send by itself. An About line is not: it says what the message
+ *  is about, and the message is still his to write. */
+export function countsAsContent(a: Attachment): boolean {
+  return a.kind !== 'about' && wasSent(a);
+}
+
+/** Stage (or clear, with null) the agenda line the next message is written about. One per
+ *  conversation: a second press on another line replaces it. */
+export function setAbout(convId: string, about: Attachment | null): void {
+  const cur = readScratch(convId);
+  const rest = cur.attachments.filter((a) => a.kind !== 'about');
+  if (!about && rest.length === cur.attachments.length) return;
+  commit(convId, { ...cur, attachments: about ? [{ ...about, kind: 'about' }, ...rest] : rest });
+}
+
+/**
+ * The message a send writes, from what is in the box. The About block opens it, then the reply
+ * quote, then the typed text with its chips (`foldAttachments`). A slash command is sent as
+ * typed: no block (`slash`, and the chip stays staged). `quoted` is the message without the
+ * block: what must have something in it for a send to happen at all.
+ */
+export function composeOutgoing(
+  text: string, attachments: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
+): { message: string; quoted: string; slash: boolean } {
+  const bodyText = foldAttachments(text, attachments, quotePath);
+  const quoted = quote ? `> ${quote}\n\n${bodyText}` : bodyText;
+  const slash = text.trimStart().startsWith('/');
+  const about = slash ? undefined : attachments.find((a) => a.kind === 'about' && !!a.text);
+  return { message: about?.text ? `${about.text}\n\n${quoted}` : quoted, quoted, slash };
+}
+
+/**
+ * The message a send builds: the typed text, then the chips. A file is its quoted path on the
+ * same line; a `ref` its token as written; a picked element its block on lines of its own, the
+ * picture's path last. `quote` quotes a path the way the composer always has (agentComposer).
+ */
+export function foldAttachments(text: string, attachments: readonly Attachment[], quote: (p: string) => string): string {
+  const paths = attachments.filter((a) => a.kind !== 'element' && a.kind !== 'about' && !!a.path)
+    .map((a) => (a.kind === 'ref' ? a.path ?? '' : quote(a.path ?? ''))).join(' ');
+  const body = paths ? (text.trim() ? `${text.trim()} ${paths}` : paths) : text.trim();
+  const blocks = attachments.filter((a) => a.kind === 'element' && !!a.text)
+    .map((a) => (a.path ? `${a.text}\npicture: ${quote(a.path)}` : a.text ?? ''));
+  return [body, ...blocks].filter(Boolean).join('\n\n');
+}
+
+const uploads = new Map<string, Set<Promise<unknown>>>();
+
+/** An upload staged from OUTSIDE the composer (a picked element's picture, AgentSurface): a send
+ *  waits for it like it waits for a pasted image, so the message carries the picture's path. */
+export function trackUpload(convId: string, job: Promise<unknown>): void {
+  let set = uploads.get(convId);
+  if (!set) { set = new Set(); uploads.set(convId, set); }
+  set.add(job);
+  const done = () => {
+    const live = uploads.get(convId);
+    if (!live) return;
+    live.delete(job);
+    if (!live.size) uploads.delete(convId);
+  };
+  job.then(done, done);
+}
+
+/** The uploads a send to this conversation must wait for. */
+export function pendingUploads(convId: string): Promise<unknown>[] {
+  return [...(uploads.get(convId) ?? [])];
 }
 
 /** Set (or clear, with null) the message the next send quotes. */
@@ -194,5 +313,6 @@ function revoke(a: Attachment): void {
 export function __resetScratchForTests(): void {
   store.clear();
   listeners.clear();
+  uploads.clear();
   seq = 0;
 }

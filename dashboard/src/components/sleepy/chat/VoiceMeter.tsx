@@ -50,8 +50,8 @@ export interface VoiceMeterProps {
   /** `live` paints incoming levels; `frozen` keeps the last picture and dims it — the take is
    *  over and being transcribed, which is not the same as nothing happening. */
   phase: 'live' | 'frozen';
-  /** Stroke colour. Passed explicitly so the meter matches the state rail rather than
-   *  guessing at a token. */
+  /** Bar colour: any CSS colour, a `var(--token)` included. Passed explicitly so the meter
+   *  matches the state rail rather than guessing at a token. */
   color: string;
   className?: string;
 }
@@ -82,6 +82,13 @@ export function VoiceMeter({ subscribe, phase, color, className }: VoiceMeterPro
 
     let raf = 0;
     let stopped = false;
+    // A canvas cannot read `var(--token)`: handed one, `fillStyle` silently keeps its default
+    // BLACK, which is what the dark theme showed (owner, 2026-10-21). The colour is set on the
+    // element's own CSS `color` (the `style` below) and read back RESOLVED, again every half
+    // second so a theme switch mid-take repaints in the new palette.
+    let fill = '';
+    let spec = '';
+    let frame = 0;
 
     const draw = () => {
       if (stopped) return;
@@ -105,7 +112,12 @@ export function VoiceMeter({ subscribe, phase, color, className }: VoiceMeterPro
       const shown = levels.slice(-slots);
       const mid = h / 2;
 
-      ctx.fillStyle = colorRef.current;
+      if (spec !== colorRef.current || frame % 30 === 0) {
+        spec = colorRef.current;
+        fill = getComputedStyle(canvas).color;
+      }
+      frame += 1;
+      ctx.fillStyle = fill;
       ctx.globalAlpha = phaseRef.current === 'frozen' ? 0.45 : 1;
 
       for (let i = 0; i < shown.length; i++) {
@@ -136,5 +148,5 @@ export function VoiceMeter({ subscribe, phase, color, className }: VoiceMeterPro
     if (phase === 'live') levelsRef.current = [];
   }, [phase]);
 
-  return <canvas ref={canvasRef} className={className} aria-hidden />;
+  return <canvas ref={canvasRef} className={className} style={{ color }} aria-hidden />;
 }

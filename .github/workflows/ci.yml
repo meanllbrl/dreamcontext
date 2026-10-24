@@ -75,3 +75,55 @@ jobs:
       # Playwright e2e specs under e2e/ are NOT run here.
       - name: Run unit + integration tests
         run: npm test -- run
+
+  # The same gate on Windows (the desktop app and install.ps1 ship there since PR #437), plus a
+  # type-check and the full build (dashboard, then CLI) that the Linux job leaves to the release.
+  # BLOCKING like `test`: a test that cannot pass on Windows is listed with its reason in
+  # tests/windows-skip.ts (vitest.config.ts excludes those on win32 only), never waved through by
+  # making this job optional.
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      # Before the checkout: keep LF endings (tests read fixtures and scripts byte-for-byte and
+      # their line regexes do not expect `\r`), allow long paths for node_modules, and give the
+      # git-backed tests the same identity and default branch as the Linux job.
+      - name: Configure git for tests
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          git config --global core.longpaths true
+          git config --global init.defaultBranch main
+          git config --global user.email "ci@dreamcontext.local"
+          git config --global user.name "dreamcontext CI"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Type-check the CLI
+        run: npx tsc --noEmit -p .
+
+      # Dashboard first, then the CLI that bundles it (the build-and-propagate order).
+      - name: Build (dashboard, then CLI)
+        run: npm run build
+
+      # pwsh is on the runner, so tests/unit/install-ps1.test.ts also runs install.ps1 itself.
+      # TEMP/TMP: the runner's default is an 8.3 short path (C:\Users\RUNNER~1\…). The product
+      # compares canonical (long) paths, so tests that build their expectation from tmpdir()
+      # would compare a short spelling against a long one; runner.temp has no short names.
+      - name: Run unit + integration tests
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: npm test -- run

@@ -1,0 +1,5 @@
+{ "elements": [ { "type": "stack", "x": 0, "y": 0, "gap": 12, "items": [
+  { "type": "appBar", "w": 360, "title": "Trip to Lisbon", "back": true, "actions": ["more-v"] },
+  { "type": "textRows", "w": 330, "rows": 6 },
+  { "type": "chip", "text": "Saved on this phone" }
+] } ] }

@@ -1,6 +1,6 @@
 {
   "productName": "dreamcontext-beta",
-  "version": "0.32.0",
+  "version": "0.34.5",
   "identifier": "com.dreamcontext.beta",
   "build": {
     "frontendDist": "./frontend-placeholder"
@@ -30,6 +30,14 @@
       "../../dist": "dist",
       "../../skill-packs": "skill-packs",
       "../../skill": "skill",
+      "../../agents": "agents",
+      "../../assets": "assets",
+      "../../skill-initializer": "skill-initializer",
+      "../../skill-curator": "skill-curator",
+      "../../skill-deep-research": "skill-deep-research",
+      "../../skill-sync": "skill-sync",
+      "../../skill-patterns": "skill-patterns",
+      "../../skill-agent-core": "skill-agent-core",
       "sleepy": "sleepy"
     },
     "macOS": {

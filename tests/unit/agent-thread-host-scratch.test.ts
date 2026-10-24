@@ -1,7 +1,7 @@
 /**
  * A thread host with ITS OWN scratch bucket — what a whiteboard's agent card gets.
  *
- * The card lives on a board, not on the Agents page, so its staged chips and its unsent draft
+ * The card lives on a board, not on the AI Team page, so its staged chips and its unsent draft
  * cannot ride the page's per-slug bucket: leaving the Agents page would empty a field on a
  * board, and two cards for the same agent would share one draft. `useAgentThreadHost(…, {
  * scratchId })` gives the card a bucket keyed by an id it owns, kept off the page's revoke list
@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import {
-  __resetScratchForTests, addAttachments, dropSentAttachments, readScratch, nextAttachmentId,
+  __resetScratchForTests, addAttachments, composeOutgoing, dropSentAttachments, foldAttachments, readScratch, nextAttachmentId,
   type Attachment,
 } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
 
@@ -71,16 +71,16 @@ describe('a host given its own scratchId', () => {
     mount({ scratchId: CARD }).host.syncDraft('what moved this week?');
     expect(mount({ scratchId: CARD }).host.getModel().draft).toBe('what moved this week?');
     expect(mount({ scratchId: OTHER_CARD }).host.getModel().draft).toBe('');
-    // …and the same agent on the Agents page has its own field, untouched by the card's.
+    // …and the same agent on the AI Team page has its own field, untouched by the card's.
     expect(mount().host.getModel().draft).toBe('');
   });
 
   it('a page draft for the same agent does not leak onto the card', () => {
-    mount().host.syncDraft('from the Agents page');
+    mount().host.syncDraft('from the AI Team');
     expect(mount({ scratchId: CARD }).host.getModel().draft).toBe('');
   });
 
-  it('is not on the Agents page\'s revoke list: leaving that page keeps the card\'s chips and draft', () => {
+  it('is not on the AI Team page\'s revoke list: leaving that page keeps the card\'s chips and draft', () => {
     const card = mount({ scratchId: CARD });
     card.host.syncDraft('half a question');
     addAttachments(CARD, [chip('dcref:wb/q3-plan/note-1')]);
@@ -138,7 +138,13 @@ describe('a ref chip', () => {
     const src = readFileSync(
       join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/Composer.tsx'), 'utf8',
     );
-    expect(src).toMatch(/a\.kind === 'ref' \? a\.path \?\? '' : quotePath\(/);
+    // The fold lives in composerScratch (`foldAttachments`, 2026-10-22, called by
+    // `composeOutgoing` since 2026-10-23); the Composer hands it its own quoting. A ref goes out
+    // as written, a file path quoted.
+    expect(src).toMatch(/composeOutgoing\(text, readScratch\(convId\)\.attachments, liveQuote, quotePath\)/);
+    expect(composeOutgoing('see', [chip('dcref:wb/q3-plan/note-1')], null, (p) => `'${p}'`).message).toBe('see dcref:wb/q3-plan/note-1');
+    expect(foldAttachments('see', [chip('dcref:wb/q3-plan/note-1'), { id: 'f', kind: 'file', name: 'f', path: '/a b' }], (p) => `'${p}'`))
+      .toBe("see dcref:wb/q3-plan/note-1 '/a b'");
     expect(src).toMatch(/a\.kind === 'ref' \? '📌'/);
     // The chip's class is `chat-cmp-attachment-${kind}`, so `chat-cmp-attachment-ref` follows.
     expect(src).toMatch(/chat-cmp-attachment chat-cmp-attachment-\$\{a\.kind\}/);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { notifyDictationChanged } from '../../lib/voice/useDictationReady';
 
 /**
  * Local dictation's install state, with the button that installs it.
@@ -37,7 +38,11 @@ export function DictationInstall({ autoStart = false }: { autoStart?: boolean })
       const res = await fetch('/api/agent/voice/dictation');
       if (!res.ok) { setFailed(true); return null; }
       const s = await res.json() as DictationState;
-      setState(s);
+      setState((prev) => {
+        // Installed now (or no longer): every composer's mic gate asks again (K7).
+        if (prev && prev.installed !== s.installed) notifyDictationChanged();
+        return s;
+      });
       return s;
     } catch {
       setFailed(true);

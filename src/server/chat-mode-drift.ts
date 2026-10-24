@@ -153,3 +153,35 @@ export function modeNoteSettings(command: string, sources: Array<'resume' | 'com
 export function modeNoteHookOutput(note: string): string {
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: note } });
 }
+
+// ─── The Super Agent's briefing revision (jarvis plan r9, K9) ──────────────────────
+
+const SUPER_BRIEF_RE = /<super-brief rev=(\d+)>/g;
+
+/**
+ * Where a resumed super session stands with briefing revision `rev`, read from its transcript
+ * (the same way `heldModeFromTranscript` reads the mode). `inPrompt`: its system-prompt
+ * snapshot already carries `rev` (a compaction keeps the system prompt, so nothing is owed).
+ * `due`: the revision has to ride on the next owner message: it is in neither the prompt nor a
+ * message, or the last message that carried it was compacted away since. A compaction
+ * summary line (`isCompactSummary`) is never read as delivery, even when it quotes the marker.
+ */
+export function superBriefState(jsonl: string, rev: number): { inPrompt: boolean; due: boolean } {
+  let inPrompt = false;
+  let delivered = false;
+  for (const line of jsonl.split('\n')) {
+    if (!line.includes('super-brief') && !line.includes('compact_boundary')) continue;
+    let o: { type?: string; subtype?: string; isCompactSummary?: boolean; attachment?: { type?: string; systemPrompt?: unknown }; message?: { content?: unknown } };
+    try { o = JSON.parse(line); } catch { continue; }
+    if (o.isCompactSummary) continue;
+    if (o.type === 'system' && o.subtype === 'compact_boundary') { delivered = false; continue; }
+    const revs = [...line.matchAll(SUPER_BRIEF_RE)].map((m) => Number(m[1]));
+    if (!revs.includes(rev)) continue;
+    if (o.attachment?.type === 'prompt_snapshot') { inPrompt = true; continue; }
+    // Delivered only by OUR block: an owner message whose own text block starts with the marker.
+    // A tool result quoting it (the agent grepping this very source) delivers nothing.
+    const content = Array.isArray(o.message?.content) ? o.message.content as Array<{ type?: unknown; text?: unknown }> : [];
+    if (o.type === 'user' && content.some((b) => b?.type === 'text' && typeof b.text === 'string' && b.text.startsWith(`<super-brief rev=${rev}>`))) delivered = true;
+  }
+  return { inPrompt, due: !inPrompt && !delivered };
+}

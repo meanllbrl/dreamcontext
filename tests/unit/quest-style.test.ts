@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The quest party's visual rules, read off the source (chat/atoms.tsx + atoms.css, and T7's
@@ -16,7 +17,7 @@ import { join } from 'node:path';
  *   light theme's charcoal and does not flip in dark, where the face would vanish on its disc.
  */
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const CHAT = join(ROOT, 'dashboard/src/components/sleepy/chat');
 const ATOMS_TSX = join(CHAT, 'atoms.tsx');
 const ATOMS_CSS = join(CHAT, 'atoms.css');

@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { readFrontmatter } from './frontmatter.js';
 import { today } from './id.js';
 import { loadStatuses } from './overrides.js';

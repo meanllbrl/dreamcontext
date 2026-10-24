@@ -1,6 +1,7 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { today, slugify } from '../../lib/id.js';
-import { assertTaskFilingBar, recordCycleTaskFiled, type FilingActor } from '../../lib/task-filing-bar.js';
+import { assertTaskFilingBar, isSleepCycleLive, recordCycleTaskFiled } from '../../lib/task-filing-bar.js';
+import { decideFiling, filingFields } from '../../lib/filing-basis.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { currentSyncJob, startSyncJob } from '../sync-job.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
@@ -10,7 +11,7 @@ import { listObjectives } from '../../lib/objectives-store.js';
 import { dueDateAfterStartMove, dateUpdatesForStatus } from '../../lib/task-dates.js';
 import { resolveFeature, applyTaskFeatureLink } from '../../lib/feature-links.js';
 import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
-import { developHandoffGaps } from '../../lib/handoff-readiness.js';
+import { developHandoffGaps, developHandoffNotes } from '../../lib/handoff-readiness.js';
 import { getAgent } from '../../lib/agents/store.js';
 import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
 import { commitAssignment, prepareAssignment, type AssignmentRefusal } from '../../lib/agents/task-assignment.js';
@@ -42,6 +43,25 @@ import {
 } from '../../lib/task-status.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
 import {
+  childrenOf,
+  inheritFromParent,
+  isMappedWaveChild,
+  openChildren,
+  validateParentLink,
+  type ParentLinkTask,
+} from '../../lib/task-parent.js';
+import { summarizeAssets } from '../../lib/task-assets.js';
+import {
+  objectToTask,
+  objectionView,
+  readObjectionsSafe,
+  rulesForView,
+  type ObjectionRecord,
+  type ObjectionView,
+} from '../../lib/task-objection.js';
+import type { RulesDoc } from '../../lib/task-filing-rules.js';
+import { TASK_SLUG_RE } from '../../lib/task-slug.js';
+import {
   getTaskBackend,
   getTaskSyncStatus,
   isSafeTaskSlug,
@@ -51,14 +71,49 @@ import {
   type RemoteMember,
 } from '../../lib/task-backend/index.js';
 
-/** API view of a task: TaskData minus the backend-internal raw fields. */
-function toApiTask(task: TaskData): Omit<TaskData, 'raw' | 'rawBody'> {
+/**
+ * What the task page reads about objections, resolved once per request: the ledger, the rules,
+ * and a slug → name lookup for the target. A broken ledger or rules file reads as "none" here
+ * (a page must not break); the objection route itself refuses loudly.
+ */
+interface ObjectionReadCtx {
+  records: ObjectionRecord[];
+  rules: RulesDoc;
+  nameOf: (slug: string) => string | null;
+}
+
+async function objectionReadCtx(contextRoot: string, backend: TaskBackend): Promise<ObjectionReadCtx> {
+  const records = readObjectionsSafe(contextRoot);
+  const names = new Map<string, string>();
+  for (const r of records) {
+    if (r.target && !names.has(r.target)) names.set(r.target, (await backend.get(r.target))?.name ?? r.target);
+  }
+  return { records, rules: rulesForView(contextRoot), nameOf: (slug) => names.get(slug) ?? null };
+}
+
+/** API view of a task: TaskData minus the backend-internal raw fields, plus its objection. */
+function toApiTask(
+  task: TaskData,
+  ctx?: ObjectionReadCtx,
+): Omit<TaskData, 'raw' | 'rawBody'> & { objection: ObjectionView | null } {
   const { raw: _raw, rawBody: _rawBody, ...api } = task;
-  return api;
+  return { ...api, objection: ctx ? objectionView(ctx.records, task.slug, ctx.rules, ctx.nameOf) : null };
 }
 
 function backendFor(contextRoot: string): TaskBackend {
   return getTaskBackend(contextRoot);
+}
+
+/** The slug, parent and status of every task, for the sub-task link rules (lib/task-parent.ts). */
+async function parentLinkTasks(backend: TaskBackend): Promise<ParentLinkTask[]> {
+  return (await backend.list()).map((s) => ({ slug: s.name, parent_task: s.parent_task, status: s.status }));
+}
+
+/** `parent_task` as a request carries it: a task slug, null, or (anything else) invalid. */
+function parseParentField(raw: unknown): { ok: true; value: string | null } | { ok: false } {
+  if (raw === null || raw === '') return { ok: true, value: null };
+  if (typeof raw === 'string' && TASK_SLUG_RE.test(raw)) return { ok: true, value: raw };
+  return { ok: false };
 }
 
 /**
@@ -335,10 +390,12 @@ export async function handleTasksList(
 ): Promise<void> {
   const backend = backendFor(contextRoot);
   const summaries = await backend.list();
-  const tasks: ReturnType<typeof toApiTask>[] = [];
+  const ctx = await objectionReadCtx(contextRoot, backend);
+  const tasks: (ReturnType<typeof toApiTask> & { attachments: { count: number; cover: string | null } })[] = [];
   for (const s of summaries) {
     const task = await backend.get(s.name);
-    if (task) tasks.push(toApiTask(task));
+    // The card's clip: one top-level directory read per task with a folder, none without.
+    if (task) tasks.push({ ...toApiTask(task, ctx), attachments: summarizeAssets(contextRoot, task.slug) });
   }
   sendJson(res, 200, { tasks });
 }
@@ -368,14 +425,46 @@ export async function handleTasksCreate(
   const priority = (body.priority as string) ?? 'medium';
   const urgency = (body.urgency as string) ?? 'medium';
   const tags = Array.isArray(body.tags) ? body.tags as string[] : [];
+
+  // A subtask (`parent_task`) is created under an existing top-level task. It inherits the
+  // parent's version and feature when the request names none, and its Why may be omitted:
+  // being part of the parent IS why it exists.
+  const backend = backendFor(contextRoot);
+  let parent: TaskData | null = null;
+  if (body.parent_task !== undefined && body.parent_task !== null && body.parent_task !== '') {
+    const parsed = parseParentField(body.parent_task);
+    if (!parsed.ok || parsed.value === null) {
+      sendError(res, 400, 'invalid_parent_task', 'parent_task must be a task slug or null.');
+      return;
+    }
+    const verdict = validateParentLink(await parentLinkTasks(backend), slugify(name.trim()), parsed.value, loadStatuses(contextRoot));
+    if (!verdict.ok) { sendError(res, 400, verdict.code, verdict.message); return; }
+    parent = await backend.get(parsed.value);
+    if (!parent) { sendError(res, 400, 'parent_missing', `Parent task not found: ${parsed.value}`); return; }
+  }
+  const inherited = parent ? inheritFromParent(parent) : null;
+
   // Every task records why it exists (created_at covers the "when") — reject
   // empty scaffolds from the dashboard the same way the CLI does.
-  const why = typeof body.why === 'string' ? body.why.trim() : '';
+  let why = typeof body.why === 'string' ? body.why.trim() : '';
+  if (!why && inherited) why = inherited.why;
   if (!why) {
     sendError(res, 400, 'missing_why', 'Every task must say why it exists — provide a non-empty "why".');
     return;
   }
-  const version = (body.version as string) ?? null;
+  const version = body.version !== undefined ? ((body.version as string) ?? null) : (inherited?.version ?? null);
+  const relatedFeature = typeof body.related_feature === 'string' && body.related_feature
+    ? body.related_feature
+    : (body.related_feature === undefined ? (inherited?.related_feature ?? null) : null);
+  let featureLink: { slug: string } | null = null;
+  if (relatedFeature) {
+    const resolved = resolveFeature(contextRoot, relatedFeature);
+    if (!resolved.ok) {
+      sendError(res, 400, 'invalid_related_feature', `Unknown feature: "${relatedFeature}"`);
+      return;
+    }
+    featureLink = { slug: resolved.slug };
+  }
 
   const validPriorities = ['critical', 'high', 'medium', 'low'];
   if (!validPriorities.includes(priority)) {
@@ -427,21 +516,41 @@ export async function handleTasksCreate(
     customFields = v.value;
   }
 
+  // Who is filing (lib/filing-basis.ts). A request with no `by` is the owner's own form — the
+  // board's Add Task, the sub-task forms — and stays `human` even mid-cycle. `by: 'sleep'` is
+  // held to sleep's rules (a basis; a new top-level task only for an owner ask or a defect),
+  // `by: 'agent'` records an agent, `by: 'plan'` with a parent marks a plan's wave.
+  const filing = decideFiling({
+    contextRoot,
+    surface: 'api',
+    by: typeof body.by === 'string' ? body.by : null,
+    basis: typeof body.basis === 'string' ? body.basis : null,
+    quote: typeof body.quote === 'string' ? body.quote : null,
+    evidence: typeof body.evidence === 'string' ? body.evidence : null,
+    parent: parent?.slug ?? null,
+    parentTechnicalDetails: parent?.technical_details ?? null,
+    why,
+    sleepLive: isSleepCycleLive(contextRoot),
+  });
+  if (!filing.ok) {
+    sendError(res, 400, filing.code, filing.message);
+    return;
+  }
+
   // The SAME filing bar the CLI enforces — this route creates tasks without
   // going through the CLI at all, so without this call it would be the hole in
-  // the gate. The actor defaults to `human`: the dashboard's "Add Task" form is
-  // a person, and a person filing during a background cycle is legitimate. An
-  // in-app agent action that files during a cycle passes `by: 'sleep'`.
+  // the gate. The actor comes from the decision above: the dashboard's "Add Task"
+  // form is a person, and a person filing during a background cycle is legitimate.
+  // An in-app agent action that files during a cycle passes `by: 'sleep'`.
   // The bar's SEMANTIC gates (neighbor + declined) therefore only ever run for
   // `by: 'sleep'`: the `human` default short-circuits inside the bar before any
   // read or embed, so the dashboard's own form never pays a model load. Both of
   // those gates are LIFTABLE by naming what you looked at, so this surface has to
   // forward both proofs — refusing an agent with "re-run with --declined-checked"
   // over an API that cannot carry it would make gate 6 a dead end here.
-  const actor: FilingActor = body.by === 'sleep' ? 'sleep' : 'human';
   const verdict = await assertTaskFilingBar({
     contextRoot,
-    actor,
+    actor: filing.barActor,
     why,
     slug: slugify(name.trim()),
     name: name.trim(),
@@ -454,7 +563,6 @@ export async function handleTasksCreate(
     return;
   }
 
-  const backend = backendFor(contextRoot);
   let task: TaskData;
   try {
     task = await backend.create({
@@ -469,6 +577,9 @@ export async function handleTasksCreate(
       start_date: startDate,
       due_date: dueDate,
       ...(customFields ? { custom_fields: customFields } : {}),
+      // The parent link and the filing stamp ride the create itself: written under the same
+      // lock as the file, so no reader ever sees a sub-task without its parent.
+      local_fields: { ...(parent ? { parent_task: parent.slug } : {}), ...filingFields(filing) },
       variant: 'dashboard',
     });
   } catch (err) {
@@ -480,6 +591,13 @@ export async function handleTasksCreate(
   }
 
   if (verdict.underBar) recordCycleTaskFiled(contextRoot, task.slug);
+
+  // The feature is written right after the create (CreateTaskInput does not carry it):
+  // related_feature keeps its bidirectional link.
+  if (featureLink) {
+    task = await backend.updateFields(task.slug, { related_feature: featureLink.slug });
+    applyTaskFeatureLink(contextRoot, task.slug, featureLink);
+  }
 
   recordDashboardChange(contextRoot, {
     entity: 'task',
@@ -807,6 +925,12 @@ export async function handleTasksDelete(
     return;
   }
 
+  // A parent's children are never deleted with it: their link is cleared first, so each
+  // becomes a top-level task.
+  for (const child of childrenOf(await parentLinkTasks(backend), slug)) {
+    await backend.updateFields(child.slug, { parent_task: null, updated_at: today() });
+  }
+
   await backend.delete(slug);
 
   // Consolidation must see deletions too — recorded into the sleep state's
@@ -833,13 +957,62 @@ export async function handleTasksGet(
   const { slug } = params;
   if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
-  const task = await backendFor(contextRoot).get(slug);
+  const backend = backendFor(contextRoot);
+  const task = await backend.get(slug);
   if (!task) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
     return;
   }
 
-  sendJson(res, 200, { task: toApiTask(task) });
+  sendJson(res, 200, { task: toApiTask(task, await objectionReadCtx(contextRoot, backend)) });
+}
+
+/**
+ * POST /api/tasks/:slug/objection — the owner objects to a task an agent opened
+ * (`{ as, target?, note }`), or finishes an unfinished objection (the same body again).
+ * One engine with `dreamcontext tasks object` (lib/task-objection.ts): 200 with the task and
+ * its objection, 409 `objection_pending` / `has_open_children` / `sleep_running`, 500 when the
+ * ledger does not parse (never overwritten).
+ */
+export async function handleTasksObjection(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  const body = await parseJsonBody(req);
+  if (!body) { sendError(res, 400, 'invalid_body', 'Request body must be JSON.'); return; }
+  const target = body.target;
+  if (target !== undefined && target !== null && (typeof target !== 'string' || !TASK_SLUG_RE.test(target))) {
+    sendError(res, 400, 'invalid_target', 'target must be a task slug or null.');
+    return;
+  }
+  const backend = backendFor(contextRoot);
+  const result = await objectToTask(contextRoot, backend, {
+    task: slug,
+    as: typeof body.as === 'string' ? body.as : '',
+    target: typeof target === 'string' ? target : null,
+    note: typeof body.note === 'string' ? body.note : '',
+    by: 'owner',
+    via: 'ui',
+  });
+  if (!result.ok) {
+    sendJson(res, result.status, { error: result.code, message: result.message, ...(result.record ? { objection: result.record.id } : {}) });
+    return;
+  }
+  const task = await backend.get(slug);
+  recordDashboardChange(contextRoot, {
+    entity: 'task',
+    action: 'update',
+    target: `state/${slug}.md`,
+    summary: `Objection ${result.record.id} (${result.record.as}) on '${task?.name ?? slug}'`,
+  });
+  sendJson(res, 200, {
+    outcome: result.outcome,
+    task: task ? toApiTask(task, await objectionReadCtx(contextRoot, backend)) : null,
+  });
 }
 
 /**
@@ -866,7 +1039,13 @@ export async function handleTasksReadiness(
   }
 
   const gaps = developHandoffGaps(task);
-  sendJson(res, 200, { ready: gaps.length === 0, gaps });
+  const children: TaskData[] = [];
+  for (const c of childrenOf(await parentLinkTasks(backendFor(contextRoot)), slug)) {
+    const full = await backendFor(contextRoot).get(c.slug);
+    if (full) children.push(full);
+  }
+  // `notes` never refuse the button (developHandoffNotes): the dashboard may show them.
+  sendJson(res, 200, { ready: gaps.length === 0, gaps, notes: developHandoffNotes(task, children) });
 }
 
 /**
@@ -950,7 +1129,19 @@ export async function handleTasksUpdate(
       return;
     }
   }
-  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'objectives', 'assignee', 'agent'];
+  // `parent_task` (local-only, two levels max): a task slug, or null to clear.
+  // Validated only when the value CHANGES: re-sending the parent a sub-task already has (the
+  // panel saves every field) must not fail because that parent has since closed.
+  if (body.parent_task !== undefined) {
+    const parsed = parseParentField(body.parent_task);
+    if (!parsed.ok) { sendError(res, 400, 'invalid_parent_task', 'parent_task must be a task slug or null.'); return; }
+    if (parsed.value !== (existing.parent_task ?? null)) {
+      const verdict = validateParentLink(await parentLinkTasks(backend), slug, parsed.value, loadStatuses(contextRoot));
+      if (!verdict.ok) { sendError(res, 400, verdict.code, verdict.message); return; }
+    }
+    body.parent_task = parsed.value;
+  }
+  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'objectives', 'assignee', 'agent', 'parent_task'];
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       const oldVal = (oldData[field] ?? null) as FieldChange['from'];
@@ -1051,9 +1242,22 @@ export async function handleTasksUpdate(
       sendError(res, 400, 'invalid_status', `Status must be one of: ${validStatuses.join(', ')}`);
       return;
     }
-    // The sleep-eval close gate, the same one `tasks status`/`tasks complete` apply.
+    // A parent closes only after its sub-tasks (cancelled ones never block), the same gate
+    // `tasks status`/`tasks complete` apply.
     if (isDone(statuses, updates.status)) {
-      const gate = checkCloseGate(contextRoot, slug, existing.parent_task ?? null);
+      const open = openChildren(await parentLinkTasks(backend), slug, statuses);
+      if (open.length > 0) {
+        sendError(res, 409, 'parent_has_open_children',
+          `This task has ${open.length} open sub-task(s): ${open.map((t) => t.slug).join(', ')}. Close or cancel them first.`);
+        return;
+      }
+    }
+    // The sleep-eval close gate, the same one `tasks status`/`tasks complete` apply. A plan's
+    // mapped wave is exempt (task-parent.ts isMappedWaveChild).
+    if (isDone(statuses, updates.status)) {
+      const parentTask = existing.parent_task ? await backend.get(existing.parent_task) : null;
+      const exempt = !!(parentTask && isMappedWaveChild(parentTask, existing));
+      const gate = checkCloseGate(contextRoot, slug, existing.parent_task ?? null, { exempt });
       if (gate.applies && !gate.ok) {
         sendError(res, 409, 'sleep_eval_gate', gate.message);
         return;
@@ -1191,7 +1395,7 @@ export async function handleTasksUpdate(
     summary: buildFieldSummary('task', `state/${slug}.md`, fieldChanges),
   });
 
-  sendJson(res, 200, { task: toApiTask(task) });
+  sendJson(res, 200, { task: toApiTask(task, await objectionReadCtx(contextRoot, backend)) });
 }
 
 /**
@@ -1221,7 +1425,8 @@ export async function handleTasksChangelog(
   const logContent = `### ${today()} - Dashboard Update\n- ${(body.content as string).trim()}`;
 
   try {
-    await backend.addChangelog(slug, logContent);
+    // A task without `## Changelog` gets one, rather than the entry failing.
+    await backend.addChangelog(slug, logContent, { createIfMissing: true });
   } catch {
     sendError(res, 500, 'write_error', 'Failed to write changelog entry.');
     return;
@@ -1285,6 +1490,7 @@ export async function handleTasksInsert(
     user_stories: 'User Stories',
     acceptance_criteria: 'Acceptance Criteria',
     why: 'Why',
+    workflow: 'Workflow',
   };
 
   const sectionKey = section.toLowerCase();

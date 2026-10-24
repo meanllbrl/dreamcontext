@@ -64,6 +64,9 @@ export interface GlanceChat {
   activity: 'asking' | 'working' | 'starting' | 'stale';
   title: string;
   ask: { id: string; kind: 'permission' | 'question'; tool: string; text: string } | null;
+  /** The row is the Super Agent's (the server's `super: true`, routes/assistant.ts superGlanceRows):
+   *  drawn with its glyph so the owner tells it from an ordinary chat at a glance. */
+  super?: true;
 }
 
 const GLANCE_ACTIVITIES = new Set(['asking', 'working', 'starting', 'stale']);
@@ -97,6 +100,7 @@ export function readGlance(raw: unknown): GlanceChat[] {
       ask: a && typeof a.id === 'string'
         ? { id: a.id, kind: a.kind === 'permission' ? 'permission' : 'question', tool: typeof a.tool === 'string' ? a.tool : '', text: unwrapUntrusted(a.text) }
         : null,
+      ...(o.super === true ? { super: true as const } : {}),
     });
   }
   return out;
@@ -205,8 +209,8 @@ export function pillHeadline(input: {
   if (running.length === 1) return `${running[0].vault} is on it`;
   if (running.length > 1) return `${running.length} projects on it`;
   const automations = input.running ?? [];
-  if (automations.length === 1) return `${automations[0].title || automations[0].slug} is running`;
-  if (automations.length > 1) return `${automations.length} automations running`;
+  if (automations.length === 1) return `${automations[0].title || automations[0].slug} is working`;
+  if (automations.length > 1) return `${automations.length} teammates working`;
   // A bare count is the right ear's job (the green bubble); the left ear says who or what.
   return input.name;
 }
@@ -401,6 +405,22 @@ export function peekTtlMs(item: { kind: string; notice?: { kind: string } }, inA
  */
 export function offScreenAsks<T extends { sessionId: string; ask: unknown }>(chats: T[], lookingAtSession: string | null): T[] {
   return chats.filter((c) => !!c.ask && c.sessionId !== lookingAtSession);
+}
+
+/**
+ * The owner's spoken (or typed) answer to a waiting permission: the notch's Y / N in words. Only
+ * the WHOLE message, and only words that cannot be a reply to the Assistant itself: "yes",
+ * "evet", "tamam" stay the Assistant's, because a project asking for permission elsewhere must
+ * not swallow a "yes" meant for the conversation. "elov" is how the dictation wrote "allow" for
+ * the owner (2026-10-22). Null = not an answer, the message goes to the Assistant as before.
+ */
+const ALLOW_WORDS = new Set(['allow', 'allow it', 'approve', 'approve it', 'elov', 'izin ver', 'izin veriyorum', 'onayla', 'onaylıyorum', 'onayliyorum']);
+const DENY_WORDS = new Set(['deny', 'deny it', 'reject', 'reject it', 'reddet', 'izin verme', 'onaylama']);
+export function permissionWord(text: string): 'allow' | 'deny' | null {
+  const said = text.replace(/İ/g, 'i').toLowerCase().replace(/[.,!?;:"'“”‘’…]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (ALLOW_WORDS.has(said)) return 'allow';
+  if (DENY_WORDS.has(said)) return 'deny';
+  return null;
 }
 
 /**

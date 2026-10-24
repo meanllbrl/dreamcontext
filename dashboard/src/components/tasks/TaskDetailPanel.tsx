@@ -1,1479 +1,195 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
-import { marked } from 'marked';
-// Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
-// global, but which modules a route loads is not, so every parse path imports it for itself.
-import '../../lib/markdownMark';
-import mermaid from 'mermaid';
-import panzoom from 'panzoom';
-import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
-import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus, useTaskOverrides, useStatusModel } from '../../hooks/useTasks';
-import { useObjectives } from '../../hooks/useObjectives';
-import { confirmAction } from '../../lib/desktop';
-import { useTaxonomy } from '../../hooks/useTaxonomy';
-import { SearchableSelect } from './SearchableSelect';
-import { TaskCustomFields } from './TaskCustomFields';
-import { AddCustomFieldForm } from './AddCustomFieldForm';
-import { usePlanningVersions } from '../../hooks/useVersions';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Task } from '../../hooks/useTasks';
+import { useUpdateTask, useDeleteTask, useFeatureOptions, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
+import { openChildrenMessage } from '../../lib/taskObjection';
+import { confirmAction } from '../../lib/desktop';
 import { useTheme } from '../../context/ThemeContext';
-import { tagHue } from '../../lib/tagColor';
-import { initMermaid, normalizeMermaidSvg } from '../../lib/mermaidRender';
-import { TaskSection, TaskField, EmptyField, RequiredField } from './detail/TaskSection';
-import { useSectionCollapse } from './detail/useSectionCollapse';
-import { AssignToAgentComposer, TaskAgentFace } from './AssignToAgentComposer';
-import { useAgents, findAgent } from '../../hooks/useAgents';
-import { taskAgent } from './boardModel';
-import { tr } from '../../lib/assignToAgent';
+import { DetailHeader } from './detail/DetailHeader';
+import { PropertiesPanel, type Updates } from './detail/PropertiesPanel';
+import { BodySections } from './detail/BodySections';
+import { SubtasksSection } from './detail/SubtasksSection';
+import { CriteriaSection } from './detail/CriteriaSection';
+import { MediaSection } from './detail/MediaSection';
+import { toggleCriterion, type SectionKey } from './detail/sectionModel';
+import { subtaskProgress } from './boardModel';
 import './TaskDetailPanel.css';
-
-marked.setOptions({ gfm: true, breaks: true });
-
-const CLOSE_FOR: Record<string, string> = { '[': ']', '(': ')', '{': '}' };
-
-// Quote unquoted node labels on a single line. Handles labels containing
-// brackets, regex chars, etc. by scanning to the LAST matching close bracket
-// on the line (mermaid requires labels on one line anyway).
-function quoteLabelsInLine(line: string): string {
-  // Skip class/classDef/style/link lines and subgraph headers.
-  if (/^\s*(classDef|class|style|linkStyle|click|subgraph)\b/.test(line)) return line;
-
-  let out = '';
-  let i = 0;
-  const n = line.length;
-
-  while (i < n) {
-    // Look for `Id[` / `Id(` / `Id{` starting here.
-    const m = line.slice(i).match(/^(\s*[A-Za-z_]\w*\s*)([\[\(\{])/);
-    if (!m) {
-      out += line[i];
-      i++;
-      continue;
-    }
-    const idPart = m[1];
-    const open = m[2];
-    const close = CLOSE_FOR[open];
-    const labelStart = i + idPart.length + 1;
-
-    // Find the LAST matching close bracket on the line (handles nested).
-    const lastClose = line.lastIndexOf(close);
-    if (lastClose <= labelStart) {
-      out += line[i];
-      i++;
-      continue;
-    }
-    const label = line.slice(labelStart, lastClose);
-    const trimmed = label.trim();
-    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-      // Already quoted — leave as is.
-      out += line.slice(i, lastClose + 1);
-      i = lastClose + 1;
-      continue;
-    }
-    if (trimmed === '') {
-      out += line.slice(i, lastClose + 1);
-      i = lastClose + 1;
-      continue;
-    }
-    const escaped = trimmed
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-    out += `${idPart}${open}"${escaped}"${close}`;
-    i = lastClose + 1;
-  }
-  return out;
-}
-
-function sanitizeMermaid(src: string): string {
-  return src.split('\n').map(quoteLabelsInLine).join('\n');
-}
-
-/* ---------------------------------------------------------------------------
- * Acceptance-criteria <-> mermaid sync
- *
- * Convention:
- *   - An acceptance criterion line in markdown ends with `<!-- node:<id> -->`.
- *   - The mermaid block uses node IDs matching those `<id>` values.
- *   - Toggling a checkbox finds the corresponding mermaid node and rewrites
- *     its trailing `:::done|:::todo|:::active|:::blocked` class:
- *       - unchecked  -> `:::todo`
- *       - checked    -> `:::done`
- *     (`:::active` / `:::blocked` are not auto-detected; manual edits in the
- *      markdown source are preserved if the toggled checkbox doesn't reference
- *      them.)
- *
- * Example:
- *
- *   - [ ] Wire up auth <!-- node:step1 -->
- *
- *   ```mermaid
- *   flowchart TD
- *     step1[Auth]:::todo --> step2[Dashboard]
- *   ```
- *
- *   Checking the box rewrites `step1[Auth]:::todo` -> `step1[Auth]:::done`
- *   and flips the markdown line to `- [x]` in the same PATCH.
- *
- * Reverse direction (mermaid click -> checkbox) is intentionally NOT
- * implemented yet; mermaid's strict securityLevel disables `click` handlers
- * and binding them via the rendered SVG requires a non-trivial amount of code.
- * Treat this as future work.
- * ------------------------------------------------------------------------- */
-
-const CHECKBOX_LINE_RE = /^(\s*[-*+]\s+)\[( |x|X)\](\s+)(.*)$/;
-
-/** Toggle the Nth markdown checkbox line. Returns null if index out of bounds. */
-function toggleCheckboxLine(body: string, index: number, checked: boolean): { body: string; nodeId: string | null } | null {
-  const lines = body.split('\n');
-  let count = 0;
-  let inFence = false;
-  let fenceChar = '';
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // Track fenced code blocks so we ignore checkboxes inside them.
-    const fenceMatch = /^(\s*)(```|~~~)/.exec(line);
-    if (fenceMatch) {
-      if (!inFence) {
-        inFence = true;
-        fenceChar = fenceMatch[2];
-      } else if (line.includes(fenceChar)) {
-        inFence = false;
-        fenceChar = '';
-      }
-      continue;
-    }
-    if (inFence) continue;
-    const m = CHECKBOX_LINE_RE.exec(line);
-    if (!m) continue;
-    if (count === index) {
-      const [, prefix, , spacing, rest] = m;
-      const newBox = checked ? '[x]' : '[ ]';
-      lines[i] = `${prefix}${newBox}${spacing}${rest}`;
-      const nodeMatch = /<!--\s*node:([A-Za-z0-9_-]+)\s*-->/.exec(rest);
-      return {
-        body: lines.join('\n'),
-        nodeId: nodeMatch ? nodeMatch[1] : null,
-      };
-    }
-    count++;
-  }
-  return null;
-}
-
-/**
- * In every ```mermaid``` fenced block of `body`, find lines that contain
- * `nodeId` (as a whole word, not a substring) and rewrite the trailing
- * `:::status` class to `:::done` or `:::todo`. If no class is present, append
- * one. Lines like `classDef`, `class`, `style`, `linkStyle`, `click`, and
- * `subgraph` headers are skipped to avoid clobbering class definitions.
- */
-// Edge-line operators in mermaid flowcharts. If a line contains any of these,
-// it's an edge (link) statement rather than a node definition, and we MUST NOT
-// rewrite `:::status` on it: e.g. `step1[A] --> step2[B]` would otherwise turn
-// into `step1:::todo --> step2:::done` which is malformed and silently flips
-// the wrong nodes. Node definitions never contain arrow operators.
-const MERMAID_EDGE_RE = /-->|---|==>|==|-\.|~~~|\.->/;
-
-function updateMermaidNodeStatus(body: string, nodeId: string, checked: boolean): string {
-  const status = checked ? 'done' : 'todo';
-  const escapedId = nodeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // Match the node ID in NODE DEFINITION position only: followed by `[label]`,
-  // `(label)`, `{label}`, `:::class`, OR alone before whitespace/EOL.
-  // Anchored to start-of-line (optional indent) so we don't match the ID
-  // anywhere on a line that might also contain other tokens.
-  const nodeDefRe = new RegExp(
-    `^(\\s*)(${escapedId})((?:\\[[^\\]]*\\]|\\([^)]*\\)|\\{[^}]*\\})?)(\\s*:::(?:done|todo|active|blocked)\\b)?\\s*$`,
-  );
-  const lines = body.split('\n');
-  let inMermaid = false;
-  let fenceChar = '';
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!inMermaid) {
-      const open = /^(\s*)(```|~~~)\s*mermaid\b/i.exec(line);
-      if (open) {
-        inMermaid = true;
-        fenceChar = open[2];
-      }
-      continue;
-    }
-    if (line.trim().startsWith(fenceChar)) {
-      inMermaid = false;
-      fenceChar = '';
-      continue;
-    }
-    // Skip lines that wouldn't be a node definition / usage in flowchart.
-    if (/^\s*(classDef|class|style|linkStyle|click|subgraph|end)\b/.test(line)) continue;
-    // Skip edge lines entirely — node definitions never have arrows.
-    if (MERMAID_EDGE_RE.test(line)) continue;
-    const m = nodeDefRe.exec(line);
-    if (!m) continue;
-    const [, indent, id, label] = m;
-    lines[i] = `${indent}${id}${label ?? ''}:::${status}`;
-  }
-  return lines.join('\n');
-}
-
-/**
- * A nullable date, under the shared field contract.
- *
- * Three states, and the whole point is that they are DISTINCT — before this, all three rendered
- * as an empty date input (or, under a `backlog` tag, as a sentence where the input should be):
- *
- *  - **never set** → the dashed "＋ Add" affordance. Says "nothing here, and you may put
- *    something here", in the same shape every other empty field uses.
- *  - **set** → the input, with a clear (×) that is the SAME gesture as every other field's
- *    clear, rather than this field's private one.
- *  - **undated by rule** (a `backlog` tag) → says so, names the tag as the cause, and offers to
- *    remove it. The rule was always there; only its explanation is new.
- *
- * Clicking "＋ Add" reveals the input rather than writing a date immediately: an "Add" that
- * silently commits today's date is a worse lie than an empty field.
- */
-function TaskDateField(
-  { label, value, backlog, onChange, onRemoveBacklog }:
-  {
-    label: string;
-    value: string | null | undefined;
-    backlog: boolean;
-    onChange: (v: string) => void;
-    onRemoveBacklog: () => void;
-  },
-) {
-  const [revealed, setRevealed] = useState(false);
-  const id = `tf-date-${label.toLowerCase()}`;
-
-  if (backlog) {
-    return (
-      <TaskField label={label}>
-        <span className="prop-backlog">
-          <span className="prop-backlog-text">Undated — this task is <code>backlog</code></span>
-          <button type="button" className="prop-backlog-clear" onClick={onRemoveBacklog}>
-            Remove tag to schedule
-          </button>
-        </span>
-      </TaskField>
-    );
-  }
-
-  if (!value && !revealed) {
-    return (
-      <TaskField label={label}>
-        <EmptyField label={`Add ${label.toLowerCase()} date`} onClick={() => setRevealed(true)} />
-      </TaskField>
-    );
-  }
-
-  return (
-    <TaskField label={label} htmlFor={id}>
-      <span className="prop-date-edit">
-        <input
-          id={id}
-          type="date"
-          className="field-select prop-select"
-          autoFocus={revealed && !value}
-          value={value ?? ''}
-          onChange={e => onChange(e.target.value)}
-        />
-        {value && (
-          <button
-            type="button"
-            className="prop-clear"
-            aria-label={`Clear ${label.toLowerCase()} date`}
-            title="Clear"
-            onClick={() => { onChange(''); setRevealed(false); }}
-          >
-            ×
-          </button>
-        )}
-      </span>
-    </TaskField>
-  );
-}
 
 interface TaskDetailPanelProps {
   task: Task;
+  /** The board's task list: parent, children and the parent select read from it. */
+  allTasks?: Task[];
+  /** Open another task in this drawer (a subtask, or the parent from the crumb). */
+  onOpenTask?: (slug: string) => void;
   onClose: () => void;
-  initialRiceExpanded?: boolean;
 }
 
-const REACH_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
-const IMPACT_OPTIONS = [1, 2, 3, 4, 5] as const;
-const VALID_CONFIDENCES = [25, 50, 75, 100] as const;
-const EFFORT_OPTIONS = [0.5, 1, 1.5, 2, 3, 4, 5, 6, 8] as const;
-
-function scoreColorClass(score: number | null): string {
-  if (score === null || score === undefined) return '';
-  if (score < 5) return 'rice-score--low';
-  if (score <= 15) return 'rice-score--mid';
-  return 'rice-score--high';
-}
-
-interface RiceBlockProps {
-  task: Task;
-  expanded: boolean;
-  onToggle: () => void;
-  onUpdate: (patch: RiceInput | null) => void;
-}
-
-function RiceBlock({ task, expanded, onToggle, onUpdate }: RiceBlockProps) {
-  const { t } = useI18n();
-  const rice: RiceFields | null = task.rice;
-  const score = rice?.score ?? null;
-  const scoreLabel = score === null ? '—' : String(score);
-  const colorClass = scoreColorClass(score);
-
-  const currentValue = (field: keyof RiceInput): number | null => (rice ? rice[field] : null);
-
-  const handlePick = (field: keyof RiceInput, raw: string) => {
-    const next = raw === '' ? null : Number(raw);
-    if (next !== null && !Number.isFinite(next)) return;
-    // No-op guard: skip API call if value didn't change.
-    if (next === currentValue(field)) return;
-    onUpdate({ [field]: next } as RiceInput);
-  };
-
-  return (
-    <div className={`rice-block ${expanded ? 'rice-block--open' : ''}`}>
-      <button type="button" className="rice-header" onClick={onToggle} aria-expanded={expanded}>
-        <span className="rice-header-label">{t('rice.title')}</span>
-        <span className={`rice-score-badge ${colorClass}`} title={t('rice.score')}>{scoreLabel}</span>
-        <svg className={`rice-chevron ${expanded ? 'rice-chevron--open' : ''}`} width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </button>
-      {expanded && (
-        <div className="rice-grid">
-          <label className="rice-field">
-            <span className="rice-field-label">{t('rice.reach')}</span>
-            <select
-              className="field-select rice-input"
-              value={rice?.reach ?? ''}
-              title={t('rice.tooltip.reach')}
-              onChange={e => handlePick('reach', e.target.value)}
-            >
-              <option value="">—</option>
-              {REACH_OPTIONS.map(v => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
-          </label>
-          <label className="rice-field">
-            <span className="rice-field-label">{t('rice.impact')}</span>
-            <select
-              className="field-select rice-input"
-              value={rice?.impact ?? ''}
-              title={t('rice.tooltip.impact')}
-              onChange={e => handlePick('impact', e.target.value)}
-            >
-              <option value="">—</option>
-              {IMPACT_OPTIONS.map(v => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
-          </label>
-          <label className="rice-field">
-            <span className="rice-field-label">{t('rice.confidence')}</span>
-            <select
-              className="field-select rice-input"
-              value={rice?.confidence ?? ''}
-              title={t('rice.tooltip.confidence')}
-              onChange={e => handlePick('confidence', e.target.value)}
-            >
-              <option value="">—</option>
-              {VALID_CONFIDENCES.map(v => (
-                <option key={v} value={v}>{v}%</option>
-              ))}
-            </select>
-          </label>
-          <label className="rice-field">
-            <span className="rice-field-label">{t('rice.effort')}</span>
-            <select
-              className="field-select rice-input"
-              value={rice?.effort ?? ''}
-              title={t('rice.tooltip.effort')}
-              onChange={e => handlePick('effort', e.target.value)}
-            >
-              <option value="">—</option>
-              {EFFORT_OPTIONS.map(v => (
-                <option key={v} value={v}>{v}w</option>
-              ))}
-            </select>
-          </label>
-          {rice && (
-            <button
-              type="button"
-              className="rice-clear-btn"
-              onClick={() => onUpdate(null)}
-            >
-              {t('rice.clear')}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* `PropertyRow` and `ExpandableText` lived here. Both are gone with the flat stack:
- * `TaskField` (detail/TaskSection.tsx) replaces the rigid `140px 1fr` row — a fixed 140px label
- * column left too little for a date input or a chip set once the rail narrowed — and
- * `ExpandableText` existed only to clamp the duplicate read-only "Description" row, which was
- * `task.description` rendered a second time under a second name. Summary is now the one place
- * that field is read and written, so the clamp has nothing to clamp. */
-
-export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDetailPanelProps) {
-  const { t } = useI18n();
+/**
+ * The task drawer (approved v5 + v6): a header (crumb, editable title, Give to agent,
+ * fullscreen, close), the body as sections on the left and Properties on the right.
+ *
+ * This file is the SHELL: the data comes from the board's list, every write goes through the
+ * task PATCH, and every body write is serialized on one pending body (below) so rapid ticks
+ * never lose an update. The parts live in `detail/`.
+ */
+export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: TaskDetailPanelProps) {
   const { resolved: theme } = useTheme();
-  const updateTask = useUpdateTask();
-  const addChangelog = useAddTaskChangelog();
-  const deleteTask = useDeleteTask();
-  const { data: members } = useTaskMembers();
-  const { data: syncStatus } = useSyncStatus();
-  // On a remote backend (ClickUp/GitHub) an assignee MUST resolve to a real
-  // member to round-trip — so the picker offers ONLY members (no free-text) and
-  // any already-assigned slug that isn't a member is flagged "won't sync".
-  // While sync-status is still loading (`undefined`), default to the SAFE state
-  // (treat as remote): never open free-text during the load window, or a fast
-  // user could mint an unsyncable slug — the exact bug this guards against.
-  const remoteBacked = syncStatus === undefined ? true : syncStatus.backend !== 'local';
-  const { data: featureOptions } = useFeatureOptions();
-  const { data: customFieldDefs } = useTaskOverrides();
+  const { t } = useI18n();
   const sm = useStatusModel();
-  const { data: taxonomy } = useTaxonomy();
-  const { data: versions } = usePlanningVersions();
-  const { data: objectives = [] } = useObjectives();
-  const [changelogEntry, setChangelogEntry] = useState('');
-  const [newTag, setNewTag] = useState('');
+  const updateTask = useUpdateTask();
+  // Body writes get their OWN mutation observer: a property edit through `updateTask` must never
+  // detach the in-flight body write (TanStack keeps per-call callbacks for the latest call only).
+  const bodyWrite = useUpdateTask();
+  const deleteTask = useDeleteTask();
+  const { data: featureOptions } = useFeatureOptions();
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const [riceExpanded, setRiceExpanded] = useState(initialRiceExpanded ?? !!task.rice);
+  const [parentError, setParentError] = useState<string | null>(null);
   const [fullScreen, setFullScreen] = useState(false);
-  // "Assign to agent": the composer, and the agent the task is assigned to (its face + name).
-  const [assigningAgent, setAssigningAgent] = useState(false);
-  const { data: agents } = useAgents();
-  const agentSlug = taskAgent(task);
-  const agentName = agentSlug ? findAgent(agents, agentSlug)?.title ?? agentSlug : '';
-  // Clearing goes through the plain task PATCH (`agent: null`): it stops nothing and logs nothing,
-  // it only takes the agent's face off the task.
-  const clearAgent = () => {
-    setMutationError(null);
-    updateTask.mutate(
-      { slug: task.slug, updates: { agent: null } },
-      { onError: () => setMutationError(tr(t, 'tasks.unassignAgentFailed', "Couldn't remove the agent. Try again.")) },
-    );
-  };
-  const sections = useSectionCollapse();
 
-  // A `backlog` tag means "undated by rule". That rule is real, but it used to be enforced by
-  // silently REPLACING both date inputs with a sentence — so the only way to learn why you
-  // couldn't schedule a task was to hover the text that had taken the input's place. The rule
-  // stays; the tag that causes it becomes visible and removable right where it bites.
-  const isBacklog = task.tags.some(x => x.toLowerCase() === 'backlog');
-  const removeBacklogTag = () => handleTagsChange(task.tags.filter(x => x.toLowerCase() !== 'backlog'));
-
+  // A status change refused because sub-tasks are still open names them in the owner's
+  // language (the status select snaps back on its own: it shows the server's status).
   const onMutationError = (err: Error) => {
-    setMutationError(err.message);
+    setMutationError(isOpenChildrenRefusal(err) ? openChildrenMessage(t, 'detail', task, allTasks, sm.isTerminal, err.message) : err.message);
     setTimeout(() => setMutationError(null), 5000);
   };
-
-  const handleStatusChange = (status: string) => {
-    updateTask.mutate(
-      { slug: task.slug, updates: { status: status as Task['status'] } },
-      { onError: onMutationError },
-    );
+  const update = (updates: Updates, onError?: (err: Error) => void) => {
+    updateTask.mutate({ slug: task.slug, updates }, { onError: onError ?? onMutationError });
   };
 
-  const handlePriorityChange = (priority: string) => {
-    updateTask.mutate(
-      { slug: task.slug, updates: { priority: priority as Task['priority'] } },
-      { onError: onMutationError },
-    );
+  // ── body writes, serialized ────────────────────────────────────────────────
+  // bodySourceRef: the last SERVER body (rollback target). pendingBodyRef: the optimistic body
+  // every toggle computes from, updated SYNCHRONOUSLY before the PATCH fires, so a second tick
+  // made before the first PATCH resolves builds on it instead of on the stale server copy.
+  //
+  // Writes are CHAINED: one PATCH in flight at a time. A tick made while one is in flight only
+  // marks the body dirty; when the write settles, the latest pending body goes out. And the
+  // server's body is adopted only when nothing is in flight or queued — a refetch that lands
+  // mid-burst (each PATCH invalidates the list) carries an older body and must not reset ticks.
+  const bodySourceRef = useRef(task.body ?? '');
+  const pendingBodyRef = useRef<string>(task.body ?? '');
+  const inflightRef = useRef(false);
+  const queuedRef = useRef(false);
+  const [shownBody, setShownBody] = useState(task.body ?? '');
+  useEffect(() => {
+    bodySourceRef.current = task.body ?? '';
+    if (inflightRef.current || queuedRef.current) return;
+    pendingBodyRef.current = task.body ?? '';
+    setShownBody(task.body ?? '');
+  }, [task.body, task.slug]);
+
+  const flushBody = () => {
+    inflightRef.current = true;
+    queuedRef.current = false;
+    const sent = pendingBodyRef.current;
+    // Driven by the PROMISE, which settles whatever else is called meanwhile and even after the
+    // drawer closes, so a queued tick still goes out instead of the chain stalling.
+    bodyWrite.mutateAsync({ slug: task.slug, updates: { body: sent } })
+      .then(() => { bodySourceRef.current = sent; })
+      .catch((err: Error) => {
+        queuedRef.current = false;
+        pendingBodyRef.current = bodySourceRef.current;
+        setShownBody(bodySourceRef.current);
+        onMutationError(err);
+      })
+      .finally(() => {
+        inflightRef.current = false;
+        if (queuedRef.current) flushBody();
+      });
+  };
+  const writeBody = (next: string) => {
+    pendingBodyRef.current = next;
+    setShownBody(next);
+    if (inflightRef.current) queuedRef.current = true;
+    else flushBody();
+  };
+  const onToggle = (key: SectionKey, index: number, checked: boolean) => {
+    const next = toggleCriterion(pendingBodyRef.current, key, index, checked);
+    if (next !== null) writeBody(next);
   };
 
-  const handleUrgencyChange = (urgency: string) => {
-    updateTask.mutate(
-      { slug: task.slug, updates: { urgency: urgency as Task['urgency'] } },
-      { onError: onMutationError },
-    );
-  };
-
-  const handleVersionChange = (version: string) => {
-    updateTask.mutate(
-      { slug: task.slug, updates: { version: version || null } },
-      { onError: onMutationError },
-    );
-  };
-
-  const handleRiceUpdate = (patch: RiceInput | null) => {
-    updateTask.mutate(
-      { slug: task.slug, updates: { rice: patch } },
-      { onError: onMutationError },
-    );
-  };
-
-  const handleCustomFieldChange = (key: string, value: string | number | null) => {
-    // The server merges this onto the existing custom_fields map, so a single
-    // key patch is enough; it syncs to ClickUp/GitHub on the next task sync.
-    updateTask.mutate(
-      { slug: task.slug, updates: { custom_fields: { [key]: value } } },
-      { onError: onMutationError },
-    );
-  };
-
-  const handleTextField = (field: 'name' | 'description' | 'related_feature', value: string) => {
-    const next = field === 'related_feature' ? (value.trim() || null) : value.trim();
-    if (field !== 'related_feature' && !next) return; // name/summary must stay non-empty
-    updateTask.mutate(
-      { slug: task.slug, updates: { [field]: next } },
-      { onError: onMutationError },
-    );
-  };
-
-  // Assignment leans on person:<slug> tags — a task may have any number of
-  // assignees. The UI presents them as a distinct "Assignees" control, but
-  // they are stored (and synced to ClickUp) purely as tags. A legacy single
-  // `assignee` field is still honored as a fallback so old tasks render.
-  const personTagsOf = (tags: string[]): string[] =>
-    tags.filter(t => t.startsWith('person:')).map(t => t.slice('person:'.length));
-  const withPersonTags = (tags: string[], people: string[]): string[] => {
-    const rest = tags.filter(t => !t.startsWith('person:'));
-    return [...rest, ...people.map(p => `person:${p}`)];
-  };
-  const effectiveAssignees = (() => {
-    const set = new Set(personTagsOf(task.tags));
-    if (task.assignee) set.add(task.assignee); // legacy single-field fallback
-    return [...set];
-  })();
-
-  const setAssignees = (people: string[]) => {
-    // Assignment lives in person tags. Retire any legacy single `assignee`
-    // field in the same PATCH, otherwise a person assigned only via that field
-    // would reappear after removal (the tag PATCH alone wouldn't clear it).
-    const updates: Parameters<typeof updateTask.mutate>[0]['updates'] = {
-      tags: withPersonTags(task.tags, people),
-    };
-    if (task.assignee) updates.assignee = null;
-    updateTask.mutate(
-      { slug: task.slug, updates },
-      { onError: onMutationError },
-    );
-  };
-  const addAssignee = (value: string) => {
-    const person = value.trim();
-    if (person && !effectiveAssignees.includes(person)) setAssignees([...effectiveAssignees, person]);
-  };
-  const removeAssignee = (person: string) => {
-    setAssignees(effectiveAssignees.filter(p => p !== person));
-  };
-
-  // Roadmap objectives this task serves (many-to-many, local-only). Assigning here
-  // links the task into an objective's rollup (progress, member tasks, forecast).
-  const taskObjectives = task.objectives ?? [];
-  const setTaskObjectives = (slugs: string[]) => {
-    updateTask.mutate(
-      { slug: task.slug, updates: { objectives: slugs } },
-      { onError: onMutationError },
-    );
-  };
-  const addObjective = (slug: string) => {
-    if (slug && !taskObjectives.includes(slug)) setTaskObjectives([...taskObjectives, slug]);
-  };
-  const removeObjective = (slug: string) => setTaskObjectives(taskObjectives.filter(s => s !== slug));
+  // ── relations ──────────────────────────────────────────────────────────────
+  const children = useMemo(() => allTasks.filter((t) => t.parent_task === task.slug), [allTasks, task.slug]);
+  const parent = task.parent_task ? allTasks.find((t) => t.slug === task.parent_task) ?? null : null;
+  const parentProgress = parent ? subtaskProgress(allTasks.filter((t) => t.parent_task === parent.slug), sm) : null;
+  const featureName = task.related_feature
+    ? (featureOptions ?? []).find((f) => f.slug === task.related_feature)?.name ?? task.related_feature
+    : null;
+  const open = (slug: string) => onOpenTask?.(slug);
 
   const handleDelete = async () => {
     const ok = await confirmAction({
       title: `Delete task “${task.name}”?`,
-      body: 'This propagates to the remote backend on sync.',
+      body: children.length
+        ? `Its ${children.length} subtask${children.length === 1 ? '' : 's'} stay, as top-level tasks. This propagates to the remote backend on sync.`
+        : 'This propagates to the remote backend on sync.',
       confirmLabel: 'Delete',
       destructive: true,
     });
     if (!ok) return;
-    deleteTask.mutate(task.slug, {
-      onError: onMutationError,
-      onSuccess: () => onClose?.(),
-    });
+    deleteTask.mutate(task.slug, { onError: onMutationError, onSuccess: () => onClose?.() });
   };
 
-  const handleStartChange = (value: string) => {
-    updateTask.mutate(
-      { slug: task.slug, updates: { start_date: value || null } },
-      { onError: onMutationError },
-    );
-  };
-
-  const handleDueChange = (value: string) => {
-    updateTask.mutate(
-      { slug: task.slug, updates: { due_date: value || null } },
-      { onError: onMutationError },
-    );
-  };
-
-  const handleTagsChange = (tags: string[]) => {
-    // person: tags ARE assignments; they round-trip through the tag list,
-    // so editing tags (incl. person tags) is a single plain PATCH.
-    const updates: Parameters<typeof updateTask.mutate>[0]['updates'] = { tags };
-    // If the user removed the person tag that backed a legacy `assignee` field,
-    // retire that field too — otherwise effectiveAssignees folds it back in and
-    // the assignee ghosts back on the next render. Narrow by design: only when
-    // that exact person tag was present before and is gone now (so unrelated
-    // tag edits never drop a legacy-only assignee that has no person tag).
-    if (task.assignee) {
-      const personTag = `person:${task.assignee}`;
-      if (task.tags.includes(personTag) && !tags.includes(personTag)) {
-        updates.assignee = null;
-      }
-    }
-    updateTask.mutate(
-      { slug: task.slug, updates },
-      { onError: onMutationError },
-    );
-  };
-
-  const handleAddTag = (raw?: string) => {
-    const tag = (raw ?? newTag).trim();
-    if (!tag) return;
-    if (!task.tags.some(x => x.toLowerCase() === tag.toLowerCase())) {
-      handleTagsChange([...task.tags, tag]);
-    }
-    setNewTag('');
-  };
-
-  /**
-   * Every tag the vault already knows, most-used first, minus the ones this
-   * task already carries. Typing something new is still allowed (`allowCustom`)
-   * — the point of the list is that you stop INVENTING a second spelling of a
-   * tag that exists, which is how `decisions` and `decision` both ended up in
-   * the vocabulary.
-   */
-  const tagOptions = useMemo(() => {
-    const usage = taxonomy?.usage ?? {};
-    const vocab = taxonomy?.vocabulary;
-    const known = new Set<string>([
-      ...Object.keys(usage),
-      ...(vocab ? Object.values(vocab.facetTags).flat() : []),
-      ...(vocab?.bareTags ?? []),
-    ]);
-    const mine = new Set(task.tags.map(t => t.toLowerCase()));
-    return [...known]
-      .filter(t => t && !mine.has(t.toLowerCase()))
-      .sort((a, b) => (usage[b] ?? 0) - (usage[a] ?? 0) || a.localeCompare(b))
-      .map(t => ({
-        value: t,
-        label: t,
-        hint: usage[t] ? `${usage[t]}` : undefined,
-      }));
-  }, [taxonomy, task.tags]);
-
-  /**
-   * Send to backlog in one click. Only the tag is written: the backend's
-   * backlog rule ("not planned" ⇒ no dates) clears the start and due date
-   * itself, so every surface stays consistent and this button cannot invent a
-   * second, drifting version of that rule.
-   */
-  const sendToBacklog = () => {
-    if (isBacklog) return;
-    handleTagsChange([...task.tags, 'backlog']);
-  };
-
-  const handleAddChangelog = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!changelogEntry.trim()) return;
-    addChangelog.mutate(
-      { slug: task.slug, content: changelogEntry.trim() },
-      { onSuccess: () => setChangelogEntry(''), onError: onMutationError },
-    );
-  };
-
-  const bodyHtml = useMemo(() => {
-    if (!task.body) return '';
-    return marked.parse(task.body) as string;
-  }, [task.body]);
-
-  const bodyRef = useRef<HTMLDivElement>(null);
-  // bodySourceRef: last known SERVER body. Updated whenever the task prop
-  // changes (i.e. after a successful PATCH + React Query invalidation).
-  // Used as the rollback target if a PATCH fails.
-  const bodySourceRef = useRef(task.body ?? '');
-  // pendingBodyRef: optimistic body that successive checkbox toggles compute
-  // against. Updated SYNCHRONOUSLY in onChange before the PATCH fires so that
-  // rapid clicks on different checkboxes don't each compute from the same
-  // pre-PATCH server snapshot (which would silently overwrite earlier toggles
-  // once the later PATCH resolved).
-  const pendingBodyRef = useRef<string>(task.body ?? '');
+  // Esc closes the drawer — but never an Esc meant for something inside it: a field being typed
+  // in (its draft would be lost), an open picker or menu (they mark their Esc as handled).
   useEffect(() => {
-    // Server response arrived: refresh both refs to the fresh body.
-    bodySourceRef.current = task.body ?? '';
-    pendingBodyRef.current = task.body ?? '';
-  }, [task.body]);
-
-  // Stable refs to the latest mutation + error handler so the long-lived
-  // 'change' listener never holds stale closures over them. We update these
-  // every render (cheap) and the listener reads `.current` at event time.
-  const updateTaskRef = useRef(updateTask);
-  const onMutationErrorRef = useRef(onMutationError);
-  useEffect(() => {
-    updateTaskRef.current = updateTask;
-    onMutationErrorRef.current = onMutationError;
-  });
-
-  // Enable inline acceptance-criterion checkboxes + delegate change events.
-  // marked emits `<input type="checkbox" disabled>` for `- [ ]` / `- [x]`
-  // task list items; we strip the disabled attr and index each input so we
-  // can map a click back to the Nth checkbox in the markdown source.
-  useEffect(() => {
-    const root = bodyRef.current;
-    if (!root || !bodyHtml) return;
-
-    const inputs = root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
-    inputs.forEach((el, i) => {
-      el.removeAttribute('disabled');
-      el.dataset.criterionIndex = String(i);
-    });
-
-    const onChange = (e: Event) => {
-      const target = e.target as HTMLInputElement;
-      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
-      const indexAttr = target.dataset.criterionIndex;
-      if (indexAttr === undefined) return;
-      const index = Number(indexAttr);
-      const checked = target.checked;
-      // Read from pendingBodyRef (optimistic, latest in-flight body) NOT
-      // bodySourceRef. This avoids a race where a second toggle computes from
-      // the pre-first-PATCH server body and silently overwrites the first
-      // toggle when its PATCH resolves later.
-      const current = pendingBodyRef.current;
-      const toggled = toggleCheckboxLine(current, index, checked);
-      if (!toggled) return;
-      let nextBody = toggled.body;
-      if (toggled.nodeId) {
-        nextBody = updateMermaidNodeStatus(nextBody, toggled.nodeId, checked);
-      }
-      if (nextBody === current) return;
-      // Commit optimistic body SYNCHRONOUSLY so the very next toggle (even if
-      // fired before this PATCH resolves) sees it.
-      pendingBodyRef.current = nextBody;
-      // Optimistic: keep DOM checked state; persist via PATCH. On error we
-      // revert the checkbox + roll pendingBodyRef back to the server source.
-      updateTaskRef.current.mutate(
-        { slug: task.slug, updates: { body: nextBody } },
-        {
-          onError: (err: Error) => {
-            target.checked = !checked;
-            pendingBodyRef.current = bodySourceRef.current;
-            onMutationErrorRef.current(err);
-          },
-        },
-      );
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest?.('input:not([type="checkbox"]):not([type="file"]), textarea, select, [contenteditable="true"], [role="listbox"], [role="menu"], .ss-pop')) return;
+      onClose();
     };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
-    root.addEventListener('change', onChange);
-    return () => root.removeEventListener('change', onChange);
-  }, [bodyHtml, task.slug]);
-
-  useEffect(() => {
-    const root = bodyRef.current;
-    if (!root || !bodyHtml) return;
-    initMermaid(theme);
-
-    let cancelled = false;
-    const disposers: Array<() => void> = [];
-    let rendering = false;
-
-    const renderAll = async () => {
-      if (cancelled || rendering) return;
-      // Restore any previously-rendered mermaid wrappers to source form so a
-      // theme change triggers a fresh render with the new palette.
-      root.querySelectorAll<HTMLElement>('.mermaid-rendered').forEach((wrap) => {
-        const src = wrap.dataset.mermaidSource;
-        if (!src) return;
-        const pre = document.createElement('pre');
-        const code = document.createElement('code');
-        code.className = 'language-mermaid';
-        code.textContent = src;
-        pre.appendChild(code);
-        wrap.replaceWith(pre);
-      });
-
-      const blocks = root.querySelectorAll<HTMLElement>('pre > code.language-mermaid');
-      if (blocks.length === 0) return;
-
-      rendering = true;
-      // Tear down any prior panzoom/observer attachments before re-rendering.
-      while (disposers.length) {
-        const d = disposers.pop();
-        try { d?.(); } catch { /* noop */ }
-      }
-
-      for (let i = 0; i < blocks.length; i++) {
-        if (cancelled) break;
-        const code = blocks[i] as HTMLElement;
-        const pre = code.parentElement;
-        if (!pre) continue;
-        const source = sanitizeMermaid(code.textContent ?? '');
-        const id = `mmd-${task.slug}-${i}-${Date.now().toString(36)}`;
-
-        const wrap = document.createElement('div');
-        wrap.className = 'mermaid-rendered';
-        wrap.dataset.mermaidSource = source;
-
-        const stage = document.createElement('div');
-        stage.className = 'mermaid-stage';
-        wrap.appendChild(stage);
-
-        const controls = document.createElement('div');
-        controls.className = 'mermaid-controls';
-        controls.innerHTML = `
-          <button type="button" data-act="out" title="Zoom out">−</button>
-          <button type="button" data-act="reset" title="Fit">⤢</button>
-          <button type="button" data-act="in" title="Zoom in">+</button>
-        `;
-        wrap.appendChild(controls);
-
-        pre.replaceWith(wrap);
-
-        try {
-          const { svg, bindFunctions } = await mermaid.render(id, source);
-          if (cancelled) break;
-          stage.innerHTML = svg;
-          bindFunctions?.(stage);
-          wrap.dataset.mermaidRendered = '1';
-
-          const svgEl = stage.querySelector('svg') as SVGSVGElement | null;
-          if (!svgEl) continue;
-          normalizeMermaidSvg(svgEl);
-          // Lock SVG to its natural (viewBox) pixel size so panzoom transforms
-          // scale predictably. Mermaid emits width="100%" which competes with
-          // the panzoom transform and breaks the fit math.
-          const vb = svgEl.viewBox.baseVal;
-          const svgW = vb && vb.width > 0 ? vb.width : svgEl.getBoundingClientRect().width;
-          const svgH = vb && vb.height > 0 ? vb.height : svgEl.getBoundingClientRect().height;
-          svgEl.removeAttribute('width');
-          svgEl.removeAttribute('height');
-          svgEl.style.width = `${svgW}px`;
-          svgEl.style.height = `${svgH}px`;
-          svgEl.style.maxWidth = 'none';
-          svgEl.style.transformOrigin = '0 0';
-
-          const pz = panzoom(svgEl, {
-            maxZoom: 12,
-            minZoom: 0.15,
-            bounds: false,
-            zoomDoubleClickSpeed: 1.6,
-            smoothScroll: false,
-          });
-
-          const fit = () => {
-            try {
-              const stageBox = stage.getBoundingClientRect();
-              if (stageBox.width === 0 || stageBox.height === 0) return;
-              const padding = 32;
-              const scale = Math.min(
-                (stageBox.width - padding) / svgW,
-                (stageBox.height - padding) / svgH,
-                1,
-              );
-              pz.zoomAbs(0, 0, 1);
-              pz.moveTo(0, 0);
-              pz.zoomAbs(0, 0, scale);
-              const tx = (stageBox.width - svgW * scale) / 2;
-              const ty = (stageBox.height - svgH * scale) / 2;
-              pz.moveTo(tx, ty);
-            } catch { /* noop */ }
-          };
-          requestAnimationFrame(() => requestAnimationFrame(fit));
-          const ro = new ResizeObserver(() => fit());
-          ro.observe(stage);
-
-          // ── Click-to-zoom on individual nodes.
-          // Animates the panzoom transform so the clicked node fills ~60% of the
-          // stage. Clicking the stage background (or the SAME node twice) fits
-          // back to the full diagram view.
-          let zoomedNode: Element | null = null;
-          const zoomToNode = (node: Element) => {
-            try {
-              const nodeRect = node.getBoundingClientRect();
-              const stageBox = stage.getBoundingClientRect();
-              if (nodeRect.width === 0) return;
-              const cx = nodeRect.left + nodeRect.width / 2 - stageBox.left;
-              const cy = nodeRect.top + nodeRect.height / 2 - stageBox.top;
-              const desiredScale = Math.min(
-                (stageBox.width * 0.6) / nodeRect.width,
-                (stageBox.height * 0.6) / nodeRect.height,
-                6,
-              );
-              const t = pz.getTransform();
-              const mult = desiredScale / t.scale;
-              if (Math.abs(mult - 1) < 0.01) return;
-              pz.smoothZoom(cx, cy, mult);
-            } catch { /* noop */ }
-          };
-
-          const onStageClick = (e: MouseEvent) => {
-            const target = e.target as Element | null;
-            const node = target?.closest('g.node, g.cluster') ?? null;
-            if (!node) {
-              // Click on empty stage — reset to fit.
-              if (zoomedNode) { zoomedNode = null; fit(); }
-              return;
-            }
-            if (zoomedNode === node) {
-              // Second click on same node — unzoom.
-              zoomedNode = null;
-              fit();
-            } else {
-              zoomedNode = node;
-              zoomToNode(node);
-            }
-          };
-          stage.addEventListener('click', onStageClick);
-          // Visual affordance: zoomable nodes get a pointer cursor.
-          svgEl.querySelectorAll<HTMLElement>('g.node, g.cluster').forEach((n) => {
-            n.style.cursor = 'zoom-in';
-          });
-
-          controls.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const btn = (e.target as HTMLElement).closest('button');
-            if (!btn) return;
-            const stageBox = stage.getBoundingClientRect();
-            const cx = stageBox.width / 2;
-            const cy = stageBox.height / 2;
-            const act = btn.getAttribute('data-act');
-            if (act === 'in') pz.smoothZoom(cx, cy, 1.4);
-            else if (act === 'out') pz.smoothZoom(cx, cy, 1 / 1.4);
-            else if (act === 'reset') { zoomedNode = null; fit(); }
-          });
-
-          disposers.push(() => {
-            ro.disconnect();
-            stage.removeEventListener('click', onStageClick);
-            pz.dispose();
-          });
-        } catch (err) {
-          if (cancelled) break;
-          const msg = err instanceof Error ? err.message : String(err);
-          stage.innerHTML = `<pre class="mermaid-error">Mermaid render failed: ${msg.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c] ?? c)}</pre>`;
-        }
-      }
-      rendering = false;
-    };
-
-    // Initial render.
-    renderAll();
-
-    // Self-healing: if React re-injects bodyHtml (or HMR), raw <pre><code> may
-    // reappear without the effect re-firing. A MutationObserver triggers a
-    // re-render whenever raw mermaid code exists but no rendered SVG.
-    const observer = new MutationObserver(() => {
-      if (cancelled || rendering) return;
-      const hasRaw = root.querySelector('pre > code.language-mermaid');
-      const hasRendered = root.querySelector('.mermaid-rendered .mermaid-stage svg');
-      if (hasRaw && (!hasRendered || hasRaw)) {
-        // Only re-render if there's actually raw code waiting.
-        if (hasRaw) renderAll();
-      }
-    });
-    observer.observe(root, { childList: true, subtree: true });
-
-    return () => {
-      cancelled = true;
-      observer.disconnect();
-      while (disposers.length) {
-        const d = disposers.pop();
-        try { d?.(); } catch { /* noop */ }
-      }
-    };
-  }, [bodyHtml, task.slug, theme]);
+  // A dangling parent link (the parent is gone) reads as top-level.
+  const subtasksSlot = (children.length > 0 || !parent)
+    ? <SubtasksSection task={task} children={children} onOpen={open} />
+    : null;
 
   return (
-    <>
-    <div
-      className={`detail-overlay ${fullScreen ? 'detail-overlay--fullscreen' : ''}`}
-      onClick={onClose}
-    >
-      <div
-        className={`detail-panel ${fullScreen ? 'detail-panel--fullscreen' : ''}`}
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="detail-header">
-          <h2 className="detail-title">{task.name}</h2>
-          <div className="detail-header-actions">
-            <button
-              type="button"
-              className="detail-icon-btn"
-              onClick={() => setAssigningAgent(true)}
-              title={t('tasks.assignToAgent')}
-              aria-label={t('tasks.assignToAgent')}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="4" y="8" width="16" height="12" rx="3" /><path d="M12 4v4M9 13h.01M15 13h.01M9 17h6" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className="detail-icon-btn"
-              onClick={() => setFullScreen((v) => !v)}
-              title={fullScreen ? 'Exit full-page view' : 'Open in full page'}
-              aria-label={fullScreen ? 'Exit full-page view' : 'Open in full page'}
-            >
-              {fullScreen ? (
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3" />
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3" />
-                </svg>
-              )}
-            </button>
-            <button className="modal-close" onClick={onClose} aria-label="Close">&times;</button>
-          </div>
-        </div>
-
-        {/* Three zones: properties rail · document · Curate. In the drawer the rail and the
-            document stack in one scrolling column (there is no width for a rail); in full-page
-            they separate. The zone markup is identical — only the CSS differs. */}
-        <div className="detail-zones">
-          <div className="detail-body">
-            {mutationError && (
-              <div className="error-state" style={{ marginBottom: 'var(--space-3)' }}>{mutationError}</div>
-            )}
-
-          {/*
-            Properties — grouped, collapsible, and remembered.
-
-            This replaces 18 flat rows in one undifferentiated stack, of which exactly one (RICE)
-            could collapse. With no hierarchy every property read as equally important, which
-            means none of them did: Status sat at the same weight as the record ID. The groups
-            below are the actual questions you open a task to answer — where it stands, when it
-            is due, whose it is — with reference material (scoring, labels, provenance) folded
-            away until asked for. Open/closed persists per user (see useSectionCollapse).
-          */}
-          <div className="props-block">
-            <TaskSection
-              id="identity" title="Identity" count={2}
-              open={sections.isOpen('identity')}
-              onToggle={() => sections.toggle('identity')}
-            >
-              <TaskField label="Name" htmlFor="tf-name">
-                <input
-                  id="tf-name"
-                  className="settings-like-input prop-text-input"
-                  defaultValue={task.name}
-                  key={`name-${task.slug}-${task.name}`}
-                  onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.name) handleTextField('name', e.target.value); }}
-                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                />
-                {/* Name is the one REQUIRED field, and the only one that cannot be cleared —
-                    the blur handler above ignores an empty value. Saying so is the difference
-                    between "required" and "your edit silently didn't take". */}
-                {!task.name.trim() && <RequiredField label="Name required" />}
-              </TaskField>
-
-              <TaskField label="Summary" htmlFor="tf-summary">
-                {/* A paragraph, not a one-liner: summaries are sentences, and a
-                    single-line input made anything past ~40 chars unreadable. */}
-                <textarea
-                  id="tf-summary"
-                  className="prop-text-input prop-textarea"
-                  defaultValue={task.description}
-                  key={`desc-${task.slug}-${task.description}`}
-                  placeholder="Short summary of the task"
-                  rows={3}
-                  onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.description) handleTextField('description', e.target.value); }}
-                />
-              </TaskField>
-              {/* The old "Description" row rendered `task.description` a SECOND time, read-only,
-                  under a different label — the same field appearing twice under two names, one
-                  of which (Description) also names the markdown body below. Removed: Summary is
-                  where you read and write it. */}
-            </TaskSection>
-
-            <TaskSection
-              id="workflow" title="Workflow" count={3}
-              open={sections.isOpen('workflow')}
-              onToggle={() => sections.toggle('workflow')}
-            >
-              <TaskField label="Status" htmlFor="tf-status">
-                <select
-                  id="tf-status"
-                  className="field-select prop-select"
-                  value={task.status}
-                  onChange={e => handleStatusChange(e.target.value)}
-                >
-                  {/* The task's OWN status is always offered, even when the status
-                      set has not loaded yet (the shipped four until /api/task-overrides
-                      resolves) or when it names a status this machine does not declare.
-                      Without it a controlled <select> has no matching <option> and the
-                      browser renders the field blank — a task silently misreporting its
-                      own status in the surface you edit it from. */}
-                  {(sm.order.includes(task.status) ? sm.order : [...sm.order, task.status]).map((k) => (
-                    <option key={k} value={k}>{['todo', 'in_progress', 'in_review', 'completed'].includes(k) ? t(`tasks.${k}`) : sm.labelOf(k)}</option>
-                  ))}
-                </select>
-              </TaskField>
-
-              <TaskField label={t('tasks.priority')} htmlFor="tf-priority">
-                <select
-                  id="tf-priority"
-                  className="field-select prop-select"
-                  value={task.priority}
-                  onChange={e => handlePriorityChange(e.target.value)}
-                >
-                  <option value="low">{t('priority.low')}</option>
-                  <option value="medium">{t('priority.medium')}</option>
-                  <option value="high">{t('priority.high')}</option>
-                  <option value="critical">{t('priority.critical')}</option>
-                </select>
-              </TaskField>
-
-              <TaskField label="Urgency" htmlFor="tf-urgency">
-                <select
-                  id="tf-urgency"
-                  className="field-select prop-select"
-                  value={task.urgency}
-                  onChange={e => handleUrgencyChange(e.target.value)}
-                >
-                  <option value="low">{t('priority.low')}</option>
-                  <option value="medium">{t('priority.medium')}</option>
-                  <option value="high">{t('priority.high')}</option>
-                  <option value="critical">{t('priority.critical')}</option>
-                </select>
-              </TaskField>
-            </TaskSection>
-
-            <TaskSection
-              id="timeline" title="Timeline" count={2}
-              open={sections.isOpen('timeline')}
-              onToggle={() => sections.toggle('timeline')}
-            >
-              <TaskDateField
-                label="Start" value={task.start_date} backlog={isBacklog}
-                onChange={handleStartChange} onRemoveBacklog={removeBacklogTag}
-              />
-              <TaskDateField
-                label="Due" value={task.due_date} backlog={isBacklog}
-                onChange={handleDueChange} onRemoveBacklog={removeBacklogTag}
-              />
-            </TaskSection>
-
-            <TaskSection
-              id="ownership" title="Ownership" count={4}
-              open={sections.isOpen('ownership')}
-              onToggle={() => sections.toggle('ownership')}
-            >
-            {/* The agent is NOT an assignee: assignees are people (and sync); the agent is
-                local-only and shows as its own face. */}
-            <TaskField label={t('tasks.agent')}>
-              {agentSlug ? (
-                <div className="task-agent-row">
-                  <TaskAgentFace slug={agentSlug} size={24} />
-                  <span className="task-agent-row-name">{agentName}</span>
-                  <button type="button" className="task-agent-btn" onClick={() => setAssigningAgent(true)}>
-                    {t('tasks.assignToAgent')}
-                  </button>
-                  <button
-                    type="button"
-                    className="task-agent-btn"
-                    onClick={clearAgent}
-                    disabled={updateTask.isPending}
-                    aria-label={`${t('tasks.unassignAgent')}: ${agentName}`}
-                  >
-                    {t('tasks.unassignAgent')}
-                  </button>
-                </div>
-              ) : (
-                <div className="task-agent-row">
-                  <button type="button" className="task-agent-btn" onClick={() => setAssigningAgent(true)}>
-                    {t('tasks.assignToAgent')}
-                  </button>
-                </div>
-              )}
-            </TaskField>
-
-            <TaskField label="Assignees">
-              <div className="assignee-multi">
-                {effectiveAssignees.length > 0 && (
-                  <div className="assignee-chips">
-                    {effectiveAssignees.map(slug => {
-                      const m = (members ?? []).find(x => x.slug === slug);
-                      // On a remote backend, a slug that matches no real member
-                      // won't sync — flag it so it's not mistaken for assigned.
-                      const unmapped = remoteBacked && !m;
-                      return (
-                        <span
-                          key={slug}
-                          className={`assignee-chip${unmapped ? ' assignee-chip--unmapped' : ''}`}
-                          title={unmapped ? `"${slug}" is not a member of this backend — it won't sync. Remove it and pick a real member.` : undefined}
-                        >
-                          {m?.name ?? slug}
-                          {unmapped && <span className="assignee-chip__warn" aria-hidden="true">⚠</span>}
-                          {unmapped && <span className="assignee-chip__sr">(not a member — won't sync)</span>}
-                          <button
-                            type="button"
-                            className="assignee-chip__remove"
-                            aria-label={`Remove ${m?.name ?? slug}`}
-                            onClick={() => removeAssignee(slug)}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-                <SearchableSelect
-                  value={null}
-                  options={(members ?? [])
-                    .filter(m => !effectiveAssignees.includes(m.slug))
-                    .map(m => ({ value: m.slug, label: m.name, hint: m.slug }))}
-                  placeholder={effectiveAssignees.length > 0 ? 'Add assignee…' : 'Unassigned'}
-                  searchPlaceholder="Search people…"
-                  clearLabel="Unassigned"
-                  // Free-text only on a local backend; a remote backend accepts
-                  // members only (typing a non-member slug is the bug we're fixing).
-                  allowCustom={!remoteBacked}
-                  onChange={v => { if (v) addAssignee(v); }}
-                />
-              </div>
-            </TaskField>
-
-            <TaskField label="Feature">
-              <SearchableSelect
-                value={task.related_feature ?? null}
-                options={(featureOptions ?? []).map(f => ({ value: f.slug, label: f.name ?? f.slug, hint: f.name ? f.slug : undefined }))}
-                placeholder="No feature"
-                searchPlaceholder="Search features…"
-                clearLabel="No feature"
-                allowCustom
-                onChange={v => handleTextField('related_feature', v ?? '')}
-              />
-            </TaskField>
-
-            <TaskField label="Roadmap">
-              <div className="assignee-multi">
-                {taskObjectives.length > 0 && (
-                  <div className="assignee-chips">
-                    {taskObjectives.map(slug => {
-                      const o = objectives.find(x => x.slug === slug);
-                      // A slug with no matching objective was orphaned (objective
-                      // deleted / renamed) — flag it so it can be cleaned up.
-                      const missing = objectives.length > 0 && !o;
-                      return (
-                        <span
-                          key={slug}
-                          className={`assignee-chip${missing ? ' assignee-chip--unmapped' : ''}`}
-                          title={missing ? `"${slug}" is not a known objective — remove it or recreate the objective.` : slug}
-                        >
-                          {o?.title ?? slug}
-                          {missing && <span className="assignee-chip__warn" aria-hidden="true">⚠</span>}
-                          <button
-                            type="button"
-                            className="assignee-chip__remove"
-                            aria-label={`Remove ${o?.title ?? slug}`}
-                            onClick={() => removeObjective(slug)}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-                <SearchableSelect
-                  value={null}
-                  options={objectives
-                    .filter(o => !taskObjectives.includes(o.slug))
-                    .map(o => ({ value: o.slug, label: o.title, hint: o.slug }))}
-                  placeholder={taskObjectives.length > 0 ? 'Add objective…' : 'Not on the roadmap'}
-                  searchPlaceholder="Search objectives…"
-                  clearLabel="None"
-                  onChange={v => { if (v) addObjective(v); }}
-                />
-              </div>
-            </TaskField>
-            </TaskSection>
-
-            <TaskSection
-              id="scoring" title="Scoring · RICE" count={1}
-              open={sections.isOpen('scoring')}
-              onToggle={() => sections.toggle('scoring')}
-            >
-              <TaskField label={t('rice.title')}>
-                <RiceBlock
-                  task={task}
-                  expanded={riceExpanded}
-                  onToggle={() => setRiceExpanded(v => !v)}
-                  onUpdate={handleRiceUpdate}
-                />
-              </TaskField>
-            </TaskSection>
-
-            <TaskSection
-              id="labels" title="Labels" count={2}
-              open={sections.isOpen('labels')}
-              onToggle={() => sections.toggle('labels')}
-            >
-            <TaskField label="Tags">
-              <div className="prop-tags prop-tags--editable">
-                {task.tags.map(tag => (
-                  <span key={tag} className="task-tag" data-hue={tagHue(tag)}>
-                    {tag}
-                    <button
-                      type="button"
-                      className="task-tag-remove"
-                      aria-label={`Remove tag ${tag}`}
-                      onClick={() => handleTagsChange(task.tags.filter(x => x !== tag))}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-                <div className="task-tag-picker">
-                  <SearchableSelect
-                    value={null}
-                    options={tagOptions}
-                    onChange={v => { if (v) handleAddTag(v); }}
-                    allowCustom
-                    hideClear
-                    triggerLabel="+ tag"
-                    searchPlaceholder="Search or create…"
-                  />
-                </div>
-              </div>
-            </TaskField>
-
-            {/* One click for the state the owner actually uses. Writing only the
-                tag keeps the backend's "backlog ⇒ undated" rule the single
-                definition of what backlog means. */}
-            {!isBacklog && (
-              <TaskField label="Backlog">
-                <button type="button" className="prop-backlog-send" onClick={sendToBacklog}>
-                  Send to backlog
-                </button>
-              </TaskField>
-            )}
-
-            <TaskField label="Version" htmlFor="tf-version">
-              <select
-                id="tf-version"
-                className="field-select prop-select"
-                value={task.version ?? ''}
-                onChange={e => handleVersionChange(e.target.value)}
-              >
-                <option value="">No version</option>
-                {(versions ?? []).map(v => (
-                  <option key={v.version} value={v.version}>{v.version}</option>
-                ))}
-                {task.version && !(versions ?? []).some(v => v.version === task.version) && (
-                  <option value={task.version}>{task.version}</option>
-                )}
-              </select>
-            </TaskField>
-            </TaskSection>
-
-            <TaskSection
-              id="custom" title={t('tasks.customFields.sectionLabel')} count={customFieldDefs?.length ?? 0}
-              open={sections.isOpen('custom')}
-              onToggle={() => sections.toggle('custom')}
-            >
-              <div className="custom-fields-cell">
-                <TaskCustomFields
-                  defs={customFieldDefs ?? []}
-                  values={task.custom_fields}
-                  onCommit={handleCustomFieldChange}
-                />
-                <AddCustomFieldForm />
-              </div>
-            </TaskSection>
-
-            {/* Provenance. Real, but consulted rather than read — which is exactly why it was
-                wrong for the record ID to sit at the same visual weight as Status. */}
-            <TaskSection
-              id="system" title="System" count={task.parent_task ? 4 : 3}
-              open={sections.isOpen('system')}
-              onToggle={() => sections.toggle('system')}
-            >
-              <TaskField label="Created">
-                <span className="prop-date">{task.created_at}</span>
-              </TaskField>
-
-              <TaskField label="Updated">
-                <span className="prop-date">{task.updated_at}</span>
-              </TaskField>
-
-              {task.parent_task && (
-                <TaskField label="Parent">
-                  <span className="prop-text">{task.parent_task}</span>
-                </TaskField>
-              )}
-
-              <TaskField label="ID">
-                <code className="prop-id">{task.id}</code>
-              </TaskField>
-            </TaskSection>
-          </div>
-
-          {/* Divider */}
-          <hr className="detail-divider" />
-
-          {/* Rendered Markdown Body */}
-          {bodyHtml ? (
-            <div
-              ref={bodyRef}
-              className="markdown-body"
-              dangerouslySetInnerHTML={{ __html: bodyHtml }}
+    <div className={`detail-overlay ${fullScreen ? 'detail-overlay--fullscreen' : ''}`} onClick={onClose}>
+      <div className={`detail-panel ${fullScreen ? 'detail-panel--fullscreen' : ''}`} onClick={(e) => e.stopPropagation()} data-task-slug={task.slug}>
+        <DetailHeader
+          task={task}
+          allTasks={allTasks}
+          featureName={featureName}
+          parent={parent}
+          parentProgress={parentProgress}
+          fullScreen={fullScreen}
+          onToggleFullScreen={() => setFullScreen((v) => !v)}
+          onClose={onClose}
+          onOpenTask={open}
+          onRename={(name) => update({ name })}
+          onError={(msg) => setMutationError(msg)}
+        />
+        <div className="detail-grid">
+          <div className="detail-main">
+            {mutationError && <div className="error-state detail-error">{mutationError}</div>}
+            <BodySections
+              task={task}
+              body={shownBody}
+              theme={theme}
+              onToggle={onToggle}
+              slots={{
+                // A subtask has no subtasks of its own (two levels max), so it gets no section.
+                subtasks: parent ? null : subtasksSlot,
+                criteria: <CriteriaSection body={shownBody} onToggle={(i, c) => onToggle('acceptance_criteria', i, c)} />,
+                media: <MediaSection task={task} />,
+              }}
             />
-          ) : (
-            <p className="detail-empty">No content.</p>
-          )}
-
-          {/* Divider */}
-          <hr className="detail-divider" />
-
-          {/* Changelog Add */}
-          <div className="changelog-section">
-            <h3 className="changelog-title">{t('tasks.changelog')}</h3>
-            <form onSubmit={handleAddChangelog} className="changelog-add">
-              <input
-                className="field-input"
-                value={changelogEntry}
-                onChange={e => setChangelogEntry(e.target.value)}
-                placeholder="Add a changelog entry..."
-              />
-              <button
-                type="submit"
-                className="btn btn--primary"
-                disabled={!changelogEntry.trim() || addChangelog.isPending}
-              >
-                {addChangelog.isPending ? '...' : t('tasks.add_entry')}
-              </button>
-            </form>
           </div>
-
-          {/* Danger zone — intentionally last */}
-          <hr className="detail-divider" />
-          <div className="detail-danger-zone">
-            <button
-              type="button"
-              className="btn btn--danger-ghost"
-              onClick={handleDelete}
-              disabled={deleteTask.isPending}
-            >
-              {deleteTask.isPending ? 'Deleting…' : 'Delete task'}
-            </button>
-            <span className="detail-danger-hint">Removes the task locally and on the remote backend (next sync).</span>
-          </div>
-          </div>
+          <PropertiesPanel
+            task={task}
+            allTasks={allTasks}
+            update={update}
+            onDelete={handleDelete}
+            deleting={deleteTask.isPending}
+            parentError={parentError}
+            setParentError={setParentError}
+          />
         </div>
       </div>
-
     </div>
-    {/* A sibling of the overlay, not a child: a click on its backdrop must close only it. */}
-    {assigningAgent && (
-      <AssignToAgentComposer task={task} onClose={() => setAssigningAgent(false)} />
-    )}
-    </>
   );
 }

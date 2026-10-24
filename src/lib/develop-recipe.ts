@@ -56,7 +56,12 @@ const END_REVIEW_TEAM = `- For \`multi-review\`, instead of that one reviewer: e
 
 const END_REVIEW_REROUND = `After a team FAIL, the fresh re-check is one specialist for each that raised a blocking
 finding, fed only its previous findings word for word and the files the fix changed; the
-router does not run again.`;
+router does not run again.
+
+A PARTIAL verdict (reviewer or specialist) means it ran out of turns, not that the change
+failed: keep its findings at their severity, then dispatch a fresh copy of that agent on its
+\`Not reviewed:\` paths only, with START and NOW. The review is done when nothing is left
+unread; a PARTIAL is never a PASS.`;
 
 const REVIEWER_EVIDENCE = `For each ticked criterion say whether its evidence OBSERVED it or inferred it; a criterion about
 what the owner sees, ticked with no screenshot, is FAIL.`;
@@ -86,6 +91,48 @@ what the owner sees, ticked with no screenshot, is FAIL.`;
  * the diff-tree classification are kept from v1 (plan-review rules R4-R11).
  * tests/unit/develop-recipe.test.ts pins the load-bearing lines of both.
  */
+/**
+ * Waves are sub-tasks (2026-10-23): a map of two or more waves on a top-level task runs each
+ * wave as a child of the task (`filed_by: plan`), so its progress, ticks and close live on the
+ * wave and the parent closes only after them (task-parent.ts waveChildren is the definition).
+ * Three cases, because Plan mode may have opened them already, an older plan has none, and a
+ * run from before this rule already logged `wN green` on the parent.
+ */
+const WAVE_SUBTASKS = `**Waves are sub-tasks** when the map has two or more waves and the task is not itself a
+sub-task (two levels max). Read them first:
+
+  dreamcontext tasks list --parent "$S" --json     # each child's \`wave\` (null = not a wave)
+
+(a) Wave sub-tasks exist: use them. (b) Two or more waves, no wave sub-tasks and no \`wN green\`
+line yet: open them before any code, one per wave, then add a NEW map naming their slugs (the
+newest map is the LAST "WAVE MAP" line in technical_details; wave order and the sleep-eval
+exemption read it):
+
+  dreamcontext tasks create "Wave N: <what it delivers>" --parent "$S" --basis plan --quote "<the WN part of the map>"
+  dreamcontext tasks insert "$S" technical_details -- "WAVE MAP: EXECUTION: lead | W1 <wave-1-slug> (<files>) | W2 <wave-2-slug> (<files>) | also run: <tests>"
+
+(c) \`wN green\` lines already exist (a run from before waves were tasks): finish it the old
+way, on "$S". A one-wave map, or a task that is itself a sub-task: progress stays on "$S".
+Children that are not waves (filed by sleep, the owner or an agent) are not yours to build,
+but they keep "$S" from closing.`;
+
+/** Where a wave's progress goes when it is a sub-task. */
+const WAVE_ON_SUBTASK = `With wave sub-tasks: \`dreamcontext tasks status <wave-N> in_progress\` when the wave starts;
+   the ticks and the \`wN green\` line go on the WAVE (\`dreamcontext tasks log <wave-N> "wN green: …"\`);
+   \`builder test\` and goal-live keep "$S" (\`--waves M\` = the W parts of the newest map). Green:
+   \`dreamcontext tasks complete <wave-N> "<the check's summary line>"\`. A wave never closes
+   without a green check.`;
+
+/** The parent's close when a child is still open. */
+const WAVE_CLOSE_409 = `A parent with an open child cannot close: the status call is refused and names the open
+sub-tasks (409 \`parent_has_open_children\` on the board). Open WAVES mean the run is not done.
+An open child that is NOT a wave: move "$S" to \`in_review\` instead and name those sub-tasks.`;
+
+/** Which wave a reopen resumes. */
+const WAVE_REOPEN = `With wave sub-tasks, the wave to resume is the open child with the smallest \`wave\` in
+\`dreamcontext tasks list --parent "$S" --json\` (closed waves are hidden; the numbers do not
+shift), and \`--wave\` always comes from that field. Without them, the \`wN green\` lines.`;
+
 export const DEVELOP_RECIPE = `# Develop run recipe
 
 You are the LEAD and you write the code: build each wave yourself, check it yourself, then
@@ -143,6 +190,8 @@ dependencies allow, and one wave is fine. Tests are written with the code they t
 a test wave. "also run": test files that read a changed file by path (fixtures, manifests,
 docs checks), which a related-tests run cannot find.
 
+${WAVE_SUBTASKS}
+
 ## 2. Each wave N
 
   dreamcontext goal-live phase impl --wave N --waves M || true
@@ -168,6 +217,7 @@ docs checks), which a related-tests run cannot find.
   dreamcontext tasks log "$S" "wN green: <what landed>; <the check's summary line>"
 
    ${EVIDENCE_TICK_RULE}
+   ${WAVE_ON_SUBTASK}
 
 ## 3. After the last wave: one end review, the final check, then close
 
@@ -208,6 +258,8 @@ fix, and the final check runs again. Nothing closes on a fix no reviewer has rea
 ${END_REVIEW_REROUND}
 
 The SAME finding twice = STOP and put it to the owner. You never sign off on your own work.
+
+${WAVE_CLOSE_409}
 
 Close by the task's Validation method:
 - A command that passed: \`dreamcontext goal-live phase done || true\`, then \`dreamcontext
@@ -265,6 +317,8 @@ criteria and \`wN green\` lines say which waves are done. A \`test-wN.json\` in 
 holds the failures still open: \`builder test "$S" --wave N --failed\`. A validator FAIL newer
 than any final-fix-reviewer PASS = fix it, then final-fix-reviewer, then the validator: never
 re-validate an unreviewed fix.
+
+${WAVE_REOPEN}
 `;
 
 /**
@@ -342,6 +396,8 @@ types) or touches a hot path (money, auth, secrets, migrations, outbound message
 its own reviewer (2f). Every other wave is reviewed once, at the end of the run (section 3).
 "also run": test files that read a changed file by path (fixtures, manifests, docs checks),
 which a related-tests run cannot find.
+
+${WAVE_SUBTASKS}
 
 ## 2. Each wave N
 
@@ -487,6 +543,7 @@ wall time.
 Only when its check is GREEN and its reviewer (if any) passed: tick that wave's criteria
 (only what is demonstrably true) and log it.
    ${EVIDENCE_TICK_RULE}
+   ${WAVE_ON_SUBTASK}
 Before the next wave, update the base with what
 landed: write $ROOT/tmp/develop/$S/base-delta-wN.md (the files each lane changed, the
 contracts they export, the decisions taken), then
@@ -527,6 +584,8 @@ re-checks only the previous findings and the fix:
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer --round 2 || true
 
 ${END_REVIEW_REROUND}
+
+${WAVE_CLOSE_409}
 
 Close by the task's Validation method:
 - A command that passed: \`dreamcontext goal-live phase done || true\`, then \`dreamcontext
@@ -596,6 +655,8 @@ START. Running = wait; reported but not checked = 2e; unfinished or crashed = re
 --failed\`. A validator FAIL newer than any final-fix-reviewer PASS = wait for the builder,
 then final-fix-reviewer, then the validator: never re-validate an unreviewed fix. Builder
 sessions never take over this chat's own conversation id.
+
+${WAVE_REOPEN}
 `;
 
 /** Every recipe `goal-live recipe <name>` knows. */

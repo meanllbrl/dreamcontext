@@ -9,31 +9,84 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
+import * as ownerWait from '../../src/lib/super/owner-wait.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 describe('super types — server record <-> window mirror', () => {
   it('every list and limit matches, in order', () => {
     expect([...client.CONTAINER_KINDS]).toEqual([...server.CONTAINER_KINDS]);
+    expect([...client.PAD_SECTIONS]).toEqual([...server.PAD_SECTIONS]);
+    expect([client.MAX_PAD, client.MAX_PAD_TEXT]).toEqual([server.MAX_PAD, server.MAX_PAD_TEXT]);
+    expect([client.AGENDA_REF, client.AGENDA_SIZE]).toEqual([server.AGENDA_REF, server.AGENDA_SIZE]);
     expect([...client.CONTAINER_SHAPES]).toEqual([...server.CONTAINER_SHAPES]);
+    expect([...client.CONTAINER_SIZES]).toEqual([...server.CONTAINER_SIZES]);
+    expect(client.SIZE_UNITS).toEqual(server.SIZE_UNITS);
     expect([...client.CONTAINER_PLACES]).toEqual([...server.CONTAINER_PLACES]);
     expect([...client.VIEW_MODES]).toEqual([...server.VIEW_MODES]);
     expect(client.MAX_PRESENT).toBe(server.MAX_PRESENT);
     for (const k of server.CONTAINER_KINDS) expect(client.defaultShape(k)).toBe(server.defaultShape(k));
     expect([...client.QUEUE_KINDS]).toEqual([...server.QUEUE_KINDS]);
     expect([...client.QUEUE_STATES]).toEqual([...server.QUEUE_STATES]);
+    expect([...client.CHILD_ROWS]).toEqual([...server.CHILD_ROWS]);
+    expect([...client.STUCK_REASONS]).toEqual([...server.STUCK_REASONS]);
+    expect([...client.OWNER_WAIT_KINDS]).toEqual([...ownerWait.OWNER_WAIT_KINDS]);
+    expect([...client.TEAM_JOB_STATUSES]).toEqual([...server.TEAM_JOB_STATUSES]);
+    expect(client.MAX_TEAM_JOBS).toBe(server.MAX_TEAM_JOBS);
     expect([...client.SUPER_NOTES]).toEqual([...server.SUPER_NOTES]);
     expect([...client.SUPER_WINDOW_VERBS]).toEqual([...server.SUPER_WINDOW_VERBS]);
     expect([...client.SUPER_EVENT_PREFIXES]).toEqual([...server.SUPER_EVENT_PREFIXES]);
     expect([...client.SUPER_EVENT_KINDS]).toEqual([...server.SUPER_EVENT_KINDS]);
     expect(client.MAX_CONTAINERS).toBe(server.MAX_CONTAINERS);
+    expect(client.MAX_FLOAT).toBe(server.MAX_FLOAT);
+    expect(client.MAX_DISMISSED).toBe(server.MAX_DISMISSED);
     expect(client.MAX_LIVE_CHILDREN).toBe(server.MAX_LIVE_CHILDREN);
     expect(client.SUPER_STATE_VERSION).toBe(server.SUPER_STATE_VERSION);
+    expect(String(client.GROUP_ID_RE)).toBe(String(server.GROUP_ID_RE));
+    expect(client.MAX_GROUP_NAME).toBe(server.MAX_GROUP_NAME);
+    expect(client.MIN_GROUP_CARDS).toBe(server.MIN_GROUP_CARDS);
+    expect(String(client.ABOUT_AGENDA_RE)).toBe(String(server.ABOUT_AGENDA_RE));
+    expect(client.MAX_ABOUT_LINE).toBe(server.MAX_ABOUT_LINE);
+    expect(String(client.REPLY_TO_RE)).toBe(String(server.REPLY_TO_RE));
+    expect(client.MAX_REPLY_QUOTE).toBe(server.MAX_REPLY_QUOTE);
+    expect(String(client.REPLY_MARK_RE)).toBe(String(server.REPLY_MARK_RE));
+    expect(client.REPLY_MARK_HEAD_MAX).toBe(server.REPLY_MARK_HEAD_MAX);
+    expect(String(client.REPLY_MARK_LINE_RE)).toBe(String(server.REPLY_MARK_LINE_RE));
+    for (const t of ['', 'hi', ' Ödev 😀 \n', 'x'.repeat(3000)]) expect(client.msgRef(t)).toBe(server.msgRef(t));
   });
 
-  it('the limits are the owner\'s numbers: 12 containers, 8 live children', () => {
-    expect(server.MAX_CONTAINERS).toBe(12);
-    expect(server.MAX_LIVE_CHILDREN).toBe(8);
+  it('the group rules are one code on both sides (the window applies the owner\'s drop before the server echoes it)', () => {
+    const block = (file: string) => {
+      const src = readFileSync(join(ROOT, file), 'utf-8');
+      return src.slice(src.indexOf('const isObj = '), src.indexOf('state.groups = state.groups.filter((g) => !ids.includes(g.id));'));
+    };
+    expect(block('dashboard/src/lib/superTypes.ts')).toBe(block('src/lib/super/types.ts'));
+    const cards = ['a', 'b', 'c', 'd'].map((id, i) => ({ id, kind: 'chat' as const, ref: id, shape: 'square' as const, place: 'float' as const, ...(i === 3 ? { pos: { x: 0.2, y: 0.3 } } : {}) }));
+    const fixtures: unknown[] = [
+      [{ id: 'grp-1', name: 'Forms', cards: ['a', 'b'], place: 'float' }],
+      [{ id: 'grp-1', name: '', cards: ['a', 'zzz'], place: 'others', pos: { x: 2, y: -1 } }],
+      [{ id: 'grp-1', cards: ['a', 'b'] }, { id: 'grp-2', cards: ['b', 'c', 'd'] }, { id: 'grp-1', cards: ['c', 'd'] }, { id: 'bad', cards: ['c', 'd'] }],
+      'nonsense',
+    ];
+    for (const f of fixtures) expect(client.normalizeGroups(cards, f)).toEqual(server.normalizeGroups(cards, f));
+    const run = (lib: typeof server | typeof client) => {
+      const st = lib.normalizeGroups(cards, []);
+      lib.applyGroupOp(st, { id: 'grp-x', cards: ['d', 'a'] });
+      lib.applyGroupOp(st, { id: 'grp-x', cards: ['b'], name: '  Ödev\nformları ' });
+      lib.applyGroupOp(st, { id: 'grp-y', cards: ['b', 'c'] });
+      lib.leaveGroups(st, ['a']);
+      const mid = JSON.parse(JSON.stringify(st));
+      lib.dissolveGroups(st, ['grp-y']);
+      return { mid, end: lib.normalizeGroups(st.containers, st.groups) };
+    };
+    expect(run(client)).toEqual(run(server));
+  });
+
+  it('the limits are the owner\'s numbers: 12 floating items on the stage, 48 cards in the record, 15 live children', () => {
+    expect(server.MAX_FLOAT).toBe(12);
+    expect(server.MAX_CONTAINERS).toBe(48);
+    expect(server.MAX_LIVE_CHILDREN).toBe(15);
   });
 
   it('the window reads back exactly what the server would push', () => {
@@ -45,12 +98,15 @@ describe('super types — server record <-> window mirror', () => {
       containers: [
         { id: 'c1', kind: 'chat', ref: 'child-1', shape: 'tall', place: 'float', pos: { x: 0.25, y: 0.5 }, title: 'Login fix' },
         { id: 'c2', kind: 'task', ref: 'login', shape: 'square', place: 'others' },
+        { id: 'c3', kind: 'browser', ref: 'child-1', shape: 'square', place: 'float', by: 'auto' },
       ],
       view: { mode: 'half', card: 'c1' },
       children: { 'child-1': { sessionId: 'child-1', brief: 'Fix the login form', adopted: true, startedAt: 1 } },
       queue: [{ id: 'q1', sessionId: 'child-1', kind: 'question', requestId: 'r1', state: 'pending', createdAt: 2 }],
+      groups: [{ id: 'grp-1', name: 'Pair', cards: ['c1', 'c2'], place: 'float', pos: { x: 0.5, y: 0 } }],
       notes: { 'child-1': 'handover' },
       away: { since: 5, events: 2 },
+      dismissed: [{ kind: 'web', ref: 'http://localhost:5173/', until: 99 }],
     };
     expect(client.readSuperStateView(JSON.parse(JSON.stringify(view)))).toEqual(view);
   });
@@ -68,6 +124,45 @@ describe('super types — server record <-> window mirror', () => {
     expect(v?.containers).toEqual([]);
     expect(v?.queue).toEqual([]);
     expect(v?.notes).toEqual({});
+  });
+
+  it('the presentation layouts are one list, one limit and one resolver on both sides', () => {
+    expect([...client.PRESENT_LAYOUTS]).toEqual([...server.PRESENT_LAYOUTS]);
+    expect([...server.PRESENT_LAYOUTS]).toEqual(['spotlight', 'compare', 'grid', 'filmstrip', 'review']);
+    expect([client.MAX_FILMSTRIP, server.MAX_FILMSTRIP]).toEqual([8, 8]);
+    for (const l of server.PRESENT_LAYOUTS) {
+      expect(client.presentRange(l)).toEqual(server.presentRange(l));
+      expect(client.layoutRule(l)).toBe(server.layoutRule(l));
+    }
+    type C = Pick<server.SuperContainer, 'kind' | 'ref' | 'of'>;
+    const chat: C = { kind: 'chat', ref: 'kid' };
+    const site: C = { kind: 'web', ref: 'http://127.0.0.1:5173/', of: 'kid' };
+    const browser: C = { kind: 'browser', ref: 'kid' };
+    const task = (r: string): C => ({ kind: 'task', ref: r });
+    const agenda: C = { kind: 'agenda', ref: 'agenda' };
+    // [asked layout, cards, the layout both sides resolve to]
+    const fixtures: [unknown, C[], string][] = [
+      [undefined, [task('a')], 'spotlight'],
+      [undefined, [site, chat], 'review'],
+      [undefined, [site, chat, browser], 'review'],
+      [undefined, [chat, agenda], 'compare'],
+      [undefined, [site, chat, agenda], 'grid'],
+      ['review', [task('a'), task('b')], 'compare'],
+      ['grid', [task('a'), task('b')], 'grid'],
+      // An old record: no layout, five cards.
+      [undefined, ['a', 'b', 'c', 'd', 'e'].map(task), 'filmstrip'],
+    ];
+    for (const [asked, cards, want] of fixtures) {
+      expect(server.resolveLayout(asked, cards), JSON.stringify([asked, cards])).toBe(want);
+      expect(client.resolveLayout(asked, cards), JSON.stringify([asked, cards])).toBe(want);
+    }
+    const containers = [{ id: 'w', ...site }, { id: 'c', ...chat }, { id: 'b', ...browser }] as server.SuperContainer[];
+    const raw = { cards: ['w', 'c', 'b'], layout: 'review', layoutBy: 'owner', chat: 'bar' };
+    expect(client.resolvePresent(raw, containers)).toEqual(server.resolvePresent(raw, containers));
+    const body = { presentLayout: { layout: 'grid', cards: ['w', 'c'] }, chat: { value: 'bar', cards: ['w'] }, exit: { cards: ['w'], closing: ['c'] } };
+    expect(client.readOwnerViewFields(body)).toEqual(server.readOwnerViewFields(body));
+    const view = { mode: 'present' as const, cards: ['w', 'c'], layout: 'compare' as const };
+    expect(client.applyOwnerViewFields(view, client.readOwnerViewFields(body))).toEqual(server.applyOwnerViewFields(view, server.readOwnerViewFields(body)));
   });
 
   it('both files carry the MIRRORED comment that sends the next reader to the other one', () => {

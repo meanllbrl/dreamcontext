@@ -12,8 +12,9 @@ import {
   CATEGORICAL_SLOTS, OTHER_COLOR, categoricalColor, colorScale, divergingColor, divergingScale, divergingStep,
   sequentialColor, sequentialScale, sequentialStep,
 } from '../../dashboard/src/components/lab/chart/palette.js';
+import { fileURLToPath } from 'node:url';
 
-const CSS = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/chart/chart.css'), 'utf8');
+const CSS = readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/chart/chart.css'), 'utf8');
 
 /** The `--viz-*` custom properties declared in the block that starts at `selector`. */
 function vizVars(selector: string): Record<string, string> {

@@ -31,6 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { win32PowerShell } from '../proc.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
@@ -63,11 +64,13 @@ import {
   SKIMMABLE_MARKDOWN,
   THREAD_BLOCKS,
   askClause,
+  routineClause,
   buildBoardTurn,
   buildPatternBlock,
   buildTurnLearningDirective,
   markerNonce,
   newTurnNonce,
+  spawnModel,
   type ClaudeExecution,
   type SpawnImpl,
   type TurnBoardContext,
@@ -86,6 +89,7 @@ import {
   type AutomationQuestion,
   type BoardTurnInput,
   type ReviewChannel,
+  type SpawnModelOverride,
 } from './types.js';
 
 /** The reader's WHY for an `is_error` envelope: the result's own opening line,
@@ -102,6 +106,9 @@ export type AncestryProbe = (pid: number) => number[] | null;
  *  cycle in a racing `ps` snapshot must not spin. */
 const ANCESTRY_MAX_HOPS = 64;
 
+/** `pid ppid` per line, like `ps -axo pid=,ppid=`. */
+const WIN_PROCESS_TABLE = "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }";
+
 /**
  * The caller's ancestor pids, nearest first (parent, grandparent, …), stopping
  * before pid 1.
@@ -117,11 +124,21 @@ const ANCESTRY_MAX_HOPS = 64;
 export function defaultAncestryProbe(pid: number): number[] | null {
   let out: string;
   try {
-    out = execFileSync('ps', ['-axo', 'pid=,ppid='], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    // Windows has no `ps`: the same `pid ppid` table comes from CIM. Windows never reparents an
+    // orphan, so a dead parent's pid can be reused; the chain must still contain the run's
+    // recorded child pid, so a false admit needs that exact pid reused as an ancestor.
+    out = process.platform === 'win32'
+      ? execFileSync(win32PowerShell(), ['-NoProfile', '-NonInteractive', '-Command', WIN_PROCESS_TABLE], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 15_000,
+        maxBuffer: 16 * 1024 * 1024,
+      })
+      : execFileSync('ps', ['-axo', 'pid=,ppid='], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        maxBuffer: 16 * 1024 * 1024,
+      });
   } catch {
     return null;
   }
@@ -153,6 +170,8 @@ export interface ProposeInput {
    * run that believes it offered five options and got four should be told.
    */
   choices?: string[];
+  /** A conversation turn proposing a scheduled routine (`propose --routine`). */
+  routine?: boolean;
 }
 
 /**
@@ -246,6 +265,7 @@ export function proposeFromRun(
     // Passed through, never trusted: `parseChoices` strips control characters,
     // truncates each label and caps the count on the way into the record.
     choices: input.choices ?? [],
+    ...(input.routine ? { proposes: 'routine' as const } : {}),
     nowISO: opts.nowISO,
   });
   return { ok: true, card: question };
@@ -334,13 +354,18 @@ export function buildResumeArgs(
   sessionId: string,
   prompt: string,
   scopeArgs?: readonly string[] | null,
+  /** The owner's temporary model for this one message (`spawnModel`); absent everywhere
+   *  but a reply the owner typed with one picked. */
+  override?: SpawnModelOverride | null,
 ): string[] {
   const permission = scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
   const args = ['--resume', sessionId, '-p', prompt, ...permission, '--output-format', 'json'];
   // Same envelope the run was approved with — a verdict must not quietly grant
-  // a bigger model or a higher effort than the hash covers.
-  if (m.model) args.push('--model', m.model);
-  if (m.effort) args.push('--effort', m.effort);
+  // a bigger model or a higher effort than the hash covers. The one exception is
+  // the owner picking one for the message they are typing right now.
+  const { model, effort } = spawnModel(m, override);
+  if (model) args.push('--model', model);
+  if (effort) args.push('--effort', effort);
   return args;
 }
 
@@ -396,6 +421,9 @@ export interface VerdictOptions extends BoardTurnInput {
   /** Called once, the moment this message stops WAITING and holds the run lock. A queued
    *  thread reply uses it to tell the reader "queued" from "being read". */
   onLockAcquired?: () => void;
+  /** The owner's temporary model for this message (AI Team). Validated by the route against
+   *  the model list; applied to this resume's argv only. */
+  override?: SpawnModelOverride | null;
 }
 
 /** What answering a question produced. */
@@ -499,7 +527,7 @@ function buildAnswerPreamble(q: AutomationQuestion, answer: string, turn?: TurnB
     return [
       COMMON_FRAME,
       '',
-      `A human answered the question you stopped to ask ("${q.question}"). Their ANSWER is the last block below.`,
+      `A human answered the question you stopped to ask (${q.id}: "${q.question}"). Their ANSWER is the last block below.`,
       'Continue the job accordingly, and do not ask the same thing again. Your final message is recorded',
       'as what actually happened, so state the RESULT plainly: what you did, and anything that did not go',
       'as expected.',
@@ -513,7 +541,7 @@ function buildAnswerPreamble(q: AutomationQuestion, answer: string, turn?: TurnB
   return [
     COMMON_FRAME,
     '',
-    `A human answered the question you stopped to ask ("${q.question}").`,
+    `A human answered the question you stopped to ask (${q.id}: "${q.question}").`,
     '',
     fenceCorrection(answer),
     '',
@@ -672,9 +700,15 @@ export async function resumeWithAnswer(
     }
     const claimed = claim.question;
 
+    // The run hints default to the question's OWN run, so a session resumed from a button
+    // press knows it is inside a run (its `post` lands in that run's thread, and
+    // `automations create` holds it to the answer it was given) exactly as a reply does.
+    const spawnOpts: VerdictOptions = opts.env
+      ? opts
+      : { ...opts, env: { DREAMCONTEXT_AUTOMATION_SLUG: question.slug, DREAMCONTEXT_AUTOMATION_RUN: question.runFiredAt } };
     const execution = await spawnSessionResume(
       contextRoot, envelope.manifest, question.runFiredAt, sessionId,
-      buildAnswerPreamble(question, answerText, turn), opts, resume,
+      buildAnswerPreamble(question, answerText, turn), spawnOpts, resume,
     );
 
     if (!execution.spawned) {
@@ -789,7 +823,7 @@ function spawnSessionResume(
 
   function spawnOn(account: AutomationAccount): Promise<ClaudeExecution> {
     ensureSandbox(account.configDir, opts.home);
-    return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt), scopeArgs), {
+    return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt), scopeArgs, opts.override), {
       cwd: dirname(contextRoot),
       timeoutMs,
       // `accountEnvFor` FIRST, so a resume runs on the account picked above.
@@ -897,7 +931,7 @@ export function buildThreadMessagePreamble(
   /** Optional so callers written before the ask clause existed keep working; absent reads
    *  as `review: off`, the answer that never names a verb the CLI would refuse. `pattern`
    *  and `learning` add the agent's notes and the learning directive. */
-  m?: Pick<AutomationManifest, 'slug' | 'review'> & Partial<Pick<AutomationManifest, 'pattern' | 'learning'>>,
+  m?: Pick<AutomationManifest, 'slug' | 'review'> & Partial<Pick<AutomationManifest, 'pattern' | 'learning' | 'agent'>>,
   /** This turn's nonce and board material. The resume always passes one; a test may not. */
   turn?: TurnBoardContext | null,
 ): string {
@@ -921,6 +955,7 @@ export function buildThreadMessagePreamble(
     // decision to put to them, is most often the answer: brief it the way the run was briefed.
     THREAD_BLOCKS.trim(),
     askClause(m ?? { slug: '<slug>', review: 'off' }).trim(),
+    ...(m ? [routineClause(m)] : []),
     ...(turn ? boardParts(turn) : []),
     ...(pattern ? ['', pattern] : []),
     ...(learning ? ['', learning] : []),

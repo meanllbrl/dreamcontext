@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DELEGATE_MARK_GRACE_MS, OPEN_LATCH, RECAP_AWAY_MS, actionGeneration, adoptionBody, childMarks, delegateArgs,
-  delegateExpired, delegateMarkUntil, elapsedLabel, shownChild, hasOwnKey, headAlarm, homedSessions,
+  delegateExpired, delegateMarkUntil, elapsedLabel, shownChild, hasOwnKey, headAlarmOnce, _resetRaisedHeads, linkOpensSuperStage, presenceChatId, homedSessions,
   isSuperSession, knownEventKind, lastLineOf, latchClick, latchSeen, markedChildren, optionsFit, ownerQueueCount, permissionSummary,
   placeDelegatedChild, queueHead, shouldRecap, superAnswerPicks, superEventOf, superEventText,
   superSendRefusal, superWindowRefusal, terminalTabs, windowTabsFor, type HandoverTab,
@@ -207,17 +207,35 @@ describe('the queue strip\'s head (D7)', () => {
     expect(ownerQueueCount({ queue: [...q, item('f', { kind: 'permission' }), item('g', { state: 'escalated' })] })).toBe(2);
   });
 
-  it('ONE alarm per head: a new owner head raises, the same head re-pushed does not, an empty head resets', () => {
+  it('ONE alarm per item, ever: re-pushed, remounted, or back at the head after another, it rings once (AC6)', () => {
+    _resetRaisedHeads();
     const p = item('p1', { kind: 'permission' });
-    let a = headAlarm(null, p);
-    expect(a).toEqual({ raise: true, key: 'p1' });
-    a = headAlarm(a.key, p);
-    expect(a.raise).toBe(false);
-    a = headAlarm(a.key, item('q9', { state: 'escalated' }));
-    expect(a).toEqual({ raise: true, key: 'q9' });
-    a = headAlarm(a.key, null);
-    expect(a).toEqual({ raise: false, key: null });
-    expect(headAlarm(null, item('q', { state: 'pending' })).raise).toBe(false);
+    expect(headAlarmOnce('acme', p)).toBe(true);
+    // The same head re-pushed, or the strip remounted (a ref would have forgotten): silent.
+    expect(headAlarmOnce('acme', p)).toBe(false);
+    const q = item('q9', { state: 'escalated' });
+    expect(headAlarmOnce('acme', q)).toBe(true);
+    expect(headAlarmOnce('acme', null)).toBe(false);
+    expect(headAlarmOnce('acme', q)).toBe(false);
+    // Another project is its own bucket; a plain question never rings.
+    expect(headAlarmOnce('other', p)).toBe(true);
+    expect(headAlarmOnce('acme', item('q', { state: 'pending' }))).toBe(false);
+  });
+
+  it('the presence report names the super agent while handed over, the focused pane otherwise (AC3)', () => {
+    const base = { expanded: true, isMobile: false, handedOver: true, superSession: 'sup', focusedChat: 'hidden-pane' };
+    expect(presenceChatId(base)).toBe('sup');
+    expect(presenceChatId({ ...base, handedOver: false })).toBe('hidden-pane');
+    expect(presenceChatId({ ...base, expanded: false })).toBe(null);
+    expect(presenceChatId({ ...base, isMobile: true })).toBe(null);
+    expect(presenceChatId({ ...base, handedOver: false, focusedChat: null })).toBe(null);
+  });
+
+  it('a link to the handed-over super agent opens its stage, any other link resumes as before (AC4)', () => {
+    expect(linkOpensSuperStage('sup', { enabled: true, session: 'sup' })).toBe(true);
+    expect(linkOpensSuperStage('child', { enabled: true, session: 'sup' })).toBe(false);
+    expect(linkOpensSuperStage('sup', { enabled: false, session: 'sup' })).toBe(false);
+    expect(linkOpensSuperStage('sup', null)).toBe(false);
   });
 
   it('options at full width or not at all: hide on overflow, back only once the row is as wide as they needed (end review r8)', () => {
@@ -292,8 +310,10 @@ describe('placement while handed over (D5, D9)', () => {
 describe('window verbs while handed over (D4b, the browser re-check)', () => {
   it('the Super Agent drives with `super` verbs only; a child cannot open or split; anyone else is untouched', () => {
     expect(superWindowRefusal('super', 'state', true)).toMatch(/super/);
-    expect(superWindowRefusal('super', 'mode', false)).toMatch(/super/);
-    for (const verb of ['new', 'split', 'join', 'focus', 'mode', 'model', 'effort', 'close', 'state']) {
+    expect(superWindowRefusal('super', 'join', false)).toMatch(/super/);
+    // A child verb (`super send`/`super update`) with no child resolved is refused all the same.
+    expect(superWindowRefusal('super', 'mode', false)).not.toBe(null);
+    for (const verb of ['new', 'split', 'join', 'focus', 'close', 'state']) {
       expect(superWindowRefusal('super', verb, true, { target: { sid: 'chat-2', pin: 'c1', conversation: 'c1' }, superSession: SUPER, children: new Set(['c1']) }), verb).not.toBe(null);
     }
     expect(superWindowRefusal('child', 'new', true)).toMatch(/cannot open/);
@@ -317,6 +337,21 @@ describe('window verbs while handed over (D4b, the browser re-check)', () => {
     // Not handed over: no child is marked, so nothing can be sent to.
     expect(send({ sid: 'chat-2', pin: 'c1', conversation: 'c1' }, new Set())).toMatch(/only a child/);
     expect(superSendRefusal({ sid: '', pin: 'c1', conversation: 'c1' }, SUPER, children)).toMatch(/no such child/);
+  });
+
+  it('`super update` travels as `window model|effort|mode`: allowed only into a marked child, like `send`', () => {
+    const children = new Set(['c1']);
+    for (const verb of ['model', 'effort', 'mode']) {
+      const run = (target: Parameters<typeof superSendRefusal>[0], kids: ReadonlySet<string> = children) =>
+        superWindowRefusal('super', verb, true, { target, superSession: SUPER, children: kids });
+      expect(run({ sid: 'chat-2', pin: 'c1', conversation: 'c1' }), verb).toBe(null);
+      expect(run({ sid: 'chat-3', pin: 'free', conversation: 'free' }), verb).toMatch(/only a child/);
+      expect(run({ sid: 'chat-9', pin: SUPER, conversation: SUPER }, new Set([SUPER])), verb).toMatch(/itself/);
+      expect(run({ sid: 'chat-2', pin: 'c1', conversation: null }), verb).toMatch(/not running/);
+      expect(run(null), verb).toMatch(/no such child/);
+      // Without the verb's target resolved (no `send` arg at all) it is refused.
+      expect(superWindowRefusal('super', verb, true), verb).not.toBe(null);
+    }
   });
 
   it('the Super Agent\'s own tab list holds only its marked children', () => {
@@ -366,7 +401,7 @@ describe('`super delegate` arguments', () => {
     expect(delegateArgs({ prompt: 'go', mode: 'super' })).toMatchObject({ ok: true, mode: 'basic' });
     expect(delegateArgs({ prompt: 'go', mode: 'assistant' })).toMatchObject({ ok: true, mode: 'basic' });
     expect(delegateArgs({ prompt: 'go', mode: 'develop', brief: 'Ship\nit', model: 'opus', effort: 'high' }))
-      .toEqual({ ok: true, prompt: 'go', mode: 'develop', model: 'opus', effort: 'high', title: 'Ship it' });
+      .toEqual({ ok: true, prompt: 'go', mode: 'develop', model: 'opus', effort: 'high', title: 'Ship it', mcp: [] });
   });
 });
 

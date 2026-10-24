@@ -54,13 +54,13 @@ describe('read and write', () => {
     });
     expect(written.children['c-1'].brief).toBe('Fix login');
     expect(readdirSync(join(root, 'state')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
-    expect(statSync(join(root, SUPER_STATE_REL)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(join(root, SUPER_STATE_REL)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(await readSuperState(root)).toEqual(written);
   });
 
   it('serializes concurrent updates per vault (none is lost)', async () => {
     await Promise.all(Array.from({ length: 20 }, (_, i) => updateSuperState(root, (s) => {
-      s.queue.push({ id: `q-${i}`, sessionId: 'c-1', kind: 'idle', state: 'pending', createdAt: i });
+      s.queue.push({ id: `q-${i}`, sessionId: 'c-1', kind: 'done', state: 'pending', createdAt: i });
     })));
     expect((await readSuperState(root)).queue.map((q) => q.id).sort()).toEqual(Array.from({ length: 20 }, (_, i) => `q-${i}`).sort());
   });
@@ -127,14 +127,14 @@ describe('hostile fields are dropped (D2)', () => {
     expect(s.notes).toEqual({ 'c-1': 'handover' });
   });
 
-  it('cards: unknown kinds dropped, ids unique, shape and place defaulted per kind, at most 12 (plan-r8 F1)', () => {
+  it('cards: unknown kinds dropped, ids unique, shape and place defaulted per kind, at most MAX_CONTAINERS (plan-r8 F1)', () => {
     const containers = [
       { id: 'a', kind: 'chat', ref: 'c-1', shape: 'square', place: 'others' },
       { id: 'a', kind: 'chat', ref: 'c-2', shape: 'tall', place: 'float' },
       { id: 'b', kind: 'video', ref: 'x', shape: 'tall', place: 'float' },
       { id: 'c', kind: 'web', ref: 'https://example.com', shape: 'round', place: 'nowhere' },
       { id: 'd', kind: 'task', ref: 'my-task' },
-      ...Array.from({ length: 20 }, (_, i) => ({ id: `n-${i}`, kind: 'insight', ref: `i-${i}`, shape: 'square', place: 'float' })),
+      ...Array.from({ length: MAX_CONTAINERS + 8 }, (_, i) => ({ id: `n-${i}`, kind: 'insight', ref: `i-${i}`, shape: 'square', place: 'float' })),
     ];
     const s = sanitizeSuperState(raw({ containers }));
     expect(s.containers).toHaveLength(MAX_CONTAINERS);
@@ -143,6 +143,30 @@ describe('hostile fields are dropped (D2)', () => {
       { id: 'c', kind: 'web', ref: 'https://example.com', shape: 'tall', place: 'float' },
       { id: 'd', kind: 'task', ref: 'my-task', shape: 'square', place: 'float' },
     ]);
+  });
+
+  it('jarvis r9: a browser card names a recorded child; `by` survives only as \'auto\'; dismissals expire and are capped', () => {
+    const s = sanitizeSuperState(raw({
+      children: { 'kid-1': child('kid-1') },
+      containers: [
+        { id: 'browser-a', kind: 'browser', ref: 'kid-1', shape: 'square', place: 'float', by: 'auto' },
+        { id: 'browser-b', kind: 'browser', ref: 'stranger', shape: 'square', place: 'float' },
+        { id: 'browser-c', kind: 'browser', ref: 'sess-super', shape: 'square', place: 'float' },
+        { id: 'web-a', kind: 'web', ref: 'http://localhost:5173/', shape: 'tall', place: 'float', by: 'agent' },
+      ],
+      dismissed: [
+        { kind: 'web', ref: 'http://localhost:5173/', until: 2_000 },
+        { kind: 'web', ref: 'http://localhost:3000/', until: 500 },
+        { kind: 'nope', ref: 'x', until: 2_000 },
+        ...Array.from({ length: 60 }, (_, i) => ({ kind: 'browser', ref: `k-${i}`, until: 3_000 + i })),
+      ],
+    }), { now: 1_000 });
+    expect(s.containers.map((c) => c.id)).toEqual(['browser-a', 'web-a']);
+    expect(s.containers[0].by).toBe('auto');
+    expect(s.containers[1].by).toBeUndefined();
+    expect(s.dismissed).toHaveLength(50);
+    expect(s.dismissed.some((d) => d.ref === 'http://localhost:3000/')).toBe(false);
+    expect(s.dismissed.at(-1)).toEqual({ kind: 'browser', ref: 'k-59', until: 3_059 });
   });
 
   it('a record written for the r7 ring (sizes, regions, a focus flag) reads back as floating cards', () => {
@@ -173,11 +197,14 @@ describe('hostile fields are dropped (D2)', () => {
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'half', card: 'b' } })).view).toEqual({ mode: 'half', card: 'b' });
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'half', card: 'gone' } })).view).toEqual({ mode: 'float' });
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'present', cards: ['b', 'gone', 'b', 'a'] } })).view)
-      .toEqual({ mode: 'present', cards: ['b', 'a'] });
+      .toEqual({ mode: 'present', cards: ['b', 'a'], layout: 'compare' });
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'present', cards: ['gone'] } })).view).toEqual({ mode: 'float' });
     expect(sanitizeSuperState(raw({ containers: cards, view: { mode: 'zoom' } })).view).toEqual({ mode: 'float' });
     const many = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, kind: 'task', ref: `t-${i}` }));
-    expect(sanitizeSuperState(raw({ containers: many, view: { mode: 'present', cards: many.map((c) => c.id) } })).view.cards).toHaveLength(4);
+    expect(sanitizeSuperState(raw({ containers: many, view: { mode: 'present', cards: many.map((c) => c.id) } })).view).toEqual({ mode: 'present', cards: many.map((c) => c.id), layout: 'filmstrip' });
+    const nine = Array.from({ length: 9 }, (_, i) => ({ id: `q${i}`, kind: 'task', ref: `t-q${i}` }));
+    expect(sanitizeSuperState(raw({ containers: nine, view: { mode: 'present', cards: nine.map((c) => c.id), layout: 'grid' } })).view)
+      .toEqual({ mode: 'present', cards: nine.slice(0, 8).map((c) => c.id), layout: 'filmstrip' });
   });
 
   it('closing a card the view names drops it from the view on the next write', async () => {
@@ -189,7 +216,7 @@ describe('hostile fields are dropped (D2)', () => {
       s.view = { mode: 'present', cards: ['a', 'b'] };
     });
     let st = await updateSuperState(root, (s) => { s.containers = s.containers.filter((c) => c.id !== 'a'); });
-    expect(st.view).toEqual({ mode: 'present', cards: ['b'] });
+    expect(st.view).toEqual({ mode: 'present', cards: ['b'], layout: 'spotlight' });
     st = await updateSuperState(root, (s) => { s.view = { mode: 'half', card: 'b' }; });
     st = await updateSuperState(root, (s) => { s.containers = []; });
     expect(st.view).toEqual({ mode: 'float' });

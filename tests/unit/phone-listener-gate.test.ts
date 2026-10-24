@@ -205,7 +205,7 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
     for (const [m, p] of [
       ['POST', '/api/window/focus'], ['GET', '/api/assistant/status'], ['POST', '/api/agent/open-terminal'],
       ['POST', '/api/launcher/register'], ['POST', '/api/agent/secret'], ['POST', '/api/handsfree/mac/stop'],
-      ['POST', '/api/admin/shutdown'], ['POST', '/api/agent/voice/tts'], ['POST', '/api/notify'], ['POST', '/api/agent/drop'],
+      ['POST', '/api/admin/shutdown'], ['POST', '/api/agent/voice/tts'], ['POST', '/api/notify'], ['POST', '/api/agent/grant'],
       ['POST', '/api/brain/auth/device/start'], ['GET', '/api/launcher/status'], ['POST', '/api/agent/install'],
     ] as const) {
       const r = await request(phonePort, m, p, H(), m !== 'GET' ? '{}' : undefined);
@@ -303,6 +303,36 @@ describe('the projects chosen at start (AC16)', () => {
     expect(r.headers.location).toBe(`/?vault=${THIRD}`);
     const live = JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H(PROJECT))).body);
     expect(live).toEqual({ chats: [], draining: [] });
+  });
+
+  it('a handed-over Super Agent: live-chats lists its one row and no chat; the phone may not reopen or take its session', async () => {
+    const { SUPER_STATE_REL, primeSuperIndex, resetSuperIndex } = await import('../../src/lib/super/store.js');
+    const { emptySuperState } = await import('../../src/lib/super/types.js');
+    const SUPER_ID = '55555555-5555-4555-8555-555555555555';
+    const ctx = join(dir, PROJECT, '_dream_context');
+    setMacExposedVaults([PROJECT]);
+    try {
+      writeFileSync(join(ctx, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SUPER_ID, enabled: true }));
+      await primeSuperIndex([ctx]);
+      const live = JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H(PROJECT))).body);
+      expect(live.chats).toEqual([]);
+      expect(live.supers).toEqual([expect.objectContaining({ conversationId: SUPER_ID, vault: PROJECT, live: false })]);
+      // No super child runs: nothing to mirror, and never a plain resume or reattach of it.
+      for (const q of [`resume=${SUPER_ID}`, `resume=${SUPER_ID}&reattach=1`, `sessionId=${SUPER_ID}`, `mode=super&sessionId=${SUPER_ID}`]) {
+        expect(await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&${q}`, { cookie, origin: ORIGIN })).toBe(403);
+      }
+      // Taken back: today's list, and the parked session still never opens from the phone (it
+      // would hold the session from the next hand-over).
+      writeFileSync(join(ctx, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SUPER_ID, enabled: false }));
+      await primeSuperIndex([ctx]);
+      expect(JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H(PROJECT))).body)).toEqual({ chats: [], draining: [] });
+      for (const q of [`resume=${SUPER_ID}&reattach=passive`, `resume=${SUPER_ID}`]) {
+        expect(await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&${q}`, { cookie, origin: ORIGIN })).toBe(403);
+      }
+    } finally {
+      rmSync(join(ctx, SUPER_STATE_REL), { force: true });
+      resetSuperIndex();
+    }
   });
 
   it('one chosen: a request naming none runs on it (never the pinned root)', async () => {

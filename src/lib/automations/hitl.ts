@@ -274,6 +274,8 @@ export function readQuestion(path: string): AutomationQuestion | null {
     answer: asString(raw.answer) || null,
     resolutionNote: asString(raw.resolutionNote) || null,
     resolutionError: asString(raw.resolutionError) || null,
+    ...(raw.proposes === 'routine' ? { proposes: 'routine' as const } : {}),
+    ...(asString(raw.routine) ? { routine: asString(raw.routine) } : {}),
     steers: parseSteers(raw.steers),
     channelRefs:
       refs && typeof refs === 'object' && !Array.isArray(refs)
@@ -392,6 +394,8 @@ export interface CreateQuestionInput {
   target?: RunKind;
   /** `kind: 'approval'` only — the asking run's task, so approving can re-run with it. */
   task?: AutomationQuestion['task'] | null;
+  /** See {@link AutomationQuestion.proposes}. */
+  proposes?: 'routine';
   /** Injected for determinism in tests; defaults to now. */
   nowISO?: string;
 }
@@ -431,6 +435,7 @@ export function createQuestion(contextRoot: string, input: CreateQuestionInput):
     answer: null,
     resolutionNote: null,
     resolutionError: null,
+    ...(input.proposes === 'routine' && input.kind === 'flow-hitl' ? { proposes: 'routine' as const } : {}),
     steers: [],
     channelRefs: {},
     createdAt: now,

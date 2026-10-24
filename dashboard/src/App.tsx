@@ -19,6 +19,7 @@ import { InboxWindow } from './components/appLink/InboxWindow';
 import type { StartIntent } from './lib/desktop';
 import { isMacPhoneSurface } from './lib/phoneSurface';
 import './styles/global.css';
+import './styles/tags.css';
 
 /*
  * Boot, before the first QueryClient polls: the window's focus/visibility (every poll and every

@@ -44,6 +44,55 @@ describe('agents/sleep-tasks.md — the protocol the bar cannot enforce', () => 
   it('tells the specialist how a review-band refusal is lifted', () => {
     expect(content).toContain('--neighbor-checked');
   });
+
+  it.each([
+    ['the model', 'A **sub-task** is a step of a parent'],
+    ['the placement order', 'Every owner ask lands somewhere — in this order.'],
+    ['the sub-task create', '--parent <parent> --basis ask --quote'],
+    ['the top-level rule', 'ONLY for an owner ask or a defect'],
+    ['progress on the open wave', 'takes its progress on the OPEN wave'],
+    ['the roll-up', '**Roll-up.**'],
+    ['learning from objections', 'tasks objections --unlearned'],
+    ['the only rule writers', 'tasks rules set --title'],
+    ['the owner-asks report line', '- Owner asks: <N> → criterion <a> · subtask <b> · task <c> · not placed <d>'],
+    ['placing is not a status change', 'Placing an ask is NOT a status change'],
+    ['a question about a defect is an ask', '**What counts as an ask.**'],
+    ['a shipped ask is placed as done', '**Done in the session is still placed.**'],
+    ['the ticked-criterion form', 'acceptance_criteria -- "- [x] <the ask> (done in session <id>, <commit>)"'],
+    ['"already there" means a criterion', '**"Already on the board" means a criterion.**'],
+    ['the check that a criterion exists', "sed -n '/^## Acceptance Criteria/,/^## /p'"],
+    ['a sent button text is an owner turn', 'including a suggested action or button text they sent as their turn'],
+    ['a completed task still takes a shipped ask', 'A completed task whose changelog records the fix takes the ask as a ticked criterion too.'],
+  ])('describes %s', (_what, marker) => {
+    expect(content).toContain(marker);
+  });
+
+  it('no longer tells the specialist to fold in when in doubt', () => {
+    expect(content).not.toMatch(/when in doubt, fold in/i);
+  });
+
+  it('never sends an owner ask that shipped to the changelog instead of the board', () => {
+    // run-20261023-1201: the bar's "already-shipped work → a changelog entry" dropped
+    // three owner asks the session had already done.
+    expect(content).toContain('not already-shipped work nobody asked for');
+    expect(content).not.toMatch(/and not already-shipped work\*\*/);
+  });
+});
+
+describe('skill/references — sub-tasks, objections and the asks line', () => {
+  it.each([
+    ['skill/references/tasks-and-features.md', 'tasks parent <slug> <parent-slug|clear>'],
+    ['skill/references/tasks-and-features.md', 'tasks object <slug> --as subtask-of'],
+    ['skill/references/tasks-and-features.md', 'tasks rules revert R2'],
+    ['skill/references/tasks-and-features.md', 'Waves are sub-tasks.'],
+    ['skill/references/cli-reference.md', '`tasks objections [--unlearned] [--json]`'],
+    ['skill/references/cli-reference.md', '--asks criterion=a,subtask=b,task=c,unplaced=d'],
+    ['skill/references/sleep.md', "Relay sleep-tasks' `Owner asks:` line as `--asks`"],
+    ['skill/references/sleep-specialists.md', 'Why objections become rules.'],
+    ['skill/references/sleep-specialists.md', 'Why done-in-session and "already on the board" are not skips.'],
+  ])('%s documents %s', (file, marker) => {
+    expect(read(file)).toContain(marker);
+  });
 });
 
 describe('skill/SKILL.md — the awake half of the declined ledger', () => {

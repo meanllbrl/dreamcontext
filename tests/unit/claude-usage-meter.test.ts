@@ -111,7 +111,7 @@ describe('the store', () => {
     recordUsageMeter(sandbox, r, home);
     expect(readUsageMeter(sandbox, home)).toEqual(r);
     expect(readUsageMeter(join(home, 'other'), home)).toBeNull();
-    expect(statSync(usageMeterFilePath(home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(usageMeterFilePath(home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('an unchanged reading inside 30s is not rewritten; a changed one is', () => {

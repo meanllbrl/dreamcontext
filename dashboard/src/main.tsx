@@ -11,6 +11,7 @@ import { installExternalLinkHandler } from './lib/externalLinks';
 import { installAppLinkListener } from './lib/appLink';
 import { sweepExpiredPins } from './lib/pinStore';
 import { sweepExpired as sweepExpiredChecklists } from './lib/checklistStore';
+import { isFramedByForeignParent } from './lib/frameGuard';
 
 // A link is the one thing on the page that can destroy the app: the desktop shell has
 // no back button, so following a URL in-place leaves nothing to return with. Install
@@ -44,13 +45,22 @@ installAppLinkListener();
 // Inside the desktop shell the window uses the macOS "overlay" title-bar style:
 // the native title bar is transparent and the traffic-light buttons float over
 // our own header. Flag the document so the header can reserve room for them.
+// Windows/Linux keep the native title bar: no traffic lights, so `tauri-native-frame`
+// lets a header drop the gap it reserves for them.
 const isTauri = !!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 if (isTauri && navigator.platform.toLowerCase().includes('mac')) {
   document.documentElement.classList.add('tauri-overlay');
+} else if (isTauri) {
+  document.documentElement.classList.add('tauri-native-frame');
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+// Framed by a page of another origin (an approved web card redirecting its frame here, a site
+// clickjacking an "allow" button): draw nothing. The server's frame gate is the first wall;
+// this is the one an old WebKit without Fetch Metadata still meets.
+if (!isFramedByForeignParent(window)) {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}

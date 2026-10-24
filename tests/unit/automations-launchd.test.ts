@@ -439,7 +439,7 @@ describe.skipIf(!onDarwin)('installDispatcher', () => {
 
     const wrapperPath = dispatcherWrapperPath(home);
     const plistPath = dispatcherPlistPath(home);
-    expect(statSync(wrapperPath).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(wrapperPath).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
     expect(statSync(plistPath).isFile()).toBe(true);
   });
 

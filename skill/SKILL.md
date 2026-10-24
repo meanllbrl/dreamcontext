@@ -90,16 +90,16 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Memory recall** | Hybrid (BM25 + embeddings), 3 tiers: local default; cloud-index/cloud via `recall cloud enable` (user only, agents never); auto-injected | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory — fire reminders when context matches | this file |
-| **Whiteboard** | live boards (`whiteboard`) with agent cards; default Control Panel. Verify with `whiteboard render`, never a browser | [whiteboards.md](references/whiteboards.md) |
+| **Whiteboard** | drawings, live widgets, agent cards. Explain = draw (`draw --spec`). Verify with `whiteboard render`, never a browser | [whiteboards.md](references/whiteboards.md) |
 | **Automations** | Scheduled headless `claude` jobs: dated output, learned pattern, a `## Flow` graph. A run that must ask hands over a **question** (chat, CLI or a **per-automation** Telegram bot); replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card). A usage-limited run publishes **nothing**. Disabled until approved here; private until `automations share <slug>` | [automations.md](references/automations.md) |
-| **Agents** | Who does the work (`agents/<slug>.md`, own **Agents** page, approved there): automations pick one, tasks are assigned to one (`tasks assign-agent`), Chat and boards talk to one | [automations.md](references/automations.md#agents-who-does-the-work) |
+| **Agents** | Who does the work (`agents/<slug>.md`), the dashboard's **AI Team**: automations pick one, tasks are assigned to one, Chat and boards talk to one. Routines: `propose --routine` then `create --answer <qid>` | [automations.md](references/automations.md#ai-team-the-dashboard-page) |
 | **Sleep / consolidation** | Multi-agent RemSleep cycle that folds changes back into the brain | [sleep.md](references/sleep.md) |
 | **Taxonomy** | Project tag vocabulary that drives recall precision | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **✅ Cloud task sync (ClickUp _or_ GitHub)** | **Yes, this exists.** Bidirectional sync to **one** backend at a time. | [integrations.md](references/integrations.md) |
 | **Duplicate task family repair** | `dreamcontext tasks dedup [--dry-run] [--yes]` merges `state/<slug>-2/-3/-4.md` duplicates. Local-only; `--dry-run` first. | [troubleshooting.md](references/troubleshooting.md#duplicate-tasks--the-same-task-appears-24-in-tasks-list) |
 | **Troubleshooting** | Symptom, cause and fix for broken-brain states | [troubleshooting.md](references/troubleshooting.md) |
 | **Web dashboard** | Local React UI: Kanban, brain graph, sleep tracker, council hall, an in-app Claude Code agent and the **Chat view BETA**. **Chat view only**: `dream-view`/`dream-actions` reach the agent through a surface briefing appended to a Chat spawn alone; anywhere else the fence renders as raw JSON | [integrations.md](references/integrations.md) |
-| **Chat modes (Basic / Planner / Developer / Train Me)** | **Chat view only.** A per-session system-prompt append, versioned in the picker: **Basic** (plain Claude Code), **Planner** (`plan`: goal-skill's planning half → a task), **Developer** (`develop`: its implementing half), **Train Me** (ALPHA: learns your taste, writes a pattern). The **Assistant** has its own mode in the notch, never in the picker; nor **Super Agent** (`super`, opt-in in Settings) | [integrations.md](references/integrations.md) |
+| **Chat modes (Basic / Planner / Developer / Train Me)** | A prompt append: **Basic** (plain Claude Code), **Planner** (`plan`: plans into a task), **Developer** (`develop`: builds it), **Train Me** (ALPHA: learns your taste). The **Assistant** has its own mode in the notch, never in the picker; nor **Super Agent** (`super`, opt-in in Settings) | [integrations.md](references/integrations.md) |
 | **Desktop app** | macOS app: multi-vault launcher, federation board, the dreamcontext Assistant (notch, hotkey, voice) | [integrations.md](references/integrations.md) |
 | **Notifications (`dreamcontext://`)** | A clicked banner opens its place; `dreamcontext notify` posts one | [cli-reference.md](references/cli-reference.md#notifications) |
 | **Federation** | Recall across multiple projects (vaults) live, read-only | [integrations.md](references/integrations.md) |
@@ -142,7 +142,7 @@ Two routing rules that override surface reading:
 | "remind me when / next time X comes up" | **Trigger** | Prospective memory — fires when context matches | `dreamcontext trigger add <when> <remind>` |
 | "make an agent", "ajan oluştur", **or the problem-shape:** "one someone reused by jobs, tasks and chat" | **Agent**: `agents/<slug>.md` | WHO does the work: prompt, model, home board; no schedule. Not a person | `dreamcontext agents create <slug> --title "…" --prompt "…"` |
 | "every evening at 6pm, summarize today", "her akşam / her cuma / her gün", **or the problem-shape:** "it happens on its own while nobody is at the keyboard" | **Automation**: `automations/<slug>.md` | A schedule plus a job for the agent it picks, run unattended. **Private to this machine by default** (say so; `automations share <slug>` shares it) | `dreamcontext automations create <slug> --agent <a> --title "…" --days <daily\|mon,wed> --at HH:MM` (capture protocol → [automations.md](references/automations.md)) |
-| "board / whiteboard / control panel / kontrol paneli / pano" | **Whiteboard**: `whiteboards/<slug>/` | A widget canvas; not a knowledge `.excalidraw.md` or a Tasks board view. A metric on it is a live `insight` widget, never a drawn chart | `dreamcontext whiteboard create "<name>"`, `whiteboard add <slug> insight` |
+| "board / whiteboard / control panel / kontrol paneli / pano" | **Whiteboard**: `whiteboards/<slug>/` | A canvas, not a knowledge `.excalidraw.md` or Tasks view. Explaining is a drawing (excalidraw kit), never notes; a metric a live `insight` widget | `whiteboard draw <slug> --spec`, `whiteboard add <slug> insight` |
 | "version / release / sprint / milestone" | **Release entry** — `RELEASES.json` | A planning version or shipped release | `dreamcontext core releases add` |
 | "add a teammate", "who am I", "kim çalışıyor" | **Person** — `people/<slug>.md` (constitution) + a row in `people/people.json` (roster) | A **human who works in this vault**; the constitution renders verbatim when they are ACTIVE on this machine. **Not knowledge** | `dreamcontext people add "<Name>" --email <address>`; `dreamcontext people whoami [--set <slug>]` binds THIS machine |
 
@@ -351,13 +351,13 @@ Status: `todo → in_progress → in_review → completed` by default. A project
 
 ## Context handoff — ECO mode (opt-in, and it escalates)
 
-When a vault or pane has it on, a long session gets an injected `[context handoff]` note that gets louder: at **300k–650k** it is firm (hand off unless the task is nearly done; "I'm mid-task" is not a reason), at **650k+** severe (finish the turn, then hand off, or tell the user why you keep going). A handoff is ONE command, every part required:
+When on, a long session gets a `[context handoff]` note that gets louder: at **300k–650k** it is firm (hand off unless the task is nearly done; "I'm mid-task" is not a reason), at **650k+** severe (finish the turn, then hand off or tell the user why not). A handoff is ONE command, every part required:
 
 ```bash
 dreamcontext tasks handoff <slug> --done "…" --next "…" --decisions "…" --learned "…" --style "…" --files "…"
 ```
 
-It refuses while a part is missing. Details → [tasks-and-features.md](references/tasks-and-features.md) § Context handoff.
+It refuses while a part is missing. Details → [tasks-and-features.md](references/tasks-and-features.md) § Context handoff. Super Agent: `super handoff`, into its own file.
 
 ---
 
@@ -451,5 +451,6 @@ Open these with `Read` when the task needs depth:
 - **[brain-sync.md](references/brain-sync.md)**: whole-project GitHub cloud sync, setup, per-machine auth, cross-OS setup, troubleshooting.
 - **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync (one cloud backend at a time), dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.
 - **[hands-free.md](references/hands-free.md)**: Mac mode.
+- **[super-orchestration.md](references/super-orchestration.md)**: how the Super Agent splits a job list.
 - **[troubleshooting.md](references/troubleshooting.md)**: symptom, cause and careful fix for broken-brain states: duplicate tasks, sync ledger refusals, a stuck brain sync, structure and version drift.
 - **[improving-dreamcontext.md](references/improving-dreamcontext.md)**: the feedback loop, when and how to file.

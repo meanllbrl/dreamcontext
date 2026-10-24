@@ -54,7 +54,7 @@ describe('loadSkillDocs', () => {
     expect(review.slug).toBe('multi-review');
     expect(review.description).toContain('Multi-agent code review');
     expect(review.tags).toEqual(['review', 'sub-agents']);
-    expect(review.relPath).toBe(join('multi-review', 'SKILL.md'));
+    expect(review.relPath).toBe('multi-review/SKILL.md'); // a corpus key: POSIX on every OS
     expect(review.tokens.length).toBeGreaterThan(0);
   });
 

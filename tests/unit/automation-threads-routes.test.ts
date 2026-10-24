@@ -146,8 +146,10 @@ describe('GET /api/automations/threads', () => {
     };
     expect(feed.messages.map((m) => m.runId)).toEqual([RUN_A, RUN_B]);
     expect(feed.messages[1].text).toBe('WAU is down 4%.');
-    expect(feed.unreadTotal).toBe(3);
-    expect(feed.unreadBySlug).toEqual({ digest: 3 });
+    // Two messages: RUN_A posted nothing (counts once), RUN_B posted once. The runner's
+    // own `started` entries are never counted as messages of their own.
+    expect(feed.unreadTotal).toBe(2);
+    expect(feed.unreadBySlug).toEqual({ digest: 2 });
     expect(feed.agents.map((a) => a.slug)).toEqual(['digest']);
   });
 
@@ -164,7 +166,7 @@ describe('GET /api/automations/threads', () => {
     }
     const { res, body } = makeRes();
     await handleAutomationsThreads(makeGetReq('/api/automations/threads'), res, {}, contextRoot);
-    expect((body() as unknown as { unreadTotal: number }).unreadTotal).toBe(3);
+    expect((body() as unknown as { unreadTotal: number }).unreadTotal).toBe(2);
   });
 });
 
@@ -222,7 +224,7 @@ describe('GET /api/automations/:slug/thread — the run\'s whole answer', () => 
     recordFinished(doc);
     const answer = await answerOf();
     expect(answer).not.toBeNull();
-    expect(answer!.path).toBe(join('automations', 'output', 'digest', '2026-09-20.md'));
+    expect(answer!.path).toBe('automations/output/digest/2026-09-20.md'); // brain-relative: POSIX on every OS
     expect(answer!.text.startsWith('WAU is down 4%.')).toBe(true);
     expect(answer!.text).toContain('Three cohorts moved.');
     expect(answer!.truncated).toBe(false);

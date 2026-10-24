@@ -245,10 +245,11 @@ function fingerprint(p: string): string | null {
  */
 export function realTouchables(realCtx: string): Map<string, string | null> {
   const out = new Map<string, string | null>();
-  for (const sub of [join('state'), join('knowledge', 'patterns')]) {
+  // Keys in the POSIX spelling the round's `touched` list uses, on every OS.
+  for (const sub of ['state', 'knowledge/patterns']) {
     const dir = join(realCtx, sub);
     if (!existsSync(dir)) continue;
-    for (const f of readdirSync(dir)) if (f.endsWith('.md')) out.set(join(sub, f), fingerprint(join(dir, f)));
+    for (const f of readdirSync(dir)) if (f.endsWith('.md')) out.set(`${sub}/${f}`, fingerprint(join(dir, f)));
   }
   return out;
 }

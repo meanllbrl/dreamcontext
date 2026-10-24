@@ -63,6 +63,9 @@ export interface SessionRow {
   /** A child of the handed-over Super Agent (plan-r7 D16): it never makes the project chip
    *  bounce or turn magenta on its own — the Super Agent's queue head speaks for it. */
   superChild?: boolean;
+  /** A row with no session of its own to close (the Super Agent's open question in the folded
+   *  dock): the dock draws no close button on it. */
+  pinned?: boolean;
 }
 
 export interface SessionStatusInput {
@@ -270,7 +273,10 @@ export interface ProjectRollup {
  * {@link wantsALook} — the same call the dock tile makes. Nothing in this function re-states
  * the status taxonomy in its own words, because the two times it did, they drifted.
  */
-export function rollupProject(rows: SessionRow[], opts: { superQueueHead?: boolean } = {}): ProjectRollup {
+export function rollupProject(
+  rows: SessionRow[],
+  opts: { superQueueHead?: boolean | { asker: string | null } } = {},
+): ProjectRollup {
   let live = 0;
   let waiting = 0;
   let alive = 0;
@@ -279,11 +285,25 @@ export function rollupProject(rows: SessionRow[], opts: { superQueueHead?: boole
   // A handed-over Super Agent's children are quiet (D16): a child blocked on a question is
   // still a live, working conversation as far as the chip can tell, but it neither turns the
   // chip magenta nor makes it bounce. Only the queue head the OWNER must answer (a permission,
-  // an escalation) does — once, below.
+  // an escalation, the Super Agent's own question) does — once, below.
   const quiet = (r: SessionRow): SessionRow => (r.superChild && r.info.kind === 'asking'
     ? { ...r, info: { kind: 'working', label: 'working', mood: 'working' }, attention: false }
     : r.superChild ? { ...r, attention: false } : r);
-  const view = rows.map(quiet);
+  // The head is a question like any chat's (owner, 2026-10-22: "Super Agent diğer agent'lar
+  // gibi soru sormalı"): the magenta bubble and the chip's repeating nudge, not a colour alone.
+  // It is the asking CHILD's row when the head is a child's (its permission, its escalated
+  // question); otherwise (the Super Agent's own `ask`, an AI Team approval) the Super Agent's
+  // conversation, which is no row here, counts as one live chat that asks.
+  const head = opts.superQueueHead;
+  const asker = typeof head === 'object' && head ? head.asker : null;
+  let headRow = false;
+  const view = rows.map((r) => {
+    if (asker && r.claudeId === asker && r.kind !== 'shell' && BUCKET_BY_KIND[r.info.kind]) {
+      headRow = true;
+      return { ...r, info: { kind: 'asking' as const, label: 'needs you', mood: 'asking' as const }, attention: false };
+    }
+    return quiet(r);
+  });
   for (const r of view) {
     // ONE read of the status, for all three decisions it drives — `null` means the row holds
     // no session at all, which is the same question `holdsSession` used to answer separately.
@@ -302,7 +322,11 @@ export function rollupProject(rows: SessionRow[], opts: { superQueueHead?: boole
     // its bell (a build finishing) is worth a jump even though it draws no bubble.
     if (r.info.kind === 'asking' || r.attention) waiting++;
   }
-  if (opts.superQueueHead) waiting++;
-  const worst: SessionStatusKind = opts.superQueueHead ? 'asking' : rollupKind(view);
+  if (head && !headRow) {
+    waiting++;
+    live++;
+    bucket.asking++;
+  }
+  const worst: SessionStatusKind = head ? 'asking' : rollupKind(view);
   return { worst, live, waiting, alive, flagged, ...bucket };
 }

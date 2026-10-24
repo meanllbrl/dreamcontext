@@ -24,8 +24,12 @@
  * every card in Others and side by side opens as a sheet.
  *
  * THE STAGE (plan-r8, owner decisions O1-O11): the centre centred in both axes with >= 24 px to
- * every card; every card between 1:1 and 3:4 on one rhythm (one width, one gap, full columns
- * spanning the centre, the centre >= 55%: stage v2); a card dragged with the mouse lands where it
+ * every card; every card one 160 px 1:1 tile on the ORBIT (each side's column on the midline, its
+ * ends next to the centre, its middle standing out; the centre 56%: owner decision 2026-10-20); a
+ * card dropped on another makes a group, the agent groups with `super group`, a group opens into
+ * its panel, Escape closes the panel and not the screen, a card dragged out leaves its group,
+ * Ungroup dissolves it, groups survive a reload; a task side by side shows its criteria; a card
+ * dragged with the mouse lands where it
  * was dropped and stays there after a reload (and, at the very end, a server restart); dropped in
  * the bottom-right corner it joins Others; clicked there it is side by side; minimize floats it;
  * the agent's half / present / present --off; a card dropped on the centre (or "Ask about this")
@@ -40,7 +44,8 @@
  * apart (half → present, present --off) with the centre and its composer at opacity 1 in every
  * frame and the draft, focus and caret kept; nothing moves for 500 ms after; a resize snaps;
  * reduced motion = crossfade; a filmstrip, a recording and screenshots at 1280, 1440 and 1920 in
- * light and dark with the queue pill and the Others stack, each checked for stage v2's rhythm.
+ * light and dark (and 1800 x 1130, the owner's window) with the queue pill and the Others stack,
+ * each checked for the orbit.
  *
  * Collect, don't fail fast: every check prints ✓/✗ and the run continues. Exit 0 iff all pass.
  */
@@ -70,10 +75,11 @@ const SEED_TASKS = Number(process.env.SEED_TASKS ?? 300);
 // ─── the stand-in `claude` ──────────────────────────────────────────────────────────────
 const STANDIN = `#!${process.execPath}
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const argv = process.argv.slice(2);
+const SLOW_EVENTS = ${JSON.stringify(join(SCRATCH, 'slow-events'))};
 const at = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : ''; };
 const convo = at('--resume') || at('--session-id') || '';
 let brief = '';
@@ -92,11 +98,20 @@ const verbRoute = (verb, body) => fetch(process.env.DREAMCONTEXT_WINDOW_URL + '/
 }).then(async (r) => ({ args: 'super ' + verb, status: r.status, json: await r.json().catch(() => null), out: '' }), (e) => ({ args: 'super ' + verb, status: 0, json: null, out: String(e) }));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const report = (o) => appendFileSync(${JSON.stringify(REPORTS)}, JSON.stringify({ role, convo, pid: process.pid, t: Date.now(), ...o }) + '\\n');
+report({ kind: 'argv', argv });
 function persist(text) {
   if (!/^[0-9a-f-]{36}$/.test(convo)) return;
   const dir = join(process.env.HOME, '.claude', 'projects', 'verify-super');
   mkdirSync(dir, { recursive: true });
   appendFileSync(join(dir, convo + '.jsonl'), JSON.stringify({ type: 'user', sessionId: convo, message: { role: 'user', content: text } }) + '\\n');
+}
+// A frame folded into the running turn is stored the way claude 2.1.304 stores it (measured):
+// a queued_command attachment, so the history replay is the real one.
+function persistQueued(text) {
+  if (!/^[0-9a-f-]{36}$/.test(convo)) return;
+  const dir = join(process.env.HOME, '.claude', 'projects', 'verify-super');
+  mkdirSync(dir, { recursive: true });
+  appendFileSync(join(dir, convo + '.jsonl'), JSON.stringify({ type: 'attachment', sessionId: convo, attachment: { type: 'queued_command', prompt: [{ type: 'text', text }] } }) + '\\n');
 }
 let inited = false;
 let awaiting = null;
@@ -123,7 +138,9 @@ async function superTurn(text) {
     report({ kind: 'handover', text: text.slice(0, 2000), children, steps });
     return 'arranged ' + children.length;
   }
-  if (text.startsWith('[super event]')) {
+  if (text.startsWith('[super event')) {
+    // One slow event turn on cue, so the owner can write into it (plan r4 D4: steer, never held).
+    if (existsSync(SLOW_EVENTS)) { rmSync(SLOW_EVENTS, { force: true }); report({ kind: 'slow-event-start', text: text.slice(0, 2000) }); await sleep(7000); }
     const q = cli('super', 'queue', 'list');
     const items = Array.isArray(q.json) ? q.json : (q.json?.items ?? q.json?.queue ?? []);
     const question = items.find((i) => i.kind === 'question' && i.state !== 'done' && i.state !== 'escalated' && text.includes(i.sessionId));
@@ -132,7 +149,7 @@ async function superTurn(text) {
     return 'handled';
   }
   if (text.startsWith('[super recap]')) { report({ kind: 'recap', text: text.slice(0, 1000) }); return 'recap'; }
-  const m = text.match(/GO-(ASK|PERM|SIBLING|MERGE|REFUSE|HALF|PRESENTOFF|PRESENT|TWO|BUSY|SLOW|LATEROPEN|CLOSE)\\s*(\\S*)\\s*(\\S*)/);
+  const m = text.match(/GO-(ASKOWNER|ASK|PERM|SIBLING|MERGE|REFUSE|HALF|PRESENTOFF|PRESENT|TWO|BUSYALL|BUSY|SLOW|LATEROPEN|CLOSE|GROUP|TURNS3)\\s*(\\S*)\\s*(\\S*)/);
   if (m) {
     const [, verb, a, b] = m;
     const steps = [];
@@ -151,9 +168,15 @@ async function superTurn(text) {
       steps.push(await first, await second);
     }
     if (verb === 'BUSY') steps.push(cli('super', 'send', a, 'BUSY'));
+    // The live children, each ending three quick turns (rows, not turns: plan r4 AC1).
+    const live = () => Object.entries(cli('super', 'state').json?.children ?? {}).filter(([, c]) => c && c.status !== 'gone' && c.status !== 'ended').map(([id]) => id);
+    if (verb === 'TURNS3') { const ids = live().slice(0, 5); for (let r = 0; r < 3; r += 1) { for (const id of ids) steps.push(cli('super', 'send', id, 'QUICK')); await sleep(900); } report({ kind: 'turns3', ids }); }
+    if (verb === 'BUSYALL') { const ids = live().slice(0, 6); for (const id of ids) steps.push(cli('super', 'send', id, 'LONGBUSY')); report({ kind: 'busyall', ids }); }
+    if (verb === 'ASKOWNER') steps.push(cli('super', 'ask', 'Ship the login fix now?', '--options', 'Ship it|Wait'));
     if (verb === 'SLOW') await sleep(3000);
     if (verb === 'LATEROPEN') { await sleep(1500); steps.push(cli('super', 'open', 'web', 'https://example.org/later', '--title', 'Later')); }
     if (verb === 'CLOSE') steps.push(cli('super', 'close', a));
+    if (verb === 'GROUP') steps.push(cli('super', 'group', a, b, '--name', 'Formlar'));
     if (verb === 'ASK') steps.push(cli('super', 'send', a, 'ASK-Q'));
     if (verb === 'PERM') steps.push(cli('super', 'send', a, 'ASK-PERM'));
     if (verb === 'SIBLING') steps.push(cli('super', 'send', a, 'TRY-SIBLING ' + b));
@@ -174,6 +197,16 @@ async function childTurn(text) {
     const r = await ask({ tool_name: 'AskUserQuestion', display_name: 'AskUserQuestion', input: { questions: [{ question: 'Which colour for the login button?', header: 'Colour', multiSelect: false, options: [{ label: 'Blue', description: 'brand' }, { label: 'Green', description: 'go' }] }] } });
     report({ kind: 'answered', response: r });
     return 'got answer';
+  }
+  if (text.includes('QUICK')) return 'quick';
+  if (text.includes('LONGBUSY')) {
+    // Twenty-five seconds of work with a tool in flight: the working ring's measurement window.
+    const id = 'toolu_long_' + process.pid;
+    out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'npm test', description: 'Run the tests' } }] } });
+    await new Promise((r) => setTimeout(r, 25000));
+    out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: 'passed' }] }] } });
+    report({ kind: 'longbusy-done' });
+    return 'tested';
   }
   if (text.includes('BUSY')) {
     // Six seconds of work: a Bash call in flight (the card's doing-line) and a background shell
@@ -216,14 +249,22 @@ async function childTurn(text) {
   }
   return 'ok';
 }
+// The CLI folds a user frame that arrives while a turn runs INTO that turn (one result for all,
+// agent-chat.ts's steer note) and opens every turn with a system:init: the stand-in does both.
+let running = false;
+let folded = [];
 async function turn(blocks) {
   const text = blocks.join('');
   persist(blocks[0] ?? '');
-  if (!inited) { inited = true; out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] }); }
+  inited = true;
+  out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] });
   let said = 'ok';
   try { said = role === 'super' ? await superTurn(blocks[0] ?? '') : await childTurn(text); } catch (e) { said = 'error ' + e; }
+  const extra = folded.splice(0);
+  if (extra.length) said += ' (+' + extra.length + ' folded: ' + extra.map((b) => (b[0] ?? '').slice(0, 40)).join(' | ') + ')';
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: (role === 'super' ? 'SUPER ' : 'CHILD ') + said }] } });
   out({ type: 'result', subtype: 'success', is_error: false, result: said, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
+  report({ kind: 'result', first: (blocks[0] ?? '').slice(0, 80), folded: extra.length });
 }
 let buf = '';
 let chain = Promise.resolve();
@@ -240,8 +281,15 @@ process.stdin.on('data', (c) => {
     const content = (o.message && o.message.content) || [];
     const blocks = typeof content === 'string' ? [content] : content.filter((b) => b.type === 'text').map((b) => b.text);
     if (!blocks.length) continue;
+    if (running) {
+      folded.push(blocks);
+      persistQueued(blocks[0] ?? '');
+      appendFileSync(${JSON.stringify(FRAMES)}, JSON.stringify({ role, convo, pid: process.pid, t: Date.now(), blocks, folded: true }) + '\\n');
+      continue;
+    }
     appendFileSync(${JSON.stringify(FRAMES)}, JSON.stringify({ role, convo, pid: process.pid, t: Date.now(), blocks }) + '\\n');
-    chain = chain.then(() => turn(blocks));
+    running = true;
+    chain = chain.then(() => turn(blocks)).finally(() => { running = false; });
   }
 });
 process.stdin.on('end', () => chain.then(() => process.exit(0)));
@@ -285,6 +333,8 @@ function setupScratch() {
     ['link add', dc('link', 'add', 'acme-code', CODE)],
     ['task', dc('tasks', 'create', 'Fix the login form', '-w', 'The login form loses its input on a slow network.')],
     ['whiteboard', dc('whiteboard', 'create', 'Login flow')],
+    ['criteria', dc('tasks', 'insert', 'fix-the-login-form', 'acceptance_criteria', '--',
+      '- [x] The form keeps its input on a slow network\n- [ ] The draft survives a reload\n- [ ] Unit tests for the draft store')],
   ]) if (r.status !== 0) throw new Error(`${what} failed: ${r.stderr || r.stdout}`);
   // A board the size of a real project's behind the chat (the owner's has ~470 tasks): the
   // motion is measured with that page mounted, not an empty one. Synthetic, cloned from the
@@ -393,39 +443,38 @@ const geo = (page) => page.evaluate(() => {
     s: s ? box(s) : null,
     c: c ? box(c) : null,
     cards: [...document.querySelectorAll('.super-card-frame')].map((e) => ({
-      id: e.dataset.containerId, kind: e.dataset.kind, where: e.dataset.where, shape: e.dataset.shape,
+      id: e.dataset.containerId || e.dataset.groupId, kind: e.dataset.kind || 'group', where: e.dataset.where, shape: e.dataset.shape,
       owner: e.dataset.owner === 'true', status: e.dataset.status, r: box(e),
     })),
     others: Number(document.querySelector('.super-others-count')?.textContent || 0),
   };
 });
 const cardIn = (g, id) => g.cards.find((c) => c.id === id);
-/** Stage v2's rhythm, read off the drawn stage: every auto-placed card one width, one 24 px gap
- *  down a column, a full column spanning the centre's top to bottom and a shorter one on its
- *  midline, the outer margins mirrored, the centre >= 55% of the stage. An owner-placed card and
- *  the columns it crosses are the owner's arrangement, not the stage's. */
-function rhythmOf(g) {
+/** The 2026-10-20 stage, read off the drawn one: every auto-placed card one 160 px 1:1 tile; each
+ *  side's inner column one gap apart and centred on the midline, its ends one gap from the centre
+ *  and its middle standing out (the orbit); the centre 56% of the stage, within its floor and
+ *  ceiling. An owner-placed card and the columns it crosses are the owner's arrangement. */
+function orbitOf(g) {
+  const T = 160, GAP = 24, DEPTH = 112;
   const owned = g.cards.filter((c) => c.where === 'float' && c.owner).map((c) => c.r);
-  const crosses = (r) => owned.some((o) => o.x < r.x + r.w && r.x < o.x + o.w);
-  const autos = g.cards.filter((c) => c.where === 'float' && !c.owner && !crosses(c.r)).map((c) => c.r);
-  const cols = new Map();
-  for (const r of autos) { const k = Math.round(r.x); cols.set(k, [...(cols.get(k) ?? []), r]); }
-  const list = [...cols.values()].map((col) => col.sort((a, b) => a.y - b.y));
+  const crosses = (r) => owned.some((o) => o.x < r.x + r.w && r.x < o.x + o.w && o.y < r.y + r.h && r.y < o.y + o.h);
+  const autos = g.cards.filter((c) => c.where === 'float' && !c.owner).map((c) => c.r);
+  const free = autos.filter((r) => !crosses(r));
+  const oneSize = autos.every((r) => Math.abs(r.w - T) <= 1 && Math.abs(r.h - T) <= 1);
   const mid = g.c.y + g.c.h / 2;
-  const oneWidth = autos.every((r) => Math.abs(r.w - autos[0].w) <= 1);
-  const oneGap = list.every((col) => col.every((r, i) => i === 0 || Math.abs(r.y - (col[i - 1].y + col[i - 1].h) - 24) <= 1));
-  const columns = list.map((col) => {
-    const top = col[0].y;
-    const bottom = col[col.length - 1].y + col[col.length - 1].h;
-    return { n: col.length, top: Math.round(top - g.c.y), bottom: Math.round(g.c.y + g.c.h - bottom), spans: Math.abs(top - g.c.y) <= 1 && Math.abs(bottom - (g.c.y + g.c.h)) <= 1, midline: Math.abs((top + bottom) / 2 - mid) <= 1 };
+  const sides = [['L', g.c.x - GAP - T], ['R', g.c.x + g.c.w + GAP]].map(([side, inner]) => {
+    const col = free.filter((r) => (side === 'L' ? r.x < g.c.x : r.x > g.c.x) && Math.abs(r.x - inner) <= DEPTH + 1).sort((a, b) => a.y - b.y);
+    if (col.length < 2 || owned.length) return { side, n: col.length, ok: true };
+    const out = (r) => (side === 'L' ? inner - r.x : r.x - inner);
+    const oneGap = col.every((r, i) => i === 0 || Math.abs(r.y - (col[i - 1].y + col[i - 1].h) - GAP) <= 1);
+    const centred = Math.abs((col[0].y + col[col.length - 1].y + col[col.length - 1].h) / 2 - mid) <= 1;
+    const ends = [col[0], col[col.length - 1]].every((r) => Math.abs(out(r)) <= 1);
+    const middle = col.length < 3 || out(col[Math.floor(col.length / 2)]) > 1;
+    return { side, n: col.length, ok: oneGap && centred && ends && middle, oneGap, centred, ends, middle };
   });
-  const aligned = columns.every((c) => c.spans || c.midline);
-  const L = autos.filter((r) => r.x < g.c.x);
-  const R = autos.filter((r) => r.x > g.c.x);
-  const margins = L.length && R.length ? [Math.round(Math.min(...L.map((r) => r.x)) - g.s.x), Math.round(g.s.x + g.s.w - Math.max(...R.map((r) => r.x + r.w)))] : null;
-  const mirror = owned.length > 0 || !margins || Math.abs(margins[0] - margins[1]) <= 1;
-  const share = g.c.w / g.s.w;
-  return { ok: autos.length > 0 && oneWidth && oneGap && aligned && mirror && share >= 0.55 - 1 / g.s.w, detail: { oneWidth, oneGap, aligned, mirror, share: Number(share.toFixed(4)), columns, margins, owned: owned.length } };
+  const want = Math.min(1120, Math.max(560, 0.56 * g.s.w));
+  const centreOk = Math.abs(g.c.w - want) <= 1;
+  return { ok: autos.length > 0 && oneSize && sides.every((x) => x.ok) && centreOk, detail: { oneSize, sides, centre: Math.round(g.c.w), want: Math.round(want), owned: owned.length } };
 }
 /** Two rects at least `gap` apart on some axis. */
 const apart = (a, b, gap = 23.5) => a.x + a.w + gap <= b.x || b.x + b.w + gap <= a.x || a.y + a.h + gap <= b.y || b.y + b.h + gap <= a.y;
@@ -490,9 +539,12 @@ async function stage(page, base, adopted = []) {
   ok('>= 24 px between the centre and every floating card', floats.every((c) => apart(c.r, g.c)), JSON.stringify(floats.map((c) => c.r)));
   const autos = floats.filter((c) => !c.owner);
   ok('>= 24 px between auto-placed cards', autos.every((a, i) => autos.every((b, j) => j <= i || apart(a.r, b.r))), JSON.stringify(autos.map((c) => c.r)));
-  ok('each floating card is drawn between 1:1 and 3:4, never taller (stage v2)', floats.every((c) => c.r.h / c.r.w >= 0.99 && c.r.h / c.r.w <= 4 / 3 + 0.01), JSON.stringify(floats.map((c) => [c.kind, c.shape, c.r.w, c.r.h])));
-  const rh = rhythmOf(g);
-  ok('one rhythm: one card width and gap, full columns span the centre, margins mirror, the centre >= 55% (stage v2)', rh.ok, JSON.stringify(rh.detail));
+  ok('each floating card is one 160 px 1:1 tile (2026-10-20)', floats.every((c) => Math.abs(c.r.w - 160) <= 1 && Math.abs(c.r.h - 160) <= 1), JSON.stringify(floats.map((c) => [c.kind, c.r.w, c.r.h])));
+  const rh = orbitOf(g);
+  ok('the orbit: each side\'s column on the midline, its ends next to the centre, its middle out; the centre 56%', rh.ok, JSON.stringify(rh.detail));
+  ok('the orbit is drawn: a faint arc through each side\'s column', (await page.locator('.super-orbit polyline').count()) >= 1);
+  const prog = await page.locator('[data-testid="super-tile-progress"]').first().innerText().catch(() => '');
+  ok('the task tile says how far its criteria are (owner 2026-10-20: a small card still shows what is in it)', /1\s*\/\s*3/.test(prog), prog);
   ok('the record: chat and web cards tall, the rest square', rec0.containers.length > 0 && rec0.containers.every((c) => c.shape === (c.kind === 'chat' || c.kind === 'web' ? 'tall' : 'square')), JSON.stringify(rec0.containers.map((c) => [c.kind, c.shape])));
   ok('>= 4 cards float around the centre', floats.length >= 4, `${floats.length} floating, ${g.others} in Others`);
   ok('a card the stage cannot fit is drawn in Others, its record still float', g.others === rec0.containers.length - g.cards.length && rec0.containers.every((c) => c.place === 'float'), JSON.stringify({ drawn: g.cards.length, others: g.others, record: rec0.containers.map((c) => c.place) }));
@@ -528,8 +580,33 @@ async function stage(page, base, adopted = []) {
   ok('the card left the stage for the Others stack', !cardIn(g, B.id) && g.others >= 1, JSON.stringify({ onStage: !!cardIn(g, B.id), others: g.others }));
   ok('…written as place: others', record().containers.find((c) => c.id === B.id)?.place === 'others');
   await page.getByTestId('super-others-stack').click();
-  ok('the Others stack opens a list with it', await until(page, async () => (await page.locator(`[data-testid="super-others-item"][data-container-id="${B.id}"]`).count()) === 1, 3000));
+  ok('the Others stack opens its panel with it', await until(page, async () => (await page.locator(`[data-testid="super-others-item"][data-container-id="${B.id}"]`).count()) === 1, 3000));
   await page.screenshot({ path: join(OUT, 'stage-02-others-fan.png') });
+  // 30 cards in Others: the open panel fits the window, scrolls inside itself (wheel too, the stage
+  // behind stays put), the last card can be scrolled to and hit, and the pill does not cover it.
+  const fan = await page.evaluate(async () => {
+    const panel = document.querySelector('[data-testid="super-others-fan"]');
+    const grid = panel.querySelector('.super-group-panel-grid');
+    const first = grid.querySelector('[data-panel-item]');
+    for (let i = 0; i < 29; i++) { const c = first.cloneNode(true); c.dataset.clone = '1'; grid.appendChild(c); }
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const pr = panel.getBoundingClientRect();
+    const stackRect = document.querySelector('[data-testid="super-others-stack"]').getBoundingClientRect();
+    const last = grid.lastElementChild;
+    last.scrollIntoView({ block: 'end' });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const lr = last.getBoundingClientRect();
+    const hit = document.elementFromPoint(lr.x + lr.width / 2, lr.y + lr.height / 2);
+    return {
+      fits: pr.top >= 0 && pr.bottom <= window.innerHeight, clear: pr.bottom <= stackRect.top + 1,
+      scrolls: grid.scrollHeight > grid.clientHeight + 1, atEnd: grid.scrollTop > 0,
+      hitLast: !!hit && last.contains(hit), overscroll: getComputedStyle(grid).overscrollBehaviorY,
+    };
+  });
+  ok('Others with 30 cards: the panel fits the window and ends above the pill', fan.fits && fan.clear, JSON.stringify(fan));
+  ok('…its grid scrolls inside itself and contains the scroll', fan.scrolls && fan.atEnd && fan.overscroll === 'contain', JSON.stringify(fan));
+  ok('…the last card is scrolled into view and elementFromPoint hits it', fan.hitLast, JSON.stringify(fan));
+  await page.evaluate(() => document.querySelectorAll('[data-clone]').forEach((n) => n.remove()));
   await page.locator(`[data-testid="super-others-item"][data-container-id="${B.id}"]`).click();
   await page.waitForTimeout(900);
   g = await geo(page);
@@ -548,6 +625,10 @@ async function stage(page, base, adopted = []) {
   const knowId = record().containers.find((c) => c.kind === 'knowledge')?.id;
   await sayToSuper(page, `GO-HALF ${taskId}`);
   ok('super half: the task card is the right half', await until(page, async () => cardIn(await geo(page), taskId)?.where === 'half', 30000));
+  ok('…side by side the task shows its page: its criteria under its status head (owner 2026-10-20)', await until(page, async () =>
+    /Acceptance Criteria/.test(await page.locator(`.super-card-frame[data-container-id="${taskId}"] .super-card-view--page`).innerText().catch(() => ''))
+    && (await page.locator(`.super-card-frame[data-container-id="${taskId}"] [data-testid="super-task-head"]`).count()) === 1, 15000));
+  await page.screenshot({ path: join(OUT, 'stage-03b-task-half.png') });
   await sayToSuper(page, `GO-PRESENT ${taskId} ${knowId}`);
   ok('super present: the agent left, the two cards right', await until(page, async () => {
     const x = await geo(page);
@@ -601,13 +682,14 @@ async function stage(page, base, adopted = []) {
   await sayToSuper(page, `GO-BUSY ${wRef}`);
   const rise = await riseP;
   ok('the working card\'s glow rises to opacity 1 within 0.8 s', rise.ms !== null && rise.ms <= 800 && !rise.late, JSON.stringify(rise));
-  ok('its doing-line names the tool in flight', /Wait for the build/.test(await page.locator(`${wSel} [data-testid="super-card-doing"]`).innerText().catch(() => '')),
-    await page.locator(`${wSel} [data-testid="super-card-doing"]`).innerText().catch(() => 'none'));
-  ok('a background chip shows the shell it runs', await until(page, async () => /1 shell/.test(await page.locator(`${wSel} [data-testid="super-card-bg"]`).innerText().catch(() => '')), 3000),
-    await page.locator(`${wSel} .super-card-meta`).innerText().catch(() => 'none'));
+  // The crop while it surely works: the child's work lasts 6 s and the checks below take a while.
   const wr = cardIn(await geo(page), W.id).r;
   const clip = { x: Math.round(wr.x - 14), y: Math.round(wr.y + wr.h / 3), width: 10, height: 40 };
   const workingShot = await page.screenshot({ clip });
+  ok('its doing-line names the tool in flight', /Wait for the build/.test(await page.locator(`${wSel} [data-testid="super-card-doing"]`).innerText().catch(() => '')),
+    await page.locator(`${wSel} [data-testid="super-card-doing"]`).innerText().catch(() => 'none'));
+  ok('a background chip shows the shell it runs', await until(page, async () => /1 shell/.test(await page.locator(`${wSel} [data-testid="super-card-bg"]`).getAttribute('aria-label').catch(() => '') ?? ''), 3000),
+    await page.locator(`${wSel} .super-card-meta`).innerText().catch(() => 'none'));
   await page.screenshot({ path: join(OUT, 'stage-05-working-glow.png') });
   const fall = await glowTiming(page, wSel, '::before', 'idle', 0);
   ok('when it goes idle the glow fades to 0 within 1.6 s', fall.ms !== null && fall.ms <= 1600, JSON.stringify(fall));
@@ -653,6 +735,72 @@ async function stage(page, base, adopted = []) {
     await sayToSuper(page, `GO-CLOSE ${later.id}`);
     await until(page, async () => !record().containers.some((c) => c.id === later.id), 20000);
   }
+  await page.waitForTimeout(1000);
+
+  console.log('\n── groups (owner decision 2026-10-20): the agent groups, the owner drops a card on another');
+  // A clean stage: the owner's drops from the sections above would otherwise sit where a new
+  // group stands and push it to Others (the stage's rule for a covered card with no free spot).
+  // They are put back at the end of this section (the server-restart check reads one of them).
+  const dropsBefore = record().containers.filter((c) => c.pos).map((c) => ({ id: c.id, pos: c.pos }));
+  await page.evaluate(async (ids) => fetch('/api/super/layout', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ cards: ids.map((id) => ({ id, pos: null })) }),
+  }), dropsBefore.map((d) => d.id));
+  await page.waitForTimeout(1000);
+  const chatsNow = record().containers.filter((c) => c.kind === 'chat' && c.place === 'float' && !c.pos).slice(0, 2);
+  const [ga, gb] = chatsNow;
+  await sayToSuper(page, `GO-GROUP ${ga.id} ${gb.id}`);
+  ok('super group: two chats become ONE tile on the stage', await until(page, async () => {
+    const x = await geo(page);
+    return x.cards.filter((c) => c.kind === 'group').length === 1 && !x.cards.some((c) => c.id === ga.id || c.id === gb.id);
+  }, 30000), JSON.stringify((await geo(page)).cards.map((c) => [c.id, c.kind, c.where])));
+  const agentGroup = (record().groups ?? [])[0];
+  ok('…recorded as a group named Formlar holding both', agentGroup?.name === 'Formlar' && JSON.stringify(agentGroup?.cards) === JSON.stringify([ga.id, gb.id]), JSON.stringify(record().groups));
+  await page.locator(`[data-group-id="${agentGroup?.id}"]`).click();
+  ok('clicking the group opens its panel with both cards', await until(page, async () => (await page.locator('[data-testid="super-group-panel"] [data-testid="super-group-item"]').count()) === 2, 4000));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: join(OUT, 'stage-06-group-open.png') });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+  ok('Escape closes the panel and never the hand-over screen', (await page.getByTestId('super-group-panel').count()) === 0 && await surfaceShown(page)
+    && (await page.locator('.agent-surface.expanded').count()) > 0);
+  g = await geo(page);
+  const singles = g.cards.filter((c) => c.where === 'float' && c.kind !== 'group' && !c.owner && c.id);
+  const [X, Y] = singles;
+  let label = 0;
+  let ring = 0;
+  await drag(page, grabPoint(X.r), { x: Y.r.x + Y.r.w / 2, y: Y.r.y + Y.r.h / 2 }, { hold: async () => {
+    label = await page.getByTestId('super-drop-label').count();
+    ring = await page.locator(`.super-card-frame[data-container-id="${Y.id}"][data-drop-target]`).count();
+  } });
+  ok('a card held over another lights it and says "Release to group"', label === 1 && ring === 1, JSON.stringify({ label, ring }));
+  ok('…released, the two are one group standing where the target stood', await until(page, async () => (record().groups ?? []).some((x) => JSON.stringify(x.cards) === JSON.stringify([Y.id, X.id])), 6000), JSON.stringify(record().groups));
+  const ownGroup = (record().groups ?? []).find((x) => x.cards[0] === Y.id);
+  await page.waitForTimeout(900);
+  g = await geo(page);
+  ok('…drawn as one tile; its cards are not on the stage', !!cardIn(g, ownGroup?.id) && !cardIn(g, X.id) && !cardIn(g, Y.id), JSON.stringify(g.cards.map((c) => [c.id, c.kind])));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  if (!(await until(page, () => surfaceShown(page), 12000))) await openChat(page, base);
+  ok('after a reload both groups are still on the stage', await until(page, async () => (await geo(page)).cards.filter((c) => c.kind === 'group').length === 2, 15000));
+  await page.waitForTimeout(1200);
+  await page.locator(`[data-group-id="${ownGroup?.id}"]`).click();
+  await until(page, async () => (await page.locator('[data-testid="super-group-item"]').count()) === 2, 4000);
+  const item = await page.locator(`[data-testid="super-group-item"][data-container-id="${X.id}"]`).boundingBox();
+  g = await geo(page);
+  const outTo = { x: g.s.x + 110, y: g.s.y + 150 };
+  if (item) await drag(page, { x: item.x + item.width / 2, y: item.y + item.height / 2 }, outTo);
+  ok('dragged out of its group, a card floats where it was dropped and leaves the group (a group of one dissolves)', await until(page, async () =>
+    !(record().groups ?? []).some((x) => x.id === ownGroup?.id) && !!record().containers.find((c) => c.id === X.id)?.pos, 6000), JSON.stringify({ groups: record().groups, x: record().containers.find((c) => c.id === X.id) }));
+  await page.waitForTimeout(900);
+  g = await geo(page);
+  ok('…both cards are tiles on the stage again', cardIn(g, X.id)?.where === 'float' && cardIn(g, Y.id)?.where === 'float', JSON.stringify(g.cards.map((c) => [c.id, c.where])));
+  await page.locator(`[data-group-id="${agentGroup?.id}"]`).click();
+  await until(page, async () => (await page.getByTestId('super-group-panel-ungroup').count()) === 1, 4000);
+  await page.getByTestId('super-group-panel-ungroup').click();
+  ok('Ungroup dissolves the group: its cards float again', await until(page, async () => (record().groups ?? []).length === 0 && !!cardIn(await geo(page), ga.id) && !!cardIn(await geo(page), gb.id), 6000), JSON.stringify(record().groups));
+  // Back to the stage as the sections above left it: this section's drop cleared, theirs put back.
+  await page.evaluate(async (cards) => fetch('/api/super/layout', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ cards }),
+  }), [{ id: X.id, pos: null }, ...dropsBefore.map((d) => ({ id: d.id, pos: d.pos }))]);
   await page.waitForTimeout(1000);
 }
 
@@ -745,8 +893,8 @@ async function flow(browser, base) {
   } else {
     ok('an asking child in Others is marked asking on the stack', await until(page, async () => (await page.locator('[data-testid="super-others-stack"][data-asking]').count()) === 1, 5000));
   }
-  const isQuestionEvent = (f) => f.role === 'super' && f.blocks[0]?.startsWith('[super event]') && /which colour/i.test(f.blocks[0]);
-  ok('the question reached the super agent as one [super event] turn', await until(page, async () => frames().filter(isQuestionEvent).length === 1, 60000));
+  const isQuestionEvent = (f) => f.role === 'super' && !f.folded && /^\[super events?\]/.test(f.blocks[0] ?? '') && /which colour/i.test(f.blocks[0]);
+  ok('the question reached the super agent as one [super events] turn', await until(page, async () => frames().filter(isQuestionEvent).length === 1, 60000));
   const ev = frames().find(isQuestionEvent);
   ok('…no sooner than the 15 s lease after the owner typed', ev && ev.t - typedAt >= 15000, ev ? `${ev.t - typedAt} ms` : 'none');
   ok('…with the child\'s text fenced', /untrusted-project-output/.test(ev?.blocks[0] ?? ''), ev?.blocks[0]?.slice(0, 400));
@@ -1088,9 +1236,11 @@ async function motion(engineName, browserType, base) {
     handovers.push(h);
     await page.waitForTimeout(1200);
     h.rectsOk = within1(h.rectsAtEnd, await rectsOf(page, '[data-testid="super-container"]'));
+    // Every card that is not a chat shows what it holds once the cards landed: a floating tile
+    // its data (2026-10-20 tiles), a large card its view.
     h.views = await page.evaluate(() => ({
-      mounted: document.querySelectorAll('[data-testid="super-container"] .super-card-view').length,
-      want: [...document.querySelectorAll('[data-testid="super-container"]')].filter((c) => ['task', 'knowledge', 'image', 'insight', 'whiteboard', 'board'].includes(c.dataset.kind)).length,
+      mounted: document.querySelectorAll('[data-testid="super-container"] :is(.super-tile[data-view="ready"], .super-card-view)').length,
+      want: [...document.querySelectorAll('[data-testid="super-container"]')].filter((c) => ['task', 'knowledge', 'image', 'insight', 'whiteboard', 'board', 'web'].includes(c.dataset.kind)).length,
     }));
     if (i === 0) {
       const cover = await coverOf();
@@ -1231,7 +1381,7 @@ async function motion(engineName, browserType, base) {
       ok('chromium: the owner\'s drops cleared for the screenshots', st === 200 && !record().containers.some((c) => c.pos), `status ${st}`);
     }
     await page.waitForTimeout(800);
-    for (const [w, h] of [[1280, 800], [1440, 900], [1920, 1080]]) {
+    for (const [w, h] of [[1280, 800], [1440, 900], [1800, 1130], [1920, 1080]]) {
       for (const scheme of ['light', 'dark']) {
         await page.setViewportSize({ width: w, height: h });
         await page.emulateMedia({ colorScheme: scheme });
@@ -1241,16 +1391,16 @@ async function motion(engineName, browserType, base) {
           const gw = await geo(page);
           ok(`chromium ${w}x${h}: >= 4 cards float, the centre centred (<= 1 px)`, gw.cards.filter((c) => c.where === 'float').length >= 4
             && Math.abs((gw.c.x - gw.s.x) - (gw.s.x + gw.s.w - gw.c.x - gw.c.w)) <= 1, JSON.stringify({ floating: gw.cards.filter((c) => c.where === 'float').length, s: gw.s, c: gw.c }));
-          const rw = rhythmOf(gw);
-          ok(`chromium ${w}x${h}: one rhythm, the centre >= 55% (stage v2)`, rw.ok, JSON.stringify(rw.detail));
-          ok(`chromium ${w}x${h}: every floating card between 1:1 and 3:4`, gw.cards.filter((c) => c.where === 'float').every((c) => c.r.h / c.r.w >= 0.99 && c.r.h / c.r.w <= 4 / 3 + 0.01),
+          const rw = orbitOf(gw);
+          ok(`chromium ${w}x${h}: the orbit, the centre 56% (2026-10-20)`, rw.ok, JSON.stringify(rw.detail));
+          ok(`chromium ${w}x${h}: every floating card one 160 px 1:1 tile`, gw.cards.filter((c) => c.where === 'float').every((c) => Math.abs(c.r.w - 160) <= 1 && Math.abs(c.r.h - 160) <= 1),
             JSON.stringify(gw.cards.filter((c) => c.where === 'float').map((c) => [c.r.w, c.r.h])));
           // At rest the pill keeps one row in its band: it never half-covers the centre's header.
           const pill = await page.getByTestId('super-queue-head').boundingBox();
           ok(`chromium ${w}x${h}: the queue pill at rest stays in its band, clear of the centre`, !!pill && pill.y + pill.height <= gw.c.y + 0.5, JSON.stringify({ pill, centreTop: gw.c.y }));
         }
         if (scheme === 'light' && w === 1280) {
-          // The pill as QueueStrip draws it, laid out by the real stylesheet at the narrowest band
+          // The pill as JobBar draws it, laid out by the real stylesheet at the narrowest band
           // and the widest, with the real Reply / "n more" labels in English and Turkish: with its
           // options when they ALL fit at full width (no cut label: an answer cannot be undone),
           // else Reply only (optionsFit). Either way one row inside the band, every button inside
@@ -1259,9 +1409,9 @@ async function motion(engineName, browserType, base) {
             const surface = document.querySelector('[data-testid="super-surface"]');
             const el = (tag, cls, text) => { const e = document.createElement(tag); e.className = cls; if (text) e.textContent = text; return e; };
             const fixtures = [
-              { name: 'en-typical', who: 'Chat 1', text: 'The login button: which colour?', options: ['Blue', 'Green'], reply: 'Reply to Claude', more: '1 more waiting' },
-              { name: 'en-worst', who: 'Fix the login button colour on every page', text: 'Which colour should the login button use across the whole app, given the brand palette?', options: ['Blue (Recommended)', 'Green', 'Keep the current one', 'Match the brand palette'], reply: 'Reply to Claude', more: '2 more waiting' },
-              { name: 'tr-worst', who: 'Giriş düğmesinin rengini düzelt', text: 'Giriş düğmesi tüm uygulamada hangi renkte olmalı, marka paletine göre?', options: ['Mavi (Önerilen)', 'Yeşil', 'Mevcut olanı koru', 'Marka paletine uy'], reply: 'Claude’a yanıt ver', more: '2 tane daha bekliyor' },
+              { name: 'en-typical', who: 'Chat 1', text: 'The login button: which colour?', options: ['Blue', 'Green'], reply: 'Reply to Claude', more: '1 more waiting', list: 'Job list' },
+              { name: 'en-worst', who: 'Fix the login button colour on every page', text: 'Which colour should the login button use across the whole app, given the brand palette?', options: ['Blue (Recommended)', 'Green', 'Keep the current one', 'Match the brand palette'], reply: 'Reply to Claude', more: '2 more waiting', list: 'Job list' },
+              { name: 'tr-worst', who: 'Giriş düğmesinin rengini düzelt', text: 'Giriş düğmesi tüm uygulamada hangi renkte olmalı, marka paletine göre?', options: ['Mavi (Önerilen)', 'Yeşil', 'Mevcut olanı koru', 'Marka paletine uy'], reply: 'Claude’a yanıt ver', more: '2 tane daha bekliyor', list: 'İş listesi' },
             ];
             const lay = (fx, bw, withOptions) => {
               const strip = el('div', 'super-queue-strip');
@@ -1272,6 +1422,8 @@ async function motion(engineName, browserType, base) {
               if (withOptions) for (const o of fx.options) actions.append(el('button', 'super-queue-btn super-queue-btn--option', o));
               actions.append(el('button', 'super-queue-btn super-queue-btn--reply', fx.reply));
               head.append(el('span', 'super-queue-who', fx.who), el('span', 'super-queue-text', fx.text), actions, el('span', 'super-queue-more', fx.more));
+              // The band holds only the head now (the counts moved into the agenda).
+              strip.classList.add('super-job-bar');
               strip.append(head);
               surface.append(strip);
               const hr = head.getBoundingClientRect();
@@ -1313,8 +1465,8 @@ async function motion(engineName, browserType, base) {
       const floats = g5.cards.filter((c) => c.where === 'float');
       const drawnOthers = [...seven].filter((id) => !floats.some((c) => c.id === id)).length;
       await page.screenshot({ path: join(OUT, `stage-v2-5t2s-${w}.png`) });
-      const r5 = rhythmOf(g5);
-      ok(`chromium ${w}x${h}: 5 tall + 2 square: ${want} float, ${7 - want} drawn in Others, on one rhythm`, floats.length === want && drawnOthers === 7 - want && floats.every((c) => seven.has(c.id)) && r5.ok,
+      const r5 = orbitOf(g5);
+      ok(`chromium ${w}x${h}: 5 chats + 2 others: ${want} float, ${7 - want} drawn in Others, on the orbit`, floats.length === want && drawnOthers === 7 - want && floats.every((c) => seven.has(c.id)) && r5.ok,
         JSON.stringify({ floating: floats.length, drawnOthers, rhythm: r5.detail }));
       ok(`chromium ${w}x${h}: 5 tall + 2 square: every chat floats (the other cards go to Others first)`, chats.every((c) => floats.some((f) => f.id === c.id)), JSON.stringify(floats.map((c) => c.kind)));
     }
@@ -1384,6 +1536,229 @@ async function motion(engineName, browserType, base) {
   await browser.close();
 }
 
+// ─── the job board (plan r4: rows not turns, batches, steer, the bar, the event line) ─────────
+
+/** Plan r4 + the owner's 2026-10-21 card asks, observed. `full` (Chromium) also drives the flow
+ *  pieces (turn ends, a slow event turn steered into, the super's own ask, the ring's cost);
+ *  every engine checks the bar, the list, the centre font and takes the screenshots. */
+async function board(engineName, browserType, base, full) {
+  console.log(`\n── ${engineName}: the job board (plan r4)`);
+  const browser = await browserType.launch();
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, colorScheme: 'dark' });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(`${LAST_CHECK}: ${m.text()}`); });
+  page.on('pageerror', (e) => errors.push(`${LAST_CHECK}: ${e}`));
+  const apiReqs = [];
+  page.on('request', (r) => { const u = new URL(r.url()); if (u.pathname.startsWith('/api/')) apiReqs.push({ t: Date.now(), path: u.pathname }); });
+  try {
+    await openChat(page, base);
+    if (!(await until(page, () => surfaceShown(page), 8000))) {
+      await page.locator('[data-testid="super-handover-btn"]:visible').first().click().catch(() => {});
+      await until(page, () => surfaceShown(page), 20000);
+    }
+    ok(`${engineName}: handed over for the board checks`, await surfaceShown(page));
+    // The board reads the floating stage: nothing side by side from an earlier section.
+    if (record().view?.mode !== 'float') {
+      await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+      await until(page, async () => record().view?.mode === 'float', 8000);
+    }
+    await until(page, async () => (await superComposer(page).count()) > 0, 20000);
+    await page.waitForTimeout(1500);
+
+    if (full) {
+      // AC9 server: the super session's own argv.
+      const sup = reports().filter((r) => r.kind === 'argv' && r.role === 'super').pop();
+      const av = sup?.argv ?? [];
+      const at = (f) => { const i = av.indexOf(f); return i >= 0 ? av[i + 1] : null; };
+      ok('the super agent spawns with --model sonnet --effort medium by default', at('--model') === 'sonnet' && at('--effort') === 'medium', JSON.stringify(av));
+
+      // AC1: children ending turns spend no super turn; 30 s settled they are done, batched.
+      const superTurns = (from, to) => frames().filter((f) => f.role === 'super' && !f.folded && f.t >= from && f.t <= to && /^\[super events?\]/.test(f.blocks[0] ?? ''));
+      await sayToSuper(page, 'GO-TURNS3');
+      ok('the super sent three quick turns to each live child', await until(page, async () => reports().some((r) => r.kind === 'turns3'), 60000));
+      const t3 = reports().filter((r) => r.kind === 'turns3').pop();
+      const tEnd = t3?.t ?? Date.now();
+      await page.waitForTimeout(20000);
+      const early = superTurns(tEnd - 15000, tEnd + 20000).filter((f) => /event=done/.test(f.blocks[0]));
+      ok(`children ending 3 turns each (${t3?.ids?.length ?? 0} children) open 0 super turns inside the 30 s settle window`, early.length === 0, JSON.stringify(early.map((f) => f.blocks[0].slice(0, 120))));
+      // The rows say so meanwhile: working with the "bitiyor" chip, or still working.
+      const settlingRows = await page.locator('[data-testid="super-agenda-row"][data-chip="settling"]').count().catch(() => 0);
+      ok('…the agenda shows them settling ("finishing") meanwhile', settlingRows >= 1, `${settlingRows}`);
+      // A slow next event turn: the owner writes into it three times, fast.
+      writeFileSync(join(SCRATCH, 'slow-events'), '1');
+      ok('30 s settled, the done rows reach the super agent batched', await until(page, async () => superTurns(tEnd, Date.now()).some((f) => /event=done/.test(f.blocks[0])), 60000));
+      const doneTurns = superTurns(tEnd, Date.now() + 1).filter((f) => /event=done/.test(f.blocks[0]));
+      const doneItems = doneTurns.reduce((n, f) => n + (f.blocks[0].match(/event=done/g) ?? []).length, 0);
+      ok(`…in fewer turns than children (${doneTurns.length} turns for ${doneItems} done items)`, doneTurns.length >= 1 && doneTurns.length < Math.max(2, doneItems), JSON.stringify(doneTurns.map((f) => f.blocks[0].split('\n')[0])));
+      ok('the slow event turn started', await until(page, async () => reports().some((r) => r.kind === 'slow-event-start'), 30000));
+      const slowAt = reports().filter((r) => r.kind === 'slow-event-start').pop().t;
+      for (const m of ['STEER-ONE', 'STEER-TWO', 'STEER-THREE']) { await sayToSuper(page, m); await page.waitForTimeout(250); }
+      const steeredOf = () => frames().filter((f) => f.role === 'super' && f.t >= slowAt && /^STEER-/.test(f.blocks[0] ?? ''));
+      ok('AC4: 3 owner messages during an event turn are 3 stdin writes at once (folded into it, never held)', await until(page, async () => steeredOf().length === 3 && steeredOf().every((f) => f.folded), 6000), JSON.stringify(steeredOf().map((f) => ({ b: f.blocks[0], folded: !!f.folded }))));
+      ok('…all three before that turn\'s result, and no extra turn after it', await until(page, async () => reports().some((r) => r.kind === 'result' && r.role === 'super' && r.t >= slowAt && r.folded === 3), 20000)
+        && (await page.waitForTimeout(3000), frames().filter((f) => f.role === 'super' && !f.folded && f.t > slowAt && /^STEER-/.test(f.blocks[0] ?? '')).length === 0),
+        JSON.stringify(reports().filter((r) => r.kind === 'result' && r.role === 'super' && r.t >= slowAt)));
+
+      // AC8: the event line, compact; the steered owner bubbles render as his.
+      const lines = page.locator('[data-super-slot="centre"] [data-testid="super-event-line"]');
+      ok('AC8: event turns are one line each in the centre', await until(page, async () => (await lines.count()) >= 1, 15000), `${await lines.count()}`);
+      const steerBubbles = await page.locator('[data-super-slot="centre"]').getByText(/^STEER-(ONE|TWO|THREE)$/).count();
+      ok('…a steered owner message renders as his bubble', steerBubbles >= 3, `${steerBubbles}`);
+      const name = page.locator('[data-super-slot="centre"] .super-event-line-name').first();
+      if (await name.count()) {
+        await name.click();
+        ok('…a name in the line lights its agenda row', await until(page, async () => (await page.locator('[data-testid="super-agenda"] [data-focus="true"]').count()) === 1, 5000));
+      } else ok('…a name in the line lights its agenda row', false, 'no name in any event line');
+      const toggle = page.locator('[data-super-slot="centre"] [data-testid="super-event-line-toggle"]').first();
+      if (await toggle.count()) {
+        await toggle.click();
+        ok('…a click expands the super agent\'s reply', await until(page, async () => (await page.locator('[data-super-slot="centre"] [data-testid="super-event-line"][data-expanded="true"]').count()) >= 1, 5000));
+        await toggle.click().catch(() => {});
+      }
+      const fullLines = await page.locator('[data-super-slot="centre"] [data-testid="super-event-line"][data-full="true"]').count();
+      ok('…the batch the super agent escalated in renders full', fullLines >= 1 || (record().ownerBatches ?? []).length === 0, JSON.stringify({ fullLines, ownerBatches: record().ownerBatches }));
+
+      // AC7 + D7: the super agent's own question heads the bar with ONE Answer button; it is
+      // answered in the chat's own AskUserQuestion card (owner 2026-10-22), one message back.
+      await sayToSuper(page, 'GO-ASKOWNER');
+      const answerBtn = page.getByTestId('super-queue-answer');
+      ok('the super agent\'s own ask heads the bar with its Answer button', await until(page, async () => (await answerBtn.count()) === 1, 40000), await page.getByTestId('super-queue-head').innerText().catch(() => 'no head'));
+      ok('…the band holds only the question (no counts beside it)', (await page.locator('[data-testid^="super-job-count-"]').count()) === 0);
+      const tAsk = Date.now();
+      await answerBtn.click();
+      const askCard = page.locator('[data-testid="super-question-card"][data-kind="ask"] .chat-surveycard');
+      await askCard.locator('.chat-surveycard-opt').filter({ hasText: 'Ship it' }).first().click();
+      await askCard.locator('.chat-btn.primary').click();
+      ok('…the card sends ONE `[super answer]` message into the super chat', await until(page, async () => frames().some((f) => f.role === 'super' && f.t >= tAsk && /^\[super answer\] item=\S+\n[\s\S]*="Ship it"/.test(f.blocks[0] ?? '')), 15000));
+      ok('…and closes the ask', await until(page, async () => !(record().queue ?? []).some((q) => q.kind === 'ask' && q.state !== 'done'), 15000), JSON.stringify((record().queue ?? []).filter((q) => q.kind === 'ask')));
+      await until(page, async () => (await page.getByTestId('super-queue-head').count()) === 0, 15000);
+    }
+
+    // The agenda (task super-agent-ajandasi-…): always drawn left of the stage, four sections,
+    // the band above the centre has no counts; it reads the pushed record (no request of its own).
+    ok(`${engineName}: the agenda is drawn with its four sections`, (await page.locator('[data-testid="super-agenda"] [data-testid^="super-agenda-section-"]').count()) === 4);
+    ok(`${engineName}: the band holds no counts and there is no list overlay`, (await page.locator('[data-testid^="super-job-count-"], [data-testid="super-job-list"]').count()) === 0);
+    await until(page, async () => { const n = apiReqs.length; await page.waitForTimeout(2500); return apiReqs.length === n; }, 30000);
+    const r0 = apiReqs.length;
+    await page.waitForTimeout(1500);
+    const kids = Object.keys(record().children ?? {});
+    const during = apiReqs.slice(r0).filter((x) => (x.path.startsWith('/api/super/') && !x.path.startsWith('/api/super/activity')) || kids.some((k) => x.path.includes(k)));
+    ok(`${engineName}: 0 requests from the agenda while it shows`, during.length === 0, JSON.stringify(during.slice(0, 5)));
+    if (engineName === 'chromium') {
+      for (const [w, h] of [[1280, 800], [1920, 1080]]) for (const scheme of ['light', 'dark']) {
+        await page.setViewportSize({ width: w, height: h });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.waitForTimeout(600);
+        await page.screenshot({ path: join(OUT, `board-agenda-${w}-${scheme}.png`) });
+      }
+      await page.setViewportSize({ width: 1600, height: 1000 });
+      await page.emulateMedia({ colorScheme: 'dark' });
+    } else await page.screenshot({ path: join(OUT, `board-agenda-${engineName}.png`) });
+
+    // D14: the centre reads 17 px, its composer 15 px; any other chat 15 px.
+    const fonts = await page.evaluate(() => {
+      const centre = document.querySelector('[data-super-slot="centre"] .chat-pane');
+      const input = document.querySelector('[data-super-slot="centre"] .chat-cmp-input');
+      const prose = centre?.querySelector('.chat-msg, .chat-md, .chat-text, p');
+      const others = [...document.querySelectorAll('.chat-pane')].filter((p) => !p.closest('[data-super-slot="centre"]'));
+      return {
+        centreVar: centre ? getComputedStyle(centre).getPropertyValue('--chat-text').trim() : null,
+        prose: prose ? getComputedStyle(prose).fontSize : null,
+        input: input ? getComputedStyle(input).fontSize : null,
+        othersVar: others.map((p) => getComputedStyle(p).getPropertyValue('--chat-text').trim()),
+      };
+    });
+    ok(`${engineName}: the centre transcript reads 17 px and its composer 15 px`, /^calc\(17px|^17px/.test(fonts.centreVar ?? '') && (fonts.prose === null || fonts.prose === '17px') && fonts.input === '15px', JSON.stringify(fonts));
+    ok(`${engineName}: every other chat keeps 15 px`, fonts.othersVar.every((v) => /15px/.test(v)), JSON.stringify(fonts.othersVar));
+
+    // The cards: tone, model chip, a title of up to three lines.
+    const tiles = await page.evaluate(() => [...document.querySelectorAll('.super-tile[data-tile="chat"]')].map((el) => {
+      const cs = getComputedStyle(el);
+      const title = el.querySelector('.super-tile-title');
+      const lh = title ? parseFloat(getComputedStyle(title).lineHeight) : 0;
+      return {
+        kind: el.dataset.kind, tone: el.dataset.superTone, toneColor: cs.getPropertyValue('--tone').trim(),
+        success: cs.getPropertyValue('--color-success').trim(), accent: cs.getPropertyValue('--color-accent').trim(),
+        model: el.querySelector('[data-testid="super-card-model"]')?.textContent ?? null,
+        titleLines: title && lh ? Math.round(title.getBoundingClientRect().height / lh) : 0,
+        state: el.querySelector('.super-tile-state, .super-tile-asks')?.textContent ?? '',
+        w: Math.round(el.closest('.super-card-frame')?.getBoundingClientRect().width ?? 0),
+      };
+    }));
+    ok(`${engineName}: every chat tile carries a tone and keeps its state word`, tiles.length > 0 && tiles.every((x) => x.tone && x.state.trim().length > 0), JSON.stringify(tiles));
+    ok(`${engineName}: an idle tile is purple (accent), a working one green (success)`, tiles.filter((x) => x.tone === 'idle').every((x) => x.toneColor === x.accent) && tiles.filter((x) => x.tone === 'working').every((x) => x.toneColor === x.success), JSON.stringify(tiles.map((x) => [x.tone, x.toneColor])));
+    // A chip only from what the session reported (its system:init): the flow's children ran turns
+    // in this page; a freshly opened page's children have not, and show no guess.
+    if (full) ok(`${engineName}: a tile shows its model chip from the session (Opus here)`, tiles.some((x) => /^Opus/.test(x.model ?? '')), JSON.stringify(tiles.map((x) => x.model)));
+    else ok(`${engineName}: no tile guesses a model it was not told`, tiles.every((x) => x.model === null || /^(Opus|Sonnet|Haiku|Fable)/.test(x.model)), JSON.stringify(tiles.map((x) => x.model)));
+    ok(`${engineName}: titles take up to three lines in the 160 px tile`, tiles.every((x) => x.titleLines <= 3) && tiles.filter((x) => x.w).every((x) => Math.abs(x.w - 160) <= 1), JSON.stringify(tiles.map((x) => [x.titleLines, x.w])));
+
+    if (full) {
+      // The working ring: at most 4 turn, held by the motion clock, rest when unfocused; its cost A/B.
+      await sayToSuper(page, 'GO-BUSYALL');
+      ok('children are busy for the ring checks', await until(page, async () => (await page.locator('.super-tile[data-kind="working"]').count()) >= 2, 40000), `${await page.locator('.super-tile[data-kind="working"]').count()}`);
+      await page.waitForTimeout(1500);
+      const ring = await page.evaluate(() => {
+        const spins = [...document.querySelectorAll('[data-testid="super-tile-spin"]')];
+        const anims = document.getAnimations().filter((a) => a.animationName === 'superTileSpin');
+        return { working: document.querySelectorAll('.super-tile[data-kind="working"]').length, on: spins.filter((s) => s.dataset.spin === 'on').length, closed: spins.filter((s) => s.dataset.spin === 'closed').length, anims: anims.length, running: anims.filter((a) => a.playState === 'running').length };
+      });
+      ok('the working ring turns on at most 4 tiles at once, the rest closed', ring.on >= 1 && ring.on <= 4 && ring.on + ring.closed === ring.working, JSON.stringify(ring));
+      ok('…its animations are held by the motion clock (none left on the display link)', ring.anims >= 1 && ring.running === 0, JSON.stringify(ring));
+      const cdp = await context.newCDPSession(page);
+      await cdp.send('Performance.enable');
+      const sample = async (ms) => {
+        const m0 = Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((x) => [x.name, x.value]));
+        const frames0 = await page.evaluate((ms) => new Promise((res) => { let n = 0; const t0 = performance.now(); const f = () => { n += 1; if (performance.now() - t0 < ms) requestAnimationFrame(f); else res(n); }; requestAnimationFrame(f); }), ms);
+        const m1 = Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((x) => [x.name, x.value]));
+        const per = (k) => Math.round(((m1[k] ?? 0) - (m0[k] ?? 0)) / (ms / 1000) * 10) / 10;
+        return { recalcPerS: per('RecalcStyleCount'), layoutPerS: per('LayoutCount'), rafPerS: Math.round(frames0 / (ms / 1000)) };
+      };
+      const withRing = await sample(5000);
+      await page.evaluate(() => document.documentElement.style.setProperty('--dc-motion-ambient-name', 'none'));
+      await page.waitForTimeout(300);
+      const restRing = await page.evaluate(() => document.getAnimations().filter((a) => a.animationName === 'superTileSpin').length);
+      const without = await sample(5000);
+      await page.evaluate(() => document.documentElement.style.removeProperty('--dc-motion-ambient-name'));
+      report.note(`ring cost A/B (chromium, ${ring.on} turning): with ${JSON.stringify(withRing)} | rested ${JSON.stringify(without)}`);
+      ok('…unfocused (the ambient name none) the ring rests: no ring animation at all', restRing === 0, `${restRing}`);
+      ok('…turning costs <= 20 style recalcs a second over resting (15 fps clock)', withRing.recalcPerS - without.recalcPerS <= 20, JSON.stringify({ withRing, without }));
+      await page.screenshot({ path: join(OUT, 'board-working-ring.png') });
+      // The compact and the full event lines, the larger centre font, in light and dark.
+      for (const [w, h] of [[1280, 800], [1800, 1130], [1920, 1080]]) for (const scheme of ['light', 'dark']) {
+        await page.setViewportSize({ width: w, height: h });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.waitForTimeout(600);
+        await page.screenshot({ path: join(OUT, `board-closed-${w}-${scheme}.png`) });
+        if (scheme === 'dark') {
+          // The centre takes the height while the bottom band is empty (owner 2026-10-21).
+          const g = await geo(page);
+          const banded = (record().containers ?? []).some((c) => c.place === 'others') || g.others > 0 || (await page.locator('[data-testid="super-terminals-row"] button').count()) > 0;
+          const below = g.s.y + g.s.h - (g.c.y + g.c.h);
+          report.note(`${w}x${h}: centre ${Math.round(g.c.w)}x${Math.round(g.c.h)}, ${Math.round(below)} px below it (${banded ? 'band reserved: Others or terminals' : 'band empty'})`);
+          ok(`chromium ${w}x${h}: the centre runs to the bottom margin unless the band holds something`, banded ? below >= 24 + 40 - 1 : Math.abs(below - 24) <= 1, JSON.stringify({ below, banded }));
+        }
+      }
+      await page.setViewportSize({ width: 1600, height: 1000 });
+      await page.emulateMedia({ colorScheme: 'dark' });
+      // A child row asks for side by side.
+      const link = page.locator('[data-testid="super-agenda-section-now"] button.super-agenda-row-btn').first();
+      if (await link.count()) {
+        await link.click();
+        ok('a child row in the agenda opens it side by side', await until(page, async () => record().view?.mode === 'half', 8000), JSON.stringify(record().view));
+      } else ok('a child row in the agenda opens it side by side', false, 'no child row in Now');
+      // Leave the stage as the next sections expect it: floating, nothing side by side.
+      await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'acme-app' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+      await until(page, async () => record().view?.mode === 'float', 8000);
+    }
+    ok(`${engineName}: no console errors on the board`, errors.length === 0, errors.slice(0, 5).join('\n'));
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
 // ─── main ───────────────────────────────────────────────────────────────────────────────
 
 let server = null;
@@ -1401,6 +1776,7 @@ try {
       await r.context.close();
     } finally { await browser.close(); }
   }
+  for (const e of ENGINES) await board(e, pw[e], base, e === 'chromium' && !SKIP_FLOW);
   for (const e of ENGINES) await motion(e, pw[e], base);
   // Light mode: the same crossfade, no flights.
   const settingsPath = join(HOME, '.dreamcontext', 'agent-ui.json');

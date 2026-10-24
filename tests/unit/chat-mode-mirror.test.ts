@@ -30,8 +30,9 @@ import {
 import {
   CHAT_MODE_ROWS, DEFAULT_CHAT_MODE as CLIENT_DEFAULT_CHAT_MODE, chatModeRow,
 } from '../../dashboard/src/lib/chatModes.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 
 describe('chat modes — client menu <-> server allowlist mirror', () => {
@@ -120,7 +121,7 @@ describe('chat modes — client menu <-> server allowlist mirror', () => {
     // fingerprint here under the new version.
     const PINNED: Record<string, [version: string, fingerprint: string]> = {
       basic: ['1.0', '7c497717dfe1'],
-      plan: ['1.1', 'aee3ba8b44d9'],
+      plan: ['1.2', 'c2422f79697d'],
       develop: ['1.2', 'ec2224ba4cd4'],
       train: ['0.1', 'f613cadc20e7'],
     };

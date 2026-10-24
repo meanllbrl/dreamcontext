@@ -25,6 +25,8 @@
  * tab left open, can never look like the owner doing something.
  */
 
+import { treeKillRealChild } from '../../lib/proc.js';
+
 /** How long an IDLE child may stay detached before it is ended (stdin EOF → linger → kill). */
 export const DETACH_IDLE_MS = 15 * 60_000;
 /** How long a BUSY child may stay detached before it is ended anyway — the backstop for a turn
@@ -91,6 +93,16 @@ export interface LiveChatEntry {
   cut?: () => Promise<void>;
   /** The child's pid (it leads its own process group): labels what a process scan finds. */
   pid?: number;
+  /** A handed-over Super Agent only: join a phone socket BESIDE the holder as a read-and-chat
+   *  mirror (lib/super/phone-mirror.ts). False when the child can no longer take one. */
+  mirror?: (ws: import('ws').WebSocket, device: { store: 'mac'; idHash: string }) => boolean;
+  /** Is there room for this device's mirror (its own earlier one is replaced)? */
+  mirrorRoom?: (device: { store: 'mac'; idHash: string }) => boolean;
+  /** Close every phone mirror (the take-back: the phone talks to the Super Agent no more). */
+  closeMirrors?: () => void;
+  /** One `_meta` frame (already serialised) to every phone mirror, never the holder: the stage
+   *  pictures the phone cannot otherwise see (`stageMediaFrame`, lib/super/phone-mirror.ts). */
+  mirrorFrame?: (serialised: string) => void;
 }
 
 /** How long a cut child gets between SIGTERM and SIGKILL. */
@@ -161,6 +173,8 @@ export function liveChatsSnapshot(): readonly LiveChatSnapshotEntry[] {
 
 /** Signal a child's process group (it is spawned as a group leader); falls back to the child. */
 export function signalGroup(child: { pid?: number; kill: (s?: NodeJS.Signals) => boolean }, signal: NodeJS.Signals): void {
+  // win32 has no process groups: tree-kill a real child, else fall through to the old path.
+  if (treeKillRealChild(child, signal)) return;
   try {
     if (child.pid) { process.kill(-child.pid, signal); return; }
   } catch { /* not a group leader (or gone): signal the child itself */ }

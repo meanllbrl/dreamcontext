@@ -68,7 +68,7 @@ describe('key handling', () => {
 
   it('stores the key 0600 and clears it with null', () => {
     setRecallCloudKey(KEY, 'env-copy', home);
-    expect(mode(recallCloudConfigPath(home))).toBe(0o600);
+    if (process.platform !== 'win32') expect(mode(recallCloudConfigPath(home))).toBe(0o600); // Windows has no POSIX mode bits
     expect(readRecallCloudConfig(home).keyOrigin).toBe('env-copy');
     setRecallCloudKey(null, 'manual', home);
     expect(recallCloudApiKey(home)).toBeNull();
@@ -147,7 +147,7 @@ describe('consent', () => {
     expect(text).toContain('"surface":"dashboard"');
     expect(text).toContain('"event":"revoke"');
     expect(text).not.toContain(KEY);
-    expect(mode(log)).toBe(0o600);
+    if (process.platform !== 'win32') expect(mode(log)).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('keeps the vault id marker in a self-ignored .embeddings directory', () => {
@@ -205,7 +205,7 @@ describe('usage ledger', () => {
     expect(u.lifetimeUsd).toBeCloseTo(0.85);
     expect(rollingIndexSpendUsd({}, home)).toBeCloseTo(0.75);
     expect(rollingIndexSpendUsd({ autoOnly: true }, home)).toBeCloseTo(0.5);
-    expect(mode(join(home, '.dreamcontext', 'recall-cloud-usage.json'))).toBe(0o600);
+    if (process.platform !== 'win32') expect(mode(join(home, '.dreamcontext', 'recall-cloud-usage.json'))).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('reads a corrupt ledger as at-ceiling and never overwrites it', () => {

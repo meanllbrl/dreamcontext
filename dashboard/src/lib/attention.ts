@@ -55,6 +55,9 @@ export interface AskAlarm {
    *  link to THAT chat tab (`dreamcontext://project/<vault>/session/<id>`); without it the
    *  banner still brings the project forward. */
   sessionId?: string | null;
+  /** False when the server already posts this alarm's banner (a Super Agent question,
+   *  `lib/super/owner-question.ts`): the chime and the bounce only. Default true. */
+  banner?: boolean;
 }
 
 /** Hidden vaults (`__assistant__`, the notch's own) are never a chip and never in the
@@ -196,6 +199,7 @@ export function raiseAskAttention(alarm: AskAlarm = {}): void {
   if (isWatchingThisWindow() && isAlarmChipOnScreen(source)) return;
 
   void bounceDockIcon();
+  if (alarm.banner === false) return;
   const detail = alarm.detail?.trim();
   void postBanner(
     source ? `Claude is asking · ${oneLine(source)}` : 'Claude is asking',

@@ -96,3 +96,60 @@ export const FOCUS_LIMITS: GateLimits = { concurrency: 4, perWindow: 600, window
 export const sttGate = new VoiceGate(STT_LIMITS);
 export const ttsGate = new VoiceGate(TTS_LIMITS);
 export const focusGate = new VoiceGate(FOCUS_LIMITS);
+
+/**
+ * THE HANDS-FREE PHONE'S DICTATION, through the tunnel (task the-hands-free-phone-sends-a-voice-
+ * message…). `POST /api/agent/voice/stt` is the ONE voice route the phone listener opens, and the
+ * request arrives over a public tunnel, so it gets caps of its own ON TOP of the shared gate:
+ *   • a body of at most {@link PHONE_MAX_STT_BYTES} (two minutes of 16 kHz mono 16-bit PCM is
+ *     ~3.8 MB) instead of the laptop's 25 MB;
+ *   • a WAV whose header says at most {@link PHONE_MAX_STT_SECONDS} — read from the bytes, an
+ *     unreadable header is refused rather than guessed;
+ *   • one take in flight and a dozen a minute: a spoken message, not a transcription service.
+ * The take is the owner's own voice on the owner's own Mac; nothing is billed (dictation is local
+ * only), but each take runs a whisper inference on this machine, which is the cost capped here.
+ */
+export const PHONE_STT_LIMITS: GateLimits = { concurrency: 1, perWindow: 12, windowMs: 60_000 };
+export const PHONE_MAX_STT_BYTES = 4 * 1024 * 1024;
+export const PHONE_MAX_STT_SECONDS = 120;
+export const phoneSttGate = new VoiceGate(PHONE_STT_LIMITS);
+
+/** The one format the phone's recorder writes (dashboard `wavEncoder.ts`): PCM, mono, 16 kHz,
+ *  16-bit. A phone take in any other shape is refused rather than measured. */
+export const PHONE_TAKE_FORMAT = { format: 1, channels: 1, sampleRate: 16_000, bitsPerSample: 16 } as const;
+
+/**
+ * How long a phone take is, or null when it is not the recorder's format or the header cannot say.
+ *
+ * The length is DERIVED from the fields whisper decodes with (sample rate × block align), never
+ * from the header's own `byteRate`, which the sender writes and whisper ignores: a forged one
+ * would let minutes of audio pass as milliseconds. Conservative: the larger of the declared data
+ * size and the bytes actually present, so a small declared size cannot smuggle a long take.
+ */
+export function wavSeconds(buf: Buffer): number | null {
+  if (buf.length < 12 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let bytesPerSecond = 0;
+  let off = 12;
+  while (off + 8 <= buf.length) {
+    const id = buf.toString('ascii', off, off + 4);
+    const size = buf.readUInt32LE(off + 4);
+    const body = off + 8;
+    if (id === 'fmt ') {
+      if (size < 16 || body + 16 > buf.length) return null;
+      const format = buf.readUInt16LE(body);
+      const channels = buf.readUInt16LE(body + 2);
+      const sampleRate = buf.readUInt32LE(body + 4);
+      const blockAlign = buf.readUInt16LE(body + 12);
+      const bits = buf.readUInt16LE(body + 14);
+      const f = PHONE_TAKE_FORMAT;
+      if (format !== f.format || channels !== f.channels || sampleRate !== f.sampleRate || bits !== f.bitsPerSample
+        || blockAlign !== (f.channels * f.bitsPerSample) / 8) return null;
+      bytesPerSecond = sampleRate * blockAlign;
+    } else if (id === 'data') {
+      if (!bytesPerSecond || size === 0xffffffff) return null;
+      return Math.max(size, buf.length - body) / bytesPerSecond;
+    }
+    off = body + size + (size % 2);
+  }
+  return null;
+}

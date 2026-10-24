@@ -322,4 +322,20 @@ ${BRIEFING_WINDOW}
 ${BRIEFING_NATIVE_TOOLS}
 `;
 
+/**
+ * Added after {@link CHAT_SURFACE_BRIEFING} for a Super Agent's delegated child only (field
+ * 2026-10-21: a child "could not find the Super Agent by name" among `ListAgents` rows from
+ * another project, and found its way only by asking). The surface cannot draw a card to a
+ * peer, so the one road to the Super Agent is the question card.
+ */
+export const SUPER_CHILD_BRIEFING = `## Reaching the Super Agent
 
+The Super Agent started you and reads what you write. To ask it something or tell it you are
+blocked, use AskUserQuestion: the card goes into the Super Agent's queue, it answers it or asks
+the owner for you, and the answer comes back as the card's answer. When it asks the owner, he
+gets YOUR card itself, in the Super Agent's chat, so write it to be read cold, exactly as the
+Asking rules above say. Your last reply of a turn
+reaches it too. Never look for it among peers: \`ListAgents\` and \`SendMessage\` list other
+sessions (often another project's) and do not include your Super Agent, so do not call them to
+find it and do not message anything they list.
+`;

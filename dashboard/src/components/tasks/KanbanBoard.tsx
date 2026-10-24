@@ -1,36 +1,27 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel } from '../../hooks/useTasks';
+import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
+import { useI18n } from '../../context/I18nContext';
+import { openChildrenMessage } from '../../lib/taskObjection';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
 import { confirmAction } from '../../lib/desktop';
 import {
-  type Dim, type SaveScope,
+  type SaveScope,
   PRIO_ORDER,
-  dimGet, dimGroups, dueInfo, filterTasks, levelLabel, prioColor, sortTasks, taskAssignees,
+  dimGroups, dueInfo, filterTasks, levelLabel, nestChildren, prioColor, sortTasks, taskAssignees,
 } from './boardModel';
 import { BoardViewTabs } from './BoardViewTabs';
 import { BoardToolbar, type MenuKey } from './BoardToolbar';
-import { BoardColumn, type BoardColumnData, type BoardSubGroup } from './BoardColumn';
-import { BoardCard } from './BoardCard';
-import { AtRiskAlert } from './AtRiskAlert';
+import { BoardColumn, type BoardColumnData } from './BoardColumn';
 import { SleepEvalBanner } from './SleepEvalDeck';
 import { SaveScopeDialog } from './SaveScopeDialog';
 import { TaskDetailPanel } from './TaskDetailPanel';
 import { TaskCreateModal } from './TaskCreateModal';
-import { DelegateComposer } from './DelegateComposer';
-import { AssignToAgentComposer } from './AssignToAgentComposer';
-import { useI18n } from '../../context/I18nContext';
 import { AuthorTaskComposer } from './AuthorTaskComposer';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
-import { SparkIcon } from '../sleepy/TypeIcons';
-import { EisenhowerMatrix } from './EisenhowerMatrix';
-import { RiceScatter } from './RiceScatter';
-import { TimelineGantt } from './TimelineGantt';
-import { TaskCalendar } from './TaskCalendar';
-import { ActivityHeatmap } from './ActivityHeatmap';
 import './Board.css';
 
 const AVATAR_PALETTE = ['#9d8cff', '#4aa8ff', '#4ade80', '#f0abfc', '#fbbf24', '#5eead4', '#f9a8d4'];
@@ -39,6 +30,7 @@ const distinct = (xs: string[]): string[] => Array.from(new Set(xs));
 type PendingSave = { mode: 'save' | 'create'; name?: string } | null;
 
 export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
+  const { t } = useI18n();
   const sm = useStatusModel();
   const s = useBoardState();
   const { data: tasks = [], isLoading } = useTasks();
@@ -47,10 +39,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const { data: activeVersion = null } = useActiveVersion();
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
-  // Desktop-only gate for "Delegate to Claude": the in-app agent needs a real embedded
+  // Desktop-only gate for "Author with agent": the in-app agent needs a real embedded
   // terminal + the claude CLI (so it's hidden on the web build / when prereqs are missing,
-  // A6) AND the Agents surface must be enabled in Settings — otherwise the delegated agent
-  // has no dock to surface in and the menu item would dead-end. Same readiness check the
+  // A6) AND the Agents surface must be enabled in Settings. Same readiness check the
   // header's Sleep tracker uses, plus the live `enabled` flag (kept in sync via the same
   // event the Settings page broadcasts on save).
   const { data: agentCaps } = useAgentCapabilities();
@@ -65,26 +56,32 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const [openMenu, setOpenMenu] = useState<MenuKey>(null);
   const [viewMenuId, setViewMenuId] = useState<string | null>(null);
   const [colCollapsed, setColCollapsed] = useState<Record<string, boolean>>({});
-  const [subCollapsed, setSubCollapsed] = useState<Record<string, boolean>>({});
+  // Which parents have their subtask list open — kept for this board session only.
+  const [subtasksOpen, setSubtasksOpen] = useState<Record<string, boolean>>({});
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
-  const [delegateTask, setDelegateTask] = useState<Task | null>(null);
-  const [assignAgentTask, setAssignAgentTask] = useState<Task | null>(null);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showAuthor, setShowAuthor] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave>(null);
-  const [dismissedAlert, setDismissedAlert] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; refused: boolean } | null>(null);
 
-  const flash = useCallback((msg: string) => { setToast(msg); }, []);
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 1900); return () => clearTimeout(t); }, [toast]);
+  const flash = useCallback((msg: string, refused = false) => { setToast({ msg, refused }); }, []);
+  // A refusal says what to do next, so it stays long enough to be read.
+  useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(null), toast.refused ? 6000 : 1900); return () => clearTimeout(timer); }, [toast]);
 
   // Open the task the ⌘K palette / Brain map navigated to in the TaskDetailPanel.
   useFocusTarget(focus, (slug) => setSelectedSlug(slug));
 
   const closeAllMenus = useCallback(() => { setOpenMenu(null); setViewMenuId(null); }, []);
+  // Esc closes an open toolbar / view menu (keyboard users have no click-away).
+  useEffect(() => {
+    if (openMenu === null && viewMenuId === null) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); closeAllMenus(); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openMenu, viewMenuId, closeAllMenus]);
 
   // ── derived option data ──────────────────────────────────────────────────────
   const memberMap = useMemo(() => new Map(members.map((m) => [m.slug, m.name])), [members]);
@@ -113,24 +110,35 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   // ── filtering / grouping ──────────────────────────────────────────────────────
   const filtered = useMemo(() => filterTasks(tasks, s.filters, s.search, versionMeta, sm), [tasks, s.filters, s.search, versionMeta, sm]);
   const groupOpts = useMemo(() => ({ versionOrder: versionsForFilter, assignees, statuses: sm }), [versionsForFilter, assignees, sm]);
+  // Subtasks ride inside their parent's card when the parent is visible; the chip and the
+  // inline list read ALL of a parent's children (a filter never hides how much is left).
+  const nested = useMemo(() => nestChildren(filtered), [filtered]);
+  const allChildren = useMemo(() => {
+    const m = new Map<string, Task[]>();
+    for (const t of tasks) if (t.parent_task) m.set(t.parent_task, [...(m.get(t.parent_task) ?? []), t]);
+    return m;
+  }, [tasks]);
+  const taskBySlug = useMemo(() => new Map(tasks.map((t) => [t.slug, t])), [tasks]);
+  // Card lookups for BoardColumn → BoardCard (stable per data change).
+  const topSlugs = useMemo(() => new Set(nested.top.map((t) => t.slug)), [nested]);
+  const childrenOf = useCallback((slug: string) => (topSlugs.has(slug) ? allChildren.get(slug) ?? [] : []), [topSlugs, allChildren]);
+  const parentNameOf = useCallback((t: Task) => {
+    if (!t.parent_task) return null;
+    const p = taskBySlug.get(t.parent_task);
+    // A dangling link (the parent is gone) draws no '↑' line: the task reads as top-level.
+    return p ? (p.name || p.slug) : null;
+  }, [taskBySlug]);
+  // Only drawn on a card whose parent is NOT folding it in (the parent is filtered out).
+  const nestedSlugs = useMemo(() => new Set([...nested.childrenByParent.values()].flat().map((t) => t.slug)), [nested]);
+  const singleVersion = s.filters.version.inc.length === 1;
 
   const columns: { data: BoardColumnData; colKey: string }[] = useMemo(() => {
-    return dimGroups(s.groupBy, filtered, groupOpts).map((col) => {
-      const colKey = `${s.groupBy}:${col.key}`;
-      let subs: BoardSubGroup[];
-      if (s.subGroupBy === 'none') {
-        subs = [{ key: '_all', hasHeader: false, cards: sortTasks(col.tasks, s.sortBy, s.sortDir) }];
-      } else {
-        const sg = dimGroups(s.subGroupBy as Dim, col.tasks, groupOpts).filter((x) => x.tasks.length);
-        subs = sg.map((x) => {
-          const subKey = `${colKey}|${x.key}`;
-          return { key: x.key, hasHeader: true, label: x.label, color: x.color, count: x.tasks.length, collapsed: !!subCollapsed[subKey], onToggleCollapse: () => setSubCollapsed((m) => ({ ...m, [subKey]: !m[subKey] })), cards: sortTasks(x.tasks, s.sortBy, s.sortDir) };
-        });
-        if (!subs.length) subs = [{ key: '_e', hasHeader: false, cards: [], empty: true }];
-      }
-      return { colKey, data: { key: col.key, label: col.label, count: col.tasks.length, color: col.color, collapsed: !!colCollapsed[colKey], subs } };
+    return dimGroups('status', nested.top, groupOpts).map((col) => {
+      const colKey = `status:${col.key}`;
+      const cards = sortTasks(col.tasks, s.sortBy, s.sortDir);
+      return { colKey, data: { key: col.key, label: col.label, count: cards.length, color: col.color, collapsed: !!colCollapsed[colKey], subs: [{ key: '_all', hasHeader: false, cards }] } };
     });
-  }, [s.groupBy, s.subGroupBy, s.sortBy, s.sortDir, filtered, groupOpts, colCollapsed, subCollapsed]);
+  }, [s.sortBy, s.sortDir, nested, groupOpts, colCollapsed]);
 
   const viewCounts = useMemo(() => {
     const m: Record<string, number> = {};
@@ -138,18 +146,30 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     return m;
   }, [s.views, tasks, versionMeta, sm]);
 
-  // ── at-risk alert ──────────────────────────────────────────────────────────────
-  const atRisk = useMemo(() => {
-    // Live = not terminal by KIND (a cancelled-kind task never enters the banner).
-    const open = tasks.filter((t) => !sm.isTerminal(t.status));
-    let overdue = 0, today = 0, soon = 0;
-    open.forEach((t) => { const di = dueInfo(t, sm); if (!di) return; if (di.kind === 'overdue') overdue++; else if (di.kind === 'today') today++; else if (di.kind === 'soon' || di.kind === 'week') soon++; });
-    return { overdue, today, soon };
-  }, [tasks, sm]);
-  const showAlert = !dismissedAlert && (atRisk.overdue > 0 || atRisk.today > 0);
+  // ── overdue chip (the tab row's right side; replaces the red Attention banner) ──────
+  // Live = not terminal by KIND (a cancelled-kind task is never overdue).
+  const overdueCount = useMemo(
+    () => tasks.filter((t) => !sm.isTerminal(t.status) && dueInfo(t, sm)?.kind === 'overdue').length,
+    [tasks, sm],
+  );
 
-  // ── drag + drop (patch the grouped dimension) ───────────────────────────────────
-  const draggable = s.layout === 'board';
+  // ── status moves (drag, right-click) ───────────────────────────────────────────
+  // The card's column comes from the server's status, so a refused move leaves it where it
+  // was; the toast says so, and "Moved to" only shows once the move landed. A parent with open
+  // sub-tasks is refused (409 parent_has_open_children): name them from the list we hold.
+  // The promise, not per-call callbacks: TanStack keeps those for the latest call only, so a
+  // second move made before this one answers would swallow its refusal.
+  const moveStatus = useCallback((task: Task, status: string) => {
+    updateTask.mutateAsync({ slug: task.slug, updates: { status } as Partial<Task> }).then(
+      () => flash(`Moved to ${sm.labelOf(status)}`),
+      (err: Error) => flash(isOpenChildrenRefusal(err)
+        ? openChildrenMessage(t, 'board', task, tasks, sm.isTerminal, err.message)
+        : err.message, true),
+    );
+  }, [updateTask, flash, sm, t, tasks]);
+
+  // ── drag + drop (patch the status) ─────────────────────────────────────────────
+  const draggable = true;
   const onCardDragStart = useCallback((e: React.DragEvent, id: string) => { setDragId(id); try { e.dataTransfer.effectAllowed = 'move'; } catch { /* noop */ } }, []);
   const endDrag = useCallback(() => { setDragId(null); setDragOverKey(null); }, []);
   // The column key the dragged card currently lives in — used to suppress the
@@ -157,20 +177,16 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const dragSourceKey = useMemo(() => {
     if (!dragId) return null;
     const task = tasks.find((t) => t.id === dragId);
-    return task ? dimGet(task, s.groupBy as Dim) : null;
-  }, [dragId, tasks, s.groupBy]);
+    return task ? task.status : null;
+  }, [dragId, tasks]);
   const onColumnDrop = useCallback((colValue: string) => {
     const id = dragId;
     endDrag();
     if (!id) return;
     const task = tasks.find((t) => t.id === id);
-    if (!task) return;
-    const field = s.groupBy as Dim;
-    const value = colValue === 'none' && (field === 'version' || field === 'assignee') ? null : colValue;
-    if ((task[field as keyof Task] ?? 'none') === (value ?? 'none')) return;
-    updateTask.mutate({ slug: task.slug, updates: { [field]: value } as Partial<Task> });
-    flash(`Updated ${field}`);
-  }, [dragId, tasks, s.groupBy, updateTask, flash, endDrag]);
+    if (!task || task.status === colValue) return;
+    moveStatus(task, colValue);
+  }, [dragId, tasks, endDrag, moveStatus]);
 
   // ── right-click context menu ─────────────────────────────────────────────────────
   const openCtxMenu = useCallback((e: React.MouseEvent, task: Task) => {
@@ -179,9 +195,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     setCtxMenu({ x: e.clientX, y: e.clientY, task });
   }, []);
   const ctxSetStatus = useCallback((task: Task, status: string) => {
-    if (task.status !== status) { updateTask.mutate({ slug: task.slug, updates: { status } as Partial<Task> }); flash(`Moved to ${sm.labelOf(status)}`); }
+    if (task.status !== status) moveStatus(task, status);
     setCtxMenu(null);
-  }, [updateTask, flash, sm]);
+  }, [moveStatus]);
   const ctxSetPriority = useCallback((task: Task, priority: string) => {
     if (task.priority !== priority) { updateTask.mutate({ slug: task.slug, updates: { priority } as Partial<Task> }); flash(`Priority → ${levelLabel(priority)}`); }
     setCtxMenu(null);
@@ -194,7 +210,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     if (task.tags.some((t) => t.toLowerCase() === 'backlog')) return;
     updateTask.mutate(
       { slug: task.slug, updates: { tags: [...task.tags, 'backlog'] } as Partial<Task> },
-      { onSuccess: () => flash('Sent to backlog'), onError: () => flash('Could not send to backlog') },
+      { onSuccess: () => flash('Sent to backlog'), onError: () => flash('Could not send to backlog', true) },
     );
   }, [updateTask, flash]);
   const ctxDelete = useCallback(async (task: Task) => {
@@ -206,15 +222,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
       destructive: true,
     });
     if (!ok) return;
-    deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed') });
+    deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed', true) });
     if (selectedSlug === task.slug) setSelectedSlug(null);
   }, [deleteTask, flash, selectedSlug]);
-  // Open the Delegate composer for a task (from the context menu). The composer dispatches
-  // the delegate event the always-mounted AgentSurface listens for; we just host the modal.
-  const ctxDelegate = useCallback((task: Task) => { setDelegateTask(task); setCtxMenu(null); }, []);
-  // "Assign to agent" runs one of the project's own agents on the task (server-side, so it is
-  // offered on every build, unlike Delegate). The composer answers every refusal in place.
-  const ctxAssignAgent = useCallback((task: Task) => { setAssignAgentTask(task); setCtxMenu(null); }, []);
 
   // ── view actions ────────────────────────────────────────────────────────────────
   const handleRequestSave = useCallback(() => { setPendingSave({ mode: 'save' }); closeAllMenus(); }, [closeAllMenus]);
@@ -229,7 +239,6 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   }, [pendingSave, s, flash]);
 
   const selectedTask = selectedSlug ? tasks.find((t) => t.slug === selectedSlug) || null : null;
-  const onTaskMove = useCallback((slug: string, updates: Partial<Pick<Task, 'priority' | 'urgency'>>) => updateTask.mutate({ slug, updates }), [updateTask]);
 
   if (!s.ready || isLoading) {
     return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading board…</div>;
@@ -239,7 +248,6 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const pendingTitle = pendingSave?.mode === 'create' ? `Create “${pendingSave.name || 'New view'}”` : `Save “${activeName}”`;
   const pendingDefaultScope: SaveScope = s.activeView?.origin === 'local' || s.activeView?.hasLocalOverride ? 'local' : 'shared';
   const isEmpty = filtered.length === 0;
-  const isAdvanced = ['eisenhower', 'scatter', 'timeline', 'calendar', 'heatmap'].includes(s.layout);
 
   return (
     <div style={{ height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)' }}>
@@ -257,6 +265,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
         onRename={s.renameView}
         onDuplicate={s.duplicateView}
         onDelete={s.deleteView}
+        overdue={overdueCount}
+        onOverdue={() => { s.setDue('risk'); closeAllMenus(); }}
       />
 
       <BoardToolbar
@@ -264,6 +274,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
         allTasks={tasks}
         allTags={allTags}
         assignees={assignees}
+        singleVersion={singleVersion}
         versionsForFilter={versionsForFilter}
         activeVersion={activeVersion}
         releasedVersions={releasedVersions}
@@ -277,20 +288,10 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 
       <SleepEvalBanner />
 
-      {showAlert && (
-        <AtRiskAlert
-          overdue={atRisk.overdue}
-          today={atRisk.today}
-          soon={atRisk.soon}
-          onFocus={() => { s.setDue('risk'); setDismissedAlert(true); }}
-          onDismiss={() => setDismissedAlert(true)}
-        />
-      )}
-
-      <div className="bd-scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-bg)', overflow: isAdvanced ? 'auto' : 'hidden' }}>
-        {isEmpty && !isAdvanced ? (
+      <div className="bd-scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-bg)', overflow: 'hidden' }}>
+        {isEmpty ? (
           <EmptyState onClear={s.clearAllFilters} />
-        ) : s.layout === 'board' ? (
+        ) : (
           <div
             className="bd-scroll"
             // Clear the active column only when the pointer leaves the whole board
@@ -317,6 +318,12 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
                 isDropTarget={!!dragId && dragOverKey === data.key}
                 showDropSilhouette={!!dragId && dragOverKey === data.key && dragSourceKey !== data.key}
                 assigneeName={assigneeName}
+                childrenOf={childrenOf}
+                parentNameOf={(t) => (nestedSlugs.has(t.slug) ? null : parentNameOf(t))}
+                showVersionChip={!singleVersion}
+                subtasksOpen={subtasksOpen}
+                onToggleSubtasks={(slug) => setSubtasksOpen((m) => ({ ...m, [slug]: !m[slug] }))}
+                onOpenTask={(t) => setSelectedSlug(t.slug)}
                 onToggleCollapse={() => setColCollapsed((m) => ({ ...m, [colKey]: !m[colKey] }))}
                 onAddTask={() => setShowCreate(true)}
                 onCardClick={(t) => setSelectedSlug(t.slug)}
@@ -327,41 +334,6 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
                 onColumnDrop={(e) => { if (draggable) { e.preventDefault(); onColumnDrop(data.key); } }}
               />
             ))}
-          </div>
-        ) : s.layout === 'list' ? (
-          <div className="bd-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 18px 20px' }}>
-            {columns.map(({ data, colKey }) => (
-              <div key={colKey} style={{ marginBottom: 22 }}>
-                <div onClick={() => setColCollapsed((m) => ({ ...m, [colKey]: !m[colKey] }))} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '6px 4px 10px', cursor: 'pointer', position: 'sticky', top: 0, background: 'var(--color-bg)', zIndex: 2 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 3, background: data.color, flex: '0 0 auto' }} />
-                  <span style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 14, color: 'var(--color-text)' }}>{data.label}</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--color-text-tertiary)', background: 'var(--color-bg-tertiary)', padding: '1px 8px', borderRadius: 20 }}>{data.count}</span>
-                  <div style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
-                </div>
-                {!data.collapsed && data.subs.map((sub) => (
-                  <div key={sub.key}>
-                    {sub.hasHeader && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 6px 5px' }}>
-                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: sub.color, flex: '0 0 auto' }} />
-                        <span style={{ fontFamily: 'var(--font-family-text)', fontWeight: 600, fontSize: 11, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-secondary)' }}>{sub.label}</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{sub.count}</span>
-                      </div>
-                    )}
-                    {sub.cards.map((t) => (
-                      <BoardCard key={t.id} task={t} cardProps={s.cardProps} variant="list" assigneeName={assigneeName} onClick={() => setSelectedSlug(t.slug)} onContextMenu={(e) => openCtxMenu(e, t)} />
-                    ))}
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ flex: 1, minHeight: 0, padding: 16, display: 'flex', flexDirection: 'column' }}>
-            {s.layout === 'eisenhower' && <EisenhowerMatrix tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} onTaskMove={onTaskMove} />}
-            {s.layout === 'scatter' && <RiceScatter tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} />}
-            {s.layout === 'timeline' && <TimelineGantt tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} />}
-            {s.layout === 'calendar' && <TaskCalendar tasks={filtered} onTaskClick={(t) => setSelectedSlug(t.slug)} />}
-            {s.layout === 'heatmap' && <ActivityHeatmap tasks={filtered} />}
           </div>
         )}
       </div>
@@ -374,34 +346,24 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
       {ctxMenu && (
         <TaskContextMenu
           menu={ctxMenu}
-          agentReady={agentReady}
           onClose={() => setCtxMenu(null)}
           onOpen={(t) => { setSelectedSlug(t.slug); setCtxMenu(null); }}
           onSendToBacklog={ctxSendToBacklog}
-          onDelegate={ctxDelegate}
-          onAssignAgent={ctxAssignAgent}
           onSetStatus={ctxSetStatus}
           onSetPriority={ctxSetPriority}
           onDelete={ctxDelete}
         />
       )}
 
-      {delegateTask && (
-        <DelegateComposer
-          task={delegateTask}
-          onClose={() => setDelegateTask(null)}
-          onDelegated={(title) => flash(`Delegated “${title}” to Claude`)}
+      {selectedTask && (
+        <TaskDetailPanel
+          key={selectedTask.slug}
+          task={selectedTask}
+          allTasks={tasks}
+          onOpenTask={(slug) => setSelectedSlug(slug)}
+          onClose={() => setSelectedSlug(null)}
         />
       )}
-
-      {assignAgentTask && (
-        <AssignToAgentComposer
-          task={assignAgentTask}
-          onClose={() => setAssignAgentTask(null)}
-        />
-      )}
-
-      {selectedTask && <TaskDetailPanel task={selectedTask} onClose={() => setSelectedSlug(null)} />}
       {showCreate && <TaskCreateModal onClose={() => setShowCreate(false)} />}
       {showAuthor && (
         <AuthorTaskComposer
@@ -412,8 +374,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
       {pendingSave && <SaveScopeDialog title={pendingTitle} defaultScope={pendingDefaultScope} onPick={handlePickScope} onCancel={() => setPendingSave(null)} />}
 
       {toast && (
-        <div className="bd-pop" style={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 60, display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 11, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-lg)', fontSize: 13, color: 'var(--color-text)' }}>
-          <span style={{ color: 'var(--color-accent)' }}>✓</span>{toast}
+        <div className="bd-pop" role={toast.refused ? 'alert' : 'status'} data-testid="board-toast" style={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 60, display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 11, background: 'var(--color-bg-elevated)', border: `1px solid ${toast.refused ? 'var(--color-error)' : 'var(--color-border)'}`, boxShadow: 'var(--shadow-lg)', fontSize: 13, color: 'var(--color-text)', width: 'max-content', maxWidth: 'min(560px, calc(100% - 32px))', lineHeight: 1.45 }}>
+          <span style={{ color: toast.refused ? 'var(--color-error)' : 'var(--color-accent)', flexShrink: 0 }}>{toast.refused ? '!' : '✓'}</span>{toast.msg}
         </div>
       )}
     </div>
@@ -421,24 +383,20 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 }
 
 interface CtxMenuState { x: number; y: number; task: Task }
-function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onAssignAgent, onSetStatus, onSetPriority, onSendToBacklog, onDelete }: {
+function TaskContextMenu({ menu, onClose, onOpen, onSetStatus, onSetPriority, onSendToBacklog, onDelete }: {
   menu: CtxMenuState;
-  agentReady?: boolean;
   onClose: () => void;
   onOpen: (t: Task) => void;
-  onDelegate: (t: Task) => void;
-  onAssignAgent: (t: Task) => void;
   onSetStatus: (t: Task, status: string) => void;
   onSetPriority: (t: Task, priority: string) => void;
   onSendToBacklog: (t: Task) => void;
   onDelete: (t: Task) => void;
 }) {
   const sm = useStatusModel();
-  const { t } = useI18n();
   const { task } = menu;
-  // The collapsed menu is short now (≈ 220×224px with Assign to agent, +34 for the Delegate
-  // row); submenus fly out to the side.
-  const W = 220, H = agentReady ? 258 : 224, SUB_W = 188;
+  // The collapsed menu is short (≈ 220×190px); submenus fly out to the side. Handing a task to
+  // an agent lives in the task's own "Give to agent" button, never here.
+  const W = 220, H = 190, SUB_W = 188;
   const left = typeof window !== 'undefined' ? Math.min(menu.x, window.innerWidth - W - 8) : menu.x;
   const top = typeof window !== 'undefined' ? Math.min(menu.y, window.innerHeight - H - 8) : menu.y;
   // Flip the flyout to the left when the main menu sits too close to the right edge.
@@ -472,21 +430,6 @@ function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onAssi
         <div className="bd-row" onClick={() => onOpen(task)} style={row}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M15 3h6v6M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" /></svg>
           <span style={{ flex: 1 }}>Open details</span>
-        </div>
-
-        {/* Delegate to Claude — desktop-only (the in-app agent). Hands the task to a
-            background Claude Code agent via a prefilled composer. */}
-        {agentReady && (
-          <div className="bd-row" onClick={() => onDelegate(task)} style={{ ...row, color: 'var(--color-accent)' }}>
-            <span style={{ display: 'inline-flex', flex: '0 0 auto' }}><SparkIcon size={14} /></span>
-            <span style={{ flex: 1 }}>Delegate to Claude</span>
-          </div>
-        )}
-
-        {/* Assign to agent: one of this project's agents takes the task and runs on it. */}
-        <div className="bd-row" onClick={() => onAssignAgent(task)} style={row}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><rect x="4" y="8" width="16" height="12" rx="3" /><path d="M12 4v4M9 13h.01M15 13h.01M9 17h6" /></svg>
-          <span style={{ flex: 1 }}>{t('tasks.assignToAgent')}</span>
         </div>
 
         <div style={{ height: 1, background: 'var(--color-border)', margin: '5px 4px' }} />

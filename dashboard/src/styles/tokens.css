@@ -350,6 +350,8 @@
   /* The brand gem's pieces gathering into the mark (onboarding hand-off, the Node setup
      window). node-setup.html mirrors this value; tests/unit/desktop-pages-mirror.test.ts. */
   --motion-converge: 520ms;
+  /* A notification landing on a message: marked, held, then faded (the AI Team page). */
+  --motion-flash: 2400ms;
 
   /* ─── Layout (compact density) ─── */
   --sidebar-width: 220px;

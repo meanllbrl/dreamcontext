@@ -21,8 +21,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 
 const PANEL = 'dashboard/src/components/agents/AgentThreadPanel.tsx';
@@ -30,7 +31,8 @@ const HOST = 'dashboard/src/components/agents/agentsChannelHost.ts';
 const MESSAGE = 'dashboard/src/components/agents/AgentMessage.tsx';
 const TABS = 'dashboard/src/components/sleepy/AgentTabs.tsx';
 const SURFACE = 'dashboard/src/components/sleepy/AgentSurface.tsx';
-const PAGE = 'dashboard/src/pages/AutomationsPage.tsx';
+// The AI Team page (2026-10-20) replaced the Automations page that owned these drops.
+const PAGE = 'dashboard/src/pages/AiTeamPage.tsx';
 const HOOKS = 'dashboard/src/hooks/useAutomations.ts';
 const FEED = 'dashboard/src/components/agents/AgentsFeed.tsx';
 
@@ -330,12 +332,11 @@ describe('an automation tab is drawn as its agent, not as a glyph', () => {
 // ── The thread composer's object URLs are revoked ────────────────────────────────────────
 
 describe('thread scratch buckets are dropped, and dropped in the right place', () => {
-  it('the page revokes them on unmount, beside the channel\'s', () => {
+  it('the page revokes them on unmount', () => {
     // WITHOUT THIS a pasted image in a thread reply holds its object URL for the life of the
     // app run, one bucket per agent — `dropScratch` is otherwise only ever called for
     // 'agents-channel' and real conversations.
-    expect(page).toMatch(/dropScratch\('agents-channel'\)/);
-    expect(page).toMatch(/dropThreadScratch\(\)/);
+    expect(page).toMatch(/useEffect\(\(\) => \(\) => dropThreadScratch\(\), \[\]\)/);
   });
 
   it('the drop does NOT hang off the panel\'s own unmount', () => {

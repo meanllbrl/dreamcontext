@@ -1,6 +1,8 @@
 /**
- * Whether assistant replies are read aloud. OPT-IN: off until the owner turns it on from the
- * composer, and the choice survives a reload.
+ * Whether replies are read aloud: THE speech switch of the notch Assistant and the Super Agent
+ * (owner, 2026-10-21: "sesli konuşma sadece açılınca gelmeli"). OPT-IN: off until the owner turns
+ * it on from the composer's speaker button, and the choice survives a reload. Off, nothing is
+ * read, not even the answer to a spoken message, and a dictated message is sent as text.
  *
  * WHY NOT `voicePrefs().speech`. That one is a server setting (Settings → Voice) and answers
  * "may this machine speak at all". This one is the composer's own switch, flipped many times

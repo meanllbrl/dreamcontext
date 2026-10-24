@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatSession } from '../chatSession';
+import { useI18n } from '../../../context/I18nContext';
+import { agendaAboutStrip, splitAbout } from '../super/superHandover';
+import { queueAutoDrainable, visibleQueued } from './chatQueue';
 
 /**
  * ORGANISM — the message queue: the strip of messages submitted while Claude was working,
@@ -38,8 +41,19 @@ function QueuedRow({
   onSave: (next: string) => void;
   onRemove: () => void;
 }) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(text);
+  // A message about an agenda line, or a reply to one message, shows that line or the quote,
+  // never the raw block (the edit box keeps it).
+  const split = splitAbout(text);
+  const about = !split.about ? null
+    : split.about.kind === 'reply'
+      ? { label: t(split.about.from === 'super' ? 'super.reply.toSuper' : 'super.reply.toOwn'), text: split.about.quote, reply: true }
+      : agendaAboutStrip(split.about, [], () => '', {
+        about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
+        superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),
+      });
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Opening the editor starts from what is queued NOW, not from whatever was typed into a
@@ -100,7 +114,10 @@ function QueuedRow({
         className="chat-queue-text"
         onClick={() => setEditing(true)}
         title="Edit this queued message"
-      >{text}</button>
+      >
+        {about && <span className="chat-queue-about" data-testid="chat-queue-about">{'reply' in about ? <span aria-hidden>↩</span> : <span className="chat-msg-about-dot" aria-hidden />} {about.label}: {about.text} · </span>}
+        {about ? split.text : text}
+      </button>
       <span className="chat-queue-actions">
         {/* Jump the line. First in the row because it is the action a queued message most
             often wants once you have re-read it — "actually, say this now" — and because the
@@ -141,11 +158,14 @@ function whenLabel(paused: boolean, total: number, owed: number): string {
 
 export function QueuedMessages({ session }: { session: ChatSession }) {
   const conv = session.getModel();
-  const queued = conv.queued;
-  if (queued.length === 0) return null;
-
   const paused = !!conv.queuePaused;
   const ended = !!conv.exited || !!conv.authRequired;
+  // A turn held by an account switch is already the owner's SENT message: out of sight while
+  // the session can still send it by itself, an ordinary row the moment it cannot.
+  const autoDrainable = queueAutoDrainable({ paused, ended, takenOver: session.takenOver, status: session.status });
+  const queued = visibleQueued(conv.queued, { autoDrainable });
+  if (queued.length === 0) return null;
+  const hidden = conv.queued.length - queued.length;
   const owed = queued.filter((q) => q.steerWhenPossible).length;
 
   /**
@@ -193,7 +213,12 @@ export function QueuedMessages({ session }: { session: ChatSession }) {
             onClick={() => session.flushQueue()}
           >Resume</button>
         )}
-        <button type="button" className="chat-queue-btn" onClick={() => session.removeQueued()}>Clear</button>
+        {/* Clears what the strip shows: a held row out of sight is not the owner's to lose. */}
+        <button
+          type="button"
+          className="chat-queue-btn"
+          onClick={() => { if (hidden === 0) session.removeQueued(); else for (const q of queued) session.removeQueued(q.id); }}
+        >Clear</button>
       </div>
       <ul className="chat-queue-rows">
         {queued.map((q, i) => (

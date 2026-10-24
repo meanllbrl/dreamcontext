@@ -84,7 +84,9 @@ what happens if the plan ships as written, never by how sure or how thorough you
   that no step builds, something the owner will notice on first opening the result that no
   criterion covers (the goal's sentence not naming it does not make it optional), a goal the
   owner opens with no observed criterion, an unsafe wave map (one file in two lanes of a wave, a contract left
-  unpinned), or an `EXECUTION:` line that does not fit the work (fan-out for work one
+  unpinned), a plan of two or more waves on a top-level task whose waves are not sub-tasks (each
+  wave a `--parent <slug> --basis plan` sub-task named on the map; a task that is itself a
+  sub-task keeps one map), or an `EXECUTION:` line that does not fit the work (fan-out for work one
   session can build, lead for work it cannot).
 - **Minor**: the plan works, but a step could be clearer, cheaper or more robust.
 - **Nit**: wording, naming, order.

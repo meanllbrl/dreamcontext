@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { moveKnowledgeFile, moveKnowledgeDir, resolveKnowledgeTarget } from '../../src/lib/knowledge-move.js';
 import { slugify } from '../../src/lib/id.js';
@@ -15,7 +15,7 @@ function makeRoot(): string {
 
 function writeMd(root: string, relPath: string, content: string): string {
   const full = join(root, relPath);
-  mkdirSync(full.replace(/\/[^/]+$/, ''), { recursive: true });
+  mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, content, 'utf-8');
   return full;
 }

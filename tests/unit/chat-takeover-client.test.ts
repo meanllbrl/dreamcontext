@@ -125,6 +125,64 @@ describe('chat client takeover (AC8)', () => {
   });
 });
 
+describe('the backoff climbs through an open-then-drop loop (2026-10-23)', () => {
+  /** Drop the newest socket right after it opened, and measure how long until the next one. */
+  async function waitForNext(): Promise<number> {
+    const before = FakeWebSocket.all.length;
+    let waited = 0;
+    while (FakeWebSocket.all.length === before && waited < 60_000) { await vi.advanceTimersByTimeAsync(100); waited += 100; }
+    return waited;
+  }
+  const last = () => FakeWebSocket.all[FakeWebSocket.all.length - 1];
+
+  it('open-then-drop climbs 1 → 2 → 5 s instead of retrying every second', async () => {
+    const s = await open(false);
+    last().open(); last().drop(1005);
+    expect(await waitForNext()).toBe(1000);
+    last().open(); last().drop(1005);
+    expect(await waitForNext()).toBe(2000);
+    last().open(); last().drop(1005);
+    expect(await waitForNext()).toBe(5000);
+    s.dispose();
+  });
+
+  it('an open that lasts 5 s resets the ladder; a drop before 5 s cancels the reset', async () => {
+    const { STABLE_OPEN_MS } = await import('../../dashboard/src/components/sleepy/chatSession');
+    expect(STABLE_OPEN_MS).toBe(5000);
+    const s = await open(false);
+    last().open(); last().drop(1005);
+    expect(await waitForNext()).toBe(1000);
+    last().open(); last().drop(1005);
+    expect(await waitForNext()).toBe(2000);
+    last().open();
+    await vi.advanceTimersByTimeAsync(4900);
+    last().drop(1005);   // 4.9 s: not stable yet
+    expect(await waitForNext()).toBe(5000);
+    last().open();
+    await vi.advanceTimersByTimeAsync(5000);
+    last().drop(1005);   // stable: back to the first rung
+    expect(await waitForNext()).toBe(1000);
+    s.dispose();
+  });
+
+  it('4409 still stops the loop; takeBack starts the ladder over', async () => {
+    const s = await open(false);
+    last().open(); last().drop(1005);
+    await waitForNext();
+    last().open(); last().drop(1005);
+    await waitForNext();
+    last().drop(4409);
+    await vi.advanceTimersByTimeAsync(120_000);
+    const n = FakeWebSocket.all.length;
+    expect(s.takenOver).toBe(true);
+    s.takeBack();
+    expect(FakeWebSocket.all.length).toBe(n + 1);
+    last().open(); last().drop(1005);
+    expect(await waitForNext()).toBe(1000);
+    s.dispose();
+  });
+});
+
 describe('dock status of a taken-over chat', () => {
   it('reads "on another screen", never "ended" (the process runs on the other screen)', async () => {
     const { deriveSessionStatus } = await import('../../dashboard/src/components/sleepy/agentStatus');

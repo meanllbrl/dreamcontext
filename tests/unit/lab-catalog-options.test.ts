@@ -13,8 +13,9 @@ import { validateBoardSpec } from '../../src/lib/lab/boards.js';
 import catalogJson from '../../dashboard/src/generated/block-catalog.json';
 import type { BlockCatalog } from '../../dashboard/src/components/lab/board/boardTypes';
 import { enumLabelKey, fieldsFor } from '../../dashboard/src/components/lab/board/editorModel';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const I18N = readFileSync(join(ROOT, 'dashboard/src/context/I18nContext.tsx'), 'utf-8');
 const TR_AT = I18N.indexOf('const TR_PARTIAL');
 const EN_SRC = I18N.slice(0, TR_AT);

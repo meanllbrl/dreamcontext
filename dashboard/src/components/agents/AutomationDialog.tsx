@@ -63,7 +63,7 @@ const CADENCES: { key: SlotCadence; label: string }[] = [
  * than one. Stateless — the dialog owns the rows, so the summary sentence and
  * the Save gate read the same list this draws.
  */
-function SlotRowEditor({
+export function SlotRowEditor({
   row,
   index,
   canRemove,
@@ -298,7 +298,7 @@ export function AutomationDialog({
   }, [fullPrompt]);
   const promptReady = !editing || promptSeeded.current || fullPrompt !== undefined;
   // An edited automation that picks an agent edits its Job here (its identity is the agent's,
-  // edited on the Agents page). Seeded from the same fresh read as the prompt, and sent only
+  // edited on the AI Team page). Seeded from the same fresh read as the prompt, and sent only
   // when it changed, so a save that never touched it never rewrites the section.
   const fullJob = detail.isFetchedAfterMount ? detail.data?.automation.job ?? '' : undefined;
   const editsJob = editing && fullJob !== undefined
@@ -465,7 +465,7 @@ export function AutomationDialog({
       && (mode === 'call' || !('error' in parsedSlots));
 
   const draft: AutomationDraft = bound
-    // Identity fields are the agent's (edited on the Agents page), so none travel here; a bound
+    // Identity fields are the agent's (edited on the AI Team page), so none travel here; a bound
     // automation always runs on a schedule (an agent you only call IS the agent).
     ? {
       title: title.trim(),
@@ -560,7 +560,7 @@ export function AutomationDialog({
   };
 
   /** A bound automation always runs on a schedule, so its form never shows the on-call pane
-   *  (an agent you only call is the agent itself, made on the Agents page). */
+   *  (an agent you only call is the agent itself, made on the AI Team page). */
   const shownMode: AutomationMode = bound ? 'sched' : mode;
   const heading = editing
     ? `Edit ${agent?.title}`

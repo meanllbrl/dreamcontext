@@ -59,18 +59,30 @@ import { openExternalUrl } from '../../lib/desktop';
 import {
   AccountSwitchBanner, HandoffCard,
   BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, TakenOverBanner,
-  SignInBanner, WorkingIndicator,
+  SignInBanner, WorkingIndicator, RECONNECT_CHIP_DELAY_MS, reconnectChipDue,
 } from './chat/Banners';
+import { surveyDraftKey } from './chat/surveyDrafts';
+import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { Composer } from './chat/Composer';
-import { readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
+import { nextAttachmentId, readScratch, setAbout, setQuote, subscribeScratch } from './chat/composerScratch';
+import { replyGroups } from './chat/replyLinks';
+import { ReplyStrip } from './chat/AgendaAboutStrip';
+import { msgRef } from '../../lib/superTypes';
+import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
-import { superEventOf } from './super/superHandover';
+import { groupSuperEventTurns, replyAboutBlock, replyAboutChipName, splitAbout, superEventOf, type SuperEventGroup } from './super/superHandover';
+import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
+import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
+import { SuperEventLine } from './super/SuperEventLine';
+import { SuperRecapCard } from './super/SuperRecapCard';
+import { StageMediaStrip } from './super/StageMediaStrip';
+import { useSuperEventContext } from './super/superJobsStore';
 import './super/SuperSurface.css';
 import './chat/cards.css';
 import './chat/overlays.css';
 import type {
-  ChatSession, ChatItem, ChatUserItem, ChatToolItem, PendingPermission, PendingQuestion, PendingPlan,
+  ChatSession, ChatItem, ChatUserItem, ChatTextItem, ChatToolItem, PendingPermission, PendingQuestion, PendingPlan,
 } from './chatSession';
 import './ChatPane.css';
 
@@ -119,6 +131,8 @@ const RAIL_CLEARANCE = 64;
 
 /** How long a jumped-to sub-agent row stays flashed. */
 const FLASH_MS = 1600;
+/** How long a reply strip's smooth scroll takes before its target becomes the scroll hold. */
+const REPLY_GLIDE_MS = 600;
 
 /** How much of the live party's card must show for the team board to fold behind it: its
  *  header and the top of a row. A shorter card counts once it is all in view. */
@@ -167,13 +181,14 @@ function primaryToolPath(input: unknown): string | null {
 
 /** What the quest model reads of the live items, as a memo key. A streamed token replaces the
  *  items array but changes only an unfinished block's text, which the quest never reads (it
- *  reads which items exist, a call's status, and whether a block is finished and non-empty).
+ *  reads which items exist, a call's status, and whether a block is finished and non-empty;
+ *  the reply links also read a Super block's `replyTo`, which its head settles once).
  *  Keying on this keeps the whole-conversation quest pass off the per-token render path. */
 function questItemsKey(items: readonly ChatItem[]): string {
   return items.map((it) => (
     it.kind === 'tool' || it.kind === 'compact' ? `${it.id}:${it.status}`
       : it.kind === 'user' ? it.id
-        : `${it.id}:${it.done ? 1 : 0}${it.text ? 1 : 0}`
+        : `${it.id}:${it.done ? 1 : 0}${it.text ? 1 : 0}${it.kind === 'text' && it.replyTo ? it.replyTo.join() : ''}`
   )).join('|');
 }
 
@@ -535,6 +550,26 @@ function AutomationQuestionComposerLock() {
  * goes through `t()`, unlike this directory's older English-only components: the hand-over
  * ships TR + EN from day one.
  */
+/** "Reconnecting…" only once the session has been connecting for {@link RECONNECT_CHIP_DELAY_MS}:
+ *  a drop that heals in a second never flashes it. A flap back to open hides it at once. */
+function ReconnectingChipWhenDue({ connecting, claudeId }: { connecting: boolean; claudeId: string }) {
+  const [due, setDue] = useState(false);
+  useEffect(() => {
+    if (!connecting) { setDue(false); return; }
+    const since = Date.now();
+    const id = setTimeout(() => setDue(reconnectChipDue(since, Date.now())), RECONNECT_CHIP_DELAY_MS);
+    return () => clearTimeout(id);
+  }, [connecting]);
+  const shown = connecting && due;
+  const wasShown = useRef(false);
+  useEffect(() => {
+    if (shown === wasShown.current) return;
+    wasShown.current = shown;
+    recordPhoneEvent('chip', claudeId, { reason: shown ? 'shown' : 'hidden' });
+  }, [shown, claudeId]);
+  return shown ? <ReconnectingChip /> : null;
+}
+
 function SuperReadOnlyLine() {
   const { t } = useI18n();
   return (
@@ -551,8 +586,9 @@ function SuperEventChip({ text }: { text: string }) {
   const ev = superEventOf(text);
   const kind = ev?.prefix === '[super recap]' ? 'recap'
     : ev?.prefix === '[super handover]' ? 'handover'
-      : (ev?.rest.split(/\s+/)[0] ?? '');
-  const key = `super.event.${['question', 'idle', 'gone', 'recap', 'handover'].includes(kind) ? kind : 'other'}`;
+      : ev?.prefix === '[super fresh]' ? 'fresh'
+        : (ev?.rest.split(/\s+/)[0] ?? '');
+  const key = `super.event.${['question', 'idle', 'gone', 'recap', 'handover', 'fresh'].includes(kind) ? kind : 'other'}`;
   return (
     <div className="super-event-chip" role="note" data-testid="super-event-chip" data-kind={kind || 'other'}>
       <span className="super-event-chip-mark" aria-hidden>◆</span>
@@ -671,7 +707,13 @@ export function ChatPane({
   readOnly?: boolean;
 }) {
   const [, force] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => session.subscribe(() => force()), [session]);
+  // A hidden pane (garaged, its overlay folded, a handed-over Super Agent's child) follows its
+  // session at most once a second and catches up the moment it is shown (hiddenRenderGate.ts).
+  useEffect(() => {
+    const gate = createHiddenRenderGate(force, () => session.minimized);
+    const off = session.subscribe(gate.notify);
+    return () => { off(); gate.dispose(); };
+  }, [session]);
   const { vault } = useVault();
   const api = useApi();
 
@@ -706,6 +748,28 @@ export function ChatPane({
   /** Connected peers, fetched once per pane — lets a `peer-<vault>` envoy run wear that
    *  vault's logo and name in the sub-agent card, rail and drill-in. */
   const peers = usePeerMentions();
+
+  // The Super Agent's centre (plan r4 D2, D8): each event turn folds into ONE line; the owner
+  // expands one with a click. Any other chat has no context and draws nothing new.
+  const superCtx = useSuperEventContext(session.mode === 'super' ? session.claudeId : null);
+  /** This pane shows the Super Agent's conversation: its own window, or the hands-free phone's
+   *  mirror of it (`superMirror`, an ordinary chat mode). The reply links read this. */
+  const superView = session.mode === 'super' || session.superMirror;
+  const { t } = useI18n();
+  const [openEvents, setOpenEvents] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleEvent = useCallback((anchor: string) => setOpenEvents((prev) => {
+    const next = new Set(prev);
+    if (next.has(anchor)) next.delete(anchor); else next.add(anchor);
+    return next;
+  }), []);
+  // A recap is the other way round (owner 2026-10-23): open unless the owner hid it, and a hide
+  // lives only in this pane, so a reload draws every recap open again.
+  const [hiddenRecaps, setHiddenRecaps] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleRecap = useCallback((anchor: string) => setHiddenRecaps((prev) => {
+    const next = new Set(prev);
+    if (next.has(anchor)) next.delete(anchor); else next.add(anchor);
+    return next;
+  }), []);
 
   const [slideOver, setSlideOver] = useState<SlideOverState>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
@@ -919,6 +983,13 @@ export function ChatPane({
   // Keyed on `questKey`, not the items array: see `questItemsKey`.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const questEntries = useMemo(() => [...conv.history, ...conv.items], [conv.history, questKey]);
+  // Which Super answer is to which owner message (owner 2026-10-23): ONE pass over the whole
+  // conversation, so the window, the history divider and the notices only look it up.
+  const replyMap = useMemo(() => (superView ? replyGroups(questEntries) : null), [superView, questEntries]);
+  const replyItems = useMemo(
+    () => (superView ? new Map(questEntries.map((it) => [it.id, it] as const)) : null),
+    [superView, questEntries],
+  );
   // Headless teammates: `claude -p` runs this conversation registered or launched with an id,
   // read off their own transcripts. Folded into the runs here, once, so every party, rail and
   // drill-in below sees one list — a builder launched detached, or still going after this
@@ -1178,6 +1249,8 @@ export function ChatPane({
       // move (the last step exhausts the window), so holding against it measures its own
       // disappearance.
       if (child.classList.contains('chat-window-more')) continue;
+      // Nor the reply lines' layer: it is drawn over the rows, never a row.
+      if (child.classList.contains('chat-reply-lines')) continue;
       const runRows = child.classList.contains('chat-toolrun')
         ? child.querySelectorAll(':scope > .chat-toolrun-rows > *')
         : null;
@@ -1303,6 +1376,100 @@ export function ChatPane({
   // synchronously, before the browser paints a single frame of the un-corrected position.
   useLayoutEffect(() => { holdAnchorSteady(); }, [firstShown, holdAnchorSteady]);
 
+  // ── Reply links: a strip scrolls to the message it names (owner 2026-10-23) ────────────
+  // `jumpToSubAgent`'s shape: explicit intent to look above, so it releases stick-to-bottom
+  // (a streaming turn never pulls the view back down), and scrolls OUR scroller by delta. A
+  // target above the window is revealed first, through the same reveal and anchor hold as
+  // "Show earlier"; the scroll runs in a layout effect AFTER that hold has settled.
+  /** `n` makes a repeat click a new state value, so the flash replays; `reveal`: the target
+   *  was above the window and is mounted by this same render. */
+  const [replyJump, setReplyJump] = useState<{ id: string; n: number; reveal: boolean } | null>(null);
+  const jumpToReplyTarget = (itemId: string) => {
+    let idx = conv.history.findIndex((it) => it.id === itemId);
+    if (idx < 0) {
+      const live = conv.items.findIndex((it) => it.id === itemId);
+      idx = live < 0 ? -1 : conv.history.length + live;
+    }
+    if (idx < 0) return;
+    setStick(false);
+    const reveal = idx < firstShown;
+    if (reveal) {
+      captureAnchor(true);
+      setFirstShownState(nextFirstShown(firstShown, { total: windowTotal, pinned: false, reveal: true, tailHead, revealHead: idx }));
+    }
+    setReplyJump((prev) => ({ id: itemId, n: (prev?.n ?? 0) + 1, reveal }));
+  };
+  /** His reply's strip: the message it names is the nearest one before his reply whose words
+   *  hash to its ref (his own message, or a Super block's body). */
+  const jumpToReplied = (ref: string, from: 'super' | 'owner', beforeId: string) => {
+    const all = [...conv.history, ...conv.items];
+    let i = all.findIndex((it) => it.id === beforeId);
+    if (i < 0) i = all.length;
+    for (let j = i - 1; j >= 0; j -= 1) {
+      const it = all[j];
+      const kind = from === 'owner' ? 'user' : 'text';
+      if (it.kind === kind && msgRef(it.text) === ref) { jumpToReplyTarget(it.id); return; }
+    }
+  };
+  /** One line per answer group, from its strip (or first row) to its last row, measured off
+   *  the mounted rows. DOM only: the layer's children are never React's. Re-run after every
+   *  commit and on every height change the ResizeObserver sees. */
+  const replyLinesRef = useRef<HTMLDivElement | null>(null);
+  const drawReplyLines = useCallback(() => {
+    const inner = contentRef.current;
+    const layer = replyLinesRef.current;
+    if (!inner || !layer) return;
+    const base = inner.getBoundingClientRect().top;
+    const spans = new Map<string, { top: number; bottom: number }>();
+    for (const el of Array.from(inner.querySelectorAll<HTMLElement>(':scope > [data-reply-strip], :scope > [data-reply-grp]'))) {
+      const id = el.dataset.replyStrip ?? el.dataset.replyGrp ?? '';
+      const r = el.getBoundingClientRect();
+      if (!id || r.height === 0) continue;
+      const span = spans.get(id);
+      spans.set(id, { top: Math.min(span?.top ?? Infinity, r.top - base), bottom: Math.max(span?.bottom ?? -Infinity, r.bottom - base) });
+    }
+    const lines = [...spans.values()];
+    while (layer.childElementCount > lines.length) layer.lastElementChild?.remove();
+    while (layer.childElementCount < lines.length) layer.appendChild(document.createElement('div')).className = 'chat-reply-line';
+    lines.forEach((l, i) => {
+      const el = layer.children[i] as HTMLElement;
+      el.style.top = `${Math.round(l.top)}px`;
+      el.style.height = `${Math.round(l.bottom - l.top)}px`;
+    });
+  }, []);
+  const drawReplyLinesRef = useRef(drawReplyLines);
+  useLayoutEffect(() => { if (superView) drawReplyLines(); });
+  const replyJumpRef = useRef({ jumpToReplyTarget, jumpToReplied });
+  replyJumpRef.current = { jumpToReplyTarget, jumpToReplied };
+  /** Stable for the memoized rows. */
+  const handleReplyJump = useCallback((ref: string, from: 'super' | 'owner', beforeId: string) => {
+    replyJumpRef.current.jumpToReplied(ref, from, beforeId);
+  }, []);
+  useLayoutEffect(() => {
+    if (!replyJump) return;
+    const scroller = scrollRef.current;
+    const row = scroller?.querySelector<HTMLElement>(`[data-item-id="${CSS.escape(replyJump.id)}"]`);
+    if (!scroller || !row) return;
+    const view = scroller.getBoundingClientRect();
+    const box = row.getBoundingClientRect();
+    // Centred when it fits, its top just under the edge when it does not.
+    const delta = box.top - view.top - Math.max(RAIL_CLEARANCE, (view.height - box.height) / 2);
+    // After a reveal the hold still names the rows the reader WAS on, and the next height change
+    // (the rows just mounted settling) would put him back there: land at once and hold the
+    // target instead. A row already mounted glides, then becomes the hold once it is there.
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    if (replyJump.reveal) {
+      scroller.scrollTop += delta;
+      captureAnchor();
+    } else {
+      scroller.scrollTo({ top: scroller.scrollTop + delta, behavior: 'smooth' });
+      settle = setTimeout(() => captureAnchor(), REPLY_GLIDE_MS);
+    }
+    row.setAttribute('data-reply-flash', '');
+    const timer = setTimeout(() => row.removeAttribute('data-reply-flash'), FLASH_MS);
+    return () => { clearTimeout(timer); clearTimeout(settle); row.removeAttribute('data-reply-flash'); };
+  }, [replyJump, captureAnchor]);
+
   // A LAYOUT effect, not a passive one, and that is the whole race: React has just mutated
   // the DOM, so the browser is holding a scroll event for whatever `scrollTop` clamp that
   // mutation forced. Re-pinning here — synchronously, before paint — means the handler sees
@@ -1415,6 +1582,7 @@ export function ChatPane({
     const ro = new ResizeObserver(() => {
       if (stickRef.current) scrollToBottom();
       else holdAnchorSteady();
+      drawReplyLinesRef.current();
       // Content growing ABOVE an unpinned view moves the card without a scroll event of
       // its own — the rail would otherwise still be showing a card that is back in view.
       syncRailRef.current();
@@ -1563,7 +1731,17 @@ export function ChatPane({
   ), []);
   const handleOpenShell = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'shell', run }), []);
   const handleStopShell = useCallback((run: SubAgentRun) => session.stopTask(run.taskId), [session]);
-  const handleQuote = useCallback((text: string) => setQuote(convId, text), [convId]);
+  /** ↩ on a message. In a Super view it is a reply: ONE About chip (the agenda's own, a second
+   *  press replaces it) whose block names the message and quotes its first words, never the
+   *  whole of it (owner 2026-10-23). Anywhere else, today's quote. */
+  const handleQuote = useCallback((item: ChatUserItem | ChatTextItem) => {
+    if (!superView) { setQuote(convId, item.text); return; }
+    const from = item.kind === 'user' ? 'owner' : 'super';
+    const words = item.kind === 'user' ? splitAbout(item.text).text : item.text;
+    const name = replyAboutChipName(words, from, { chipSuper: t('super.reply.chipSuper'), chipOwn: t('super.reply.chipOwn') });
+    setAbout(session.scratchId || convId, { id: nextAttachmentId(), kind: 'about', name, text: replyAboutBlock(item.text, from, words) });
+    requestAnimationFrame(() => session.focus());
+  }, [superView, convId, session, t]);
   const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => {
     setSlideOver(null);
     onOpenAppPage?.(page, id, vault);
@@ -1667,11 +1845,40 @@ export function ChatPane({
 
   type Stretch = { stretch: 'lead' | 'follow'; running: boolean } | undefined;
 
-  const itemNode = (item: ChatItem, stretch: Stretch): React.ReactNode => {
+  const itemNode = (item: ChatItem, stretch: Stretch, accruing = false): React.ReactNode => {
     // A turn the Super Agent's inbox injected — live (`superEvent`) or replayed from the
     // transcript (its `[super …]` prefix) — is a small event chip, not an owner's bubble.
     if (item.kind === 'user' && (item.superEvent || superEventOf(item.text))) {
+      const group = superGroups.get(item.id);
+      if (group && superCtx && group.kind === 'recap') {
+        // A hidden card builds nothing: building a question or a team card counts it as drawn,
+        // and the tail would then skip what the owner cannot see. The streaming tail of the
+        // turn (`accruing`, the anchor's own) goes to the last segment that SHOWS something,
+        // as `liveTail` does, so a live run keeps growing. One flat keyed list, like the
+        // transcript's: a question card moving to a newer segment keeps its state.
+        const hidden = hiddenRecaps.has(item.id);
+        const shows = (seg: RunSegment<ChatItem>) => seg.kind === 'run' || shapeOf(seg.item).draw !== 'nothing';
+        const body = hidden ? [] : (recapBodies.get(item.id) ?? []).filter((seg) => shows(seg) || cardsOf(seg).length > 0);
+        let tail = body.length - 1;
+        while (tail >= 0 && !shows(body[tail])) tail -= 1;
+        return (
+          <SuperRecapCard key={item.id} group={group} hidden={hidden} onToggle={toggleRecap}>
+            {body.flatMap((seg, i) => [renderSegment(seg, accruing && i === tail, noStretches), ...questionNodes(seg)])}
+          </SuperRecapCard>
+        );
+      }
+      if (group && superCtx) {
+        return <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+      }
       return <SuperEventChip key={item.id} text={item.text} />;
+    }
+    // Pictures the Super Agent opened on the Mac's stage, as the phone sees them: a strip.
+    if (item.kind === 'user' && item.stageMedia) {
+      return <StageMediaStrip key={item.id} items={item.stageMedia} snapshot={!!item.stageSnapshot} onOpenFile={handleOpenFile} />;
+    }
+    // The owner's answer to a question card in the super chat: the card's receipt, never a bubble.
+    if (item.kind === 'user' && session.mode === 'super' && parseSuperAnswer(item.text)) {
+      return <SuperAnswerReceipt key={item.id} text={item.text} itemId={item.id} />;
     }
     const shape = shapeOf(item);
     switch (shape.draw) {
@@ -1699,6 +1906,8 @@ export function ChatPane({
         actor="lead"
         stretch={stretch?.stretch}
         stretchRunning={stretch?.running}
+        replyGroup={replyMap?.get(item.id)?.groupId}
+        onReplyJump={superView ? handleReplyJump : undefined}
       />
     );
     if (!shape.parties.length && !shape.guarded) return view;
@@ -1744,7 +1953,7 @@ export function ChatPane({
   // and "Show earlier messages" read as doing nothing at all (owner report 08-01, second
   // pass). See the helper's own doc for why the accruing tail keys off its head instead.
   const renderSegment = (seg: RunSegment<ChatItem>, accruing: boolean, stretches: Map<string, NonNullable<Stretch>>): React.ReactNode => {
-    if (seg.kind === 'single') return itemNode(seg.item, stretches.get(seg.item.id));
+    if (seg.kind === 'single') return itemNode(seg.item, stretches.get(seg.item.id), accruing);
     const stretch = stretches.get(`run:${seg.items[0].id}`);
     return (
       <ToolRunCard
@@ -1755,6 +1964,7 @@ export function ChatPane({
         actor="lead"
         stretch={stretch?.stretch}
         stretchRunning={stretch?.running}
+        replyGroup={replyMap?.get(seg.items[0].id)?.groupId}
       />
     );
   };
@@ -1766,9 +1976,43 @@ export function ChatPane({
   // edge (revealing older entries would otherwise re-shape a group the reader is looking at)
   // nor the history/live boundary. Quest-map bookkeeping weighs nothing there: it rides in a
   // run the real steps formed, and never forms one.
+  // Event turns fold INSIDE each piece too (plan r4 D8): a group never straddles the window
+  // edge, the history/live boundary or a notice; the anchor stays and renders the line.
+  const superGroups = new Map<string, SuperEventGroup>();
+  // A recap's whole turn, segmented like the transcript and drawn inside its card rather than
+  // flat under the line: its prose open, its tool runs as run cards, its questions as cards.
+  const recapBodies = new Map<string, RunSegment<ChatItem>[]>();
+  // Its steps join no stretch: the card is a surface of its own, not part of the lead's run.
+  const noStretches = new Map<string, NonNullable<Stretch>>();
+  // The Super Agent's questions to the owner, as cards under the turn that asked them
+  // (superQuestions.ts, owner 2026-10-21 "soruyu hep chatta sorsun"): placed on what each
+  // piece DRAWS (what it keeps, plus each recap card's body in its place), so a call folded into
+  // an event line is not counted as drawn (the tail draws it), and one in a recap lands in its card.
+  const questionCards = new Map<string, Array<AskRef & { live: boolean }>>();
+  const foldSuper = <T extends ChatItem>(piece: T[]): T[] => {
+    let kept = piece;
+    let drawn = piece;
+    if (superCtx) {
+      const folded = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded: openEvents });
+      for (const [k, g] of folded.groups) superGroups.set(k, g);
+      const inCard = new Set<string>();
+      for (const [k, g] of folded.groups) {
+        if (g.kind !== 'recap') continue;
+        const ids = new Set(g.folded);
+        for (const id of ids) inCard.add(id);
+        const body = piece.filter((it) => ids.has(it.id));
+        recapBodies.set(k, segmentToolRuns(body, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+      }
+      kept = folded.kept;
+      const keptIds = new Set(kept.map((it) => it.id));
+      drawn = piece.filter((it) => keptIds.has(it.id) || inCard.has(it.id));
+    }
+    if (session.mode === 'super') for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
+    return kept;
+  };
   const historySlice = conv.history.slice(historyFrom);
   const liveSlice = conv.items.slice(itemsFrom);
-  const historySegments = segmentToolRuns(historySlice, isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
+  const historySegments = segmentToolRuns(foldSuper(historySlice), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
   // The handoff receipt and the account move are drawn WHERE THEY HAPPENED, not docked under
   // the newest message: the turns that followed belong below them (owner, 2026-10-10). The
   // live slice is cut at each one's place and segmented piece by piece, so a tool run never
@@ -1821,7 +2065,7 @@ export function ChatPane({
     const errorAt = conv.lastErrorAt ?? conv.items.length;
     const cut = noticeCut(errorAt, itemsFrom, conv.items.length, false);
     if (cut !== null) {
-      const movedOn = conv.items.slice(errorAt).some((it) => it.kind === 'user');
+      const movedOn = conv.items.slice(errorAt).some((it) => it.kind === 'user' && !it.stageMedia);
       // Wrapped, not passed: `retryLastMessage` is declared further down this render, and the
       // wrapper only reads it on click.
       notices.push({
@@ -1837,13 +2081,31 @@ export function ChatPane({
   const liveSegments: RunSegment<ChatItem>[] = [];
   let pieceFrom = 0;
   for (const n of notices) {
-    liveSegments.push(...segmentToolRuns(liveSlice.slice(pieceFrom, n.cut), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+    liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom, n.cut)), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
     pieceFrom = Math.max(pieceFrom, n.cut);
     noticesAt.set(liveSegments.length, [...(noticesAt.get(liveSegments.length) ?? []), n]);
   }
-  liveSegments.push(...segmentToolRuns(liveSlice.slice(pieceFrom), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
+  liveSegments.push(...segmentToolRuns(foldSuper(liveSlice.slice(pieceFrom)), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem));
   const noticeProbes = (i: number): StretchProbe[] => (noticesAt.get(i) ?? [])
     .map((n) => ({ key: `notice:${n.key}`, step: false, invisible: false, actor: 'lead', running: false }));
+  // One item asked twice across pieces: only its latest call is live (pieces are placed in
+  // reading order, and so is the map).
+  const latestAsk = new Map<string, string>();
+  for (const cards of questionCards.values()) for (const c of cards) latestAsk.set(c.item, c.toolItemId);
+  const cardsOf = (seg: RunSegment<ChatItem>): Array<AskRef & { live: boolean }> => {
+    if (!questionCards.size) return [];
+    const ids = seg.kind === 'run' ? seg.items.map((it) => it.id) : [seg.item.id];
+    return ids.flatMap((id) => questionCards.get(id) ?? [])
+      .map((c) => ({ ...c, live: c.live && latestAsk.get(c.item) === c.toolItemId }));
+  };
+  const questionProbes = (seg: RunSegment<ChatItem>): StretchProbe[] => cardsOf(seg)
+    .map((c) => ({ key: `question:${c.toolItemId}`, step: false, invisible: false, actor: 'lead', running: false }));
+  /** The items that got a LIVE card above; every other open question goes to the tail. */
+  const anchoredQuestions = new Set<string>();
+  const questionNodes = (seg: RunSegment<ChatItem>): React.ReactNode[] => cardsOf(seg).map((c) => {
+    if (c.live) anchoredQuestions.add(c.item);
+    return <SuperQuestionCard key={`question-${c.toolItemId}`} ask={c} session={session} />;
+  });
   // The accruing tail is the last segment that SHOWS something, not the last segment. An
   // empty thinking block is re-emitted after the run it sat inside (see `segmentToolRuns`),
   // and by array position alone that invisible single would demote the live run from tail to
@@ -1856,20 +2118,63 @@ export function ChatPane({
     liveTail -= 1;
   }
   const accruingAt = (i: number) => i === liveTail && session.busy;
+  // Reply strips (owner 2026-10-23, pick 1A): ONE per answer group, its own transcript row,
+  // before the first segment of the group this render SHOWS (a group cut by the window edge,
+  // the history divider or a notice still gets exactly one). Decided once, in reading order,
+  // so the stretch pass and the nodes agree.
+  const stripAt = new Map<RunSegment<ChatItem>, { groupId: string; targets: string[] }>();
+  if (replyMap) {
+    const seen = new Set<string>();
+    for (const seg of [...historySegments, ...liveSegments]) {
+      const head = seg.kind === 'run' ? seg.items[0] : seg.item;
+      const g = replyMap.get(head.id);
+      if (!g || seen.has(g.groupId) || (seg.kind === 'single' && rendersNothing(seg.item))) continue;
+      seen.add(g.groupId);
+      if (g.strip) stripAt.set(seg, g);
+    }
+  }
+  const stripProbes = (seg: RunSegment<ChatItem>): StretchProbe[] => (stripAt.has(seg)
+    ? [{ key: `strip:${stripAt.get(seg)!.groupId}`, step: false, invisible: false, actor: 'lead', running: false }]
+    : []);
+  /** What one target reads on a strip: his own words (without an About block it opened with),
+   *  or a question card's answer. */
+  const replyQuoteOf = (id: string, max: number): string => {
+    const it = replyItems?.get(id);
+    if (!it || it.kind !== 'user') return '';
+    const answer = parseSuperAnswer(it.text);
+    const words = (answer ? answer.values.join(', ') : splitAbout(it.text).text).replace(/\s+/g, ' ').trim();
+    const chars = Array.from(words);
+    return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : words;
+  };
+  const stripNodes = (seg: RunSegment<ChatItem>): React.ReactNode[] => {
+    const g = stripAt.get(seg);
+    if (!g) return [];
+    const many = g.targets.length > 1;
+    const label = many ? t('super.reply.nMessages').replace('{n}', String(g.targets.length)) : t('super.reply.yourMessage');
+    return [(
+      <div key={`strip-${g.groupId}`} className="chat-reply-strip" data-reply-strip={g.groupId}>
+        <ReplyStrip
+          label={label}
+          quotes={g.targets.slice(0, 3).map((id) => replyQuoteOf(id, many ? 40 : 80))}
+          onJump={() => replyJumpRef.current.jumpToReplyTarget(g.targets[0])}
+        />
+      </div>
+    )];
+  };
   // Stretches, like consecutive Slack messages: one avatar opens each run of the lead's step
   // lines and the rest are bare verbs under it (`stepStretches`). This pass only sets props;
   // it never wraps rows, so every single stays a direct child of the transcript. The history
   // divider is something the reader sees, so a stretch never runs across it.
   const stretches = stepStretches([
-    ...historySegments.flatMap((seg) => probesOf(seg, false)),
+    ...historySegments.flatMap((seg) => [...stripProbes(seg), ...probesOf(seg, false), ...questionProbes(seg)]),
     { key: 'history-divider', step: false, invisible: !showsHistory, actor: 'lead', running: false },
-    ...liveSegments.flatMap((seg, i) => [...noticeProbes(i), ...probesOf(seg, accruingAt(i))]),
+    ...liveSegments.flatMap((seg, i) => [...noticeProbes(i), ...stripProbes(seg), ...probesOf(seg, accruingAt(i)), ...questionProbes(seg)]),
     ...noticeProbes(liveSegments.length),
   ]);
-  const historyNodes = historySegments.map((seg) => renderSegment(seg, false, stretches));
+  const historyNodes = historySegments.flatMap((seg) => [...stripNodes(seg), renderSegment(seg, false, stretches), ...questionNodes(seg)]);
   const noticeNodes = (i: number) => (noticesAt.get(i) ?? []).map((n) => n.node);
   const liveNodes = [
-    ...liveSegments.flatMap((seg, i) => [...noticeNodes(i), renderSegment(seg, accruingAt(i), stretches)]),
+    ...liveSegments.flatMap((seg, i) => [...noticeNodes(i), ...stripNodes(seg), renderSegment(seg, accruingAt(i), stretches), ...questionNodes(seg)]),
     ...noticeNodes(liveSegments.length),
   ];
   // Only a party still AT WORK trails the transcript: one whose first call is older than the
@@ -1900,7 +2205,8 @@ export function ChatPane({
   const isEmpty = !working
     && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
 
-  const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user');
+  // A stage strip is not something the owner sent (ChatUserItem.stageMedia).
+  const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia);
 
   // Sending is unambiguous intent to watch the answer, so it re-arms sticking: a reply that
   // streams in off-screen because you had scrolled up is a bug, not a feature. Keyed on the
@@ -1933,9 +2239,9 @@ export function ChatPane({
           team={{ parties: drawnParties, runsOf: liveRunsOf, onDrillIn: handleDrillIn, inView: teamInView }}
         />
       )}
-      {session.status === 'connecting' && <ReconnectingChip />}
       <BrowserHostProvider value={browserHost}>
       <div className="chat-transcript">
+        <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
         <div
           className="chat-scroll"
           ref={scrollRef}
@@ -2072,7 +2378,11 @@ export function ChatPane({
         >
           {/* One wrapper the ResizeObserver can watch: the scroller's own box never changes
               when its content grows, so content height needs an element of its own. */}
-          <div className="chat-scroll-inner" ref={contentRef}>
+          <div className={superView ? 'chat-scroll-inner chat-scroll-inner--reply' : 'chat-scroll-inner'} ref={contentRef}>
+            {/* The reply groups' lines (owner 2026-10-23, pick 1A): one per group, drawn over the
+                rows from the strip to the group's last row. Out of flow, and skipped by the
+                hold; rows stay direct children with only a `data-reply-grp` on them. */}
+            {superView && <div className="chat-reply-lines" ref={replyLinesRef} aria-hidden />}
             {/* First thing in the scroller, above even the window's ceiling button: it frames
                 every item below it, including the replayed history, and a reader who meets
                 the automation's brief before meeting this card has already misread it as
@@ -2107,10 +2417,19 @@ export function ChatPane({
               .map((p) => <PermissionCard key={p.requestId} item={p} session={session} permissionMode={permissionMode} />)}
             {conv.pending
               .filter((p): p is PendingQuestion => p.kind === 'question')
-              .map((p) => <SurveyCard key={p.requestId} item={p} session={session} />)}
+              .map((p) => (
+                <SurveyCard
+                  key={p.requestId}
+                  item={p}
+                  session={session}
+                  draftKey={surveyDraftKey(session.claudeId, p.requestId)}
+                  connected={session.status === 'open'}
+                />
+              ))}
             {conv.pending
               .filter((p): p is PendingPlan => p.kind === 'plan')
               .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}
+            {session.mode === 'super' && <SuperQuestionTail session={session} anchored={anchoredQuestions} />}
             {askRouting?.phase === 'preparing' && <PreparingQuestionCard item={askRouting.item} />}
             {askRouting?.phase === 'degraded' && (
               <DegradedQuestionCard item={askRouting.item} onContinueInTerminal={onContinueInTerminal} />

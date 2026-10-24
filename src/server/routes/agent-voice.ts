@@ -31,6 +31,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
+import { isPhoneSocket } from '../phone-origin.js';
 import {
   voiceApiKey, voiceStatus, writeVoiceConfig, readVoiceConfig,
   DEFAULT_VOICE, clampSpeechRate, clampMusicDuck,
@@ -42,9 +43,13 @@ import {
 } from '../../lib/voice/openrouter.js';
 import {
   sttGate, ttsGate, focusGate, MAX_STT_BYTES, MAX_TTS_CHARS,
+  phoneSttGate, PHONE_MAX_STT_BYTES, PHONE_MAX_STT_SECONDS, wavSeconds,
 } from '../../lib/voice/limits.js';
 import { speakable } from '../../lib/voice/speakable.js';
-import { wavFromPcm16, normalizeSpeech, pcmSeconds, PCM16_SAMPLE_RATE } from '../../lib/voice/wav.js';
+import {
+  wavFromPcm16, normalizeSpeech, pcmSeconds, PCM16_SAMPLE_RATE,
+  trimSpeechTail, SENTENCE_TAIL_MS, CLAUSE_TAIL_MS,
+} from '../../lib/voice/wav.js';
 import {
   transcribeLocal, findWhisper, warmWhisper,
 } from '../../lib/voice/whisper.js';
@@ -52,7 +57,7 @@ import { readVerbatim, verbatimRatio } from '../../lib/voice/verbatim.js';
 import { dictationState, startDictationInstall } from '../../lib/voice/dictationInstall.js';
 import { buildVoiceLexicon } from '../../lib/voice/lexicon.js';
 import { hold, release, hookExitRestore } from '../../lib/voice/audioFocus.js';
-import { logVoiceEvent, parseTakeMeta, parseTurnTrace, keepTake } from '../../lib/voice/voiceLog.js';
+import { logVoiceEvent, parseTakeMeta, parseTurnTrace, parseSpeechReport, keepTake } from '../../lib/voice/voiceLog.js';
 import { readAssistantConfig, DEFAULT_ASSISTANT_CONFIG } from '../../lib/assistant/home.js';
 
 /**
@@ -125,8 +130,66 @@ export const JARVIS_FEWSHOT = [
  * the line and nothing else. And because a retry costs a whole extra generation, making the
  * FIRST attempt reliable is also the biggest latency win available on this path.
  */
-export function scriptLine(text: string): string {
-  return `Read this line of script aloud, exactly as written, and say nothing else:\n\n«${text}»`;
+export function scriptLine(text: string, continues = false): string {
+  const line = `Read this line of script aloud, exactly as written, and say nothing else:\n\n«${text}»`;
+  return continues ? `${CONTINUES_NOTE}\n\n${line}` : line;
+}
+
+/**
+ * Said before a line that stops MID-sentence. Without it the model lands every line like a
+ * full stop — the falling pitch that made a comma-cut sentence sound like two.
+ */
+export const CONTINUES_NOTE =
+  'This line stops in the middle of a sentence and the sentence carries on in the next line, '
+  + 'so keep your intonation open at its end instead of landing it like a full stop.';
+
+/** Does this (speakable) line stop mid-sentence? Read off the text itself, so a direct POST and
+ *  the queue agree. A line with no punctuation at all — a heading, a list item — does not. */
+export function lineContinues(line: string): boolean {
+  return /[,;:—–]$/.test(line.trim());
+}
+
+/** How much of the previous chunk is kept as context (the client sends at most this much). */
+export const PREV_CONTEXT_CHARS = 240;
+
+/**
+ * The messages for one line, WITH the line before it when there is one.
+ *
+ * ── WHY THE PREVIOUS LINE RIDES ALONG ───────────────────────────────────────────────────
+ * Every chunk is a separate generation, so each sentence used to be read cold: no idea it was
+ * the second half of a thought, its pitch and pace reset at every seam. There is no
+ * "previous text" parameter on a chat model, but there is a conversation: the line before is
+ * placed as one more turn of the job ALREADY DONE — the script handed over, the line read —
+ * in the exact shape of {@link JARVIS_FEWSHOT}. The model then reads the new line as the next
+ * line of the same script.
+ *
+ * Measured on the live model before shipping (2026-10-21): 8 of 8 lines read verbatim with the
+ * previous line in context, including the short addressed ones that are the model's known
+ * failure ("Söyle, hangi konuya girelim?", "Are you there?", "Evet, duyuyorum."). The
+ * verbatim guard still checks every result, so a regression here cannot be heard — only
+ * logged and retried.
+ */
+export function speechMessages(spoken: string, prev?: string): Array<{ role: string; content: string }> {
+  const messages: Array<{ role: string; content: string }> = [
+    { role: 'system', content: JARVIS_INSTRUCTIONS },
+    ...JARVIS_FEWSHOT,
+  ];
+  if (prev) {
+    messages.push(
+      { role: 'user', content: scriptLine(prev, lineContinues(prev)) },
+      { role: 'assistant', content: prev },
+    );
+  }
+  messages.push({ role: 'user', content: scriptLine(spoken, lineContinues(spoken)) });
+  return messages;
+}
+
+/** The previous chunk as context: a string from the body, stripped like the line itself and
+ *  capped. Anything else — or nothing speakable — is no context at all, never an error. */
+export function contextLine(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  const line = speakable(raw.slice(-PREV_CONTEXT_CHARS * 2)).slice(-PREV_CONTEXT_CHARS).trim();
+  return line || undefined;
 }
 
 /** How long a single speech generation may take before it is abandoned. Generation runs at
@@ -140,7 +203,7 @@ const TTS_TIMEOUT_MS = 30_000;
  *
  * Resolves null when the cap was hit (413 already sent) or the stream errored.
  */
-function readCappedAudio(req: IncomingMessage, res: ServerResponse): Promise<Buffer | null> {
+function readCappedAudio(req: IncomingMessage, res: ServerResponse, max = MAX_STT_BYTES): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -148,8 +211,8 @@ function readCappedAudio(req: IncomingMessage, res: ServerResponse): Promise<Buf
     const finish = (v: Buffer | null) => { if (!done) { done = true; resolve(v); } };
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_STT_BYTES) {
-        sendError(res, 413, 'too_large', 'The recording exceeds the 25 MB limit.');
+      if (size > max) {
+        sendError(res, 413, 'too_large', `The recording exceeds the ${Math.round(max / (1024 * 1024))} MB limit.`);
         req.destroy();
         finish(null);
         return;
@@ -189,16 +252,25 @@ export async function handleVoiceStt(
     return;
   }
 
-  // The gate is taken BEFORE the body is read, so a burst is refused without us first
+  // The hands-free phone (Mac mode's tunnel) is the one remote caller this route takes: its own
+  // tighter caps, on top of the shared ones (lib/voice/limits.ts). Decided per socket, never by
+  // loopback: the tunnel dials from 127.0.0.1.
+  const phone = isPhoneSocket(req);
+  const busy = (verdict: 'busy' | 'rate'): void => sendJson(res, 429, {
+    error: 'stt_busy',
+    message: verdict === 'busy'
+      ? 'Another recording is still being transcribed.'
+      : 'Too many recordings in the last minute.',
+  });
+
+  // The gates are taken BEFORE the body is read, so a burst is refused without us first
   // buffering 25 MB per attacker request.
+  const phoneVerdict = phone ? phoneSttGate.acquire() : 'ok';
+  if (phoneVerdict !== 'ok') { busy(phoneVerdict); return; }
   const verdict = sttGate.acquire();
   if (verdict !== 'ok') {
-    sendJson(res, 429, {
-      error: 'stt_busy',
-      message: verdict === 'busy'
-        ? 'Another recording is still being transcribed.'
-        : 'Too many recordings in the last minute.',
-    });
+    if (phone) phoneSttGate.release();
+    busy(verdict);
     return;
   }
 
@@ -209,7 +281,7 @@ export async function handleVoiceStt(
     // warm whisper.cpp answers in ~0.88s for nothing, against ~1.0-1.5s and ~$0.0015 a take
     // for an omni chat model that is also less accurate on Turkish carrying English jargon.
     const cfgEarly = readVoiceConfig();
-    const audioEarly = await readCappedAudio(req, res);
+    const audioEarly = await readCappedAudio(req, res, phone ? PHONE_MAX_STT_BYTES : MAX_STT_BYTES);
     if (!audioEarly) return;                  // 413 already sent, or a read error
     if (audioEarly.length === 0) {
       sendJson(res, 400, { error: 'stt_failed', message: 'The recording was empty.' });
@@ -222,6 +294,13 @@ export async function handleVoiceStt(
         message: 'This take was not recorded in a supported format.',
       });
       return;
+    }
+    if (phone) {
+      const seconds = wavSeconds(audioEarly);
+      if (seconds === null || seconds > PHONE_MAX_STT_SECONDS) {
+        sendError(res, 413, 'too_large', `A voice message from the phone is at most ${PHONE_MAX_STT_SECONDS / 60} minutes.`);
+        return;
+      }
     }
 
     // DICTATION IS LOCAL, AND ONLY LOCAL (owner, 2026-09-27: "dikte sadece yerel olsun",
@@ -255,6 +334,7 @@ export async function handleVoiceStt(
     });
   } finally {
     sttGate.release();
+    if (phone) phoneSttGate.release();
   }
 }
 
@@ -332,13 +412,28 @@ export async function handleVoiceTts(
 
   const verdict = ttsGate.acquire();
   if (verdict !== 'ok') {
+    // Logged, because a refusal used to be the one fate of a chunk voice.jsonl never showed:
+    // the queue turned it into a silent skip (2026-10-21). The client now waits a 429 out.
+    logVoiceEvent({ kind: 'tts', outcome: verdict === 'busy' ? 'refused-busy' : 'refused-rate' });
     sendJson(res, 429, { error: 'tts_busy', message: 'Too many speech requests.' });
     return;
   }
 
+  // ── THE CALLER WENT AWAY ──────────────────────────────────────────────────────────────
+  // A barge-in aborts the page's requests, and the generation behind each one used to run on
+  // regardless — holding its gate slot for seconds (a retry and the fallback could triple it).
+  // The next turn's first sentences then met a full gate. Now the upstream call is aborted
+  // and the slot handed back as soon as the response closes unfinished.
+  const gone = new AbortController();
+  const onClose = (): void => { if (!res.writableFinished) gone.abort(); };
+  res.on('close', onClose);
+
   try {
     const body = await parseJsonBody(req);
     const text = typeof body?.text === 'string' ? body.text.trim() : '';
+    // The page's name for this chunk, so its `speech` line and this `tts` line can be matched.
+    const id = typeof body?.id === 'string' && /^[\w-]{1,48}$/.test(body.id) ? body.id : undefined;
+    const idField = id ? { id } : {};
     if (!text) {
       sendJson(res, 400, { error: 'tts_failed', message: 'No text to speak.' });
       return;
@@ -346,6 +441,7 @@ export async function handleVoiceTts(
     if (text.length > MAX_TTS_CHARS) {
       // The client chunks to roughly a sentence, so this is only ever reached by a direct
       // POST — which is exactly the case AC12 is about.
+      logVoiceEvent({ kind: 'tts', outcome: 'refused-too-long', chars: text.length, ...idField });
       sendJson(res, 413, { error: 'tts_busy', message: 'That chunk is too long to speak.' });
       return;
     }
@@ -356,9 +452,20 @@ export async function handleVoiceTts(
     // dash. Applied AFTER the character cap, so a hostile direct POST cannot pad its way
     // under the limit with markup that strips away.
     const spoken = speakable(text);
-    // One line per chunk in voice.jsonl: which were spoken, rescued, or dropped, and why.
+    // Context, never content: the chunk before this one, so the voice reads on rather than
+    // starting cold (`speechMessages`). It is not spoken and not verbatim-checked.
+    const prev = contextLine(body?.prev);
+    // The pause this chunk leaves before the next: a breath after a sentence, almost none in
+    // the middle of one (`trimSpeechTail`).
+    const tailMs = lineContinues(spoken) ? CLAUSE_TAIL_MS : SENTENCE_TAIL_MS;
+    const startedAt = Date.now();
+    // One line per chunk in voice.jsonl: which were spoken, rescued, or dropped, and why —
+    // and how long the speech took to make (`genMs`), the number a seam gap is made of.
     const chunkLog = (outcome: string, extra: Record<string, unknown> = {}) =>
-      logVoiceEvent({ kind: 'tts', outcome, chars: text.length, spokenChars: spoken.length, ...extra });
+      logVoiceEvent({
+        kind: 'tts', outcome, chars: text.length, spokenChars: spoken.length, ...idField,
+        ...(prev ? { context: true } : {}), genMs: Date.now() - startedAt, ...extra,
+      });
     if (!spoken) {
       // Nothing speakable survived — a chunk that was only a link, or only a fence. This is
       // not a failure, so it is not `tts_failed`: the queue treats 204 as "skip this one and
@@ -370,6 +477,7 @@ export async function handleVoiceTts(
 
     const key = voiceApiKey();
     if (!key) {
+      chunkLog('unconfigured');
       sendJson(res, 400, {
         error: 'tts_unconfigured',
         message: 'No OpenRouter key is set. The mode still works as text.',
@@ -379,6 +487,7 @@ export async function handleVoiceTts(
 
     const model = await resolveModel('speech', { key });
     if (!model.ok) {
+      chunkLog(model.reason === 'unreachable' ? 'failed' : 'unconfigured');
       sendJson(res, model.reason === 'unreachable' ? 502 : 400, {
         error: model.reason === 'unreachable' ? 'tts_failed' : 'tts_unconfigured',
         message: model.detail,
@@ -413,7 +522,7 @@ export async function handleVoiceTts(
             const r = await fetch(`${OPENROUTER_BASE}/audio/speech`, {
               method: 'POST',
               headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...OPENROUTER_HEADERS },
-              signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+              signal: untilGoneOr(TTS_TIMEOUT_MS, gone.signal),
               // `pcm` is the ONLY format this model accepts, and it is the same 24 kHz mono
               // pcm16 the chat path returns — so the WAV wrapper below serves both.
               body: JSON.stringify({ model: candidate, input: spoken, voice, response_format: 'pcm' }),
@@ -424,6 +533,7 @@ export async function handleVoiceTts(
             }
             return Buffer.from(await r.arrayBuffer());
           } catch (err) {
+            if (gone.signal.aborted) return null;
             console.error('[voice:tts] fallback failed', err);
           }
         }
@@ -439,7 +549,7 @@ export async function handleVoiceTts(
           'Content-Type': 'application/json',
           ...OPENROUTER_HEADERS,
         },
-        signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+        signal: untilGoneOr(TTS_TIMEOUT_MS, gone.signal),
         body: JSON.stringify({
           model: model.id,
           stream: true,
@@ -447,11 +557,8 @@ export async function handleVoiceTts(
           audio: { voice: cfg.voice || DEFAULT_VOICE, format: 'pcm16' },
           // The few-shot sits between the system prompt and the line, and is what makes a
           // one-word line get READ rather than answered. See `JARVIS_FEWSHOT`.
-          messages: [
-            { role: 'system', content: JARVIS_INSTRUCTIONS },
-            ...JARVIS_FEWSHOT,
-            { role: 'user', content: scriptLine(spoken) },
-          ],
+          // The previous line rides along as context — see `speechMessages`.
+          messages: speechMessages(spoken, prev),
         }),
       });
       if (!upstream.ok) {
@@ -472,7 +579,7 @@ export async function handleVoiceTts(
     let retried = false;
     try {
       speech = await generate();
-      if (!readVerbatim(spoken, speech.transcript)) {
+      if (!readVerbatim(spoken, speech.transcript) && !gone.signal.aborted) {
         retried = true;
         console.warn(
           `[voice:tts] the model answered the line instead of reading it `
@@ -481,12 +588,21 @@ export async function handleVoiceTts(
         speech = await generate();
       }
     } catch (err) {
+      if (gone.signal.aborted) {
+        // Nobody is waiting for this chunk any more: the slot goes back now, not in seconds.
+        chunkLog('abandoned', { retried });
+        return;
+      }
       console.error('[voice:tts] request failed', err);
       chunkLog('failed', { retried });
       sendJson(res, 502, { error: 'tts_failed', message: 'Speech failed for this chunk.' });
       return;
     }
 
+    if (gone.signal.aborted) {
+      chunkLog('abandoned', { retried });
+      return;
+    }
     if (!readVerbatim(spoken, speech.transcript)) {
       // Twice over. The chunk is DROPPED rather than played, and the distinction is the whole
       // point of this route: a missing sentence is a gap in speech the owner can still read on
@@ -497,12 +613,16 @@ export async function handleVoiceTts(
       // real TTS, which cannot make this mistake.
       console.warn('[voice:tts] the chat model would not read the line — using the TTS model');
       const rescued = await speakWithRealTts();
+      if (gone.signal.aborted) {
+        chunkLog('abandoned', { retried });
+        return;
+      }
       if (!rescued || rescued.length === 0) {
         chunkLog('dropped-not-read', { ratio: Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) });
         res.writeHead(204).end();
         return;
       }
-      const wav = wavFromPcm16(normalizeSpeech(rescued), PCM16_SAMPLE_RATE);
+      const wav = wavFromPcm16(normalizeSpeech(trimSpeechTail(rescued, tailMs)), PCM16_SAMPLE_RATE);
       console.info(`[voice:tts] ${pcmSeconds(rescued).toFixed(1)}s spoken by the fallback`);
       chunkLog('spoken-by-fallback', { seconds: Number(pcmSeconds(rescued).toFixed(1)) });
       res.writeHead(200, {
@@ -526,11 +646,14 @@ export async function handleVoiceTts(
     // NORMALISED BEFORE IT IS WRAPPED. This is the only point in the path where the answer
     // can actually be made louder: after this it is a WAV played through a master volume the
     // app does not own. See `normalizeSpeech` for why the client's gain node cannot do it.
-    const audio = wavFromPcm16(normalizeSpeech(pcm), PCM16_SAMPLE_RATE);
+    // The seam first: the model's half-second tail cut to a breath (`trimSpeechTail`).
+    const trimmed = trimSpeechTail(pcm, tailMs);
+    const audio = wavFromPcm16(normalizeSpeech(trimmed), PCM16_SAMPLE_RATE);
     console.info(`[voice:tts] ${pcmSeconds(pcm).toFixed(1)}s spoken`);
     chunkLog('spoken', {
       retried,
-      seconds: Number(pcmSeconds(pcm).toFixed(1)),
+      seconds: Number(pcmSeconds(trimmed).toFixed(1)),
+      trimmedMs: Math.round((pcmSeconds(pcm) - pcmSeconds(trimmed)) * 1000),
       // Below 1 means the voice left words out (a full read scores 1.00, measured 2026-10-13).
       ratio: speech.transcript ? Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) : null,
     });
@@ -547,8 +670,23 @@ export async function handleVoiceTts(
       sendJson(res, 500, { error: 'tts_failed', message: 'Speech failed for this chunk.' });
     }
   } finally {
+    res.off('close', onClose);
     ttsGate.release();
   }
+}
+
+/**
+ * Aborts after `ms`, or as soon as `gone` does — whichever comes first. (`AbortSignal.any` is
+ * Node 20.3+, and the CLI still runs on 18.)
+ */
+function untilGoneOr(ms: number, gone: AbortSignal): AbortSignal {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new Error('timeout')), ms);
+  timer.unref?.();
+  const onGone = (): void => { clearTimeout(timer); ctl.abort(new Error('client gone')); };
+  if (gone.aborted) onGone();
+  else gone.addEventListener('abort', onGone, { once: true });
+  return ctl.signal;
 }
 
 // ─── POST /api/agent/voice/warm ──────────────────────────────────────────────────────────
@@ -585,6 +723,8 @@ const NOTCH_ACTIONS = new Set(['opened', 'kept-open', 'already-open', 'switched-
  *
  * `{kind:"turn"}` is the other record: one voice turn timed from the hotkey's release to the
  * first audible chunk (`parseTurnTrace`), the measurement the 2026-10-13 speed work starts from.
+ * `{kind:"speech"}` is one spoken chunk's fate (`parseSpeechReport`): the line per sentence
+ * that shows which one was played, skipped or cut, and why.
  */
 export async function handleVoiceLog(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!isDesktop()) {
@@ -592,6 +732,17 @@ export async function handleVoiceLog(req: IncomingMessage, res: ServerResponse):
     return;
   }
   const body = await parseJsonBody(req).catch(() => null) as Record<string, unknown> | null;
+  if (body?.kind === 'speech') {
+    // One spoken chunk's fate from the page's queue (played / skipped / cut, and why).
+    const chunk = parseSpeechReport(body);
+    if (!chunk) {
+      sendError(res, 400, 'bad_request', 'Unknown speech record.');
+      return;
+    }
+    logVoiceEvent(chunk);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   if (body?.kind === 'turn') {
     // A voice turn's timing (dashboard/src/lib/voice/turnTrace.ts), plus what the page cannot
     // know: the model and effort the Assistant is configured to run.

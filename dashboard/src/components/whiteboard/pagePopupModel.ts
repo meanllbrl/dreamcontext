@@ -14,7 +14,8 @@ export const CONTEXT_DIR = '_dream_context';
 
 const KNOWLEDGE_PREFIX = `${CONTEXT_DIR}/knowledge/`;
 const TASK_PREFIX = `${CONTEXT_DIR}/state/`;
-const TASK_SLUG_RE = /^[a-z0-9][a-z0-9\-/]{0,200}$/;
+// Room for any task slug (src/lib/task-slug.ts MAX_TASK_SLUG_LENGTH = 252), pinned by task-slug-limit.test.ts.
+const TASK_SLUG_RE = /^[a-z0-9][a-z0-9\-/]{0,251}$/;
 
 /** What a card or an element link asks the popup to open. */
 export interface PageTarget {

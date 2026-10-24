@@ -235,7 +235,7 @@ describe('the voice key store', () => {
   it('writes voice.json at mode 0600 — the same secrecy class as a Claude account', () => {
     writeVoiceConfig({ openRouterKey: 'sk-or-secret' }, home);
     const mode = statSync(voiceConfigPath(home)).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== 'win32') expect(mode).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('leaves an absent file as an EMPTY config rather than throwing', () => {

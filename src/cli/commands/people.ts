@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, relative } from 'node:path';
+import { dirname } from 'node:path';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
 import { resolveContextRoot } from '../../lib/context-path.js';
@@ -15,6 +15,7 @@ import {
 } from '../../lib/people-store.js';
 import { resolveActivePerson, setActivePersonPin } from '../../lib/people-resolve.js';
 import { header, success, error, info, warn, formatTable } from '../../lib/format.js';
+import { relPosix } from '../../lib/paths.js';
 
 /**
  * `dreamcontext people` — the single surface for WHO works in this vault.
@@ -31,7 +32,7 @@ import { header, success, error, info, warn, formatTable } from '../../lib/forma
 
 /** Roster-relative display path, e.g. `_dream_context/people/ada.md`. */
 function vaultRelative(contextRoot: string, absPath: string): string {
-  return relative(dirname(contextRoot), absPath);
+  return relPosix(dirname(contextRoot), absPath);
 }
 
 function requireContextRoot(): string | undefined {

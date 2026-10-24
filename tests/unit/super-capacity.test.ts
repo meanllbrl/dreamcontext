@@ -2,7 +2,8 @@
  * Capacity (plan-r7 D11, AC9) and `super delegate` (AC3):
  *  - `availMemGb` comes from `vm_stat` on macOS (free + inactive + purgeable + speculative pages
  *    times the page size), `os.freemem()` elsewhere; disk and load beside it; memoized a minute;
- *  - a 9th live child is refused with `held` and the machine facts; nothing reaches the window;
+ *  - one live child past the cap is refused with `held` (reason `cap`, the only hold); nothing
+ *    reaches the window;
  *  - a delegation goes to the window as a `super_command`, and the child it opened is recorded
  *    with its brief and a chat container.
  */
@@ -26,7 +27,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/
 import { MAX_LIVE_CHILDREN, emptySuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { parseVmStat, readCapacityFacts, resetCapacityForTests, type CapacityDeps } from '../../src/lib/super/capacity.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperVerb, DEV_SERVER_LINE } from '../../src/server/routes/super.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
 const VM_STAT = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -148,7 +149,8 @@ describe('super delegate', () => {
     const commands = frames.filter((f) => f.subtype === 'super_command');
     expect(commands).toEqual([expect.objectContaining({
       verb: 'delegate',
-      args: expect.objectContaining({ prompt: 'Write the migration for the users table.', mode: 'develop', brief: 'users migration', title: 'users migration' }),
+      // K10 (jarvis plan r9): every delegated prompt starts with the pin-your-dev-server line.
+      args: expect.objectContaining({ prompt: `${DEV_SERVER_LINE}\n\nWrite the migration for the users table.`, mode: 'develop', brief: 'users migration', title: 'users migration' }),
     })]);
     const deadline = (commands[0].args as { deadline: number }).deadline;
     expect(deadline).toBeGreaterThan(Date.now());
@@ -158,18 +160,17 @@ describe('super delegate', () => {
     expect(s.containers.find((c) => c.kind === 'chat' && c.ref === 'new-child')).toBeTruthy();
   });
 
-  it('a 9th live child is held, with the machine facts, and nothing reaches the window', async () => {
+  it('one live child past the cap is held (reason cap), and nothing reaches the window', async () => {
     const ids = Array.from({ length: MAX_LIVE_CHILDREN }, (_, i) => `live-${i}`);
     write(ids);
     for (const id of ids) registerChat({ sessionId: id, conversationId: null, vault: 'acme', mode: 'basic' }).userSent('busy');
     const r = await delegate({ prompt: 'one more' });
     expect(r.status).toBe(409);
-    expect(r.json).toMatchObject({ error: 'held', held: true, live: MAX_LIVE_CHILDREN, max: MAX_LIVE_CHILDREN });
-    expect(r.json.machine).toBeDefined();
+    expect(r.json).toMatchObject({ error: 'held', held: true, reason: 'cap', live: MAX_LIVE_CHILDREN, max: MAX_LIVE_CHILDREN });
     expect(frames.filter((f) => f.subtype === 'super_command')).toHaveLength(0);
   });
 
-  it('8 delegated children the registry has not seen yet (< 60 s old) are live: the 9th is held', async () => {
+  it('a full cap of delegated children the registry has not seen yet (< 60 s old) are live: one more is held', async () => {
     const now = Date.now();
     writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({
       ...emptySuperState(), session: 'sup-1', enabled: true,

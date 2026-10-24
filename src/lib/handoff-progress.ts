@@ -34,6 +34,9 @@ export interface HandoffRun {
   message?: string;
   /** The conversation being left; a `system/init` naming any OTHER id means the clear landed. */
   fromSession?: string;
+  /** `super`: the Super Agent's own handoff — written to its file, not a task. The card names no
+   *  task and offers no task chip. */
+  kind?: 'super';
 }
 
 export function startHandoffRun(opts: {
@@ -41,6 +44,7 @@ export function startHandoffRun(opts: {
   title: string;
   contextTokens: number | null | undefined;
   fromSession: string | null | undefined;
+  kind?: 'super';
   now?: number;
 }): HandoffRun {
   return {
@@ -50,6 +54,7 @@ export function startHandoffRun(opts: {
     title: opts.title || opts.task,
     ...(opts.contextTokens && opts.contextTokens > 0 ? { contextTokens: opts.contextTokens } : {}),
     ...(opts.fromSession ? { fromSession: opts.fromSession } : {}),
+    ...(opts.kind === 'super' ? { kind: 'super' as const } : {}),
   };
 }
 

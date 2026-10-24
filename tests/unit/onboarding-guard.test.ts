@@ -87,7 +87,11 @@ describe('local-read guard (readiness)', () => {
     expect(await read()).toBe(200);
   });
   it('accepts a same-machine Origin', async () => {
-    expect(await read({ headers: { origin: 'http://localhost:4173', 'sec-fetch-site': 'same-origin' } })).toBe(200);
+    expect(await read({ headers: { origin: 'http://127.0.0.1:4173', 'sec-fetch-site': 'same-origin' } })).toBe(200);
+  });
+  it('403 for another loopback port, and for Sec-Fetch-Site: same-site (jarvis T3)', async () => {
+    expect(await read({ headers: { origin: 'http://localhost:5173' } })).toBe(403);
+    expect(await read({ headers: { 'sec-fetch-site': 'same-site' } })).toBe(403);
   });
   it('403 for a non-loopback peer', async () => { expect(await read({ remote: '192.168.1.9' })).toBe(403); });
   it('403 for a foreign Host', async () => { expect(await read({ host: 'evil.example:4173' })).toBe(403); });

@@ -18,6 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { handleAgentBoardAssets, isShellSafePath } from '../../src/server/routes/agent-chat.js';
 import { CHAT_SURFACE_BRIEFING } from '../../src/server/chat-surface.js';
+import { fileURLToPath } from 'node:url';
 
 /** A 1×1 PNG — real bytes, so `sharp` (when present) has something valid to re-encode. */
 const PNG_1PX = Buffer.from(
@@ -411,7 +412,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    */
   it('names no dc- class the kit does not define', () => {
     const kit = readFileSync(
-      join(new URL('../../', import.meta.url).pathname,
+      join(fileURLToPath(new URL('../../', import.meta.url)),
         'dashboard/src/components/sleepy/chat/chat-html-kit.css'), 'utf-8');
     // `dc-f1..8` in the briefing is shorthand for the eight numbered classes; expand it the
     // same way a reader would before checking each one exists.

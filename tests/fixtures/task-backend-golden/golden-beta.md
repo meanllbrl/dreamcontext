@@ -11,6 +11,12 @@ tags: []
 parent_task: null
 related_feature: null
 version: null
+filed_by: agent
+filing_basis:
+  kind: note
+  quote: Golden coverage of the rice create branch
+  at: '2026-06-11'
+  verified: false
 rice: null
 start_date: '2026-06-11'
 due_date: '2026-06-11'

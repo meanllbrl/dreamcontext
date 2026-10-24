@@ -15,8 +15,9 @@ import { sanitizeChatMode } from '../../src/server/routes/agent-spawn-shared.js'
 import { pickWindowArgs } from '../../src/server/routes/window-control.js';
 import { runWindowVerb, type WindowVerbDeps } from '../../dashboard/src/components/sleepy/windowVerbs';
 import { CHAT_MODE_ROWS } from '../../dashboard/src/lib/chatModes.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 
 describe('super is a chat mode the picker never offers', () => {

@@ -13,6 +13,7 @@ import { installExternalLinkHandler } from '../../dashboard/src/lib/externalLink
 import {
   handleLinkOpen, routeElementLink, installHyperlinkGuard, HYPERLINK_SELECTOR,
 } from '../../dashboard/src/components/whiteboard/linkRouting.js';
+import { fileURLToPath } from 'node:url';
 
 const ORIGIN = 'http://127.0.0.1:4173';
 
@@ -97,7 +98,7 @@ describe('handleLinkOpen — location unchanged, window.open never called', () =
 
   it('the canvas wires onLinkOpen through handleLinkOpen (source pin)', () => {
     const src = readFileSync(
-      join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/whiteboard/WhiteboardCanvas.tsx'),
+      join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/whiteboard/WhiteboardCanvas.tsx'),
       'utf-8',
     );
     expect(src).toMatch(/onLinkOpen=\{onLinkOpen\}/);
@@ -237,7 +238,7 @@ describe('installHyperlinkGuard vs the app-global external-link handler', () => 
  * free drawing's link popup, and the guard acting on it, are never affected.
  */
 describe('widget-only selection hides the popup, not the guard', () => {
-  const root = new URL('../../', import.meta.url).pathname;
+  const root = fileURLToPath(new URL('../../', import.meta.url));
   const css = readFileSync(join(root, 'dashboard/src/components/whiteboard/WhiteboardCanvas.css'), 'utf-8');
   const src = readFileSync(join(root, 'dashboard/src/components/whiteboard/WhiteboardCanvas.tsx'), 'utf-8');
 

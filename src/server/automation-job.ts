@@ -11,7 +11,7 @@ import {
 import {
   resumeWithAnswer, resumeWithMessage, type TalkOutcome, type VerdictOptions,
 } from '../lib/automations/verdict.js';
-import type { BoardTurnInput, RunKind, RunStatus } from '../lib/automations/types.js';
+import type { BoardTurnInput, RunKind, RunStatus, SpawnModelOverride } from '../lib/automations/types.js';
 import type { TaskRef } from '../lib/automations/runner.js';
 import { getAgent } from '../lib/agents/store.js';
 import { logAssignmentResult } from '../lib/agents/task-assignment.js';
@@ -51,6 +51,8 @@ export interface AutomationAsk extends BoardTurnInput {
   /** `'agent'` runs the agent's call target even when a same-slug automation
    *  exists (a task assignment). Omitted ⇒ what `getAutomation` resolves. */
   target?: RunKind;
+  /** The owner's temporary model for this ask (AI Team), already validated. */
+  override?: SpawnModelOverride | null;
 }
 
 /**
@@ -99,6 +101,15 @@ function pruneSettledJobs(): void {
  * one before any settled one — which is what the single-slot callers (`GET /runs`, the
  * "run now" poll) always read, so they keep their meaning.
  */
+/** Each run job's settlement, for a caller that must know when it ended (the Super Agent's team
+ *  card). Dropped a minute after it settles. */
+const runSettled = new Map<string, Promise<AutomationJobState>>();
+
+/** Resolves with the run job once it settled; null for a job this process does not know. */
+export function whenRunSettles(jobId: string): Promise<AutomationJobState> | null {
+  return runSettled.get(jobId) ?? null;
+}
+
 export function currentAutomationJob(contextRoot: string, slug?: string): AutomationJobState | null {
   pruneSettledJobs();
   const bySlug = jobs.get(contextRoot);
@@ -153,7 +164,9 @@ export function startAutomationJob(
   };
   if (!bySlug) { bySlug = new Map(); jobs.set(contextRoot, bySlug); }
   bySlug.set(slug, job);
-  void runJob(contextRoot, job, ask);
+  const settled = runJob(contextRoot, job, ask).then(() => job, () => job);
+  runSettled.set(job.id, settled);
+  void settled.then(() => { setTimeout(() => runSettled.delete(job.id), 60_000).unref?.(); });
   return { job, started: true };
 }
 
@@ -236,6 +249,7 @@ async function runJob(contextRoot: string, job: AutomationJobState, ask?: Automa
       ...(ask?.board ? { board: ask.board } : {}),
       ...(ask?.target ? { target: ask.target } : {}),
       ...(ask?.task ? { task: ask.task } : {}),
+      ...(ask?.override ? { override: ask.override } : {}),
       // CALLBACK form — NEVER trackChild(child). trackChild's ChildProcess
       // branch does `child.kill()`, which signals the PID only; the automation
       // child is `detached: true`, so a PID-only kill leaves its process group
@@ -319,6 +333,9 @@ export interface ReplyJobState {
    *  On `refused` this is `resumeWithMessage`'s reason, already written for a human. */
   reason: string | null;
   startedAt: string;
+  /** When it got the run lock and began delivering (ISO). A queued reply's own words in the
+   *  thread start here; everything before it is the turn it waited behind. */
+  deliveredAt?: string;
   finishedAt: string | null;
 }
 
@@ -332,6 +349,9 @@ export interface ReplyJobState {
  * `resumeWithMessage`, which refuses with its own sentence when a run holds it.
  */
 const replyJobs = new Map<string, ReplyJobState>();
+/** Each reply job's settlement, for a caller that records the outcome where it outlives this
+ *  process's registry (the Super Agent's team job). Pruned with the job. */
+const replySettled = new Map<string, Promise<ReplyJobState>>();
 
 /** Settled reply jobs older than this are pruned. */
 const REPLY_JOB_TTL_MS = 60 * 60 * 1000;
@@ -348,7 +368,7 @@ function pruneSettledReplyJobs(now: number = Date.now()): void {
   for (const [id, job] of replyJobs) {
     if (job.status === 'running') continue;
     const finished = job.finishedAt ? Date.parse(job.finishedAt) : NaN;
-    if (Number.isFinite(finished) && finished < cutoff) replyJobs.delete(id);
+    if (Number.isFinite(finished) && finished < cutoff) { replyJobs.delete(id); replySettled.delete(id); }
   }
 }
 
@@ -357,6 +377,12 @@ function pruneSettledReplyJobs(now: number = Date.now()): void {
 export function currentReplyJob(jobId: string): ReplyJobState | null {
   pruneSettledReplyJobs();
   return replyJobs.get(jobId) ?? null;
+}
+
+/** Resolves with the job once it settled (its terminal entry is written); null for a job this
+ *  process does not know. Never rejects. */
+export function whenReplySettles(jobId: string): Promise<ReplyJobState> | null {
+  return replySettled.get(jobId) ?? null;
 }
 
 /**
@@ -559,7 +585,11 @@ function settleReplyThread(
 export function startAutomationReplyJob(
   contextRoot: string,
   slug: string,
-  opts: { runId: string; text: string; entryId: string; home?: string; lockPollMs?: number } & BoardTurnInput,
+  opts: {
+    runId: string; text: string; entryId: string; home?: string; lockPollMs?: number;
+    /** The owner's temporary model for this reply (AI Team), already validated. */
+    override?: SpawnModelOverride | null;
+  } & BoardTurnInput,
 ): ReplyJobState {
   pruneSettledReplyJobs();
   const job: ReplyJobState = {
@@ -576,7 +606,7 @@ export function startAutomationReplyJob(
     finishedAt: null,
   };
   replyJobs.set(job.id, job);
-  void runReplyJob(contextRoot, job, opts);
+  replySettled.set(job.id, runReplyJob(contextRoot, job, opts).then(() => job, () => job));
   return job;
 }
 
@@ -621,7 +651,7 @@ async function replyOrAnswer(
 async function runReplyJob(
   contextRoot: string,
   job: ReplyJobState,
-  opts: { text: string; home?: string; lockPollMs?: number } & BoardTurnInput,
+  opts: { text: string; home?: string; lockPollMs?: number; override?: SpawnModelOverride | null } & BoardTurnInput,
 ): Promise<void> {
   let outcome: TalkOutcome | null = null;
   try {
@@ -638,9 +668,10 @@ async function runReplyJob(
       // minute, which is the longest the turn ahead of it can legitimately take.
       lockWaitMs: ((manifest?.timeoutMinutes ?? 30) + 1) * 60_000,
       ...(opts.lockPollMs ? { lockPollMs: opts.lockPollMs } : {}),
-      onLockAcquired: () => { job.phase = 'delivering'; },
+      onLockAcquired: () => { job.phase = 'delivering'; job.deliveredAt = new Date().toISOString(); },
       // The board the reply came from, so the resumed turn carries its context.
       ...(opts.board ? { board: opts.board } : {}),
+      ...(opts.override ? { override: opts.override } : {}),
     };
     outcome = await replyOrAnswer(contextRoot, job.slug, opts.text, verdictOpts);
     job.status = outcome.status === 'ok' ? 'ok' : outcome.status === 'refused' ? 'refused' : 'failed';

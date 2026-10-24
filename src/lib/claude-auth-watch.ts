@@ -164,18 +164,20 @@ export function createClaudeAuthWatcher(deps: AuthWatcherDeps = {}): ClaudeAuthW
    *  that answers "can't tell" leaves `knownStatus` null by design, and without this the poll
    *  would re-spawn the CLI every tick forever trying to fill it. */
   let baselineProbed = false;
-  let lastMtimeMs = -1;
+  let lastSig = '';
   let checking = false;
 
   /** The mirror's fingerprint right now, re-parsing only when the file actually moved.
    *  An unreadable/absent file is `MIRROR_ABSENT`, the same as a signed-out one: both mean
    *  "no account is named here", and the probe decides what that is worth. */
   function readMirror(): string {
-    let mtimeMs: number;
-    try { mtimeMs = statSync(file).mtimeMs; }
-    catch { lastMtimeMs = -1; return MIRROR_ABSENT; }
-    if (mtimeMs === lastMtimeMs && knownMirror !== null) return knownMirror;
-    lastMtimeMs = mtimeMs;
+    // mtime AND size: Windows' clock is coarse enough that two writes moments apart can share
+    // an mtime, and an account switch written right after another write would go unseen.
+    let sig: string;
+    try { const st = statSync(file); sig = `${st.mtimeMs}:${st.size}`; }
+    catch { lastSig = ''; return MIRROR_ABSENT; }
+    if (sig === lastSig && knownMirror !== null) return knownMirror;
+    lastSig = sig;
     try { return mirrorFingerprint(JSON.parse(readFileSync(file, 'utf-8'))); }
     catch { return MIRROR_ABSENT; }
   }

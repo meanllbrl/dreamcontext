@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
-import fg from 'fast-glob';
+import { relPosix } from './paths.js';
+import fg from './glob.js';
 import { readFrontmatter } from './frontmatter.js';
 import { AGENT_CORE_SKILL } from './catalog.js';
 import { readJsonArray } from './json-file.js';
@@ -620,7 +621,7 @@ function loadMarkdownDocs(
       const body = isExcalidrawPath(file)
         ? extractExcalidrawText(content)
         : content.trim();
-      const relPath = file.replace(contextRoot + '/', '');
+      const relPath = relPosix(contextRoot, file);
       const fields = buildFields({ slug, title, description, tags, body });
       const built: CorpusDoc = {
         type,
@@ -884,7 +885,7 @@ function loadAutomationRunDocs(contextRoot: string): CorpusDoc[] {
       out.push({
         type: 'automation',
         path: file,
-        relPath: file.replace(contextRoot + '/', ''),
+        relPath: relPosix(contextRoot, file),
         slug,
         title,
         description: '',
@@ -954,7 +955,7 @@ function loadWhiteboardDocs(contextRoot: string): CorpusDoc[] {
       out.push({
         type: 'whiteboard',
         path: file,
-        relPath: file.replace(contextRoot + '/', ''),
+        relPath: relPosix(contextRoot, file),
         slug,
         title,
         description,
@@ -1011,7 +1012,7 @@ export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
       out.push({
         type: 'skill',
         path: file,
-        relPath: relative(skillsRoot, file),
+        relPath: relPosix(skillsRoot, file),
         slug,
         title,
         description,

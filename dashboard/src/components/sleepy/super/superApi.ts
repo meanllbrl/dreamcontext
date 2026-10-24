@@ -46,9 +46,22 @@ export async function postSuperActivity(api: ApiClient): Promise<void> {
   await api.post<unknown>('/super/activity', {});
 }
 
+/** `POST /api/super/end` — the owner ended a child from its card (his window closed the tab). */
+export async function postSuperEnd(api: ApiClient, child: string): Promise<SuperStateView | null> {
+  const r = await api.post<{ state?: unknown }>('/super/end', { child });
+  return readSuperStateView(r?.state);
+}
+
 /** `POST /api/super/recap` — the window came back after a long absence. */
 export async function postSuperRecap(api: ApiClient): Promise<boolean> {
   const r = await api.post<{ queued?: unknown }>('/super/recap', {});
+  return r?.queued === true;
+}
+
+/** `POST /api/super/fresh` — the owner pressed "New session". Throws the server's refusal
+ *  (409 `off` / `rotating`) as a RequestError; true = a fresh turn was queued. */
+export async function postSuperFresh(api: ApiClient): Promise<boolean> {
+  const r = await api.post<{ queued?: unknown }>('/super/fresh', {});
   return r?.queued === true;
 }
 

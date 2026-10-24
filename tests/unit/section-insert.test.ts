@@ -62,6 +62,14 @@ describe('formatListItems', () => {
     expect(formatListItems('* star bullet', true)).toBe('* star bullet');
   });
 
+  it('keeps the tick of a bare checkbox instead of nesting it in a new one', () => {
+    // run-20261023-1727: sleep wrote '[x] …' (a leading '-' is read as a CLI option) and got '- [ ] [x] …'.
+    expect(formatListItems('[x] done in session', true)).toBe('- [x] done in session');
+    expect(formatListItems('[ ] still open', true)).toBe('- [ ] still open');
+    expect(formatListItems('[x] not a checkbox list', false)).toBe('- [x] not a checkbox list');
+    expect(formatListItems('[link](x) text', true)).toBe('- [ ] [link](x) text');
+  });
+
   it('formats each non-empty line of multi-line content', () => {
     expect(formatListItems('one\ntwo', true)).toBe('- [ ] one\n- [ ] two');
   });

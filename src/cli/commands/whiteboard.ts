@@ -67,6 +67,7 @@ import {
 } from '../../lib/whiteboards/layout.js';
 import { foldOwnWrite, noteShow, type SinceLastShow } from '../../lib/whiteboards/seen.js';
 import { contentRegion, fitScale, MAX_SIDE, renderScene } from '../../lib/whiteboards/render.js';
+import { auditWarning, buildSpecDrawing, loadBuilder, noteWarning, readKitReference } from '../../lib/whiteboards/spec-draw.js';
 import type { MutateResult } from '../../lib/whiteboards/store.js';
 import type { WhiteboardElement } from '../../lib/whiteboards/widgets.js';
 import {
@@ -210,7 +211,7 @@ function isInside(parent: string, child: string): boolean {
  * too. A symlink is refused outright, and both sides are compared by real path. Returns the
  * path to read.
  */
-function assertFileInScope(file: string): string {
+function assertFileInScope(file: string, flag = '--file'): string {
   if (scopedBoard() === null) return file;
   const self = process.env[AGENT_SELF_ENV]?.trim();
   const allowed = [
@@ -219,7 +220,7 @@ function assertFileInScope(file: string): string {
   ].filter((d): d is string => d !== null);
   const refuse = (why: string): never => {
     throw new WhiteboardValidationError(
-      `--file '${file}' ${why}; a board agent may only read files from its scratch folder ($${AGENT_SCRATCH_ENV}) `
+      `${flag} '${file}' ${why}; a board agent may only read files from its scratch folder ($${AGENT_SCRATCH_ENV}) `
       + `or _dream_context/automations/output/${self || '<self>'}/`,
     );
   };
@@ -229,7 +230,7 @@ function assertFileInScope(file: string): string {
     real = realpathSync(file);
   } catch (err) {
     if (err instanceof WhiteboardValidationError) throw err;
-    throw new WhiteboardValidationError(`cannot read --file '${file}': ${(err as Error).message}`);
+    throw new WhiteboardValidationError(`cannot read ${flag} '${file}': ${(err as Error).message}`);
   }
   if (!allowed.some((dir) => isInside(dir, real))) refuse('is outside the folders this agent may read from');
   return real;
@@ -845,7 +846,9 @@ export function registerWhiteboardCommand(program: Command): void {
 
       // A dangling ref renders "not found" on the board; warn, never fail (the entity may come later).
       const dangling = payload.ref && !refExists(root, kind, payload.ref);
-      const warning = dangling ? `no ${kind} '${payload.ref}' exists yet; the widget will show "not found" until it does` : null;
+      const warning = dangling
+        ? `no ${kind} '${payload.ref}' exists yet; the widget will show "not found" until it does`
+        : kind === 'note' ? noteWarning(payload.markdown ?? '') : null;
       if (opts.json) {
         if (warning) console.error(`⚠ ${warning}`);
         console.log(JSON.stringify({ id, slug, kind }, null, 2));
@@ -949,10 +952,14 @@ export function registerWhiteboardCommand(program: Command): void {
         view = describeElement(board.elements[i]);
       });
       noteOwnWrite(root, slug, res, [id]);
+      const written = view as ElementView | null;
+      const warning = update.text !== undefined && written?.kind === 'note' ? noteWarning(update.text) : null;
       if (opts.json) {
+        if (warning) console.error(`⚠ ${warning}`);
         console.log(JSON.stringify(view, null, 2));
         return;
       }
+      if (warning) console.log(chalk.yellow('⚠') + ' ' + warning);
       success(`Updated ${id} on ${slug}`);
       if (view) printView(view);
     }));
@@ -987,10 +994,24 @@ export function registerWhiteboardCommand(program: Command): void {
 
   registerNavCommands(wb);
 
+  // --- kit ---
+  wb.command('kit')
+    .description('How to draw on a whiteboard: the excalidraw kit\'s spec types, with a worked example, for `draw --spec`')
+    .option('--json', 'Machine-readable output: the type list and the reference')
+    .action(run(async (opts: { json?: boolean }) => {
+      const reference = readKitReference();
+      if (opts.json) {
+        console.log(JSON.stringify({ types: loadBuilder().SPEC_TYPES, reference }, null, 2));
+        return;
+      }
+      console.log(reference.trimEnd());
+    }));
+
   // --- draw ---
   wb.command('draw <slug>')
-    .description('Import a drawing built by the excalidraw skill (.excalidraw.md or scene .json) onto a board; refused where it would cover live elements')
-    .requiredOption('--file <path>', 'x.excalidraw.md or x.json')
+    .description('Draw onto a board with the excalidraw kit: a JSON spec (--spec; `whiteboard kit` lists the types) or a file the excalidraw skill built (--file); refused where it would cover live elements')
+    .option('--spec <path>', 'A JSON spec ({ "elements": [ … ] }) built with the excalidraw kit\'s own builders; `whiteboard kit` lists the types')
+    .option('--file <path>', 'An x.excalidraw.md or scene x.json the excalidraw skill already built')
     .option('--at <x,y>', 'Top-left of the imported group (default: right of existing content); refused when the group would cover a live element')
     .option('--below <tag>', 'Place the group in the first free grid slot under the group with this tag, lined up with its left edge (decided under the board lock)')
     .option('--right-of <tag>', 'Place the group in the first free grid slot right of the group with this tag, lined up with its top')
@@ -998,15 +1019,42 @@ export function registerWhiteboardCommand(program: Command): void {
     .option('--allow-overlap', 'Write it even where it covers live elements')
     .option('--tag <tag>', 'Tag every imported element, for `remove --tag`')
     .option('--json', 'Machine-readable output')
-    .action(run(async (slug: string, opts: PlaceOpts & { file: string; tag?: string; json?: boolean }) => {
+    .action(run(async (slug: string, opts: PlaceOpts & { file?: string; spec?: string; tag?: string; json?: boolean }) => {
       assertBoardInScope(slug);
       if (opts.tag !== undefined && !isValidTag(opts.tag)) throw new WhiteboardValidationError(`invalid tag '${opts.tag}'`);
-      const source = readImportSource(readFileSync(assertFileInScope(opts.file), 'utf-8'), basename(opts.file));
+      if ((opts.file === undefined) === (opts.spec === undefined)) {
+        throw new WhiteboardValidationError('draw needs exactly one of --spec <spec.json> (`whiteboard kit` lists the types) or --file <x.excalidraw.md>');
+      }
+      // A spec is built here, by the kit; a file was built before. Both arrive as the same elements.
+      // A picture a spec names is checked before the kit reads it (the agent's scope, a real
+      // PNG/JPEG/GIF/WebP), and the CHECKED bytes are what is stored: a file swapped after the
+      // check gets another sha1 from the kit, which the board then does not hold, so the import
+      // is refused rather than storing what the check never saw.
+      const checked = new Map<string, Buffer>();
+      const fromSpec = opts.spec !== undefined
+        ? buildSpecDrawing(readFileSync(assertFileInScope(opts.spec, '--spec'), 'utf-8'), basename(opts.spec), {
+          checkPicture: (path) => {
+            const bytes = readFileSync(assertFileInScope(path, 'the picture'));
+            if (!sniffImageType(bytes)) throw new WhiteboardValidationError(`'${path}' is not a PNG, JPEG, GIF or WebP picture`);
+            checked.set(path, bytes);
+          },
+        })
+        : null;
+      const name = basename((opts.spec ?? opts.file) as string);
+      const source = fromSpec ? fromSpec.elements : readImportSource(readFileSync(assertFileInScope(opts.file as string), 'utf-8'), name);
       const at = parseAt(opts.at);
       const anchor = parseAnchor(opts);
       const size = sourceBBox(source);
       let imported: ReturnType<typeof prepareImport> | null = null;
       const root = ensureContextRoot();
+      if (fromSpec && fromSpec.pictures.length > 0) {
+        // Checked once before the pictures are stored, so a refused --at leaves no file behind; the
+        // check that decides runs again under the lock.
+        if (at && size && !opts.allowOverlap) {
+          assertFree(readWhiteboard(root, slug).board.elements, { x: at.x, y: at.y, w: size.w, h: size.h }, { slug, what: `draw ${name}` });
+        }
+        for (const bytes of checked.values()) writeBoardFile(root, slug, fileIdFor(bytes), bytes);
+      }
       // A picture already beside this board (one `show` handed out) comes back as it was.
       const hasFile = (fileId: string) => boardFileRelPath(root, slug, fileId) !== null;
       const res = await mutateWhiteboard(root, slug, (board) => {
@@ -1014,17 +1062,20 @@ export function registerWhiteboardCommand(program: Command): void {
         // drew after your last `show` is seen here, not after the fact.
         const pos = at ?? (hasAnchor(anchor) && size ? placeFree(board.elements, { w: size.w, h: size.h }, anchor) : undefined);
         imported = prepareImport(source, board.elements, { at: pos, tag: opts.tag, hasFile });
-        if (!opts.allowOverlap && imported.bbox) assertFree(board.elements, imported.bbox, { slug, what: `draw ${basename(opts.file)}` });
+        if (!opts.allowOverlap && imported.bbox) assertFree(board.elements, imported.bbox, { slug, what: `draw ${name}` });
         board.elements.push(...imported.elements);
       });
       const r = imported as unknown as ReturnType<typeof prepareImport>;
       noteOwnWrite(root, slug, res, r.elements.map((e) => e.id));
+      const warning = fromSpec ? auditWarning(fromSpec.audit) : null;
       if (opts.json) {
-        console.log(JSON.stringify({ ids: r.elements.map((e) => e.id), bbox: r.bbox }, null, 2));
+        if (warning) console.error(`⚠ ${warning}`);
+        console.log(JSON.stringify({ ids: r.elements.map((e) => e.id), bbox: r.bbox, ...(fromSpec ? { audit: fromSpec.audit } : {}) }, null, 2));
         return;
       }
-      success(`Imported ${r.elements.length} element${r.elements.length === 1 ? '' : 's'} onto ${slug}`);
+      success(`${fromSpec ? 'Drew' : 'Imported'} ${r.elements.length} element${r.elements.length === 1 ? '' : 's'} onto ${slug}`);
       if (r.bbox) console.log(`bbox ${formatBBox(r.bbox)}`);
+      if (warning) console.log(chalk.yellow('⚠') + ' ' + warning);
       const look = lookHint(slug, opts.tag, r.bbox);
       if (look) console.log(chalk.dim(look));
     }));

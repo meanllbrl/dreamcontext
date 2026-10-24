@@ -33,7 +33,7 @@ import { getTaskBackend } from '../../src/lib/task-backend/index.js';
 import { planDigestGc } from '../../src/lib/session-digest.js';
 import { registerSleepCommand } from '../../src/cli/commands/sleep.js';
 import { readSleepFlags } from '../../src/lib/sleep-flags.js';
-import { readSleepHistory } from '../../src/cli/commands/sleep.js';
+import { readSleepHistory, parseAsks } from '../../src/cli/commands/sleep.js';
 
 interface FakeBackend {
   name: string;
@@ -107,6 +107,31 @@ describe('sleep done — hygiene (AC5/AC6/AC7/AC9a wiring)', () => {
   function loggedText(): string {
     return logSpy.mock.calls.map((c) => String(c[0])).join('\n');
   }
+
+  it('--asks prints the owner-asks line and writes it into the history summary', async () => {
+    writeSleepJson(projectRoot, { debt: 0, sessions: [], bookmarks: [] });
+    vi.mocked(getTaskBackend).mockReturnValue(makeFakeBackend() as never);
+    await runSleepDone(['--asks', 'criterion=3,subtask=1,task=1,unplaced=2', 'Consolidated']);
+    const line = 'Owner asks: 7 → criterion 3 · subtask 1 · new task 1 · not placed 2';
+    expect(loggedText()).toContain(line);
+    expect(readSleepHistory(join(projectRoot, '_dream_context'))[0].summary).toBe(`Consolidated · ${line}`);
+  });
+
+  it('a malformed --asks never refuses sleep done: it warns and keeps the raw value', async () => {
+    writeSleepJson(projectRoot, { debt: 0, sessions: [], bookmarks: [] });
+    vi.mocked(getTaskBackend).mockReturnValue(makeFakeBackend() as never);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await runSleepDone(['--asks', 'lots', 'Consolidated']);
+    warnSpy.mockRestore();
+    expect(readSleepHistory(join(projectRoot, '_dream_context'))[0].summary).toBe('Consolidated · Owner asks (unparsed): lots');
+  });
+
+  it('parseAsks: every key optional, only non-negative integers', () => {
+    expect(parseAsks('criterion=2')).toMatchObject({ ok: true, counts: { criterion: 2, subtask: 0, task: 0, unplaced: 0 } });
+    expect(parseAsks('criterion=-1').ok).toBe(false);
+    expect(parseAsks('tasks=1').ok).toBe(false);
+    expect(parseAsks('').ok).toBe(false);
+  });
 
   it('does not swallow the summary when --flag precedes it (variadic-option regression fix)', async () => {
     writeSleepJson(projectRoot, { debt: 0, sessions: [], bookmarks: [] });
@@ -248,6 +273,26 @@ describe('sleep done — hygiene (AC5/AC6/AC7/AC9a wiring)', () => {
 
     const history = readSleepHistory(join(projectRoot, '_dream_context'));
     expect(history[0].summary).toBe('Consolidated despite backend errors');
+  });
+
+  it('the curator task sleep opens is stamped filed_by sleep with its measured basis', async () => {
+    writeSleepJson(projectRoot, { debt: 0, sessions: [], bookmarks: [] });
+    const kdir = join(projectRoot, '_dream_context', 'knowledge');
+    mkdirSync(kdir, { recursive: true });
+    const tags = Array.from({ length: 160 }, (_, i) => `orphan-tag-${i}`);
+    writeFileSync(join(kdir, 'tagged.md'), `---\nname: Tagged\ntags: [${tags.join(', ')}]\n---\n\nBody.\n`);
+    const backend = makeFakeBackend();
+    vi.mocked(getTaskBackend).mockReturnValue(backend as never);
+
+    await runSleepDone(['Consolidated']);
+
+    expect(backend.create).toHaveBeenCalledTimes(1);
+    const input = backend.create.mock.calls[0][0] as { local_fields?: Record<string, unknown> };
+    expect(input.local_fields).toMatchObject({
+      filed_by: 'sleep',
+      filing_basis: { kind: 'change', verified: true },
+    });
+    expect(String((input.local_fields?.filing_basis as { quote: string }).quote)).toMatch(/^\d+ orphan tags$/);
   });
 
   it('curator trigger is a no-op below the orphan-tag threshold (empty corpus)', async () => {

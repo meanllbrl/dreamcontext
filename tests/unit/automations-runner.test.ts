@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep, win32 } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import {
   buildPreamble,
   composePrompt,
+  executeClaudeDetached,
   killRunGroup,
   outputPathFor,
   OUTPUT_WRITE_FAILURE_REASON,
@@ -259,10 +260,15 @@ describe('outputPathFor', () => {
 // ─── runAutomation — gates and dispositions ─────────────────────────────────
 
 describe('runAutomation — preconditions', () => {
-  it('throws on win32 (POSIX-only process-group signalling)', async () => {
+  it('does not refuse win32 (Task Scheduler backend; killPortable replaces the group kill)', async () => {
     const spy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
-    await expect(runAutomation(contextRoot, 'whatever', {})).rejects.toThrow(/Windows is not supported/);
-    spy.mockRestore();
+    try {
+      // No manifest ⇒ the ordinary step-1 outcome, not a thrown platform refusal.
+      const out = await runAutomation(contextRoot, 'whatever', {});
+      expect(out.status).toBe('failed');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('throws when host:"server" is passed without registerChild', async () => {
@@ -1002,6 +1008,8 @@ describe('runAutomation — timeout kill matrix', () => {
 
 // ─── killRunGroup — CLI-only guards ──────────────────────────────────────────
 
+// Fake pids throughout: the win32 ownership check (recordedChildIsOurs) is injected as true here
+// and tested on its own below and in proc.test.ts.
 describe('killRunGroup', () => {
   it('no sidecar ⇒ found: false', () => {
     const result = killRunGroup(contextRoot, 'no-such-slug');
@@ -1052,7 +1060,7 @@ describe('killRunGroup', () => {
       fireAt: NOW.toISOString(), startedAt: NOW.toISOString(), timeoutAt: NOW.toISOString(),
     });
     const killImpl = vi.fn();
-    const result = killRunGroup(contextRoot, slug, { killImpl });
+    const result = killRunGroup(contextRoot, slug, { killImpl, isOurs: () => true });
     expect(result.killed).toBe(false);
     expect(result.refusedReason).toMatch(/does not match the current run lock/);
     // killImpl IS invoked with signal 0 for the informational runnerAlive/
@@ -1072,12 +1080,12 @@ describe('killRunGroup', () => {
     const killImpl = vi.fn((pid: number) => {
       if (pid === 999999) { const e = new Error('gone') as NodeJS.ErrnoException; e.code = 'ESRCH'; throw e; }
     });
-    const refused = killRunGroup(contextRoot, slug, { nowMs: NOW.getTime(), killImpl });
+    const refused = killRunGroup(contextRoot, slug, { nowMs: NOW.getTime(), killImpl, isOurs: () => true });
     expect(refused.killed).toBe(false);
     expect(refused.refusedReason).toMatch(/minutes old/);
     expect(killImpl).not.toHaveBeenCalledWith(-44444, 'SIGKILL');
 
-    const forced = killRunGroup(contextRoot, slug, { nowMs: NOW.getTime(), killImpl, force: true });
+    const forced = killRunGroup(contextRoot, slug, { nowMs: NOW.getTime(), killImpl, force: true, isOurs: () => true });
     expect(forced.killed).toBe(true);
     expect(killImpl).toHaveBeenCalledWith(-44444, 'SIGKILL');
   });
@@ -1095,11 +1103,25 @@ describe('killRunGroup', () => {
       if (pid === 999999) { const e = new Error('gone') as NodeJS.ErrnoException; e.code = 'ESRCH'; throw e; }
     });
     const nowMs = new Date('2026-07-26T17:05:00.000Z').getTime();
-    const result = killRunGroup(contextRoot, slug, { killImpl, nowMs });
+    const result = killRunGroup(contextRoot, slug, { killImpl, nowMs, isOurs: () => true });
 
     expect(result.killed).toBe(true);
     expect(result.childPgid).toBe(55555);
     expect(killImpl).toHaveBeenCalledWith(-55555, 'SIGKILL');
+
+    // The same sidecar, but the pid now belongs to another program (Windows reuses pids and the
+    // kill is a tree kill): refused even though every other guard passes, and --force does not lift it.
+    const reused = 'operator-kill-reused-pid';
+    createApproved(reused);
+    writeRunSidecar(contextRoot, reused, {
+      slug: reused, runnerPid: 999999, childPid: 55556, childPgid: 55556,
+      fireAt, startedAt, timeoutAt: '2026-07-26T17:15:00.000Z',
+    });
+    const killReused = vi.fn();
+    const refused = killRunGroup(contextRoot, reused, { killImpl: killReused, nowMs, force: true, isOurs: () => false });
+    expect(refused.killed).toBe(false);
+    expect(refused.refusedReason).toMatch(/still belongs to the recorded run/);
+    expect(killReused).not.toHaveBeenCalledWith(-55556, 'SIGKILL');
 
     const cache = readAutomationCache(contextRoot, slug);
     expect(cache?.lastFireAt).toBe(fireAt); // watermark ADVANCED
@@ -1448,5 +1470,35 @@ describe('flow warnings and report targets are surfaced, never absorbed', () => 
     const outcome = await runAutomation(contextRoot, 'digest', { home, spawnImpl: impl, now: () => NOW, fireAt: NOW });
     expect(outcome.status).toBe('ok');
     expect(outcome.outputPath).toContain(join('automations', 'output', 'digest'));
+  });
+});
+
+describe('executeClaudeDetached — win32', () => {
+  it('is not detached (no console-less child), and a missing claude is reported, not silent', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const saved = { PATH: process.env.PATH, APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, USERPROFILE: process.env.USERPROFILE };
+    const empty = mkdtempSync(join(tmpdir(), 'dc-no-claude-'));
+    // findClaudeBin() must come up empty whatever this machine has installed.
+    Object.assign(process.env, { PATH: '', APPDATA: empty, LOCALAPPDATA: empty, USERPROFILE: empty });
+    const seen: Array<{ file: string; detached: unknown }> = [];
+    const spawnImpl = ((file: string, _args: string[], o: { detached?: boolean }) => {
+      seen.push({ file, detached: o.detached });
+      // What node hands back for a missing executable: no pid (the ENOENT arrives later).
+      return Object.assign(new EventEmitter(), { pid: undefined, stdout: null, stderr: null });
+    }) as unknown as SpawnImpl;
+    const lines: string[] = [];
+    try {
+      const out = await executeClaudeDetached(['-p', 'x'], { cwd: empty, home: empty, timeoutMs: 1_000, spawnImpl, log: (l) => lines.push(l) });
+      // An absolute path, never /bin/zsh and never the bare name (a bare name is looked up in
+      // the working folder first on Windows, where a project could plant a claude.exe).
+      expect(seen).toEqual([{ file: win32.join(empty, '.local', 'bin', 'claude.exe'), detached: false }]);
+      expect(out.spawned).toBe(false);
+      expect(out.stderrTail).toMatch(/claude was not found/);
+      expect(lines.some((l) => /claude was not found/.test(l))).toBe(true);
+    } finally {
+      platform.mockRestore();
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rmSync(empty, { recursive: true, force: true });
+    }
   });
 });

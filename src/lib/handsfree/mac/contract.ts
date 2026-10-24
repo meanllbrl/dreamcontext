@@ -110,7 +110,17 @@ export interface LiveChatWire {
 
 /** GET /api/agent/live-chats's body: running chats, plus conversations still finishing after a
  *  takeover (`draining`, ids only) so the drawer lists neither of them as a past chat. */
-export interface LiveChatsWire { chats: LiveChatWire[]; draining: string[] }
+export interface LiveChatsWire {
+  chats: LiveChatWire[];
+  draining: string[];
+  /** A project whose Super Agent is handed over lists ONE row here and none of its chats under
+   *  `chats` (the phone talks to the Super Agent only). Absent when no project is handed over. */
+  supers?: SuperChatWire[];
+}
+
+/** The Super Agent row of a handed-over project. `live` false: the Mac's window is not running
+ *  it right now, so the phone cannot open it. */
+export interface SuperChatWire extends LiveChatWire { vault: string; live: boolean }
 
 // ─── Error codes ────────────────────────────────────────────────────────────
 

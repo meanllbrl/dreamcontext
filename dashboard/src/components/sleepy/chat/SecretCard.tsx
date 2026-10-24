@@ -84,7 +84,7 @@ export function SecretCard({ spec, report }: {
 
   if (phase === 'saved' && result) {
     return (
-      <div className="chat-viewcard chat-secretcard" data-phase="saved">
+      <div className="chat-viewcard chat-secretcard" data-phase="saved" data-view-kind="secret" data-view-id={spec.id}>
         <CardHeader glyph="✓" title={spec.title} aside={<span className="chat-secretcard-file">{result.file}</span>} />
         <ul className="chat-secretcard-receipt">
           {result.written.map((w) => (
@@ -103,7 +103,7 @@ export function SecretCard({ spec, report }: {
   }
 
   return (
-    <div className="chat-viewcard chat-secretcard" data-phase={phase}>
+    <div className="chat-viewcard chat-secretcard" data-phase={phase} data-view-kind="secret" data-view-id={spec.id}>
       <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file">{spec.file}</span>} />
       {spec.intro && <p className="chat-secretcard-intro">{spec.intro}</p>}
 

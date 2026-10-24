@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
-import { useVoiceCapture } from '../../../lib/voice/useVoiceCapture';
+import { useVoiceCapture, PHONE_MAX_TAKE_MS, STT_RETRIES } from '../../../lib/voice/useVoiceCapture';
 import { publishVoiceActivity, publishVoiceLevel } from '../../../lib/voice/voiceActivity';
 import { VoiceMeter } from './VoiceMeter';
 import {
@@ -8,18 +8,24 @@ import {
 } from '../../../lib/voice/hotkey';
 import { voicePrefs, refreshVoicePrefs, onVoicePrefs } from '../../../lib/voice/voicePrefs';
 import { onSpeechMuted } from '../../../lib/voice/audioFocus';
-import { readAloudEnabled, setReadAloud, onReadAloud } from '../../../lib/voice/readAloud';
+import { readAloudEnabled, onReadAloud } from '../../../lib/voice/readAloud';
+import { toggleReadAloud, wireReadAloudPersistence } from '../../../lib/voice/readAloudPersist';
 
 /** The exact text of the unspoken-answer notice, named so it can be RETRACTED without
  *  clobbering an unrelated message sharing the same row. */
-const SPEECH_MUTED_NOTICE = 'Another window was speaking — this answer was not read aloud.';
+/** The voice row's notices are i18n KEYS (`voice.note.*`), drawn through `t()`. */
+const SPEECH_MUTED_NOTICE = 'voice.note.muted';
+const ADDED_TO_DRAFT_NOTICE = 'voice.note.added';
 import { registerPushToTalk, ownsPushToTalk } from '../../../lib/voice/pushToTalkScope';
 import { onExternalPushToTalk, pushToTalkAction } from '../../../lib/voice/externalPushToTalk';
 import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
 import { useVault } from '../../../context/VaultContext';
+import { useI18n } from '../../../context/I18nContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
-import { useAgentSessionStats, useClaudeAccounts, useUsageLimits } from '../../../hooks/useAgentCapabilities';
+import { isMacPhoneSurface } from '../../../lib/phoneSurface';
+import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
+import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
   fmtTokens, CONTEXT_TIGHT_PCT, contextBands,
@@ -41,8 +47,8 @@ import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
 } from './chatEntities';
 import {
-  addAttachments, dropSentAttachments, nextAttachmentId, readScratch, removeAttachment,
-  settleAttachment, subscribeScratch, type Attachment,
+  addAttachments, composeOutgoing, countsAsContent, dropSentAttachments, nextAttachmentId, pendingUploads,
+  readScratch, removeAttachment, setAttachmentPreview, settleAttachment, stageUpload, subscribeScratch, trackUpload, type Attachment,
 } from './composerScratch';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
@@ -50,6 +56,8 @@ import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import { SleepyMascot } from '../SleepyMascot';
 import type { ComposerHost } from './composerHost';
 import './composer.css';
+import { useDictationReady } from '../../../lib/voice/useDictationReady';
+import { REPLY_TO_RE } from '../../../lib/superTypes';
 
 /**
  * The redesigned Agent Chat (beta) composer (task T6, plan rev.3) — replaced the inline
@@ -210,11 +218,13 @@ const MemoUsageMenu = memo(UsageMenu);
 
 /** The quote strip and the attachment row. A fragment, so both stay direct children of
  *  `.chat-cmp-body` — `measureBodyChrome` sums the body's children. */
-const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, onClearQuote }: {
+const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, onClearQuote, photoMeta }: {
   quote: string | null;
   attachments: Attachment[];
   convId: string;
   onClearQuote: () => void;
+  /** The hands-free phone's one line under its photo chips ("2 photos · 1 uploading…"). */
+  photoMeta?: string | null;
 }) {
   return (
     <>
@@ -234,13 +244,16 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
           {attachments.map((a) => (
             <div
               key={a.id}
-              className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}`}
+              className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}${a.kind === 'image' && a.uploading && !a.url ? ' chat-cmp-photo-pending' : ''}`}
               data-state={a.uploading ? 'uploading' : a.failed ? 'failed' : 'ready'}
             >
-              {a.kind === 'image' ? (
+              {((a.kind === 'image' || a.kind === 'element') && a.url) ? (
                 <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
+              ) : a.kind === 'about' ? (
+                // The agenda line the message is about: the agenda's Waiting dot.
+                <span className="chat-cmp-attachment-dot" aria-hidden />
               ) : (
-                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : '📄'}</span>
+                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : a.kind === 'image' ? '🖼' : '📄'}</span>
               )}
               {/* An attachment says what will happen to it. A picture that can't be sent
                   must never look like one that can — that is the whole bug this row grew
@@ -248,13 +261,14 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
               <span className="chat-cmp-attachment-name">
                 {a.name}
                 {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
-                {a.failed && <span className="chat-cmp-attachment-note">couldn't attach — not sent</span>}
+                {a.failed && <span className="chat-cmp-attachment-note">{a.note ?? (a.kind === 'element' ? 'sent without its picture' : 'couldn\'t attach — not sent')}</span>}
               </span>
               <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(convId, a.id)}>✕</button>
             </div>
           ))}
         </div>
       )}
+      {photoMeta && <div className="chat-cmp-photo-meta" data-testid="phone-photo-meta">{photoMeta}</div>}
     </>
   );
 });
@@ -334,20 +348,64 @@ const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker }: {
   );
 });
 
+/** A picture, drawn (the hands-free phone's photo button). */
+function PhotoIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <circle cx="9" cy="10" r="1.8" />
+      <path d="M21 16l-5-5-8 9" />
+    </svg>
+  );
+}
+
+/**
+ * The hands-free phone's attach control (task hands-free-phone-shows-every-picture…, D3): the `+`
+ * menu's files, folders and task all need the Mac's own picker, so on the phone it is ONE button
+ * that opens the phone's own sheet — photo library, camera, files. No `capture`, so the library
+ * is offered too; `multiple`, the composer keeps the first six.
+ */
+const PhotoButton = memo(function PhotoButton({ onFiles, label }: { onFiles: (files: File[]) => void; label: string }) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button type="button" className="chat-cmp-iconbtn chat-cmp-photobtn" onClick={() => input.current?.click()} title={label} aria-label={label} data-testid="phone-photo-button">
+        <PhotoIcon />
+      </button>
+      <input
+        ref={input}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        data-testid="phone-photo-input"
+        onChange={(e) => {
+          const files = Array.from(e.currentTarget.files ?? []);
+          // Cleared at once, so picking the same photo again still fires a change.
+          e.currentTarget.value = '';
+          if (files.length) onFiles(files);
+        }}
+      />
+    </>
+  );
+});
+
 /** The model + effort trigger. */
-const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disabled, open, onToggle }: {
+const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disabled, open, onToggle, temporary = false }: {
   modelLabel: string;
   effortValue: string;
   disabled: boolean;
   open: boolean;
   onToggle: () => void;
+  /** The pick is a temporary one (AI Team), not the default: the trigger is tinted. */
+  temporary?: boolean;
 }) {
   return (
     <div className="chat-cmp-model-wrap">
       <button
         type="button"
         {...{ [MENU_TRIGGER_ATTR]: '' }}
-        className="chat-cmp-modeltrigger"
+        className={`chat-cmp-modeltrigger${temporary ? ' chat-cmp-modeltrigger--temp' : ''}`}
         disabled={disabled}
         onClick={onToggle}
         title="Model and reasoning effort — switch applies from the next turn"
@@ -470,6 +528,7 @@ export function Composer({
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
   idlePlaceholder, unavailable,
   showModel = true,
+  modelMenu,
   activeAccountId = '', onAccountChange,
   contextHandoff, onContextHandoffChange,
 }: {
@@ -648,6 +707,12 @@ export function Composer({
    * is something behind it.
    */
   showModel?: boolean;
+  /**
+   * The model menu's extra slots, for a surface whose pick is TEMPORARY rather than a new
+   * default (AI Team): a head above the list, a foot that replaces "Set as default", the row
+   * tagged "Default", and a tinted trigger while the pick differs from it.
+   */
+  modelMenu?: { head?: ReactNode; foot?: ReactNode; defaultId?: string; temporary?: boolean };
   /** Which account THIS conversation is running on, so the picker can mark it. '' means the
    *  server resolved the default and no explicit account was named. */
   activeAccountId?: string;
@@ -659,6 +724,7 @@ export function Composer({
   // with several projects live in one window the bytes would otherwise land in the temp dir of
   // whichever chip the user last touched.
   const { vault } = useVault();
+  const { t } = useI18n();
   // Re-read on every render (the pane re-renders on every applied event — see ChatPane): this
   // is the live conversation model, not a snapshot.
   const conv = session.getModel();
@@ -783,34 +849,50 @@ export function Composer({
   // comes back. This is the same channel a dropped file uses (`POST /api/agent/drop`); the
   // beta shipped without it, which is what made a pasted screenshot a picture the user could
   // see and the agent never received (owner report 07-27).
-  /** Upload jobs still running. `submit` awaits these so ⌘V then ⏎ sends the picture. */
-  const uploadsRef = useRef<Set<Promise<void>>>(new Set());
-
+  // Staged in the store (`stageUpload`), which is both what `submit` reads (so there is no
+  // flush-ordering question — a settle that lands in the same microtask batch as a send is
+  // already visible) and what survives a respawn. The upload's resolution is addressed by
+  // CONVERSATION id, so a mode switch mid-upload still lands the path on the right chip in
+  // the pane that replaced this one. Any clipboard FILE is taken, not only an image MIME: a file
+  // copied in Explorer/Finder pastes as one, and its bytes are what the agent needs.
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
-    let addedImage = false;
+    let addedFile = false;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+      if (item.kind !== 'file') continue;
       const file = item.getAsFile();
       if (!file) continue;
-      const id = nextAttachmentId();
-      const name = file.name || 'Pasted image';
-      const url = URL.createObjectURL(file);
-      // Staged in the store, which is both what `submit` reads (so there is no flush-ordering
-      // question — a settle that lands in the same microtask batch as a send is already
-      // visible) and what survives a respawn. The upload's resolution is addressed by
-      // CONVERSATION id, so a mode switch mid-upload still lands the path on the right chip
-      // in the pane that replaced this one.
-      addAttachments(convId, [{ id, kind: 'image', url, name, uploading: true }]);
-      const job = uploadAgentFile(vault, file, name)
-        .then((path) => { settleAttachment(convId, id, path); });
-      uploadsRef.current.add(job);
-      void job.finally(() => uploadsRef.current.delete(job));
-      addedImage = true;
+      stageUpload(convId, file, (f) => uploadAgentFile(vault, f, f.name || 'Pasted image'));
+      addedFile = true;
     }
-    if (addedImage) e.preventDefault(); // don't also paste raw image bytes as garbage text
+    if (addedFile) e.preventDefault(); // don't also paste raw image bytes as garbage text
+  };
+
+  // ── The hands-free phone's photos (task hands-free-phone-shows-every-picture…) ──────────
+  // Each picked photo becomes a chip AT ONCE (its own preview) and its upload starts at once: iOS
+  // may evict a backgrounded tab, and bytes already on the Mac survive that. It is re-encoded on
+  // the phone first (lib/phonePhoto.ts: oriented, ≤ 2560 px, JPEG, no EXIF), then goes through the
+  // same channel a pasted image does, so the message quotes its path exactly as the desktop's.
+  const phonePhotos = isMacPhoneSurface();
+  const [photoCapNote, setPhotoCapNote] = useState(false);
+  const onPhonePhotos = (files: File[]) => {
+    const staged = readScratch(convId).attachments.filter((a) => a.kind === 'image').length;
+    const room = Math.max(0, PHONE_PHOTOS_PER_MESSAGE - staged);
+    setPhotoCapNote(files.length > room);
+    for (const file of files.slice(0, room)) {
+      const id = nextAttachmentId();
+      const name = jpegName(file.name || 'photo');
+      // No preview from the original (a 24 MP decode per chip): the small JPEG becomes it.
+      addAttachments(convId, [{ id, kind: 'image', name, uploading: true }]);
+      const job = preparePhonePhotoQueued(file).then((jpeg) => {
+        if (!jpeg) { settleAttachment(convId, id, null, t('chat.photo.unreadable')); return; }
+        setAttachmentPreview(convId, id, URL.createObjectURL(jpeg));
+        return withPhotoUploadSlot(() => uploadAgentFile(vault, jpeg, name, photoUploadSignal())).then((path) => { settleAttachment(convId, id, path); });
+      });
+      trackUpload(convId, job);
+    }
   };
 
   // ── Slash-command autocomplete ───────────────────────────────────────────────────
@@ -1212,8 +1294,23 @@ export function Composer({
   // land in the vault temp dir. An image whose upload FAILED has none, so it is not sendable
   // content and (unlike everything else) survives the submit — the chip stays, saying it
   // wasn't sent, rather than disappearing as if it had been.
-  const sendableAttachments = attachments.filter((a) => !!a.path);
+  // An About chip (the agenda line the message is about) is not content: alone it sends nothing.
+  const sendableAttachments = attachments.filter(countsAsContent);
+  // Only an About chip staged and nothing typed: the box asks for the words about that line.
+  const aboutOnly = !draft.trim() && attachments.length > 0 && attachments.every((a) => a.kind === 'about');
+  // A reply chip (its ↩ on one message, owner 2026-10-23) asks for his answer, not "about".
+  const aboutPlaceholder = attachments.some((a) => a.kind === 'about' && REPLY_TO_RE.test(a.text ?? ''))
+    ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder');
   const uploadingCount = attachments.filter((a) => a.uploading).length;
+  // The phone's line under its photo chips: how many, how many still on their way, the cap.
+  const photoCount = attachments.filter((a) => a.kind === 'image').length;
+  const photoMeta = phonePhotos && photoCount > 0
+    ? [
+      photoCount === 1 ? t('chat.photo.count.one') : t('chat.photo.count.many').replace('{n}', String(photoCount)),
+      uploadingCount > 0 ? t('chat.photo.uploading').replace('{n}', String(uploadingCount)) : '',
+      photoCapNote ? t('chat.photo.max') : '',
+    ].filter(Boolean).join(' · ')
+    : null;
   const hasSendableContent = !!draft.trim() || sendableAttachments.length > 0
     || uploadingCount > 0;
 
@@ -1224,6 +1321,9 @@ export function Composer({
   liveRef.current = { draft, busy, connected: canCompose, quote };
   /** Guards the window between "⏎ pressed" and "upload settled" against a second submit. */
   const sendingRef = useRef(false);
+  /** The next commit is a push-to-talk take sent untouched: it arms the read-aloud with the
+   *  message it actually sends. Consumed by that commit, whatever becomes of it. */
+  const spokenRef = useRef(false);
   const [awaitingUpload, setAwaitingUpload] = useState(false);
 
   /** `auto` — ⏎ and the ↑ button: send, or steer into the running turn.
@@ -1235,7 +1335,14 @@ export function Composer({
   // The mic is drawn ONLY in this mode and ONLY in the desktop app (AC15). The web dashboard
   // has no microphone path at all — there is no Info.plist to carry a usage string and no
   // WKWebView to grant against — so a button there would be a control that cannot work.
-  const voiceEnabled = mode === 'assistant' && isDesktop();
+  // K7 (jarvis plan r9): every desktop chat gets the mic once local dictation is installed; the
+  // Assistant always has it (its notch carries the install hint). The hands-free phone draws the
+  // same mic in any chat mode while the Mac has local dictation (usePhoneDictation): its take goes
+  // to the Mac's whisper. Read-aloud and the hotkey stay the laptop's (the tunnel refuses their
+  // routes), so the few lines below that differ ask `phoneVoice`. Read aloud stays the Assistant's.
+  const dictationReady = useDictationReady(isDesktop() && mode !== 'assistant');
+  const phoneVoice = usePhoneDictation();
+  const voiceEnabled = (isDesktop() && (mode === 'assistant' || dictationReady)) || phoneVoice;
   /** The draft as it stood when the take began, so a transcript can tell "the owner typed
    *  while I was transcribing" from "nothing changed". */
   const draftAtTakeRef = useRef('');
@@ -1276,6 +1383,7 @@ export function Composer({
   const [readAloud, setReadAloudState] = useState(readAloudEnabled);
   useEffect(() => {
     if (!voiceEnabled) return;
+    wireReadAloudPersistence();
     setReadAloudState(readAloudEnabled());
     return onReadAloud((on) => {
       setReadAloudState(on);
@@ -1304,7 +1412,8 @@ export function Composer({
     });
   }, [voiceEnabled, session.claudeId]);
   useEffect(() => {
-    if (!voiceEnabled) return;
+    // Not on the phone: warm, prefs and the hotkey are the laptop's routes.
+    if (!voiceEnabled || phoneVoice) return;
     // Load the local transcription model NOW rather than on the first press: it is a 1.5 GB
     // read, and paying it while the owner is still deciding what to say costs them nothing.
     void fetch('/api/agent/voice/warm', { method: 'POST' }).catch(() => {});
@@ -1315,7 +1424,7 @@ export function Composer({
     };
     void refreshVoicePrefs().then(adopt);
     return onVoicePrefs(adopt);
-  }, [voiceEnabled]);
+  }, [voiceEnabled, phoneVoice]);
 
   /**
    * A transcript lands in the box as the local model heard it — no second model rewrites it
@@ -1334,7 +1443,7 @@ export function Composer({
     setDraft(next);
     session.syncDraft(next);
     if (!untouched) {
-      setVoiceNotice('Added to what you typed — press send when it reads right.');
+      setVoiceNotice(ADDED_TO_DRAFT_NOTICE);
       return;
     }
     setVoiceSubmitTick((n) => n + 1);
@@ -1359,7 +1468,7 @@ export function Composer({
     return () => { levelSubsRef.current.delete(fn); };
   }, []);
 
-  const voice = useVoiceCapture({ vault, onTranscript, onLevel });
+  const voice = useVoiceCapture({ vault, onTranscript, onLevel, ...(phoneVoice ? { maxMs: PHONE_MAX_TAKE_MS } : {}) });
 
   // The capture state, published for a surface that draws it bigger (lib/voice/voiceActivity.ts).
   useEffect(() => {
@@ -1402,8 +1511,22 @@ export function Composer({
   const voiceStateRef = useRef(voice.state);
   voiceStateRef.current = voice.state;
 
+  /** A tap instead of a hold: the mic gives a short nudge (and a buzz where the device has one)
+   *  instead of a sentence telling the owner off. Motion is skipped under reduced motion. */
+  const [micNudge, setMicNudge] = useState(false);
   useEffect(() => {
-    if (voiceSubmitTick > 0) submitRef.current('auto');
+    if (voice.state !== 'too-short') { setMicNudge(false); return; }
+    setMicNudge(true);
+    try { navigator.vibrate?.(30); } catch { /* no vibration motor */ }
+    const id = window.setTimeout(() => setMicNudge(false), 420);
+    return () => window.clearTimeout(id);
+  }, [voice.state]);
+
+  useEffect(() => {
+    if (voiceSubmitTick > 0) {
+      spokenRef.current = true;
+      submitRef.current('auto');
+    }
   }, [voiceSubmitTick]);
 
   /** Press. Synchronous on purpose: {@link ComposerHost.bargeInSpeech} both silences whatever
@@ -1522,25 +1645,25 @@ export function Composer({
 
   const commit = (mode: SubmitMode) => {
     const { draft: text, busy: isBusy, connected: isConnected, quote: liveQuote } = liveRef.current;
+    const spoken = spokenRef.current;
+    spokenRef.current = false;
     if (!isConnected) return;
     // A `ref` chip's path is a token the server matches (`dcref:wb/<board>/<id>`), not a
     // filesystem path: it goes out as written, never shell-quoted.
-    const pathsText = readScratch(convId).attachments.filter((a) => !!a.path)
-      .map((a) => (a.kind === 'ref' ? a.path ?? '' : quotePath(a.path ?? ''))).join(' ');
-    const bodyText = pathsText ? (text.trim() ? `${text.trim()} ${pathsText}` : pathsText) : text.trim();
-    const message = liveQuote ? `> ${liveQuote}\n\n${bodyText}` : bodyText;
-    if (!message.trim()) return;
+    // A message about an agenda line opens with its block (the About chip), before the quote.
+    const { message, quoted, slash } = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath);
+    if (!quoted.trim()) return;
 
     // `/login` is the one command this surface must not forward. The headless engine replies
     // "/login isn't available in this environment." (verified on CLI 2.1.220) — a dead end for
     // the user typing exactly the right thing. Hand it to the terminal instead, and keep the
     // draft: if the sign-in tab isn't what they wanted, their text is still here.
-    if (isSignInCommand(message)) { onSignIn(); return; }
+    if (isSignInCommand(text)) { onSignIn(); return; }
 
     // `/mcp` is the other one, and it fails worse: the engine ANSWERS it, with a result frame
     // whose text tells the user to use a terminal for the details. So it opens the MCP panel
     // instead of spending a turn to deliver that.
-    if (onMcpPanel && isMcpCommand(message)) {
+    if (onMcpPanel && isMcpCommand(text)) {
       onMcpPanel();
       // Cleared, unlike the sign-in above, and the difference is the message itself: `/login`
       // may be sitting in front of a half-written sentence worth keeping, while a draft that
@@ -1558,7 +1681,7 @@ export function Composer({
     // than in the handler because from the user's side this WAS a send — it just landed
     // somewhere else. A bare "@acme-payments" with nothing after it is someone mid-sentence, so it
     // falls through untouched rather than opening a session with an empty prompt.
-    const addressed = onPeerMessage ? addressedPeer(message, peers) : null;
+    const addressed = onPeerMessage ? addressedPeer(quoted, peers) : null;
     if (addressed && addressed.body) {
       onPeerMessage?.(addressed.peer, addressed.body);
       setDraft('');
@@ -1566,7 +1689,7 @@ export function Composer({
       setNavBoth(NO_HISTORY_NAV);
       setSlashQuery(null);
       setMentionQuery(null);
-      dropSentAttachments(convId);
+      dropSentAttachments(convId, { keepAbout: true });
       onClearQuote();
       return;
     }
@@ -1592,6 +1715,9 @@ export function Composer({
     // the quote are all still the user's, untouched. Clearing them on a refusal would be the
     // composer taking the message away without sending it, which is the one failure mode the
     // steer fallback above also exists to prevent.
+    // A spoken take is armed with the message as SENT (block and quote included), so the
+    // server's match on its text arms the read-aloud.
+    if (spoken) session.armSpoken?.(message);
     if (mode === 'queue') session.enqueue(message);
     else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
     else if (session.send(message) === false) return;
@@ -1602,21 +1728,27 @@ export function Composer({
     // Sent chips go (their previews with them); anything that could NOT be attached stays, so
     // the row keeps saying "not sent" instead of implying it went with the message. The rule is
     // "had a path" rather than "was not failed" — see `dropSentAttachments`, which also clears
-    // the quote, so this conversation's staged state settles in one write.
-    dropSentAttachments(convId);
+    // the quote, so this conversation's staged state settles in one write. A slash command
+    // carried no About block, so the About chip stays for the next message.
+    dropSentAttachments(convId, { keepAbout: slash });
     onClearQuote();
   };
 
   const submit = (mode: SubmitMode = 'auto') => {
-    if (!canCompose || !hasSendableContent || sendingRef.current) return;
-    // Nothing in flight — the common case, and it stays synchronous.
-    if (uploadsRef.current.size === 0) { commit(mode); return; }
+    // A submit refused while an earlier one waits on its upload leaves that one's spoken take armed.
+    if (sendingRef.current) return;
+    if (!canCompose || !hasSendableContent) { spokenRef.current = false; return; }
+    // Nothing in flight — the common case, and it stays synchronous. Every upload (a paste, a
+    // drop, a phone photo, a picked element's picture) is tracked per conversation in
+    // composerScratch (`trackUpload`), so a respawned pane still waits for it.
+    const jobs = pendingUploads(convId);
+    if (jobs.length === 0) { commit(mode); return; }
     // A screenshot pasted and sent in the same breath: the message can only name the file
     // once the path exists, so hold the submit for the upload rather than sending a message
     // that references nothing. Loopback write of a clipboard image — milliseconds.
     sendingRef.current = true;
     setAwaitingUpload(true);
-    void Promise.allSettled([...uploadsRef.current]).then(() => {
+    void Promise.allSettled(jobs).then(() => {
       sendingRef.current = false;
       setAwaitingUpload(false);
       commit(mode);
@@ -1675,7 +1807,10 @@ export function Composer({
   const saveModelDefault = () => {
     if (onSetModelDefault) { onSetModelDefault(); setSavedDefault(true); return; }
     const at = { model, effort: effortValue };
-    const write = patchAgentSettings({ chatDefaultModel: at.model, chatDefaultEffort: at.effort });
+    // The Super Agent keeps its own default (plan r4 D12): "Set as default" there writes it, not the chat's.
+    const write = mode === 'super'
+      ? patchAgentSettings({ superModel: at.model, superEffort: at.effort })
+      : patchAgentSettings({ chatDefaultModel: at.model, chatDefaultEffort: at.effort });
     void savedDefaultReceipt(write, at, () => pickRef.current).then((show) => { if (show) setSavedDefault(true); });
   };
 
@@ -1715,6 +1850,7 @@ export function Composer({
   const stableClearQuote = useStableHandler(() => onClearQuote());
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
   const stableTaskPicker = useStableHandler(() => onOpenTaskPicker?.());
+  const stablePhonePhotos = useStableHandler((files: File[]) => onPhonePhotos(files));
 
   return (
     <div className="chat-cmp" ref={rootRef}>
@@ -1805,6 +1941,9 @@ export function Composer({
             onSetDefault={stableSaveDefault}
             savedDefault={savedDefault}
             close={menu.close}
+            head={modelMenu?.head}
+            foot={modelMenu?.foot}
+            defaultId={modelMenu?.defaultId}
           />
         </div>
       )}
@@ -1846,7 +1985,7 @@ export function Composer({
           paint) — composer.css's own two-line fallback holds the box until then, rather
           than a JS constant that would drift from the tokens the moment one moved. */}
       <div className="chat-cmp-body" ref={bodyRef} data-instant={instantH ? '1' : undefined} style={bodyHeight == null ? undefined : { ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
-        <ComposerChips quote={quote} attachments={attachments} convId={convId} onClearQuote={stableClearQuote} />
+        <ComposerChips quote={quote} attachments={attachments} convId={convId} onClearQuote={stableClearQuote} photoMeta={photoMeta} />
 
         <div className="chat-cmp-row" ref={rowRef}>
           <div className="chat-cmp-field">
@@ -1885,7 +2024,7 @@ export function Composer({
             // two are saying something more urgent than where to find a feature.
             // Blank while the meter has the slot: two things in one place, one of them a
             // sentence about how to start something that has already started.
-            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
+            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? aboutPlaceholder : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
@@ -1997,8 +2136,9 @@ export function Composer({
             menu is a short list that clamps to its trigger rather than spanning the card.
             Drawn only inside a project (`showAttach`) — every attachment becomes a path, and
             a pasted image's bytes need that project's temp dir. */}
-        {showAttach && (
-          <AttachButton onPick={stablePick} onOpenTaskPicker={onOpenTaskPicker ? stableTaskPicker : undefined} />
+        {showAttach && (phonePhotos
+          ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
+          : <AttachButton onPick={stablePick} onOpenTaskPicker={onOpenTaskPicker ? stableTaskPicker : undefined} />
         )}
 
         <div className="chat-cmp-spacer" />
@@ -2025,7 +2165,7 @@ export function Composer({
               aria-label="Stop reading aloud"
             >
               <HushIcon />
-              <span>Hush</span>
+              <span>{t('voice.hush')}</span>
             </button>
             {/* The rate, WHERE IT APPLIES. It is a Settings row the rest of the time, and it
                 spent weeks doing nothing at all without anything on screen to contradict it.
@@ -2078,6 +2218,7 @@ export function Composer({
             disabled={!canCompose}
             open={menu.open === 'model'}
             onToggle={toggleModel}
+            temporary={modelMenu?.temporary}
           />
         )}
 
@@ -2091,13 +2232,42 @@ export function Composer({
             otherwise have left "not this turn, the next one" with no way to say it at all.
             Both text buttons appear only once there is something to send, so an idle-handed
             Stop stays the single obvious control. */}
+        {/* THE VOICE LINE: two to four words, one line, cut with an ellipsis — never a sentence
+            (owner, 2026-10-21: the long ones overflowed the narrow composer). What it does not
+            say, the mic's `title` does. It sits LEFT of the mic on purpose: its width changes
+            with every state, and on the mic's right it slid the button out from under a
+            holding pointer the moment a take began (pointerleave ended the take, which then
+            read as "that was a tap"). On this side only the model trigger moves.
+            Resting, it names the binding ("Shift+V to talk") and a narrow pane drops it
+            (`data-rest`); the phone's mic needs no caption. */}
+        {voiceEnabled && !voiceNotice && voice.state !== 'error' && voice.state !== 'unconfigured'
+          && !(phoneVoice && voice.state === 'idle') && (
+          <span className="chat-cmp-voice-note is-idle" data-rest={voice.state === 'idle' ? '' : undefined}>
+            {voice.state === 'recording' ? t('voice.note.listening')
+              : voice.state === 'transcribing'
+                ? (voice.attempt > 0 ? t('voice.note.retry').replace('{n}', String(voice.attempt)).replace('{max}', String(STT_RETRIES)) : t('voice.note.transcribing'))
+                : voice.state === 'too-short' ? t('voice.note.tap')
+                  : voice.state === 'silent' ? t('voice.note.silent')
+                    : t('voice.note.rest').replace('{key}', hotkeyLabel(pushToTalk))}
+          </span>
+        )}
+        {voiceEnabled && (voiceNotice || voice.state === 'error' || voice.state === 'unconfigured') && (
+          // Said in the row rather than only in a tooltip: a take that was refused looks
+          // exactly like one that was never recorded, and the owner needs to know which. The
+          // full reason rides on `title`.
+          <span className="chat-cmp-voice-note" title={voiceNotice ? undefined : voice.error || undefined}>
+            {voiceNotice ? t(voiceNotice)
+              : voice.state === 'unconfigured' ? t('voice.note.unconfigured')
+                : t('voice.note.error')}
+          </span>
+        )}
         {/* Push-to-talk. Hold it, speak, let go — see `useVoiceCapture` for why the take is
-            gated on duration and RMS before a single byte is uploaded. Only in assistant
-            mode and only on the desktop (AC15). */}
+            gated on duration and RMS before a single byte is uploaded. A tap (too short) nudges
+            the button and, where the device can, buzzes once: the word beside it is one word. */}
         {voiceEnabled && (
           <button
             type="button"
-            className={`chat-cmp-send chat-cmp-mic${voice.state === 'recording' ? ' is-recording' : ''}`}
+            className={`chat-cmp-send chat-cmp-mic${voice.state === 'recording' ? ' is-recording' : ''}${micNudge ? ' is-nudged' : ''}`}
             // `onPointerDown`/`onPointerUp`, not `onClick`: press-and-hold has no click.
             // `onPointerLeave` and `onPointerCancel` close the take when the finger slides off
             // the button or the OS takes the pointer away, so the recorder cannot be left open
@@ -2113,7 +2283,7 @@ export function Composer({
             title={
               voice.state === 'recording' ? `Recording — ${voice.elapsed}s. Let go to send.`
                 : voice.state === 'transcribing' ? 'Transcribing…'
-                      : voice.state === 'too-short' ? 'That was a tap — hold the button while you speak.'
+                      : voice.state === 'too-short' ? 'Hold the button while you speak.'
                         : voice.state === 'silent' ? 'Nothing was heard in that take.'
                           : voice.state === 'unconfigured' ? (voice.error || 'Dictation is not installed — install it in Settings → Voice.')
                             : voice.state === 'error' ? (voice.error || 'That take did not go through.')
@@ -2127,49 +2297,22 @@ export function Composer({
             {voice.state === 'transcribing' ? <span aria-hidden>…</span> : <MicIcon />}
           </button>
         )}
-        {/* Read aloud, beside the mic it pairs with. A switch, not an action: `aria-pressed`
-            carries the state and the icon draws it (speaker vs speaker struck through). */}
-        {voiceEnabled && (
+        {/* SPOKEN REPLIES, beside the mic it pairs with: the one switch for speech (owner,
+            2026-10-21), shared by the notch and the Super Agent through `lib/voice/readAloud.ts`.
+            Off — the default — nothing is read aloud, not even the answer to a spoken message,
+            and a dictated message goes as text. A switch, not an action: `aria-pressed` carries
+            the state and the icon draws it. Not on the phone: it plays nothing. */}
+        {voiceEnabled && (mode === 'assistant' || mode === 'super') && !phoneVoice && (
           <button
             type="button"
             className="chat-cmp-iconbtn chat-cmp-readaloud"
-            onClick={() => setReadAloud(!readAloud)}
-            title={readAloud ? 'Read replies aloud' : 'Replies are not read aloud'}
-            aria-label="Read replies aloud"
+            onClick={() => toggleReadAloud(!readAloud)}
+            title={readAloud ? t('voice.readAloud.on') : t('voice.readAloud.off')}
+            aria-label={t('voice.readAloud.aria')}
             aria-pressed={readAloud}
           >
             {readAloud ? <SpeakerIcon /> : <HushIcon />}
           </button>
-        )}
-        {/* THE RESTING INSTRUCTION. Without it the mode is a microphone button and a secret:
-            the binding is configurable, so nothing on screen tells the owner whether to HOLD
-            it or PRESS it — and the two are opposites. It says the current binding in the
-            current mode, and gets out of the way the moment anything else has something to
-            report. */}
-        {voiceEnabled && !voiceNotice && voice.state !== 'error'
-          && voice.state !== 'unconfigured' && (
-          <span className="chat-cmp-voice-note is-idle" data-rest={voice.state === 'idle' ? '' : undefined}>
-            {voice.state === 'recording'
-              ? (effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
-                ? `Listening — ${hotkeyLabel(pushToTalk)} again to send`
-                : `Listening — let go to send`)
-              : voice.state === 'transcribing' ? (voice.attempt > 0 ? `Transcribing… trying again (${voice.attempt} of 2)` : 'Transcribing…')
-                : voice.state === 'too-short' ? 'That was a tap — keep it down while you speak'
-                  : voice.state === 'silent' ? 'Nothing was heard — try again'
-                    : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
-                      ? `Press ${hotkeyLabel(pushToTalk)} to speak, again to send`
-                      : `Hold ${hotkeyLabel(pushToTalk)} or the mic to speak`}
-          </span>
-        )}
-        {voiceEnabled && (voiceNotice || voice.state === 'error' || voice.state === 'unconfigured') && (
-          // Said in the row rather than only in a tooltip: a take that was refused looks
-          // exactly like one that was never recorded, and the owner needs to know which.
-          <span className="chat-cmp-voice-note">
-            {voiceNotice
-              || (voice.state === 'too-short' ? 'Hold it while you speak.'
-                : voice.state === 'silent' ? 'Nothing heard.'
-                  : voice.error)}
-          </span>
         )}
         {busy && (
           <button type="button" className="chat-cmp-send is-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => { session.bargeInSpeech?.(); session.interrupt(); }}>

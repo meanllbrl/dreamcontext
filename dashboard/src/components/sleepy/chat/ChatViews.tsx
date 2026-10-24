@@ -181,7 +181,7 @@ function ChecklistCard({ spec, conversationId }: { spec: ChecklistViewSpec; conv
       : null;
 
   return (
-    <div className="chat-viewcard chat-checklistcard">
+    <div className="chat-viewcard chat-checklistcard" data-view-kind="checklist" data-view-id={spec.id}>
       <div className="chat-checklistcard-head">
         <span className="chat-checklistcard-glyph" aria-hidden>☑</span>
         <div className="chat-checklistcard-titlewrap">

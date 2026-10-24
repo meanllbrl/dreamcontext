@@ -163,7 +163,7 @@ describe('spawn wiring', () => {
     expect(p).toBe(join(home, '.dreamcontext', 'assistant', 'computer-mcp.json'));
     const cfg = JSON.parse(readFileSync(p as string, 'utf-8'));
     expect(cfg.mcpServers.computer).toEqual({ type: 'stdio', command: '/usr/local/bin/node', args: ['/opt/dc/dist/index.js', 'assistant', 'computer-mcp'] });
-    expect(statSync(p as string).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(p as string).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
   });
   it('no CLI entry, no config', () => {
     expect(ensureComputerMcpConfig(home, '/usr/local/bin/node', '')).toBeNull();

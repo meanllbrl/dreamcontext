@@ -1326,7 +1326,12 @@
    dock and the Chat button step aside (owner, 2026-10-05). Chat stays one click away in the
    rail, and the floating dock over an open overlay is untouched. Shell.tsx sets data-page. */
 .project-instance[data-page="whiteboards"] .agent-dock:not(.agent-dock--floating),
-.project-instance[data-page="whiteboards"] .agent-fab {
+.project-instance[data-page="whiteboards"] .agent-fab,
+/* The AI Team is a conversation page with its own composer in that corner: the same. */
+.project-instance[data-page="automations"] .agent-dock:not(.agent-dock--floating),
+.project-instance[data-page="automations"] .agent-fab,
+.project-instance[data-page="agents"] .agent-dock:not(.agent-dock--floating),
+.project-instance[data-page="agents"] .agent-fab {
   display: none;
 }
 /* The minimized-sessions dock floats ABOVE the expanded overlay (z-index 20) — and with the

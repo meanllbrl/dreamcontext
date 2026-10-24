@@ -1,0 +1,177 @@
+/* ── The agenda (task super-agent-ajandasi-…) ─────────────────────────────────────
+   The super agent's notepad, drawn inside its stage card (owner 2026-10-22: a card, not a
+   column; a sticky notepad, not a list of sessions): Waiting on you, Now, Done. One dot per row
+   in its section's meaning (waiting pink, now green, done hollow); an open question's kind
+   travels with it as a word. Tokens only, no motion. */
+.super-agenda {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px 12px;
+  color: var(--color-text);
+}
+.super-agenda-sec { margin-top: 8px; }
+.super-agenda-sec:first-child { margin-top: 0; }
+.super-agenda-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 4px 4px;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.super-agenda-n { font-family: var(--font-mono); color: var(--color-text-secondary); }
+.super-agenda-sec[data-section='waiting'] .super-agenda-n { color: var(--mood-waiting); }
+.super-agenda-empty { padding: 2px 6px 4px; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+
+.super-agenda-row { border-radius: var(--radius-md); }
+/* "Write about this" (owner 2026-10-23, pick A): a sibling at the row's right edge, always there
+   and faint, full on the row's hover and on its own hover or focus. 28px to hit. */
+.super-agenda-row[data-about='true'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: start;
+}
+.super-agenda-about {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-tertiary);
+  opacity: 0.45;
+  cursor: pointer;
+}
+.super-agenda-row:hover .super-agenda-about { opacity: 1; }
+.super-agenda-about:hover { opacity: 1; color: var(--color-text); background: var(--color-bg-secondary); }
+.super-agenda-about:focus-visible { opacity: 1; color: var(--color-text); outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.super-agenda-row-btn {
+  box-sizing: border-box;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: baseline;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+button.super-agenda-row-btn { cursor: pointer; }
+button.super-agenda-row-btn:hover { background: var(--color-bg-secondary); }
+button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.super-agenda-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--tone, var(--color-text-tertiary));
+  transform: translateY(-1px);
+}
+.super-agenda-name {
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  /* Every line is read whole (owner 2026-10-23: a cut line cannot be read): it wraps as many
+     lines as it needs and the card body scrolls (.super-agenda). Never clamped, never "…". */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.super-agenda-meta { display: inline-flex; align-items: baseline; }
+.super-agenda-line {
+  grid-column: 2 / 4;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.super-agenda-chip {
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+.super-agenda-chip[data-kind='permission'],
+.super-agenda-chip[data-kind='question'],
+.super-agenda-chip[data-kind='ask'],
+.super-agenda-chip[data-kind='needsYou'] { color: var(--color-warning-ink); background: var(--color-warning-subtle); }
+
+/* Each section's dot, in its meaning: waiting pink, now green, done hollow. */
+.super-agenda-row[data-state='waiting'] .super-agenda-dot { background: var(--mood-waiting); }
+.super-agenda-row[data-state='now'] .super-agenda-dot { background: var(--color-success); }
+.super-agenda-row[data-state='done'] .super-agenda-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--color-text-tertiary); }
+.super-agenda-row[data-state='done'] .super-agenda-name { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); }
+.super-agenda-row[data-chip='queued'] { opacity: 0.6; }
+/* A note is the super's own sentence, in its own weight; it wraps whole like every line. */
+.super-agenda-row[data-kind='note'] .super-agenda-name { font-weight: var(--font-weight-medium); }
+
+/* The counts tile (a small or medium agenda card): what waits on him, what runs, what is done.
+   Waiting is the waiting colour (--mood-waiting) here too, as a tint behind ordinary text. */
+.super-agenda--tile {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 0 10px 10px;
+  overflow: hidden;
+}
+.super-agenda--tile[data-wide='true'] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.super-agenda-tile-n {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+.super-agenda-tile-v { font-family: var(--font-mono); font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); color: var(--color-text-tertiary); line-height: 1.2; }
+.super-agenda-tile-l { font-size: var(--font-size-2xs); color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.super-agenda-tile-n[data-on='true'] .super-agenda-tile-v,
+.super-agenda-tile-n[data-on='true'] .super-agenda-tile-l { color: var(--color-text); }
+.super-agenda-tile-n[data-section='waiting'][data-on='true'] { background: color-mix(in srgb, var(--mood-waiting) 16%, var(--color-bg-elevated)); }
+.super-agenda-tile-n[data-section='now'][data-on='true'] { background: var(--color-success-subtle); }
+.super-agenda-tile-n[data-section='now'][data-on='true'] .super-agenda-tile-v,
+.super-agenda-tile-n[data-section='now'][data-on='true'] .super-agenda-tile-l { color: var(--color-success-ink); }
+/* A small (1x1) tile: one line per section, its count then its word. */
+.super-agenda--tile:not([data-wide='true']) .super-agenda-tile-n { flex-direction: row; align-items: baseline; justify-content: flex-start; gap: 8px; }
+
+/* "Agenda" in the centre's head, while the card is off the stage: its badge counts what waits. */
+.super-agenda-open { margin-left: auto; }
+.super-agenda-open + .super-fresh { margin-left: 0; }
+.super-agenda-open-n {
+  min-width: 20px;
+  padding: 0 4px;
+  line-height: 20px;
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  text-align: center;
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--mood-waiting) 16%, var(--color-bg-elevated));
+}
+
+/* The minimised agenda's pill, bottom-left (owner 2026-10-22 23:44): the Others stack's look. */
+.super-agenda-pill-glyph { flex: none; color: var(--color-text-secondary); }
+.super-agenda-pill-btn:not([data-asking]) .super-others-count { opacity: 0.7; }

@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import matter from 'gray-matter';
 import { defaultGitTrackedCheck, type GitTrackedCheck } from '../git-tracked.js';
 import { basename, dirname, join, normalize, resolve, sep } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../glob.js';
 import { generateId } from '../id.js';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { formatSchedule, parseScheduleDetailed, parseSlot, serializeSchedule, serializeSlot } from './schedule.js';
@@ -1640,6 +1640,15 @@ export interface UpdateAutomationInput {
    *  agent); `null` or blank removes the section. Approval-hashed like the
    *  prompt. Refused for an unsplit automation, which has no job of its own. */
   job?: string | null;
+  /** The job's "ask me before it publishes" gate (`review:`), a job-file field. */
+  review?: ReviewMode;
+}
+
+/** A review mode an edit may write, or a refusal: a typo'd mode would read as `off`. */
+export function checkReviewPatch(review: unknown): void {
+  if (review !== undefined && !(REVIEW_MODES as readonly unknown[]).includes(review)) {
+    throw new AutomationError(`Invalid review mode "${String(review)}" — must be one of: ${REVIEW_MODES.join(', ')}.`);
+  }
 }
 
 /**
@@ -1668,6 +1677,8 @@ export function updateAutomation(
   patch: UpdateAutomationInput,
 ): AutomationManifest {
   if (!isSafeAutomationSlug(slug)) throw new AutomationError(`No such automation: ${slug}`);
+  // Before any write: a bad mode refused after the agent half was saved would leave half an edit.
+  checkReviewPatch(patch.review);
   const path = automationPath(contextRoot, slug);
   if (!pathOccupied(path)) {
     if (patch.job !== undefined) throw new AutomationError(JOB_NEEDS_BOUND);
@@ -1756,6 +1767,7 @@ function updateLegacyManifest(
   }
   if (patch.enabled !== undefined) fields.enabled = patch.enabled;
   if (patch.photo !== undefined) fields.photo = patch.photo;
+  if (patch.review !== undefined) fields.review = patch.review;
 
   patchManifestFrontmatter(manifest.path, fields);
 
@@ -1820,6 +1832,7 @@ function updateBoundAutomation(
     fields.timeout_minutes = numberOrDefault(patch.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES);
   }
   if (patch.enabled !== undefined) fields.enabled = patch.enabled;
+  if (patch.review !== undefined) fields.review = patch.review;
   patchManifestFrontmatter(job.path, fields);
 
   if (patch.job !== undefined) {
@@ -1841,7 +1854,8 @@ function updateAgentOnlyTarget(contextRoot: string, slug: string, patch: UpdateA
     patch.days !== undefined ||
     patch.at !== undefined ||
     patch.timeoutMinutes !== undefined ||
-    patch.enabled !== undefined;
+    patch.enabled !== undefined ||
+    patch.review !== undefined;
   if (schedulish) {
     throw new AutomationError(`"${slug}" is an agent you only call: give it an automation to put it on a schedule.`);
   }

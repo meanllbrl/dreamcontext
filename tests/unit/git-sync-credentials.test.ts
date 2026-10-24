@@ -33,7 +33,7 @@ describe('git-sync/credentials — withGitCredentials', () => {
       // File must exist, be 0600, and hold the token WHILE fn runs.
       expect(tokenFilePathDuringCall).toBeTruthy();
       const stat = statSync(tokenFilePathDuringCall!);
-      expect(stat.mode & 0o777).toBe(0o600);
+      if (process.platform !== 'win32') expect(stat.mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
       expect(readFileSync(tokenFilePathDuringCall!, 'utf-8')).toBe('super-secret-token');
     });
 

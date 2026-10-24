@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -305,7 +305,7 @@ describe('handleAgentReveal — a reference whose climb lands nowhere', () => {
     writeFileSync(shot, Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'binary');
     try {
       const { res, status } = makeRes();
-      await handleAgentReveal(makePost({ path: `../../${shotDir.split('/').pop()}/automations-light.png` }), res, {}, contextRoot);
+      await handleAgentReveal(makePost({ path: `../../${basename(shotDir)}/automations-light.png` }), res, {}, contextRoot);
       expect(status()).toBe(200);
       expect(lastSpawn().args).toEqual([shot]); // an image opens; no `-R`
     } finally {
@@ -323,7 +323,7 @@ describe('handleAgentReveal — a reference whose climb lands nowhere', () => {
     writeFileSync(script, '#!/bin/sh\necho hi\n', 'utf-8');
     try {
       const { res, status } = makeRes();
-      await handleAgentReveal(makePost({ path: `../../../${dir.split('/').pop()}/setup.sh` }), res, {}, contextRoot);
+      await handleAgentReveal(makePost({ path: `../../../${basename(dir)}/setup.sh` }), res, {}, contextRoot);
       expect(status()).toBe(200);
       expect(lastSpawn().args).not.toEqual([script]);
       if (process.platform === 'darwin') expect(lastSpawn().args).toEqual(['-R', script]);

@@ -13,6 +13,12 @@ tags:
 parent_task: null
 related_feature: null
 version: 0.7.1
+filed_by: agent
+filing_basis:
+  kind: note
+  quote: Because golden bytes matter
+  at: '2026-06-11'
+  verified: false
 rice: null
 ---
 

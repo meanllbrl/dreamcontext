@@ -82,6 +82,9 @@ describe('chat registry — status derived at the agent-chat.ts parse point', ()
 
       line(child, { type: 'assistant', message: { content: [{ type: 'text', text: 'Looking at auth.ts now.' }] } });
       expect(registry.getChat(SID)?.lastAssistantText).toEqual(['Looking at auth.ts now.']);
+      // The Super's reply mark is for the window: never a chat's last line (owner 2026-10-23).
+      line(child, { type: 'assistant', message: { content: [{ type: 'text', text: '<!-- re:k3f9q0 -->\nThe login page is fixed.' }] } });
+      expect(registry.getChat(SID)?.lastAssistantText.at(-1)).toBe('The login page is fixed.');
 
       line(child, { type: 'control_request', request_id: 'req-1', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which DB?', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }] } } });
       const asking = registry.getChat(SID)!;

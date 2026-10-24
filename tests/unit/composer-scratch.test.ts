@@ -19,10 +19,11 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import {
-  __resetScratchForTests, addAttachments, dropScratch, dropSentAttachments, nextAttachmentId,
-  readScratch, removeAttachment, settleAttachment, setQuote, subscribeScratch,
+  __resetScratchForTests, addAttachments, countsAsContent, dropScratch, dropSentAttachments, foldAttachments, nextAttachmentId,
+  pendingUploads, readScratch, removeAttachment, setAbout, settleAttachment, setQuote, stageUpload, subscribeScratch, wasSent,
   type Attachment,
 } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
 
@@ -194,7 +195,7 @@ describe('composerScratch — lifetimes', () => {
 
 // ─── Source guards: the properties that live in code that ISN'T there ──────────────────
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 const code = (src: string) => src
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
@@ -204,13 +205,51 @@ const COMPOSER = 'dashboard/src/components/sleepy/chat/Composer.tsx';
 const PANE = 'dashboard/src/components/sleepy/ChatPane.tsx';
 const SURFACE = 'dashboard/src/components/sleepy/AgentSurface.tsx';
 
+/** The agenda line a message is written about (owner 2026-10-23): one chip, never content alone. */
+describe('composerScratch — the About chip', () => {
+  const aboutChip = (text: string, name = 'About: x'): Attachment => ({ id: nextAttachmentId(), kind: 'about', name, text });
+
+  it('one per conversation: a second line replaces the first, other chips stay, it goes first', () => {
+    addAttachments(CONV, [file('/tmp/a.txt')]);
+    setAbout(CONV, aboutChip('[About agenda line note=n1 section=now]\nline: "a"', 'About: a'));
+    setAbout(CONV, aboutChip('[About agenda line note=n2 section=waiting]\nline: "b"', 'About: b'));
+    const atts = readScratch(CONV).attachments;
+    expect(atts.map((a) => a.kind)).toEqual(['about', 'file']);
+    expect(atts[0].name).toBe('About: b');
+    expect(readScratch(OTHER).attachments).toEqual([]);
+    setAbout(CONV, null);
+    expect(readScratch(CONV).attachments.map((a) => a.kind)).toEqual(['file']);
+  });
+
+  it('a send carries it (and drops it); it is never content by itself; folding ignores it', () => {
+    const a = aboutChip('[About agenda line item=q-1 section=waiting]');
+    expect(wasSent(a)).toBe(true);
+    expect(countsAsContent(a)).toBe(false);
+    expect(countsAsContent(file('/tmp/a.txt'))).toBe(true);
+    expect(foldAttachments('hi', [a], (p) => `"${p}"`)).toBe('hi');
+    setAbout(CONV, a);
+    setQuote(CONV, 'earlier');
+    dropSentAttachments(CONV);
+    expect(readScratch(CONV)).toEqual({ attachments: [], quote: null });
+  });
+
+  it('a slash command keeps it staged; the quote and other sent chips go as always', () => {
+    setAbout(CONV, aboutChip('[About agenda line note=n1 section=now]\nline: "a"'));
+    addAttachments(CONV, [file('/tmp/a.txt')]);
+    setQuote(CONV, 'earlier');
+    dropSentAttachments(CONV, { keepAbout: true });
+    expect(readScratch(CONV).attachments.map((x) => x.kind)).toEqual(['about']);
+    expect(readScratch(CONV).quote).toBeNull();
+  });
+});
+
 describe('composerScratch — the wiring nobody can see at the call site', () => {
   it('the composer no longer revokes an object URL on unmount', () => {
     // This single line was the bug: an unmount is not evidence that the user is done with a
-    // chip, because a respawn unmounts a pane whose chips are still wanted. Creating the URL
-    // stays here (the paste handler has the File); releasing it belongs to the store.
+    // chip, because a respawn unmounts a pane whose chips are still wanted. The paste handler
+    // hands its File to `stageUpload`, which creates the URL; releasing it belongs to the store.
     const src = code(read(COMPOSER));
-    expect(src).toContain('URL.createObjectURL');
+    expect(src).toContain('stageUpload(convId');
     expect(src, 'releasing a preview is composerScratch\'s job now').not.toContain('revokeObjectURL');
   });
 
@@ -249,5 +288,35 @@ describe('composerScratch — the wiring nobody can see at the call site', () =>
     const window = src.slice(Math.max(0, at - 900), at);
     expect(window).toContain('clearPins(');
     expect(window).toContain('closeSessionById');
+  });
+});
+
+describe('stageUpload — one door for a paste and a drop', () => {
+  beforeEach(() => __resetScratchForTests());
+
+  it('stages an uploading chip, then settles it with the uploaded path', async () => {
+    let resolve!: (p: string | null) => void;
+    const file = new File(['x'], 'shot.png', { type: '' });
+    stageUpload('conv-u', file, () => new Promise((r) => { resolve = r; }));
+    const [chip] = readScratch('conv-u').attachments;
+    expect(chip).toMatchObject({ kind: 'image', name: 'shot.png', uploading: true });
+    expect(pendingUploads('conv-u')).toHaveLength(1);
+    resolve('C:\vault\_dream_context\tmp\agent-drops\1-shot.png');
+    await Promise.allSettled(pendingUploads('conv-u'));
+    expect(readScratch('conv-u').attachments[0]).toMatchObject({
+      path: 'C:\vault\_dream_context\tmp\agent-drops\1-shot.png', uploading: false, failed: false,
+    });
+    expect(pendingUploads('conv-u')).toHaveLength(0);
+  });
+
+  it('a nameless non-image paste is labelled a file, not an image', () => {
+    stageUpload('conv-n', new File(['x'], '', { type: 'application/pdf' }), () => new Promise(() => {}));
+    expect(readScratch('conv-n').attachments[0]).toMatchObject({ kind: 'file', name: 'Pasted file' });
+  });
+
+  it('a non-image file is a file chip, and a rejected upload is marked failed', async () => {
+    stageUpload('conv-f', new File(['%PDF'], 'brief.pdf', { type: 'application/pdf' }), () => Promise.reject(new Error('x')));
+    await Promise.allSettled(pendingUploads('conv-f'));
+    expect(readScratch('conv-f').attachments[0]).toMatchObject({ kind: 'file', name: 'brief.pdf', failed: true });
   });
 });

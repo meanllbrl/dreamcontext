@@ -17,6 +17,7 @@ import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import type { FunnelFrame, FunnelFrameMetric } from '../../dashboard/src/generated/frameOps.js';
 import type { Block, BlockProps } from '../../dashboard/src/components/lab/board/boardTypes.js';
+import { fileURLToPath } from 'node:url';
 
 const COPY: Record<string, string> = {
   'lab.blocks.benchmark.notMeasured': 'Not measured: {reason}',
@@ -143,7 +144,7 @@ describe('2. funnel detail page: a lookup lane that skips a step is not measured
   });
 
   it('the page draws lanes, stacked bands and arc details through the lookup guard', () => {
-    const src = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/funnel/FunnelDetailPage.tsx'), 'utf8');
+    const src = readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/funnel/FunnelDetailPage.tsx'), 'utf8');
     expect(src).toContain('laneStepsOf(laneSteps, lane.steps, segmentMode, laneNotSplit, laneNotSplitReason)');
     expect(src).toContain('data-lab-lane-missing=');
     expect(src).not.toMatch(/users: lane\.steps\.get\(s\.key\) \?\? 0/);

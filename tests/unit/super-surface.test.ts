@@ -46,15 +46,16 @@ describe('the Super Agent is never a tab (D9, AC1)', () => {
 
   it('it joins the roster with mode super and is placed in NO pane', () => {
     const ensure = surface.slice(surface.indexOf('const ensureSuperSession'), surface.indexOf('// ── What the server pushes'));
-    expect(ensure).toMatch(/spawn\(false, session, !fresh, 'chat', '', '', true, '', false, '', false, 'super'\)/);
+    expect(ensure).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super'\)/);
     expect(ensure).toMatch(/mode: 'super'/);
     expect(ensure).not.toMatch(/setPanes/);
   });
 
   it('it follows the vault\'s permission switch like any chat (decision 14): no explicit bypass on its spawn or its children\'s', () => {
     // Param 11 (explicitBypass) is false, so `spawn`'s chat arm takes the vault's remembered mode.
-    expect(surface).toMatch(/spawn\(false, session, !fresh, 'chat', '', '', true, '', false, '', false, 'super'\)/);
-    expect(surface).toMatch(/spawn\(false, undefined, false, 'chat', prepared\.inline, d\.model, true, prepared\.token, false, d\.effort, false, d\.mode\)/);
+    expect(surface).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super'\)/);
+    // The child's id is minted first so its lean MCP set (orchestration plan r5 D14) is known at the spawn.
+    expect(surface).toMatch(/spawn\(false, childId, false, 'chat', prepared\.inline, d\.model, true, prepared\.token, false, d\.effort, false, d\.mode\)/);
   });
 
   it('past chats never reopen its conversation as a tab', () => {
@@ -211,19 +212,43 @@ describe('quiet children (D16, AC6 client half)', () => {
   it('a marked child\'s question raises no chime, banner, bounce or badge', () => {
     const chat = read(`${SLEEPY}/chatSession.ts`);
     const push = chat.slice(chat.indexOf('function pushAsk('), chat.indexOf('function applyZoom('));
-    expect(push).toMatch(/if \(!hadAskBefore && !session\.superChild\) \{[\s\S]*raiseAskAttention/);
+    expect(push).toMatch(/if \(!hadAskBefore\) \{[\s\S]*childAlarm\.ask\(/);
+    expect(push).not.toMatch(/raiseAskAttention\(/);
+    // The gate: a child raises nothing, an unknown one waits (super-child-alarm.test.ts).
+    expect(chat).toMatch(/setSuperChild: \(on: boolean \| null\) => \{\s*childAlarm\.set\(on\);/);
   });
 
   it('children are marked from the record, and on spawn (no window between spawn and the first frame)', () => {
-    expect(surface).toMatch(/cs\.setSuperChild\(markedChildren\(superStateRef\.current\)\.has\(cs\.claudeId\)\)/);
-    expect(surface).toMatch(/\(s as ChatSession\)\.setSuperChild\(set\.has\(s\.claudeId\)\)/);
+    expect(surface).toMatch(/cs\.setSuperChild\(superKnownRef\.current \|\| superStateRef\.current\s*\? markedChildren\(superStateRef\.current\)\.has\(cs\.claudeId\)\s*: null\)/);
+    // The first GET (or no record to read) makes it known and releases what waited.
+    expect(surface).toMatch(/superKnownRef\.current = true;[\s\S]{0,200}setSuperChild\(marked\.has\(s\.claudeId\)\)/);
+    // Until the record is read the effect keeps the alarm waiting, never an early "not a child".
+    expect(surface).toMatch(/const known = superKnownRef\.current \|\| !!superState;[\s\S]{0,200}\(s as ChatSession\)\.setSuperChild\(known \? set\.has\(s\.claudeId\) : null\)/);
   });
 
-  it('the queue strip raises ONE alarm per new owner head, through headAlarm', () => {
-    const strip = read(`${superDir}/QueueStrip.tsx`);
-    expect(strip).toMatch(/const next = headAlarm\(alarmKey\.current, head\);/);
-    expect(strip).toMatch(/if \(!next\.raise \|\| !head\) return;\s*[\s\S]{0,400}raiseAskAttention\(/);
-    expect((strip.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
+  it('ONE alarm per owner item, EVERY item (not only the head), linked to the super agent, raised where the record lives', () => {
+    // Owner 2026-10-22: a super question rings like any agent's question. A normal agent's
+    // question rings whatever else is open; the job bar rang only for its head, and only while
+    // the stage was mounted. The alarm lives in AgentSurface and walks every owner item.
+    const strip = read(`${superDir}/JobBar.tsx`);
+    expect(strip).not.toMatch(/raiseAskAttention|headAlarmOnce/);
+    const effect = surface.slice(surface.indexOf('const superOwnerItems = useMemo('), surface.indexOf('const superTitleFor = useCallback('));
+    expect(effect).toMatch(/superState\.queue\.filter\(needsOwner\)/);
+    expect(effect).toMatch(/const fresh = superOwnerItems\.filter\(\(q\) => headAlarmOnce\(vault, q\)\);\s*if \(!fresh\.length\) return;[\s\S]{0,200}raiseAskAttention\(/);
+    expect(effect).toMatch(/sessionId: superChatSession\?\.claudeId \?\? null,/);
+    expect((surface.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
+    // A banner the server posted (owner-question.ts names it in the view) is never posted twice.
+    expect(effect).toMatch(/banner: !\(superBannered \?\? \[\]\)\.includes\(item\.id\),/);
+    // The super chat's tab gets the attention badge, like any asking chat.
+    expect(effect).toMatch(/superChatSession\.attention = true;\s*bumpStatus\(\);/);
+  });
+
+  it('a link to the super agent opens its stage before any resume (AC4)', () => {
+    const open = surface.slice(surface.indexOf('useInstanceEvent<OpenSessionDetail>(OPEN_SESSION_EVENT'), surface.indexOf('setLinkedSession({ claudeId: detail.claudeId'));
+    // A link that lands before the record waits for it, then re-checks before any resume.
+    expect(surface).toMatch(/const ready = caps !== null && settingsReady && hydratedRef\.current && superKnownRef\.current;/);
+    expect(surface).toMatch(/setLinkedSession\(null\);\s*if \(!isMobile && !isMacPhoneSurface\(\) && linkOpensSuperStage\(claudeId, superStateRef\.current\)\) \{/);
+    expect(open).toMatch(/if \(!isMobile && !isMacPhoneSurface\(\) && linkOpensSuperStage\(detail\.claudeId, superStateRef\.current\)\) \{\s*setSuperView\('super'\);\s*setExpanded\(true\);\s*detail\.accepted = true;\s*return;/);
   });
 
   it('the project chip ignores marked children and counts only the queue head', () => {
@@ -237,22 +262,32 @@ describe('quiet children (D16, AC6 client half)', () => {
     expect(head).toMatchObject({ waiting: 1, worst: 'asking' });
     // An unmarked chat still rings as before.
     expect(rollupProject([asking('c')])).toMatchObject({ waiting: 1, asking: 1 });
-    expect(surface).toMatch(/rollupProject\(dockRows, \{ superQueueHead: !!superState\?\.enabled && !!queueHead\(superState\) \}\)/);
+    expect(surface).toMatch(/const superHead = superState\?\.enabled \? queueHead\(superState\) : null;/);
+    expect(surface).toMatch(/rollupProject\(dockRows, \{ superQueueHead: superHead \? \{ asker: superHead\.sessionId \} : false \}\)/);
   });
 });
 
 describe('the strip answers once; the button\'s dot is in its name; ids never read the prototype', () => {
-  const strip = read(`${superDir}/QueueStrip.tsx`);
+  const strip = read(`${superDir}/JobBar.tsx`);
 
-  it('Allow, Deny and the option buttons go through one latch and are disabled once answered', () => {
-    expect(strip).toMatch(/latch\.current = latchSeen\(latch\.current, answerKey, pendingPresent\);/);
-    expect(strip).toMatch(/const next = latchClick\(latch\.current, answerKey, child\?\.status === 'open'\);/);
+  it('Allow and Deny go through one latch and are disabled once answered', () => {
+    // The latch is the one the super chat's question card shares (superQuestions.ts): noted
+    // first from the ONE pending input, then read, per item + request key.
+    expect(strip).toMatch(/if \(head && answerKey\) noteOwnerPending\(answerKey, ownerPendingPresent\(head, child, openOwnerQuestions\(state\.queue\)\)\);\s*const locked = answerKey !== null && ownerAnswerLocked\(answerKey\);/);
+    // The answer rides the child's socket, or for the super agent's own ask its own (verify finding).
+    expect(strip).toMatch(/const carrier = head\.kind === 'ask' \? superSession : child;\n\s*if \(!claimOwnerAnswer\(answerKey, head\.id, state\.session \?\? '', carrier\?\.status === 'open'\)\) return;\n\s*if \(send\(\) === false\) releaseOwnerAnswer\(answerKey\);/);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'allow'/);
     expect(strip).toMatch(/onClick=\{\(\) => answerOnce\(\(\) => child\.answer\(pending\.requestId, \{ behavior: 'deny'/);
-    expect(strip).toMatch(/if \(picks\.ok\) answerOnce\(\(\) => child\.answerQuestion\(/);
-    // No answer path bypasses the latch.
-    expect((strip.match(/child\.answer(Question)?\(/g) ?? []).length).toBe(3);
-    expect((strip.match(/disabled=\{locked\}/g) ?? []).length).toBe(3);
+    // No answer path bypasses the latch: the permission's two. A question is answered in the
+    // chat's own card (SuperQuestionCard.tsx), never from the bar.
+    expect((strip.match(/child\.answer(Question)?\(/g) ?? []).length).toBe(2);
+    expect((strip.match(/disabled=\{locked\}/g) ?? []).length).toBe(2);
+    expect(strip).not.toMatch(/sendOwnerAnswer|ownerOptionsOf/);
+    // The card answers through the AskUserQuestion card's own host: the child's session, or one
+    // message to the super (sendToSuper), and a failed send remounts the card.
+    const card = read(`${superDir}/SuperQuestionCard.tsx`);
+    expect(card).toMatch(/if \(!sendToSuper\(superSession, text\)\) setAttempt\(\(a\) => a \+ 1\);/);
+    expect(card).not.toMatch(/\.send\(|\.steer\(/);
   });
 
   it('the pill is one row that never reflows: a cut text opens below it, a button never shrinks (end review r8)', () => {
@@ -270,11 +305,10 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect(strip).toMatch(/const next = optionsFit\(fitRef\.current, fitKey, band\.clientWidth, el\.scrollWidth - el\.clientWidth, showRef\.current\);/);
     // Keyed on the row's content (a change inside a full-width pill resizes no box), and run
     // again on every show/hide, before paint (end review r8, round 5).
-    expect(strip).toMatch(/\[answerKey, titleFor\(head\?\.sessionId \?\? ''\), waiting > 1 \? waiting - 1 : 0, t\('super\.queue\.reply'\), \.\.\.optionLabels\]\.join\(/);
+    expect(strip).toMatch(/\[answerKey, titleFor\(head\?\.sessionId \?\? ''\), waiting > 1 \? waiting - 1 : 0, t\('super\.queue\.reply'\), t\('super\.queue\.answer'\)\]\.join\(/);
     expect(strip).toMatch(/\}, \[fitKey, showOptions\]\);/);
     expect(strip).toMatch(/useLayoutEffect\(\(\) => \{\n\s*const el = headRef\.current;/);
     expect(strip).toMatch(/ro\.observe\(band\);\n\s*ro\.observe\(el\);/);
-    expect(strip).toMatch(/\{showOptions && child && question && q && q\.options\.slice\(0, 4\)\.map/);
     expect(strip).toMatch(/<button type="button" className="super-queue-btn super-queue-btn--reply" onClick=\{onReplyToSuper\}>/);
     expect(css).toMatch(/\.super-queue-head:hover \.super-queue-full,\n\.super-queue-head:focus-within \.super-queue-full \{ display: block; \}/);
     expect(rule('.super-queue-full')).toMatch(/position: absolute;[^}]*top: 100%;/);
@@ -283,7 +317,6 @@ describe('the strip answers once; the button\'s dot is in its name; ids never re
     expect((strip.match(/return \(\) => \{ live = false; ro\.disconnect\(\); \};/g) ?? []).length).toBe(2);
     expect((strip.match(/void document\.fonts\?\.ready\.then\(\(\) => \{ if \(live\) measure\(\); \}\);/g) ?? []).length).toBe(2);
     expect(strip).toMatch(/\{cut && <span className="super-queue-full" aria-hidden="true">/);
-    expect(strip).toMatch(/className="super-queue-btn super-queue-btn--option"\n\s*title=\{o\.label\}/);
   });
 
   it('the queue dot is decoration; its meaning rides in the button\'s accessible name', () => {
@@ -310,11 +343,15 @@ describe('the window rules (D10, AC12)', () => {
   it('agent cards make 0 network requests: they read the child\'s live session', () => {
     const card = read(`${superDir}/AgentCard.tsx`);
     const frame = read(`${superDir}/SuperContainer.tsx`);
-    for (const src of [card, frame]) expect(src).not.toMatch(/\bfetch\(|useApi|useQuery|api\.(get|post)|EventSource|WebSocket/);
-    // The card reads the child's live model; its frame re-renders on the session at most once a frame.
+    const live = read(`${superDir}/liveSession.ts`);
+    for (const src of [card, frame, live]) expect(src).not.toMatch(/\bfetch\(|useApi|useQuery|api\.(get|post)|EventSource|WebSocket/);
+    // The card reads the child's live model; card and frame follow the session in ONE shared frame
+    // (liveSession.ts), the frame only on a status change (frameKeyOf), the tile on what it draws.
     expect(card).toMatch(/session\?\.getModel\(\)/);
-    expect(frame).toMatch(/session\.subscribe\(/);
-    expect(frame).toMatch(/requestAnimationFrame\(\(\) => \{ raf = 0; force\(\); \}\)/);
+    expect(live).toMatch(/s\.subscribe\(\(\) => inNextFrame\(check\)\)/);
+    expect(live).toMatch(/requestAnimationFrame\(run\)/);
+    expect(frame).toMatch(/useLiveSession\(liveChat, \(\) => frameKeyOf\(liveChat\)\)/);
+    expect(card).toMatch(/useLiveSession\(session, \(\) => cardKeyOf\(session, false\)\)/);
     // The one clock follows pollMs (slower unfocused, doubled in Light mode).
     expect(card).toMatch(/pollMs\(30_000\)/);
   });
@@ -354,20 +391,20 @@ describe('the window rules (D10, AC12)', () => {
     expect(flight).toMatch(/last = onStage\(stage\.plan\.centre\)/);
     expect(flight).toMatch(/cp\.where === 'others' \? stage\.plan\.othersRect : cp\.rect/);
     expect(surface).toMatch(/onStageReady=\{onStageReady\}/);
-    const stage = read(`${superDir}/SuperSurface.tsx`);
+    const stage = ['SuperSurface.tsx', 'useStageDrag.ts', 'StageMotion.tsx'].map((f) => read(`${superDir}/${f}`)).join('\n');
     // Ready only once the measured size is the rendered one, and once per mount.
     expect(stage).toMatch(/if \(el\.clientWidth !== size\.width \|\| el\.clientHeight !== size\.height\) return;/);
     expect(stage).toMatch(/readyRef\.current = true;\n\s*props\.onStageReady/);
   });
 
   it('a drop never reorders the record; the card dropped last is lifted on top for the session', () => {
-    const stage = read(`${superDir}/SuperSurface.tsx`);
+    const stage = ['SuperSurface.tsx', 'useStageDrag.ts', 'StageMotion.tsx'].map((f) => read(`${superDir}/${f}`)).join('\n');
     expect(stage).not.toMatch(/order: 'last'/);
     expect(stage).toMatch(/onLayout\(\{ cards: \[\{ id, pos: posFromRect\(p\.free, r\), place: 'float' \}\] \}\);\n\s*liftOnTop\(id\);/);
   });
 
   it('a re-render that draws the same stage never restarts a running motion (FE2)', () => {
-    const stage = read(`${superDir}/SuperSurface.tsx`);
+    const stage = ['SuperSurface.tsx', 'useStageDrag.ts', 'StageMotion.tsx'].map((f) => read(`${superDir}/${f}`)).join('\n');
     expect(stage).toMatch(/if \(prev\.dragId === this\.props\.dragId && \(prev\.plan === this\.props\.plan \|\| samePlan\(prev\.plan, this\.props\.plan\)\)\) return null;/);
   });
 
@@ -391,7 +428,9 @@ describe('the window rules (D10, AC12)', () => {
     expect(edit).toMatch(/if \(!st\) \{ notSaved\('no state in the answer'\); return; \}/);
     expect(edit).toMatch(/\n\s*notSaved,\n\s*\);/);
     expect(surface).toMatch(/if \(st\) setSuperState\(withPendingEdits\(st\)\);\n\s*\};/);
-    expect(surface).toMatch(/pendingPatchesRef\.current\.filter\(\(p\) => !patchEchoed\(st, p\)\)/);
+    // Each pending edit is read against the push with the earlier ones applied (withPendingPatches,
+    // presentation layouts end review: a close then Esc survives a push in between).
+    expect(surface).toMatch(/const \{ state, keep \} = withPendingPatches\(st, pendingPatchesRef\.current\);\n\s*pendingPatchesRef\.current = keep;/);
     const api = read(`${superDir}/superApi.ts`);
     expect(api).toMatch(/api\.post<\{ state\?: unknown \}>\('\/super\/layout', patch\)/);
   });
@@ -402,7 +441,7 @@ describe('the window rules (D10, AC12)', () => {
     expect(ask).toMatch(/cs\.sendText\(cardReference\(id, title, cs\.getModel\(\)\.draft\)\)/);
     expect(ask).not.toMatch(/postSuperLayout|editSuperLayout/);
     expect(surface).toMatch(/onAskAbout=\{askAboutCard\}/);
-    const stage = read(`${superDir}/SuperSurface.tsx`);
+    const stage = ['SuperSurface.tsx', 'useStageDrag.ts', 'StageMotion.tsx'].map((f) => read(`${superDir}/${f}`)).join('\n');
     // A drop on the centre asks; it posts no layout.
     expect(stage).toMatch(/if \(drop && h === 'centre'\) actions\.onAskAbout\(id\);\n\s*else if/);
   });
@@ -520,9 +559,12 @@ describe('the window rules (D10, AC12)', () => {
 describe('stable hooks for the lead\'s verify script', () => {
   it('every piece the verify drives carries its test id', () => {
     const all = readdirSync(join(ROOT, superDir)).filter((f) => f.endsWith('.tsx')).map((f) => read(`${superDir}/${f}`)).join('\n');
-    for (const id of ['super-handover-btn', 'super-surface', 'super-container', 'super-queue-strip', 'super-queue-head', 'super-terminals-row']) {
+    for (const id of ['super-handover-btn', 'super-surface', 'super-job-bar', 'super-queue-head', 'super-terminals-row']) {
       expect(all, id).toContain(`data-testid="${id}"`);
     }
+    // A live page parked off the stage (kept alive, hidden) answers to its own id, so the verify's
+    // `super-container` selector only ever finds a card the owner can see.
+    expect(all).toContain(`data-testid={props.parked ? 'super-container-parked' : 'super-container'}`);
     expect(all).toMatch(/data-kind=\{c\.kind\}/);
     expect(all).toMatch(/data-container-id=\{c\.id\}/);
     expect(all).toMatch(/data-super-motion=\{motion\}/);
@@ -553,6 +595,7 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
     // Keys built from a value: every value the code can produce.
     for (const k of ['saved', 'starting', 'working', 'asking', 'ready', 'ended']) keys.add(`super.card.state.${k}`);
     for (const k of ['question', 'idle', 'gone', 'recap', 'handover', 'other']) keys.add(`super.event.${k}`);
+    for (const k of ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'group']) keys.add(`super.tile.kind.${k}`);
     expect(keys.size).toBeGreaterThan(30);
     for (const k of keys) {
       expect(en, `EN ${k}`).toContain(`'${k}':`);

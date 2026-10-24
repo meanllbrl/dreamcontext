@@ -253,7 +253,7 @@ export function CardChat({ session, reopen, placeholder }: { session: ChatSessio
     changeMode: () => { /* a card speaks as its agent */ },
     changeAccount: () => { /* follows the default account */ },
     handoffToDevelop: () => { /* a card does not hand off */ },
-    openAppPage: () => { /* opened from the Agents page or the tab */ },
+    openAppPage: () => { /* opened from the AI Team or the tab */ },
     signIn: async () => { /* sign in from a project chat */ },
   }), [session]);
 

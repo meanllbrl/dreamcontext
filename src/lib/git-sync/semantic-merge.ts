@@ -45,6 +45,8 @@ export type MergeClass =
   | 'knowledge-md'
   | 'feature-md'
   | 'taxonomy-json'
+  /** `state/.task-objections.json`: union by objection id (mergeTaskObjectionsJson). */
+  | 'task-objections-json'
   /** `whiteboards/<slug>/<slug>.excalidraw.md` — element-level merge (whiteboard D13). */
   | 'whiteboard-md'
   /** `lab/boards/*.md`: union of cards by id (mergeLabBoard). `lab/blocks/*.md` stays on the prose path. */
@@ -66,6 +68,7 @@ export function classifyPath(relPath: string): MergeClass {
   if (norm === PEOPLE_JSON_REL) return 'people-json';
   if (norm === 'core/taxonomy.json') return 'taxonomy-json';
   if (norm === TASKS_MAP_REL) return 'tasks-map-json';
+  if (norm === 'state/.task-objections.json') return 'task-objections-json';
   if (/^state\/[^/]+\.md$/.test(norm)) return 'task-md';
   if (/^knowledge\/features\//.test(norm)) return 'feature-md';
   if (/^knowledge\//.test(norm)) return 'knowledge-md';
@@ -102,6 +105,48 @@ function unionStringArray(a: unknown, b: unknown): string[] {
   const arrA = Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : [];
   const arrB = Array.isArray(b) ? b.filter((x): x is string => typeof x === 'string') : [];
   return [...new Set([...arrA, ...arrB])];
+}
+
+// ─── state/.task-objections.json — union by id, field by field ───────────────
+
+/**
+ * Two machines objected, or one finished an objection the other started. Records are joined by
+ * `id`; a record on both sides keeps the APPLIED side (the later `applied.at` when both are),
+ * the union of their finished `steps`, and no `error` once applied. Two different applied
+ * records for one task (two machines objected separately) are both kept: the task page reads
+ * the newest (task-objection.ts `currentObjection`). Oldest first, like the file.
+ */
+export function mergeTaskObjectionsJson(_base: string, ours: string, theirs: string): { merged: string } {
+  const byId = new Map<string, Record<string, unknown>>();
+  const order: string[] = [];
+  const appliedAt = (r: Record<string, unknown>): string | null => {
+    const a = r.applied as { at?: unknown } | null | undefined;
+    return a && typeof a.at === 'string' ? a.at : null;
+  };
+  for (const rec of [...parseJsonArray(ours), ...parseJsonArray(theirs)]) {
+    if (typeof rec.id !== 'string') continue;
+    const prev = byId.get(rec.id);
+    if (!prev) {
+      byId.set(rec.id, rec);
+      order.push(rec.id);
+      continue;
+    }
+    const pa = appliedAt(prev);
+    const ra = appliedAt(rec);
+    const winner = pa && ra ? (ra > pa ? rec : prev) : pa ? prev : ra ? rec : prev;
+    const merged: Record<string, unknown> = {
+      ...winner,
+      steps: unionStringArray(prev.steps, rec.steps),
+    };
+    // Superseded on either side stays superseded: a step error must not revive a replaced record.
+    merged.error = merged.applied ? null
+      : prev.error === 'superseded' || rec.error === 'superseded' ? 'superseded'
+        : (prev.error ?? rec.error ?? null);
+    byId.set(rec.id, merged);
+  }
+  const out = order.map((id) => byId.get(id)!);
+  out.sort((a, b) => String(a.at ?? '').localeCompare(String(b.at ?? '')));
+  return { merged: JSON.stringify(out, null, 2) + '\n' };
 }
 
 // ─── core/CHANGELOG.json — set-union by fingerprint, LIFO ───────────────────
@@ -679,6 +724,9 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
         break;
       case 'tasks-map-json':
         mergedContent = mergeTasksMapJson(base, ours, theirs).merged;
+        break;
+      case 'task-objections-json':
+        mergedContent = mergeTaskObjectionsJson(base, ours, theirs).merged;
         break;
       case 'task-md': {
         const taskResult = mergeTaskMd(base, ours, theirs, { statuses: statusSet() });

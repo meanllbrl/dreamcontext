@@ -1,4 +1,4 @@
-/* Extracted by /design-sync from TaskFilters.css (.filter-chip*) and TaskCreateModal.css (.field-input/.field-select) — the trigger-chip and form-control styles the synced MultiSelectFilter / VersionFilter / CustomFieldInput components need but don't co-locate. Re-extract if those classes change. */
+/* Extracted by /design-sync from the since-deleted TaskFilters.css (.filter-chip*, used by the FilterPopover preview) and TaskCreateModal.css (.field-input/.field-select, needed by the synced CustomFieldInput). Re-extract if those classes change. */
 
 /* --- filter trigger chips --- */
 /* ─── Filter Chips ─── */

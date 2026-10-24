@@ -158,7 +158,7 @@ describe('sidebar rail — the icon family is one hand (C9)', () => {
 
   it('draws Agents as agents, not as a clock (C10)', () => {
     const src = read(NAV_ICONS);
-    const start = src.indexOf('function AutomationsIcon');
+    const start = src.indexOf('function AiTeamIcon');
     const body = src.slice(start, src.indexOf('\n}', start));
     // The clock was a ring plus two hands plus two bells. Two heads is the shape now; the
     // assertion is on the GLYPH's own body so a comment elsewhere cannot satisfy it.
@@ -301,12 +301,12 @@ describe('sidebar rail — the Workspace entry is Whiteboard, the settings group
 });
 
 describe('sidebar rail — Workspace order (owner, 2026-10-02)', () => {
-  it('reads Chat, Tasks, Automations, Agents, Insights, Roadmap, then the alpha pages last', () => {
+  it('reads Chat, Tasks, AI Team, Insights, Roadmap, then the alpha pages last', () => {
     const block = navGroupsBlock(read(SIDEBAR_TSX));
     const workspace = block.slice(0, block.indexOf("'nav.group.memory'"));
     const rows = [...workspace.matchAll(/\{\s*(?:page|launch):\s*'([^']+)'([^}]*)\}/g)].map((m) => ({ id: m[1], maturity: /maturity:\s*'([^']+)'/.exec(m[2])?.[1] }));
-    // Agents follows the Automations that pick one (reverses ad04364c, 2026-10-12).
-    expect(rows.map((r) => r.id)).toEqual(['chat', 'tasks', 'automations', 'agents', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'council']);
+    // AI Team (page key `automations`) is Agents and Automations in one row (owner, 2026-10-20).
+    expect(rows.map((r) => r.id)).toEqual(['chat', 'tasks', 'automations', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'council']);
     // No beta or stable row may sit below an alpha one.
     const firstAlpha = rows.findIndex((r) => r.maturity === 'alpha');
     expect(rows.slice(firstAlpha).every((r) => r.maturity === 'alpha')).toBe(true);
@@ -314,12 +314,13 @@ describe('sidebar rail — Workspace order (owner, 2026-10-02)', () => {
 });
 
 describe('sidebar rail — the hero row (C5)', () => {
-  it('puts Automations right after Tasks in Workspace, at beta, flagged hero', () => {
+  it('puts AI Team right after Tasks in Workspace, with no maturity tag, flagged hero', () => {
     const items = navItems(read(SIDEBAR_TSX));
     // Chat (a launcher row, not a page) leads; Tasks then Automations follow (owner, 2026-10-02).
     expect(items[0].page).toBe('tasks');
     expect(items[1].page).toBe('automations');
-    expect(items[1].maturity).toBe('beta');
+    expect(items[1].labelKey).toBe('nav.aiTeam');
+    expect(items[1].maturity).toBeUndefined();
     expect(items[1].hero).toBe(true);
     // Exactly one hero: the emphasis is only worth anything if it is not shared.
     expect(items.filter((i) => i.hero)).toHaveLength(1);

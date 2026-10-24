@@ -9,7 +9,7 @@ import { FilterPopover } from 'dreamcontext-dashboard';
 // record a cardMode/viewport override in learnings.
 const noop = () => {};
 
-// The .filter-chip pill styles live in TaskFilters.css, which is NOT in this
+// The .filter-chip pill styles (once in the deleted TaskFilters.css) are NOT in this
 // component's CSS bundle graph — so we inline the chip styling (same DS tokens)
 // to keep the FilterPopover preview self-contained and fully styled.
 function Chip({ label, active, open }: { label: string; active?: boolean; open?: boolean }) {

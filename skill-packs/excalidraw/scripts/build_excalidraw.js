@@ -48,6 +48,7 @@ const COMPOSITES = {
   // house style
   funnel: STYLE.funnel, card: STYLE.card, node: STYLE.node, column: STYLE.column, hub: STYLE.hub,
   connector: STYLE.connector, annotate: STYLE.annotate, chip: STYLE.chip, divider: STYLE.divider,
+  flow: STYLE.flow,
   prose: STYLE.prose, bullets: STYLE.bullets, sectionTitle: STYLE.sectionTitle,
   takeaway: STYLE.takeaway,
   // wireframe kit
@@ -59,13 +60,34 @@ const COMPOSITES = {
   searchField: WF.searchField, roundRect: WF.roundRect,
 };
 // Layout composites take `items` (child specs) rather than scalar props, so they expand differently.
-const LAYOUTS = { stack: STYLE.stack, row: STYLE.row };
+const LAYOUTS = { stack: STYLE.stack, row: STYLE.row, panel: STYLE.panel };
+// Every `type` a spec element may carry. `dreamcontext whiteboard kit` lists these and a test holds
+// its reference to them, so a builder added here is never missing from the whiteboard's kit.
+const PRIMITIVE_TYPES = ['text', 'image', 'rectangle', 'ellipse', 'diamond', 'line', 'arrow', 'frame'];
+const SPEC_TYPES = [...PRIMITIVE_TYPES, ...Object.keys(COMPOSITES), ...Object.keys(LAYOUTS)];
+// The types whose `items` are child specs (a spec checker walks into them).
+const LAYOUT_TYPES = Object.keys(LAYOUTS);
+
+// A picture given one side (or none) gets the other from its real proportions BEFORE a layout
+// measures it: stack/row read `width`/`height`, and a picture they measured as 0 tall would have the
+// next block drawn over it. A missing file is left alone for the build's own missing-image check.
+function withImageBox(e) {
+  if (e.width != null && e.height != null) return e;
+  let d;
+  try { d = imageSize(path.resolve(e.path)); } catch (err) { return e; }
+  if (!d || !d.width || !d.height) return e;
+  if (e.width != null) return Object.assign({}, e, { height: Math.round(e.width * d.height / d.width) });
+  if (e.height != null) return Object.assign({}, e, { width: Math.round(e.height * d.width / d.height) });
+  return Object.assign({}, e, { width: d.width, height: d.height });
+}
 
 function expandElements(list) {
   const out = [];
   for (const e of (list || [])) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) { if (e) out.push(e); continue; }
-    if (LAYOUTS[e.type]) {
+    if (e.type === 'image' && e.path) {
+      out.push(withImageBox(e));
+    } else if (LAYOUTS[e.type]) {
       // each item is itself a spec (or array of specs) → expand first, then let stack/row measure it
       const items = (e.items || []).map((it) => expandElements(Array.isArray(it) ? it : [it]));
       out.push(...expandElements(LAYOUTS[e.type](Object.assign({}, e, { items }))));
@@ -193,7 +215,7 @@ function baseEl(rng, type, x, y, w, h, overrides) {
 // title bar, content inside a frame) is the normal parent/child relationship. Grouped composites (a
 // card's own label, a window's own chrome) and connectors / transparent shapes are skipped too.
 // Disable with `spec.audit === false`.
-function auditOverlaps(elements) {
+function auditOverlaps(elements, containers = new Set()) {
   const label = (e) => {
     if (e.type === 'text') return JSON.stringify(String(e.text).split('\n')[0].slice(0, 24));
     return `${e.type}@(${Math.round(e.x)},${Math.round(e.y)})`;
@@ -210,11 +232,18 @@ function auditOverlaps(elements) {
     return ix * iy;
   };
   const boxes = elements.filter(isOpaqueBox);
+  // A declared container (a `panel` box, spec `container: true`) holds what lies wholly inside it
+  // AND is painted after it, whatever their sizes: one big child, or a panel in a panel, is nesting.
+  // A box painted BEFORE the container is hidden under it, which is exactly a collision.
+  const zOf = new Map(elements.map((e, i) => [e, i]));
+  const inside = (inner, outer) => overlap(inner, outer) / Math.max(1, area(inner)) > 0.98;
+  const holds = (c, e) => containers.has(c) && zOf.get(c) < zOf.get(e) && inside(e, c);
   const hits = [];
   for (let i = 0; i < boxes.length; i++) {
     for (let j = i + 1; j < boxes.length; j++) {
       const a = boxes[i], b = boxes[j];
       if (grp(a) && grp(a) === grp(b)) continue;         // same composite ⇒ intentional
+      if (holds(a, b) || holds(b, a)) continue;
       const ov = overlap(a, b); if (ov <= 0) continue;
       const minA = Math.min(area(a), area(b)), maxA = Math.max(area(a), area(b));
       const cover = ov / Math.max(1, minA);              // fraction of the SMALLER box that is covered
@@ -382,7 +411,7 @@ function refuseWhiteboard(outPath) {
     marked = /^dreamcontext-whiteboard:\s*1\s*$/m.test(fs.readFileSync(abs, 'utf8').split(/\n---\s*\n/)[0]);
   } catch (e) { /* no file yet: nothing to overwrite */ }
   if (underBoards || marked) {
-    throw new Error(`refusing to write ${outPath}: it is a dreamcontext whiteboard. Add widgets with \`dreamcontext whiteboard add <slug> <kind>\`, or draw shapes onto it with \`dreamcontext whiteboard draw <slug> --file <board.excalidraw.md>\` (build that file somewhere else first).`);
+    throw new Error(`refusing to write ${outPath}: it is a dreamcontext whiteboard. Draw onto it with \`dreamcontext whiteboard draw <slug> --spec <spec.json>\` (this same kit, straight from the spec) or \`--file <board.excalidraw.md>\` (built somewhere else first); add live widgets with \`dreamcontext whiteboard add <slug> <kind>\`.`);
   }
 }
 
@@ -555,6 +584,9 @@ function buildExcalidraw(spec) {
   const groupMap = new Map();
   const gidFor = (key) => { if (!groupMap.has(key)) groupMap.set(key, idFrom(rng) + idFrom(rng)); return groupMap.get(key); };
   (spec.elements || []).forEach((e, i) => { if (e.group != null && elements[i]) elements[i].groupIds = [gidFor(String(e.group))]; });
+  // Spec element i built element i (every branch above pushes exactly one), so a declared
+  // container is found by position, and the flag never reaches the scene.
+  const containers = new Set((spec.elements || []).flatMap((e, i) => (e && e.container && elements[i] ? [elements[i]] : [])));
 
   // assign canonical fractional indices in array order (z-order)
   const keys = generateNKeysBetween(null, null, elements.length);
@@ -566,7 +598,7 @@ function buildExcalidraw(spec) {
   //   longLines      — body copy past the reading measure (too WIDE)
   //   wallOfText     — a block of copy too LONG to be read at all
   const doAudit = spec.audit !== false;
-  const overlaps = doAudit ? auditOverlaps(elements) : 0;
+  const overlaps = doAudit ? auditOverlaps(elements, containers) : 0;
   const buriedText = doAudit ? auditTextCollisions(elements) : 0;
   const longLines = doAudit ? auditMeasure(elements, spec.measure) : 0;
   const wallOfText = doAudit ? auditBlockLength(elements) : 0;
@@ -678,7 +710,7 @@ function grid(opts) {
   return els;
 }
 
-module.exports = { buildExcalidraw, lane, grid, thumbHeight };
+module.exports = { buildExcalidraw, lane, grid, thumbHeight, SPEC_TYPES, LAYOUT_TYPES };
 
 // ---------- CLI ----------
 if (require.main === module) {

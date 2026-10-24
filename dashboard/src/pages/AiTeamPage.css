@@ -1,0 +1,403 @@
+/* AI Team — the page's own pieces. Every value is an app token (from the approved board,
+   ai-team-ekranlari: mockups/src/ai-team.css), plus the tab switch and toast the retired
+   Automations page owned. */
+.aiteam { display: grid; grid-template-columns: 304px minmax(0, 1fr); height: 100%; min-height: 0; background: var(--color-bg); }
+.aiteam--panel { grid-template-columns: 304px minmax(0, 1fr) 416px; }
+
+/* ── roster ── */
+.aiteam-roster { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--color-border); }
+.aiteam-roster-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-5) var(--space-4) var(--space-3) var(--space-5); }
+.aiteam-roster-title { margin: 0; font-family: var(--font-family-display); font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); letter-spacing: -0.4px; color: var(--color-text); }
+.aiteam-roster-count { font-size: var(--font-size-xs); color: var(--color-text-tertiary); padding-top: 2px; }
+.aiteam-spacer { flex: 1; }
+.aiteam-iconbtn { display: inline-grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text-secondary); font-size: var(--font-size-base); line-height: 1; }
+.aiteam-newbtn { display: inline-flex; align-items: center; gap: var(--space-1); height: 32px; padding: 0 var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.aiteam-search { display: flex; align-items: center; gap: var(--space-2); height: 32px; margin: 0 var(--space-4) var(--space-3) var(--space-4); padding: 0 var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-secondary); color: var(--color-text-placeholder); font-size: var(--font-size-sm); }
+.aiteam-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-2) var(--space-3); }
+.aiteam-section { padding: var(--space-3) var(--space-3) var(--space-1); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); letter-spacing: 0.4px; text-transform: uppercase; color: var(--color-text-tertiary); }
+.aiteam-row { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: var(--space-3); align-items: start; width: 100%; padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-lg); background: transparent; color: var(--color-text); text-align: left; }
+.aiteam-row--on { background: var(--color-bg-tertiary); }
+.aiteam-row--draft .agent-av { border: 1px dashed var(--color-border-hover); background: var(--color-bg) !important; color: var(--color-text-tertiary) !important; }
+.aiteam-face { position: relative; width: 40px; height: 40px; }
+.aiteam-face-dot { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; border-radius: var(--radius-full); border: 2px solid var(--color-bg); background: var(--color-text-tertiary); }
+.aiteam-row--on .aiteam-face-dot { border-color: var(--color-bg-tertiary); }
+.aiteam-face-dot--working { background: var(--color-accent); animation: var(--dc-motion-status-name, aiteam-breath) var(--motion-breath) ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
+.aiteam-face-dot--needs { background: var(--color-warning); }
+.aiteam-face-dot--idle { background: var(--color-success); }
+@keyframes aiteam-breath { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.aiteam-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.aiteam-row-top { display: flex; align-items: baseline; gap: var(--space-2); }
+.aiteam-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.aiteam-row-time { flex-shrink: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.aiteam-row-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: var(--font-size-sm); line-height: 1.4; color: var(--color-text-secondary); }
+.aiteam-row-preview--live { color: var(--color-accent-ink); }
+.aiteam-row-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1); }
+.aiteam-row-end { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); padding-top: 22px; }
+.aiteam-tag { display: inline-flex; align-items: center; gap: var(--space-1); height: 20px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--color-bg-tertiary); color: var(--color-text-secondary); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); white-space: nowrap; }
+.aiteam-row--on .aiteam-tag { background: var(--color-bg); }
+.aiteam-tag--warn { background: var(--color-warning-subtle) !important; color: var(--color-warning-ink); }
+.aiteam-tag--accent { background: var(--color-accent-soft) !important; color: var(--color-accent-ink); }
+.aiteam-tag--muted { color: var(--color-text-tertiary); }
+.aiteam-roster-foot { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-roster-foot .auto-dispatch-pill { flex-shrink: 0; }
+.aiteam-roster-empty { margin: var(--space-6) var(--space-5); font-size: var(--font-size-sm); line-height: 1.5; color: var(--color-text-tertiary); }
+
+/* ── conversation ── */
+.aiteam-convo { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.aiteam-convo-head { display: flex; align-items: center; gap: var(--space-3); min-height: 64px; padding: var(--space-3) var(--space-5) var(--space-3) var(--space-6); border-bottom: 1px solid var(--color-border); }
+.aiteam-convo-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.aiteam-convo-name { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.aiteam-convo-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-pill { display: inline-flex; align-items: center; gap: var(--space-2); height: 32px; padding: 0 var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-full); background: var(--color-bg); color: var(--color-text); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); white-space: nowrap; }
+.aiteam-pill--on { border-color: var(--color-text); }
+.aiteam-pill--new { border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border)); background: var(--color-accent-soft); color: var(--color-accent-ink); }
+.aiteam-pill-count { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--space-6) 0 var(--space-4); }
+.aiteam-col { display: flex; flex-direction: column; gap: var(--space-4); max-width: 800px; margin: 0 auto; padding: 0 var(--space-6); }
+.aiteam-col .agent-msg { padding: 0; border-left: 0; }
+.aiteam-col .agent-msg:hover { background: transparent; }
+.aiteam-col .agents-feed-day { margin: var(--space-2) 0; }
+.aiteam-event { display: flex; align-items: center; justify-content: center; gap: var(--space-2); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-event b { font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); }
+.aiteam-event-mark { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: var(--radius-full); background: var(--color-bg-tertiary); color: var(--color-text-secondary); font-size: var(--font-size-2xs); }
+.aiteam-event--good .aiteam-event-mark { background: var(--color-success-subtle, var(--color-bg-tertiary)); color: var(--color-success); }
+.aiteam-event--accent .aiteam-event-mark { background: var(--color-accent-soft); color: var(--color-accent-ink); }
+.aiteam-col .chat-msg-user-row { max-width: min(560px, 80%); }
+.aiteam-col .agent-report { margin-top: var(--space-2); }
+.aiteam-col .agent-msg-ask { margin-top: var(--space-3); }
+.aiteam-composer { padding: 0 var(--space-6) var(--space-4); max-width: 848px; width: 100%; margin: 0 auto; }
+.aiteam-replying { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2) var(--space-2); font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-replying b { color: var(--color-text); font-weight: var(--font-weight-semibold); }
+.aiteam-banner { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-4) var(--space-6) 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-secondary); font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-banner b { color: var(--color-text); font-weight: var(--font-weight-semibold); }
+
+/* zero state of one teammate */
+.aiteam-hello { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); max-width: 520px; margin: var(--space-16) auto 0; text-align: center; }
+.aiteam-hello-name { margin: var(--space-3) 0 0; font-family: var(--font-family-display); font-size: var(--font-size-xl); font-weight: var(--font-weight-semibold); letter-spacing: var(--letter-spacing-subheading); color: var(--color-text); }
+.aiteam-hello-role { margin: 0; font-size: var(--font-size-sm); line-height: 1.5; color: var(--color-text-secondary); }
+.aiteam-hello-note { margin: var(--space-4) 0 var(--space-2); font-size: var(--font-size-sm); color: var(--color-text-tertiary); }
+.aiteam-suggest { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
+.aiteam-suggest-btn { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg); color: var(--color-text); font-size: var(--font-size-sm); text-align: left; }
+.aiteam-suggest-kind { flex-shrink: 0; width: 72px; font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); letter-spacing: 0.4px; text-transform: uppercase; color: var(--color-text-tertiary); }
+
+/* ── side panel ── */
+.aiteam-panel { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--color-border); background: var(--color-bg); }
+.aiteam-panel-head { display: flex; align-items: center; gap: var(--space-2); min-height: 64px; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); }
+.aiteam-panel-close { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+.aiteam-panel-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+.aiteam-panel-label { margin: var(--space-2) 0 0; font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); letter-spacing: 0.4px; text-transform: uppercase; color: var(--color-text-tertiary); }
+.aiteam-routine { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg); }
+.aiteam-routine--open { border-color: var(--color-border-hover); box-shadow: var(--shadow-sm); padding: var(--space-4); }
+.aiteam-routine-top { display: flex; align-items: center; gap: var(--space-3); }
+.aiteam-routine-id { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.aiteam-routine-name { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.aiteam-routine-when { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-routine-actions { display: flex; gap: var(--space-2); }
+.aiteam-routine .agent-field { gap: var(--space-1); }
+.aiteam-routine .agent-textarea { min-height: 72px; }
+.aiteam-routine .agent-chip--day { min-width: 36px; }
+.aiteam-tip { display: flex; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-bg-secondary); font-size: var(--font-size-xs); line-height: 1.5; color: var(--color-text-secondary); }
+.aiteam-tip b { color: var(--color-text); font-weight: var(--font-weight-semibold); }
+.aiteam-check { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: var(--font-size-sm); color: var(--color-text); }
+.aiteam-check small { display: block; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-routine-foot { display: flex; align-items: center; gap: var(--space-2); }
+
+/* ── new teammate ── */
+.aiteam-new { flex: 1; min-height: 0; overflow: auto; padding: var(--space-6) var(--space-6) var(--space-8); }
+.aiteam-new-card { display: flex; flex-direction: column; gap: var(--space-4); max-width: 640px; margin: 0 auto; }
+.aiteam-new-card .aid-modal { position: static; width: 100%; max-width: none; max-height: none; box-shadow: none; border: 1px solid var(--color-border); transform: none; animation: none; }
+.aiteam-starters { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.aiteam-starter { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); text-align: left; }
+.aiteam-starter b { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.aiteam-starter span { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-starter--on { border-color: var(--color-text); }
+
+/* ── whole-page empty ── */
+.aiteam-zero { flex: 1; min-height: 0; overflow: auto; }
+.aiteam-zero .auto-intro { margin-top: var(--space-10); }
+/* Same override the channel uses (.agents-feed-main.chat-pane): wear chat-pane for its reading
+   tokens and composer ceiling, without its absolute fill. */
+.aiteam-convo.chat-pane { position: relative; inset: auto; }
+.aiteam-pill svg { flex-shrink: 0; }
+.aiteam-new-card .aid-textarea { min-height: 88px; }
+/* The real profile, hosted inside the AI Team panel: no own border, width or entrance. */
+/* `flex: 1; min-height: 0` is load-bearing: unbounded, the profile grew past the page, the app
+   shell's own scroller took the overflow, and wheeling over the panel (or "Review approval")
+   slid the whole page up, leaving the list blank and the composer mid-screen. */
+.aiteam-panel .agp-panel { flex: 1; min-height: 0; width: 100%; border-left: 0; background: transparent; padding: var(--space-4); animation: none; }
+.aiteam-panel .agp-panel-top .agp-btn--ghost { display: none; }
+.aiteam-convo-id { flex: 1; min-width: 0; }
+.aiteam-convo-name { white-space: nowrap; }
+.aiteam-convo-name .aiteam-tag { flex-shrink: 0; }
+.aiteam-convo-name { overflow: hidden; }
+
+/* ── page frame ── */
+/* The page is exactly the shell's height and never lends it overflow: each column scrolls itself. */
+.aiteam { position: relative; container-type: inline-size; overflow: hidden; }
+.aiteam--narrow { grid-template-columns: minmax(0, 1fr); }
+.aiteam--narrow .aiteam-roster { border-right: 0; }
+.aiteam-roster-next { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aiteam-search-input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; color: var(--color-text); font: inherit; font-size: var(--font-size-sm); outline: none; }
+.aiteam-search-input::placeholder { color: var(--color-text-placeholder); }
+.aiteam-search:focus-within { border-color: var(--color-border-hover); }
+.aiteam-row { cursor: pointer; }
+.aiteam-row:hover:not(.aiteam-row--on) { background: var(--color-bg-secondary); }
+.aiteam-row:focus-visible, .aiteam-newbtn:focus-visible, .aiteam-pill:focus-visible, .aiteam-iconbtn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent); }
+.aiteam-newbtn, .aiteam-pill, .aiteam-iconbtn, .aiteam-panel-close, .aiteam-suggest-btn, .aiteam-starter, .aiteam-linkbtn { cursor: pointer; font-family: inherit; }
+.aiteam-newbtn:hover, .aiteam-pill:hover, .aiteam-iconbtn:hover, .aiteam-suggest-btn:hover, .aiteam-starter:hover { border-color: var(--color-border-hover); }
+.aiteam-iconbtn[aria-pressed='true'] { border-color: var(--color-text); color: var(--color-text); }
+.aiteam-draft-av { display: inline-grid; place-items: center; width: 40px; height: 40px; border: 1px dashed var(--color-border-hover); border-radius: var(--radius-lg); background: var(--color-bg); color: var(--color-text-tertiary); font-size: var(--font-size-base); }
+.aiteam-draft-av--lg { width: 36px; height: 36px; flex-shrink: 0; border-style: solid; border-color: var(--color-border); background: var(--color-bg-secondary); }
+.aiteam-convo-name-text { overflow: hidden; text-overflow: ellipsis; }
+.aiteam-pill-text { white-space: nowrap; }
+.aiteam-back { flex-shrink: 0; }
+.aiteam-routine-id { border: 0; padding: 0; background: transparent; text-align: left; cursor: pointer; font: inherit; }
+.aiteam-panel-empty { margin: 0; font-size: var(--font-size-sm); line-height: 1.5; color: var(--color-text-tertiary); }
+.aiteam-event--bad .aiteam-event-mark { background: var(--color-error-subtle, var(--color-bg-tertiary)); color: var(--color-error); }
+.aiteam-msg-needs { font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-warning-ink); }
+.aiteam-msg-failed { font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-error); }
+.aiteam-col .chat-msg-user-bubble .agent-msg-md { margin: 0; }
+.aiteam-col .chat-msg-user-row { align-self: flex-end; }
+
+/* The panel over the conversation, when the page is too narrow to share the row with it. */
+.aiteam-panel-scrim { position: absolute; inset: 0; z-index: 60; display: flex; justify-content: flex-end; background: color-mix(in srgb, var(--color-text) 18%, transparent); }
+.aiteam-panel-scrim .aiteam-panel { width: min(416px, 100%); height: 100%; box-shadow: var(--shadow-lg); }
+
+/* The new teammate's form, drawn in the page rather than over it. */
+.aid-inline { display: contents; }
+.aid-inline .aid-modal { position: static; width: 100%; max-width: none; max-height: none; box-shadow: none; border: 1px solid var(--color-border); transform: none; animation: none; }
+
+/* ── the temporary model (Chat's own trigger and menu, plus this state) ── */
+.chat-cmp-modeltrigger.chat-cmp-modeltrigger--temp { border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border)); background: var(--color-accent-soft); }
+.chat-cmp-modeltrigger--temp .chat-cmp-modeltrigger-model::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: var(--radius-full); background: var(--color-accent); vertical-align: middle; }
+.chat-cmp-modelrow-default { margin-left: auto; font-size: var(--font-size-2xs); color: var(--color-text-tertiary); }
+.aiteam-model-default { margin-bottom: var(--space-2); }
+
+/* ── the panel's tab switch (was the Automations page's) ── */
+.agents-switch { display: inline-flex; gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-md); background: var(--color-bg-tertiary); flex-shrink: 0; }
+.agents-switch-opt { display: inline-flex; align-items: center; gap: var(--space-2); height: var(--space-7); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font: inherit; font-size: var(--font-size-sm); font-weight: var(--font-weight-normal); cursor: pointer; white-space: nowrap; transition: background var(--transition-fast), color var(--transition-fast); }
+.agents-switch-opt:hover { color: var(--color-text); }
+.agents-switch-opt--on { background: var(--color-bg-secondary); color: var(--color-text); font-weight: var(--font-weight-semibold); box-shadow: var(--shadow-sm); }
+.agents-switch-count { font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); background: var(--color-bg-tertiary); border-radius: var(--radius-full); padding: 0 var(--space-2); text-align: center; }
+.agents-switch-opt--on .agents-switch-count { color: var(--color-text); }
+.agents-switch-opt:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-bg-tertiary), 0 0 0 4px var(--color-accent); }
+
+.aiteam-toast { position: absolute; right: var(--space-5); bottom: calc(var(--space-5) + var(--dc-bottom-strip, 0px)); z-index: 70; max-width: 420px; padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-bg-elevated); color: var(--color-text); font-size: var(--font-size-sm); line-height: var(--line-height-relaxed); box-shadow: var(--shadow-lg); cursor: pointer; }
+
+/* ── phone and narrow widths ── */
+@container (max-width: 759px) {
+  .aiteam-convo-head { padding: var(--space-3) var(--space-3); gap: var(--space-2); }
+  .aiteam-convo-role { display: none; }
+  .aiteam-convo-name .aiteam-tag { display: none; }
+  .aiteam-pill { padding: 0 var(--space-2); }
+  .aiteam-col { padding: 0 var(--space-4); }
+  .aiteam-composer { padding: 0 var(--space-3) var(--space-3); }
+  .aiteam-banner { margin: var(--space-3) var(--space-3) 0; flex-wrap: wrap; }
+  .aiteam-new { padding: var(--space-4) var(--space-3) var(--space-6); }
+  .aiteam-col .chat-msg-user-row { max-width: 88%; }
+}
+@container (max-width: 460px) {
+  .aiteam-pill-text { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aiteam-face-dot--working { animation: none; }
+  .agents-switch-opt { transition: none; }
+}
+
+/* With the panel open the head is narrow: the name keeps the room, the state tag goes (the
+   list row beside it still says it). */
+.aiteam--panel .aiteam-convo-name .aiteam-tag { display: none; }
+
+/* model picker: the menu's head and foot, and the temporary strip over the composer */
+.aiteam-composer .chat-cmp { position: relative; }
+.aiteam-model-default { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-bg-secondary); font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-model-default b { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.aiteam-model-tag { margin-left: auto; font-size: var(--font-size-2xs); color: var(--color-text-tertiary); }
+.aiteam-model-note { flex: 1; font-size: var(--font-size-xs); line-height: 1.45; color: var(--color-text-secondary); }
+.aiteam-composer .chat-cmp-modelmenu .chat-cmp-menu-foot { display: flex; align-items: center; gap: var(--space-3); }
+.aiteam-temp { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2) var(--space-2); font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-temp b { color: var(--color-accent-ink); font-weight: var(--font-weight-semibold); }
+.aiteam-temp-dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--color-accent); }
+.aiteam-linkbtn { border: 0; background: transparent; padding: 0; color: var(--color-text); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); text-decoration: underline; text-underline-offset: 2px; }
+.aiteam-you { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ── Chat's typography: the conversation reads at Chat's own size and leading ──
+   The posts reuse the channel's atoms, which set a smaller channel size; here the reader is in a
+   conversation, so prose, lists and the owner's bubble (cards.css, untouched) read like Chat. */
+.aiteam-col .agent-msg-md .md-preview .markdown-body,
+.aiteam-col .agent-msg-md .md-preview .markdown-body li { font-size: var(--chat-text); line-height: var(--chat-line-height); }
+.aiteam-col .agent-msg-name { font-size: var(--font-size-sm); }
+
+/* ── the agent at work: its face, its name, and Chat's working indicator under them ── */
+.aiteam-working .chat-working { margin-top: var(--space-1); }
+
+/* ── a notification landed here: the message is marked for a moment ── */
+.aiteam-col [data-flash] { border-radius: var(--radius-lg); animation: aiteam-flash var(--motion-flash) ease-out; }
+@keyframes aiteam-flash {
+  0%, 35% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-accent) 22%, transparent); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+  100% { box-shadow: 0 0 0 6px transparent; background: transparent; }
+}
+
+/* ── what waits for your approval, at the top of the conversation ── */
+.aiteam-approval { display: flex; flex-direction: column; gap: var(--space-2); flex-shrink: 0; padding: var(--space-3) var(--space-6) 0; max-height: 55%; overflow: auto; }
+.aiteam-approval-row { border: 1px solid color-mix(in srgb, var(--color-warning) 45%, var(--color-border)); border-radius: var(--radius-lg); background: var(--color-warning-subtle); }
+.aiteam-approval-line { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
+.aiteam-approval-mark { display: inline-grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border-radius: var(--radius-full); background: var(--color-bg); color: var(--color-warning-ink); }
+.aiteam-approval-text { flex: 1; min-width: 0; font-size: var(--font-size-sm); line-height: 1.45; color: var(--color-text); }
+.aiteam-approval-btn { flex-shrink: 0; }
+.aiteam-approval-review { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--space-3) var(--space-3); }
+.aiteam-approval-lead { margin: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-approval-pre { margin: 0; max-height: 280px; overflow: auto; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font-family: var(--font-mono); font-size: var(--font-size-xs); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.aiteam-approval-foot { display: flex; justify-content: flex-end; gap: var(--space-2); }
+@container (max-width: 759px) {
+  .aiteam-approval { padding: var(--space-2) var(--space-3) 0; }
+  .aiteam-approval-line { flex-wrap: wrap; }
+  .aiteam-approval-text { flex-basis: calc(100% - 40px); }
+  .aiteam-approval-btn { margin-left: 36px; }
+}
+/* Phone: the conversation's name keeps the head; the routines open from the panel button. */
+@container (max-width: 460px) {
+  .aiteam-convo-head [data-team-routines] { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aiteam-col [data-flash] { animation: none; outline: 2px solid color-mix(in srgb, var(--color-accent) 40%, transparent); }
+}
+
+/* The head's name block already takes the free width (flex: 1): a spacer beside it split that
+   width in two and cut the name short, at phone width down to three letters. */
+.aiteam-convo-head > .aiteam-spacer { display: none; }
+
+/* ── the team tree (List | Tree under the search) ──
+   Indent, fold and guide positions are geometry set inline by TeamRoster (one level = 22px, the
+   fold's hit box 24px); the lines and colours are here. */
+.aiteam-viewswitch { display: flex; margin: 0 var(--space-4) var(--space-3); }
+.aiteam-viewswitch .agents-switch-opt { flex: 1; justify-content: center; }
+.aiteam-section-count { font-weight: var(--font-weight-semibold); }
+.aiteam-treesec { display: flex; flex-direction: column; gap: 2px; }
+.aiteam-trow { position: relative; display: flex; align-items: flex-start; }
+.aiteam-trow > .aiteam-row { flex: 1; min-width: 0; }
+.aiteam-guide { position: absolute; top: -2px; bottom: 0; width: 0; border-left: 1px solid var(--color-border-hover); pointer-events: none; }
+.aiteam-guide--down { top: 40px; }
+.aiteam-trow:not(.aiteam-trow--root) .aiteam-guide--down { top: 36px; }
+.aiteam-elbow { position: absolute; top: -2px; height: 26px; border-left: 1px solid var(--color-border-hover); border-bottom: 1px solid var(--color-border-hover); border-bottom-left-radius: var(--radius-sm); pointer-events: none; }
+.aiteam-caret { position: relative; z-index: 1; display: inline-grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; margin-top: 16px; padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-tertiary); cursor: pointer; }
+.aiteam-trow:not(.aiteam-trow--root) .aiteam-caret { margin-top: 12px; }
+.aiteam-caret:hover { color: var(--color-text); background: var(--color-bg-secondary); }
+.aiteam-caret:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
+.aiteam-caret--none { background: transparent; cursor: default; }
+.aiteam-row--sm { grid-template-columns: 32px minmax(0, 1fr) auto; padding-left: var(--space-2); }
+.aiteam-row--sm .aiteam-face { width: 32px; height: 32px; }
+.aiteam-row--sm .aiteam-face-dot { width: 10px; height: 10px; }
+.aiteam-row--sm .aiteam-row-end { padding-top: var(--space-4); }
+.aiteam-trow .aiteam-row-preview { -webkit-line-clamp: 1; }
+.aiteam-row-preview--team { display: block; white-space: nowrap; text-overflow: ellipsis; }
+.aiteam-teamchip { margin-right: var(--space-2); vertical-align: 1px; }
+.aiteam-rollup { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-rollup-warn { color: var(--color-warning-ink); font-weight: var(--font-weight-semibold); }
+.aiteam-convo-path { display: flex; flex-wrap: nowrap; gap: var(--space-1); min-width: 0; overflow: hidden; font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; }
+.aiteam-convo-path-step { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.aiteam-convo-path-step:last-child .aiteam-convo-path-link { color: var(--color-text-secondary); font-weight: var(--font-weight-semibold); }
+.aiteam-convo-path-link { overflow: hidden; text-overflow: ellipsis; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.aiteam-convo-path-link:hover { color: var(--color-text); text-decoration: underline; text-underline-offset: 2px; }
+
+/* ── a teammate's place in the team (Profile, and the Org chart's Team tab) ── */
+.aiteam-place-grid { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-3) var(--space-3); align-items: center; margin: 0; }
+.aiteam-place-grid dt { font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-place-grid dd { margin: 0; min-width: 0; font-size: var(--font-size-sm); }
+.aiteam-place-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.aiteam-place-edit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.aiteam-place-edit .agent-input { flex: 1; min-width: 140px; }
+.aiteam-person { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; height: 28px; padding: 0 var(--space-2) 0 var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-full); background: var(--color-bg); color: var(--color-text); font: inherit; font-size: var(--font-size-sm); white-space: nowrap; }
+button.aiteam-person:not(:disabled) { cursor: pointer; }
+button.aiteam-person:not(:disabled):hover { border-color: var(--color-border-hover); }
+.aiteam-person:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
+.aiteam-person--on { border-color: var(--color-text); }
+.aiteam-person--you { padding: 0 var(--space-3); color: var(--color-text-secondary); }
+.aiteam-person:disabled { color: var(--color-text); }
+.aiteam-person-name { overflow: hidden; text-overflow: ellipsis; }
+.aiteam-person .agent-av { flex-shrink: 0; }
+.aiteam-chain { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); margin-top: var(--space-3); }
+.aiteam-chain-step { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.aiteam-chain-sep { color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+
+/* ── the Org chart (Conversations | Org chart) ──
+   Card, frame and line positions are geometry from orgLayout (set inline); colours here. */
+.aiteam--org { grid-template-columns: minmax(0, 1fr); }
+.aiteam--org.aiteam--panel { grid-template-columns: minmax(0, 1fr) 416px; }
+.aiteam-org { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.aiteam-org-head { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-3); padding: var(--space-5) var(--space-6) var(--space-3); }
+.aiteam-org-head .aiteam-roster-count { padding-top: 2px; }
+.aiteam-org-search { flex: 0 1 240px; min-width: 150px; margin: 0; }
+.aiteam-org-strip { display: flex; align-items: center; gap: var(--space-3); margin: 0 var(--space-6) var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-secondary); font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-org-strip-needs { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0; border: 0; background: transparent; color: var(--color-text-secondary); font: inherit; cursor: pointer; text-align: left; }
+.aiteam-org-strip-needs b { color: var(--color-text); font-weight: var(--font-weight-semibold); white-space: nowrap; }
+.aiteam-org-strip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aiteam-org-strip-facts { flex-shrink: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-org-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--space-4) var(--space-6) var(--space-8); }
+.aiteam-org-canvas { position: relative; margin: 0 auto; }
+.aiteam-org-lines { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.aiteam-org-line { fill: none; stroke: var(--color-border-hover); stroke-width: 1.5; }
+.aiteam-org-line--path { stroke: var(--color-accent); stroke-width: 2; }
+.aiteam-org-you { position: absolute; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border: 1px dashed var(--color-border-hover); border-radius: var(--radius-full); background: var(--color-bg); color: var(--color-text-secondary); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.aiteam-org-frame { position: absolute; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-secondary); }
+.aiteam-org-frame--path { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); }
+.aiteam-org-frame-label { position: absolute; left: var(--space-3); top: var(--space-2); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); letter-spacing: 0.4px; text-transform: uppercase; color: var(--color-text-tertiary); }
+.aiteam-org-frame-count { position: absolute; right: var(--space-3); top: var(--space-2); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); color: var(--color-text-tertiary); }
+.aiteam-org-card { position: absolute; display: flex; flex-direction: column; justify-content: space-between; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg); color: var(--color-text); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast); }
+.aiteam-org-card:hover { border-color: var(--color-border-hover); box-shadow: var(--shadow-sm); }
+.aiteam-org-card:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent); }
+.aiteam-org-card--on { border-color: var(--color-text); box-shadow: var(--shadow-sm); }
+.aiteam-org-card--dim { opacity: 0.35; }
+.aiteam-org-card-top { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.aiteam-org-face { width: 28px; height: 28px; flex-shrink: 0; }
+.aiteam-org-face .aiteam-face-dot { width: 10px; height: 10px; }
+.aiteam-org-card-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.aiteam-org-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.aiteam-org-card-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-org-card-foot { display: flex; align-items: center; gap: var(--space-2); min-height: 20px; }
+.aiteam-org-meta { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-org-live { font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-accent-ink); }
+.aiteam-org-hint { font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; }
+.aiteam-pageswitch { margin-left: var(--space-2); }
+
+/* the Team tab */
+.aiteam-teamtab-head { display: flex; align-items: center; gap: var(--space-3); }
+.aiteam-teamtab-id { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.aiteam-teamtab-name { font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.aiteam-teamtab-chain { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-teamtab-chain b { color: var(--color-text-secondary); font-weight: var(--font-weight-semibold); }
+.aiteam-teamtab-actions { display: flex; gap: var(--space-2); }
+.aiteam-teamtab-you { padding: var(--space-3); border: 1px dashed var(--color-border); border-radius: var(--radius-lg); font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-teamtab-member { display: flex; align-items: flex-start; gap: var(--space-3); width: 100%; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg); color: var(--color-text); font: inherit; text-align: left; cursor: pointer; }
+.aiteam-teamtab-member:hover { border-color: var(--color-border-hover); }
+.aiteam-teamtab-member .aiteam-org-face { width: 32px; height: 32px; }
+.aiteam-teamtab-member-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.aiteam-teamtab-member-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-teamtab-add { width: 100%; height: 40px; border: 1px dashed var(--color-border-hover); border-radius: var(--radius-lg); background: transparent; color: var(--color-text-secondary); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
+.aiteam-teamtab-add:hover { color: var(--color-text); border-color: var(--color-text-tertiary); }
+.aiteam-teamtab-routines { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+.aiteam-teamtab-routine { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-sm); color: var(--color-text); }
+.aiteam-teamtab-routine-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aiteam-teamtab-routine-state { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.aiteam-teamtab-routine-when { flex-shrink: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.aiteam-teamtab .aiteam-tip { margin: var(--space-2) 0 0; }
+
+@container (max-width: 759px) {
+  .aiteam-org-head { flex-wrap: wrap; padding: var(--space-4) var(--space-3) var(--space-2); gap: var(--space-2); }
+  .aiteam-org-search { order: 5; width: 100%; }
+  .aiteam-pageswitch { margin-left: 0; }
+  .aiteam-org-strip { margin: 0 var(--space-3) var(--space-2); flex-wrap: wrap; }
+  .aiteam-org-scroll { padding: var(--space-3); }
+  .aiteam-org-hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aiteam-org-card { transition: none; }
+}
+.aiteam-org-head > .aiteam-roster-title, .aiteam-org-head > .aiteam-roster-count, .aiteam-org-head > .aiteam-newbtn, .aiteam-pageswitch { flex-shrink: 0; white-space: nowrap; }
+/* Four tabs on a phone: the switch scrolls, the close button never leaves the head. */
+.aiteam-panel-head .agents-switch { flex-shrink: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.aiteam-panel-close { flex-shrink: 0; }
+/* The head keeps the title on one line; the count gives way first. */
+.aiteam-roster-title { white-space: nowrap; flex-shrink: 0; }
+.aiteam-roster-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

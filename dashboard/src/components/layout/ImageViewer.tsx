@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
+import { usePanZoom, type View } from './usePanZoom';
 import './ImageViewer.css';
 
 interface Props {
@@ -25,21 +26,11 @@ interface Props {
   onClose: () => void;
 }
 
-interface View {
-  /** 1 = fitted to the viewport. Multiplies whatever the browser's contain-fit did. */
-  scale: number;
-  /** Pan, in screen px, applied before the scale (so these stay screen-space). */
-  x: number;
-  y: number;
-}
-
 const FIT: View = { scale: 1, x: 0, y: 0 };
 /** Past this you are reading interpolation, not the screenshot. */
 const HARD_MAX = 8;
 /** One press of ＋ / − / the keyboard. */
 const STEP = 1.4;
-/** Pointer travel under this is a click, not a drag — so a shaky click still closes. */
-const CLICK_SLOP = 4;
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -73,18 +64,8 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
    *  (see `Lightbox`: granting access re-requests the same file under a new URL). */
   const [failed, setFailed] = useState(false);
   const [stage, setStage] = useState<{ w: number; h: number } | null>(null);
-  const [view, setView] = useState<View>(FIT);
-  const [grabbing, setGrabbing] = useState(false);
-
-  // Live pointers, for drag (one) and pinch (two). Refs, not state: these change
-  // on every pointermove and none of them belong in the render output.
-  const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const pinchDist = useRef<number | null>(null);
-  const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
-
   // A new image is a new subject — never inherit the previous one's zoom or pan.
   useEffect(() => {
-    setView(FIT);
     setNatural(null);
     setFailed(false);
   }, [src]);
@@ -129,56 +110,17 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
   // An image small enough to already fit natively still gets room to magnify —
   // otherwise `actual === 1` would leave the zoom controls permanently dead.
   const maxScale = clamp(Math.max(actual, 3), 1, HARD_MAX);
-
-  /** Pan can never pull the image off its own edges; below fit it stays centred. */
-  const clampView = useCallback((v: View): View => {
-    if (!natural || !stage) return v;
-    const w = natural.w * base * v.scale;
-    const h = natural.h * base * v.scale;
-    const maxX = Math.max(0, (w - stage.w) / 2);
-    const maxY = Math.max(0, (h - stage.h) / 2);
-    return { scale: v.scale, x: clamp(v.x, -maxX, maxX), y: clamp(v.y, -maxY, maxY) };
-  }, [natural, stage, base]);
-
-  /**
-   * Zoom, keeping whatever sits under (clientX, clientY) pinned there — the thing
-   * you point at is the thing you wanted a closer look at. With `transform-origin:
-   * center`, a point `d` from the stage centre satisfies `d = k·(d − x) + x`, so
-   * the new pan is `x' = d − k·(d − x)`. Omit the point to zoom about the centre.
-   */
-  const zoomAround = useCallback((next: (s: number) => number, clientX?: number, clientY?: number) => {
-    const el = stageRef.current;
-    setView((v) => {
-      const scale = clamp(next(v.scale), 1, maxScale);
-      if (scale === v.scale) return v;
-      let dx = 0;
-      let dy = 0;
-      if (el && clientX !== undefined && clientY !== undefined) {
-        const r = el.getBoundingClientRect();
-        dx = clientX - (r.left + r.width / 2);
-        dy = clientY - (r.top + r.height / 2);
-      }
-      const k = scale / v.scale;
-      return clampView({ scale, x: dx - k * (dx - v.x), y: dy - k * (dy - v.y) });
-    });
-  }, [clampView, maxScale]);
-
-  // React registers `wheel` PASSIVELY at the root, so preventDefault() from an
-  // onWheel prop is ignored and the page behind would scroll while you zoom.
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el || failed) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      // A trackpad pinch arrives as ctrl+wheel (steeper per-tick); a plain wheel
-      // zooms too, because in a viewer that fills the screen there is nothing
-      // else a scroll could mean.
-      const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0025));
-      zoomAround((s) => s * factor, e.clientX, e.clientY);
-    };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, [zoomAround, failed]);
+  // Pan can never pull the image off its own edges; below fit it stays centred.
+  const content = useMemo(() => (natural ? { w: natural.w * base, h: natural.h * base } : null), [natural, base]);
+  // Pinch (two pointers or the trackpad's gesture events), wheel, drag: usePanZoom. A plain
+  // wheel zooms too, because in a viewer that fills the screen there is nothing else a scroll
+  // could mean.
+  const pz = usePanZoom({ stageRef, content, stage, minScale: 1, maxScale, wheel: 'zoom', fit: FIT, enabled: !failed });
+  const { view, setView, zoomAround } = pz;
+  // A new image opens fitted (the hook's setter changes with the stage; the reset follows `src` only).
+  const fitRef = useRef(setView);
+  fitRef.current = setView;
+  useEffect(() => { fitRef.current(FIT); }, [src]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -214,57 +156,6 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose, zoomAround]);
 
-  const twoPointerSpan = () => {
-    const [a, b] = [...pointers.current.values()];
-    if (!a || !b) return null;
-    return { dist: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
-  };
-
-  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.current.size === 2) {
-      // A second finger turns the drag into a pinch; the drag's pan must not also
-      // apply or the image lurches sideways as the gesture starts.
-      pinchDist.current = twoPointerSpan()?.dist ?? null;
-      press.current = null;
-      setGrabbing(false);
-      return;
-    }
-    if (pointers.current.size > 1) return;
-    press.current = { x: e.clientX, y: e.clientY, moved: false };
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setGrabbing(true);
-  };
-
-  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const prev = pointers.current.get(e.pointerId);
-    if (!prev) return;
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-    if (pointers.current.size === 2 && pinchDist.current) {
-      const span = twoPointerSpan();
-      if (!span || span.dist <= 0) return;
-      const k = span.dist / pinchDist.current;
-      pinchDist.current = span.dist;
-      if (Number.isFinite(k) && k > 0) zoomAround((s) => s * k, span.mx, span.my);
-      return;
-    }
-
-    if (!press.current) return;
-    const dx = e.clientX - prev.x;
-    const dy = e.clientY - prev.y;
-    if (Math.hypot(e.clientX - press.current.x, e.clientY - press.current.y) > CLICK_SLOP) {
-      press.current.moved = true;
-    }
-    if (dx || dy) setView((v) => clampView({ ...v, x: v.x + dx, y: v.y + dy }));
-  };
-
-  const endPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
-    pointers.current.delete(e.pointerId);
-    if (pointers.current.size < 2) pinchDist.current = null;
-    if (pointers.current.size === 0) setGrabbing(false);
-  };
-
   /**
    * Backdrop click closes; a click that panned does not, and neither does a click
    * on the picture. Hit-tested against the image's box rather than `e.target`,
@@ -272,7 +163,7 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
    * about what a click's target is once capture has been involved.
    */
   const onStageClick = (e: ReactMouseEvent<HTMLDivElement>) => {
-    if (press.current?.moved) return;
+    if (pz.pressMoved()) return;
     const r = (imgRef.current ?? failRef.current)?.getBoundingClientRect();
     if (r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
     onClose();
@@ -298,16 +189,14 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
       <div
         ref={stageRef}
         className="image-viewer-stage"
+        data-pinch-owner="true"
         data-zoomed={zoomed || undefined}
-        data-grabbing={(grabbing && zoomed) || undefined}
+        data-grabbing={(pz.grabbing && zoomed) || undefined}
         data-failed={failed || undefined}
         // Nothing to pan or pinch once the picture is gone — and leaving the drag on would
         // put the stage's pointer CAPTURE between a click and the fallback's own button,
         // which is exactly the case the click hit-test below already calls unreliable.
-        onPointerDown={failed ? undefined : onPointerDown}
-        onPointerMove={failed ? undefined : onPointerMove}
-        onPointerUp={failed ? undefined : endPointer}
-        onPointerCancel={failed ? undefined : endPointer}
+        {...pz.handlers}
         onClick={onStageClick}
         onDoubleClick={failed ? undefined : onDoubleClick}
       >

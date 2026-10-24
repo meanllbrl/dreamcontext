@@ -141,7 +141,7 @@ describe('brain-auth — device flow (B1)', () => {
     // The token IS persisted to the global store at mode 0600.
     const path = globalSecretsPath(home);
     expect(existsSync(path)).toBe(true);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(readFileSync(path, 'utf-8')).toContain('ghp_secretauth');
   });
 

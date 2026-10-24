@@ -287,6 +287,8 @@ function looksLikePath(s: string): boolean {
   if (!s || s.length > 400) return false;
   if (s.startsWith('~')) return true;
   if (s.startsWith('/') || s.startsWith('./') || s.startsWith('../')) return true;
+  // Windows: `C:\Users\me\notes` (or `C:/…`, `.\notes`) carries no forward slash.
+  if (process.platform === 'win32' && (/^[A-Za-z]:[\\/]/.test(s) || s.includes('\\'))) return true;
   return s.includes('/');
 }
 
@@ -322,7 +324,7 @@ function resolveUserPath(token: string, cwd: string): string | null {
     let t = token.trim();
     if (!t) return null;
     if (t === '~') t = homedir();
-    else if (t.startsWith('~/')) t = join(homedir(), t.slice(2));
+    else if (t.startsWith('~/') || (process.platform === 'win32' && t.startsWith('~\\'))) t = join(homedir(), t.slice(2));
     if (!isAbsolute(t)) t = join(cwd, t);
     return resolve(t);
   } catch {

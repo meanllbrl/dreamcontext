@@ -190,6 +190,8 @@ describe('runWindowVerb (the surface half)', () => {
   it('send reaches another tab, never the caller; an unknown tab is named', async () => {
     expect(await runWindowVerb(deps, 'send', { tab: 'conv-a', text: 'x' })).toMatchObject({ ok: false });
     expect(await runWindowVerb(deps, 'send', { tab: 'conv-b', text: 'x' })).toEqual({ ok: true, result: { tab: 'conv-b', delivered: 'sent' } });
+    (deps.send as ReturnType<typeof vi.fn>).mockReturnValueOnce('steered');
+    expect(await runWindowVerb(deps, 'send', { tab: 'conv-b', text: 'y' })).toEqual({ ok: true, result: { tab: 'conv-b', delivered: 'steered' } });
     expect(await runWindowVerb(deps, 'focus', { tab: 'conv-zzz' })).toMatchObject({ ok: false, error: expect.stringContaining('window state') });
   });
 });

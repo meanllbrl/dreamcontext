@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { CHAT_SURFACE_BRIEFING } from '../../src/server/chat-surface.js';
 import { parseChatActions } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
 import { VIEW_TYPES } from '../../dashboard/src/lib/chatViewSpec.js';
+import { fileURLToPath } from 'node:url';
 
 /** Every fenced ```dream-view block the briefing actually shows the agent, in order. */
 function extractViewExamples(briefing: string): string[] {
@@ -142,7 +143,7 @@ describe('CHAT_SURFACE_BRIEFING <-> dream-view parser lockstep', () => {
  * fails, the user just sees a JSON blob where an answer should be.
  */
 describe('dream-view is surface-gated to the Chat spawn', () => {
-  const root = new URL('../../', import.meta.url).pathname;
+  const root = fileURLToPath(new URL('../../', import.meta.url));
   const read = (p: string) => readFileSync(join(root, p), 'utf-8');
 
   it('only the chat route imports the briefing — the terminal route never does', () => {
@@ -180,7 +181,7 @@ describe('CHAT_SURFACE_BRIEFING <-> dc- kit lockstep', () => {
    * lists (`dc-doc--tight`, `dc-card--flat`, `dc-slides`, …): an unnamed class is a
    * capability the agent simply never reaches, which is the safe half of the trade.
    */
-  const repo = new URL('../../', import.meta.url).pathname;
+  const repo = fileURLToPath(new URL('../../', import.meta.url));
   const kitCss = readFileSync(
     join(repo, 'dashboard/src/components/sleepy/chat/chat-html-kit.css'), 'utf-8',
   );

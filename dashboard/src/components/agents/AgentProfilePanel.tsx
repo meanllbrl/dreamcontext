@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { RequestError } from '../../api/client';
 import { emitInstance, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
@@ -143,13 +143,15 @@ function automationWhen(a: AgentUsageAutomation, t: (k: string) => string, local
  * no-ops in the desktop app). No Run now and no Telegram on this page.
  */
 export function AgentProfilePanel({
-  slug, onClose, onEdit, onDeleted, onToast,
+  slug, onClose, onEdit, onDeleted, onToast, placement = null,
 }: {
   slug: string;
   onClose: () => void;
   onEdit: (slug: string) => void;
   onDeleted: (slug: string) => void;
   onToast: (message: string) => void;
+  /** A host's section drawn under the actions, before the soul (AI Team: "Place in team"). */
+  placement?: ReactNode;
 }) {
   const { t, locale } = useI18n();
   const { bus } = useVault();
@@ -264,7 +266,15 @@ export function AgentProfilePanel({
   const reviewFromHeader = () => {
     openReview();
     const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    approvalRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    // NOT `scrollIntoView`: it scrolls every scrollable ancestor, and the app shell's own
+    // overflow-hidden main counts. Hosted in the AI Team panel, that shoved the whole page up
+    // and left the list and the composer hanging mid-screen. Only the panel's scroller moves.
+    const target = approvalRef.current;
+    const scroller = target ? scrollParentOf(target) : null;
+    if (target && scroller) {
+      const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      scroller.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
+    }
   };
 
   return (
@@ -314,6 +324,8 @@ export function AgentProfilePanel({
         <button type="button" className="agp-btn" onClick={() => onEdit(slug)}>{t('agents.profile.edit')}</button>
       </div>
       {talkError && <p className="agp-error" role="alert">{talkError}</p>}
+
+      {placement}
 
       <section className="agp-section" aria-label={t('agents.profile.soul')} data-section="soul">
         <div className="agp-head">
@@ -519,6 +531,15 @@ export function AgentProfilePanel({
       </section>
     </aside>
   );
+}
+
+/** The nearest element that scrolls `el` on its own (overflow auto or scroll), itself excluded. */
+export function scrollParentOf(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const { overflowY } = getComputedStyle(p);
+    if ((overflowY === 'auto' || overflowY === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
 }
 
 /** Free text as paragraphs and bulleted lists (`textBlocks`). */

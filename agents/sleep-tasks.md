@@ -79,22 +79,40 @@ dreamcontext tasks list --status in_progress
 dreamcontext tasks list --status in_review
 ```
 
-Decide with this rubric, **defaulting to folding in**: a **smaller piece, sub-step or follow-up** of an existing task (same area, narrower scope) → **do NOT create a task**, fold it in (below); the **same work** observed again → update that task (step 3); a **genuinely separate concern** (a different feature/area/deliverable) → create a new task (below).
+**The model.** A **feature** is an area (its PRD). A **parent task** is one deliverable the owner would recognise. A **sub-task** is a step of a parent that is worth tracking on its own (`parent_task`, two levels at most). A plan's **waves** are sub-tasks too (`filed_by: plan`).
 
-**Folding a smaller piece into an existing task:**
+**Every owner ask lands somewhere — in this order.** For each thing the owner asked for (a typed turn, not your paraphrase), and for each real change no task covers:
 
-1. If the task's scope grew, **broaden its title/scope**: Edit the frontmatter `description:` and the `## Why`. Rename the slug/`name:` only if the scope fundamentally changed identity.
-2. Add the new work as **sub-items in the body**, not a new file:
+1. **A criterion on an existing task**: it refines work already on the board. Write it as the owner said it, testable:
+   ```bash
+   dreamcontext tasks insert <slug> acceptance_criteria "<the ask, in the owner's terms>"
+   dreamcontext tasks insert <slug> user_stories "<as a … I want …>"   # when it is a story, not a check
+   ```
+   If the task's scope grew, broaden its `description:` and `## Why` by Edit; tick/extend Workflow Mermaid nodes it has.
+2. **A sub-task of an existing parent**: a step of a planned deliverable, big enough to track:
+   ```bash
+   dreamcontext tasks create "<sentence>" --parent <parent> --basis ask --quote "<the owner's words, verbatim>" -w "<why>"
+   # observed work, no ask:  --basis change --quote "<what changed>"   |   a bookmark: --basis bookmark --quote "<it>"
+   ```
+3. **A new parent task**: ONLY for an owner ask or a defect that has no home on the board (a home is any task, completed included, whose NAME or criteria already describe the work: the CLI's neighbor check compares one sentence, you compare the board map) (`--basis ask --quote …` or `--basis defect --evidence "<the failing output, verbatim>"`). The CLI looks the quote up in the owner's typed turns (the evidence in tool results) and refuses anything else at the top level; its refusal names the `--parent` and criterion escapes.
+4. **Not placed**: only with a reason (killed by a later session, declined, out of scope, cap, already a criterion), in the report.
 
+**What counts as an ask.** Every turn the owner sent that asks for a change or a check, including a suggested action or button text they sent as their turn ("Fix the drift: …"): "fix X", "X should Y", "is X solved? check it", "why doesn't the agent do Y?". A question about a defect is an ask to fix it. "devam et", "ok" and a bare "merge it" are not. List every ask per session before you place any, so none is lost between sessions.
+
+**Done in the session is still placed.** An ask the same session already shipped is recorded, never skipped: on its task as a ticked criterion in the owner's terms (`tasks insert <slug> acceptance_criteria -- "- [x] <the ask> (done in session <id>, <commit>)"`: the `--` is required, a leading `-` is otherwise read as an option), or, with no home on the board, a new task filed done (`tasks create "<sentence>" --status completed --by sleep --basis ask --quote "<their words>" -w "…"`). sleep-state's changelog entry is in addition, never instead.
+
+**"Already on the board" means a criterion.** Skip an ask only when the same work already stands as an acceptance criterion (ticked or not) on its task: read that task's `## Acceptance Criteria` and quote the line in the report:
 ```bash
-dreamcontext tasks insert <slug> user_stories "<as a … I want …>"
-dreamcontext tasks insert <slug> acceptance_criteria "<testable criterion>"
-dreamcontext tasks insert <slug> notes "<follow-up / smaller piece>"
+sed -n '/^## Acceptance Criteria/,/^## /p' _dream_context/state/<slug>.md | grep -E '^\s*- \[[ xX]\]'   # nothing printed = no criterion
 ```
+A mention in the title, Why, Notes, Constraints, Technical Details or changelog is NOT placement, and neither is a `tasks log` you write now (history, not the board): add the criterion. A completed task whose changelog records the fix takes the ask as a ticked criterion too. The owner saying a ticked criterion fails in use ("why does it still ask me in plain text?") is a new criterion in their words, not a duplicate.
 
-3. Tick/extend the Workflow Mermaid nodes if the task has them.
+Placing an ask is NOT a status change: "the latest session wins" and "never bump a status from an older transcript" govern status only. A task updated after the session, or sitting `in_review` at the owner's gate, still takes the ask when it is not already one of its criteria: add the criterion, leave the status, and name the task in the report as needing the owner's eyes again. The criterion is the owner's ask in their own words, never a different problem you found on the way (that one is placed on its own).
 
-**Sub-tasks (`parent_task`) are for genuinely large decomposition only.** A slice that fits as a user story or criterion goes in the parent. When in doubt, fold in.
+**Waves.** A parent with wave sub-tasks (`dreamcontext tasks list --parent <slug> --json`: `wave` is set) takes its progress on the OPEN wave: log and tick there. Work inside the plan never gets a new sub-task.
+
+**Roll-up.** A parent whose sub-tasks are all closed moves to `in_review` ("all sub-tasks closed — confirm"). A parent with open sub-tasks cannot be completed: the CLI refuses and names them; a cancelled sub-task never blocks.
+
 
 ### Lands in THIS project?
 
@@ -122,7 +140,7 @@ A new task must clear **every** line:
    dreamcontext tasks declined                              # ideas a human dropped that never became tasks
    ```
    A tombstoned slug: log on the task that absorbed it, **never re-file it**. A DECLINED topic: do not re-file; if you believe the decision changed, say so in your report (only an awake `dreamcontext tasks undecline <key>` lifts it).
-4. **It is not a one-line observation** (→ `dreamcontext memory remember` or a bookmark) **and not already-shipped work** (→ a changelog entry).
+4. **It is not a one-line observation** (→ `dreamcontext memory remember` or a bookmark) **and not already-shipped work nobody asked for** (→ a changelog entry). An owner ask that shipped is still placed, as done (step 2).
 
 **What the CLI refuses on its own — read the message, it names the rule:**
 
@@ -135,9 +153,10 @@ A new task must clear **every** line:
 
 **Direct evidence — file now; indirect — defer.** File in THIS cycle only when the evidence is **direct**:
 
-- **(i)** the user **asked for it** in this project; or
-- **(ii)** **real changes** exist in files no live task covers; or
-- **(iii)** a **task-less bookmark** names it.
+- **(i)** the user **asked for it** in this project (`--basis ask`: a new parent only when no task is its home); or
+- **(ii)** **real changes** exist in files no live task covers (`--basis change`, under the parent they belong to); or
+- **(iii)** a **task-less bookmark** names it (`--basis bookmark`, under its parent); or
+- **(iv)** a **defect** shows in a tool result (`--basis defect --evidence …`).
 
 *"It was discussed"* is INDIRECT. Do **not** run `tasks create` for it, and do not drop it: defer it as a flag in the Recidivism-flags block, with **no task slug**:
 
@@ -155,7 +174,7 @@ dreamcontext sleep config          # "Max new tasks per cycle"
 
 Rank candidates by evidence and file at most that many (`tasks create` refuses past it). Every candidate you do not file goes in your report under **"Candidates NOT filed (cap)"**, one line each. Never drop one silently.
 
-**Create a new task only when the rubric says "separate concern" AND it clears the bar:**
+**Create a new parent task only at step 3 of the placement order (an owner ask or a defect with no home) AND when it clears the bar:**
 
 ```bash
 dreamcontext core releases active   # verify an active planning version exists; if empty:
@@ -163,7 +182,7 @@ dreamcontext core releases add --ver vX.Y.Z --status planning --summary "<theme>
 
 # Name = a plain sentence, never a slug. -w is MANDATORY (40+ chars). --by sleep names you as filer.
 dreamcontext tasks create "<short sentence describing the work>" --status in_progress --priority medium \
-  --description "<one-line scope>" --by sleep -w "<who is hurt, by what, at what cost>"
+  --description "<one-line scope>" --by sleep --basis ask --quote "<the owner's words>" -w "<who is hurt, by what, at what cost>"
 ```
 
 If `tasks create` refuses, act on the rule it names; never pad the `-w`. New tasks scaffold lean (`## Why` + `## Changelog`); add sections via `tasks insert` only with real content, **never placeholder content** (Lean Task Authoring Pattern).
@@ -178,6 +197,24 @@ When the roster in **`_dream_context/people/people.json`** has **>1 entry** (rea
 Tags are additive: never remove a previously-set `person:` tag. A slug that may not match a remote backend's member roster gets a note in your report.
 
 **Single-person projects (roster has 0 or 1 entry): this step is a NO-OP.** Never inject a `person:` tag; the output must stay byte-identical to today.
+
+### 2.6. Learn from the owner's objections — every cycle
+
+The owner objects to a task an agent opened ("this was a criterion of X", "not a task"). `sleep start` prints the rules already learned and how many objections are not; read both BEFORE you file anything:
+
+```bash
+cat _dream_context/knowledge/patterns/task-filing-rules.md   # the Don't / Do rules (absent = none yet)
+dreamcontext tasks objections --unlearned --json             # snapshot (what was filed, by whom, on what basis) + the owner's note
+```
+
+Distil a rule from ONE objection whose note states a general principle, or from TWO OR MORE of the same kind that agree. Same idea as an existing rule → add the objection to it:
+
+```bash
+dreamcontext tasks rules set --title "<a few words>" --dont "<what not to file>" --do "<what to do instead>" --rests-on obj_a,obj_b
+dreamcontext tasks rules merge R2 --rests-on obj_c
+```
+
+Only these verbs write the rules file; never Edit it. `tasks rules revert R<n>` is the owner's call, never yours. An objection too specific to generalise stays unlearned: name it in the report. If `sleep start` said the rules could NOT be read, say so in the report and file conservatively.
 
 ### 3. Log progress AND reconcile the body — both required
 
@@ -271,6 +308,8 @@ One line per field; write `none` rather than dropping a field.
 - Updated: <slug> (in_progress → completed, "<done, validated>"), <slug> (→ in_review, "<what to verify>"), <slug> (logged)
 - Folded in (no new task): <existing-slug>: broadened scope + added <n> stories/criteria for <smaller-piece>
 - Filed: <k>/<cap>: read from `dreamcontext sleep config`
+- Owner asks: <N> → criterion <a> · subtask <b> · task <c> · not placed <d> (each not-placed ask + why; "already a criterion" quotes that criterion and its task)
+- Rules learned: R<n> "<title>" (rests on obj_…) | merged obj_… into R<n> | unlearned: obj_… (why) | none
 - Created: <slug> (status, attached to vX.Y.Z): genuinely separate concern
 - Candidates NOT filed (cap): <what it was + the evidence> | none
 - Did not clear the filing bar: <what + which line failed, incl. every CLI refusal: the neighbor or declined idea it named> | none
@@ -295,7 +334,7 @@ Dropped-but-load-bearing self-check: <none | every signal you saw but did NOT fo
 
 ## Rules
 
-1. **Dedup before creating**: fold a smaller slice into the task that covers it (step 2).
+1. **Place before creating**: a criterion on the task that covers it, else a sub-task of its parent, else a new parent only for an owner ask or a defect (step 2).
 2. **Clear the filing bar; never pad to get past it.** `--neighbor-checked` and `--declined-checked` are proof you opened what the CLI named, never a way past it.
 3. **Body = current truth, Changelog = history.**
 4. **Status reflects reality, not a reflex** (step 4); never silently delete.
@@ -308,3 +347,4 @@ Dropped-but-load-bearing self-check: <none | every signal you saw but did NOT fo
 11. **Latest session wins** (step 1).
 12. **Lands in THIS project**, or it gets no task here.
 13. **Direct evidence files; discussion defers** as a `task-candidate:<key>` flag.
+14. **Every owner ask is on the board when you finish**: shipped in the session → a ticked criterion or a completed task; "already there" only when a criterion says it.

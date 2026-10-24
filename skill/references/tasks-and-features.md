@@ -43,6 +43,54 @@ dreamcontext tasks undecline <key>                                              
 - **Stored as brain content** in `_dream_context/state/.task-declined.json` (newest-first, cap 500) and it **syncs** like `.task-tombstones.json` — a teammate's sleep cycle must not re-file what you declined here.
 - **How sleep uses it.** A sleep-filed task whose slug matches a declined key is refused outright with the date and reason. One that merely *looks* like a declined idea (semantic match) is refused with `--declined-checked <key>` named in the message — the specialist reads the reason and either drops the candidate or re-runs naming that key. Reversing a decision is an awake act: `tasks undecline <key>`, then file.
 
+### Sub-tasks, waves, and who opened a task
+
+**The model.** A **feature** is an area (its PRD). A **parent task** is one deliverable the owner would recognise. A **sub-task** is a step of a parent worth tracking on its own. Two levels at most: a sub-task never has sub-tasks, and a closed (done- or cancelled-kind) task takes no new ones.
+
+```bash
+dreamcontext tasks create "<sentence>" --parent <parent-slug> [-w "<why>"]   # inherits version + feature; Why defaults to "Part of <parent>"
+dreamcontext tasks parent <slug> <parent-slug|clear>                         # move under a parent, or out (no arg: print parent + sub-tasks)
+dreamcontext tasks list --parent <parent-slug> [--json]                      # its sub-tasks; --json adds `wave` (null = not a wave)
+```
+
+- **Close gate.** A parent with an open sub-task cannot move to a done-kind status (`tasks complete`, `tasks status <done>`, the board's drag: 409 `parent_has_open_children`, naming them). Cancelled sub-tasks never block. A remote pull (GitHub/ClickUp) closing a parent skips this gate on purpose: the remote cannot express sub-tasks.
+- **Waves are sub-tasks.** A plan with two or more waves opens one sub-task per wave: `tasks create "Wave N: <what it delivers>" --parent <S> --basis plan --quote "<the WN part of the WAVE MAP>"`. The parent keeps the goal, the Validation method, the observed criteria and the WAVE MAP line naming each wave's slug (the NEWEST map is the last `WAVE MAP:` line in Technical Details). Progress, ticks and `wN green` go on the wave; it closes when its check is green. A task that is itself a sub-task, or a one-wave map, keeps the old single-line map. `tasks ready` never refuses an older map; it notes when wave sub-tasks are missing.
+
+**Who opened it, and why.** Every create stamps `filed_by: human | agent | sleep | plan` and, unless the owner filed it, `filing_basis: { kind, quote, session?, at, verified }`. The task page shows it ("Sleep opened it · the owner asked: «…»"). Both are local-only.
+
+```bash
+dreamcontext tasks create "<sentence>" --basis ask --quote "<the owner's own words>" -w "…"     # the owner asked for it
+dreamcontext tasks create "<sentence>" --basis defect --evidence "<the failing output>" -w "…"  # a defect
+dreamcontext tasks basis <slug> --basis <kind> [--quote|--evidence "…"]                        # record it on an existing task
+```
+
+- Kinds: `ask`, `defect`, `change`, `bookmark`, `plan`, `note`. With no `--basis`, an agent's task records the start of its Why as a `note`.
+- **Who counts as sleep:** `--by sleep`, or a CLI call with NO `--by` while a sleep cycle is live. Sleep needs a basis, and opens a new top-level task only for an `ask` (the quote is looked up in the turns the owner typed this cycle, Turkish-aware) or a `defect` (the evidence in tool results); anything else goes under a parent with `--parent` or onto a task as a criterion. `--by human` is the owner's own task; `--by agent` an awake agent; `--basis plan --parent` a wave. Over HTTP a request with no `by` is the owner.
+
+### Objections: "this task was wrong"
+
+The owner (task page → **Object to this task**, or the CLI) says what a task an agent opened really was:
+
+```bash
+dreamcontext tasks object <slug> --as subtask-of|criterion-on|duplicate-of|not-a-task|wrong-project [--target <slug>] --note "<why, 15+ chars>"
+dreamcontext tasks object <slug> --resume obj_…     # finish one that stopped midway
+dreamcontext tasks objections [--unlearned] [--json]
+```
+
+- `subtask-of` moves it under the target (it stays open). `criterion-on` adds `- [ ] <name> (itiraz obj_…)` to the target, `duplicate-of` logs on the target, `not-a-task`/`wrong-project` decline it (never re-filed); all four cancel the task. It is never deleted: its page keeps the objection box.
+- Every step is idempotent and cancelling comes last: a run that stopped is finished by the same objection again (one record, never two). A task with open sub-tasks cannot be cancelled this way: move them first. Refused during a sleep cycle.
+- Ledger: `state/.task-objections.json` (syncs; merged by id). A file that does not parse is refused, never overwritten.
+
+**Rules learned from objections.** The next sleep distils applied objections into `knowledge/patterns/task-filing-rules.md` ("Don't … / Do …"), and every sleep reads them before filing (`sleep start` prints them). Only these verbs write that file:
+
+```bash
+dreamcontext tasks rules set --title "…" --dont "…" --do "…" --rests-on obj_a,obj_b
+dreamcontext tasks rules merge R2 --rests-on obj_c [--title|--dont|--do "…"]
+dreamcontext tasks rules revert R2     # drop it for good: its objections are dismissed, never learned again
+```
+
+Which objection became which rule lives only in each rule's `rests_on`; the task page shows "Sleep learned: R2" from it. Deleting a rule by hand makes its objections unlearned again, so use `revert` to drop one. A file over 8,000 characters or that no longer parses is refused by every write and reported by `sleep start`.
+
 ### Enrich (insert into any section during active work)
 ```bash
 dreamcontext tasks insert <name> user_stories "As a user, I want X so that Y"
@@ -105,9 +153,9 @@ dreamcontext tasks create <name> --start 2026-06-25 --due 2026-07-01
 - `start` is always **on or before** `due`. Moving the **start** past the due date doesn't fail — the due date is pushed out by just enough to preserve the window's length (a 5-day job that starts late is still a 5-day job). Moving the **due** end before the start is still rejected, since that's a direct contradiction.
 - Status transitions record real-world timing: the first `in_progress` stamps `start_date` (and reschedules a due date it would have invalidated), `completed` stamps `due_date` with the actual end date. Completing a task that never had a start means it went not-started → done in one move, so it gets today at **both** ends (and loses its `backlog` tag, since it is now dated).
 - Setting either date on a `backlog`-tagged task **removes the `backlog` tag** (a dated task is planned, not backlog). The rule runs the other way too: adding the tag clears both dates. That direction is enforced in the BACKEND, so every surface inherits it — the dashboard's "Send to backlog" writes only the tag and lets the backend undate the task, rather than keeping a second copy of the rule in the UI.
-- Both dates render in the dashboard timeline (Gantt) and calendar views.
+- Both dates show in the task's Properties (More › Plan) and drive the board's overdue chip.
 
-`urgency` (critical/high/medium/low) is the second Eisenhower axis (priority × urgency) for the dashboard matrix.
+`urgency` (critical/high/medium/low) sits next to priority under the task's Properties (More › Prioritization).
 
 ---
 
@@ -145,11 +193,11 @@ dreamcontext tasks assign-agent <task> --clear                 # remove the agen
 In the dashboard: **Assign to agent** on the task (pick an agent, optional note). The route is `POST /api/tasks/:slug/assign-agent {agent, note?}`.
 
 - **The field.** `agent: <slug>` in the task's frontmatter. **Agents are not people**: it is never a `person:` tag, never an assignee, never in `people/people.json`, and it never syncs to ClickUp or GitHub (a local-only field). The board card shows the agent's face with a ring; agents are not part of the assignee grouping.
-- **Assign versus Delegate.** **Assign to agent** runs a named agent from the Agents page under its own approved prompt, unattended. **Delegate to Claude** opens a live Claude session on the task that you watch and steer.
+- **Assign versus Delegate.** **Assign to agent** runs a named agent from the AI Team under its own approved prompt, unattended. **Delegate to Claude** opens a live Claude session on the task that you watch and steer.
 - **The status rule.** Assigning moves the task to `in_progress` only when it has no status or an open-kind one (`todo` and declared children). It never moves a task out of active, review, done, cancelled or an unknown status. Assigning itself is allowed at any status.
 - **What the agent gets.** The task name (capped at 200 characters) and a `--note` arrive fenced as data, never as instructions. A note typed in the dashboard is the owner speaking and goes in as the run's ask. The agent's own human gates stay on: a `## Flow` `hitl` node or `review` still stops it to ask.
 - **The result.** The agent logs its own entries with `tasks log`. On top of that the run writes exactly one sanitized entry: ``### <date> - Agent <title> (`slug`)`` and `- Run <runId>: <status>. Document: <path or none>.`, never the document body. The changelog syncs to ClickUp/GitHub like any other entry, so only the status and the document path leave the machine.
-- **First use: approval.** The agent must be approved **to run** on this machine (a scheduled agent's automation approval does not count). Otherwise the CLI refuses with "Approve it on the Agents page", and the dashboard composer shows the review with **Approve and assign**. A disabled agent, an unknown agent or task, or an over-long note is refused too.
+- **First use: approval.** The agent must be approved **to run** on this machine (a scheduled agent's automation approval does not count). Otherwise the CLI refuses with "Approve it on the AI Team page", and the dashboard composer shows the review with **Approve and assign**. A disabled agent, an unknown agent or task, or an over-long note is refused too.
 - **Who may assign.** The owner, from the dashboard or their own terminal. An agent run cannot (`tasks assign-agent` refuses inside one).
 - **How long.** An assigned run uses the agent's call settings: a 15-minute timeout unless a former on-call agent carried its own.
 
@@ -734,7 +782,7 @@ id: "task_abc123"
 name: "Implement auth middleware"
 description: "Add JWT validation to protected routes"
 priority: "high"          # critical | high | medium | low
-urgency: "medium"         # critical | high | medium | low (Eisenhower axis)
+urgency: "medium"         # critical | high | medium | low
 status: "todo"            # todo | in_progress | in_review | completed — or any key declared in overrides/task.md
 created_at: "2026-02-25"
 updated_at: "2026-02-25"
@@ -760,7 +808,7 @@ A project can override the default task shape, declare its own custom fields AND
 
 The file carries three things:
 
-- **Frontmatter `statuses:`** — extra task statuses, each living **under one of the shipped four**. Each entry: `name` (label), `key` (stable frontmatter value — ALWAYS write it explicitly; defaults to the snake_cased name), `kind` (`open | active | review | cancelled` — `done` is reserved for `completed`, exactly one done-kind status ever), `parent` (which of `todo`/`in_progress`/`in_review`/`completed` it rides under; defaults from the kind — `cancelled` → `completed`), `order` (pipeline position; the shipped four sit at 0 / 10 / 20 / 30, so `5` slots between `todo` and `in_progress`), optional `color` (6-hex — the GitHub label colour and the dashboard swatch) and optional `clickup` (list-status name aliases). The **kind drives everything**: `active` stamps the start date and counts as "being worked"; `review` triggers the required-field gate; `cancelled` is terminal — hidden by default, never overdue / at-risk / in the Eisenhower matrix, out of roadmap progress on both sides, and never the task a bookmark hint offers. The shipped four can be relabelled / reordered / recoloured but never removed or re-kinded. Every invalid entry (bad kind, non-hex colour, duplicate or reserved key, a collision with a custom-field key, a second done-kind) is dropped with a warning `doctor` shows — never fatal.
+- **Frontmatter `statuses:`** — extra task statuses, each living **under one of the shipped four**. Each entry: `name` (label), `key` (stable frontmatter value — ALWAYS write it explicitly; defaults to the snake_cased name), `kind` (`open | active | review | cancelled` — `done` is reserved for `completed`, exactly one done-kind status ever), `parent` (which of `todo`/`in_progress`/`in_review`/`completed` it rides under; defaults from the kind — `cancelled` → `completed`), `order` (pipeline position; the shipped four sit at 0 / 10 / 20 / 30, so `5` slots between `todo` and `in_progress`), optional `color` (6-hex — the GitHub label colour and the dashboard swatch) and optional `clickup` (list-status name aliases). The **kind drives everything**: `active` stamps the start date and counts as "being worked"; `review` triggers the required-field gate; `cancelled` is terminal — hidden by default, never overdue / at-risk, out of roadmap progress on both sides, and never the task a bookmark hint offers. The shipped four can be relabelled / reordered / recoloured but never removed or re-kinded. Every invalid entry (bad kind, non-hex colour, duplicate or reserved key, a collision with a custom-field key, a second done-kind) is dropped with a warning `doctor` shows — never fatal.
   - **THE PARENT IS THE WIRE.** A cloud backend only ever sees the parent — one of the four it already understands — so **a declared status needs nothing created on the provider**. The child's identity rides beside it as a `dc:<key>` marker and round-trips.
   - **GitHub**: the parent gives the open/closed state (parent `completed` → closed + `state_reason: completed`), and the `dc:<key>` label is auto-provisioned in the declared colour. `not_planned` stays EXCLUSIVELY the soft-delete signal (see integrations.md). A status key the local set does not know never reopens or closes an issue and never strips another machine's label.
   - **ClickUp**: the API cannot create list statuses, and it never has to. A declared status tries its own names first (so a list that really carries "Cancelled" gets the honest value — declare a `clickup:` alias when the list spells it differently), then falls back to the parent's status, with the `dc:<key>` **tag** carrying the child. On pull the tag wins only while it still agrees with the list status, so **a human moving the task in ClickUp always beats a stale tag**. `doctor` reports which declared statuses ride as a tag and flags any list status whose meaning your declaration changes.

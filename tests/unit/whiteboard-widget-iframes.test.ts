@@ -19,8 +19,9 @@ import {
   HEIGHT_BRIDGE, REACH_BRIDGE, KIT_BEHAVIOUR, HEIGHT_MESSAGE_KEY, PRESS_MESSAGE_KEY, CHORD_MESSAGE_KEY,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
 import { SANDBOX_CSP, SANDBOX_ALLOW } from '../../dashboard/src/lib/sandboxHtml.js';
+import { fileURLToPath } from 'node:url';
 
-const WB_DIR = join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/whiteboard');
+const WB_DIR = join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/whiteboard');
 const read = (rel: string) => readFileSync(join(WB_DIR, rel), 'utf-8');
 
 /** Every `<iframe …>` JSX opening tag in a source file. */
@@ -194,6 +195,8 @@ describe('WebWidget — the web embed (D7)', () => {
     const tags = iframeTags(widget);
     expect(tags).toHaveLength(1);
     expect(tags[0]).toContain('sandbox={WEB_WIDGET_SANDBOX}');
+    // Super's web card draws this same widget (jarvis r9, AC2): one sandbox for both surfaces.
+    expect(read('../sleepy/super/SuperContainer.tsx')).toMatch(/<WebWidget /);
     expect(widget).not.toMatch(/allow-popups|allow-top-navigation|allow-modals/);
   });
 
@@ -208,8 +211,11 @@ describe('WebWidget — the web embed (D7)', () => {
     // A page renders only once its target checked out as a page (`kind: 'url'`), and starts unloaded unless trusted.
     expect(widget).toMatch(/if \(!check\.ok\) \{/);
     expect(widget).toMatch(/useState\(\(\) => isTrustedHost\(page\.host\)\)/);
-    // The frame renders only on the `loaded` branch.
-    expect(widget).toMatch(/\{loaded \? \(\s*<iframe/);
+    // The frame renders only on the `loaded` branch (a remote page) or once the port is granted or
+    // opened once (a page on this computer, jarvis r9), and only through the one PageFrame.
+    expect(widget).toMatch(/\{loaded \? \(\s*<PageFrame/);
+    // (A granted page waits for its frame address, the session proxy's, before it mounts.)
+    expect(widget).toMatch(/\(granted \|\| once\) \? \(\s*frameHref\s*\?\s*<PageFrame/);
     // A file never gets an iframe of its own: the board's reader draws it, after the file route said yes.
     expect(widget).toMatch(/access\.state === 'blocked'/);
     expect(widget).toMatch(/api\.post\('\/agent\/grant'/);

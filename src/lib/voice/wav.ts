@@ -126,3 +126,52 @@ export function normalizeSpeech(pcm: Buffer): Buffer {
   }
   return out;
 }
+
+// ─── The seam between two chunks ───────────────────────────────────────────────────────
+
+/** The pause left after a chunk that ENDS a sentence: a breath between two sentences. */
+export const SENTENCE_TAIL_MS = 220;
+/** …and after one that stops MID-sentence (at a comma, a colon, a dash), where a speaker
+ *  barely pauses at all. */
+export const CLAUSE_TAIL_MS = 90;
+/** The fade at the cut, so trimming never ends a buffer on a non-zero sample (a click). */
+const TAIL_FADE_MS = 8;
+
+/**
+ * Cut the silence the model leaves after the last word down to `keepMs`.
+ *
+ * ── WHY ─────────────────────────────────────────────────────────────────────────────────
+ * Every generated chunk ends with 0.3–0.7 s of near-silence (measured on the live model,
+ * 2026-10-21: 318–738 ms on eight chunks). The queue butts chunks together sample-exactly, so
+ * that tail IS the pause between them — half a second of dead air after every sentence, and
+ * after a chunk that stops at a comma, half a second in the middle of one. Played back to
+ * back, an answer sounds like a list of separate recordings: the "robotic" the owner heard.
+ * Trimmed to a breath, the seams sound like one speaker.
+ *
+ * Measured against the chunk's own peak (3%, ≈ -30 dB), so a quiet take is not cut into its
+ * last word. Only TRAILING silence is touched: the lead-in is already short (4–34 ms) and the
+ * word onset after it must not be clipped. Returns the input unchanged when there is nothing
+ * to trim.
+ */
+export function trimSpeechTail(pcm: Buffer, keepMs: number, sampleRate: number = PCM16_SAMPLE_RATE): Buffer {
+  const count = Math.floor(pcm.length / 2);
+  if (count === 0) return pcm;
+  let peak = 0;
+  for (let i = 0; i < count; i++) {
+    const v = Math.abs(pcm.readInt16LE(i * 2));
+    if (v > peak) peak = v;
+  }
+  if (peak / 32768 < SPEECH_FLOOR) return pcm;
+  const gate = peak * 0.03;
+  let last = count - 1;
+  while (last > 0 && Math.abs(pcm.readInt16LE(last * 2)) < gate) last--;
+  const end = Math.min(count, last + 1 + Math.round((keepMs / 1000) * sampleRate));
+  if (end >= count) return pcm;
+  const out = Buffer.from(pcm.subarray(0, end * 2));
+  const fade = Math.min(end, Math.round((TAIL_FADE_MS / 1000) * sampleRate));
+  for (let k = 0; k < fade; k++) {
+    const i = end - fade + k;
+    out.writeInt16LE(Math.round(out.readInt16LE(i * 2) * (1 - (k + 1) / fade)), i * 2);
+  }
+  return out;
+}

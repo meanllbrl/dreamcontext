@@ -157,3 +157,20 @@ describe('resolveChatReference — no vault resolved for the request', () => {
     expect(resolveChatReference(null, null, 'src/app.ts')).toBeNull();
   });
 });
+
+describe('resolveChatReference — a network path on Windows', () => {
+  // Even a stat of `\\host\share\x` makes Windows connect to that host and offer the user's
+  // NTLM hash, and an answer's image renders with no click: refused before any filesystem call.
+  it('refuses every UNC / device spelling on win32, with or without a project', () => {
+    for (const p of ['//attacker/s/x.png', '\\\\attacker\\s\\x.png', '/\\attacker/s/x.png', '\\\\?\\C:\\x.png', '\\\\.\\pipe\\x']) {
+      expect(resolveChatReference(projectRoot, contextRoot, p, 'win32'), p).toBeNull();
+      expect(resolveChatReference(null, null, p, 'win32'), p).toBeNull();
+    }
+  });
+
+  it('changes nothing off win32', () => {
+    const target = join(shotDir, 'automations-light.png');
+    expect(resolveChatReference(null, null, target, 'darwin')).toMatchObject({ abs: target, missing: false });
+    expect(resolveChatReference(null, null, '//attacker/s/x.png', 'darwin')).toMatchObject({ missing: true });
+  });
+});

@@ -280,3 +280,16 @@ describe('a project whose check cannot finish within the cap', () => {
     expect(calls).toBe(afterCap + 1);
   });
 });
+
+describe('filterTscErrors on Windows paths', () => {
+  it('matches tsc\'s forward-slash output against a backslash file path', async () => {
+    const { win32 } = await import('node:path');
+    // The function uses the host's path module; the forward-slash spellings it now also tries
+    // are what a Windows host computes from `C:\p\src\a.ts` under `C:\p`.
+    const rel = win32.relative('C:\\p', 'C:\\p\\src\\a.ts');
+    expect(rel).toBe('src\\a.ts');
+    expect(rel.split(win32.sep).join('/')).toBe('src/a.ts');
+    const { relPosix } = await import('../../src/lib/paths.js');
+    expect(relPosix('C:\\p', 'C:\\p\\src\\a.ts', win32)).toBe('src/a.ts');
+  });
+});

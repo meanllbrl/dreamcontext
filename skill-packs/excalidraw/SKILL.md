@@ -1,9 +1,12 @@
 ---
 name: excalidraw
 description: >-
-  NOT for a dreamcontext whiteboard or control panel (`_dream_context/whiteboards/`): its metrics are
-  live insight widgets added with `dreamcontext whiteboard add`, never charts drawn here.
-  Generate or extend Obsidian Excalidraw (.excalidraw.md) boards in this vault — visual-first diagrams,
+  The visual-first drawing kit. Draws and writes on a dreamcontext whiteboard
+  (`_dream_context/whiteboards/`): an explanation there is a drawing from these builders
+  (`dreamcontext whiteboard draw <board> --spec`, reference: `dreamcontext whiteboard kit`), never a
+  stack of note widgets, and only a live METRIC there is an insight widget (`whiteboard add`), never
+  a chart drawn from today's values. Generates or extends Obsidian Excalidraw (.excalidraw.md) boards
+  in this vault — visual-first diagrams,
   charts (line/bar/comparison/stacked/gantt/quadrant/donut/heatmap/table/timeline/KPI/sparkline),
   funnels, device mockups (iPhone/iPad/Mac) and wireframes/prototypes, flowcharts, image/screenshot
   layouts, shapes, arrows, frames, lanes and grids — by passing DATA to ~45 ready-made deterministic
@@ -15,6 +18,7 @@ description: >-
   sha1 wikilink trick (no base64). Triggers: '/excalidraw', 'draw this in excalidraw', 'make an
   excalidraw board', 'excalidraw diagram', 'chart', 'line chart', 'bar chart', 'compare before/after',
   'gantt', 'timeline', 'quadrant', 'impact effort matrix', 'heatmap', 'KPI tiles', 'dashboard board',
+  'draw on the whiteboard', 'whiteboard'a çiz', 'whiteboard'a kur', 'tahtaya çiz', 'panoya anlat',
   'funnel', 'conversion funnel', 'wireframe', 'prototype', 'mockup', 'app/web screen mockup', 'iphone
   mockup', 'ipad mockup', 'mac app mockup', 'ui kit', 'icon button', 'funnel map board', 'embed
   screenshots into excalidraw', 'add images to an excalidraw file', 'excalidraw çiz', 'excalidraw board
@@ -30,15 +34,19 @@ Write `.excalidraw.md` files that render natively in this vault's Obsidian Excal
 frontmatter, `## Text Elements`, `## Embedded Files`, and the `%% ## Drawing … %%` JSON, with
 correct sha1 image links, fractional z-indices, and deterministic seeds (clean git diffs).
 
-> **STOP if the target is a dreamcontext whiteboard.** A file under `_dream_context/whiteboards/`, or
-> one whose frontmatter has `dreamcontext-whiteboard: 1`, is not this skill's output: read the
-> `dreamcontext` skill's `references/whiteboards.md` and edit it with `dreamcontext whiteboard …`.
-> **A number on a whiteboard (MRR, revenue, signups, a trend, a split) is a live `insight` widget**
-> (`dreamcontext whiteboard add <board> insight --ref <insight-slug>`), never a `kpi()`/`lineChart()`/
-> `donut()` drawn from today's values: a drawn number is stale the moment the board is saved. If the
-> metric has no insight yet, create the insight first (`dreamcontext lab create`), then add its widget.
-> This skill only feeds a whiteboard **data-free** drawings (a flow, a sketch, a wireframe) through
-> `dreamcontext whiteboard draw`.
+> **Drawing on a dreamcontext whiteboard** (a board under `_dream_context/whiteboards/`, or a file
+> whose frontmatter has `dreamcontext-whiteboard: 1`): this kit IS how you draw there, but never by
+> writing that file. Write a JSON spec of these builders and run `dreamcontext whiteboard draw
+> <board> --spec spec.json --tag <tag>` (or build an `.excalidraw.md` elsewhere and `draw --file`
+> it); `dreamcontext whiteboard kit` prints the whiteboard reference
+> (`reference/whiteboard-kit.md`), and the `dreamcontext` skill's `references/whiteboards.md` owns
+> placement, widgets and agent cards. **An explanation on a whiteboard is a drawing** (a `flow`,
+> groups in a `panel`, a comparison, a `timeline`, short labels), never a stack of note widgets; a
+> note is a caption. **A number on a whiteboard (MRR, revenue, signups, a trend, a split) is a live
+> `insight` widget** (`dreamcontext whiteboard add <board> insight --ref <insight-slug>`), never a
+> `kpi()`/`lineChart()`/`donut()` drawn from today's values: a drawn number is stale the moment the
+> board is saved. If the metric has no insight yet, create the insight first (`dreamcontext lab
+> create`), then add its widget.
 
 ## Design principles (read first)
 
@@ -206,6 +214,9 @@ A `type` is either a **primitive** (below) or any **composite** — every chart 
 `gantt`, `quadrant`, `heatmap`, `table`, `kpi`, `callout`, …), house-style widget (`card`, `funnel`,
 `windowFrame`, `chip`, …) or layout (`stack`, `row`, which nest via `items`). Composites expand to
 primitives before the build, so the JSON surface is as capable as the JS API. See **Charts** below.
+In a spec `card`, `node`, `column` and `hub` may leave out their coordinates (a `stack`/`row`
+places them); `connector` and `annotate` always need their points, so a wired process in JSON is a
+`flow`.
 
 - `text`     — `{ x, y, text, fontSize?, color?, width?, align?, fontFamily? }` (fontFamily 1=hand, 2=normal, 3=code). **Set `width` for any caption/label that must stay inside a column or card** → the text WRAPS to that width (autoResize off) and its height is computed from the wrapped line count. Omit `width` only for short single-line text you want sized to content (it renders on one line and will overlap neighbours if long).
 - `image`    — `{ x, y, path, width? , height? }` — give ONE of width/height; the other is derived from aspect. `path` is an absolute file path.
@@ -316,6 +327,12 @@ consistent:
 - **`column({x,y,items,color})`** → vertical stack of cards (benefit/risk lists). `items` may be
   strings or `{text,color}`.
 - **`hub({cx,cy,label,spokes})`** → central node + satellites with arrows (the "Layer + APIs" pattern).
+- **`flow({steps,direction})`** → a process as uniform cards in a line, each wired to the next by an
+  arrow, so a JSON spec draws "A → B → C" without a coordinate. `steps` are strings or
+  `{text,color,note,label}` (`label` names the arrow into the step, `note` is a caption under it);
+  `direction:'down'` stacks it.
+- **`panel({title,color,items,direction})`** → a group box: a pale tinted panel with a small title,
+  sized to the child blocks laid out inside it (a layout like `stack`/`row`, so `items` are specs).
 - **`bullets({x,y,items})`** → one left-aligned bulleted text block (their spec-list pattern).
 - Edge helpers `center/rightOf/leftOf/topOf/bottomOf(x,y,w,h)` to wire connectors to card edges.
 
@@ -476,7 +493,7 @@ paragraph**.
 | file | owns | reach for it when |
 |---|---|---|
 | `lib/typography.js` | fonts, measured glyph advances, wrapping, inline emphasis (`textBlock`, `wrapLines`, `parseMarkup`, `FONT`, `LH`) | anything that renders words |
-| `lib/style.js` | house style + layout: `card`, `node`, `connector`, `hub`, `column`, `funnel`, `prose`, `bullets`, `takeaway`, `sectionTitle`, `chip`, `divider`, **`stack`/`row`**, `READ_W`, `measureText`, `wrapToWidth`, `fitText` | diagrams, flows, any board's skeleton |
+| `lib/style.js` | house style + layout: `card`, `node`, `connector`, `flow`, `hub`, `column`, `funnel`, `prose`, `bullets`, `takeaway`, `sectionTitle`, `chip`, `divider`, **`stack`/`row`/`panel`**, `READ_W`, `measureText`, `wrapToWidth`, `fitText` | diagrams, flows, any board's skeleton |
 | `lib/charts.js` | data viz + copy: `lineChart`, `barChart`, `barCompare`, `stackedBar`, `gantt`, `quadrant`, `donut`/`pie`, `sparkline`, `heatmap`, `table`, `timeline`, `kpi`, `callout` | anything with numbers |
 | `lib/wireframe.js` | product UI: `device`, `appBar`, `tabBar`, `icon`, `iconButton`, `listRow`, `toggle`, `segmented`, `slider`, `searchField` (+ re-exports style.js's UI bits) | app/screen mockups |
 
@@ -566,7 +583,8 @@ not show the real typeface. Final typography is the user's eye in Obsidian, not 
 **Never verify with Playwright or any browser, and never touch the user's open dashboard or Obsidian
 window** (no opening it, no hiding its dialogs, no clicking its tabs). Your checks are the build
 audit, `dreamcontext whiteboard show --json`, the overlap check `whiteboard draw` runs, and the
-render above. Putting a drawing on a dreamcontext whiteboard: pick free space with
+render above. Putting a drawing on a dreamcontext whiteboard: `dreamcontext whiteboard draw <slug>
+--spec <spec.json>` builds it with this kit and prints the same four audit counts; pick free space with
 `dreamcontext whiteboard place <slug> --size <w,h> --below <tag>` or let `whiteboard draw --below <tag>`
 place it; a `draw --at` that would cover live elements is refused and lists them.
 

@@ -1,0 +1,83 @@
+/* ── An event turn as one line in the centre chat (plan r4 D2, D8) ─────────────────
+   Short by design: it never pushes the owner's conversation up. Tokens only. */
+.super-event-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 4px 0;
+  padding: 4px 10px;
+  min-height: 28px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+.super-event-line[data-full='true'] { background: none; padding-left: 0; }
+.super-event-line-names { color: var(--color-text); font-weight: 600; min-width: 0; }
+.super-event-line-name {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.super-event-line-name:hover { text-decoration: underline; }
+.super-event-line-more, .super-event-line-cmds { color: var(--color-text-tertiary); }
+.super-event-line-toggle {
+  margin-left: auto;
+  padding: 0 8px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  cursor: pointer;
+}
+.super-event-line-toggle:hover { border-color: var(--color-border-hover); color: var(--color-text); }
+
+/* ── The recap turn as its own card (owner 2026-10-23, mockup A) ────────────────────
+   Open by default and tinted toward the accent, so it never reads as an ordinary answer.
+   The reply inside keeps its markdown but sheds its own bubble: the card IS the surface. */
+.super-recap-card {
+  align-self: stretch;
+  max-width: var(--chat-line-width, 100%);
+  margin: var(--space-1) 0;
+  border-radius: var(--radius-xl);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-secondary));
+  box-shadow: var(--shadow-sm);
+}
+.super-recap-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-5);
+  font-size: var(--font-size-xs);
+}
+.super-recap-card[data-open='true'] .super-recap-card-head {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+.super-recap-card-mark { color: var(--color-accent); }
+.super-recap-card-title { font-weight: 600; font-size: var(--font-size-sm); color: var(--color-accent-ink); }
+.super-recap-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+.super-recap-card-body .chat-msg-assistant-row { max-width: 100%; }
+/* The prose starts where the header's mark does (space-3 + space-2 = the head's space-5), and
+   sits close under it: without its bubble the block padding reads as a gap, not an edge. */
+.super-recap-card-body .chat-msg-assistant-body {
+  width: 100%;
+  padding: var(--space-2);
+  background: none;
+  border: 0;
+  box-shadow: none;
+}

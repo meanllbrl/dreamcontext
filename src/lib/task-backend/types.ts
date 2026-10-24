@@ -1,3 +1,4 @@
+import type { FiledBy, FilingBasis } from '../filing-basis.js';
 import type { RiceFields } from '../rice.js';
 import type { TaskFilter, TaskRecord } from '../task-query.js';
 
@@ -94,6 +95,10 @@ export interface TaskData {
   agent?: string;
   /** User-defined custom-field values (override-declared). Empty when none. */
   custom_fields: Record<string, string | number | null>;
+  /** Who opened the task (`human | agent | sleep | plan`), null on tasks older than the field. */
+  filed_by: FiledBy | null;
+  /** Why it was opened (lib/filing-basis.ts), null when nothing was recorded. */
+  filing_basis: FilingBasis | null;
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -140,6 +145,14 @@ export interface CreateTaskInput {
   objectives?: string[];
   /** Seed user-defined custom-field values at creation (override-declared). */
   custom_fields?: Record<string, string | number | null>;
+  /**
+   * Local-only frontmatter written INSIDE the create lock, in the same first write as the
+   * template: `parent_task`, `filed_by`, `filing_basis`. A second write after the create would
+   * leave a window where a reader sees a sub-task with no parent, and would re-serialize the
+   * whole YAML. Remote backends call `super.create`, so these land in the file and never reach
+   * the remote (local-only.ts).
+   */
+  local_fields?: Record<string, unknown>;
   /**
    * Which historical template produced the file. The CLI and the dashboard
    * have always written different task skeletons (full template with Workflow

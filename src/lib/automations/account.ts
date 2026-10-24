@@ -8,6 +8,8 @@ import {
   type AccountReading,
 } from '../claude-account-switch.js';
 import { readAccountRejections } from '../claude-limit-rejections.js';
+import { SIGNED_OUT_FOR_MS, readSignedOut } from '../claude-signed-out.js';
+import { sandboxHasIdentity } from '../claude-account-sandbox.js';
 import { probeAccountUsage, type ProbeOutcome } from '../claude-usage-probe.js';
 import {
   EMPTY_USAGE_LIMITS, readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse,
@@ -94,6 +96,17 @@ function cachedUsage(dir: string): UsageLimitsResponse {
   }
 }
 
+/** Accounts that cannot serve: no credential in the sandbox, or recorded signed out. */
+export function signedOutAccounts(accounts: readonly ClaudeAccount[], home: string, now: number): Set<string> {
+  const recorded = readSignedOut(home, now);
+  const out = new Set<string>();
+  for (const a of accounts) {
+    if (recorded[a.id] !== undefined) { out.add(a.id); continue; }
+    try { if (!sandboxHasIdentity(a.configDir ?? home, home)) out.add(a.id); } catch { /* unknown: not proven out */ }
+  }
+  return out;
+}
+
 /** The account the run used before auto-switch reached automations: never throws. */
 function preferredOnly(deps: PickDeps): AutomationAccount {
   const home = deps.home ?? homedir();
@@ -150,12 +163,27 @@ export function automationAccountWithoutProbe(deps: PickDeps = {}): AutomationAc
 export function chatSpawnAccount(deps: Pick<PickDeps, 'home' | 'now'> & {
   /** Injectable so a test reads its own fixture, not a `.claude.json` under the real HOME. */
   readUsage?: (configDir: string) => UsageLimitsResponse;
+  /** Injectable: the accounts known signed out (default: {@link signedOutAccounts}). */
+  signedOut?: ReadonlySet<string>;
 } = {}): AutomationAccount {
   try {
     const c = contextFor(deps);
     const { home, now, accounts, preferred, fallback, rejectedUntil } = c;
-    if (accounts.length < 2 || !autoSwitchEnabled(home) || !preferred) return fallback;
+    if (accounts.length < 2 || !preferred) return fallback;
     const dirOf = (a: ClaudeAccount): string => a.configDir ?? home;
+    // A SIGNED-OUT account is not a forecast, it cannot serve at all (claude-signed-out.ts):
+    // no credential in its sandbox, or a turn on it was refused for sign-in. A new chat never
+    // opens there while a signed-in account exists, whatever auto-switch says.
+    const out = deps.signedOut ?? signedOutAccounts(accounts, home, now);
+    // Where to go when the preferred account is signed out and nothing better is proven: the
+    // first signed-in one in the owner's order (one with no standing refusal first).
+    const next = out.has(preferred.id)
+      ? accounts.find((a) => !out.has(a.id) && !rejectedUntil[a.id]) ?? accounts.find((a) => !out.has(a.id)) ?? null
+      : null;
+    const orFallback = (): AutomationAccount => (next ? toAccount(next, home) : fallback);
+    if (next && !autoSwitchEnabled(home)) return orFallback();
+    for (const id of out) rejectedUntil[id] = { until: now + SIGNED_OUT_FOR_MS };
+    if (!autoSwitchEnabled(home)) return fallback;
     const read = deps.readUsage ?? cachedUsage;
     const sequential = switchStrategyFor(home) === 'sequential';
     if (!rejectedUntil[preferred.id]) {
@@ -192,7 +220,7 @@ export function chatSpawnAccount(deps: Pick<PickDeps, 'home' | 'now'> & {
     const winner = choice.accountId === null || (choice.unmeasured && !sequential)
       ? null
       : accounts.find((a) => a.id === choice.accountId);
-    return winner ? toAccount(winner, home) : fallback;
+    return winner ? toAccount(winner, home) : orFallback();
   } catch {
     return preferredOnly(deps);
   }

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../glob.js';
 import { docKey, type CorpusDoc, type CorpusType } from '../recall.js';
 import { chunkDoc, type Chunk } from './chunker.js';
 import { EMBED_MODEL, embedPassages } from './embedder.js';

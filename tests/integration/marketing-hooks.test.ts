@@ -75,7 +75,7 @@ describe('mk hooks (integration)', () => {
       expect(content).toContain('dreamcontext mk hooks check-staged');
       // exec bit
       const mode = statSync(target).mode;
-      expect(mode & 0o111).not.toBe(0);
+      if (process.platform !== 'win32') expect(mode & 0o111).not.toBe(0); // Windows has no POSIX mode bits
     });
 
     it('refuses to overwrite a non-managed pre-commit hook without --force', () => {

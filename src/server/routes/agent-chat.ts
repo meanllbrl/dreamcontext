@@ -1,34 +1,43 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { join, dirname, basename, extname } from 'node:path';
+import { join, dirname, basename, extname, resolve } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import {
   writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
   realpathSync, openSync, readSync, closeSync, lstatSync, fstatSync, constants as fsConstants,
 } from 'node:fs';
-import { sendJson, sendError, isForeignOriginUpgrade } from '../middleware.js';
+import { sendJson, sendError, isForeignOriginUpgrade, parseJsonBody } from '../middleware.js';
+import { ownedLoopbackPorts } from '../owned-ports.js';
+import { openWebSession, UPSTREAM_HOSTS } from '../web-session-proxy.js';
+import { createSuperSignalObserver } from '../super-signals.js';
+import { readLoopbackGrants, setLoopbackGrant } from '../../lib/loopback-grants.js';
 import { serveMedia } from '../media.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { authFor, deviceIdHash, macHandsfreeAuth, onDeviceSessionsChanged } from '../handsfree-auth.js';
-import { isMacExposed, isMacOriginAllowed, isPhoneSocket, phoneTranscriptRefused } from '../phone-origin.js';
+import { isMacExposed, isMacOriginAllowed, isPhoneSocket, macExposedEpoch, macExposedVaults, phoneTranscriptRefused } from '../phone-origin.js';
+import { phoneMediaRoots, phoneMediaVerdict } from '../../lib/handsfree/mac/phone-media-roots.js';
+import { addPhoneFileGrant, hasPhoneFileGrant } from '../phone-file-grants.js';
+import { sniffImageType } from '../../lib/image-sniff.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HOLDER_PROBE_MS, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
-import { readHandoffRecord, stampHandoffRecord, writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, shouldRotateForHandoff, contextTokensFromUsage } from '../../lib/context-watch.js';
+import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage } from '../../lib/context-watch.js';
+import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
+import { clearFresh, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
 import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
-import { startHandoffRun, advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRun } from '../../lib/handoff-progress.js';
+import { advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRun } from '../../lib/handoff-progress.js';
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
-import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
+import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
-import { modeBriefing, type ChatMode } from '../chat-modes.js';
-import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote } from '../chat-mode-drift.js';
+import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
+import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote, superBriefState } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
 import { autoModeSettings } from '../../lib/auto-mode-rules.js';
 import { clearSessionCheckout, enterSessionCheckout, exitSessionCheckout } from '../../lib/session-cwd.js';
@@ -42,7 +51,8 @@ import {
 import { clearSessionEdits, recordSessionEdit } from '../../lib/session-edits.js';
 import { forgetSessionFacts, readSessionFacts } from '../../lib/session-facts.js';
 import { tabSessionEnv } from '../../lib/session-origin.js';
-import { claudeAwarePath } from '../../lib/claude-path.js';
+import { claudeAwarePath, claudeDirectCommand } from '../../lib/claude-path.js';
+import { killPortable } from '../../lib/proc.js';
 import { claudeAuthWatcher } from '../../lib/claude-auth-watch.js';
 import { claudeAuthStatus } from '../../lib/claude-auth.js';
 import {
@@ -56,6 +66,8 @@ import {
   SWITCH_THRESHOLD_PERCENT, chooseAccount, provenPastThreshold, shouldProbe, shouldSwitchAway, type AccountReading, type ChooseResult,
 } from '../../lib/claude-account-switch.js';
 import { readLimitSignal, type LimitSignal } from '../../lib/claude-limit-signal.js';
+import { clearSignedOut, isAuthFailureFrame, recordSignedOut } from '../../lib/claude-signed-out.js';
+import { dropFromOutbox } from '../../lib/super/outbox.js';
 import { clearAccountRejection, readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
 import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFrame, recordUsageMeter } from '../../lib/claude-usage-meter.js';
 import { chatSpawnAccount } from '../../lib/automations/account.js';
@@ -64,7 +76,7 @@ import { isAutomationBoundSession } from '../../lib/automations/session-registry
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
-import { registerChat, isDelegatedConversation, listChats, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
+import { getChat, registerChat, isDelegatedConversation, listChats, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
 import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
 import { ensureIndexBuilt } from './embeddings.js';
@@ -72,23 +84,28 @@ import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '..
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
-import { clearSuperNote, peekSuperNote, superIndex, superRootOfChild } from '../../lib/super/store.js';
-import { SUPER_FRAME_EVENT, SUPER_NOTE_TEXT } from '../../lib/super/types.js';
+import { clearSuperNote, delegatedChildMcp, peekSuperNote, readSuperState, superIndex, superRootOfChild } from '../../lib/super/store.js';
+import { ABOUT_AGENDA_RE, OWNER_VOICE_TEXT, REPLY_TO_RE, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, ownerMsgBlock } from '../../lib/super/types.js';
+import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen, stageImageItems, stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, stashHeldOwnerTexts, superSocketAttached, superTurnEnded, takeHeldOwnerTexts,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
+import {
+  knownMcpServers, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
+} from '../../lib/super/lean-mcp.js';
 import { deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import {
   CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, liveChatsSnapshot, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
   signalGroup, unregisterLiveChat, wsPingMs, type LiveChatEntry,
 } from './agent-chat-live.js';
+import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOptions, type ParkOutcome } from '../chat-park.js';
 import {
-  isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
+  isLoopback, isSameOriginStrict, isCrossSiteRequest, requireLocalDesktop, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
   claudeConversationExists, redeemPromptToken, findFirstTranscriptPath,
 } from './agent-spawn-shared.js';
@@ -403,6 +420,44 @@ export function mcpConfigArgs(paths: Array<string | null>): string[] {
 }
 
 /**
+ * Is this chat open a LEAN Super Agent child, and with which servers (orchestration plan r5
+ * D14)? A child the super record names is lean from its RECORD, whatever the URL says (a window
+ * that reloaded before the record arrived asks for nothing); the URL's `lean=1&mcp=` covers a
+ * child opened before its record lands. A name the user no longer has is DROPPED: narrower,
+ * never wider, never a refusal that locks the conversation out. Never the Assistant or a Super
+ * Agent's own session. Null = not lean (every other chat, as before); 'refuse' = a malformed list.
+ */
+export function leanMcpForUpgrade(o: {
+  assistant: boolean; mode: string; conversation: string; lean: string | null; mcp: string | null;
+  recorded: (conversation: string) => string[] | null; known: () => ReadonlyMap<string, unknown>;
+}): string[] | null | 'refuse' {
+  if (o.assistant || o.mode === 'super' || o.mode === 'assistant') return null;
+  let asked = o.recorded(o.conversation);
+  if (!asked && o.lean === '1') {
+    const parsed = parseMcpNames(o.mcp ?? '');
+    if ('error' in parsed) return 'refuse';
+    asked = parsed.names;
+  }
+  if (!asked) return null;
+  const known = o.known();
+  return asked.filter((n) => known.has(n));
+}
+
+/**
+ * The MCP argv of a spawn: today's ({@link mcpConfigArgs} over `normal`) for every chat, or, for
+ * a LEAN Super Agent child (orchestration plan r5 D14), `--strict-mcp-config` and only its
+ * subset, the project's `.mcp.json` and the browser override (still last). A lean child with no
+ * servers named and no project file gets `--strict-mcp-config` alone: no user MCP process.
+ */
+export function leanChildMcpArgs(
+  lean: { leanMcpPath: string | null; projectMcp: string | null; browser: string | null } | null,
+  normal: Array<string | null>,
+): string[] {
+  if (!lean) return mcpConfigArgs(normal);
+  return ['--strict-mcp-config', ...mcpConfigArgs([lean.leanMcpPath, lean.projectMcp, lean.browser])];
+}
+
+/**
  * The recall mode a spawn's hooks run under, as an env override — or `{}` to leave the
  * vault's own mode alone. The Assistant, and a chat it delegated into a vault whose mode is
  * `haiku` (a `claude -p` per prompt: 10-27 s measured), get `hybrid` when the embedding model
@@ -501,6 +556,67 @@ function readAssistantCharacter(): string {
  *  backtick, `\`, `;`, whitespace) can reach the command line. Exported pure for tests. */
 export function isShellSafePath(p: string): boolean {
   return /^[A-Za-z0-9/._-]+$/.test(p);
+}
+
+/** `isShellSafePath` for win32 (`C:\Users\…\Temp\…` never matches the POSIX allowlist, which
+ *  silently dropped every Windows chat's briefing, `--agents` and `--settings` files). On win32
+ *  the chat argv never goes through a shell (see `chatSpawnCommand`); the only shell that sees
+ *  one of these paths is the mode-note hook's `cat "<path>"` (bash), where the double quotes
+ *  cover spaces, `~` (8.3 short names), `'`, `;`, `|` and `&`. Still no `"`, `$`, backtick,
+ *  `%`, `!`, line break or NUL. Exported pure for tests. */
+export function isWin32SafeTmpPath(p: string): boolean {
+  // Any letter, so a profile or project folder like `Öğretmen`, `Masaüstü` or `O'Brien` passes
+  // (a stricter list silently dropped every chat file for those users). What stays out is what
+  // is live inside bash double quotes (`"`, `$`, backtick), `%` and `!` (cmd expansion, should a
+  // cmd ever see one), line breaks and NUL. `'`, `;`, `|`, `&` are literal inside the quotes.
+  return /^[A-Za-z]:[\\/][^"$`%!\r\n\0]*$/u.test(p);
+}
+
+/** The path guard for this platform's tmp files. */
+function tmpPathOk(p: string): boolean {
+  return process.platform === 'win32' ? isWin32SafeTmpPath(p) : isShellSafePath(p);
+}
+
+/**
+ * Stop a chat's claude. Off win32 this is exactly `child.kill()` / `child.kill(signal)`. On win32
+ * the child is not a process-group leader, so a plain kill reaches claude alone and leaves the
+ * hooks and tools under it running: the tree goes first (`taskkill /T`, via `killPortable`), then
+ * the same `child.kill(...)` runs as the backstop (harmless on a dead child).
+ */
+export function reapChild(
+  child: ChildProcessWithoutNullStreams,
+  signal?: NodeJS.Signals,
+  platform: NodeJS.Platform = process.platform,
+  tree: (pid: number, signal: NodeJS.Signals) => void = killPortable,
+): void {
+  // Only a REAL ChildProcess: a test double carrying a made-up pid must never reach taskkill,
+  // which would kill whatever unrelated process owns that pid on the developer's machine.
+  if (platform === 'win32' && child instanceof ChildProcess && child.pid) {
+    try { tree(-child.pid, signal ?? 'SIGTERM'); } catch { /* gone, or the backstop below */ }
+  }
+  if (signal) child.kill(signal);
+  else child.kill();
+}
+
+/**
+ * The process the chat spawns. POSIX: the user's interactive login shell running the quoted
+ * `exec claude …` script (it supplies nvm/brew PATH), in its own process group. win32: there is
+ * no login shell to ask, so `claude` is started directly with the argv array (no quoting layer),
+ * NOT detached. Detaching on Windows means DETACHED_PROCESS (no console), so every console
+ * program claude's hooks start would open a new visible one; a non-detached child with piped
+ * stdio and `windowsHide` gets a hidden console its hooks inherit. libuv's kill-on-close job
+ * then ties it to the server, which is the lifetime a chat wants. Exported pure for tests.
+ */
+export function chatSpawnCommand(o: {
+  argv: string[];
+  script: string;
+  platform?: NodeJS.Platform;
+  shell?: string;
+}): { file: string; args: string[]; detached: boolean; windowsHide: boolean } {
+  if ((o.platform ?? process.platform) === 'win32') {
+    return { ...claudeDirectCommand(o.argv), detached: false, windowsHide: true };
+  }
+  return { file: o.shell ?? (process.env.SHELL || '/bin/zsh'), args: ['-ilc', o.script], detached: true, windowsHide: false };
 }
 
 /** Client-generated control-request id gate (setModel/rewind acks are matched client-side
@@ -704,6 +820,12 @@ export function phoneDeviceShowing(sessionId: string): string | null {
 /** Every live chat session in this process — desktop-spawned ones included, because a phone
  *  may adopt any of them. */
 const deviceSessions = new Set<{ device: () => DeviceTag | null; revoke: () => void; releasePhone: () => boolean }>();
+/** The phone mirrors of every live Super Agent (lib/super/phone-mirror.ts): closed by the same
+ *  revocation and return as the sessions above. */
+const superMirrorSets = new Set<MirrorSet<DeviceTag>>();
+/** Owner frames that came from a phone mirror (written at once like every owner frame, or
+ *  re-fed to a successor; the mark rides on the frame itself). */
+const mirrorFrames = new WeakSet<Buffer>();
 let deviceRevocationArmed = false;
 
 export function tagDeviceSocket(ws: object, tag: DeviceTag): void {
@@ -728,6 +850,7 @@ export function revokeStaleDeviceSessions(): number {
     const d = s.device();
     if (d && !deviceStillValid(d)) { s.revoke(); n++; }
   }
+  for (const m of superMirrorSets) n += m.revokeStale();
   return n;
 }
 
@@ -740,6 +863,7 @@ export function revokeStaleDeviceSessions(): number {
 export function releasePhoneSessions(): number {
   let n = 0;
   for (const s of [...deviceSessions]) if (s.releasePhone()) n++;
+  for (const m of superMirrorSets) n += m.closeAll(MIRROR_CLOSE_REVOKED, 'mac mode ended');
   return n;
 }
 
@@ -779,7 +903,16 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
   const draining = snapshot
     .filter((e) => e.draining && visible(byPath.get(e.projectRoot.replace(/\/+$/, '')) ?? null))
     .map((e) => e.conversationId);
-  sendJson(res, 200, { chats, draining });
+  // A phone talks to a handed-over project's Super Agent only: one row, none of its chats.
+  if (!phone) { sendJson(res, 200, { chats, draining }); return; }
+  const handedOver = new Map<string, string>();
+  for (const [path, name] of byPath) {
+    if (!visible(name)) continue;
+    const idx = superIndex(join(path, '_dream_context'));
+    if (idx.enabled && idx.session) handedOver.set(name, idx.session);
+  }
+  const view = phoneLiveChats(chats, handedOver);
+  sendJson(res, 200, view.supers.length ? { chats: view.chats, draining, supers: view.supers } : { chats, draining });
 }
 
 /** AC18: what the drawer says about a live chat. A question waiting wins; then a turn running
@@ -931,7 +1064,11 @@ export async function passiveAdopt(entry: LiveChatEntry, ws: import('ws').WebSoc
  * (see `remote-access.ts` for why that gate wants all three facts at once). `networkToken`
  * is the server's per-process credential, null on a loopback bind where none is minted.
  */
+/** Lean MCP subsets a killed server left behind are swept once, at the first attach (D14). */
+let leanSwept = false;
+
 export function attachAgentChat(server: Server, opts: { networkToken?: string | null; windowControlPort?: number } = {}): void {
+  if (!leanSwept) { leanSwept = true; try { sweepLeanMcpDir(); } catch { /* next start */ } }
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     let url: URL;
     try { url = new URL(req.url || '/', `http://${req.headers.host}`); }
@@ -957,9 +1094,16 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       if (!isDesktop() || !isLoopback(req)) { rejectUpgrade(socket, 403); return; }
       // …and only from the app's own pages: a website the owner visits is loopback too.
       if (isForeignOriginUpgrade(req)) { rejectUpgrade(socket, 403); return; }
+      // …and only from THIS origin, port included, under a loopback Host (T0): an approved
+      // dev server on another loopback port, or a rebinding page, is not the app.
+      if (!isSameOriginStrict(req)) { rejectUpgrade(socket, 403); return; }
       if (!assistantExists()) { rejectUpgrade(socket, 400); return; }
     } else {
-      const trusted = isLoopback(req) || isTrustedRemotePeer(req, opts.networkToken ?? null);
+      // A loopback peer must be this very origin (T0: a page on another loopback port could
+      // otherwise drive a `bypass=1` session); a tailnet peer keeps its own three-fact gate.
+      const trusted = isLoopback(req)
+        ? isSameOriginStrict(req)
+        : isTrustedRemotePeer(req, opts.networkToken ?? null);
       if (!isDesktop() || !trusted) { rejectUpgrade(socket, 403); return; }
     }
 
@@ -974,11 +1118,62 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // Selects a system-prompt append, not an argv element — an unknown value degrades to
     // plain Claude Code rather than to a half-applied mode. See sanitizeChatMode.
     const mode = sanitizeChatMode(url.searchParams.get('mode'), vault);
+    // A Super Agent's delegated child (orchestration plan r5 D14): `lean=1` and the MCP servers
+    // its job named (`mcp=a,b`). Lean only ever NARROWS what a chat gets, so a forged `lean=1`
+    // costs its sender servers; the names are re-checked here against the servers the user
+    // really has (own keys), and again when the subset is written. Never the Assistant or a
+    // Super Agent's own session.
+    // A child the super record names is lean from its RECORD, whatever the URL says (a window
+    // that reloaded before the record arrived asks for nothing); the URL's `lean` covers a child
+    // opened before its record lands. A name the user no longer has is DROPPED, never widened,
+    // never a refusal that would lock the conversation out.
+    const lean = leanMcpForUpgrade({
+      assistant, mode, conversation: resumeId || sessionId, lean: url.searchParams.get('lean'), mcp: url.searchParams.get('mcp'),
+      recorded: delegatedChildMcp, known: () => knownMcpServers(projectRoot),
+    });
+    if (lean === 'refuse') { rejectUpgrade(socket, 400); return; }
+    const leanMcp = lean ?? undefined;
     // The project's Super Agent (plan-r7 D3): exactly ONE super session per vault, the one the
     // hand-over recorded (`POST /api/super/enable` mints it). A different id is a second super
     // agent and is refused; a same-id respawn (account switch, Resume, reattach) passes. The
     // phone never runs the hand-over (D4), and no session recorded yet means no super chat.
-    const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: join(projectRoot, '_dream_context'), resumeId, sessionId });
+    // A phone and a handed-over Super Agent (lib/super/phone-mirror.ts): the phone joins the
+    // live super chat as a MIRROR beside the window that holds it, never adopting, superseding or
+    // respawning it; any other phone open naming that session, and `mode=super`, is refused.
+    const superCtx = join(projectRoot, '_dream_context');
+    const superIdx = superIndex(superCtx);
+    const liveSuper = superIdx.session ? findLiveChat(superIdx.session) : null;
+    const phoneSuper = phone
+      ? phoneSuperOpen({ mode, resumeId, sessionId, index: superIdx, liveSuper: !!liveSuper?.mirror && liveSuper.projectRoot === projectRoot })
+      : 'pass';
+    if (phoneSuper === 'refuse') { rejectUpgrade(socket, 403); return; }
+    if (phoneSuper === 'mirror') {
+      const mirrorHash = authFor(req) ? deviceIdHash(req) : null;
+      const mirrorTag: DeviceTag | null = mirrorHash ? { store: 'mac', idHash: mirrorHash } : null;
+      if (!mirrorTag || !liveSuper?.mirror) { rejectUpgrade(socket, 403); return; }
+      // Full of OTHER devices: refused before the handshake, so the client backs off instead of
+      // opening and being closed in a loop.
+      if (!liveSuper.mirrorRoom?.(mirrorTag)) { rejectUpgrade(socket, 503); return; }
+      void (async () => {
+        let WebSocketServer: typeof import('ws').WebSocketServer;
+        try { ({ WebSocketServer } = await import('ws')); }
+        catch { rejectUpgrade(socket, 501); return; }
+        new WebSocketServer({ noServer: true }).handleUpgrade(req, socket, head, (ws) => {
+          // FIRST: a protocol error on a socket nobody listens to would be an unhandled 'error'
+          // and exit the server (a refused mirror below has no other listener).
+          ws.on('error', () => { /* the close that follows is what counts */ });
+          tagDeviceSocket(ws, mirrorTag);
+          // The child may have ended meanwhile: the client reconnects and is decided again.
+          if (!liveSuper.mirror?.(ws, mirrorTag)) {
+            try { ws.close(MIRROR_CLOSE_ENDED, 'super ended'); } catch { /* gone */ }
+            const t = setTimeout(() => { try { ws.terminate(); } catch { /* gone */ } }, 1000);
+            t.unref?.();
+          }
+        });
+      })();
+      return;
+    }
+    const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: superCtx, resumeId, sessionId });
     if (superRefused) { rejectUpgrade(socket, superRefused); return; }
     // Which Claude ACCOUNT this session runs on. '' = none requested, which resolves to the
     // preferred account (and, with no preferred account, to account #0 — the real HOME, i.e.
@@ -1080,7 +1275,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           void passiveAdopt(adoptable, ws).then((outcome) => {
             if (outcome === 'aborted') { settleSupersede(false); return; }
             if (outcome !== 'unadoptable') return;
-            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
+            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
           });
           return;
         }
@@ -1088,7 +1283,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
           return;
         }
         // The Assistant's CLI reaches `/api/assistant/*` with these two — injected into THIS
@@ -1102,7 +1297,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
         let accepted = false;
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}) });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
         settleSupersede(accepted);
       });
     })();
@@ -1176,6 +1371,9 @@ interface ChatSpawnOpts {
   /** An agent spoken to in an ordinary Chat tab (lib/whiteboards/card-chat.ts `prepareAgentChat`):
    *  its identity and envelope as on a card, while the tab stays a Chat tab in every other way. */
   agent?: string;
+  /** A LEAN Super Agent child (orchestration plan r5 D14): `--strict-mcp-config` with only these
+   *  of the user's MCP servers plus the app's own configs. Absent = every chat as before. */
+  leanMcp?: string[];
 }
 
 /** Interrupt watchdog: if no result/exit follows an interrupt request within this window,
@@ -1310,6 +1508,11 @@ const SWITCH_STALL_MS = Number(process.env.DREAMCONTEXT_SWITCH_STALL_MS) > 0
  * typed "devam et", one of them for 46 minutes. Replaying the owner's original text instead
  * would be worse: forty minutes into a run it restarts the whole request.
  */
+/** What a pane moved off a SIGNED-OUT account is told after the restart (see onAuthFailed). */
+export const AUTH_CONTINUE_TEXT =
+  'The previous turn failed because this chat\'s Claude account was signed out, and the chat has moved to a signed-in account. '
+  + 'Continue exactly where you stopped; do not redo finished work.';
+
 export const LIMIT_CONTINUE_TEXT =
   'The previous turn was cut off by a Claude usage limit, and this chat has moved to another account. '
   + 'Continue exactly where you stopped; do not redo finished work.';
@@ -1499,6 +1702,29 @@ export function startChatSession(
   // The project's Playwright MCP, re-declared headless with a loopback CDP port so its browser
   // never takes the screen and the pane can show it live (browser-override.ts). Not for a
   // scoped card (no MCP at all).
+  // A lean child's own MCP subset (D14): written per spawn, removed when it exits. A name the
+  // user no longer has (the config changed since the upgrade) is dropped: narrower, never wider.
+  let leanMcpPath: string | null = null;
+  // Every lean path rides the double-quoted login-shell script: only a shell-safe one may
+  // (security review r1). The project's `.mcp.json` under an odd project folder name is left
+  // out (narrower, never a shell expansion); an unsafe subset path refuses the spawn.
+  const leanProjectMcp = opts.leanMcp ? projectMcpJson(projectRoot) : null;
+  const leanProjectMcpSafe = leanProjectMcp && tmpPathOk(leanProjectMcp) ? leanProjectMcp : null;
+  if (opts.leanMcp && !scopedCard) {
+    try {
+      const known = knownMcpServers(projectRoot);
+      leanMcpPath = writeLeanMcpConfig(opts.leanMcp.filter((n) => known.has(n)), known);
+      if (leanMcpPath && !tmpPathOk(leanMcpPath)) {
+        removeLeanMcpConfig(leanMcpPath);
+        leanMcpPath = null;
+        throw new Error('its MCP config path is not shell-safe');
+      }
+    } catch (err) {
+      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'mcp_refused', message: `This child cannot start: ${(err as Error).message}.` })); } catch { /* gone */ }
+      try { ws.close(); } catch { /* already closed */ }
+      return;
+    }
+  }
   const browserOverride = scopedCard ? null : prepareBrowserOverride(projectRoot);
 
   const heldConversation = resumeTarget || freshPin;
@@ -1571,7 +1797,7 @@ export function startChatSession(
     try {
       const json = JSON.stringify(subagents.agents);
       const file = join(tmpdir(), `dreamcontext-chat-agents-${randomUUID()}.json`);
-      if (!isShellSafePath(file)) throw new Error('unsafe tmpdir');
+      if (!tmpPathOk(file)) throw new Error('unsafe tmpdir');
       writeFileSync(file, json, { encoding: 'utf-8', mode: 0o600 });
       agentsArg = ['--agents', file];
       cleanupAgents = () => { try { rmSync(file, { force: true }); } catch { /* tmp cleanup */ } };
@@ -1584,7 +1810,7 @@ export function startChatSession(
     // isn't a fixed literal or a whitelist-sanitized token. Hold it to the same standard
     // (see the quoting note on `script`): a tmpdir carrying a shell metacharacter drops the
     // briefing rather than reaching the command line.
-    if (!isShellSafePath(brief)) throw new Error('unsafe tmpdir');
+    if (!tmpPathOk(brief)) throw new Error('unsafe tmpdir');
     // ONE file, two parts: the surface briefing every chat gets, then the selected mode's
     // behaviour brief (empty for `basic`). A second --append-system-prompt-file would be a
     // second argv element and a second cleanup path for no gain — the CLI concatenates
@@ -1605,7 +1831,9 @@ export function startChatSession(
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
     const modeBrief = [ownBrief, subagents?.roster ?? ''].filter(Boolean).join('\n\n');
-    const briefing = modeBrief ? `${CHAT_SURFACE_BRIEFING}\n${modeBrief}` : CHAT_SURFACE_BRIEFING;
+    // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent.
+    const surface = opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}` : CHAT_SURFACE_BRIEFING;
+    const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
@@ -1626,27 +1854,35 @@ export function startChatSession(
   let modeNoteArg: string[] = [];
   let cleanupModeNote = () => { /* nothing written */ };
   const tmpFiles: string[] = [];
+  // The Super Agent's briefing revision (K9): a new session carries it in its system prompt; a
+  // resumed one learns from its transcript whether this revision still has to reach it.
+  const superBrief = { inPrompt: true, due: false };
   if (resumeTarget && !isAssistant && !card) {
     try {
       const transcript = findFirstTranscriptPath([resumeTarget]);
-      const state = transcript ? heldModeFromTranscript(readFileSync(transcript, 'utf-8')) : null;
+      const jsonl = transcript ? readFileSync(transcript, 'utf-8') : '';
+      // No transcript found for a resume: nothing proves the revision arrived, so it rides once.
+      if (isSuper) Object.assign(superBrief, transcript ? superBriefState(jsonl, SUPER_BRIEF_REV) : { inPrompt: false, due: true });
+      const state = transcript ? heldModeFromTranscript(jsonl) : null;
       const sources = modeNoteSources(state, mode);
       if (state && sources.length) {
         const brief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
         const note = modeNoteHookOutput(modeSwitchNote(state.held, mode, brief));
         const id = randomUUID();
         const out = join(tmpdir(), `dreamcontext-chat-mode-${id}.json`);
-        if (!isShellSafePath(out)) throw new Error('unsafe tmpdir');
+        if (!tmpPathOk(out)) throw new Error('unsafe tmpdir');
         writeFileSync(out, note, { encoding: 'utf-8', mode: 0o600 });
         tmpFiles.push(out);
-        Object.assign(spawnSettings, JSON.parse(modeNoteSettings(`cat "${out}"`, sources)));
+        // The hook runs in Git Bash on win32, which reads `C:/…` and not `C:\…`.
+        const hookPath = process.platform === 'win32' ? out.replace(/\\/g, '/') : out;
+        Object.assign(spawnSettings, JSON.parse(modeNoteSettings(`cat "${hookPath}"`, sources)));
         
       }
     } catch { /* the model keeps the mode it was born with — the defect, not a crash */ }
   }
   try {
     const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
-    if (!isShellSafePath(settings)) throw new Error('unsafe tmpdir');
+    if (!tmpPathOk(settings)) throw new Error('unsafe tmpdir');
     writeFileSync(settings, JSON.stringify(spawnSettings), { encoding: 'utf-8', mode: 0o600 });
     tmpFiles.push(settings);
     modeNoteArg = ['--settings', settings];
@@ -1715,7 +1951,9 @@ export function startChatSession(
     // No MCP for a scoped card (its allowlist names no MCP tool; out of scope by decision).
     // The browser override rides LAST: between two `--mcp-config` files the later one wins,
     // and the shared config may carry the owner's headed `playwright` too.
-    ...(scopedCard ? [] : mcpConfigArgs([mcpConfigPath, computerMcpPath, browserOverride?.configPath ?? null])),
+    // A LEAN child (D14) instead: strict, and only its subset, the project's own `.mcp.json`
+    // (strict would drop it) and the browser override, LAST as above. Never the shared config.
+    ...(scopedCard ? [] : leanChildMcpArgs(opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [mcpConfigPath, computerMcpPath, browserOverride?.configPath ?? null])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
@@ -1755,6 +1993,27 @@ export function startChatSession(
   // The token carries WHO it is (vault, pin id, mode) for the Super Agent's checks (plan-r7 D4);
   // the registry entry below is keyed by the same id.
   const chatRegistryId = pinId || randomUUID();
+  /** The phone's mirrors of this Super Agent (lib/super/phone-mirror.ts); null for any other
+   *  chat. The owner's text from one joins the desktop's own path (`onWsMessage`). */
+  const mirrors = isSuper
+    ? new MirrorSet<DeviceTag>({
+      valid: deviceStillValid,
+      onOwnerFrame: (raw) => {
+        // Never into a stdin that is ending (a drain or respawn closes the mirrors, this is the
+        // race before it).
+        if (!alive || stdinEnding()) return;
+        // The frame carries where it came from (a Buffer the set knows), so the mark survives
+        // the switch gate and a successor's replay: see `fromMirror` in the user branch.
+        const frame = Buffer.from(raw, 'utf-8');
+        mirrorFrames.add(frame);
+        onWsMessage(frame);
+      },
+      holder: () => (alive && !detached && ws.readyState === ws.OPEN ? ws : null),
+      key: (d) => d.idHash,
+    })
+    : null;
+
+  if (mirrors) superMirrorSets.add(mirrors);
   const windowControl = !isAssistant && !card
     ? mintWindowToken({
       send: (frame) => {
@@ -1768,11 +2027,13 @@ export function startChatSession(
     })
     : null;
   const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
-  // Its own process group, so the whole tree can be ended at once.
-  const child: ChildProcessWithoutNullStreams = spawn(process.env.SHELL || '/bin/zsh', ['-ilc', script], {
+  // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
+  const spawnCmd = chatSpawnCommand({ argv, script });
+  const child: ChildProcessWithoutNullStreams = spawn(spawnCmd.file, spawnCmd.args, {
     cwd: projectRoot,
     stdio: ['pipe', 'pipe', 'pipe'],
-    detached: true,
+    detached: spawnCmd.detached,
+    ...(process.platform === 'win32' ? { windowsHide: spawnCmd.windowsHide } : {}),
     // claude-aware PATH: `claude` installs into ~/.local/bin, which no default PATH
     // contains — without this the login shell 127s whenever the install's `export
     // PATH` echo never reached the user's rc. See src/lib/claude-path.ts.
@@ -1800,6 +2061,8 @@ export function startChatSession(
     ...(delegated ? { origin: 'assistant' as const } : {}),
     seed,
   });
+  // An ended Super Agent child running again without `super resume`: the owner reopened it.
+  if (registry) void noteChatStarted(chatRegistryId);
   let disposeSurface = opts.inheritedSurfaceDispose ?? (() => { /* not a surface */ });
   // The Assistant's inbox (delegations.ts) — attached once the switch chain it rides exists.
   let detachInbox = () => { /* not the Assistant */ };
@@ -1864,12 +2127,15 @@ export function startChatSession(
    * idle child emits no `init`, so that rule cannot open a turn that is not running.
    */
   let turnsInFlight = 0;
-  /** The Super Agent only (D8): a turn its inbox opened is running. Owner frames that arrive
-   *  meanwhile are held and written after that turn's `result`, as their own turn. */
+  /** The Super Agent only: a turn its inbox opened is running. An owner frame that arrives
+   *  meanwhile is written AT ONCE and folded into it, like a steer in any chat (plan r4 D4). */
   let superEventTurnOpen = false;
-  const heldOwnerFrames: Array<Buffer | string> = [];
-  /** Set while a held frame is handed to `onWsMessage`, so it is not held a second time. */
-  let releasingHeld = false;
+  /** Owner texts sent spoken (`voice: true`) not yet written to the CLI. */
+  const spokenTexts = new Set<string>();
+  /** A spoken owner message was written and its turn's `result` has not come yet. */
+  let voiceArmed = false;
+  /** The last owner text written (`lastSentText`) was spoken: a limit-refused resend keeps it. */
+  let lastSentSpoken = false;
   /** The request id of the interrupt last written, so ITS `control_response` can be told apart
    *  from a model or mode switch's. */
   let interruptRequestId: string | null = null;
@@ -1890,6 +2156,13 @@ export function startChatSession(
    *  point cuts off WORK, not a request, so the switch resubmits `LIMIT_CONTINUE_TEXT` rather
    *  than replaying the request from the top. */
   let turnProgressed = false;
+  /** This turn was refused for sign-in: its `result` must not clear the record. */
+  let authFailedTurn = false;
+  /** A limit refusal was read in this turn (any frame, a sub-agent's too): its main `result`
+   *  must not rotate the pane — the turn did not run, and the pane is about to be switched.
+   *  Reset only at the very end of the main result's handling, after that frame's own refusal
+   *  was read (task super-agent-devrini-…). */
+  let limitHitThisTurn = false;
   let interruptWatchdog: ReturnType<typeof setTimeout> | null = null;
   let interruptKillTimer: ReturnType<typeof setTimeout> | null = null;
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1956,7 +2229,7 @@ export function startChatSession(
   function dropPhoneSocket(reason: string): void {
     const sock = ws;
     if (socketDevice.get(sock)?.store !== 'mac') return;
-    sock.off('message', onWsMessage);
+    sock.off('message', onSocketFrame);
     try { sock.close(DEVICE_REVOKED_CLOSE, reason); } catch { /* gone */ }
     onSocketGone();
     const t = setTimeout(() => { try { if (typeof sock.terminate === 'function') sock.terminate(); } catch { /* gone */ } }, 1000);
@@ -1981,8 +2254,31 @@ export function startChatSession(
     supersede: () => supersedeLive(),
     cut: () => cutChild(),
     pid: child.pid,
+    ...(mirrors ? {
+      mirror: (sock: import('ws').WebSocket, device: DeviceTag) => addMirror(sock, device),
+      mirrorRoom: (device: DeviceTag) => mirrors.room(device),
+      closeMirrors: () => { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super taken back'); },
+      mirrorFrame: (serialised: string) => { mirrors.frame(serialised); },
+    } : {}),
   } : null;
   if (live) registerLiveChat(live);
+  /** A phone joins this Super Agent beside its holder. It reads the turn state like a reattach
+   *  (and replays what it missed from chat-history); the window's prompts are not its own. */
+  function addMirror(sock: import('ws').WebSocket, device: DeviceTag): boolean {
+    if (!mirrors || !alive || handedOff || lingerTimer || lingerKillTimer) return false;
+    if (!mirrors.add(sock, device)) return false;
+    try { sock.send(JSON.stringify({ type: '_meta', subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 })); } catch { /* gone */ }
+    // The pictures on the Mac's stage right now, once: the phone has no stage, and an image card
+    // opened before it joined would otherwise never reach it (D2). Best-effort and async — a
+    // missing or unreadable super record just means no strip.
+    void readSuperState(contextRoot, superSanitizeOpts())
+      .then((st) => {
+        const frame = stageMediaFrame(stageImageItems(st), true);
+        if (frame && sock.readyState === sock.OPEN) sock.send(frame);
+      })
+      .catch(() => { /* no record, no strip */ });
+    return true;
+  }
   /** No socket right now; the reap timers below decide how long that may last. */
   let detached = false;
   let detachedAt = 0;
@@ -1999,6 +2295,62 @@ export function startChatSession(
    *  prompt printed while detached reached no socket, so an adopting socket is handed them
    *  again — otherwise the turn would wait forever on a card nobody can see. */
   const outstandingAsks = new Map<string, string>();
+
+  // ── Parking under load (chat-park.ts) ───────────────────────────────────────────────
+  // A pinned project chat (not the Assistant, not a whiteboard card) can be parked by the
+  // load sweep or `super end`: a `park` frame down THIS socket, answered by the window.
+  const spawnedAt = Date.now();
+  /** The CLI's running background roster (`system:background_tasks_changed`): shells and agents
+   *  a park would kill. */
+  let backgroundTasks = 0;
+  /** The window's last `focus` frame: the owner looked at or typed in this tab. */
+  let focusedAt = 0;
+  let parkAsk: { id: string; settle: (o: ParkOutcome) => void; promise: Promise<ParkOutcome> } | null = null;
+  const PARK_REFUSALS: readonly ParkOutcome[] = ['busy', 'asking', 'background', 'focused'];
+  const parkThis = (reason: string, opts: ParkOptions = {}): Promise<ParkOutcome> => {
+    if (!alive || lingerTimer || lingerKillTimer) return Promise.resolve('already');
+    if (parkAsk) return parkAsk.promise;
+    // No socket (the window closed, the phone slept): nobody to ask, the process just ends.
+    if (detached || ws.readyState !== ws.OPEN) { unregisterPark(); drain(); return Promise.resolve('drained'); }
+    const id = randomUUID();
+    let settle!: (o: ParkOutcome) => void;
+    const promise = new Promise<ParkOutcome>((res) => { settle = res; });
+    const timer = setTimeout(() => { if (parkAsk?.id === id) { parkAsk = null; settle('no_answer'); } }, PARK_ANSWER_MS);
+    timer.unref?.();
+    parkAsk = { id, promise, settle: (o) => { clearTimeout(timer); parkAsk = null; settle(o); } };
+    try { ws.send(JSON.stringify({ type: '_meta', subtype: 'park', id, reason, focusGraceMs: parkFocusGraceMs(), ...(opts.end ? { end: true } : {}), ...(opts.force ? { force: true } : {}) })); }
+    catch { parkAsk.settle('no_answer'); }
+    return promise;
+  };
+  /** The window answered a park frame. Parked: the tab is dormant and its socket is closing;
+   *  that close ends the child (never a detach), and a socket that lingers is drained anyway. */
+  const onParkResult = (r: { id?: unknown; ok?: unknown; error?: unknown }): void => {
+    if (!parkAsk || r.id !== parkAsk.id) return;
+    if (r.ok === true) {
+      endOnSocketGone = true;
+      unregisterPark();
+      const t = setTimeout(() => { if (alive && !detached) drain(); }, 5_000);
+      t.unref?.();
+      parkAsk.settle('parked');
+      return;
+    }
+    const e = typeof r.error === 'string' ? r.error as ParkOutcome : 'refused';
+    parkAsk.settle(PARK_REFUSALS.includes(e) ? e : 'refused');
+  };
+  const unregisterPark = live && !card ? registerParkable({
+    id: live.conversationId,
+    kind: 'chat',
+    projectRoot,
+    pid: child.pid,
+    exempt: () => (isSuper ? 'super' : ownerDevice?.store === 'mac' ? 'phone' : null),
+    busy: () => turnsInFlight > 0,
+    asking: () => outstandingAsks.size > 0 || (registry ? getChat(chatRegistryId)?.status === 'asking' : false),
+    backgroundTasks: () => backgroundTasks,
+    idleSince: () => Math.max(spawnedAt, live.lastTurnEndedAt ?? 0),
+    focusedAt: () => focusedAt,
+    transcriptPath: () => liveTranscriptPath(contextRoot, live.conversationId),
+    park: parkThis,
+  }) : () => { /* never parked */ };
   /** The context handoff in progress (or the last one), drawn live by the chat as a staged
    *  card — see handoff-progress.ts. Replayed to an adopting socket like `outstandingAsks`. */
   let handoffRun: HandoffRun | null = null;
@@ -2023,16 +2375,15 @@ export function startChatSession(
   const closeTurn = (): void => {
     turnsInFlight = 0;
     outstandingAsks.clear();
+    // Every frame written before this result is answered by it (the CLI folds them in one turn).
+    if (voiceArmed) { voiceArmed = false; sendMeta({ subtype: 'voice_turn_end' }); }
     if (live) markTurnEnded(live);
     // A restart owed since mid-turn may go now: say so with `turnInFlight: false`.
     reannounceSwitch();
     armDetachReap();
-    // The Super Agent's event turn is over: what the owner typed during it goes now, ONE
-    // message per turn, in order (D8); the next waits for this one's turn to close.
+    // The Super Agent's event turn is over (an owner message steered into it was answered in
+    // the same `result`); the queue's next batch may go now (D7).
     if (superEventTurnOpen) superEventTurnOpen = false;
-    if (isSuper && heldOwnerFrames.length > 0) setImmediate(releaseOneHeldOwnerFrame);
-    // The queue's next item may go now (D7): queued AFTER the held owner frames, so an owner
-    // message the event turn held still runs first and the pump then finds the chat busy.
     if (isSuper) setImmediate(() => superTurnEnded(chatRegistryId));
   };
   /**
@@ -2044,6 +2395,13 @@ export function startChatSession(
   const settleAfterInterrupt = (): void => {
     interruptSettleTimer = null;
     if (!alive) return;
+    // Stop with no `result`: a "New session" turn never rotates now, and a rotation that will
+    // never see its continue result stops holding the Super Agent's inbox (fresh-session.ts).
+    if (isSuper) {
+      clearFresh(chatRegistryId);
+      if (handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed') setHandoffRun(failHandoffRun(handoffRun, 'stopped'));
+      stopRotating(chatRegistryId);
+    }
     if (turnsInFlight > 0) closeTurn();
     sendMeta({ subtype: 'turn_state', busy: false });
   };
@@ -2059,6 +2417,7 @@ export function startChatSession(
       // A refused opening prompt is the worst one to lose: the user never typed it into a
       // composer they could scroll back to.
       lastSentText = submitPrompt;
+      lastSentSpoken = false;
       turnProgressed = false;
       registry?.userSent(submitPrompt);
       child.stdin.write(JSON.stringify({
@@ -2101,6 +2460,10 @@ export function startChatSession(
       const live = assistantLiveContext();
       if (live) content.push({ type: 'text', text: live });
     }
+    // Every owner message to the Super Agent carries its reference, so its answer can open with
+    // `<!-- re:<ref> -->` and the window draws which message it answers (replyMark.ts). Hashed
+    // from the exact text the window sent; a slash command is no message of his.
+    if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: ownerMsgBlock(text) });
     // The Super Agent hand-over / take-back note (plan-r7 D17) rides on a CHILD's next owner
     // message, the same way: a second, fixed, server-written block starting with `<`, so the
     // replay drops it and the owner's bubble and `userSent` keep his text. Read from memory
@@ -2108,21 +2471,52 @@ export function startChatSession(
     // happened (the note it delivered, nothing written meanwhile).
     const note = registry && !isSuper && !text.startsWith('/') ? peekSuperNote(chatRegistryId) : null;
     if (note) content.push({ type: 'text', text: SUPER_NOTE_TEXT[note] });
+    // The Super Agent's briefing changed since its session began (K9): this owner message
+    // carries the new sections, once; again only after a compaction drops them.
+    const brief = isSuper && superBrief.due && !text.startsWith('/');
+    if (brief) content.push({ type: 'text', text: SUPER_BRIEF_TEXT });
+    // A spoken message to the Super Agent (K1): its answer is read aloud. The window reads
+    // only what streams between `voice_turn` and `voice_turn_end`; an event turn never arms it.
+    const voice = isSuper && spokenTexts.delete(text);
+    if (voice) content.push({ type: 'text', text: OWNER_VOICE_TEXT });
+    // The Super Agent's own question is open: this message answers it, and everything held
+    // back while it was open rides in the SAME message (inbox.ts `superAnswerDigest`), a block
+    // starting with `<` the replay drops.
+    // A message about one agenda line answers the open question only when that line is it.
+    const aboutHead = isSuper ? ABOUT_AGENDA_RE.exec(text) : null;
+    // A reply to one message (its ↩) is about that message, never the open question's answer.
+    const replyHead = isSuper && !aboutHead ? REPLY_TO_RE.exec(text) : null;
+    const about = aboutHead ? { kind: aboutHead[1] as 'note' | 'item', id: aboutHead[2] }
+      : replyHead ? { kind: 'reply' as const, id: replyHead[1] } : null;
+    const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), about) : null;
+    if (held) content.push({ type: 'text', text: held.text });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
+    // Written, and not a slash command: the owner's lease, the running event turn marked
+    // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
+    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], about);
     if (note && wrote) {
       void clearSuperNote(superRootOfChild(chatRegistryId) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }
+    if (brief && wrote) superBrief.due = false;
+    if (voice && wrote && !voiceArmed) { voiceArmed = true; sendMeta({ subtype: 'voice_turn' }); }
+    lastSentSpoken = voice && wrote;
   };
 
   const sendMeta = (frame: Record<string, unknown>): void => {
+    // The inbox's event chip is conversation the phone reads too. Nothing else sent here is the
+    // mirror's, and the window's verbs and state (its token's channel) never leave its socket.
+    if (mirrors && frame.subtype === SUPER_FRAME_EVENT) mirrors.frame(JSON.stringify({ type: '_meta', ...frame }));
     if (ws.readyState === ws.OPEN) {
       try { ws.send(JSON.stringify({ type: '_meta', ...frame })); } catch { /* closing */ }
     }
   };
 
   // The live browser view: watches the override's CDP port once the agent calls a browser tool.
+  // The Super Agent's stage reads every non-super chat's output for a dev-server pin or a
+  // live browser (jarvis S1, S2); a chat that is not a super child returns on the first check.
+  const superSignals = isSuper ? null : createSuperSignalObserver(chatRegistryId, browserOverride?.server ?? null);
   const browserMirror = browserOverride
     ? createBrowserMirror({ port: browserOverride.port, server: browserOverride.server, send: (frame) => sendMeta(frame) })
     : null;
@@ -2207,10 +2601,9 @@ export function startChatSession(
    *  alone. Untracking here (and only here) is what lets a tab-less, still-draining child
    *  remain reapable by the server's own shutdown (`killTrackedChildren`). */
   const teardown = (): void => {
+    if (voiceArmed) { voiceArmed = false; sendMeta({ subtype: 'voice_turn_end' }); }
     if (!alive) return;
     alive = false;
-    // Owner messages held for the Super Agent outlive this process (M2).
-    stashHeldOwnerFrames();
     deviceSessions.delete(deviceSession);
     // A gone child cannot be mid-turn. `armAccountSwitch` checks `exited` too, but leaving a
     // stale count here would be a lie about the one thing only this side can report.
@@ -2222,6 +2615,9 @@ export function startChatSession(
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     stopPing();
     if (live) unregisterLiveChat(live);
+    if (mirrors) { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super ended'); superMirrorSets.delete(mirrors); }
+    unregisterPark();
+    parkAsk?.settle('already');
     untrack();
     releaseHeld();
     cleanupDeferred();
@@ -2230,6 +2626,7 @@ export function startChatSession(
     cleanupModeNote();
     browserMirror?.dispose();
     browserOverride?.dispose();
+    removeLeanMcpConfig(leanMcpPath);
     envelope?.dispose();
     unwatchAuth();
     registry?.exited();
@@ -2254,6 +2651,8 @@ export function startChatSession(
    *  terminal/chat double-attach already has). */
   function drain(): void {
     if (!alive || lingerTimer || lingerKillTimer) return;
+    // The phone's mirrors leave with the stdin: their reconnect lands on the successor.
+    mirrors?.closeAll(MIRROR_CLOSE_ENDED, 'super ended');
     clearDetachTimers();
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     stopPing();
@@ -2267,11 +2666,11 @@ export function startChatSession(
     lingerTimer = setTimeout(() => {
       lingerTimer = null;
       if (!alive) return;
-      try { child.kill(); } catch { /* already gone */ }
+      try { reapChild(child); } catch { /* already gone */ }
       lingerKillTimer = setTimeout(() => {
         lingerKillTimer = null;
         if (!alive) return;
-        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        try { reapChild(child, 'SIGKILL'); } catch { /* already gone */ }
       }, CLOSE_KILL_GRACE_MS);
     }, closeLingerMs());
   }
@@ -2331,7 +2730,7 @@ export function startChatSession(
   }
 
   function bindSocket(): void {
-    ws.on('message', onWsMessage);
+    ws.on('message', onSocketFrame);
     ws.on('close', onSocketGone);
     ws.on('error', onSocketGone);
     startPing();
@@ -2342,7 +2741,7 @@ export function startChatSession(
   function adoptSocket(next: import('ws').WebSocket, how: 'halfopen' | 'takeover' = 'halfopen'): boolean {
     if (!alive || lingerTimer || lingerKillTimer || handedOff || deviceRevoked) return false;
     const prev = ws;
-    prev.off('message', onWsMessage);
+    prev.off('message', onSocketFrame);
     prev.off('close', onSocketGone);
     prev.off('error', onSocketGone);
     // A late error on the abandoned socket must not throw for want of a listener.
@@ -2369,6 +2768,8 @@ export function startChatSession(
     // Tells the client it got the SAME process back and whether a turn is still running —
     // what it missed meanwhile it replays from chat-history.
     sendMeta({ subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 });
+    // A spoken turn still being answered: the new socket reads the rest of it aloud.
+    if (isSuper && voiceArmed) sendMeta({ subtype: 'voice_turn' });
     if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
     for (const line of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
@@ -2455,6 +2856,7 @@ export function startChatSession(
       if (ws.readyState === ws.OPEN) {
         try { ws.send(line); } catch { /* closing */ }
       }
+      mirrors?.line(line);
 
       // Light local parse (type/subtype only — full typed parsing is the CLIENT's job,
       // chatProtocol.ts) so the server knows when an interrupt has actually resolved.
@@ -2465,6 +2867,12 @@ export function startChatSession(
 
       registry?.observe(obj);
       browserMirror?.observe(obj);
+      superSignals?.observe(obj);
+      // A compaction drops the message that carried the briefing update (never the system prompt).
+      if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary' && !superBrief.inPrompt) superBrief.due = true;
+      if (obj.type === 'system' && obj.subtype === 'background_tasks_changed') {
+        backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
+      }
 
       // A prompt the CLI now waits on (or no longer does) — replayed to an adopting socket.
       if (typeof obj.request_id === 'string') {
@@ -2520,13 +2928,22 @@ export function startChatSession(
       // A rotation in progress moves through its stages on these same frames. Read BEFORE the
       // result block below, which may START a run: the frame that triggers a rotation must
       // not also advance it, and `turnsInFlight` must be the count before this frame closes one.
+      const stageBefore = handoffRun?.stage;
+      const turnsBefore = turnsInFlight;
       if (handoffRun) setHandoffRun(advanceHandoffRun(handoffRun, obj, turnsInFlight));
       if (obj.type === 'assistant' && !obj.parent_tool_use_id) {
         const used = contextTokensFromUsage((obj.message as { usage?: Record<string, unknown> } | undefined)?.usage);
         if (used > 0) lastMainContext = used;
       }
 
-      if (obj.type === 'result' && obj.parent_tool_use_id === undefined) {
+      // The API REFUSED this turn. Read ONCE, here, before the result block: the rotation below
+      // must see a refusal that arrives on this very `result` frame (the dispatch further down
+      // uses the same read).
+      const limit = readLimitSignal(obj);
+      /** The ONE main-result predicate this frame uses (rotation, and the latch reset below). */
+      const mainResult = obj.type === 'result' && obj.parent_tool_use_id === undefined;
+
+      if (mainResult) {
         closeTurn();
         // An autonomy change waited for this boundary.
         // Through scheduleRespawn, never straight to respawnInPlace: a message may still be
@@ -2534,47 +2951,34 @@ export function startChatSession(
         // it would lose it.
         if (respawnTo !== null && turnsInFlight === 0) setImmediate(scheduleRespawn);
 
+        // The rotated Super Agent's fresh session finished its first turn: it has read its
+        // handoff, so the inbox may deliver again (handoff-rotation.ts).
+        if (isSuper && isRotating(chatRegistryId) && rotationFinished(stageBefore, turnsBefore)) stopRotating(chatRegistryId);
+
         // ── Context handoff: rotate this pane into a fresh session ────────────
         //
-        // The agent ran `dreamcontext tasks handoff <slug>`, which wrote a record
-        // keyed by THIS pane. A turn boundary is the only safe place to act on it:
-        // `/clear` mid-turn would discard work the agent is still producing.
-        //
-        // `actedAt` is the idempotency latch and this is the ONLY writer of it (the
-        // SessionStart hook owns `consumedAt`, and neither touches the other's
-        // field). Without it, every subsequent result frame in the pane would see
-        // the same record and clear again — an infinite rotation loop.
-        //
-        // The STEP 0 spike verified the mechanism on CLI 2.1.261: `/clear` sent as a
-        // stream-json USER frame rotates the conversation in-process and fires
-        // SessionStart with `source=clear` and a new transcript. So no respawn is
-        // needed, and the pane's websocket, pinned id and tab env all survive.
+        // The agent ran `dreamcontext tasks handoff <slug>` (or the Super Agent `super handoff`),
+        // which wrote a record keyed by THIS pane; or the super's "New session" turn ended with
+        // none, and the fallback runs. A turn boundary is the only safe place to act on it:
+        // `/clear` mid-turn would discard work the agent is still producing. One decision per
+        // frame, in handoff-rotation.ts.
         try {
-          const handoffPane = pinId;
-          const pending = handoffPane ? readHandoffRecord(contextRoot, handoffPane) : null;
-          if (shouldRotateForHandoff(pending) && pending) {
-            stampHandoffRecord(contextRoot, handoffPane, { actedAt: new Date().toISOString() });
-
-            // Both are USER frames, so both open turns — counted for the same reason
-            // the opening prompt and `/effort` are (see turnsInFlight's header).
-            openTurn();
-            writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/clear' }] } });
-
-            const continuePrompt = `Handoff: continue task ${pending.title} (${pending.task}). `
-              + `Read _dream_context/state/${pending.task}.md first, then carry on from its latest changelog entry.`;
-            openTurn();
-            writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: continuePrompt }] } });
-
+          handleRotationAtResult({
+            contextRoot,
+            pane: pinId,
+            isSuper,
+            frame: obj,
+            isLimit: limitHitThisTurn || !!limit,
+            observedConversation,
+            lastMainContext,
+            writeUserTurn: (text) => {
+              openTurn();
+              writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+            },
             // Its own frame, not the branch notice's one-liner: the chat draws the run as it
-            // happens (handoff-progress.ts), so "it is happening" is on screen from now on
-            // rather than a sentence sent after it was over.
-            setHandoffRun(startHandoffRun({
-              task: pending.task,
-              title: pending.title,
-              contextTokens: pending.contextTokens ?? lastMainContext,
-              fromSession: observedConversation,
-            }));
-          }
+            // happens (handoff-progress.ts), so "it is happening" is on screen from now on.
+            startRun: (run) => setHandoffRun(run),
+          });
         } catch (handoffErr) {
           // A failed rotation must leave the pane exactly as it was — still usable,
           // just not rotated. The agent can always hand off again.
@@ -2582,6 +2986,7 @@ export function startChatSession(
           const failed = handoffRun ? failHandoffRun(handoffRun, message) : null;
           if (failed) setHandoffRun(failed);
           else sendMeta(handoffProgressFrame({ id: Date.now(), stage: 'failed', task: '', title: '', message }));
+          if (isSuper) stopRotating(chatRegistryId);
         }
       }
 
@@ -2592,13 +2997,21 @@ export function startChatSession(
       // nothing at all when there is nowhere to move it to.
       //
       // A SUB-AGENT's rejection counts too, and deliberately so: it drew on the same account
-      // quota, and the main turn it belongs to is about to fail for the same reason.
-      const limit = readLimitSignal(obj);
+      // quota, and the main turn it belongs to is about to fail for the same reason. (`limit`
+      // was read once, above the result block.)
       // Every turn states this account's usage exactly; kept, so the panel and the chooser read
       // what the account said a moment ago rather than a cache up to an hour old.
       if (obj.type === 'rate_limit_event') noteTurnUsage(obj);
       if (limit) onLimitRejected(limit);
+      else if (!obj.parent_tool_use_id && isAuthFailureFrame(obj)) onAuthFailed();
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
+      // A turn that went through says the account is signed in again (claude-signed-out.ts).
+      if (obj.type === 'result' && !obj.parent_tool_use_id) {
+        if (!authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
+        authFailedTurn = false;
+      }
+      // After this frame's own refusal was dispatched (it may set the latch again): the turn is over.
+      if (mainResult) limitHitThisTurn = false;
       // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
       // turn's end the text has been answered, so a LATER refusal (a background task's turn,
       // which no user frame of ours opened) must not resubmit it.
@@ -2666,6 +3079,9 @@ export function startChatSession(
 
   child.on('close', (code) => {
     teardown();
+    // Before the respawn's early return too: a successor starts with no handoff run, so nothing
+    // would ever end this process's rotation hold but the 120 s cap.
+    if (isSuper) { clearFresh(chatRegistryId); stopRotating(chatRegistryId); }
     if (handedOff) { spawnSuccessor(); return; }
     if (handoffRun) setHandoffRun(failHandoffRun(handoffRun, 'The session exited before the fresh one answered.'));
     sendMeta({ subtype: 'exit', code });
@@ -2726,6 +3142,8 @@ export function startChatSession(
       ...pendingSwitchFrame,
       turnInFlight: turnsInFlight > 0,
       ...(heldTexts.length > 0 ? { pendingText: heldTexts[0], pendingTexts: [...heldTexts] } : {}),
+      // The spoken ones stay spoken through the restart (the client resubmits them, K1).
+      ...(isSuper && heldTexts.some((t) => spokenTexts.has(t)) ? { pendingSpoken: heldTexts.filter((t) => spokenTexts.has(t)) } : {}),
     });
     armSwitchStall();
   };
@@ -2969,6 +3387,8 @@ export function startChatSession(
       until: previousResetAt ?? null,
     });
     heldTexts = resubmit && text ? [text] : [];
+    // The refused message is resent after the restart: if it was spoken, it stays spoken (K1).
+    if (isSuper && resubmit && text && lastSentSpoken && text === lastSentText) spokenTexts.add(text);
     // The system chose this account, so the reopened pane is still free to come home later.
     noteAutoPlaced(pinId, target.id);
     if (cause !== 'come_home' && activeAccountId) {
@@ -3024,6 +3444,9 @@ export function startChatSession(
    * visible half; the memory is the half that makes it stay fixed.
    */
   const onLimitRejected = (signal: LimitSignal): void => {
+    // Before any early return: a refusal anywhere in the turn holds its rotation (only while a
+    // turn of ours is open — a background task's late refusal belongs to no turn).
+    if (turnsInFlight > 0) limitHitThisTurn = true;
     if (switchPending) return;
     const recorded = recordAccountRejection(activeAccountId, signal);
     // A restart this pane could not perform: the refusal is on screen as the CLI wrote it, and
@@ -3043,6 +3466,8 @@ export function startChatSession(
       return;
     }
     if (listClaudeAccounts().length < 2) return;   // nothing to switch to
+    // A switch really happens from here on: the refused turn is not a stuck child (plan r4 D6).
+    registry?.markLimited();
 
     // The turn that was refused may not be one WE sent: a background task finishing, or a
     // sub-agent, starts a turn inside the CLI with no user frame from us. Or it was ours but
@@ -3063,6 +3488,26 @@ export function startChatSession(
     switchGate = switchGate.then(() => (switchPending
       ? false
       : decideAndAnnounce(text ?? '', 'limit_hit', { id: activeAccountId, problem: 'unknown' }, undefined, !!text)
+        .catch(() => false)));
+  };
+
+  /**
+   * The CLI says this account is SIGNED OUT (field 2026-10-21: sessions stalled on "/login" on
+   * a lapsed account while a signed-in one sat idle). Unlike a usage limit this is no forecast
+   * and nothing here can fix it, so the pane moves to a signed-in account whatever auto-switch
+   * says, the same way a refused turn does; the record keeps new chats off it too.
+   */
+  const onAuthFailed = (): void => {
+    authFailedTurn = true;
+    if (activeAccountId) recordSignedOut(activeAccountId);
+    if (switchPending || switchAbandoned) return;
+    if (listClaudeAccounts().length < 2) return;   // nowhere to go: the banner says sign in
+    const text = isAssistant
+      ? lastSentText
+      : lastSentText && !turnProgressed ? lastSentText : AUTH_CONTINUE_TEXT;
+    switchGate = switchGate.then(() => (switchPending
+      ? false
+      : decideAndAnnounce(text ?? '', 'needs_relogin', { id: activeAccountId, problem: 'needs-relogin' }, undefined, !!text)
         .catch(() => false)));
   };
 
@@ -3220,65 +3665,42 @@ export function startChatSession(
     });
   }
 
-  // The Super Agent's inbox (lib/super/inbox.ts): ONE injected event per turn, down the same
-  // chain as an owner message (account switch evaluated first), only while nothing else runs.
-  // The pump decides WHEN (D7); this only writes, and says so with a `super_event` frame first
-  // so the window draws the injected turn as an event chip.
+  // The Super Agent's inbox (lib/super/inbox.ts): ONE injected `[super events]` turn at a time,
+  // down the same chain as an owner message (account switch evaluated first), only while
+  // nothing else runs. The pump decides WHEN (D7); this only writes, and says so with a
+  // `super_event` frame first (the batch and its items) so the window draws the turn as one line.
   if (isSuper && pinId) {
-    // What a previous process of this super session held when it died: written here first, one
-    // per turn, before any event (M2).
-    for (const text of takeHeldOwnerTexts(chatRegistryId)) heldOwnerFrames.push(JSON.stringify({ type: 'user', text }));
-    if (heldOwnerFrames.length > 0) setImmediate(releaseOneHeldOwnerFrame);
     detachInbox = attachSuperInbox({
       id: randomUUID(),
       sessionId: chatRegistryId,
       attached: () => alive && !detached && ws.readyState === ws.OPEN,
-      idle: () => turnsInFlight === 0 && !superEventTurnOpen && heldOwnerFrames.length === 0 && !stdinEnding(),
-      deliver: (text, kind, childId, cancelled) => new Promise<boolean>((resolve) => {
-        // `cancelled`: the inbox gave up waiting (a slow account switch); the item is still
+      idle: () => turnsInFlight === 0 && !superEventTurnOpen && !stdinEnding(),
+      deliver: (text, event, cancelled) => new Promise<boolean>((resolve) => {
+        // `cancelled`: the inbox gave up waiting (a slow account switch); the items are still
         // pending there, so this turn must never be written late.
-        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || heldOwnerFrames.length > 0 || stdinEnding() || !!cancelled?.();
+        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || !!cancelled?.();
         if (blocked()) return resolve(false);
         switchGate = switchGate.then(() => maybeSwitchAccount(text, { resubmit: false })
           .catch(() => false)
           .then((held) => {
             // An owner message that went first in the chain wins: this event waits for idle.
             if (held || blocked()) return resolve(false);
-            sendMeta({ subtype: SUPER_FRAME_EVENT, kind, child: childId });
+            sendMeta({ subtype: SUPER_FRAME_EVENT, ...event });
             openTurn();
             lastSentText = null;
             superEventTurnOpen = true;
             registry?.userSent('');
             const wrote = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
             if (!wrote) superEventTurnOpen = false;
+            // The owner's "New session" turn is out: its result rotates the pane even when the
+            // super writes no handoff (handoff-rotation.ts). Only after a write that landed.
+            else if (event.kind === 'fresh' && event.batch) markFreshDelivered(chatRegistryId, event.batch);
             resolve(wrote);
           }));
       }),
     });
   }
 
-  /** The oldest owner frame held for the Super Agent, written now as its own turn (D8). A dead
-   *  process never drops them: they go to its successor (M2). */
-  function releaseOneHeldOwnerFrame(): void {
-    if (!alive) { stashHeldOwnerFrames(); return; }
-    if (superEventTurnOpen || turnsInFlight > 0 || heldOwnerFrames.length === 0) return;
-    const raw = heldOwnerFrames.shift() as Buffer | string;
-    releasingHeld = true;
-    try { onWsMessage(raw); } finally { releasingHeld = false; }
-  }
-
-  /** Hand every held owner text to the next process of this super session (exactly once). */
-  function stashHeldOwnerFrames(): void {
-    if (!isSuper || heldOwnerFrames.length === 0) return;
-    const texts: string[] = [];
-    for (const raw of heldOwnerFrames.splice(0)) {
-      try {
-        const m = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf-8')) as { text?: unknown };
-        if (typeof m.text === 'string' && m.text) texts.push(m.text);
-      } catch { /* not a user frame */ }
-    }
-    stashHeldOwnerTexts(chatRegistryId, texts);
-  }
 
   // ── Autonomy changed under a live Assistant → respawn in place with --resume ─────────
   //
@@ -3334,8 +3756,9 @@ export function startChatSession(
     // The socket already went (draining): the next summon spawns under the new autonomy anyway.
     if (lingerTimer || lingerKillTimer || ws.readyState !== ws.OPEN) return;
     handedOff = true;
+    mirrors?.closeAll(MIRROR_CLOSE_ENDED, 'super restarting');
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
-    ws.off('message', onWsMessage);
+    ws.off('message', onSocketFrame);
     ws.off('close', onSocketGone);
     ws.off('error', onSocketGone);
     ws.on('message', holdFrame);
@@ -3346,7 +3769,7 @@ export function startChatSession(
     lingerKillTimer = setTimeout(() => {
       lingerKillTimer = null;
       if (!alive) return;
-      try { child.kill(); } catch { /* already gone */ }
+      try { reapChild(child); } catch { /* already gone */ }
     }, CLOSE_KILL_GRACE_MS);
   }
 
@@ -3371,6 +3794,17 @@ export function startChatSession(
   }
 
   // ── ws → claude stdin (client control frames) ──────────────────────────────────────
+  /** A frame from the HOLDER's socket. The owner's words typed there are shown on the Super
+   *  Agent's phone mirrors before the chat takes them; re-entries (`onWsMessage` on a held
+   *  frame) never echo twice. */
+  function onSocketFrame(raw: Buffer | string): void {
+    if (mirrors?.size && alive) {
+      const text = mirrorOwnerText(raw);
+      if (text !== null) mirrors.echo(text, ws);
+    }
+    onWsMessage(raw);
+  }
+
   function onWsMessage(raw: Buffer | string): void {
     if (!alive) return;
     // Defence in depth (AC3): a frame from a device that is no longer signed in acts on nothing.
@@ -3379,7 +3813,7 @@ export function startChatSession(
     let msg: {
       type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
       message?: string; model?: string; effort?: string; targetUuid?: string; mode?: string;
-      taskId?: string; enabled?: boolean; visible?: boolean;
+      taskId?: string; enabled?: boolean; visible?: boolean; voice?: boolean;
     };
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
@@ -3396,10 +3830,10 @@ export function startChatSession(
       // is for the successor — it must not run under the old permissions. (Only user frames:
       // an answer or an interrupt belongs to the turn in flight.)
       if (respawnTo !== null) { holdForSuccessor(raw); return; }
-      // The Super Agent is answering an injected event: the owner's message waits for that
-      // turn's end and then runs as its own turn (D8), never folded into the event's.
-      // Held too while earlier held messages wait their turn, so the owner's order is kept.
-      if (isSuper && !releasingHeld && (superEventTurnOpen || heldOwnerFrames.length > 0)) { heldOwnerFrames.push(raw); return; }
+      // The Super Agent's owner message is never held behind an event turn: it is written at
+      // once and folded into whatever turn runs (plan r4 D4), as Enter does in every chat.
+      // A spoken message (the frame's `voice`) stays spoken through the account-switch gate.
+      if (isSuper && msg.voice === true) spokenTexts.add(msg.text);
       // Auto-switch evaluates BEFORE the turn goes to the CLI — the whole point is that the
       // message does not have to fail first. `maybeSwitchAccount` either sends the turn on
       // this account (the overwhelmingly common answer, and the answer whenever anything is
@@ -3409,7 +3843,11 @@ export function startChatSession(
       // now behind a human turn, so the taint clears (autonomy.ts).
       if (isAssistant) clearTaint();
       // Appended to the chain, never fired concurrently — see `switchGate`.
-      switchGate = switchGate.then(() => maybeSwitchAccount(text)
+      // A phone's words with no window attached WHEN THE GATE REACHES THEM: nobody could perform
+      // an account switch's restart, so a held text would die with the idle reap. They go out on
+      // this account instead (decided when the gate reaches them, not when they arrived).
+      const fromMirror = typeof raw !== 'string' && mirrorFrames.has(raw);
+      switchGate = switchGate.then(() => (fromMirror && detached ? Promise.resolve(false) : maybeSwitchAccount(text))
         // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
         // never swallowed" would hold for every decision the chooser can make and fail for
         // the one case nobody planned: an unexpected error on the way to making it.
@@ -3578,6 +4016,20 @@ export function startChatSession(
       return;
     }
 
+    // The window looked at / typed in this tab (at most once per 30 s): it is the owner's.
+    if (msg.type === 'focus') { focusedAt = Date.now(); return; }
+    // The owner took queued rows back (deleted, edited, held): a super child's outbox copy goes
+    // too, so a relaunch cannot bring them back (lib/super/outbox.ts).
+    if (msg.type === 'queue_dropped') {
+      const texts = Array.isArray((msg as { texts?: unknown }).texts)
+        ? ((msg as { texts: unknown[] }).texts).filter((t): t is string => typeof t === 'string').slice(0, 50)
+        : [];
+      const root = pinId ? superRootOfChild(pinId) : null;
+      if (root && texts.length) void dropFromOutbox(root, pinId, texts).catch((err) => console.warn(`[super outbox] drop failed: ${(err as Error).message}`));
+      return;
+    }
+    if (msg.type === 'park_result') { onParkResult(msg as unknown as { id?: unknown; ok?: unknown; error?: unknown }); return; }
+
     if (windowControl && msg.type === 'window_command_result') {
       const r = msg as unknown as { id?: unknown; ok?: unknown; result?: unknown; error?: unknown };
       deliverWindowResult(windowControl.token, r.id, r.ok === true
@@ -3596,6 +4048,9 @@ export function startChatSession(
     }
 
     if (msg.type === 'interrupt') {
+      // Stop holds the window's queue: what the outbox kept for this child is held with it.
+      const stopRoot = pinId ? superRootOfChild(pinId) : null;
+      if (stopRoot) void dropFromOutbox(stopRoot, pinId).catch((err) => console.warn(`[super outbox] drop failed: ${(err as Error).message}`));
       // Empirically verified against claude 2.1.218 (scratch-dir experiment): a
       // control_request{subtype:'interrupt'} on stdin aborts the in-flight turn — the CLI
       // echoes a control_response, emits a synthetic rejected tool_result + "[Request
@@ -3613,7 +4068,7 @@ export function startChatSession(
         interruptKillTimer = setTimeout(() => {
           interruptKillTimer = null;
           if (!alive) return;
-          try { child.kill(); } catch { /* already gone */ }
+          try { reapChild(child); } catch { /* already gone */ }
         }, INTERRUPT_KILL_GRACE_MS);
       }, INTERRUPT_WATCHDOG_MS);
       return;
@@ -3813,6 +4268,38 @@ export function computeBackgroundOutput(contextRoot: string, taskId: string, cla
  *  image bytes so a huge PNG can't be requested through this endpoint either. */
 const AGENT_FILE_MAX_BYTES = 512 * 1024;
 
+/** A web page (`.html`/`.htm`) has its own, larger text cap: a mockup carries its pictures
+ *  inline as base64 (one owner file was 596 KB and read as "could not be read", 2026-10-22).
+ *  Still read whole into the JSON body, and still drawn only in the strict, network-less
+ *  sandbox, so the cap stays a ceiling, not a stream. */
+const AGENT_FILE_HTML_MAX_BYTES = 8 * 1024 * 1024;
+
+/** An Excalidraw board (`*.excalidraw.md`) shares that larger cap: its scene JSON grows fast
+ *  (a 202-element whiteboard was 827 KB), and over the preview cap every board card — the
+ *  Super stage's `whiteboard` and `board` containers, a chat embed — drew "couldn't be read"
+ *  (2026-10-23). The whiteboards page reads the same file uncapped. */
+const AGENT_FILE_BOARD_MAX_BYTES = AGENT_FILE_HTML_MAX_BYTES;
+
+/** The text-preview cap for one file: a web page and a board get the larger one. */
+export function agentFileTextCap(abs: string): number {
+  const lower = abs.toLowerCase();
+  if (lower.endsWith('.excalidraw.md') || lower.endsWith('.excalidraw')) return AGENT_FILE_BOARD_MAX_BYTES;
+  const ext = extname(lower);
+  return ext === '.html' || ext === '.htm' ? AGENT_FILE_HTML_MAX_BYTES : AGENT_FILE_MAX_BYTES;
+}
+
+/** A file over its branch's cap: the size and the limit ride along, so a card can say how big
+ *  it is and what the limit is instead of "could not be read". */
+function sendTooLarge(res: ServerResponse, size: number, limit: number, message: string): void {
+  sendJson(res, 413, { error: 'too_large', message, size, limit });
+}
+
+/** `?probe=1`: everything a read would check has passed and the file fits its branch's cap,
+ *  answered without reading a byte (a card asking "will this load?" before it mounts a reader). */
+function sendProbe(res: ServerResponse, size: number, limit: number): void {
+  sendJson(res, 200, { probe: true, size, limit });
+}
+
 /** Extensions servable as raw image bytes via `?raw=1`. SVG is NOT in this map: it can embed
  *  `<script>`/`foreignObject`, so it has its own arm in `handleAgentFile` — raw bytes for an
  *  `<img>` (which never runs an SVG's script) under a `sandbox` CSP that keeps a direct
@@ -3999,10 +4486,18 @@ export async function handleAgentFile(
   if (!rawPath) { sendError(res, 400, 'missing_path', 'Query parameter "path" is required.'); return; }
 
 
-  // A Mac-mode phone: the project root only, grants ignored — a grant is the desktop owner's
-  // consent for THEIR screen, and the phone is another trust level.
-  const resolved = isPhoneSocket(req) ? resolveServablePath(contextRoot, rawPath, { grants: false }) : resolveServablePath(contextRoot, rawPath);
-  if ('deny' in resolved) {
+  // A Mac-mode phone: the desktop's grants never count — they are the owner's consent for the
+  // Mac's own screen. Outside the project the phone sees MEDIA only, by its own rules
+  // (`phoneOutsideMedia`): its own linked repos and worktrees without asking, anything else after
+  // a one-tap phone grant, a project not chosen at start never.
+  const phone = isPhoneSocket(req);
+  const resolved = phone ? resolveServablePath(contextRoot, rawPath, { grants: false }) : resolveServablePath(contextRoot, rawPath);
+  let phoneMedia: { abs: string; type: string } | null = null;
+  if ('deny' in resolved && phone && resolved.deny === 'outside' && resolved.abs) {
+    const v = await phoneOutsideMedia(req, contextRoot, resolved.abs, { granted: true });
+    if ('deny' in v) { sendPhoneOutsideRefusal(res, v, rawPath); return; }
+    phoneMedia = v;
+  } else if ('deny' in resolved) {
     if (resolved.deny === 'needs_grant') {
       // NOT a refusal the UI should render as an error: it is the prompt to ask the user.
       // `path` is the RESOLVED file, so the card can name it and grant exactly it — the
@@ -4017,11 +4512,23 @@ export async function handleAgentFile(
     }
     return;
   }
-  const abs = resolved.abs;
+  const abs = phoneMedia ? phoneMedia.abs : (resolved as { abs: string }).abs;
   if (!existsSync(abs)) { sendError(res, 404, 'not_found', `File not found: ${rawPath}`); return; }
 
   let st: ReturnType<typeof statSync>;
   try { st = statSync(abs); } catch { sendError(res, 404, 'not_found', `File not found: ${rawPath}`); return; }
+
+  // The phone, outside the project: the media stream and nothing else — never a folder listing,
+  // a text preview or a probe of anything but the media it may see.
+  if (phoneMedia) {
+    if (!st.isFile()) { sendError(res, 404, 'not_found', `Not a file: ${rawPath}`); return; }
+    const url0 = new URL(req.url || '/', `http://${req.headers.host}`);
+    if (url0.searchParams.get('raw') !== '1') { sendError(res, 403, 'phone_media_only', 'Outside the project the phone shows pictures, audio and video only.'); return; }
+    if (st.size > AGENT_MEDIA_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_MEDIA_MAX_BYTES, 'File is too large to stream.'); return; }
+    if (url0.searchParams.get('probe') === '1') { sendProbe(res, st.size, AGENT_MEDIA_MAX_BYTES); return; }
+    serveMedia(req, res, abs, st.size, phoneMedia.type);
+    return;
+  }
 
   // A DIRECTORY answers with its listing — a folder named in the transcript is something to
   // look inside, not an error.
@@ -4031,6 +4538,7 @@ export async function handleAgentFile(
   const ext = extname(abs).toLowerCase();
   const rawType = AGENT_FILE_RAW_CONTENT_TYPE[ext];
   const wantsRaw = url.searchParams.get('raw') === '1';
+  const probe = url.searchParams.get('probe') === '1';
 
   // AN SVG, AS AN IMAGE — for the Lightbox's `<img>` (Chat and the Agents page both open an
   // `.svg` there). An `<img>` never executes an SVG's script; `sandbox` plus `default-src
@@ -4038,7 +4546,8 @@ export async function handleAgentFile(
   // origin, nothing fetched); `nosniff` is set above. Capped like a text preview: an SVG is
   // markup, and a huge one is a generated artifact, not a picture.
   if (wantsRaw && ext === '.svg') {
-    if (st.size > AGENT_FILE_MAX_BYTES) { sendError(res, 413, 'too_large', 'File exceeds the preview size cap.'); return; }
+    if (st.size > AGENT_FILE_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_FILE_MAX_BYTES, 'File exceeds the preview size cap.'); return; }
+    if (probe) { sendProbe(res, st.size, AGENT_FILE_MAX_BYTES); return; }
     res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     res.setHeader('Content-Disposition', 'inline');
     serveMedia(req, res, abs, st.size, 'image/svg+xml');
@@ -4046,7 +4555,8 @@ export async function handleAgentFile(
   }
 
   if (wantsRaw && rawType) {
-    if (st.size > AGENT_MEDIA_MAX_BYTES) { sendError(res, 413, 'too_large', 'File is too large to stream.'); return; }
+    if (st.size > AGENT_MEDIA_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_MEDIA_MAX_BYTES, 'File is too large to stream.'); return; }
+    if (probe) { sendProbe(res, st.size, AGENT_MEDIA_MAX_BYTES); return; }
     // A document is DISPLAYED, never downloaded: without this an engine that has no built-in
     // viewer for the type falls back to saving it, which from the user's side reads as "the
     // viewer opened and nothing happened, and now there's a file in Downloads". `nosniff` is
@@ -4056,8 +4566,11 @@ export async function handleAgentFile(
     return;
   }
 
-  // Text preview keeps the tight cap: this branch reads the whole file into a JSON body.
-  if (st.size > AGENT_FILE_MAX_BYTES) { sendError(res, 413, 'too_large', 'File exceeds the preview size cap.'); return; }
+  // Text preview keeps the tight cap: this branch reads the whole file into a JSON body. A web
+  // page (its pictures ride inline) and an Excalidraw board (its scene JSON) get the larger one.
+  const textCap = agentFileTextCap(abs);
+  if (st.size > textCap) { sendTooLarge(res, st.size, textCap, 'File exceeds the preview size cap.'); return; }
+  if (probe) { sendProbe(res, st.size, textCap); return; }
   let content: string;
   try { content = readFileSync(abs, 'utf-8'); } catch { sendError(res, 500, 'read_failed', 'Failed to read file.'); return; }
   sendJson(res, 200, { path: rawPath, type: ext === '.md' ? 'markdown' : 'text', content });
@@ -4164,7 +4677,15 @@ export async function handleAgentGrant(
     if (typeof body.path === 'string') target = body.path;
   } catch { /* invalid body → the guard below */ }
 
-  if (!target.startsWith('/') || target.includes('\0') || target.includes('/../') || target.endsWith('/..')) {
+  // win32: a `//host/share` spelling passes the `/` test, and the stat below would send the user's
+  // NTLM hash to that host (see resolveChatReference).
+  // Absolute, literal, local: `/…` on POSIX; a drive path (`C:\…`, `C:/…`) on Windows, where a
+  // `//host/share` spelling would make the stat below send the user's NTLM hash to that host
+  // (see resolveChatReference). No climb segment in either separator.
+  const win = process.platform === 'win32';
+  const absolute = win ? /^[A-Za-z]:[\\/]/.test(target) : target.startsWith('/');
+  const climb = win ? /(^|[\\/])\.\.([\\/]|$)/ : /(^|\/)\.\.(\/|$)/;
+  if (!absolute || target.includes('\0') || climb.test(target)) {
     sendError(res, 400, 'invalid_path', 'An absolute, literal file path is required.');
     return;
   }
@@ -4174,6 +4695,209 @@ export async function handleAgentGrant(
 
   addGrant(contextRoot, target);
   sendJson(res, 200, { granted: true, path: target });
+}
+
+// ─── The hands-free phone, outside the project ──────────────────────────────────────
+//
+// Task hands-free-phone-shows-every-picture… (owner 2026-10-23). The Super Agent's pictures live
+// in its children's worktrees, the linked repo and /tmp — all outside the brain project — and the
+// phone used to refuse every one with a 400. Now, decided on the REAL path, media only:
+//   • a file inside a project the owner did not choose at start → refused (`other_project`), first;
+//   • under the request project's own worktrees, linked repos or theirs → shown;
+//   • anywhere else → shown after the phone's one-tap grant for that file (`needs_phone_grant`).
+// Raster images must also SAY so in their bytes; a symlink named `.mp4` that points at a text
+// file is judged by what it points at.
+
+type PhoneOutside =
+  | { abs: string; type: string }
+  | { deny: 'other_project' | 'needs_phone_grant' | 'phone_media_only' | 'not_found'; abs: string };
+
+async function phoneOutsideMedia(
+  req: IncomingMessage,
+  contextRoot: string,
+  abs: string,
+  /** `granted`: honour this device's phone grants (the file route). The grant route passes false. */
+  opts: { granted: boolean },
+): Promise<PhoneOutside> {
+  let realAbs = abs;
+  let missing = false;
+  // Any path that cannot be resolved (missing, not a directory, unreadable) answers the same,
+  // so the phone cannot tell those apart by probing.
+  try { realAbs = realpathSync.native(abs); } catch { missing = true; }
+  // The boundary first: nothing below may serve a file inside an unchosen project.
+  const roots = await phoneMediaRoots(projectRootOf(contextRoot), macExposedVaults());
+  const verdict = phoneMediaVerdict(realAbs, roots);
+  if (verdict === 'other') return { deny: 'other_project', abs };
+  const type = AGENT_FILE_MEDIA_CONTENT_TYPE[extname(realAbs).toLowerCase()];
+  if (!type) return { deny: 'phone_media_only', abs };
+  // The card names the path as REQUESTED (resolved, not followed): where a symlink points is not
+  // the phone's to learn before it is allowed. The grant route resolves it again.
+  // A file that is not there is not found, whatever its verdict: a "Show" that can only answer
+  // 404 is a button that does nothing (a merged child's worktree, a rebooted /tmp).
+  if (missing) return { deny: 'not_found', abs };
+  if (verdict === 'ask' && opts.granted && !hasPhoneFileGrant(authFor(req) ? deviceIdHash(req) : null, realAbs)) {
+    return { deny: 'needs_phone_grant', abs };
+  }
+  // A regular file only: opening a FIFO named `x.png` would block the event loop.
+  let regular = false;
+  try { regular = statSync(realAbs).isFile(); } catch { /* raced away */ }
+  if (!regular) return { deny: 'not_found', abs };
+  if (type.startsWith('image/')) {
+    let head: Buffer | null = null;
+    try {
+      const fd = openSync(realAbs, 'r');
+      try { head = Buffer.alloc(16); readSync(fd, head, 0, 16, 0); } finally { closeSync(fd); }
+    } catch { head = null; }
+    if (!head || sniffImageType(head) !== type) return { deny: 'phone_media_only', abs };
+  }
+  return { abs: realAbs, type };
+}
+
+function sendPhoneOutsideRefusal(res: ServerResponse, v: { deny: string; abs: string }, rawPath: string): void {
+  if (v.deny === 'needs_phone_grant') {
+    // The prompt to ask, not an error: `path` is the REAL file, which is what a grant records.
+    sendJson(res, 403, { error: 'needs_phone_grant', message: 'Outside the project — tap Show to see it on this phone.', path: v.abs });
+  } else if (v.deny === 'other_project') {
+    // No path, no card button: this file is never the phone's to see.
+    sendJson(res, 403, { error: 'other_project', message: 'This file is inside a project this phone cannot open.' });
+  } else if (v.deny === 'not_found') {
+    sendError(res, 404, 'not_found', `File not found: ${rawPath}`);
+  } else {
+    sendJson(res, 403, { error: 'phone_media_only', message: 'Outside the project the phone shows pictures, audio and video only.' });
+  }
+}
+
+/**
+ * POST /api/agent/phone-grant — the hands-free phone allowing ONE media file outside the project,
+ * for that device only (phone-file-grants.ts: memory, ends with the device's session or the run).
+ * Re-runs every rule of the file route — the boundary, media only, the bytes — so a grant can
+ * never reach what the route itself would refuse. Body: `{ path }`, the absolute path the file
+ * route answered `needs_phone_grant` with.
+ */
+export async function handleAgentPhoneGrant(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!isPhoneSocket(req)) { sendError(res, 403, 'phone_only', 'Only the hands-free phone grants itself a file.'); return; }
+  const device = authFor(req) ? deviceIdHash(req) : null;
+  if (!device) { sendError(res, 401, 'unauthenticated', 'Sign in first.'); return; }
+  // The run and the device this grant is for, taken BEFORE the awaits: a Mac-mode restart or a
+  // revoke landing meanwhile must not leave a grant behind in the next run.
+  const epoch = macExposedEpoch();
+  const body = await parseJsonBody(req);
+  const target = typeof body?.path === 'string' ? body.path : '';
+  if (!target.startsWith('/') || target.length > 4096 || target.includes('\0')) {
+    sendError(res, 400, 'invalid_path', 'An absolute file path is required.');
+    return;
+  }
+  const resolved = resolveServablePath(contextRoot, target, { grants: false });
+  // Inside the project there is nothing to grant: the file route already serves it.
+  if (!('deny' in resolved)) { sendJson(res, 200, { granted: true, inside: true }); return; }
+  if (resolved.deny !== 'outside' || !resolved.abs) { sendError(res, 400, 'invalid_path', 'That path cannot be read.'); return; }
+  const v = await phoneOutsideMedia(req, contextRoot, resolved.abs, { granted: false });
+  if ('deny' in v) { sendPhoneOutsideRefusal(res, v, target); return; }
+  let isFile = false;
+  try { isFile = statSync(v.abs).isFile(); } catch { /* gone */ }
+  if (!isFile) { sendError(res, 404, 'not_found', `File not found: ${target}`); return; }
+  let stillSignedIn = false;
+  try { stillSignedIn = macHandsfreeAuth().store.isValidDeviceHash(device); } catch { /* unknown: refuse */ }
+  if (epoch !== macExposedEpoch() || !stillSignedIn) { sendError(res, 409, 'stale', 'Hands-free changed meanwhile; try again.'); return; }
+  addPhoneFileGrant(device, v.abs);
+  sendJson(res, 200, { granted: true, path: v.abs });
+}
+
+/** The owner's own window: desktop app, this machine, a loopback Host, and this very origin
+ *  (port included). A page on another loopback port (an approved dev server in a web card)
+ *  can neither read nor write a grant (T0, AC3). Sends the 403. */
+function requireGrantOwner(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!requireLocalDesktop(req, res)) return false;
+  if (!isSameOriginStrict(req) || isCrossSiteRequest(req)) {
+    sendError(res, 403, 'forbidden', 'Only this app\'s own window can change what a web card may load.');
+    return false;
+  }
+  return true;
+}
+
+function vaultRealPath(contextRoot: string): string {
+  try { return realpathSync(contextRoot); } catch { return resolve(contextRoot); }
+}
+
+/**
+ * GET /api/agent/loopback-grants — the loopback ports this vault's web cards may load without
+ * asking (`~/.dreamcontext/loopback-grants.json`), and the ports this process owns right now,
+ * which no card may ever load (the window refuses them too: they change every launch).
+ */
+export async function handleLoopbackGrantsGet(
+  req: IncomingMessage, res: ServerResponse, _params: Record<string, string>, contextRoot: string,
+): Promise<void> {
+  if (!requireGrantOwner(req, res)) return;
+  const owned = ownedLoopbackPorts();
+  sendJson(res, 200, { grants: readLoopbackGrants(vaultRealPath(contextRoot), owned), ownedPorts: [...owned].sort((a, b) => a - b) });
+}
+
+/** POST /api/agent/loopback-grant `{port, op:'grant'|'revoke'}` — the owner's "Always allow
+ *  localhost:PORT" in a web card, or its removal in Settings. Never an owned port. */
+export async function handleLoopbackGrantSet(
+  req: IncomingMessage, res: ServerResponse, _params: Record<string, string>, contextRoot: string,
+): Promise<void> {
+  if (!requireGrantOwner(req, res)) return;
+  const body = (await parseJsonBody(req)) ?? {};
+  const port = body.port;
+  const op = body.op === 'revoke' ? 'revoke' : body.op === 'grant' ? 'grant' : null;
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535 || !op) {
+    sendError(res, 400, 'invalid_body', 'Send {port, op: "grant" | "revoke"}.');
+    return;
+  }
+  const owned = ownedLoopbackPorts();
+  if (op === 'grant' && owned.has(port)) {
+    sendError(res, 403, 'owned_port', `localhost:${port} is this app's own port; it is never shown in a card.`);
+    return;
+  }
+  try {
+    const grants = setLoopbackGrant(vaultRealPath(contextRoot), port, op, owned);
+    sendJson(res, 200, { grants, ownedPorts: [...owned].sort((a, b) => a - b) });
+  } catch (err) {
+    sendError(res, 500, 'grant_unwritable', `The grant could not be saved: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * POST /api/agent/web-session `{port, host, once?}` — the session proxy for a web card's dev
+ * server (`web-session-proxy.ts`): its origin (`http://127.0.0.1:<proxy>`, same site as this
+ * window, so the page's cookies stick) and the token its Clear button uses. The owner's window
+ * only (`requireGrantOwner`), never an owned port, and only for a port this vault always allows
+ * or one the owner just opened once (the card's own gate already asked him).
+ */
+export async function handleWebSessionOpen(
+  req: IncomingMessage, res: ServerResponse, _params: Record<string, string>, contextRoot: string,
+): Promise<void> {
+  if (!requireGrantOwner(req, res)) return;
+  const body = (await parseJsonBody(req)) ?? {};
+  const port = body.port;
+  const host = typeof body.host === 'string' ? body.host.toLowerCase() : 'localhost';
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535 || !(UPSTREAM_HOSTS as readonly string[]).includes(host)) {
+    sendError(res, 400, 'invalid_body', 'Send {port, host: "localhost" | "127.0.0.1" | "[::1]"}.');
+    return;
+  }
+  const owned = ownedLoopbackPorts();
+  if (owned.has(port)) {
+    sendError(res, 403, 'owned_port', `localhost:${port} is this app's own port; it is never shown in a card.`);
+    return;
+  }
+  const granted = readLoopbackGrants(vaultRealPath(contextRoot), owned).some((g) => g.port === port);
+  if (!granted && body.once !== true) {
+    sendError(res, 403, 'not_allowed', `localhost:${port} is not allowed in this project.`);
+    return;
+  }
+  try {
+    // One session per project and port: two projects on :3000 never share a login or storage.
+    const s = await openWebSession(port, { scope: vaultRealPath(contextRoot), host, parent: `http://${String(req.headers.host ?? '').toLowerCase()}` });
+    sendJson(res, 200, { origin: s.origin, clearToken: s.clearToken });
+  } catch (err) {
+    sendError(res, 500, 'proxy_failed', `The page's session could not be opened: ${(err as Error).message}`);
+  }
 }
 
 /**
@@ -4262,7 +4986,7 @@ export async function handleAgentReveal(
       ? { cmd: 'explorer', args: openDirectly ? [target] : [`/select,${target}`] }
       : { cmd: 'xdg-open', args: [openDirectly ? target : dirname(target)] };
   try {
-    spawn(opener.cmd, opener.args, { detached: true, stdio: 'ignore' }).unref();
+    spawn(opener.cmd, opener.args, { detached: true, stdio: 'ignore', windowsHide: false }).unref();
   } catch {
     sendError(res, 500, 'open_failed', 'The system opener could not be started.');
     return;

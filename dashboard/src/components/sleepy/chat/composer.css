@@ -250,6 +250,7 @@
   max-width: 220px;
 }
 .chat-cmp-attachment-image { padding-left: 0; }
+.chat-cmp-attachment-about { padding-left: 8px; }
 .chat-cmp-thumb {
   width: 44px;
   height: 44px;
@@ -258,6 +259,14 @@
   flex: 0 0 auto;
 }
 .chat-cmp-attachment-glyph { flex: 0 0 auto; }
+/* The About chip (an agenda line the message is about): the agenda's Waiting dot, then its name. */
+.chat-cmp-attachment-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting);
+}
 .chat-cmp-attachment-name {
   display: flex;
   flex-direction: column;
@@ -530,10 +539,12 @@
 }
 .chat-cmp-send.is-stop:hover { filter: brightness(1.08); }
 
-/* Push-to-talk (assistant mode, desktop only). An OUTLINED disc at rest, like Queue —
-   the filled solid belongs to "this goes now", and holding the mic is not sending yet.
-   While recording it fills red and breathes, which is the same visual grammar as Stop
-   because it is the same kind of state: something is running and you can end it. */
+/* Push-to-talk. An OUTLINED disc at rest, like Queue — the filled solid belongs to "this goes
+   now", and holding the mic is not sending yet. While recording it turns red and a ring breathes
+   around it: something is running and you can end it. A TINTED disc (error-subtle under
+   error-ink, ringed in error), not a filled one: the filled red with a white glyph was the
+   loudest thing in a dark composer and read as an alarm (owner, 2026-10-21). Tokens only, so
+   both themes carry their own red. */
 .chat-cmp-mic:not(:disabled) {
   cursor: pointer;
   border-color: var(--color-border-hover);
@@ -544,19 +555,18 @@
   color: var(--color-text);
 }
 .chat-cmp-send.chat-cmp-mic.is-recording {
-  background: var(--color-error);
-  border-color: transparent;
-  color: #fff;
+  background: var(--color-error-subtle);
+  border-color: var(--color-error);
+  color: var(--color-error-ink);
   position: relative;
 }
-/* The brightening is a white veil whose opacity breathes — a `filter` keyframe repaints the
-   button every frame, a veil's opacity is composited. */
+/* The breathing is a ring whose opacity animates: composited, never a repaint per frame. */
 .chat-cmp-send.chat-cmp-mic.is-recording::after {
   content: '';
   position: absolute;
-  inset: -1.5px;
+  inset: -4px;
   border-radius: inherit;
-  background: #fff;
+  border: 2px solid var(--color-error);
   opacity: 0;
   pointer-events: none;
   animation: var(--dc-motion-status-name, chat-cmp-mic-pulse) 1.4s ease-in-out infinite;
@@ -564,11 +574,20 @@
 }
 @keyframes chat-cmp-mic-pulse {
   0%, 100% { opacity: 0; }
-  50% { opacity: 0.22; }
+  50% { opacity: 0.55; }
+}
+/* A tap instead of a hold: one short sideways nudge instead of a sentence. */
+.chat-cmp-mic.is-nudged { animation: chat-cmp-mic-nudge 360ms ease-in-out; }
+@keyframes chat-cmp-mic-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  45% { transform: translateX(3px); }
+  70% { transform: translateX(-2px); }
 }
 /* Motion is decoration here — the fill already says "recording". */
 @media (prefers-reduced-motion: reduce) {
-  .chat-cmp-send.chat-cmp-mic.is-recording::after { animation: none; }
+  .chat-cmp-send.chat-cmp-mic.is-recording::after { animation: none; opacity: 0.4; }
+  .chat-cmp-mic.is-nudged { animation: none; }
 }
 
 /* A refused or failed take says so in the row. A take that was rejected client-side looks
@@ -576,6 +595,7 @@
 .chat-cmp-voice-note {
   flex: 0 1 auto;
   min-width: 0;
+  max-width: 22ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1788,7 +1808,7 @@
   .chat-cmp-perm-wrap .chat-cmp-modeltrigger-effort { display: none; }
 }
 
-/* 1b. The resting voice instruction ("Hold Shift+V or the mic to speak") is the longest
+/* 1b. The resting voice instruction ("Shift+V to talk") is the longest
       thing in the row and the only one that repeats what a control's `title` already says,
       so a narrow pane drops it first. The transient notes (listening, a refused take) stay
       and ellipsise, because only the row can report those. The model name may truncate. */
@@ -1817,4 +1837,42 @@
   .chat-cmp-right .chat-cmp-modeltrigger-effort { display: none; }
   .chat-cmp-modeltrigger-model { max-width: 62px; }
   .chat-cmp-right { gap: 3px; }
+}
+
+/* Hold-to-talk on a TOUCH screen (the hands-free phone): the press is a hold, never a scroll,
+   a zoom, a text selection or the long-press callout — any of those raises \`pointercancel\`, and
+   that ends the take mid-sentence. Inert for a mouse. */
+.chat-cmp-mic {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* ── The hands-free phone's photos (Composer.tsx PhotoButton) ──────────────────── */
+
+.chat-cmp-photobtn { color: var(--color-accent); }
+.chat-cmp-photo-meta {
+  padding: 0 var(--space-3);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+/* A phone photo still on its way says so with a ring beside its name (the desktop's pasted
+   image keeps its words only). `.chat-cmp-photo-pending` is set by the phone composer alone. */
+.chat-cmp-photo-pending .chat-cmp-attachment-glyph {
+  display: inline-block;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-accent-soft);
+  border-top-color: var(--color-accent);
+  color: transparent;
+  font-size: 0;
+  overflow: hidden;
+  animation: var(--dc-motion-status-name, chat-cmp-photo-spin) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+@keyframes chat-cmp-photo-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-cmp-photo-pending .chat-cmp-attachment-glyph { animation: none; }
 }

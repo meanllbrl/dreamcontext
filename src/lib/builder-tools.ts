@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpus, loadavg, tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
+import { cpus, homedir, loadavg, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { acquireFileLock, acquireFileLockWithin, releaseFileLock } from './file-lock.js';
 
 /**
  * The pieces behind `dreamcontext builder …`: what a headless `claude -p` builder and the
@@ -109,6 +111,69 @@ export function heavyLockPath(cwd: string, gitCommonDir: () => string | null = (
   if (common) return join(isAbsolute(common) ? common : resolve(cwd, common), 'dc-heavy.lock');
   const key = createHash('sha256').update(resolve(cwd)).digest('hex').slice(0, 16);
   return join(tmpdir(), `dc-heavy-${key}.lock`);
+}
+
+// ─── machine-wide heavy slots (orchestration plan r5 D12) ─────────────────────────────────
+
+/** At most this many heavy checks run at once on the WHOLE machine, every repo together (O5). */
+export const HEAVY_MACHINE_SLOTS = 2;
+/** A slot (or repo lock) past this age whose pid is gone is reclaimed; a live holder never is. */
+export const HEAVY_LOCK_STALE_MS = 5_000;
+
+/** Where the machine's slot files live: `~/.dreamcontext/heavy/slot-<n>.lock`. */
+export function heavySlotDir(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'heavy');
+}
+
+export function heavySlotPaths(dir: string): string[] {
+  return Array.from({ length: HEAVY_MACHINE_SLOTS }, (_, i) => join(dir, `slot-${i}.lock`));
+}
+
+/** How many slots a LIVE process holds right now (a dead holder's file does not count). */
+export function heavySlotsHeld(dir: string): number {
+  let n = 0;
+  for (const p of heavySlotPaths(dir)) {
+    try {
+      const { pid } = JSON.parse(readFileSync(p, 'utf-8')) as { pid?: unknown };
+      if (typeof pid !== 'number') { n += 1; continue; }
+      try { process.kill(pid, 0); n += 1; } catch (err) { if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH') n += 1; }
+    } catch { /* no file: free */ }
+  }
+  return n;
+}
+
+export interface HeavyHold {
+  /** The machine slot taken (a path under {@link heavySlotDir}). */
+  slot: string;
+  /** Release the slot, then the repo lock (the reverse of the order they were taken). */
+  release: () => void;
+}
+
+/**
+ * Take this repo's heavy lock, THEN one of the machine's {@link HEAVY_MACHINE_SLOTS} slots,
+ * all within `waitMs` together. Always in that order and released in reverse, so two callers
+ * never hold each other's half (no deadlock). Slots are tried in a loop, each once per poll,
+ * with pid liveness (that is what makes the short stale age safe). Null = nothing is held and
+ * nothing may run (the caller's exit 75).
+ */
+export async function acquireHeavy(cwd: string, opts: {
+  waitMs: number; slotDir: string; pollMs?: number; now?: () => number; repoLock?: string;
+}): Promise<HeavyHold | null> {
+  const now = opts.now ?? Date.now;
+  const pollMs = opts.pollMs ?? 1000;
+  const deadline = now() + Math.max(0, opts.waitMs);
+  const repoLock = opts.repoLock ?? heavyLockPath(cwd);
+  const held = await acquireFileLockWithin(repoLock, { waitMs: opts.waitMs, staleMs: HEAVY_LOCK_STALE_MS, pollMs, now, verifyPidLiveness: true });
+  if (!held) return null;
+  for (;;) {
+    for (const slot of heavySlotPaths(opts.slotDir)) {
+      if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) {
+        return { slot, release: () => { releaseFileLock(slot); releaseFileLock(repoLock); } };
+      }
+    }
+    if (now() >= deadline) { releaseFileLock(repoLock); return null; }
+    await new Promise((r) => { setTimeout(r, pollMs); });
+  }
 }
 
 function gitCommonDirOf(cwd: string): string | null {

@@ -6,8 +6,7 @@
  * each with a semantic `kind`. `buildStatusModel` turns that into what the board
  * needs: the column order, per-status label + colour, and the kind predicates
  * every "is this task still live?" site reads INSTEAD of `status !== 'completed'`
- * — so a cancelled-kind task is never overdue, never at risk, never in the
- * Eisenhower matrix.
+ * — so a cancelled-kind task is never overdue and never at risk.
  *
  * Pure: no React, no fetch. `DEFAULT_STATUS_MODEL` is the shipped four, used
  * until the override query lands (and forever, for a project that declares

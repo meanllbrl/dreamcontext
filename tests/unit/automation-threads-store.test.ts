@@ -37,6 +37,7 @@ import {
   AutomationError, THREAD_DAY_MAX_ENTRIES, THREAD_ENTRY_MARKER,
   THREAD_SUMMARY_MAX_ROWS, THREAD_TEXT_MAX_CHARS,
 } from '../../src/lib/automations/types.js';
+import { fileURLToPath } from 'node:url';
 
 let projectRoot: string;
 let contextRoot: string;
@@ -272,7 +273,7 @@ describe('concurrent appends from two processes', () => {
     // The honest claim about `appendFileSync` + O_APPEND: a torn interleave is
     // possible, and the marker resync bounds its cost to one skipped entry.
     const script = join(projectRoot, 'appender.mjs');
-    const threadsMod = new URL('../../src/lib/automations/threads.ts', import.meta.url).pathname;
+    const threadsMod = fileURLToPath(new URL('../../src/lib/automations/threads.ts', import.meta.url));
     writeFileSync(script, `
       const { appendThreadEntry } = await import(${JSON.stringify(threadsMod)});
       const [ctx, tag] = process.argv.slice(2);

@@ -187,6 +187,77 @@
   cursor: default;
 }
 
+/* "About: <the agenda line>" above a message written about it (owner 2026-10-23): the agenda's
+   Waiting dot, the word, the line. Secondary and small; the bubble is still his words. */
+.chat-msg-about {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+.chat-msg-about-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting);
+  transform: translateY(-1px);
+}
+.chat-msg-about-label { flex: 0 0 auto; font-weight: var(--font-weight-semibold); color: var(--color-text-tertiary); }
+.chat-msg-about-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Reply links (owner 2026-10-23): which Super answer is to which message ────────────
+   The About strip's reply variant: a ↩ where the dot is, and a click scrolls to the message
+   it names. Above his reply it hangs right like his bubble; above a Super answer group it is
+   its own transcript row, left. One line at any width, the quote clipped. */
+.chat-msg-about--reply {
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+button.chat-msg-about--reply { cursor: pointer; }
+button.chat-msg-about--reply:hover .chat-msg-about-text,
+button.chat-msg-about--reply:focus-visible .chat-msg-about-text { color: var(--color-text); text-decoration: underline; }
+button.chat-msg-about--reply:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.chat-msg-about-glyph { flex: 0 0 auto; color: var(--color-text-tertiary); }
+.chat-reply-strip {
+  display: flex;
+  min-width: 0;
+  max-width: var(--chat-line-width, 100%);
+  /* Closer to the group it heads than the transcript's row gap. */
+  margin-bottom: calc(-1 * var(--space-3));
+}
+.chat-reply-strip .chat-msg-about { align-self: flex-start; padding-left: 0; }
+/* A group's thin line on its left, from the strip to its last row (one element per group,
+   measured by ChatPane over the rows: tool cards clip their own overflow, so a per-row
+   pseudo-element could not reach outside them). Out of flow, never hit. */
+.chat-scroll-inner--reply { position: relative; }
+.chat-reply-lines { position: absolute; inset: 0; pointer-events: none; }
+.chat-reply-line {
+  position: absolute;
+  left: calc(-1 * var(--space-3));
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+}
+/* The message a strip just scrolled to. */
+[data-reply-flash] {
+  border-radius: var(--radius-md);
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+}
+/* A message row takes focus on a tap (touch shows its action bar then); no ring for that. */
+.chat-msg-user-row:focus,
+.chat-msg-assistant-row:focus { outline: none; }
+
 /* What the user ATTACHED, above their own words — a sent screenshot has to be visible as a
    screenshot, not as the path the message quoted for the agent's benefit. */
 .chat-msg-user-media {
@@ -586,7 +657,7 @@ video.chat-msg-user-media-el { cursor: default; }
 }
 .chat-surveycard-dot.done .chat-surveycard-dot-i { background: var(--color-accent); border-color: var(--color-accent); }
 .chat-surveycard-dot.on .chat-surveycard-dot-i { transform: scale(1.5); border-color: var(--color-accent); }
-.chat-surveycard-actions { display: flex; align-items: center; gap: 10px; }
+.chat-surveycard-actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .chat-surveycard-jump {
   padding: 0;
   border: 0;
@@ -641,6 +712,29 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-surveycard-opt-desc { font-size: 11.5px; color: var(--color-text-secondary); }
 .chat-surveycard-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
 .chat-surveycard-count { color: var(--color-text-tertiary); font-size: 11.5px; }
+/* "Waiting for connection" is drawn over the pager's box (or, with no pager, in the space left
+   of the buttons), out of the flow and on ONE line: nothing reflows, the card never grows. */
+.chat-surveycard-pager { position: relative; }
+.chat-surveycard-pager[data-waiting] > :not(.chat-surveycard-waiting) { visibility: hidden; }
+.chat-surveycard-pager > .chat-surveycard-waiting { position: absolute; inset: 0; display: flex; align-items: center; }
+.chat-surveycard-actions { position: relative; }
+.chat-surveycard-waiting-beside {
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 10px;
+  max-width: 9.5em;
+  display: flex;
+}
+.chat-surveycard-waiting {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--color-warning);
+  font-size: 11.5px;
+}
 .chat-surveycard-receipt {
   display: flex;
   align-items: center;
@@ -2097,6 +2191,9 @@ video.chat-msg-user-media-el { cursor: default; }
 }
 /* Two lines, then ellipsis: enough to recognise the message, not enough for one long queued
    paragraph to own the strip. The full text is one click away in the editor. */
+/* A queued message about an agenda line: the line first, in the strip's colours. */
+.chat-queue-about { color: var(--color-text-secondary); font-weight: var(--font-weight-semibold); }
+.chat-queue-about .chat-msg-about-dot { display: inline-block; vertical-align: middle; }
 .chat-queue-text {
   flex: 1 1 auto;
   min-width: 0;

@@ -11,6 +11,7 @@ import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { CHAT_MODES, DEFAULT_CHAT_MODE, type ChatMode } from '../chat-modes.js';
 import { assistantExists, assistantProjectRoot, isAssistantVault } from '../../lib/assistant/home.js';
 import { isMacExposed, isPhoneSocket } from '../phone-origin.js';
+import { isSameOriginAsHost } from '../remote-access.js';
 
 /**
  * Shared trust-boundary primitives for the two loopback `claude`-spawning surfaces —
@@ -74,14 +75,46 @@ export function requireLocalRead(req: IncomingMessage, res: ServerResponse): boo
   return false;
 }
 
-/** A request another site sent: `Sec-Fetch-Site: cross-site`, or an `Origin` that is not one
- *  of the three loopback spellings. A request with no Origin at all is not cross-site. */
+/** A request another site sent: `Sec-Fetch-Site: cross-site` or `same-site` (another port on
+ *  this machine is the same site), or an `Origin` that is not the very loopback host this
+ *  request was sent to. Port-strict: a page on `localhost:5173` is not this server on
+ *  `localhost:4173`. A request with no Origin at all (a CLI) is not cross-site. */
 export function isCrossSiteRequest(req: Pick<IncomingMessage, 'headers'>): boolean {
   const site = req.headers['sec-fetch-site'];
+  const s = typeof site === 'string' ? site.trim().toLowerCase() : '';
+  const crossSite = s === 'cross-site' || s === 'same-site';
   const origin = req.headers.origin;
-  const crossSite = typeof site === 'string' && site.trim().toLowerCase() === 'cross-site';
-  const foreignOrigin = typeof origin === 'string' && origin !== '' && !LOOPBACK_ORIGIN_RE.test(origin.trim());
+  const foreignOrigin = typeof origin === 'string' && origin !== ''
+    && !(LOOPBACK_ORIGIN_RE.test(origin.trim()) && isSameOriginAsHost(req));
   return crossSite || foreignOrigin;
+}
+
+/**
+ * The strict same-origin test for the doors that run code or hand out trust: the chat and
+ * terminal upgrades, the Super Agent's owner routes, the loopback-grant routes (T0 in the
+ * super-agent-mode threat model).
+ *
+ *  - A loopback peer must name this machine in `Host`: a DNS-rebinding page sends
+ *    `Origin = Host = evil.test:PORT`, which an Origin-equals-Host check alone would pass.
+ *    This also closes these doors to a TLS proxy dialing from loopback (`tailscale serve`,
+ *    Host `*.ts.net`), on purpose.
+ *  - No `Origin` (the CLI, a native client) passes; any `Origin` must be the dialed host,
+ *    port included: another loopback port is another origin.
+ *  - `Sec-Fetch-Site`, when sent, must be `same-origin` or `none`.
+ *
+ * A tailnet peer is not loopback, so the Host rule does not apply to it; its Origin must still
+ * be its own host (`http://100.x:port`), and its trust comes from `isTrustedRemotePeer`.
+ */
+export function isSameOriginStrict(req: IncomingMessage): boolean {
+  if (isLoopback(req) && !isLoopbackHostHeader(req)) return false;
+  const site = req.headers['sec-fetch-site'];
+  if (typeof site === 'string' && site.trim() !== '') {
+    const s = site.trim().toLowerCase();
+    if (s !== 'same-origin' && s !== 'none') return false;
+  }
+  const origin = req.headers.origin;
+  if (origin === undefined) return true;
+  return isSameOriginAsHost(req);
 }
 
 const UPGRADE_REJECT_TEXT: Record<number, string> = {

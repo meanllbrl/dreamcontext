@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * TEXT ON AN ACCENT FILL takes the strong accent — app-wide, and this file is what keeps it so.
@@ -23,7 +24,7 @@ import { join, relative } from 'node:path';
  * TEXT with the gradient (`background-clip: text`) is not a fill and is skipped.
  */
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const SRC = join(ROOT, 'dashboard/src');
 
 function walk(dir: string, exts: string[], out: string[] = []): string[] {
@@ -54,8 +55,12 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/search/BrainSearch.css::.bsearch-score-track > i': 'score bar',
   'components/layout/Sidebar.css::.sidebar-sleepy-eye': 'mascot eye',
   'components/sleepy/SleepyMascot.css::.smascot-hand': 'mascot art',
+  'components/handsfree/handsfree.css::.hf-chrome-dot': 'state dot',
   'components/sleepy/MobileChat.css::.mchat-dot[data-kind="ready"]': 'state dot',
   "components/sleepy/chat/teamBoard.css::.chat-team-board-phase[data-tone='running'] .chat-team-board-dot": 'state dot',
+  'components/sleepy/super/SuperSurface.css::.super-tile-bar-fill': 'progress bar',
+  'components/sleepy/super/SuperSurface.css::.super-card-glint': 'verb glint behind a card (AC16), no text',
+  'components/sleepy/super/superInsight.css::.super-tile-lane-bar:last-child': 'funnel silhouette bar (the last step)',
   'components/whiteboard/widgets/wikiWidget.css::.wb-wiki-row.is-drop-before::before, .wb-wiki-row.is-drop-after::after, .wb-wiki-section.is-drop-before::before, .wb-wiki-section.is-drop-after::after': 'drop marker (bar)',
   'pages/whiteboards/BoardTabs.css::.wbt-tab[data-drop]::before, .wbt-chip[data-drop]::before': 'drop marker (2px bar)',
   'components/sleepy/AgentTerminal.css::.agent-overlay-head': 'tinted surface (6% accent), body text on it',
@@ -73,6 +78,9 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/sleepy/AgentTerminal.css::.agent-pane-glide': 'active pane indicator',
   'components/sleepy/chat/dreamaction.css::.chat-dreamcard::before': 'edge indicator',
   'components/roadmap/DependencyPicker.css::.dep-check--on': 'check mark (non-text, 3:1 rule)',
+  'pages/AiTeamPage.css::.aiteam-face-dot--working': 'status dot on a face (non-text, 3:1 rule)',
+  'pages/AiTeamPage.css::.chat-cmp-modeltrigger--temp .chat-cmp-modeltrigger-model::before': 'temporary-model dot (non-text, 3:1 rule)',
+  'pages/AiTeamPage.css::.aiteam-temp-dot': 'temporary-model dot (non-text, 3:1 rule)',
   'components/roadmap/InsightPicker.css::.inp-check--on': 'check mark (non-text, 3:1 rule)',
   'components/sleepy/chat/cards.css::.chat-surveycard-dot.done .chat-surveycard-dot-i': 'progress dot',
   'components/sleepy/chat/cards.css::.chat-surveycard-opt.on .chat-surveycard-opt-mark': 'check mark',
@@ -88,11 +96,9 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/sleepy/chat/overlays.css::.chat-working-dots span': 'working dots',
   'components/sleepy/chat/cards.css::.chat-msg-caret': 'typing caret',
   'components/sleepy/chat/atoms.css::.chat-a-glyph-brand': 'brand glyph square',
-  'components/tasks/ActivityHeatmap.css::.heatmap-cell--l4': 'heatmap cell',
-  'components/tasks/MiniCalendar.css::.mini-cal-day--today::after': 'today dot',
-  'components/tasks/TimelineGantt.css::.gantt-today-rule': 'today rule',
   'components/tasks/SleepEvalDeck.css::.se-banner-dot': 'status dot',
   'components/tasks/SleepEvalDeck.css::.se-progress-fill': 'progress bar',
+  'components/tasks/TaskDetailPanel.css::.dmedia-progress > span': 'upload progress bar',
   'pages/onboarding/Onboarding.css::.ob-step--current .ob-step-dot': 'step dot',
   'pages/onboarding/ReadinessChecklist.css::.ob-rail-fill': 'progress bar (2px rail)',
 };
@@ -121,7 +127,7 @@ interface Rule { file: string; selector: string; body: string }
 function cssRules(): Rule[] {
   const rules: Rule[] = [];
   for (const abs of walk(SRC, ['.css'])) {
-    const file = relative(SRC, abs);
+    const file = relative(SRC, abs).replace(/\\/g, '/');
     const src = readFileSync(abs, 'utf-8').replace(/\/\*[\s\S]*?\*\//g, ' ');
     for (const chunk of src.split('}')) {
       const i = chunk.lastIndexOf('{');
@@ -199,7 +205,7 @@ describe('text on an accent fill uses --color-accent-strong, app-wide', () => {
   it('every inline accent fill carrying text is converted too', () => {
     const offenders: string[] = [];
     for (const abs of walk(SRC, ['.tsx'])) {
-      const file = relative(SRC, abs);
+      const file = relative(SRC, abs).replace(/\\/g, '/');
       const src = readFileSync(abs, 'utf-8');
       const re = /background:\s*'([^']*)'/g;
       let m: RegExpExecArray | null;

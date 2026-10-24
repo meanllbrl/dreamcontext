@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * THE AGENTS PAGE SPEAKS ONLY IN TOKENS — every colour, text size, weight, duration and curve
@@ -17,18 +18,19 @@ import { join } from 'node:path';
  * and `cubic-bezier(`. `tokens.css` itself is where those literals belong and is not scanned.
  */
 
-const ROOT = process.env.AGENTS_CSS_ROOT ?? join(new URL('../../', import.meta.url).pathname, 'dashboard/src');
+const ROOT = process.env.AGENTS_CSS_ROOT ?? join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src');
 
 const FILES = [
   'components/agents/AgentsFeed.css',
   'components/agents/AgentsFeedFilters.css',
   'components/agents/AgentMemberCard.css',
   'components/agents/AgentsMembers.css',
-  'pages/AutomationsPage.css',
+  // The AI Team page (2026-10-20), which replaced the Automations and Agents pages.
+  'pages/AiTeamPage.css',
   'components/automations/AutomationsDispatcherBar.css',
   'components/automations/AutomationsEmptyState.css',
-  // The team roster, the profile, the identity dialog and the face (agent soul task, T9).
-  'pages/AgentsPage.css',
+  // The profile, the identity dialog and the face (agent soul task, T9).
+  'components/agents/AgentRosterCard.css',
   'components/agents/AgentProfilePanel.css',
   'components/agents/AgentIdentityDialog.css',
   'components/agents/AgentAvatar.css',

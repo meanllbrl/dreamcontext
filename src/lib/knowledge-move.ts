@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join, basename, resolve, sep } from 'node:path';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { rewriteWikilinks, WikilinkRemap } from './wikilink-rewrite.js';
 import { EXCALIDRAW_SUFFIX } from './excalidraw-text.js';
 

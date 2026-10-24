@@ -58,8 +58,8 @@ export interface ScratchOptions {
 }
 
 /** Verbs the shim refuses: everything that writes outside the scratch vault. */
-const REFUSED_VERBS = ['brain', 'cloud', 'window', 'notify', 'dashboard', 'app', 'update', 'upgrade', 'setup', 'init'];
-const REFUSED_PAIRS = ['lab sync', 'automations run', 'tasks sync', 'tasks push', 'tasks pull', 'peer ask', 'peer send', 'peer mail', 'link add', 'link remove', 'link rm'];
+export const REFUSED_VERBS = ['brain', 'cloud', 'window', 'notify', 'dashboard', 'app', 'update', 'upgrade', 'setup', 'init'];
+export const REFUSED_PAIRS = ['lab sync', 'automations run', 'tasks sync', 'tasks push', 'tasks pull', 'peer ask', 'peer send', 'peer mail', 'link add', 'link remove', 'link rm'];
 
 function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;

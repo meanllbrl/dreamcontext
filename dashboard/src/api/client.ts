@@ -88,6 +88,16 @@ export function graphContentUrl(vault: string | null, path: string, opts: { raw?
 }
 
 /**
+ * The URL for one task attachment (`state/assets/<slug>/<path>`), for an `<img>`/`<video>`/
+ * PDF frame — the same hand-it-to-the-browser reason as {@link graphContentUrl}: the vault
+ * rides in `?vault=`. The route serves images, audio, video and PDF only (415 otherwise).
+ */
+export function taskAssetUrl(vault: string | null, slug: string, path: string): string {
+  const scope = vault ? `&vault=${encodeURIComponent(vault)}` : '';
+  return `${BASE_URL}/tasks/${encodeURIComponent(slug)}/assets/raw?path=${encodeURIComponent(path)}${scope}`;
+}
+
+/**
  * The URL for a connected PEER vault's logo (`_dream_context/assets/logo.*` in the peer's
  * own tree), for the same hand-it-to-the-browser reason as {@link agentFileUrl}: an
  * `<img src>` carries no headers, so the requesting vault rides in `?vault=` and the peer's

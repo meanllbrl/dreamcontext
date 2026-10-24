@@ -1,8 +1,9 @@
 import { ApiClient } from '../../api/client';
-import { SpeechQueue, type SpokenChunk } from '../../lib/voice/speechQueue';
+import { SpeechQueue, type SpokenChunk, type StopReason } from '../../lib/voice/speechQueue';
 import { turnTrace } from '../../lib/voice/turnTrace';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { splitNotchCue, stripNotchCue, presentationOf, type NotchCue } from '../../lib/notchCue';
+import { splitReplyMark } from '../../lib/replyMark';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { chatAgentFor } from '../../lib/chatAgentBinding';
@@ -18,7 +19,10 @@ import { runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } fro
 import * as queue from './chat/chatQueue';
 import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
-import { superEventText } from './super/superHandover';
+import { leanMcpParam, superEventText } from './super/superHandover';
+import { createChildAlarmGate } from './super/childAlarm';
+import { dropSettledSurveyDrafts } from './chat/surveyDrafts';
+import { recordPhoneEvent } from '../../lib/phoneConnLog';
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -79,8 +83,20 @@ export interface ChatUserItem {
    *  server wrote the real text into the process; this item stands for it live, so it never
    *  matches a transcript row and the uuid backfill skips it. */
   superEvent?: string;
+  /** Pictures the Super Agent opened on the Mac's stage, as a phone mirror sees them (it has no
+   *  stage): drawn as a strip, never a bubble. Live only, like `superEvent`; `text` is empty.
+   *  NOT a message anyone sent: Retry never resends it, rewind never anchors on it, and its
+   *  arrival never counts as the owner moving on or as a send to scroll to. `snapshot`: what the
+   *  stage held as the phone joined, not a new open. */
+  stageMedia?: Array<{ ref: string; title?: string }>;
+  stageSnapshot?: true;
 }
-export interface ChatTextItem { kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number }
+export interface ChatTextItem {
+  kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number;
+  /** In a Super view: the owner messages this block answers, by reference (its
+   *  `<!-- re:<ref> -->` head, which `text` never holds). Absent: no mark. */
+  replyTo?: string[];
+}
 /** One Assistant text block as the notch should show it (`ChatSession.onPresent`). A block with
  *  no cue is an answer: `present`, not staying. */
 export interface NotchPresentation { itemId: string; kind: NotchCue['kind']; stay: boolean; text: string }
@@ -186,6 +202,22 @@ export type AssistantCommandHandler = (cmd: { id: string; verb: string; args: Re
   Promise<{ ok: true; result?: unknown } | { ok: false; error: string } | null>;
 
 /** Runs one window-control verb this chat's own agent issued (`dreamcontext window …`). */
+/** The window's verdict on a park request: refuse with why, or yes plus the step that closes
+ *  the process and turns the tab dormant, run right after the answer is on the wire. */
+export type ParkVerdict =
+  | { ok: true; commit: () => void }
+  | { ok: false; error: 'busy' | 'asking' | 'background' | 'focused' | 'refused' };
+/** `focusGraceMs`: how recently looked-at or typed-in counts as the owner's, as the server
+ *  applies it (2 min; a verify run shortens it), capped at 2 min here. */
+export type ParkHandler = (req: { reason: string; focusGraceMs: number; end?: boolean; force?: boolean }) => ParkVerdict;
+export const PARK_FOCUS_GRACE_MS = 2 * 60_000;
+/** The grace a park frame asks for, never longer than {@link PARK_FOCUS_GRACE_MS}. */
+export function parkGraceOf(asked: unknown): number {
+  return typeof asked === 'number' && Number.isFinite(asked) && asked >= 0 ? Math.min(asked, PARK_FOCUS_GRACE_MS) : PARK_FOCUS_GRACE_MS;
+}
+/** The window sends `focus` at most this often per chat (the server's grace is 2 min). */
+export const FOCUS_FRAME_THROTTLE_MS = 30_000;
+
 export type WindowCommandHandler = (cmd: { verb: string; args: Record<string, unknown> }) =>
   Promise<{ ok: true; result?: unknown } | { ok: false; error: string }>;
 
@@ -195,9 +227,14 @@ export type SuperCommandHandler = WindowCommandHandler;
 
 /** What the server pushes about the Super Agent down its own socket: the whole state after
  *  every store write, and the kind of each turn its inbox opens. Never conversation state. */
+/** Owner texts that were SPOKEN when an account switch held them, keyed by the pane's
+ *  conversation: the restarted session (a new closure) sends them with `voice: true`. */
+const spokenCarry = new Map<string, Set<string>>();
+
 export type SuperSignal =
   | { kind: 'state'; state: Record<string, unknown> }
-  | { kind: 'event'; eventKind: string; child: string };
+  | { kind: 'event'; eventKind: string; child: string }
+  | { kind: 'cue'; verb: string; ids: string[] };
 
 export interface ChatResultInfo {
   success: boolean;
@@ -431,6 +468,9 @@ export interface ChatSession {
    *  Only the pane can see them all (teammates come from a poll), so it reports this through
    *  {@link ChatSession.setAgentsWorking}; the tab and dock read it as `working`. */
   agentsWorking: boolean;
+  /** Not on screen: garaged, or its pane's overlay folded (AgentSurface's placement pass sets it).
+   *  Turning it OFF fires the subscribers once, so a pane that held its renders while hidden
+   *  (chat/hiddenRenderGate.ts) catches up before it paints. */
   minimized: boolean;
   capabilities: string[];
   model: string;
@@ -468,6 +508,9 @@ export interface ChatSession {
    *  for plain Claude. Read at spawn from `chatAgentFor(claudeId)`, so it follows the
    *  conversation through every respawn; readonly for the reason `mode` is. */
   readonly agent: string;
+  /** This pane shows the Super Agent's conversation although its mode is not `super`: the
+   *  hands-free phone's mirror (AgentSurface `openSuperOnPhone`). Client-only, never sent. */
+  readonly superMirror: boolean;
   ensureOpen: () => void;
   fitAndResize: () => void;
   applyZoom: (zoom: number) => void;
@@ -539,7 +582,7 @@ export interface ChatSession {
    *  still wants the first opening rather than the end of the turn, and `maybeFlushQueue`
    *  gives it one as soon as there is one. Callers falling back from a refused steer should
    *  always pass it; the ⇡ button never does. */
-  enqueue: (text: string, opts?: { steerWhenPossible?: boolean }) => void;
+  enqueue: (text: string, opts?: { steerWhenPossible?: boolean; resubmit?: boolean }) => void;
   /** Hold the queue as Stop does (a no-op when it is empty). For a respawn carrying over the
    *  rows of a session whose queue the user had paused: the rows come along, the pause too. */
   pauseQueue: () => void;
@@ -562,9 +605,25 @@ export interface ChatSession {
    *  will post the result to the server itself), so nothing is sent back from here. Only
    *  meaningful on the `__assistant__` session; the server ignores the frames elsewhere. */
   setCommandHandler: (fn: AssistantCommandHandler | null) => void;
+  /**
+   * The owner's words that the HOST answers itself, before the agent ever sees them: `fn` gets
+   * every message `send`, `steer` and `enqueue` are handed and returns true when it took it (the
+   * notch's "allow" / "deny" for a waiting permission, Notch.tsx). A taken message is not sent,
+   * not drawn and not queued. `null` withdraws it.
+   */
+  setOwnerWordsHook: (fn: ((text: string) => boolean) | null) => void;
   /** The surface that draws this chat runs the window verbs its agent sends
    *  (`dreamcontext window …`). Without one, every verb answers `no_window`. */
   setWindowHandler: (fn: WindowCommandHandler | null) => void;
+  /** The surface that draws this chat decides a park request (src/server/chat-park.ts).
+   *  Without one every request is refused. */
+  setParkHandler: (fn: ParkHandler | null) => void;
+  /** Tell the server the owner is looking at or typing in this chat (throttled to one frame
+   *  per {@link FOCUS_FRAME_THROTTLE_MS}). */
+  markFocus: () => void;
+  /** Something a park would lose: a turn, a card waiting, agents this conversation started,
+   *  a background shell, or queued messages not sent yet. */
+  hasLiveWork: () => boolean;
   /** The Super Agent's window-side verbs (`delegate`, `answer`). Only the super chat gets one;
    *  without it every `super_command` answers `no_window`. */
   setSuperHandler: (fn: SuperCommandHandler | null) => void;
@@ -573,24 +632,37 @@ export interface ChatSession {
   /**
    * A child of a handed-over Super Agent (D16): its question raises NO alarm — no chime, no
    * banner, no Dock bounce, no attention badge — because the Super Agent's queue decides what
-   * reaches the owner, and raises the one alarm itself. Set from every `super_state`.
+   * reaches the owner, and raises the one alarm itself. Set from every `super_state`; `null`
+   * while the project's record is not read yet, which holds an ask's alarm (super/childAlarm.ts).
    */
   superChild: boolean;
-  setSuperChild: (on: boolean) => void;
+  setSuperChild: (on: boolean | null) => void;
   /** Called with the composer's text on every keystroke (`syncDraft`). The Super Agent's chat
    *  uses it for the owner-activity lease; the text itself never leaves the window. */
   setDraftListener: (fn: ((text: string) => void) | null) => void;
-  /** Answer a pending permission request (or a plain non-question `can_use_tool` prompt). */
-  answer: (requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }) => void;
+  /** Answer a pending permission request (or a plain non-question `can_use_tool` prompt).
+   *  FALSE when the answer could not be written (the socket is not open): the card stays, and
+   *  the caller says so instead of reporting an answer nobody received. TRUE after a write,
+   *  which is not proof it arrived (there is no ack frame). */
+  answer: (requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }) => boolean;
   /** Answer a pending AskUserQuestion card — builds the load-bearing `{questions, answers}`
-   *  updatedInput shape via `buildQuestionAnswer` and allows it. */
-  answerQuestion: (requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>) => void;
+   *  updatedInput shape via `buildQuestionAnswer` and allows it. Same return as {@link answer}. */
+  answerQuestion: (requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>) => boolean;
+  /** The owner tapped something that needs the wire while it is down (a card's Submit): try
+   *  again about a second after the last attempt instead of waiting out the backoff, and give
+   *  up on an attempt that has hung for more than {@link HUNG_ATTEMPT_MS}. Never faster than
+   *  the backoff floor; a no-op while open, taken over or ended. */
+  reconnectSoon: () => void;
   /** Ask the server to interrupt the in-flight turn (Stop button while busy). */
   interrupt: () => void;
   /** Silence spoken audio and bank the autoplay activation. Called by the composer's mic
    *  button, synchronously inside the press handler (see the implementation for why both
    *  jobs have to happen there). A no-op outside assistant mode. */
   bargeInSpeech: () => void;
+  /** The next message written with exactly this text was spoken (`voice: true`). */
+  armSpoken: (text: string) => void;
+  /** When the owner last typed in this composer (epoch ms, 0 = never). */
+  typedAt: () => number;
   /**
    * Subscribe to "is this turn speaking", for the composer's speaking controls. Returns the
    * unsubscribe; fires immediately with the current value.
@@ -771,6 +843,12 @@ export const RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 10000, 30000] as const;
 /** One attempt (a WS upgrade, a chat-history fetch) that has not answered in this long is
  *  abandoned and retried on the backoff — the cloud's port forwarder can hang a request. */
 export const CONNECT_TIMEOUT_MS = 15000;
+/** How long a socket must stay open before the backoff starts again from its first rung. An
+ *  open that drops at once is part of the same outage: resetting on the open edge made an
+ *  open-then-drop loop retry every second forever (the jumping phone chat, 2026-10-23). */
+export const STABLE_OPEN_MS = 5000;
+/** A CONNECTING attempt older than this is given up on when the owner taps for a reconnect. */
+export const HUNG_ATTEMPT_MS = 3000;
 
 /** The server's `_meta/reattached` frame (agent-chat.ts), or null for anything else. Its
  *  `_meta/turn_state` frame reads the same way: the server's word that nothing is running,
@@ -889,6 +967,11 @@ export function createChatSession(
    *  automatic restore (adopt a detached chat, never evict another screen); '1' = an explicit tap
    *  that takes the chat from whichever screen holds it ("Mac'te açık" in the drawer). */
   reattach: '' | typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = '',
+  /** A Super Agent's delegated child (orchestration plan r5 D14): `--strict-mcp-config` and only
+   *  these of the user's MCP servers ([] = none). Null = every other chat, its URL unchanged. */
+  leanMcp: readonly string[] | null = null,
+  /** `ChatSession.superMirror`: the phone opened the Super Agent's conversation. */
+  superMirror = false,
 ): ChatSession {
   const id = `chat-${++chatSessionSeq}`;
   const container = document.createElement('div');
@@ -929,6 +1012,8 @@ export function createChatSession(
   // The agent this Chat tab speaks as, on BOTH URLs for the same reason. Never beside a card.
   const agent = card ? '' : chatAgentFor(claudeId);
   const agentParam = agent ? `&chatAgent=${encodeURIComponent(agent)}` : '';
+  // On BOTH URLs too: a reconnect that respawns a lean child must respawn it lean.
+  const leanParam = leanMcpParam(leanMcp);
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -938,7 +1023,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${leanParam}`;
   /** The reconnect after a DROPPED socket: the same conversation, `reattach` so the server
    *  adopts the live child instead of spawning a twin — PASSIVE, because it is automatic: a
    *  live screen holding the chat is never evicted by it (the server answers 4409 instead).
@@ -947,7 +1032,7 @@ export function createChatSession(
    *  a live permission switch may have moved it. */
   const reconnectUrl = (how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=${how}`
-    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}`;
+    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${leanParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
 
@@ -972,7 +1057,15 @@ export function createChatSession(
   // `claudeId` identifies this pane to the server's audio-focus ledger: one conversation is
   // one pane is one speaker claimant. Two assistant panes are two ids, and exactly one of
   // them is granted the speaker for any given turn (`lib/voice/audioFocus.ts`).
-  const speech = mode === 'assistant' ? new SpeechQueue(claudeId) : null;
+  const speech = mode === 'assistant' || mode === 'super'
+    ? new SpeechQueue(claudeId, undefined, undefined, { surface: mode })
+    : null;
+  /** Super: the server said a spoken owner message is being answered (`voice_turn`), until
+   *  `voice_turn_end`. Only text streamed in between is read; the client never arms it on its
+   *  own (an event turn may be running when the owner speaks). */
+  let voiceTurn = false;
+  /** The text of the next spoken message (`armSpoken`). */
+  let spokenNext: string | null = null;
 
   /**
    * How many characters of each TEXT ITEM have already been handed to the speech queue,
@@ -997,8 +1090,30 @@ export function createChatSession(
   const cueRaw = new Map<string, string>();
   const cues = new Map<string, NotchCue | null>();
   const presentListeners = new Set<(p: NotchPresentation) => void>();
-  /** The body to store for item `itemId` given its full raw text (identity outside assistant mode). */
+  // ── Super view: reply marks (lib/replyMark.ts) ───────────────────────────────────────
+  // The Super opens an answer with `<!-- re:<ref> -->` naming the owner messages it answers.
+  // Same shape as the notch cue: the raw text is kept per item, the item holds the body (so
+  // the transcript, speech and Copy never see the mark) and `replyTo` the refs. On the
+  // hands-free phone the Super's conversation is a `superMirror` session, not mode `super`.
+  const superView = mode === 'super' || superMirror;
+  const replyRefs = new Map<string, string[]>();
+  /** A text item with its reply refs as the head parsed so far (absent: none). */
+  function withReplyTo(it: ChatTextItem): ChatTextItem {
+    const refs = superView ? replyRefs.get(it.id) : undefined;
+    if (refs) return { ...it, replyTo: refs };
+    if (!it.replyTo) return it;
+    const { replyTo: _gone, ...rest } = it;
+    return rest;
+  }
+  /** The body to store for item `itemId` given its full raw text (identity outside assistant
+   *  mode and a Super view). */
   function cueBody(itemId: string, raw: string): string {
+    if (superView) {
+      cueRaw.set(itemId, raw);
+      const split = splitReplyMark(raw);
+      if (split.refs.length) replyRefs.set(itemId, split.refs); else replyRefs.delete(itemId);
+      return split.body;
+    }
     if (mode !== 'assistant') return raw;
     cueRaw.set(itemId, raw);
     const split = splitNotchCue(raw);
@@ -1006,9 +1121,9 @@ export function createChatSession(
     cues.set(itemId, split.cue);
     return split.body;
   }
-  /** The raw text an item has received so far (its body, outside assistant mode). */
+  /** The raw text an item has received so far (its body, outside assistant mode and a Super view). */
   function rawOf(itemId: string, body: string): string {
-    return mode === 'assistant' ? (cueRaw.get(itemId) ?? body) : body;
+    return mode === 'assistant' || superView ? (cueRaw.get(itemId) ?? body) : body;
   }
   function presentBlock(itemId: string, body: string): void {
     if (mode !== 'assistant' || !body.trim() || !cues.has(itemId)) return;
@@ -1020,11 +1135,20 @@ export function createChatSession(
     }
   }
 
+  /** The Super Agent speaks only the answer to a spoken question (K1), and only while the
+   *  speech switch is on (owner, 2026-10-21: "sesli konuşma sadece açılınca gelmeli"). Off, the
+   *  text is consumed unspoken: no `/tts`, whatever the server armed. */
+  function speakSuperTail(itemId: string, full: string, already: number): void {
+    if (voiceTurn && readAloudEnabled()) speech?.push(full.slice(already), itemId);
+    spokenChars.set(itemId, full.length);
+  }
+
   /** Speak the part of `full` that item `itemId` has not contributed yet. */
   function speakTail(itemId: string, full: string): void {
     if (!speech) return;
     const already = spokenChars.get(itemId) ?? 0;
     if (full.length <= already) return;
+    if (mode === 'super') { speakSuperTail(itemId, full, already); return; }
     // A progress line is shown, never read: the Assistant marked it as thinking out loud.
     if (cues.get(itemId)?.kind === 'progress') { spokenChars.set(itemId, full.length); return; }
     // Read aloud is opt-in (the composer's switch). Off means nothing reaches the queue, so
@@ -1072,7 +1196,18 @@ export function createChatSession(
   let focusTarget: HTMLElement | null = null;
   let transcriptRepin: (() => void) | null = null;
   let draftListener: ((text: string) => void) | null = null;
+  /** When the owner last typed in this composer (the Super stage holds new cards meanwhile, G1). */
+  let lastTypedAt = 0;
   let disposed = false;
+  // A handed-over Super Agent's child raises nothing; one whose record is not read yet waits.
+  const childAlarm = createChildAlarmGate<Parameters<typeof raiseAskAttention>[0]>({
+    raise: (alarm, deferred) => {
+      if (deferred) applyAndNotify(() => { session.attention = true; });
+      else session.attention = true;
+      raiseAskAttention(alarm);
+    },
+    stillAsking: () => !disposed && conv.pending.some((p) => p.kind === 'question' || p.kind === 'plan'),
+  });
 
   // ── Phone: is this chat on screen (the server's push suppression, D2) ──────────────────
   let onScreen = false;
@@ -1102,6 +1237,7 @@ export function createChatSession(
     effort,
     mode,
     agent,
+    superMirror,
     accountId,
     ensureOpen: () => { /* no DOM-open step — the AgentSurface portal mount IS "open" */ },
     // No terminal grid to refit — the transcript's equivalent is "you were just moved or
@@ -1129,14 +1265,24 @@ export function createChatSession(
     flushQueue,
     answer,
     answerQuestion,
+    reconnectSoon,
     setCommandHandler,
+    setOwnerWordsHook,
     setWindowHandler,
+    setParkHandler,
+    markFocus,
+    hasLiveWork,
     setSuperHandler,
     onSuper,
-    setSuperChild: (on: boolean) => { session.superChild = on; },
+    setSuperChild: (on: boolean | null) => {
+      childAlarm.set(on);
+      session.superChild = childAlarm.child;
+    },
     setDraftListener: (fn) => { draftListener = fn; },
     interrupt,
     bargeInSpeech,
+    armSpoken: (text: string) => { spokenNext = text.trim() || null; },
+    typedAt: () => lastTypedAt,
     onSpeaking,
     onSpokenChunk,
     onPresent,
@@ -1207,14 +1353,13 @@ export function createChatSession(
     session.asking = conv.pending.length > 0;
     // A handed-over Super Agent's child is quiet (D16): its queue decides what reaches the
     // owner and raises the ONE alarm itself, so nothing here chimes, banners, bounces or badges.
-    if (!hadAskBefore && !session.superChild) {
-      session.attention = true;
+    if (!hadAskBefore) {
       // Chat is the one surface that can put the actual words in the banner: the ask
       // arrives as structured JSON, so what the notification shows is what the card shows.
       // `source` is this session's own VAULT: it is what the chip strip keys a background
       // project's alarm off, so a title here would silence the wrong project's chip.
       // `sessionId` makes the banner a link to THIS chat tab.
-      raiseAskAttention({ source: vault, detail: askSummary(entry), sessionId: session.claudeId });
+      childAlarm.ask({ source: vault, detail: askSummary(entry), sessionId: session.claudeId });
     }
   }
 
@@ -1236,6 +1381,7 @@ export function createChatSession(
     // Mirror only — no subscriber fire (a per-keystroke transcript re-render buys nothing)
     // and no epoch bump (the textarea already shows this text; adoption would be a no-op).
     conv = { ...conv, draft: text };
+    lastTypedAt = Date.now();
     try { draftListener?.(text); } catch { /* a listener never breaks typing */ }
   }
 
@@ -1368,7 +1514,7 @@ export function createChatSession(
         const cur = items[pos];
         if (cur && (cur.kind === 'text' || cur.kind === 'thinking')) {
           const next = cur.kind === 'text' ? cueBody(cur.id, rawOf(cur.id, cur.text) + ev.text) : cur.text + ev.text;
-          items[pos] = { ...cur, text: next };
+          items[pos] = cur.kind === 'text' ? withReplyTo({ ...cur, text: next }) : { ...cur, text: next };
           conv = { ...conv, items };
           // Fed live, so speech starts on the first closed sentence rather than at the end of
           // the turn. Thinking is never spoken.
@@ -1451,19 +1597,21 @@ export function createChatSession(
           const items = conv.items.slice();
           const cur = items[pos] as ChatTextItem | ChatThinkingItem;
           const body = kind === 'text' ? cueBody(cur.id, ev.text) : ev.text;
-          items[pos] = { ...cur, text: body };
+          items[pos] = cur.kind === 'text' ? withReplyTo({ ...cur, text: body }) : { ...cur, text: body };
           conv = { ...conv, items };
           // The echo is the AUTHORITATIVE full block. Only the tail beyond what this item
           // already contributed is spoken, so a reply that DID stream is not read twice.
           if (kind === 'text') { speakTail(cur.id, body); speech?.endBlock(); presentBlock(cur.id, body); }
         } else {
           const last = [...conv.items].reverse().find((it) => it.kind === kind);
-          const echoed = kind === 'text' && mode === 'assistant' ? stripNotchCue(ev.text) : ev.text;
+          const echoed = kind !== 'text' ? ev.text
+            : superView ? splitReplyMark(ev.text).body : mode === 'assistant' ? stripNotchCue(ev.text) : ev.text;
           if (last && (last as ChatTextItem | ChatThinkingItem).text === echoed) return;
           const id = nextItemId();
-          const item: ChatTextItem | ChatThinkingItem = {
+          const made: ChatTextItem | ChatThinkingItem = {
             kind, id, index: -1, text: kind === 'text' ? cueBody(id, ev.text) : ev.text, done: true, ts: Date.now(),
           };
+          const item = made.kind === 'text' ? withReplyTo(made) : made;
           conv = { ...conv, items: [...conv.items, item] };
           // AC8's case: a short reply the CLI sent with NO deltas at all. This is a fresh
           // item that has contributed nothing, so it is spoken in full — once.
@@ -1480,6 +1628,7 @@ export function createChatSession(
         // instead.
         session.busy = false;
         conv = { ...conv, authRequired: { text: ev.text } };
+        clearResubmit();
         return;
       }
       case 'auth-changed': {
@@ -1492,6 +1641,7 @@ export function createChatSession(
         return;
       }
       case 'account-switch': {
+        if (mode === 'super' && ev.pendingSpoken?.length) spokenCarry.set(claudeId, new Set(ev.pendingSpoken));
         // Recorded, NOT acted on here — and `busy` is untouched, exactly as `auth-changed`
         // leaves it. The server HELD the turn before sending this, so nothing is in flight
         // on the old account; `AgentSurface.armAccountSwitch` performs the restart at the
@@ -1528,6 +1678,7 @@ export function createChatSession(
             ...(ev.rejected ? { rejected: ev.rejected } : {}),
             ...(ev.pendingText ? { pendingText: ev.pendingText } : {}),
             ...(ev.pendingTexts ? { pendingTexts: ev.pendingTexts } : {}),
+            // (the spoken ones ride to the restarted session through `spokenCarry`, below)
             ...(ev.turnInFlight === undefined ? {} : { turnInFlight: ev.turnInFlight }),
             at,
           },
@@ -1806,6 +1957,8 @@ export function createChatSession(
       }
       case 'meta-exit': {
         session.busy = false;
+        // The process is gone: a spoken turn it was answering ends with it.
+        voiceTurn = false;
         // Distinguishes a real process exit from a network drop (ws.onclose/onerror never
         // set this) so the Session-ended banner shows only for the former.
         conv = { ...conv, exited: { code: ev.code } };
@@ -1899,6 +2052,17 @@ export function createChatSession(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let connectTimer: ReturnType<typeof setTimeout> | null = null;
   let lastAttemptAt = Date.now();
+  /** Bounds how long an account switch's held, already-sent rows stay out of sight
+   *  (see `enqueue`). */
+  let resubmitTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Arms the backoff reset once an open has lasted {@link STABLE_OPEN_MS}. */
+  let stableTimer: ReturnType<typeof setTimeout> | null = null;
+  /** How the current attempt attaches: a replacement for a hung one must ask the same way,
+   *  or a "Buraya al" (evicting) attempt would come back passive and be refused 4409. */
+  let attemptHow: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE;
+  /** The current attempt is itself the replacement for one a tap gave up on: it is never
+   *  abandoned in turn, so taps can never starve a slow but healthy upgrade. */
+  let attemptAbandoned = false;
   /** The server reported an error on the current socket — the close that follows is an end
    *  (a spawn failure, an account refusal, a conversation held elsewhere), not a drop. */
   let sawServerError = false;
@@ -1907,6 +2071,10 @@ export function createChatSession(
 
   function clearConnectTimer(): void {
     if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+  }
+
+  function clearStableTimer(): void {
+    if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
   }
 
   /** Is `sock` the socket this session currently owns? A late event from an abandoned attempt
@@ -1927,7 +2095,10 @@ export function createChatSession(
     ws.onopen = () => {
       if (!isCurrentSocket(ws)) return;
       clearConnectTimer();
-      reconnectAttempt = 0;
+      // NOT reset here: only an open that lasts climbs back down the backoff.
+      clearStableTimer();
+      stableTimer = setTimeout(() => { stableTimer = null; if (!disposed) reconnectAttempt = 0; }, STABLE_OPEN_MS);
+      recordPhoneEvent('open', claudeId);
       applyAndNotify(() => { session.status = 'open'; });
       if (isReconnect) void replayMissed();
       // THE OPEN EDGE IS A DRAIN EDGE. Until this fires, `writeUser` refuses every frame
@@ -1951,22 +2122,27 @@ export function createChatSession(
   }
 
   function onSocketClosed(code = 0): void {
+    // First: a drop before the open settled must not reset the backoff behind its back.
+    clearStableTimer();
     clearConnectTimer();
+    recordPhoneEvent('close', claudeId, { code });
+    // A spoken turn's end may be lost with the socket: the server re-announces it on reattach.
+    voiceTurn = false;
     if (disposed) return;
     if (code === MAC_CLOSE_TAKEN_OVER) {
       // Another screen holds this chat. Reconnecting would only take it back and start a
       // ping-pong, so the loop stops here; "Buraya al" is the owner's explicit choice.
-      applyAndNotify(() => { session.takenOver = true; session.status = 'closed'; });
+      applyAndNotify(() => { session.takenOver = true; session.status = 'closed'; clearResubmit(); });
       return;
     }
     if (code === MAC_CLOSE_SIGNED_OUT && isMacPhoneSurface()) {
       // The phone was signed out (Return, "Hepsini çıkar", a new password): to the login page.
       try { location.assign('/login?revoked=1'); } catch { /* not a browser */ }
-      applyAndNotify(() => { session.status = 'closed'; });
+      applyAndNotify(() => { session.status = 'closed'; clearResubmit(); });
       return;
     }
     if (conv.exited || sawServerError) {
-      applyAndNotify(() => { session.busy = false; session.asking = false; session.status = 'closed'; });
+      applyAndNotify(() => { session.busy = false; session.asking = false; session.status = 'closed'; clearResubmit(); });
       return;
     }
     scheduleReconnect();
@@ -1985,8 +2161,12 @@ export function createChatSession(
 
   function reconnectNow(how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): void {
     if (disposed) return;
+    clearStableTimer();
     lastAttemptAt = Date.now();
+    attemptAbandoned = false;
+    attemptHow = how;
     isReconnect = true;
+    recordPhoneEvent('attempt', claudeId);
     ws = new WebSocket(reconnectUrl(how));
     bindSocket(ws);
   }
@@ -1995,6 +2175,7 @@ export function createChatSession(
   function takeBack(): void {
     if (disposed) return;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectAttempt = 0;
     applyAndNotify(() => { session.takenOver = false; session.status = 'connecting'; });
     reconnectNow(REATTACH_EVICT);
   }
@@ -2003,6 +2184,7 @@ export function createChatSession(
    *  was taken over reattaches on its own — passively, like any automatic open. */
   function onMacModeEnded(): void {
     if (disposed || !session.takenOver) return;
+    reconnectAttempt = 0;
     applyAndNotify(() => { session.takenOver = false; session.status = 'connecting'; });
     reconnectNow(REATTACH_PASSIVE);
   }
@@ -2020,6 +2202,33 @@ export function createChatSession(
   }
   window.addEventListener('online', onWake);
   document.addEventListener('visibilitychange', onWake);
+
+  /** See {@link ChatSession.reconnectSoon}. Unlike {@link onWake}, a tap inside the floor is
+   *  DEFERRED to the floor, never dropped: the owner is holding an answer that waits for it. */
+  function reconnectSoon(): void {
+    if (disposed) return;
+    const now = Date.now();
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      const wait = Math.max(0, lastAttemptAt + RECONNECT_BACKOFF_MS[0] - now);
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; reconnectNow(); }, wait);
+      return;
+    }
+    if (ws.readyState === WebSocket.CONNECTING) {
+      if (attemptAbandoned || now - lastAttemptAt <= HUNG_ATTEMPT_MS) return;
+      // Close the hung attempt FIRST (the server then skips the holder probe); `reconnectNow`
+      // replaces `ws`, so this attempt's late close fails `isCurrentSocket` and schedules nothing.
+      const hung = ws;
+      const how = attemptHow;
+      try { hung.close(); } catch { /* gone */ }
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      reconnectNow(how);
+      attemptAbandoned = true;
+      return;
+    }
+    // Open: nothing to do. Closed with no timer armed (taken over, exited, refused): that
+    // state's own banner is the answer, not a reconnect.
+  }
 
   function onSocketMessage(e: MessageEvent): void {
     const raw = typeof e.data === 'string' ? e.data : '';
@@ -2041,6 +2250,7 @@ export function createChatSession(
     if (ev.kind === 'assistant-command') { void runCommand(ev); return; }
     // Nor is a window verb: the surface runs it and the answer goes back up the socket.
     if (ev.kind === 'window-command') { void runWindowCommand(ev); return; }
+    if (ev.kind === 'park-request') { runPark(ev); return; }
     // The Super Agent's window-side verbs, the same way (their own subtype and result frame).
     if (ev.kind === 'super-command') { void runSuperCommand(ev); return; }
     // The Super Agent's state is the surface's, never this conversation's.
@@ -2049,7 +2259,7 @@ export function createChatSession(
     if (ev.kind === 'super-event') {
       applyAndNotify(() => {
         const item: ChatUserItem = {
-          kind: 'user', id: `super-${id}-${++superEventSeq}`, text: superEventText(ev.eventKind, ev.child),
+          kind: 'user', id: `super-${id}-${++superEventSeq}`, text: superEventText(ev.eventKind, ev.child, ev.batch),
           ts: Date.now(), superEvent: ev.eventKind,
         };
         conv = { ...conv, items: [...conv.items, item] };
@@ -2057,13 +2267,51 @@ export function createChatSession(
       emitSuper({ kind: 'event', eventKind: ev.eventKind, child: ev.child });
       return;
     }
+    // The Super Agent opened pictures on the Mac's stage (phone mirror only): a strip in the
+    // chat. A join snapshot repeats on every reconnect, so refs already drawn are skipped.
+    if (ev.kind === 'stage-media') {
+      const shown = new Set<string>();
+      for (const it of [...conv.history, ...conv.items]) {
+        if (it.kind === 'user' && it.stageMedia) for (const m of it.stageMedia) shown.add(m.ref);
+      }
+      const fresh = ev.snapshot ? ev.items.filter((m) => !shown.has(m.ref)) : ev.items;
+      if (!fresh.length) return;
+      applyAndNotify(() => {
+        const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: '', ts: Date.now(), stageMedia: fresh, ...(ev.snapshot ? { stageSnapshot: true as const } : {}) };
+        conv = { ...conv, items: [...conv.items, item] };
+      });
+      return;
+    }
+    // The owner typed on the Super Agent's other surface: their bubble here too, in order.
+    if (ev.kind === 'owner-echo') {
+      applyAndNotify(() => {
+        const item: ChatUserItem = { kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now() };
+        conv = { ...conv, items: [...conv.items, item] };
+      });
+      return;
+    }
     // Nor is a browser frame: it feeds the small live window in the browser step and nothing else,
     // so six frames a second never re-render the transcript (chat/browserLiveStore.ts).
     if (ev.kind === 'browser-frame') { pushBrowserFrame(session.id, ev.frame); return; }
     if (ev.kind === 'browser-closed') { dropBrowserLive(session.id); return; }
+    if (ev.kind === 'super-cue') { emitSuper({ kind: 'cue', verb: ev.verb, ids: ev.ids }); return; }
+    if (ev.kind === 'voice-turn') {
+      if (mode !== 'super') return;
+      if (ev.open && !voiceTurn) {
+        // What streamed before this frame belongs to an earlier turn: it is never read.
+        for (const it of conv.items) if (it.kind === 'text') spokenChars.set(it.id, Math.max(spokenChars.get(it.id) ?? 0, it.text.length));
+      }
+      if (!ev.open && voiceTurn) speech?.flushTurn();
+      voiceTurn = ev.open;
+      return;
+    }
     // The ONE place coalescing is allowed: a socket frame nobody is waiting to act on can
     // ride the next paint instead of forcing a React commit per streamed token.
     applyAndNotify(() => applyEvent(ev), !isUrgentChatEvent(ev));
+    if (ev.kind === 'question') recordPhoneEvent('ask', claudeId, { requestId: ev.requestId });
+    // A `result` after an answer means the answer was taken: a lost one is re-sent by the
+    // server on reattach BEFORE any `result`. So the picks of a question no longer open go.
+    if (ev.kind === 'result') dropSettledSurveyDrafts(claudeId, conv.pending.map((p) => p.requestId));
     // Outside the reducer on purpose: draining the queue SENDS a frame and appends an item,
     // which is a second mutation with its own notify — not something a reducer arm may do
     // mid-event. Cheap on every frame (four flag reads and an array length).
@@ -2078,6 +2326,7 @@ export function createChatSession(
    *  can still be waiting: the CLI only asks inside a turn, and a still-open ask is re-sent by
    *  the server right after this frame. */
   function applyReattached(busy: boolean): void {
+    recordPhoneEvent('reattached', claudeId, { busy });
     applyAndNotify(() => {
       session.busy = busy;
       if (!busy) {
@@ -2096,7 +2345,16 @@ export function createChatSession(
   function writeUser(text: string, opts: { steered: boolean }): boolean {
     const clean = text.trim();
     if (!clean || ws.readyState !== WebSocket.OPEN) return false;
-    const frame: ClientControl = { type: 'user', text: clean };
+    // Spoken now, or spoken before an account switch restarted this pane (`spokenCarry`).
+    const carried = spokenCarry.get(claudeId);
+    const saidAloud = (spokenNext !== null && spokenNext === clean) || !!carried?.delete(clean);
+    if (carried && carried.size === 0) spokenCarry.delete(claudeId);
+    spokenNext = null;
+    // A message is SENT spoken only while the speech switch is on, and never from the phone,
+    // which plays nothing. Sent as typed text, the server adds no `<owner-voice>` block and
+    // arms no voice turn, so the reply keeps its usual length and nobody reads it aloud.
+    const spoken = saidAloud && readAloudEnabled() && !isMacPhoneSurface();
+    const frame: ClientControl = spoken ? { type: 'user', text: clean, voice: true } : { type: 'user', text: clean };
     try { ws.send(JSON.stringify(frame)); } catch { return false; }
     turnTrace.mark(vault, 'sent');
     applyAndNotify(() => {
@@ -2118,7 +2376,19 @@ export function createChatSession(
     return true;
   }
 
+  /** See {@link ChatSession.setOwnerWordsHook}. */
+  let ownerWordsHook: ((text: string) => boolean) | null = null;
+  function setOwnerWordsHook(fn: ((text: string) => boolean) | null): void {
+    ownerWordsHook = fn;
+  }
+  function ownerWordsTaken(text: string): boolean {
+    const clean = text.trim();
+    if (!clean || !ownerWordsHook) return false;
+    try { return ownerWordsHook(clean) === true; } catch { return false; }
+  }
+
   function send(text: string): boolean {
+    if (ownerWordsTaken(text)) return true;
     return writeUser(text, { steered: false });
   }
 
@@ -2131,10 +2401,11 @@ export function createChatSession(
    * false→true edge never sees.
    */
   function steer(text: string): boolean {
+    if (ownerWordsTaken(text)) return true;
     if (!steerable()) return false;
     // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
     // answer they are talking over.
-    silenceSpeech();
+    silenceSpeech('steer');
     return writeUser(text, { steered: true });
   }
 
@@ -2150,8 +2421,8 @@ export function createChatSession(
    * generation, so the abandoned turn's in-flight fetch bails on its own when it lands; the
    * flag only needs to be back down for the NEXT turn, which may begin in the same breath.
    */
-  function silenceSpeech(): void {
-    speech?.stop();
+  function silenceSpeech(reason: StopReason = 'barge-in'): void {
+    speech?.stop(reason);
     speech?.resume();
   }
 
@@ -2202,22 +2473,50 @@ export function createChatSession(
 
   // ── Message queue (submitted while a turn was in flight) ──────────────────────────
 
-  function enqueue(text: string, opts?: { steerWhenPossible?: boolean }): void {
+  function enqueue(text: string, opts?: { steerWhenPossible?: boolean; resubmit?: boolean }): void {
+    if (ownerWordsTaken(text)) return;
     applyAndNotify(() => {
       const next = queue.appendQueued(conv.queued, text, `q-${id}-${++queuedSeq}`, Date.now(), opts);
       if (next !== conv.queued) conv = { ...conv, queued: next };
     });
+    // A held row the owner already sent stays out of sight only while it can still go out by
+    // itself; a socket that has not opened within the connect timeout turns it back into an
+    // ordinary row. STATE, not a render-time clock: the timer notifies, so the pane redraws.
+    if (opts?.resubmit && !resubmitTimer && !disposed) {
+      resubmitTimer = setTimeout(() => {
+        resubmitTimer = null;
+        if (!disposed && conv.queued.some((q) => q.resubmit)) applyAndNotify(() => clearResubmit());
+      }, CONNECT_TIMEOUT_MS);
+    }
+  }
+
+  /** Every held row becomes an ordinary, visible, editable row (see `chatQueue.visibleQueued`).
+   *  Mutates `conv`: call it inside `applyAndNotify` (or the reducer). */
+  function clearResubmit(): void {
+    if (resubmitTimer) { clearTimeout(resubmitTimer); resubmitTimer = null; }
+    if (conv.queued.some((q) => q.resubmit)) conv = { ...conv, queued: queue.withoutResubmit(conv.queued) };
+  }
+
+  /** Tell the server which queued texts the owner took back (see ClientControl `queue_dropped`). */
+  function noteQueueDropped(texts: string[]): void {
+    if (texts.length) sendControl({ type: 'queue_dropped', texts: texts.slice(0, 50) });
   }
 
   function pauseQueue(): void {
-    if (conv.queued.length > 0) applyAndNotify(() => { conv = { ...conv, queuePaused: true }; });
+    if (conv.queued.length > 0) {
+      noteQueueDropped(conv.queued.map((q) => q.text));
+      applyAndNotify(() => { conv = { ...conv, queuePaused: true }; clearResubmit(); });
+    }
   }
 
   function editQueued(qid: string, text: string): void {
+    const was = conv.queued.find((q) => q.id === qid)?.text;
+    if (was !== undefined && was !== text) noteQueueDropped([was]);
     applyAndNotify(() => { setQueued(queue.editQueued(conv.queued, qid, text)); });
   }
 
   function removeQueued(qid?: string): void {
+    noteQueueDropped(conv.queued.filter((q) => qid === undefined || q.id === qid).map((q) => q.text));
     applyAndNotify(() => { setQueued(queue.removeQueued(conv.queued, qid)); });
   }
 
@@ -2305,14 +2604,17 @@ export function createChatSession(
     const remaining = conv.queued.slice(1);
     conv = { ...conv, queued: remaining };
     if (!send(next.text)) conv = { ...conv, queued: [next, ...conv.queued] };
+    if (resubmitTimer && !conv.queued.some((q) => q.resubmit)) { clearTimeout(resubmitTimer); resubmitTimer = null; }
   }
 
-  function answer(requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }): void {
-    if (ws.readyState === WebSocket.OPEN) {
-      const frame: ClientControl = { type: 'answer', requestId, behavior: opts.behavior, updatedInput: opts.updatedInput, message: opts.message };
-      try { ws.send(JSON.stringify(frame)); } catch { /* best-effort — the request stays pending server-side */ }
-    }
-    // Optimistic local removal: the protocol has no explicit "answer accepted" ack frame.
+  function answer(requestId: string, opts: { behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }): boolean {
+    // Not written = not answered: the card STAYS. Removing it anyway (the old "optimistic"
+    // path) lost the answer on a dropped phone socket — the server still held the request and
+    // re-sent it on reattach, and the card came back empty.
+    if (ws.readyState !== WebSocket.OPEN) { recordPhoneEvent('submit-held', claudeId, { requestId, reason: 'offline' }); return false; }
+    const frame: ClientControl = { type: 'answer', requestId, behavior: opts.behavior, updatedInput: opts.updatedInput, message: opts.message };
+    try { ws.send(JSON.stringify(frame)); } catch { recordPhoneEvent('submit-held', claudeId, { requestId, reason: 'unsent' }); return false; }
+    // Optimistic local removal after the write: the protocol has no "answer accepted" ack frame.
     applyAndNotify(() => {
       conv = { ...conv, pending: conv.pending.filter((p) => p.requestId !== requestId) };
       session.asking = conv.pending.length > 0;
@@ -2320,17 +2622,20 @@ export function createChatSession(
     // Answering the last open card can itself be the moment the session becomes drainable (a
     // card that outlived its turn's `result` frame) — normally the guard just returns.
     maybeFlushQueue();
+    return true;
   }
 
-  function answerQuestion(requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>): void {
+  function answerQuestion(requestId: string, questions: QuestionSpec[], picked: Record<string, string>, notes?: Record<string, string>): boolean {
     const item = conv.pending.find((p): p is PendingQuestion => p.kind === 'question' && p.requestId === requestId);
-    answer(requestId, { behavior: 'allow', updatedInput: buildQuestionAnswer(questions, picked, { input: item?.input, notes }) });
+    return answer(requestId, { behavior: 'allow', updatedInput: buildQuestionAnswer(questions, picked, { input: item?.input, notes }) });
   }
 
   function interrupt(): void {
     // Before the socket check, on purpose: Stop must silence the audio even when the socket
     // has already gone away, or a dead session keeps talking.
-    silenceSpeech();
+    silenceSpeech('stopped');
+    // Stop turns a held, already-sent row back into one the owner can see and edit.
+    if (conv.queued.some((q) => q.resubmit)) applyAndNotify(() => clearResubmit());
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ type: 'interrupt' } as ClientControl)); } catch { /* best-effort */ }
     // Stop means stop — including whatever was lined up behind this turn. The queue is held,
@@ -2378,6 +2683,39 @@ export function createChatSession(
     sendControl(out.ok
       ? { type: 'window_command_result', id: cmd.id, ok: true, result: out.result ?? null }
       : { type: 'window_command_result', id: cmd.id, ok: false, error: out.error });
+  }
+
+  // ── Parking under load (src/server/chat-park.ts) ──────────────────────────────────
+  let parkHandler: ParkHandler | null = null;
+  function setParkHandler(fn: ParkHandler | null): void { parkHandler = fn; }
+  function hasLiveWork(): boolean {
+    // Queued composer rows (a paused queue included) die with the process: they count as work.
+    return session.busy || session.asking || session.agentsWorking
+      || conv.queued.length > 0
+      || conv.subAgents.some((r) => r.status === 'running');
+  }
+  function runPark(req: { id: string; reason: string; focusGraceMs?: number; end?: boolean; force?: boolean }): void {
+    let verdict: ParkVerdict;
+    // `force` (`super end --force`, only on the owner's word): live work does not refuse it.
+    if (!req.force && hasLiveWork()) verdict = { ok: false, error: session.asking ? 'asking' : session.busy ? 'busy' : 'background' };
+    else {
+      try {
+        verdict = parkHandler
+          ? parkHandler({ reason: req.reason, focusGraceMs: parkGraceOf(req.focusGraceMs), ...(req.end ? { end: true } : {}), ...(req.force ? { force: true } : {}) })
+          : { ok: false, error: 'refused' };
+      }
+      catch { verdict = { ok: false, error: 'refused' }; }
+    }
+    sendControl(verdict.ok
+      ? { type: 'park_result', id: req.id, ok: true }
+      : { type: 'park_result', id: req.id, ok: false, error: verdict.error });
+    if (verdict.ok) verdict.commit();
+  }
+  let lastFocusFrameAt = 0;
+  function markFocus(): void {
+    const now = Date.now();
+    if (now - lastFocusFrameAt < FOCUS_FRAME_THROTTLE_MS) return;
+    if (sendControl({ type: 'focus' })) lastFocusFrameAt = now;
   }
 
   // ── The Super Agent (its own chat only: the server sends these frames nowhere else) ──
@@ -2572,7 +2910,7 @@ export function createChatSession(
     let userItem: ChatUserItem | undefined;
     for (let i = idx - 1; i >= 0; i--) {
       const it = all[i];
-      if (it.kind === 'user') { userItem = it; break; }
+      if (it.kind === 'user' && !it.stageMedia) { userItem = it; break; }
     }
     if (!userItem) return; // no preceding user message (e.g. the very first turn) — no-op
     await rewind(userItem.id, true);
@@ -2594,8 +2932,15 @@ export function createChatSession(
 
   function toChatItem(h: HistoryEntry): ChatItem | null {
     const it = historyChatItem(h, `hist-${++itemSeq}`);
+    if (!it || it.kind !== 'text') return it;
+    // A replayed Super block keeps its words and which messages it answers, never the mark.
+    if (superView) {
+      const split = splitReplyMark(it.text);
+      if (split.pending) return it;
+      return split.refs.length ? { ...it, text: split.body, replyTo: split.refs } : { ...it, text: split.body };
+    }
     // A replayed Assistant block keeps its words, never its notch cue (lib/notchCue.ts).
-    return it && it.kind === 'text' && mode === 'assistant' ? { ...it, text: stripNotchCue(it.text) } : it;
+    return mode === 'assistant' ? { ...it, text: stripNotchCue(it.text) } : it;
   }
 
   /** Resume replay: `--resume` never re-emits past frames, so a resumed chat would open
@@ -2673,7 +3018,7 @@ export function createChatSession(
           const it = items[i];
           // A super event chip stands for text the server wrote; it matches no row, and a
           // search for it would run past every older row and stop the backfill there.
-          if (it.kind !== 'user' || it.superEvent) continue;
+          if (it.kind !== 'user' || it.superEvent || it.stageMedia) continue;
           while (e >= 0 && entries[e].text !== it.text) e--;
           if (e < 0) break;
           if (!it.uuid) { items[i] = { ...it, uuid: entries[e].uuid }; changed = true; }
@@ -2701,6 +3046,7 @@ export function createChatSession(
   }
 
   function dispose(): void {
+    childAlarm.dispose();
     if (disposed) return;
     disposed = true;
     // A queued trailing flush would otherwise fire into subscribers whose component is on
@@ -2711,6 +3057,8 @@ export function createChatSession(
     dropBrowserLive(session.id);
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     clearConnectTimer();
+    clearStableTimer();
+    if (resubmitTimer) { clearTimeout(resubmitTimer); resubmitTimer = null; }
     window.removeEventListener('online', onWake);
     document.removeEventListener('visibilitychange', onWake);
     document.removeEventListener('visibilitychange', onPageVisibility);
@@ -2721,6 +3069,20 @@ export function createChatSession(
     try { ws.close(); } catch { /* already closing */ }
     try { container.remove(); } catch { /* already detached */ }
   }
+
+  // `minimized` as an accessor: shown again (true -> false) fires the subscribers, so a pane
+  // whose renders were held while hidden draws its current state in the same placement pass.
+  let minimizedFlag = false;
+  Object.defineProperty(session, 'minimized', {
+    enumerable: true,
+    configurable: true,
+    get: () => minimizedFlag,
+    set: (v: boolean) => {
+      const shown = minimizedFlag && !v;
+      minimizedFlag = !!v;
+      if (shown && !disposed) renderFlush.flush();
+    },
+  });
 
   // A resumed conversation replays its transcript into `conv.history` (fire-and-forget —
   // an empty/missing transcript just leaves history empty, exactly like a fresh session).

@@ -34,10 +34,8 @@
   background: var(--mood-waiting);
   box-shadow: 0 0 0 2px var(--color-bg);
 }
-.super-cape-glyph { flex: none; }
-.super-cape-glyph-cloth { fill: color-mix(in srgb, var(--color-text) 30%, transparent); stroke: var(--color-text); stroke-width: 1.2; stroke-linejoin: round; }
-.super-cape-glyph-gem-top { fill: color-mix(in srgb, var(--color-accent) 62%, var(--color-bg)); stroke: var(--color-accent); stroke-width: 0.8; }
-.super-cape-glyph-gem { fill: var(--color-accent); stroke: var(--color-accent); stroke-width: 0.8; stroke-linejoin: round; }
+.super-handover-btn-icon { display: inline-flex; flex: none; }
+.super-handover-btn-icon svg { display: block; }
 
 /* Handed over, the panes row stays mounted (take-back returns to it) but is not on screen. */
 .agent-panes[hidden] { display: none !important; }
@@ -49,7 +47,48 @@
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: var(--color-bg);
+  background-color: var(--color-bg);
+  /* The stage's ONE stacking order, low to high (owner 2026-10-23: the agenda card covered an
+     opened group). Every stage-level layer names one of these; no other number. Floating cards
+     and group tiles share the band [--sz-cards, --sz-dock): the window places each card in it
+     (superLayout.ts cardZIndex, drift-tested against these values), the agenda just under the
+     Others drop corner and over every other card,
+     so a card the owner placed or moved last can never climb over what opens above the band.
+     Isolated: the whole stage stays under the app's own full-screen viewers. */
+  isolation: isolate;
+  --sz-under: 1;
+  --sz-orbit: 2;
+  --sz-centre: 5;
+  --sz-cards: 10;
+  --sz-dock-zone: 299;
+  --sz-dock: 300;
+  --sz-card-open: 302;
+  --sz-handover: 305;
+  --sz-queue: 310;
+  --sz-flight: 320;
+  --sz-sheet: 330;
+  --sz-scrim: 340;
+  --sz-panel: 350;
+  --sz-panel-stack: 352;
+  --sz-lifted: 400;
+  --sz-lifted-label: 401;
+}
+/* The stage (2026-10-20, "Cam HUD"): a faint dot grid on the 24 px rhythm and a quiet accent
+   haze behind the centre. Static, on its OWN compositor layer: painted as the surface's own
+   background, the two gradients were re-rastered on every frame of a layout switch (measured: one
+   dropped frame per half switch); as a layer it is rastered once and only composited. */
+.super-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(52% 46% at 50% 52%, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 70%),
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-text) 7%, transparent) 1px, transparent 1.4px);
+  background-size: 100% 100%, 24px 24px;
+  background-position: 0 0, 12px 12px;
+  will-change: transform;
 }
 .super-stage-under,
 .super-stage-layer {
@@ -57,13 +96,13 @@
   inset: 0;
   pointer-events: none;
 }
-.super-stage-under { z-index: 1; }
-.super-stage-layer { z-index: 60; }
+.super-stage-under { z-index: var(--sz-under); }
+.super-stage-layer { z-index: var(--sz-flight); }
 
 /* ── The centre: Claude in the cape (O1). A FRAME (glows, background) around a CLIP. ── */
 .super-centre {
   position: absolute;
-  z-index: 5;
+  z-index: var(--sz-centre);
   isolation: isolate;
   transform-origin: 0 0;
 }
@@ -97,6 +136,41 @@
   min-width: 0;
 }
 .super-centre-name { font-weight: 700; color: var(--color-text); }
+/* "Yeni oturum" (task super-agent-devrini-…): the head's last item, pushed right. On a narrow
+   centre the sub line goes first, then the button keeps only its glyph (label in aria/title). */
+.super-centre-clip { container-type: inline-size; container-name: super-centre; }
+.super-fresh { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
+.super-fresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px 0 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex: none;
+  transition: background 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out, transform 120ms ease-out;
+}
+.super-fresh-btn:hover:not([aria-disabled='true']) { background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg)); border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); color: var(--color-text); }
+.super-fresh-btn:active:not([aria-disabled='true']) { transform: scale(0.97); }
+.super-fresh-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-fresh-btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
+.super-fresh-glyph { flex: none; }
+.super-fresh-error { font-size: var(--font-size-xs); color: var(--color-error-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+@container super-centre (max-width: 420px) {
+  .super-centre-sub { display: none; }
+}
+@container super-centre (max-width: 320px) {
+  .super-fresh-btn { padding: 0 4px; }
+  .super-fresh-btn-label { display: none; }
+}
+
 .super-centre-sub,
 .super-card-large-note { font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .super-card-large-title { font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
@@ -158,8 +232,8 @@
 .super-centre::before,
 .super-card-frame::before {
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--color-accent) 70%, transparent),
-    0 0 28px 4px color-mix(in srgb, var(--color-accent) 38%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--tone, var(--color-accent)) 70%, transparent),
+    0 0 28px 4px color-mix(in srgb, var(--tone, var(--color-accent)) 38%, transparent);
 }
 .super-centre::after,
 .super-card-frame::after {
@@ -182,8 +256,11 @@
   outline: none;
 }
 .super-card-frame[data-where='float'] { cursor: grab; touch-action: none; }
-.super-card-frame[data-lifted] { z-index: 1000 !important; cursor: grabbing; }
-.super-card-frame[data-where='sheet'] { z-index: 70 !important; }
+.super-card-frame[data-lifted] { z-index: var(--sz-lifted) !important; cursor: grabbing; }
+.super-card-frame[data-where='sheet'] { z-index: var(--sz-sheet) !important; }
+/* A card with a menu or a question open lifts out of the band: what it opened paints above the
+   agenda and every floating card (owner 2026-10-23), never under its neighbour. */
+.super-card-frame:not([data-lifted]):not([data-where='sheet']):has(.super-size-menu, .super-close-choice) { z-index: var(--sz-card-open) !important; }
 .super-card-frame:focus-visible .super-card-clip { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 /* The lift: a shadow layer whose opacity follows the hand (F6). */
 .super-card-lift {
@@ -254,6 +331,57 @@
 .super-card-frame:focus-within .super-card-actions,
 .super-card-frame:not([data-where='float']) .super-card-actions { opacity: 1; pointer-events: auto; }
 .super-card-frame[data-lifted] .super-card-actions { opacity: 0; pointer-events: none; }
+/* A child chat's close asks first: end the session, or keep it running in Others. */
+.super-close-choice {
+  position: absolute;
+  top: 38px;
+  right: 6px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 148px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+.super-close-choice-q {
+  padding: 0 var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.super-close-choice-btn {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.super-close-choice-btn:hover { background: var(--color-bg-secondary); }
+.super-close-choice-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.super-close-choice-btn--end { color: var(--color-error-ink); }
+.super-close-pending {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 2;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.super-close-pending--failed {
+  color: var(--color-error-ink);
+  border-color: var(--color-error);
+}
 .super-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -337,8 +465,9 @@
 .super-web-placeholder { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; }
 .super-web-title { font-size: var(--font-size-sm); color: var(--color-text-secondary); word-break: break-all; }
 
-/* ── Others (O4-O6): a small stack in the bottom-right corner, a fan list above it ── */
-.super-others { position: absolute; z-index: 40; }
+/* ── Others (O4-O6, 2026-10-20): the stage's own group, docked bottom-right; it opens the panel ── */
+.super-others { position: absolute; z-index: var(--sz-dock); }
+.super-others[data-open] { z-index: var(--sz-panel-stack); }
 .super-others-stack {
   position: relative;
   display: flex;
@@ -346,16 +475,17 @@
   gap: 8px;
   width: 100%;
   height: 100%;
-  padding: 0 12px 0 8px;
+  padding: 0 8px 0 12px;
   border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 7%, transparent), var(--shadow-md);
   color: var(--color-text);
   font-size: var(--font-size-sm);
   cursor: pointer;
 }
 .super-others-stack:hover { border-color: var(--color-border-hover); }
+.super-others-stack[aria-expanded='true'] { border-color: var(--color-accent); }
 .super-others-stack:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .super-others-sheets { position: relative; flex: none; width: 22px; height: 18px; }
 .super-others-sheets > span {
@@ -363,71 +493,35 @@
   width: 16px;
   height: 12px;
   border-radius: 3px;
-  border: 1px solid var(--color-border-hover);
-  background: var(--color-bg-secondary);
+  border: 1px solid color-mix(in srgb, var(--color-text) 30%, transparent);
+  background: var(--color-bg-elevated);
 }
-.super-others-sheets > span:nth-child(1) { left: 6px; top: 0; }
-.super-others-sheets > span:nth-child(2) { left: 3px; top: 3px; }
-.super-others-sheets > span:nth-child(3) { left: 0; top: 6px; background: var(--color-bg-elevated); }
+.super-others-sheets > span:nth-child(1) { left: 6px; top: 0; opacity: 0.5; }
+.super-others-sheets > span:nth-child(2) { left: 3px; top: 3px; opacity: 0.75; }
+.super-others-sheets > span:nth-child(3) { left: 0; top: 6px; }
 .super-others-name { flex: 1 1 auto; min-width: 0; text-align: left; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-others-dots { flex: none; display: flex; gap: 4px; }
+.super-others-dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: color-mix(in srgb, var(--color-text) 30%, transparent); }
+.super-others-dot[data-super-tone] { background: var(--tone); }
 .super-others-count {
   flex: none;
   min-width: 20px;
   height: 20px;
   padding: 0 6px;
   border-radius: var(--radius-full);
-  background: var(--color-bg-tertiary);
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   line-height: 20px;
   text-align: center;
 }
 .super-others-stack[data-asking] .super-others-count { background: color-mix(in srgb, var(--mood-waiting) 20%, transparent); color: var(--mood-waiting); }
-.super-others-fan {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  width: 260px;
-  max-height: min(60vh, 420px);
-  overflow: auto;
-  margin: 0;
-  padding: 6px;
-  list-style: none;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  box-shadow: var(--shadow-lg);
-  transform-origin: 100% 100%;
-  animation: super-fan-in 160ms ease-out;
-}
-.super-others-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: none;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-  touch-action: none;
-}
-.super-others-item:hover,
-.super-others-item:focus-visible { background: var(--color-bg-tertiary); outline: none; }
-.super-others-glyph { flex: none; color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
-.super-others-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.super-others-dot { flex: none; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--kind-color); }
-.super-others-dot[data-status='working'] { --kind-color: var(--color-success); }
-.super-others-dot[data-status='asking'] { --kind-color: var(--mood-waiting); }
 /* The corner a dragged card is dropped into (lit while the pointer is over it). */
 .super-others-zone {
   position: absolute;
-  z-index: 30;
+  z-index: var(--sz-dock-zone);
   border-top-left-radius: var(--radius-2xl);
   border: 2px dashed color-mix(in srgb, var(--color-accent) 35%, transparent);
   border-right: 0;
@@ -438,10 +532,371 @@
 }
 .super-others-zone[data-lit] { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
 
+/* ── Tiles (owner decision 2026-10-20, direction "Cam HUD") ─────────────────
+   Every floating card is ONE 1:1 glass tile: a status ring and its kind on top, the title, what
+   it does, telemetry in mono at the foot. Corner brackets light while it works or asks. A group
+   is a tile on a deck of sheets. Tokens only; nothing here moves on its own. */
+.super-card-frame[data-where='float'],
+.super-card-frame[data-where='float'] .super-card-clip { border-radius: var(--radius-xl); }
+.super-card-frame[data-where='float']::before,
+.super-card-frame[data-where='float']::after { border-radius: var(--radius-xl); }
+.super-card-frame[data-where='float'] .super-card-clip,
+.super-panel-clip {
+  border: 1px solid color-mix(in srgb, var(--tone, var(--color-text)) var(--tone-ring, 10%), transparent);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--color-bg-elevated) 88%, var(--color-text) 6%) 0%, color-mix(in srgb, var(--color-bg-elevated) 92%, transparent) 100%), var(--color-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 8%, transparent), var(--shadow-md);
+}
+.super-card-frame[data-where='float'][data-super-tone],
+.super-panel-tile[data-super-tone] { --tone-ring: 45%; }
+/* A floating tile is its own layout and paint island: a streaming child changes its doing-line
+   many times a second, and without this every change laid out the whole stage (measured,
+   scripts/verify/super-jank.mjs). The clip is a fixed box that already clips (overflow hidden),
+   so nothing it draws moves; its own border, shadow and focus ring are outside the containment. */
+.super-card-frame[data-where='float'] > .super-card-clip { contain: strict; }
+.super-tile {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 12px;
+  color: var(--color-text);
+}
+.super-tile-corners {
+  position: absolute;
+  inset: 4px;
+  pointer-events: none;
+  opacity: 0;
+  --c: var(--tone, var(--color-accent));
+  --l: 8px;
+  --t: 2px;
+  background:
+    linear-gradient(var(--c), var(--c)) left top / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) left top / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right top / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) right top / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) left bottom / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) right bottom / var(--t) var(--l) no-repeat;
+  transition: opacity 400ms ease-out;
+}
+.super-tile[data-kind='working'] .super-tile-corners { opacity: 0.85; }
+.super-tile[data-kind='asking'] .super-tile-corners { opacity: 0.9; }
+.super-tile-top { display: flex; align-items: center; gap: 8px; min-height: 20px; min-width: 0; }
+.super-tile-kind {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+.super-tile-glyph {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+}
+.super-tile-asks {
+  margin-left: auto;
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--mood-waiting) 18%, transparent);
+  color: var(--mood-waiting);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  font-weight: 700;
+  line-height: 20px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.super-tile-title,
+.super-tile-name {
+  font-size: calc(var(--font-size-sm) - 1px);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.1px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.super-tile-name { font-family: var(--font-family-display); font-size: var(--font-size-base); font-weight: 700; flex: none; }
+/* A team card (an AI Team job): the member's face beside "<name> took the job". */
+.super-team-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.super-team-who .agent-av,
+.super-team-who img { flex: none; }
+.super-tile[data-tile='team'] .super-tile-line { -webkit-line-clamp: 2; }
+.super-card-view--team { display: flex; height: 100%; }
+/* A chat tile's title reads whole (owner 2026-10-21): up to three lines, its doing-line one. */
+.super-tile[data-tile='chat'] .super-tile-title { -webkit-line-clamp: 3; flex: none; }
+.super-tile[data-tile='chat'] .super-tile-line { -webkit-line-clamp: 1; }
+.super-tile-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.super-tile-line {
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.super-tile-line--one { -webkit-line-clamp: 1; }
+.super-tile-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.super-tile-foot--name { font-family: var(--font-family-text); font-size: var(--font-size-xs); color: var(--color-text-secondary); white-space: normal; }
+.super-tile-state { color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
+.super-tile[data-super-tone] .super-tile-state { color: var(--tone); }
+.super-tile-chip {
+  margin-left: auto;
+  flex: none;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-text) 9%, transparent);
+  color: var(--color-text-secondary);
+  line-height: 16px;
+}
+.super-tile-count {
+  margin-left: auto;
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+.super-tile[data-kind='asking'] .super-tile-count { background: color-mix(in srgb, var(--mood-waiting) 22%, transparent); color: var(--mood-waiting); }
+/* The status ring: colour is the state, the mark says it again. */
+.super-ring { flex: none; --ring: var(--color-text-tertiary); }
+.super-ring[data-super-tone] { --ring: var(--tone); }
+.super-ring-track { stroke: color-mix(in srgb, var(--color-text) 12%, transparent); }
+.super-ring-arc { stroke: var(--ring); }
+.super-ring-mark { fill: var(--ring); }
+.super-ring-check { stroke: var(--ring); }
+/* A task: how far its criteria are, and the next one. */
+.super-tile-status-dot { margin-left: auto; flex: none; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--color-text-tertiary); }
+.super-tile-status-dot[data-status='in_progress'] { background: var(--color-status-in-progress); }
+.super-tile-status-dot[data-status='in_review'] { background: var(--color-status-in-review); }
+.super-tile-status-dot[data-status='completed'] { background: var(--color-status-completed); }
+.super-tile-status-dot[data-status='todo'] { background: var(--color-status-todo); }
+.super-tile-status { text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-secondary); }
+.super-tile-progress { display: flex; align-items: center; gap: 8px; }
+.super-tile-bar { flex: 1 1 auto; height: 4px; border-radius: var(--radius-full); background: color-mix(in srgb, var(--color-text) 10%, transparent); overflow: hidden; }
+.super-tile-bar-fill { display: block; height: 100%; background: var(--color-accent); transform-origin: 0 50%; }
+.super-tile-progress-text { flex: none; font-family: var(--font-mono); font-size: var(--font-size-2xs); color: var(--color-text-secondary); }
+.super-tile-next { color: var(--color-text-secondary); }
+/* An insight: its number. */
+.super-tile-value { margin-top: 4px; font-family: var(--font-family-display); font-size: var(--font-size-xl); font-weight: 700; line-height: 1; letter-spacing: -0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-tile-delta { font-family: var(--font-mono); font-size: var(--font-size-2xs); font-weight: 600; color: var(--color-text-secondary); }
+.super-tile-delta[data-dir='up'] { color: var(--color-success); }
+.super-tile-delta[data-dir='down'] { color: var(--color-error); }
+/* An image: the picture is the tile. */
+.super-tile--image { padding: 0; }
+.super-tile-picture { position: absolute; inset: 0; overflow: hidden; }
+.super-tile-picture :is(img, .viewer-media) { width: 100%; height: 100%; object-fit: cover; display: block; }
+.super-tile--image .super-tile-top {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 2px 8px 2px 2px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-bg) 78%, transparent);
+}
+.super-tile-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 24px 12px 12px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--color-bg) 92%, transparent));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A group: its name and its first cards. */
+.super-tile-members { list-style: none; margin: auto 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.super-tile-members li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); white-space: nowrap; }
+.super-tile-member { overflow: hidden; text-overflow: ellipsis; }
+.super-tile-mini { flex: none; width: 12px; text-align: center; font-size: var(--font-size-2xs); color: var(--color-text-tertiary); }
+.super-tile-more { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: var(--font-size-2xs); }
+/* The deck under a group: two sheets peeking above its tile (outside the clip, behind it). */
+.super-tile-sheet {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: -8px;
+  bottom: 8px;
+  z-index: -1;
+  border-radius: var(--radius-xl);
+  border: 1px solid color-mix(in srgb, var(--color-text) 13%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 86%, var(--color-text) 6%);
+  pointer-events: none;
+}
+.super-tile-sheet--far { left: 16px; right: 16px; top: -12px; bottom: 12px; z-index: -2; opacity: 0.7; }
+
+/* ── Grouping: a held card over a tile (2026-10-20) ─────────────────────────
+   The target shrinks a little inside its frame (the frame's transform belongs to the layout
+   motion) and a ring fades in; a label above it says what releasing does. */
+.super-card-clip { transition: transform 120ms ease-out; }
+.super-card-frame[data-drop-target] .super-card-clip { transform: scale(0.94); }
+.super-drop-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: calc(var(--radius-xl) + 4px);
+  box-shadow: 0 0 0 2px var(--color-accent), 0 0 0 8px color-mix(in srgb, var(--color-accent) 18%, transparent), 0 0 36px color-mix(in srgb, var(--color-accent) 30%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.super-card-frame[data-drop-target] .super-drop-ring { opacity: 1; }
+.super-drop-label {
+  position: absolute;
+  z-index: var(--sz-lifted-label);
+  transform: translate(-50%, -100%);
+  height: 24px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 24px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+.super-card-frame[data-lifted] .super-card-clip { background: var(--color-bg-elevated); }
+
+/* ── An open group, or Others: a scrim and the panel the tile grows into ─── */
+.super-panel-scrim { position: absolute; inset: 0; z-index: var(--sz-scrim); background: color-mix(in srgb, var(--color-bg) 62%, transparent); }
+/* A card being dragged out: the panel stays mounted (its item holds the pointer), not drawn. */
+:is(.super-panel-scrim, .super-group-panel)[data-hidden] { opacity: 0; pointer-events: none; }
+.super-group-panel {
+  position: absolute;
+  z-index: var(--sz-panel);
+  display: flex;
+  flex-direction: column;
+  transform-origin: 0 0;
+  border-radius: var(--radius-2xl);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
+  background: linear-gradient(165deg, color-mix(in srgb, var(--color-bg-elevated) 94%, var(--color-text) 5%), var(--color-bg-elevated));
+  box-shadow: var(--shadow-xl), 0 0 40px color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+.super-group-panel-head { height: 48px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; min-width: 0; }
+.super-group-panel-head .super-tile-count { margin-left: 0; }
+.super-group-panel-title { font-family: var(--font-family-display); font-size: var(--font-size-base); font-weight: 700; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.super-group-panel-hint { flex: 1 1 auto; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.super-group-panel-btn {
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+.super-group-panel-btn:hover { border-color: var(--color-border-hover); color: var(--color-text); }
+.super-group-panel-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-group-panel-grid {
+  display: grid;
+  gap: 16px;
+  padding: 0 16px 16px;
+  grid-auto-rows: var(--super-tile, 160px);
+  /* Taller than the panel (30 cards in Others): it scrolls inside itself and the stage behind
+     never pans with it. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.super-panel-item {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  border-radius: var(--radius-xl);
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+.super-panel-item:focus-visible .super-panel-clip { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-panel-tile { position: absolute; inset: 0; isolation: isolate; border-radius: var(--radius-xl); }
+.super-panel-clip { position: absolute; inset: 0; display: flex; flex-direction: column; border-radius: var(--radius-xl); overflow: hidden; }
+.super-panel-tile:is([data-status='working'], [data-status='asking']) .super-panel-clip { box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone) 62%, transparent), 0 0 24px 2px color-mix(in srgb, var(--tone) 29%, transparent); }
+.super-panel-item .super-tile { pointer-events: none; user-select: none; }
+
+/* Over a task's page side by side: status, priority, how far its criteria are. */
+.super-card-view--page { overflow: auto; }
+.super-page-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px 0; }
+.super-page-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-transform: capitalize;
+}
+.super-page-chip .super-tile-status-dot { margin-left: 0; }
+.super-page-progress { display: inline-flex; align-items: center; gap: 8px; width: 160px; }
+
+/* ── The orbit: a faint, static arc through each side's tiles, under the centre ── */
+.super-orbit { position: absolute; left: 0; top: 0; z-index: var(--sz-orbit); pointer-events: none; overflow: visible; }
+.super-orbit-stop { stop-color: var(--color-accent); }
+
 /* ── The queue pill (F7): centred in the top band, grows downward as an overlay ── */
 .super-queue-strip {
   position: absolute;
-  z-index: 50;
+  z-index: var(--sz-queue);
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -472,12 +927,38 @@
   pointer-events: auto;
   animation: super-pill-in 200ms ease-out;
 }
-.super-queue-head[data-kind='permission'] { --queue-tone: var(--mood-waiting); }
+.super-queue-head[data-kind='permission'],
+.super-queue-head[data-kind='owner'] { --queue-tone: var(--mood-waiting); }
+/* The Super Agent's own question carries its glyph (NavIcons SuperAgentIcon) before its name;
+   the head's tone stays the colour channel. */
+.super-queue-super { flex: none; display: inline-flex; color: var(--color-text-secondary); margin-right: -6px; }
+.super-queue-super svg { display: block; }
 .super-queue-who { flex: 0 1 auto; min-width: 6ch; max-width: 24ch; font-weight: 700; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .super-queue-text { flex: 1 1 0; min-width: 10ch; color: var(--color-text-secondary); font-size: var(--font-size-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .super-queue-tool { color: var(--color-text); margin-right: 8px; }
 .super-queue-input { font-family: var(--font-mono); font-size: var(--font-size-xs); }
 .super-queue-actions { flex: none; display: flex; flex-wrap: nowrap; gap: 6px; }
+/* A child waiting on something only the owner can do: the same badge its card wears. It gives
+   way before the head's one button does: it shrinks, and a narrow bar drops it (the tone stays). */
+.super-queue-needs {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+  height: 20px;
+  line-height: 20px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--mood-waiting) 18%, transparent);
+  color: var(--mood-waiting);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.super-queue-head[data-kind='owner'] .super-queue-text { min-width: 0; }
+@media (max-width: 640px) {
+  .super-queue-head[data-kind='owner'] .super-queue-needs { display: none; }
+}
 .super-queue-more { flex: none; font-size: var(--font-size-xs); color: var(--color-text-tertiary); padding-right: 8px; white-space: nowrap; }
 .super-queue-full {
   display: none;
@@ -528,7 +1009,7 @@
 /* ── The terminals dock (F12): small pills in the bottom band's left side ── */
 .super-terminals-row {
   position: absolute;
-  z-index: 40;
+  z-index: var(--sz-dock);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -562,7 +1043,7 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 40;
+  z-index: var(--sz-handover);
   overflow: hidden;
 }
 .super-standin {
@@ -617,27 +1098,449 @@
   50% { opacity: 0.45; transform: scale(0.8); }
 }
 
-@keyframes super-fan-in {
-  from { opacity: 0; transform: translateY(6px) scale(0.98); }
-  to { opacity: 1; transform: none; }
-}
 @keyframes super-pill-in {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: none; }
 }
 
 /* Light mode: the pill and the fan appear without moving (a crossfade-only surface). */
-:root[data-light='true'] .super-others-fan,
 :root[data-light='true'] .super-queue-head { animation: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .super-card-dot { animation: none !important; }
-  .super-others-fan,
   .super-queue-head { animation: none; }
   .super-centre::before,
   .super-centre::after,
   .super-card-frame::before,
   .super-card-frame::after,
   .super-card-lift,
-  .super-card-actions { transition: none; }
+  .super-card-actions,
+  .super-card-clip,
+  .super-drop-ring,
+  .super-tile-corners { transition: none; }
+}
+
+/* ── A child's live browser (jarvis plan r9, K6) ── */
+.super-browser-card { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: inherit; }
+.super-browser-card.is-empty { align-items: center; justify-content: center; padding: var(--space-3); text-align: center; color: var(--color-text-tertiary); font-size: var(--font-size-sm); }
+.super-browser-frame { flex: 1 1 auto; min-height: 0; width: 100%; object-fit: cover; object-position: top center; display: block; }
+.super-browser-host { padding: var(--space-1) var(--space-2); font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.super-card-view--browser { padding: var(--space-2); }
+.super-browser-card.is-large .chat-browser { margin: 0; }
+
+/* ── Verb cues (AC16, useStageCues): one-time, transform/opacity only, on the card's inside so the
+      stage's own FLIP on the frame never fights them. Reduced motion: a plain fade. ── */
+.super-card-glint { position: absolute; inset: -6px; border-radius: var(--radius-xl); pointer-events: none; opacity: 0;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--color-accent) 38%, transparent), transparent 72%); }
+.super-card-frame[data-cue='delegate'] .super-card-clip,
+.super-card-frame[data-cue='delegate'] .super-card-lift { animation: super-cue-fly 620ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.super-card-frame[data-cue='delegate'] .super-card-glint { animation: super-cue-glint 900ms ease-out 380ms both; }
+.super-card-frame[data-cue='open'] .super-card-clip,
+.super-card-frame[data-cue='arrive'] .super-card-clip { animation: super-cue-pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+.super-card-frame[data-cue='open'] .super-card-glint,
+.super-card-frame[data-cue='arrive'] .super-card-glint { animation: super-cue-glint 800ms ease-out 120ms both; }
+.super-card-frame[data-cue='present'] .super-card-glint { animation: super-cue-glint 700ms ease-out both; }
+.super-card-frame[data-cue='stack'] .super-card-clip { animation: super-cue-sink 380ms ease-out both; }
+.super-card-frame[data-cue='float'] .super-card-clip { animation: super-cue-pop 380ms ease-out both; }
+.super-card-frame[data-cue='group'] .super-card-clip,
+.super-card-frame[data-cue='ungroup'] .super-card-clip { animation: super-cue-pulse 520ms ease-in-out both; }
+.super-card-frame[data-cue='answer'] .super-card-glint,
+.super-card-frame[data-cue='merge'] .super-card-glint { animation: super-cue-glint 700ms ease-out both; }
+.super-card-frame[data-cue='close'] { pointer-events: none; }
+.super-card-frame[data-cue='close'] .super-card-clip,
+.super-card-frame[data-cue='close'] .super-card-lift { animation: super-cue-fade 360ms ease-in both; }
+.super-card-frame[data-cue='close'] .super-card-actions { display: none; }
+
+@keyframes super-cue-fly {
+  from { opacity: 0; transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.35); }
+  70% { opacity: 1; }
+  to { opacity: 1; transform: none; }
+}
+@keyframes super-cue-pop { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: none; } }
+@keyframes super-cue-sink { from { transform: none; } to { transform: scale(0.94); opacity: 0.85; } }
+@keyframes super-cue-pulse { 0%, 100% { transform: none; } 45% { transform: scale(1.05); } }
+@keyframes super-cue-glint { from { opacity: 0; transform: scale(0.8); } 35% { opacity: 1; } to { opacity: 0; transform: scale(1.15); } }
+@keyframes super-cue-fade { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(0.9); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .super-card-frame[data-cue] .super-card-clip,
+  .super-card-frame[data-cue] .super-card-lift { animation: super-cue-plain 240ms ease-out both; }
+  /* Reduced motion: a closed card is gone at once (no fade). */
+  .super-card-frame[data-cue='close'] { opacity: 0; }
+  .super-card-frame[data-cue='close'] .super-card-clip,
+  .super-card-frame[data-cue='close'] .super-card-lift { animation: none; }
+  .super-card-frame[data-cue] .super-card-glint { animation: none; }
+}
+@keyframes super-cue-plain { from { opacity: 0; } to { opacity: 1; } }
+
+
+/* A page and a live browser fill the large card (the body scrolls, so it is not a flex box). */
+.super-card-view--web, .super-card-view--browser { height: 100%; }
+.super-card-view--web > .wb-widget { flex: 1 1 auto; min-height: 0; }
+
+/* ── Card sizes (owner 2026-10-22: "like Apple widgets") ─────────────────────────────────── */
+
+/* A medium (2×1) tile has the width for a second line of what it is. */
+.super-card-frame[data-size='medium'] .super-tile-line { -webkit-line-clamp: 2; }
+.super-card-frame[data-size='medium'] .super-tile-title { -webkit-line-clamp: 2; }
+/* A large or wide floating card draws its own view, read-only like the rest of the tile. */
+.super-card-frame[data-where='float'] .super-card-body.super-card-large .super-card-large-body { overflow: hidden; }
+/* Its web card's trust buttons stay clickable (a page is allowed from the card itself). */
+.super-card-frame[data-where='float'] .wb-web-buttons { pointer-events: auto; }
+
+/* The size menu: four presets as little grids under the card's buttons. */
+.super-size-menu {
+  position: absolute;
+  top: 38px;
+  right: 6px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 220px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+.super-card-frame[data-side='left'] .super-size-menu { right: auto; left: 6px; }
+.super-size-menu-title { padding: 0 var(--space-1); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.super-size-menu-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-1); }
+.super-size-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.super-size-option:hover:not(:disabled) { background: var(--color-bg-secondary); color: var(--color-text); }
+.super-size-option:active:not(:disabled) { transform: scale(0.97); }
+.super-size-option:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.super-size-option[aria-checked='true'] { border-color: var(--color-accent); color: var(--color-text); }
+.super-size-option:disabled { opacity: 0.5; cursor: not-allowed; }
+.super-size-cell { fill: none; stroke: var(--color-border-strong, var(--color-border)); stroke-width: 1; }
+.super-size-cell--on { fill: var(--color-accent); stroke: var(--color-accent); }
+.super-size-menu-note { margin: 0; padding: 0 var(--space-1); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.super-size-menu-item {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.super-size-menu-item:hover { background: var(--color-bg-secondary); }
+.super-size-menu-item:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+/* The corner handle: the card's outer bottom corner, shown on hover or focus. */
+.super-card-resize {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  z-index: 3;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.super-card-resize::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--color-text-tertiary);
+  border-bottom: 2px solid var(--color-text-tertiary);
+  border-bottom-right-radius: 3px;
+}
+.super-card-frame[data-side='left'] .super-card-resize { right: auto; left: 0; cursor: nesw-resize; }
+.super-card-frame[data-side='left'] .super-card-resize::after {
+  right: auto;
+  left: 4px;
+  border-right: 0;
+  border-left: 2px solid var(--color-text-tertiary);
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 3px;
+}
+.super-card-frame:hover .super-card-resize,
+.super-card-frame:focus-within .super-card-resize { opacity: 1; }
+.super-card-frame[data-lifted] .super-card-resize { opacity: 0; }
+
+/* The preset a corner drag would land on. */
+.super-resize-outline {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: 2px dashed var(--color-accent);
+  border-radius: var(--radius-lg, 12px);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  pointer-events: none;
+  z-index: var(--sz-lifted);
+}
+
+/* ── Zoom in place (owner 2026-10-22: a picture or a page side by side or presented zooms where
+      it is: pinch or ⌘/Ctrl + scroll, drag once zoomed, double click to fit) ───────────── */
+.super-zoom { position: relative; flex: 1 1 auto; min-height: 0; height: 100%; overflow: hidden; }
+.super-zoom-content { position: absolute; inset: 0; display: flex; flex-direction: column; transform-origin: center; will-change: transform; }
+.super-zoom-content > * { flex: 1 1 auto; min-height: 0; }
+.super-zoom[data-zoomed] { cursor: grab; touch-action: none; }
+.super-zoom[data-zoomed][data-grabbing] { cursor: grabbing; }
+/* Zoomed, a drag pans the view: the content's own clicks and selection wait until it fits again. */
+.super-zoom[data-zoomed]:not([data-inspect]) .super-zoom-content { pointer-events: none; user-select: none; }
+.super-zoom-shield { position: absolute; inset: 0; z-index: 1; cursor: grab; }
+.super-zoom[data-grabbing] .super-zoom-shield { cursor: grabbing; }
+.super-zoom-bar {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-bg-elevated, var(--color-bg)) 92%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+.super-zoom-btn {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.super-zoom-btn--text { font-size: var(--font-size-xs); }
+.super-zoom-btn:hover:not(:disabled) { background: var(--color-bg-tertiary); color: var(--color-text); }
+.super-zoom-btn:disabled { opacity: 0.4; cursor: default; }
+.super-zoom-btn[aria-pressed='true'] { background: var(--color-bg-tertiary); color: var(--color-text); }
+.super-zoom-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.super-zoom-btn--danger { color: var(--color-error); }
+/* A narrow card (a sheet, a 390 px window): the bar stays inside the card; the zoom steps give
+   way (a pinch still zooms), Fit stays while the view is zoomed (the way back), the Clear
+   question wraps rather than scrolling its start out of sight, and anything left scrolls. */
+.super-zoom { container-type: inline-size; }
+.super-zoom-bar { max-width: calc(100% - 2 * var(--space-2)); overflow-x: auto; scrollbar-width: none; }
+.super-zoom-bar::-webkit-scrollbar { display: none; }
+.super-zoom-bar > * { flex: none; white-space: nowrap; }
+@container (max-width: 460px) {
+  .super-zoom-bar .super-zoom-ctl,
+  .super-zoom:not([data-zoomed]) .super-zoom-bar .super-zoom-fit { display: none; }
+  .super-zoom-bar:has(.super-zoom-ask) { border-radius: var(--radius-lg); }
+  .super-zoom-bar > .super-zoom-ask { flex: 1 1 auto; min-width: 0; white-space: normal; padding-left: var(--space-2); }
+}
+.super-zoom-ask { padding: 0 6px 0 10px; font-size: var(--font-size-xs); color: var(--color-text); white-space: nowrap; }
+/* Inspect picking in the page: the page takes the pointer (its bridge outlines and picks). */
+.super-zoom[data-picker] .super-zoom-content { pointer-events: auto; }
+.super-zoom-level { min-width: 44px; text-align: center; font-family: var(--font-mono); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
+/* A picture zoomed in place is the whole card, fitted and centred: the pointer finds it wherever
+   it points (at the card's top it left the card's lower half empty, and zooming there showed nothing). */
+.super-zoom-content > .super-card-view > .doc-reader:has(> img.viewer-media) { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.super-zoom-content img.viewer-media { max-width: 100%; max-height: 100%; margin: 0; }
+
+/* The agenda's list is live on a floating card (owner 2026-10-22: the agenda is a card): its
+   rows are buttons and it scrolls; the card around it is still the grab handle. */
+.super-card-frame[data-where='float'][data-kind='agenda'] .super-card-large .super-agenda { pointer-events: auto; }
+
+/* A live page's card (owner 2026-10-22): one tree in every state, so its frame never reloads.
+   Shown, the page fills the body; hidden (a 1×1 tile, parked) it keeps its last size, unseen. */
+.super-web-body { position: relative; display: flex; flex-direction: column; overflow: hidden; }
+.super-web-keep { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.super-web-tile { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--color-bg-elevated); }
+.super-web-tile > * { flex: 1 1 auto; min-height: 0; }
+/* Past the budget the title and Load sit at the top of the card, over the empty pane (a project
+   page drew them there before it shared this body, 2026-10-23). */
+.super-web-body > .super-web-placeholder { position: absolute; inset: 0; }
+/* Kept alive off the stage (Others, a group): never seen, never hit, never in the tab order. */
+.super-card-frame--parked { visibility: hidden; pointer-events: none; }
+.super-card-frame--parked .super-card-actions { display: none; }
+
+/* ── Presentation layouts (plan-r2 D11-D14): the top band's switcher and exit, a narrow
+   sheet's tabs, a filmstrip's thumbs. Tokens only. ── */
+.super-stage-controls {
+  position: absolute;
+  z-index: var(--sz-queue);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+.super-layout-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--space-8);
+  padding: var(--space-1);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  box-shadow: var(--shadow-md);
+}
+.super-layout-seg,
+.super-sheet-tab {
+  height: 100%;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+.super-layout-seg:hover,
+.super-sheet-tab:hover { color: var(--color-text); }
+.super-layout-seg[aria-pressed='true'],
+.super-sheet-tab[aria-selected='true'] {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-text);
+}
+.super-layout-seg:focus-visible,
+.super-sheet-tab:focus-visible,
+.super-stage-exit:focus-visible,
+.super-chat-fold:focus-visible,
+.super-card-frame[data-where='thumb']:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: var(--space-1);
+}
+.super-stage-exit {
+  height: var(--space-8);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  flex: none;
+}
+.super-stage-exit:hover { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
+.super-sheet-tabs {
+  position: absolute;
+  z-index: var(--sz-sheet);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  overflow-x: auto;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+}
+.super-sheet-tab { max-width: calc(var(--space-28) + var(--space-16)); overflow: hidden; text-overflow: ellipsis; }
+/* A filmstrip thumb: a static tile the owner presses to make it big. */
+.super-card-frame[data-where='thumb'] { cursor: pointer; }
+.super-card-frame[data-where='thumb']:hover .super-card-clip {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+}
+
+/* ── The centre in a presentation (plan-r2 D6, D7, D14): a mini square keeps its head to the name
+   and the fold, its list scrolls and the composer stays; folded to a bar (and a narrow sheet's
+   composer) it is the composer alone (the centre's own glow still says when the agent asks);
+   its unfold sits just right of it. ── */
+.super-centre[data-chat='mini'] .super-centre-head,
+.super-centre[data-chat='bar'] .super-centre-head { gap: var(--space-2); }
+.super-centre[data-chat='bar'] .super-centre-head { display: none; }
+/* Everything of the chat but its composer: the transcript, the pins, the banners, the chips. */
+.super-centre[data-chat='bar'] .chat-pane > :not(.chat-cmp):not(:has(.chat-cmp)),
+.super-centre[data-chat='bar'] .chat-transcript { display: none; }
+.super-chat-fold {
+  margin-left: auto;
+  height: var(--space-6);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex: none;
+}
+.super-chat-fold:hover { color: var(--color-text); }
+.super-chat-fold--bar {
+  position: absolute;
+  z-index: var(--sz-queue);
+  left: calc(var(--bar-x) + var(--space-3));
+  top: calc(var(--bar-mid) - var(--space-6) / 2);
+  margin-left: 0;
+  background: var(--color-bg-elevated);
+}
+
+/* The pictures the Super Agent opened on the Mac's stage, as the hands-free phone sees them
+   (StageMediaStrip.tsx): one quiet line, then a row of thumbnails that open full size. */
+.super-stage-media {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-1) 0;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-accent-soft);
+  max-width: 100%;
+}
+.super-stage-media-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.super-stage-media-row {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+}
+.super-stage-media-thumb {
+  flex: 1 1 0;
+  min-width: 96px;
+  max-width: 240px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-primary);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+.super-stage-media-thumb img {
+  display: block;
+  width: 100%;
+  height: 96px;
+  object-fit: cover;
+}
+.super-stage-media-gone {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
 }

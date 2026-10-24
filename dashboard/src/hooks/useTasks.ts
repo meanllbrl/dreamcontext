@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { useApi } from '../context/VaultContext';
+import { useApi, useVault } from '../context/VaultContext';
 import { pollMs } from '../lib/windowActivity';
 import { buildStatusModel, DEFAULT_STATUSES, type StatusDef, type StatusModel } from '../lib/statusModel';
 
@@ -50,6 +50,47 @@ export interface Task {
   changelog: string;
   sections: string[];
   body: string;
+  /** The board card's clip: top-level entries in `state/assets/<slug>/` and the first image. List only. */
+  attachments?: { count: number; cover: string | null };
+  /** Who opened the task (server: lib/filing-basis.ts). Null on tasks older than the field. */
+  filed_by?: FiledBy | null;
+  /** Why it was opened. Null when nothing was recorded (the owner's own tasks, older tasks). */
+  filing_basis?: FilingBasis | null;
+  /** The owner's objection to this task and the rule sleep learned from it (newest), or null. */
+  objection?: TaskObjection | null;
+}
+
+export type FiledBy = 'human' | 'agent' | 'sleep' | 'plan';
+export type FilingBasisKind = 'ask' | 'defect' | 'change' | 'bookmark' | 'plan' | 'note';
+export interface FilingBasis {
+  kind: FilingBasisKind;
+  quote: string;
+  session?: string;
+  /** YYYY-MM-DD */
+  at: string;
+  verified: boolean;
+}
+
+export type ObjectionKind = 'subtask-of' | 'criterion-on' | 'duplicate-of' | 'not-a-task' | 'wrong-project';
+/** The kinds that point at another task. */
+export const OBJECTION_TARGETED: ReadonlySet<ObjectionKind> = new Set(['subtask-of', 'criterion-on', 'duplicate-of']);
+/** Mirrors the server's floor (lib/task-objection.ts MIN_OBJECTION_NOTE_CHARS). */
+export const MIN_OBJECTION_NOTE_CHARS = 15;
+
+export interface TaskObjection {
+  id: string;
+  as: ObjectionKind;
+  target: string | null;
+  targetName: string | null;
+  note: string;
+  /** ISO timestamp the objection was made. */
+  at: string;
+  /** Not finished: the page offers "Finish" (the same request again). */
+  pending: boolean;
+  error: string | null;
+  applied: { action: string; at: string } | null;
+  /** The rule sleep learned from it, or null (not yet, or deleted by hand). */
+  rule: { id: string; title: string; dont: string; do: string } | null;
 }
 
 interface TasksResponse {
@@ -69,11 +110,13 @@ interface CreateTaskInput {
   why?: string;
   version?: string;
   custom_fields?: Record<string, string | number | null>;
+  /** Create it as a subtask of this task (inherits version + feature; `why` may be omitted). */
+  parent_task?: string | null;
 }
 
-interface UpdateTaskInput {
+export interface UpdateTaskInput {
   slug: string;
-  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'start_date' | 'assignee' | 'agent' | 'objectives' | 'body'>> & {
+  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'start_date' | 'assignee' | 'agent' | 'objectives' | 'body' | 'parent_task'>> & {
     rice?: RiceInput | null;
     custom_fields?: Record<string, string | number | null>;
   };
@@ -170,6 +213,35 @@ export function useUpdateTask() {
   });
 }
 
+/**
+ * Did a status change come back refused because the task still has open sub-tasks? (409
+ * `parent_has_open_children`.) The board and the drawer answer it in their own words, from the
+ * task list they already hold (lib/taskObjection.ts openChildrenMessage), not the route's English.
+ */
+export function isOpenChildrenRefusal(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === 'parent_has_open_children';
+}
+
+/**
+ * "Object to this task" (`POST /api/tasks/:slug/objection`). The same call finishes an
+ * unfinished objection. Rejects with the route's RequestError (its `code` and message); the
+ * dialog shows it in place.
+ */
+export function useObjectToTask() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation<{ outcome: 'applied' | 'already_applied'; task: Task | null }, Error, { slug: string; as: ObjectionKind; target: string | null; note: string }>({
+    mutationFn: ({ slug, as, target, note }) =>
+      api.post(`/tasks/${encodeURIComponent(slug)}/objection`, { as, target, note }),
+    // Settled, not success: a step that failed midway still changed the task (and the ledger).
+    onSettled: (_data, _err, { slug, target }) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks', slug] });
+      if (target) queryClient.invalidateQueries({ queryKey: ['tasks', target] });
+    },
+  });
+}
+
 /** Every refusal `POST /api/tasks/:slug/assign-agent` can answer with, by its `error` slug. */
 export type AssignAgentRefusal =
   | 'agent_not_approved_to_run'
@@ -242,6 +314,59 @@ export function useAssignTaskToAgent() {
       queryClient.invalidateQueries({ queryKey: ['agents'] });
       queryClient.invalidateQueries({ queryKey: ['automations-run-job'] });
       queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
+    },
+  });
+}
+
+/** One entry of a task's attachment folder (`GET /api/tasks/:slug/assets`). */
+export type TaskAssetKind = 'image' | 'video' | 'audio' | 'pdf' | 'file';
+export type TaskAssetEntry =
+  | { name: string; path: string; kind: TaskAssetKind; size: number }
+  | { name: string; path: string; kind: 'folder'; count: number };
+export interface TaskAssetListing { entries: TaskAssetEntry[]; total: number; truncated: boolean }
+
+export function useTaskAssets(slug: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['task-assets', slug],
+    queryFn: () => api.get<TaskAssetListing>(`/tasks/${encodeURIComponent(slug)}/assets`),
+    enabled: !!slug,
+  });
+}
+
+/** What an upload is doing right now, for the progress tile. */
+export interface TaskAssetUploadProgress { name: string; loaded: number; total: number }
+
+/**
+ * Upload one file to a task's attachments: the raw bytes as the body, the name in `?name=`.
+ * XHR rather than fetch for upload progress. The vault rides in the `X-Dreamcontext-Vault`
+ * HEADER, never `?vault=` (the server reads the query only on GET). Rejects with the route's
+ * message (413 too large, 429 busy, 403 cross-site).
+ */
+export function useUploadTaskAsset(slug: string, onProgress?: (p: TaskAssetUploadProgress) => void) {
+  const queryClient = useQueryClient();
+  const { vault } = useVault();
+  // The target task rides in the VARIABLES, fixed when the upload starts: a batch keeps going to
+  // the task it was dropped on even if the drawer moves to another task meanwhile.
+  return useMutation<{ name: string; size: number }, Error, { file: Blob; name: string; target?: string }>({
+    mutationFn: ({ file, name, target = slug }) => new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/api/tasks/${encodeURIComponent(target)}/assets?name=${encodeURIComponent(name)}`);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      if (vault) xhr.setRequestHeader('X-Dreamcontext-Vault', vault);
+      xhr.upload.onprogress = (e) => onProgress?.({ name, loaded: e.loaded, total: e.lengthComputable ? e.total : file.size });
+      xhr.onload = () => {
+        let body: { name?: string; size?: number; message?: string } = {};
+        try { body = JSON.parse(xhr.responseText); } catch { /* not json */ }
+        if (xhr.status >= 200 && xhr.status < 300 && body.name) resolve({ name: body.name, size: body.size ?? file.size });
+        else reject(new Error(body.message || `Upload failed (${xhr.status}).`));
+      };
+      xhr.onerror = () => reject(new Error('Upload failed: the connection dropped.'));
+      xhr.send(file);
+    }),
+    onSettled: (_d, _e, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['task-assets', vars.target ?? slug] });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
   });
 }

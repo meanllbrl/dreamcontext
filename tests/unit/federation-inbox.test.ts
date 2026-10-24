@@ -19,7 +19,10 @@ import {
 const execFileAsync = promisify(execFile);
 
 /** Absolute path to the vite-node binary bundled with this project. */
-const VITE_NODE = resolve('node_modules/.bin/vite-node');
+const VITE_NODE = process.platform === 'win32' ? process.execPath : resolve('node_modules/.bin/vite-node');
+/** win32: `.bin/vite-node` is a .cmd shim Node will not spawn without a shell, so its own entry
+ *  runs under node instead. */
+const VITE_NODE_ARGS = process.platform === 'win32' ? [resolve('node_modules/vite-node/dist/cli.mjs')] : [];
 
 /** Absolute path to the child-writer helper script. */
 const CHILD_WRITER = resolve('tests/helpers/federation-inbox-child-writer.ts');
@@ -97,7 +100,7 @@ describe('federation-inbox', () => {
       // Launch all child processes simultaneously.
       await Promise.all(
         childArgs.map(({ vault, startIndex, count }) =>
-          execFileAsync(VITE_NODE, [
+          execFileAsync(VITE_NODE, [...VITE_NODE_ARGS, 
             CHILD_WRITER,
             contextRoot,
             vault,

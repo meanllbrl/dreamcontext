@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
-import { phoneAllows } from '../lib/phoneSurface';
+import { isMacPhoneSurface, phoneAllows } from '../lib/phoneSurface';
 import { pollMs } from '../lib/windowActivity';
 import type { Capabilities } from '../components/sleepy/agentSession';
 import {
@@ -39,6 +39,29 @@ export function useAgentCapabilities() {
     refetchInterval: () => pollMs(30_000),
     retry: false,
   });
+}
+
+/**
+ * The hands-free phone's hold-to-talk (task the-hands-free-phone-sends-a-voice-message…): on Mac
+ * mode's phone only, and only while the Mac has local dictation installed — its takes are
+ * transcribed there (`POST /api/agent/voice/stt`, the one voice route the phone reaches).
+ *
+ * Every chat pane calls this, so it is a PASSIVE reader of the shared capabilities cache: off the
+ * phone it never fetches (`enabled: false`), and it runs no interval of its own anywhere (one
+ * timer per mounted pane would multiply the poll). The surface's own subscriber keeps the cache
+ * fresh; a pane mounting over a stale entry refreshes it once.
+ */
+export function usePhoneDictation(): boolean {
+  const api = useApi();
+  const phone = isMacPhoneSurface();
+  const { data } = useQuery({
+    queryKey: ['agent-capabilities'],
+    queryFn: () => api.get<Capabilities>('/agent/capabilities'),
+    enabled: phone,
+    staleTime: 30_000,
+    retry: false,
+  });
+  return phone && data?.dictation === true;
 }
 
 /**

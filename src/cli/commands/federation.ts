@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { realpathSync, unlinkSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import chalk from 'chalk';
-import fg from 'fast-glob';
+import fg from '../../lib/glob.js';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { listConnections } from '../../lib/connections.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';

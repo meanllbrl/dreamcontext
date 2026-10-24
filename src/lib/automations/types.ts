@@ -78,6 +78,16 @@ export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
 /**
+ * A model or effort the owner picked for ONE message to an agent (the AI Team's temporary
+ * model). It reaches exactly one spawn's argv and nothing else: never the manifest, never the
+ * approval hash, never a scheduled fire. A null field keeps the manifest's own value.
+ */
+export interface SpawnModelOverride {
+  model: string | null;
+  effort: EffortLevel | null;
+}
+
+/**
  * One way an automation fires. A schedule is a UNION of slots: the agent is
  * due at every moment any slot names, and a slot is exactly one of four
  * cadences. Every `at` is 24h "HH:MM", machine-local wall-clock.
@@ -519,13 +529,17 @@ export type ThreadEntryKind = 'system' | 'agent' | 'user';
  *  orphan guard. A SCHEDULED fire deliberately writes nothing on those paths
  *  (a still-due automation would otherwise post every five minutes forever);
  *  this event exists for the other caller, a human who typed into the channel
- *  and is owed an answer. One ask, at most one `skipped`. */
-export type ThreadSystemEvent = 'started' | 'ok' | 'failed' | 'timeout' | 'asked' | 'replied' | 'skipped';
+ *  and is owed an answer. One ask, at most one `skipped`.
+ *
+ *  `routine` is NOT terminal: a conversation turn set up a scheduled automation for its agent
+ *  (`automations create --answer`, after the owner pressed the proposal's first choice). The
+ *  text names it and when it runs. */
+export type ThreadSystemEvent = 'started' | 'ok' | 'failed' | 'timeout' | 'asked' | 'replied' | 'skipped' | 'routine';
 
 /** Where an entry came from. Provenance, for the same reason `ReviewChannel`
  *  exists: "the agent said this" and "the runner said this on the agent's
  *  behalf" are different claims and a reader is entitled to tell them apart. */
-export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant';
+export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super';
 
 /** One row of a posted summary — a FIGURE that moved, never prose. Deliberately
  *  not a free-form block: a summary the agent can write at any length is a
@@ -804,6 +818,14 @@ export interface AutomationQuestion {
    * a human must never be shown as done.
    */
   resolutionError: string | null;
+  /** `'routine'` when a conversation turn proposed a scheduled routine
+   *  (`automations propose --routine`): the only kind of question `automations create
+   *  --answer` accepts. Absent on every other question. */
+  proposes?: 'routine';
+  /** The automation a run created on this answer (`automations create --answer`). One
+   *  answer sets up one routine: a second create naming this question is refused. Absent
+   *  until then. */
+  routine?: string;
   /** Newest LAST — a steer trail reads as a conversation, unlike the LIFO
    *  ledgers elsewhere in the brain, which are scanned newest-first. */
   steers: QuestionSteer[];

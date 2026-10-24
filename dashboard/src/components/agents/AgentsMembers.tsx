@@ -57,7 +57,7 @@ export function AgentsMembers({
   const [profile, setProfile] = useState<ProfileAnchor | null>(null);
   const [detailSlug, setDetailSlug] = useState<string | null>(null);
 
-  // Real automations only: on-call agents live on the Agents page (the list still carries them).
+  // Real automations only: on-call agents live on the AI Team page (the list still carries them).
   const ordered = useMemo(() => applyOrder((automations ?? []).filter(isAutomationRow), order), [automations, order]);
 
   /** Always re-derived from the live list, never captured in state: an agent

@@ -1,0 +1,5 @@
+/* ── The question band (plan r4 D1) ──────────────────────────────────────────────
+   One row in the top band: the queue head (SuperSurface.css's .super-queue-* rules). The counts
+   and the job list are gone: the agenda card (SuperAgenda.css) holds what waits on the owner. Tokens only. */
+.super-job-bar { gap: 8px; align-items: center; }
+.super-job-bar .super-queue-head { flex: 1 1 auto; }

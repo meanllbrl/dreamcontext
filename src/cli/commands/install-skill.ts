@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { relPosix } from '../../lib/paths.js';
 import chalk from 'chalk';
 import { checkbox, confirm } from '@inquirer/prompts';
 import { error, info, warn, miniBox, header } from '../../lib/format.js';
@@ -622,7 +623,7 @@ function installSingleSkill(skillName: string, projectRoot: string, platforms: P
       mkdirSync(dirname(subDest), { recursive: true });
       writeFileSync(subDest, readFileSync(subSrc, 'utf-8'), 'utf-8');
 
-      const skillRootRel = skillRoot.replace(projectRoot + '/', '');
+      const skillRootRel = relPosix(projectRoot, skillRoot);
       const subRel = `${skillRootRel}/${pack.name}/${sub.file}`;
       recordFile(manifest, subRel, dreamcontextVersion(), 'pack-skill');
       let label = platformPrefixed(platform, subRel);
@@ -841,12 +842,26 @@ export async function installCoreForPlatform(
   if (!skillSource) {
     throw new Error('SKILL.md not found in package. Try reinstalling dreamcontext.');
   }
+  // The foundational core skills below are each "non-fatal if absent", but `update` treats whatever
+  // this install did not record as retired and prunes it. A package missing one of these folders
+  // would therefore delete the project's copy, so a partial package fails here instead.
+  const missingCore = ['skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns']
+    .filter((dir) => !findPackageFile(dir, 'SKILL.md'));
+  if (missingCore.length > 0) {
+    throw new Error(`${missingCore.join(', ')} not found in package. Try reinstalling dreamcontext.`);
+  }
+  // Checked here, before anything is written, for the same reason (see the agents loop below):
+  // a throw after the writes would leave files on disk that the saved manifest does not list.
+  const agentsSourceDir = findPackageDir('agents');
+  if (!agentsSourceDir) {
+    throw new Error('agents/ not found in package. Try reinstalling dreamcontext.');
+  }
 
   if (manifest) recordPlatform(manifest, platform);
 
   const skillRoot = platformSkillRoot(projectRoot, platform);
   const skillDestDir = join(skillRoot, 'dreamcontext');
-  const skillRootRel = skillRoot.replace(projectRoot + '/', '');
+  const skillRootRel = relPosix(projectRoot, skillRoot);
   mkdirSync(skillDestDir, { recursive: true });
   writeFileSync(join(skillDestDir, 'SKILL.md'), readFileSync(skillSource, 'utf-8'), 'utf-8');
   const coreSkillRel = `${skillRootRel}/dreamcontext/SKILL.md`;
@@ -1009,15 +1024,15 @@ export async function installCoreForPlatform(
     installed.push(platformPrefixed(platform, agentCoreSkillRel));
   }
 
-  const agentsSourceDir = findPackageDir('agents');
-  if (agentsSourceDir) {
-    const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
-    for (const file of agentFiles) {
-      const source = join(agentsSourceDir, file);
-      const agent = installAgentForPlatform(platform, projectRoot, source);
-      recordIfManifest(manifest, agent.relPath, 'agent', { baselineSha: agent.baselineSha });
-      installed.push(platformPrefixed(platform, agent.relPath));
-    }
+  // Required, like SKILL.md above. A missing `agents/` used to be skipped silently, and `update`
+  // reads "in the old manifest, not in this install" as "retired" and DELETES the project's
+  // core agents (reproduced with the desktop app's resources layout, which shipped no `agents/`).
+  const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
+  for (const file of agentFiles) {
+    const source = join(agentsSourceDir, file);
+    const agent = installAgentForPlatform(platform, projectRoot, source);
+    recordIfManifest(manifest, agent.relPath, 'agent', { baselineSha: agent.baselineSha });
+    installed.push(platformPrefixed(platform, agent.relPath));
   }
 
   notes.push(...pruneRetiredCoreAgents(projectRoot, manifest));

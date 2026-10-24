@@ -55,7 +55,7 @@ describe('recording and reading', () => {
 
   it('is written 0600 — it names a resumable bypassPermissions session', () => {
     recordAutomationSession('digest', 'sess-abc', home, NOW);
-    expect(statSync(automationSessionsPath('digest', home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(automationSessionsPath('digest', home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('a session this machine never recorded is NOT resumable', () => {

@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import chalk from 'chalk';
-import fg from 'fast-glob';
+import fg from '../../lib/glob.js';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { readFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { insertToSection } from '../../lib/markdown.js';
@@ -15,6 +15,7 @@ import { featuresDir, featureSlug, featureProduct, FEATURES_SUBDIR, FEATURES_TYP
 import { resolveFeature, taskExists, applyFeatureTaskList, healFeatureRename } from '../../lib/feature-links.js';
 import { moveKnowledgeFile } from '../../lib/knowledge-move.js';
 import { migrateKnowledgeAccessKey } from './sleep.js';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Normalise a free-form feature subfolder path (relative to knowledge/features/):
@@ -99,8 +100,8 @@ function setRelatedTasksValidated(file: string, taskSlugs: string[]): boolean {
 function getFeatureTemplate(): string {
   // Try to load from templates directory
   const candidates = [
-    join(new URL('.', import.meta.url).pathname, '..', '..', 'templates', 'feature.md'),
-    join(new URL('.', import.meta.url).pathname, '..', 'templates', 'feature.md'),
+    join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'templates', 'feature.md'),
+    join(fileURLToPath(new URL('.', import.meta.url)), '..', 'templates', 'feature.md'),
   ];
 
   for (const path of candidates) {

@@ -1,0 +1,63 @@
+/* The full-screen page viewer (FrameViewer.tsx). It wears the picture viewer's backdrop, bar
+   and close button (ImageViewer.css); only the stage differs: a page laid out at the screen's
+   width, transformed by the zoom, under a shield in Inspect mode. */
+
+/* Its own stacking context (z-index 0): the shield's z-index stays inside it, so the bar and
+   the close button drawn after it are always on top and take their clicks. */
+.frame-viewer-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+.frame-viewer-stage[data-grabbing] { cursor: grabbing; }
+.frame-viewer-stage[data-mode='click'] { cursor: auto; }
+
+.frame-viewer-page {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center center;
+  /* The page is drawn in the app's scheme (the kit's tokens): it sits on the app's own background. */
+  background: var(--color-bg);
+  box-shadow: 0 20px 48px hsl(0 0% 0% / 0.4);
+}
+
+.frame-viewer-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+/* Inspect mode: every pointer is the viewer's (a drag pans, it never selects text in the page). */
+.frame-viewer-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.frame-viewer-status {
+  margin: 0;
+  padding: 24px;
+  color: var(--color-text-secondary, hsl(0 0% 40%));
+  font-size: 0.875rem;
+}
+
+.frame-viewer-level { cursor: default; min-width: 56px; }
+
+.frame-viewer-note {
+  position: absolute;
+  left: 50%;
+  bottom: 104px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 4px 12px;
+  border-radius: 8px;
+  background: hsl(0 0% 0% / 0.6);
+  color: hsl(0 0% 100% / 0.86);
+  font-size: 0.8125rem;
+}

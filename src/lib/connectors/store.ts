@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../glob.js';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../frontmatter.js';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { today } from '../id.js';

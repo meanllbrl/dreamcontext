@@ -60,7 +60,7 @@ function without(m: AutomationManifest): AutomationManifest {
   return copy as AutomationManifest;
 }
 
-const START = '--- HOW YOU WORK (your approved soul, from the Agents page) ---';
+const START = '--- HOW YOU WORK (your approved soul, from the AI Team) ---';
 const END = '--- END HOW YOU WORK ---';
 
 function assertBetween(text: string, before: string, after: string): void {

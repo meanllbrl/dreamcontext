@@ -45,7 +45,9 @@
         "--soul-template",
         "--model",
         "--effort",
-        "--whiteboard"
+        "--whiteboard",
+        "--reports-to",
+        "--team"
       ]
     },
     {
@@ -343,7 +345,8 @@
         "--review",
         "--whiteboard",
         "--agent",
-        "--job"
+        "--job",
+        "--answer"
       ]
     },
     {
@@ -688,7 +691,7 @@
     },
     {
       "path": "builder heavy",
-      "desc": "Run a type-check or test run holding this repo's heavy lock, one at a time across builders (exit: the command's, or 75 = lock busy, nothing ran)",
+      "desc": "Run a type-check, build or test run holding this repo's heavy lock and one of the machine's 2 heavy slots (every repo together), one at a time per repo (exit: the command's, or 75 = busy, nothing ran)",
       "args": [
         "<command...>"
       ],
@@ -2935,7 +2938,8 @@
         "<summary...>"
       ],
       "valueFlags": [
-        "--flag"
+        "--flag",
+        "--asks"
       ]
     },
     {
@@ -3045,6 +3049,16 @@
       "group": true
     },
     {
+      "path": "super adopt",
+      "desc": "Make an open chat of this project one of your children (its card comes, it hears of the hand-over). Every chat you did not start is the owner's: only on his word, with --force",
+      "args": [
+        "<chat>"
+      ],
+      "valueFlags": [
+        "--brief"
+      ]
+    },
+    {
       "path": "super answer",
       "desc": "Answer a child's QUESTION (never a permission) with its option label(s) or --text",
       "args": [
@@ -3057,40 +3071,84 @@
       ]
     },
     {
-      "path": "super brief",
-      "desc": "Set the one-line reminder a child's card shows",
+      "path": "super ask",
+      "desc": "Ask the owner YOUR own question (one at a time), in AskUserQuestion's own shape: his chat draws it with the same card any agent's question gets (title, question, why, options with descriptions or previews, several picks, a note, \"Unclear\"). It never holds your turn (AskUserQuestion does: never use it). His answer comes back as his next message, `[super answer] …`; the reply says whether it `reached` him",
       "args": [
-        "<child>",
-        "<line>"
+        "[text]"
+      ],
+      "valueFlags": [
+        "--json",
+        "--title",
+        "--description",
+        "--header",
+        "--option",
+        "--options"
       ]
     },
     {
+      "path": "super brief",
+      "desc": "Set the job's line in the owner's agenda (one plain sentence: what it is doing now); its card shows it too",
+      "args": [
+        "<child>",
+        "<line>"
+      ],
+      "valueFlags": [
+        "--task"
+      ]
+    },
+    {
+      "path": "super clean",
+      "desc": "Give disk back: remove ended children's worktrees that are merged and clean (branches kept) and this repo's own test temp folders older than a day. Chrome and system files are never touched",
+      "args": []
+    },
+    {
       "path": "super close",
-      "desc": "Close a card (a child chat keeps running)",
+      "desc": "Close a card (a child chat keeps running; `super end` ends it)",
       "args": [
         "<card>"
       ]
     },
     {
       "path": "super delegate",
-      "desc": "Start a child chat in THIS project and open its card; returns its session id",
+      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap (15 live children, the only limit), the job is kept in the pool (`held`)",
       "args": [],
       "valueFlags": [
         "--prompt",
+        "--from",
+        "--succeeds",
         "--brief",
         "--mode",
         "--model",
         "--effort",
         "--worktree",
         "--slug",
-        "--base"
+        "--base",
+        "--task",
+        "--mcp"
+      ]
+    },
+    {
+      "path": "super end",
+      "desc": "End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks",
+      "args": [
+        "[children...]"
       ]
     },
     {
       "path": "super float",
-      "desc": "Bring a card from Others back to the floating cards (placed for you)",
+      "desc": "Bring a card or a group from Others back to the stage (placed for you); a grouped card leaves its group",
       "args": [
         "<card>"
+      ]
+    },
+    {
+      "path": "super group",
+      "desc": "Put cards together as one tile on the stage; a group id among them adds the rest to that group",
+      "args": [
+        "<cards...>"
+      ],
+      "valueFlags": [
+        "--name"
       ]
     },
     {
@@ -3101,8 +3159,23 @@
       ]
     },
     {
+      "path": "super handoff",
+      "desc": "Hand YOUR session off: write your whole state into your own handoff file (state/.super/handoff.md, never a task) and let a fresh session continue on the same stage. Refuses while any part is missing. Your sub-agents share your pane and are routed here too",
+      "args": [
+        "[note...]"
+      ],
+      "valueFlags": [
+        "--done",
+        "--next",
+        "--decisions",
+        "--learned",
+        "--style",
+        "--files"
+      ]
+    },
+    {
       "path": "super merge",
-      "desc": "Merge children's super/* branches into super/<topic> in its own worktree (never the default branch, never pushed)",
+      "desc": "Merge the branch each child's worktree is on now into super/<topic> in its own worktree (nothingToMerge when it brings no commit; never the default branch, never pushed)",
       "args": [
         "<children...>"
       ],
@@ -3111,22 +3184,100 @@
       ]
     },
     {
+      "path": "super note",
+      "desc": "The owner's agenda: your notepad of what you do now, what you wait on him for, and what is done (plain words, high level)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super note add",
+      "desc": "Write one line: now (what you are doing) | waiting (what you need from the owner) | done (what finished); returns its id (n1, n2, ...)",
+      "args": [
+        "<section>",
+        "<text...>"
+      ]
+    },
+    {
+      "path": "super note clear",
+      "desc": "Empty the agenda (or one section): a new day or a new piece of work starts",
+      "args": [
+        "[section]"
+      ]
+    },
+    {
+      "path": "super note done",
+      "desc": "Move a line to Done (it finished, or the owner gave what you waited for)",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "super note drop",
+      "desc": "Remove a line that no longer holds",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
       "path": "super open",
-      "desc": "Open a floating card: chat | insight | task | knowledge | whiteboard | board | web | image. ref = a session id, a slug, a URL or a project path",
+      "desc": "Open floating cards: chat | insight | task | knowledge | whiteboard | board | web | image | browser | team | agenda. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once. `open agenda` (no ref) brings back the owner's agenda card (Waiting on you, Now, Done, Up next)",
       "args": [
         "<kind>",
-        "<ref>"
+        "[refs...]"
       ],
       "valueFlags": [
+        "--group",
         "--shape",
-        "--title"
+        "--size",
+        "--title",
+        "--titles",
+        "--for"
+      ]
+    },
+    {
+      "path": "super pool",
+      "desc": "Jobs kept for later (the job list's Havuz)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super pool add",
+      "desc": "Keep a job for later; start it with `delegate --from <id>` when a slot frees",
+      "args": [],
+      "valueFlags": [
+        "--prompt",
+        "--note",
+        "--brief",
+        "--mode",
+        "--model",
+        "--effort",
+        "--worktree",
+        "--slug",
+        "--base",
+        "--task",
+        "--mcp"
+      ]
+    },
+    {
+      "path": "super pool list",
+      "desc": "The pooled jobs (title, note, task, held, maybe started)",
+      "args": []
+    },
+    {
+      "path": "super pool remove",
+      "desc": "Drop a job from the pool",
+      "args": [
+        "<id>"
       ]
     },
     {
       "path": "super present",
-      "desc": "Presentation: you move left, 1-4 cards fill the right; --off returns to the floating cards",
+      "desc": "Presentation of 1-8 cards in a named layout: spotlight (1), compare (2), grid (2-4), filmstrip (2-8), review (a page with its child's chat); without --layout the cards pick it; --off returns to the floating cards",
       "args": [
         "[cards...]"
+      ],
+      "valueFlags": [
+        "--layout"
       ]
     },
     {
@@ -3137,7 +3288,7 @@
     },
     {
       "path": "super queue ask",
-      "desc": "Escalate a question to the owner with your words (never a permission)",
+      "desc": "Escalate a child's question to the owner in your words (never a permission): a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him",
       "args": [
         "<item>",
         "<text>"
@@ -3157,7 +3308,7 @@
     },
     {
       "path": "super read",
-      "desc": "The end of a child's transcript (bounded), fenced as the child's text",
+      "desc": "A child's last reply, whole (tool calls skipped), fenced as the child's text. An event line that ends in \"…\" is cut: this prints the rest",
       "args": [
         "<child>"
       ],
@@ -3166,8 +3317,20 @@
       ]
     },
     {
+      "path": "super resume",
+      "desc": "Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others",
+      "args": [
+        "<child>"
+      ],
+      "valueFlags": [
+        "--mode",
+        "--model",
+        "--effort"
+      ]
+    },
+    {
       "path": "super send",
-      "desc": "Send a message into a child chat (queued if it is busy)",
+      "desc": "Send a message into a child chat (steered into its running turn; queued only while it asks). A parked child is woken first, in the same command: \"delivered\" says how it arrived",
       "args": [
         "<child>",
         "<text>"
@@ -3175,7 +3338,7 @@
     },
     {
       "path": "super shape",
-      "desc": "Make a card square (1:1) or tall (3:4)",
+      "desc": "Size a card: small | medium | large | wide (1x1 2x1 2x2 3x2 tiles); 409 owner_sized when the owner chose its size. square | tall are recorded only (older scripts)",
       "args": [
         "<card>",
         "<shape>"
@@ -3183,15 +3346,51 @@
     },
     {
       "path": "super stack",
-      "desc": "Put a card in the Others stack (bottom right)",
+      "desc": "Put a card or a group in Others (bottom right); a grouped card leaves its group",
       "args": [
         "<card>"
       ]
     },
     {
       "path": "super state",
-      "desc": "Children (status, brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
+      "desc": "Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
       "args": []
+    },
+    {
+      "path": "super team",
+      "desc": "The project's AI Team: give a member a job in its own thread",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super team ask",
+      "desc": "Give an AI Team member a job: it lands in the member's own thread and runs on its own model, approval and queue. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)",
+      "args": [
+        "<member>",
+        "<job>"
+      ],
+      "valueFlags": [
+        "--brief"
+      ]
+    },
+    {
+      "path": "super ungroup",
+      "desc": "Dissolve a group (its cards take its place on the stage or in Others), or take cards out of their group (they float)",
+      "args": [
+        "<targets...>"
+      ]
+    },
+    {
+      "path": "super update",
+      "desc": "Change a RUNNING child's mode, model or effort (the window's own switches; a mode change restarts it on the same conversation once its turn ends); recorded for `super resume`",
+      "args": [
+        "<child>"
+      ],
+      "valueFlags": [
+        "--mode",
+        "--model",
+        "--effort"
+      ]
     },
     {
       "path": "super worktree",
@@ -3226,6 +3425,18 @@
       ],
       "valueFlags": [
         "--note"
+      ]
+    },
+    {
+      "path": "tasks basis",
+      "desc": "Record why an existing task was opened; --basis plan also marks it as a plan's wave (filed_by: plan)",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--basis",
+        "--quote",
+        "--evidence"
       ]
     },
     {
@@ -3268,6 +3479,10 @@
         "--feature",
         "--field",
         "--by",
+        "--parent",
+        "--basis",
+        "--quote",
+        "--evidence",
         "--neighbor-checked",
         "--declined-checked"
       ]
@@ -3381,7 +3596,8 @@
         "--since",
         "--until",
         "-g",
-        "--group-by"
+        "--group-by",
+        "--parent"
       ]
     },
     {
@@ -3398,11 +3614,37 @@
       "args": []
     },
     {
+      "path": "tasks object",
+      "desc": "Object to a task an agent opened: put it under another task, make it a criterion, mark it a duplicate, or decline it",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--as",
+        "--target",
+        "--note",
+        "--resume"
+      ]
+    },
+    {
+      "path": "tasks objections",
+      "desc": "List objections to tasks, newest first",
+      "args": []
+    },
+    {
       "path": "tasks objectives",
       "desc": "Print, set, or clear the roadmap objectives a task serves (local-only field)",
       "args": [
         "<name>",
         "[slugs]"
+      ]
+    },
+    {
+      "path": "tasks parent",
+      "desc": "Print, set, or clear the parent of a sub-task (two levels max; the parent must be open)",
+      "args": [
+        "<name>",
+        "[parent]"
       ]
     },
     {
@@ -3444,6 +3686,43 @@
         "--impact",
         "--confidence",
         "--effort"
+      ]
+    },
+    {
+      "path": "tasks rules",
+      "desc": "Task filing rules learned from objections (knowledge/patterns/task-filing-rules.md); the only writer of that file",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "tasks rules merge",
+      "desc": "Add objections to an existing rule (and optionally reword it)",
+      "args": [
+        "<id>"
+      ],
+      "valueFlags": [
+        "--rests-on",
+        "--title",
+        "--dont",
+        "--do"
+      ]
+    },
+    {
+      "path": "tasks rules revert",
+      "desc": "Drop a rule; the objections it rested on are dismissed and never learned again",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "tasks rules set",
+      "desc": "Add a rule learned from one or more applied objections",
+      "args": [],
+      "valueFlags": [
+        "--title",
+        "--dont",
+        "--do",
+        "--rests-on"
       ]
     },
     {
@@ -3874,11 +4153,12 @@
     },
     {
       "path": "whiteboard draw",
-      "desc": "Import a drawing built by the excalidraw skill (.excalidraw.md or scene .json) onto a board; refused where it would cover live elements",
+      "desc": "Draw onto a board with the excalidraw kit: a JSON spec (--spec; `whiteboard kit` lists the types) or a file the excalidraw skill built (--file); refused where it would cover live elements",
       "args": [
         "<slug>"
       ],
       "valueFlags": [
+        "--spec",
         "--file",
         "--at",
         "--below",
@@ -3886,6 +4166,11 @@
         "--align-left",
         "--tag"
       ]
+    },
+    {
+      "path": "whiteboard kit",
+      "desc": "How to draw on a whiteboard: the excalidraw kit's spec types, with a worked example, for `draw --spec`",
+      "args": []
     },
     {
       "path": "whiteboard list",
@@ -4096,7 +4381,7 @@
     },
     {
       "path": "window send",
-      "desc": "Send a message into another chat tab (queued if it is busy)",
+      "desc": "Send a message into another chat tab (steered into its running turn; queued only while it asks)",
       "args": [
         "<tab>",
         "<text>"
