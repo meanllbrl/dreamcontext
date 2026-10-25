@@ -279,7 +279,7 @@ describe('recall-eval CLI', () => {
       });
 
       it('passes when every query ran its tier (api for cloud, nano for cloud-index, none for a gate skip)', async () => {
-        const cloud = await fakeEngine((i) => (i % 2 ? { querySource: 'none', fallback: 'none' } : { querySource: 'api', fallback: 'none' }));
+        const cloud = await fakeEngine((i) => (i % 2 ? { querySource: 'none', fallback: 'bm25_confident' } : { querySource: 'api', fallback: 'none' }));
         const a = await run(tierArgs('cloud', { label: 'ok-cloud' }), deps(cloud));
         expect(a.outFile).not.toBeNull();
         const idx = await fakeEngine(() => ({ querySource: 'nano', fallback: 'none' }));

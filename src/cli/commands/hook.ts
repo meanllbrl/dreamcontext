@@ -48,7 +48,7 @@ import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
 } from '../../lib/patterns.js';
-import { hybridSearch, hybridReady, HOOK_MAX_INLINE_EMBED, type RecallTiming } from '../../lib/embeddings/hybrid.js';
+import { hybridSearch, hybridReady, hybridNotReadyReason, HOOK_MAX_INLINE_EMBED, type HybridNotReadyReason, type RecallTiming } from '../../lib/embeddings/hybrid.js';
 import { resolvePromptTier, type RecallTier } from '../../lib/recall-cloud-config.js';
 import { listVaults } from '../../lib/vaults.js';
 import {
@@ -563,15 +563,24 @@ export function recallTimingLine(timing: RecallTiming | null, env: NodeJS.Proces
 /**
  * The header label of a hybrid prompt, from the EFFECTIVE query source. A cloud tier that answered
  * (`api`, or the cloud-index tier's local nano query) is `Hybrid · cloud`; one that fell back says where it
- * went and why: `Hybrid · cloud → local: breaker open`, or `→ BM25` when no local model could serve either.
+ * went and why: `Hybrid · cloud → local: breaker open`, or `→ BM25: bm25 confident` when the dense gate
+ * skipped it. A fallback ALWAYS names a reason: a path that forgot to record one reads `reason not recorded`
+ * rather than a bare arrow.
  */
 export function hybridHeaderLabel(timing: RecallTiming): string {
   const base = `Hybrid · ${timing.tier}`;
-  const fellBack = timing.tier !== 'local' && (timing.querySource === 'e5' || timing.querySource === 'none');
+  const fellBack = timing.tier === 'local'
+    ? timing.querySource === 'none' && timing.fallback !== 'none'
+    : timing.querySource === 'e5' || timing.querySource === 'none';
   if (!fellBack) return base;
   const served = timing.querySource === 'e5' ? 'local' : 'BM25';
-  const why = timing.fallback === 'none' ? '' : `: ${timing.fallback.replace(/_/g, ' ')}`;
-  return `${base} → ${served}${why}`;
+  const why = timing.fallback === 'none' ? 'reason not recorded' : timing.fallback.replace(/_/g, ' ');
+  return `${base} → ${served}: ${why}`;
+}
+
+/** The header label when hybrid is selected but cannot run: still `BM25` first (scripts/hook-latency.ts counts by the first word), then why. */
+export function hybridNotReadyLabel(tier: RecallTier, reason: HybridNotReadyReason): string {
+  return `BM25 · hybrid ${tier} not ready: ${reason.replace(/_/g, ' ')}`;
 }
 
 export interface PromptRecallDeps {
@@ -585,7 +594,7 @@ export interface PromptRecallDeps {
 
 export interface PromptRecall {
   hits: RecallHit[];
-  /** Header label: `Haiku`, `BM25`, `Hybrid · <effective tier>`, or `Hybrid · <tier> → local: <why>` after a fallback (no parentheses or commas: scripts/hook-latency.ts parses the header). */
+  /** Header label: `Haiku`, `BM25`, `BM25 · hybrid <tier> not ready: <why>`, `Hybrid · <effective tier>`, or `Hybrid · <tier> → local|BM25: <why>` after a fallback (no parentheses or commas: scripts/hook-latency.ts parses the header). */
   label: string;
   haiku: boolean;
   /** Filled by the hybrid path only. */
@@ -614,7 +623,8 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
     return { hits: [], label: 'BM25', haiku: false, timing: null };
   }
 
-  const tier = recallMode === 'hybrid' ? resolvePromptTier(root, env, deps.home).tier : 'local';
+  const resolved = recallMode === 'hybrid' ? resolvePromptTier(root, env, deps.home) : null;
+  const tier = resolved?.tier ?? 'local';
   if (hybridReady(root, recallMode, tier, deps.home)) {
     // The local tier's cost is loading the e5 model into THIS process (~5 CPU-seconds and ~450 MB
     // per prompt, measured). When the app's dashboard server is running it holds the model warm:
@@ -626,7 +636,8 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
     }
     return hybridPromptRecall(prompt, root, tier, deps.home);
   }
-  return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_INJECT_TOP_K), label: 'BM25', haiku: false, timing: null };
+  const label = resolved !== null ? hybridNotReadyLabel(tier, hybridNotReadyReason(root, resolved, deps.home)) : 'BM25';
+  return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_INJECT_TOP_K), label, haiku: false, timing: null };
 }
 
 /**

@@ -216,7 +216,7 @@ describe('tier resolution', () => {
     const fake = fakeOpenRouter();
     vi.stubGlobal('fetch', fake.fetch);
     const r = await selectPromptRecall(PROMPT, env.root, 'hybrid', { env: { DREAMCONTEXT_RECALL_TIER: 'local' }, home: env.home });
-    expect(r.label).toBe('BM25');
+    expect(r.label).toBe('BM25 · hybrid local not ready: not warmed');
     expect(fake.calls).toHaveLength(0);
   });
 
@@ -228,18 +228,44 @@ describe('tier resolution', () => {
     const spawned = { [SPAWNED_ENV]: 'goal-skill' };
     expect(resolvePromptTier(env.root, spawned, env.home)).toEqual({ tier: 'local', downgraded: 'spawned_session' });
     const r = await selectPromptRecall(PROMPT, env.root, 'hybrid', { env: spawned, home: env.home });
-    expect(r.label).toBe('BM25');
+    expect(r.label).toBe('BM25 · hybrid local not ready: spawned session');
     expect(fake.calls).toHaveLength(0);
   });
 
-  it('cloud-index without the nano model on disk is not ready: BM25, zero fetches', async () => {
+  it('cloud-index without the nano model on disk is not ready: BM25 that names the missing model, zero fetches', async () => {
     const corpus = writeVault(env.root);
     await consentAndIndex(env, corpus, 'cloud-index');
     const fake = fakeOpenRouter();
     vi.stubGlobal('fetch', fake.fetch);
     const r = await selectPromptRecall(PROMPT, env.root, 'hybrid', { env: {}, home: env.home });
-    expect(r.label).toBe('BM25');
+    expect(r.label).toBe('BM25 · hybrid cloud-index not ready: no local model');
+    // still a BM25 header to the latency script, and a parseable one (no commas or parentheses)
+    const block = renderRecallBlock(r.hits, r.label).join('\n');
+    expect(headerLabels(block)).toEqual(['BM25']);
+    expect(fullHeaderLabels(block)).toEqual([r.label]);
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it('cloud-index whose dense gate skipped the prompt says so: never a bare "→ BM25"', async () => {
+    const corpus = writeVault(env.root);
+    await consentAndIndex(env, corpus, 'cloud-index');
+    const { hybridPromptRecall } = await import('../../src/cli/commands/hook.js');
+    const { setNanoLoader } = await import('../../src/lib/embeddings/nano.js');
+    const { FUSION_BY_TIER } = await import('../../src/lib/embeddings/fusion-config.js');
+    const gate = FUSION_BY_TIER['cloud-index'].denseGate;
+    // A gate any hit clears, so the prompt is BM25-sure; the nano loader must never be reached.
+    const loader = vi.fn(async () => { throw new Error('nano must not load when the gate skips dense'); });
+    setNanoLoader(loader);
+    FUSION_BY_TIER['cloud-index'].denseGate = { rawSure: 0, rawLead: 0, leadRatio: 1 };
+    try {
+      const r = await hybridPromptRecall(PROMPT, env.root, 'cloud-index', env.home);
+      expect(r.timing).toMatchObject({ tier: 'cloud-index', querySource: 'none', fallback: 'bm25_confident' });
+      expect(r.label).toBe('Hybrid · cloud-index → BM25: bm25 confident');
+      expect(loader).not.toHaveBeenCalled();
+    } finally {
+      FUSION_BY_TIER['cloud-index'].denseGate = gate;
+      setNanoLoader(null);
+    }
   });
 });
 
@@ -251,9 +277,9 @@ describe('a vault without consent', () => {
     const fake = fakeOpenRouter();
     vi.stubGlobal('fetch', fake.fetch);
 
-    for (const mode of ['raw', 'hybrid'] as const) {
+    for (const [mode, label] of [['raw', 'BM25'], ['hybrid', 'BM25 · hybrid local not ready: not warmed']] as const) {
       const r = await selectPromptRecall(PROMPT, env.root, mode, { env: {}, home: env.home });
-      expect(r.label).toBe('BM25');
+      expect(r.label).toBe(label);
       expect(r.hits.length).toBeGreaterThan(0);
     }
     const noHaiku = await selectPromptRecall(PROMPT, env.root, 'haiku', { env: {}, home: env.home, haiku: () => null });
@@ -302,10 +328,22 @@ describe('memory recall notes', () => {
     expect(hybridNotReadyNote(env.root, spawned, env.home)).toContain('spawned session');
   });
 
-  it('names the cloud fallback only when a cloud tier fell back', () => {
-    expect(cloudFallbackNote({ tier: 'local', querySource: 'none', fallback: 'no_local_model' })).toBeNull();
+  it('names every fallback that served the query, and stays quiet when the tier answered', () => {
     expect(cloudFallbackNote({ tier: 'cloud', querySource: 'api', fallback: 'none' })).toBeNull();
+    expect(cloudFallbackNote({ tier: 'cloud-index', querySource: 'nano', fallback: 'none' })).toBeNull();
+    expect(cloudFallbackNote({ tier: 'local', querySource: 'e5', fallback: 'none' })).toBeNull();
     expect(cloudFallbackNote({ tier: 'cloud', querySource: 'e5', fallback: 'breaker_open' })).toBe('cloud recall: breaker open — served by local e5.');
+    expect(cloudFallbackNote({ tier: 'local', querySource: 'none', fallback: 'no_local_model' })).toBe('local recall: no local model — served by BM25.');
+    expect(cloudFallbackNote({ tier: 'cloud-index', querySource: 'none', fallback: 'bm25_confident' }))
+      .toBe('cloud-index recall: BM25 was already confident, so the dense channel was skipped — served by BM25.');
+  });
+
+  it('cloud-index with the index but no nano model names the missing query model', async () => {
+    const corpus = writeVault(env.root);
+    await consentAndIndex(env, corpus, 'cloud-index');
+    const resolved = resolvePromptTier(env.root, {}, env.home);
+    expect(resolved.tier).toBe('cloud-index');
+    expect(hybridNotReadyNote(env.root, resolved, env.home)).toContain('voyage-4-nano query model');
   });
 });
 
@@ -316,9 +354,24 @@ describe('hybridHeaderLabel', () => {
     expect(hybridHeaderLabel({ tier: 'cloud', querySource: 'api', fallback: 'rerank_not_consented' })).toBe('Hybrid · cloud');
     expect(hybridHeaderLabel({ tier: 'cloud-index', querySource: 'nano', fallback: 'none' })).toBe('Hybrid · cloud-index');
     expect(hybridHeaderLabel({ tier: 'local', querySource: 'e5', fallback: 'none' })).toBe('Hybrid · local');
-    expect(hybridHeaderLabel({ tier: 'local', querySource: 'none', fallback: 'no_local_model' })).toBe('Hybrid · local');
+    expect(hybridHeaderLabel({ tier: 'local', querySource: 'none', fallback: 'no_local_model' })).toBe('Hybrid · local → BM25: no local model');
     expect(hybridHeaderLabel({ tier: 'cloud', querySource: 'e5', fallback: 'breaker_open' })).toBe('Hybrid · cloud → local: breaker open');
     expect(hybridHeaderLabel({ tier: 'cloud', querySource: 'none', fallback: 'no_index' })).toBe('Hybrid · cloud → BM25: no index');
+    expect(hybridHeaderLabel({ tier: 'cloud-index', querySource: 'none', fallback: 'bm25_confident' })).toBe('Hybrid · cloud-index → BM25: bm25 confident');
+  });
+
+  it('never ends a fallback arrow without a reason, for any tier × source × fallback', () => {
+    const tiers = ['local', 'cloud-index', 'cloud'] as const;
+    const sources = ['api', 'nano', 'e5', 'none'] as const;
+    const fallbacks = ['none', 'breaker_open', 'withheld', 'not_consented', 'spawned_session', 'daily_cap', 'no_index',
+      'no_local_model', 'rerank_not_consented', 'bm25_confident', 'timeout', 'network', 'auth'] as const;
+    for (const tier of tiers) for (const querySource of sources) for (const fallback of fallbacks) {
+      const label = hybridHeaderLabel({ tier, querySource, fallback } as RecallTiming);
+      if (label.includes('→')) expect(label).toMatch(/→ (local|BM25): [a-z0-9]/);
+      expect(label).not.toMatch(/[,()]/);
+    }
+    // a path that forgot to record its reason is still named, not silent
+    expect(hybridHeaderLabel({ tier: 'cloud-index', querySource: 'none', fallback: 'none' })).toBe('Hybrid · cloud-index → BM25: reason not recorded');
   });
 });
 

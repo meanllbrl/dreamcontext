@@ -103,9 +103,12 @@ describe('cloud tier', () => {
     vi.stubGlobal('fetch', fake.fetch);
     const params = { rawCutoff: 18, rrfK: 60, rrfBm25Weight: 0.6, relativeLambda: 0.1, pinMargin: 1.35, aggregation: 'max' as const,
       secondWeight: 0, priorGamma: 0, changelogFactor: 0.85, denseGate: { rawSure: 0, rawLead: 0, leadRatio: 1 }, langWeights: null, rerank: null };
-    const hits = await search('zzw3', timing(), { fusionParams: params });
+    const t = timing();
+    const hits = await search('zzw3', t, { fusionParams: params });
     expect(fake.calls).toHaveLength(0);
     expect(hits.map((h) => docKey(h.doc))).toEqual(bm25Keys('zzw3'));
+    // the skip is recorded as a reason, so the header and `memory recall` can name it
+    expect(t).toMatchObject({ querySource: 'none', fallback: 'bm25_confident' });
   });
 
   it('never exceeds the vault: a cloud-index vault asked for cloud runs cloud-index (no query-time fetch)', async () => {
