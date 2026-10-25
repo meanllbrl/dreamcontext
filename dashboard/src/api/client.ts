@@ -64,10 +64,13 @@ export function getActiveVault(): string | null {
  * `raw` asks for the bytes (range-streamed, so video seeks); without it the endpoint
  * answers the JSON text preview that `api.get` reads.
  */
-export function agentFileUrl(vault: string | null, path: string, opts: { raw?: boolean } = {}): string {
+export function agentFileUrl(vault: string | null, path: string, opts: { raw?: boolean; session?: string | null } = {}): string {
   const raw = opts.raw ? '&raw=1' : '';
   const scope = vault ? `&vault=${encodeURIComponent(vault)}` : '';
-  return `${BASE_URL}/agent/file?path=${encodeURIComponent(path)}${raw}${scope}`;
+  // The chat session the path was written in: a child working in its own worktree names files
+  // relative to THAT tree, which only the server can map back (session-worktree.ts).
+  const session = opts.session ? `&session=${encodeURIComponent(opts.session)}` : '';
+  return `${BASE_URL}/agent/file?path=${encodeURIComponent(path)}${raw}${scope}${session}`;
 }
 
 /**

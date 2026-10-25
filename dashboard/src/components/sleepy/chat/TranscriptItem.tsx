@@ -226,7 +226,7 @@ export function ProseSegment({ text, onOpenFile, caret, session, itemId }: {
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   useCopyableCodeBlocks(bodyRef);
-  useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: (path) => revealPath(api, path), onGrant: (path) => grantFile(api, path) });
+  useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: (path) => revealPath(api, path, 'auto', session?.claudeId), onGrant: (path) => grantFile(api, path), session: session?.claudeId });
   useClickablePaths(bodyRef, (path) => onOpenFile?.(path));
   useSpokenHighlight(bodyRef, itemId ?? '', itemId ? session : undefined);
 

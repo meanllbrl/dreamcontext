@@ -24,8 +24,8 @@ import { RequestError, type ApiClient } from '../api/client';
  * agnostic list), and this is a plain function called from event handlers, not a hook — it
  * can't read `useVault()` itself, so every caller passes the client bound to ITS OWN project.
  */
-export function revealPath(api: ApiClient, path: string, mode: 'auto' | 'reveal' = 'auto'): Promise<string | null> {
-  return api.post('/agent/reveal', { path, mode }).then(
+export function revealPath(api: ApiClient, path: string, mode: 'auto' | 'reveal' = 'auto', session?: string | null): Promise<string | null> {
+  return api.post('/agent/reveal', { path, mode, ...(session ? { session } : {}) }).then(
     () => null,
     (err: unknown) => {
       const code = err instanceof RequestError ? err.code : '';

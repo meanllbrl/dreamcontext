@@ -2440,8 +2440,8 @@ function isLocalRef(href: string): boolean {
  *  (see `agentFileUrl`). Hand-building this is what made every clip 400 in launcher mode.
  *  `vault` is a parameter — this is a module function with no React above it, and with several
  *  projects live in one window the wrong one would serve another project's file. */
-function rawUrl(vault: string | null, path: string): string {
-  return agentFileUrl(vault, path, { raw: true });
+function rawUrl(vault: string | null, path: string, session?: string | null): string {
+  return agentFileUrl(vault, path, { raw: true, session });
 }
 
 function basenameOf(path: string): string {
@@ -2488,6 +2488,8 @@ export function useInlineMedia(
     onReveal?: (path: string) => Promise<string | null>;
     /** Ask the server to allow this exact file; resolves true when it may now be served. */
     onGrant?: (path: string) => Promise<boolean>;
+    /** The chat session these references were written in (its worktree resolves them). */
+    session?: string | null;
   } = {},
 ): void {
   // Which project's files these references name. Read here, in the hook, and threaded into the
@@ -2695,7 +2697,7 @@ export function useInlineMedia(
         // consent. One byte costs nothing even for a large clip.
         // The 403 body also carries the file the server RESOLVED the reference to, which is
         // what "Allow access" has to grant — see `buildFallback`.
-        void fetch(rawUrl(vault, path), { headers: { Range: 'bytes=0-0' } })
+        void fetch(rawUrl(vault, path, live.current.session), { headers: { Range: 'bytes=0-0' } })
           .then(async (r): Promise<{ reason: FallbackReason; grantPath: string }> => {
             if (r.status === 404) return { reason: 'gone', grantPath: path };
             if (r.status >= 500) return { reason: 'unreachable', grantPath: path };
@@ -2716,7 +2718,7 @@ export function useInlineMedia(
             if (el.isConnected) el.replaceWith(buildFallback(path, reason, grantPath));
           });
       }, { once: true });
-      el.src = rawUrl(vault, path);
+      el.src = rawUrl(vault, path, live.current.session);
       // Cap what a single message can keep alive: a detached clip still holds its buffer, and
       // an answer with two dozen screenshots should not pin all of them off-screen. Oldest out.
       if (cache.current.size >= MEDIA_KEEP_MAX) {
