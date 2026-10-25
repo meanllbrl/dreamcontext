@@ -68,13 +68,13 @@ describe('every preset at every stage size', () => {
 
 describe('the wide stage (not narrow)', () => {
   for (const stage of STAGES.slice(0, 2)) {
-    it(`spotlight at ${stage.width}: the mini square bottom-left, the card at least 2/3 of the content`, () => {
+    it(`spotlight at ${stage.width}: the chat the whole left column, the card at least 2/3 of the content`, () => {
       const p = plan('spotlight', items(1), stage);
       expect(p.chat).toBe('mini');
       expect(p.centre.width).toBeGreaterThanOrEqual(300);
       expect(p.centre.width).toBeLessThanOrEqual(380);
       expect(p.centre.height).toBeGreaterThanOrEqual(320);
-      expect(p.centre.height).toBeLessThanOrEqual(460);
+      expect(p.centre.height).toBeCloseTo(p.free.height, 5);
       expect(p.centre.x).toBe(p.free.x);
       expect(p.centre.y + p.centre.height).toBeCloseTo(p.free.y + p.free.height, 5);
       const c = p.cards.c0.rect;

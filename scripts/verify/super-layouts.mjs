@@ -348,8 +348,8 @@ async function flow(pw, base, ports) {
 
   console.log('\n── L2: the mini chat and its bar');
   const cbox = await box(centre(page));
-  ok(`the Super is a mini square bottom-left (${Math.round(cbox?.width ?? 0)}x${Math.round(cbox?.height ?? 0)})`, (await centre(page).getAttribute('data-chat')) === 'mini'
-    && cbox.width >= 299 && cbox.width <= 381 && cbox.height >= 319 && cbox.height <= 461 && cbox.x < cb.x, JSON.stringify(cbox));
+  ok(`the Super is the whole left column, as tall as the card (${Math.round(cbox?.width ?? 0)}x${Math.round(cbox?.height ?? 0)})`, (await centre(page).getAttribute('data-chat')) === 'mini'
+    && cbox.width >= 299 && cbox.width <= 381 && cbox.height >= 319 && Math.abs(cbox.height - cb.height) <= 2 && cbox.x < cb.x, JSON.stringify(cbox));
   ok('…its messages scroll', await centre(page).locator('.chat-scroll').evaluate((el) => ['auto', 'scroll'].includes(getComputedStyle(el).overflowY)).catch(() => false));
   const sent = await superVerb(page, 'state');
   ok('…its composer types and sends', sent?.status === 0);

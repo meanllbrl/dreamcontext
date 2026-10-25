@@ -929,7 +929,8 @@ function planWith(
     const c = content;
     const chat: ChatDraw = view.chat === 'bar' && !opts.asking ? 'bar' : 'mini';
     const miniW = Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * f.width));
-    const miniH = Math.min(c.height, STAGE.MINI_MAX_H, Math.max(STAGE.MINI_MIN_H, STAGE.MINI_FRAC_H * f.height));
+    // The chat takes the whole left column (owner 2026-10-25): a short mini left an unused gap above it.
+    const miniH = c.height;
     const centre: Rect = chat === 'bar'
       ? { x: c.x, y: c.y + c.height - STAGE.CHAT_BAR_H, width: miniW, height: STAGE.CHAT_BAR_H }
       : { x: c.x, y: c.y + c.height - miniH, width: miniW, height: miniH };
