@@ -132,6 +132,38 @@ function liveCards(s: SuperState, ids: readonly string[]): string[] {
   return out;
 }
 
+/**
+ * `super close --group <id>` / `--all-groups [--others]`: close the cards of one group, of every
+ * group, or of the groups in Others. A live job's card (live.ts) is skipped and stays; closing a
+ * chat card is the single `super close` (the child keeps running, `super end` ends it). A group
+ * whose cards all close goes with them; one left with a single card dissolves into it (the store).
+ */
+async function closeGroupCards(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse): Promise<void> {
+  const all = b.allGroups === true;
+  if (all && b.group !== undefined) { refuse(res, 400, 'invalid_args', 'name one group, or --all-groups, not both'); return; }
+  if (!all && b.others === true) { refuse(res, 400, 'invalid_args', '--others goes with --all-groups'); return; }
+  let groups = c.state.groups;
+  if (all) {
+    if (b.others === true) groups = groups.filter((g) => g.place === 'others');
+  } else {
+    const g = typeof b.group === 'string' ? groups.find((x) => x.id === b.group) : undefined;
+    if (!g) { refuse(res, 404, 'unknown_container', `no such group: ${String(b.group)} (\`dreamcontext super state\` lists them)`); return; }
+    groups = [g];
+  }
+  const ids = [...new Set(groups.flatMap((g) => g.cards))].filter((id) => c.state.containers.some((k) => k.id === id));
+  const skipped = liveCards(c.state, ids);
+  const closing = ids.filter((id) => !skipped.includes(id));
+  if (!all && !closing.length && skipped.length) { refuseLive(res, skipped, 'closed'); return; }
+  if (closing.length) {
+    await writeSuper(c.who.contextRoot, (s) => {
+      const gone = new Set(closing);
+      s.containers = s.containers.filter((x) => !gone.has(x.id));
+      s.view = viewWithout(s.view, gone);
+    });
+  }
+  ok(res, { closed: closing, skipped, groups: groups.map((g) => g.id) });
+}
+
 /** 409 live_child: a live job's card stays a floating card (owner 2026-10-23). */
 function refuseLive(res: ServerResponse, cards: readonly string[], what: string): void {
   refuse(res, 409, 'live_child', `${cards.join(', ')} ${cards.length === 1 ? 'is a job that still runs' : 'are jobs that still run'} (working, asking, stuck or waiting on the owner): a live job's card stays on the stage, never ${what}. It may go once the job is done; the stage makes room for live jobs itself`, { cards });
@@ -979,6 +1011,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   close: async (c, b, res) => {
+    // A group's cards, or every group's (`--group <id>`, `--all-groups [--others]`): the finished
+    // ones close, a live job's card stays where it is.
+    if (b.group !== undefined || b.allGroups === true) { await closeGroupCards(c, b, res); return; }
     if (typeof b.container === 'string' && c.state.groups.some((g) => g.id === b.container)) {
       refuse(res, 400, 'invalid_args', 'a group is not closed: `super ungroup` it, or close its cards');
       return;

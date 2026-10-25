@@ -5,7 +5,7 @@
  *    group standing where its first card stood, a group id among the cards adds to it, `--name`
  *    renames; one group at most per call; unknown cards refused;
  *  - `stack` / `float` take a group; a grouped card stacked or floated alone leaves its group;
- *    `close` never closes a group, and closing a member settles the group (one left = dissolved
+ *    `close` never closes a group by its id, and closing a member settles the group (one left = dissolved
  *    into that card, which takes the group's place and spot);
  *  - the owner's layout PATCH: a drop on a card makes a group, a drop on a group joins it, a card
  *    dragged out leaves it, Ungroup dissolves, a `cards` entry may move or stack a group;
@@ -175,6 +175,79 @@ describe('stack / float / close and groups', () => {
     expect((await verb('close', { container: 'grp-1' })).status).toBe(400);
     expect((await verb('close', { container: 'chat-b' })).status).toBe(200);
     expect((await state()).groups[0].cards).toEqual(['chat-a', 'chat-c']);
+  });
+});
+
+describe('close --group / --all-groups (the agent)', () => {
+  const child = (sid: string, extra: Record<string, unknown> = {}) => ({ sessionId: sid, brief: sid, adopted: false, startedAt: 1, ...extra });
+  const two = [
+    { id: 'grp-1', name: 'One', cards: ['chat-a', 'chat-b', 'task-d'], place: 'float' as const },
+    { id: 'grp-2', name: 'Two', cards: ['chat-c', 'chat-e'], place: 'others' as const },
+  ];
+  const withE = { containers: [card('chat-a'), card('chat-b'), card('chat-c'), card('task-d', { kind: 'task', shape: 'square' }), card('chat-e')] };
+
+  it('--group closes every card of the group and the group goes with them', async () => {
+    makeVault({ ...withE, groups: two });
+    const r = await verb('close', { group: 'grp-1' });
+    expect(r.status).toBe(200);
+    expect(r.json.result).toMatchObject({ closed: ['chat-a', 'chat-b', 'task-d'], skipped: [], groups: ['grp-1'] });
+    const s = await state();
+    expect(s.containers.map((c) => c.id)).toEqual(['chat-c', 'chat-e']);
+    expect(s.groups.map((g) => g.id)).toEqual(['grp-2']);
+  });
+
+  it('a live job\'s card is skipped and stays; its group settles around it', async () => {
+    makeVault({ ...withE, groups: two, children: { 'ref-chat-b': child('ref-chat-b', { row: 'working' }) } });
+    const r = await verb('close', { group: 'grp-1' });
+    expect(r.status).toBe(200);
+    expect(r.json.result).toMatchObject({ closed: ['chat-a', 'task-d'], skipped: ['chat-b'] });
+    const s = await state();
+    expect(s.containers.map((c) => c.id)).toEqual(['chat-b', 'chat-c', 'chat-e']);
+    // One card left: the group dissolved into it.
+    expect(s.groups.map((g) => g.id)).toEqual(['grp-2']);
+  });
+
+  it('a group of live jobs only is refused (409 live_child) and nothing closes', async () => {
+    makeVault({ ...withE, groups: two, children: { 'ref-chat-c': child('ref-chat-c', { row: 'asking' }), 'ref-chat-e': child('ref-chat-e', { row: 'stuck' }) } });
+    const r = await verb('close', { group: 'grp-2' });
+    expect(r.status).toBe(409);
+    expect(r.json.error).toBe('live_child');
+    expect((await state()).containers).toHaveLength(5);
+  });
+
+  it('--all-groups closes every group\'s finished cards; with --others only the groups in Others', async () => {
+    makeVault({ ...withE, groups: two, children: { 'ref-chat-e': child('ref-chat-e', { row: 'waiting' }) } });
+    const o = await verb('close', { allGroups: true, others: true });
+    expect(o.status).toBe(200);
+    expect(o.json.result).toMatchObject({ closed: ['chat-c'], skipped: ['chat-e'], groups: ['grp-2'] });
+    expect((await state()).containers.map((c) => c.id)).toEqual(['chat-a', 'chat-b', 'task-d', 'chat-e']);
+    const a = await verb('close', { allGroups: true });
+    expect(a.status).toBe(200);
+    expect(a.json.result).toMatchObject({ closed: ['chat-a', 'chat-b', 'task-d'], skipped: [] });
+    const s = await state();
+    expect(s.containers.map((c) => c.id)).toEqual(['chat-e']);
+    expect(s.groups).toEqual([]);
+  });
+
+  it('--all-groups with only live cards is a quiet no-op, not a refusal; with no groups it closes nothing', async () => {
+    makeVault({ ...withE, groups: [two[1]], children: { 'ref-chat-c': child('ref-chat-c', { row: 'working' }), 'ref-chat-e': child('ref-chat-e', { row: 'working' }) } });
+    const r = await verb('close', { allGroups: true });
+    expect(r.status).toBe(200);
+    expect(r.json.result).toMatchObject({ closed: [], skipped: ['chat-c', 'chat-e'] });
+    expect((await state()).containers).toHaveLength(5);
+    makeVault(withE);
+    expect((await verb('close', { allGroups: true })).json.result).toMatchObject({ closed: [], skipped: [], groups: [] });
+    expect((await state()).containers).toHaveLength(5);
+  });
+
+  it('refuses an unknown group, a group with --all-groups, and --others alone', async () => {
+    makeVault({ ...withE, groups: two });
+    expect((await verb('close', { group: 'grp-nope' })).status).toBe(404);
+    expect((await verb('close', { group: 'grp-1', allGroups: true })).status).toBe(400);
+    expect((await verb('close', { group: 'grp-1', others: true })).status).toBe(400);
+    // A card id named as a group is no group.
+    expect((await verb('close', { group: 'chat-a' })).status).toBe(404);
+    expect((await state()).containers).toHaveLength(5);
   });
 });
 
