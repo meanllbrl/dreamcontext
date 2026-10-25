@@ -449,7 +449,7 @@ describe('the window rules (D10, AC12)', () => {
   it('a handed-over child\'s chat is read-only; the Super Agent\'s own has no mode menu', () => {
     expect(surface).toMatch(/readOnly=\{marked\.has\(cs\.claudeId\)\}/);
     const pane = read(`${SLEEPY}/ChatPane.tsx`);
-    expect(pane).toMatch(/\) : readOnly \? \(\s*<SuperReadOnlyLine \/>/);
+    expect(pane).toMatch(/\) : readOnly \? \(\s*<SuperReadOnlyLine finished={readOnly === 'finished'} \/>/);
     expect(pane).toMatch(/onModeChange=\{bare \|\| mode === 'super' \? undefined : onModeChange\}/);
     const host = read(`${SLEEPY}/ChatPaneHost.tsx`);
     expect(host).toMatch(/readOnly=\{readOnly\}/);

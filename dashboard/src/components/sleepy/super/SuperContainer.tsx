@@ -135,6 +135,10 @@ export interface SuperContainerProps extends SuperCardActions {
   asksOwner: AsksOwner;
   /** This card hosts the shown chat's slot (the half card, or the first presented chat). */
   shownSlot: boolean;
+  /** A shown child with no live chat (finished, or a dormant tab after a relaunch): its saved
+   *  transcript, read only, in the chat pane (AgentSurface's ChildTranscript). A render prop, so
+   *  the stage never imports the chat pane itself. */
+  childTranscript?: (claudeId: string) => ReactNode;
   /** A press on a FLOATING card arms its drag (the card is one grab handle; F6, FE1). */
   onPress: (e: PointerEvent<HTMLDivElement>, id: string) => void;
   /** A card held over this one: releasing groups them (2026-10-20). */
@@ -530,7 +534,9 @@ function LargeBody(p: BodyProps): ReactNode {
           <span className="super-card-large-title">{p.title}</span>
           <span className="super-card-large-note">{t('super.focus.readOnly')}</span>
         </div>
-        <div className="super-slot" data-super-slot="shown" />
+        {/* A live child is homed into the slot by AgentSurface; one with no live chat (finished,
+            or a dormant tab after a relaunch) has nothing to home, so its transcript is read here. */}
+        {p.session || !p.childTranscript ? <div className="super-slot" data-super-slot="shown" /> : p.childTranscript(c.ref)}
       </div>
     );
   }
