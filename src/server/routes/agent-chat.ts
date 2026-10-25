@@ -1315,10 +1315,16 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         settleSupersede(false);
         releaseOpening();
         // Taken back meanwhile: the client reconnects and is decided again, as today.
-        if (!child) { try { ws.close(MIRROR_CLOSE_ENDED, 'decide again'); } catch { /* gone */ } return; }
+        // A socket closed here has no other listener: a protocol error on it must not be an
+        // unhandled 'error' (it would exit the server), and a peer that never answers the close
+        // is cut after a second.
+        ws.on('error', () => { /* the close is what counts */ });
+        const cut = () => { const t = setTimeout(() => { try { ws.terminate(); } catch { /* gone */ } }, 1000); t.unref?.(); };
+        if (!child) { try { ws.close(MIRROR_CLOSE_ENDED, 'decide again'); } catch { /* gone */ } cut(); return; }
         const lc = findLiveChat(child) ?? findLiveChat(child.toLowerCase());
         if (deviceTag && lc?.watch && lc.watch(ws, deviceTag)) return;
         try { ws.close(MAC_CLOSE_HANDED_OVER, 'handed_over'); } catch { /* gone */ }
+        cut();
       };
       wss.handleUpgrade(req, socket, head, (ws) => {
         if (deviceTag) tagDeviceSocket(ws, deviceTag);

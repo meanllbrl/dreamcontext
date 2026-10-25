@@ -5,7 +5,7 @@ import { useI18n } from '../../context/I18nContext';
 import { useChrome } from '../layout/WindowChrome';
 import { SuperAgentIcon } from '../layout/NavIcons';
 import type { LiveChatWire, LiveChatsWire, SuperChatWire } from '../handsfree/macContract';
-import { setPendingMacAdopt, setPendingPhoneOpen } from '../handsfree/macAdopt';
+import { clearPendingOpens, setPendingMacAdopt, setPendingPhoneOpen } from '../handsfree/macAdopt';
 import { homeSections, narrowTo, type HomeRow } from './phoneHome';
 import { usePhoneHome } from './usePhoneHome';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
@@ -113,12 +113,12 @@ export function PhoneChatList({
     const s = sessionFor(row.id);
     return s && s.kind === 'chat' ? chatLastLine(s.getModel()) : '';
   };
-  // A chat closed here a moment ago is still exiting on the Mac: neither open nor closed yet.
+  // A chat closed here a moment ago is still exiting on the Mac: never its "Mac" row again. Its
+  // closed row stands as soon as the Mac lists it as closed (or draining), as before.
   const justClosed = new Set(recentlyClosed());
   // Every row of every chosen project; the search runs over all of them (closed ones on the Mac).
   const allRows = narrowTo(home.rows, project).filter((r) => {
-    if (r.kind === 'closed') return !justClosed.has(r.row.id);
-    if (r.kind === 'super') return true;
+    if (r.kind === 'closed' || r.kind === 'super') return true;
     if (r.row.kind === 'mac' && justClosed.has(r.row.id)) return false;
     if (!tokens.length) return true;
     const s = r.row.kind === 'tab' ? sessionFor(r.row.id) : undefined;
@@ -170,6 +170,8 @@ export function PhoneChatList({
    *  takes the parked request when it is on screen, macAdopt.ts). */
   const tapHome = (r: HomeRow) => {
     if (r.vault === vault) {
+      // A tap here supersedes an open parked for another project (it must not fire later).
+      clearPendingOpens();
       if (r.kind === 'super') {
         const st = superTap(r.row, tabs);
         if (!st) return;

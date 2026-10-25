@@ -33,6 +33,11 @@ export type PendingPhoneOpen =
   | { vault: string; kind: 'resume'; id: string; title: string }
   | { vault: string; kind: 'super'; id: string };
 
+/** Forget every parked open: a tap in THIS project supersedes one parked for another. */
+export function clearPendingOpens(): void {
+  try { sessionStorage.removeItem(KEY); sessionStorage.removeItem(OPEN_KEY); } catch { /* private mode */ }
+}
+
 export function setPendingPhoneOpen(p: PendingPhoneOpen): void {
   try { sessionStorage.setItem(OPEN_KEY, JSON.stringify({ ...p, at: Date.now() })); } catch { /* private mode */ }
 }

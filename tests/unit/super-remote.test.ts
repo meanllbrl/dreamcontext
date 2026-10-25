@@ -15,7 +15,7 @@ import net from 'node:net';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { superRemoteView, isMacOnlyHost } from '../../src/lib/super/remote-view.js';
+import { superRemoteView, isMacOnlyHost, titleFromBrief } from '../../src/lib/super/remote-view.js';
 import { checkRemoteLayout } from '../../src/server/routes/super-remote.js';
 import { SUPER_VERB_HANDLERS, type SuperCaller } from '../../src/server/routes/super.js';
 import type { ServerResponse } from 'node:http';
@@ -109,6 +109,33 @@ describe('superRemoteView is an allowlist (AC14)', () => {
       expect(isMacOnlyHost(h, TUNNEL), h).toBe(true);
     }
     for (const h of ['example.com', '172.32.0.1', '8.8.8.8']) expect(isMacOnlyHost(h, TUNNEL), h).toBe(false);
+  });
+
+  it('a private network name or range is the Mac\'s too: the tailnet, private suffixes, CGNAT, benchmarking', () => {
+    for (const h of ['mac.tail1234.ts.net', 'ts.net', 'build.internal', 'nas.lan', 'router.home.arpa', 'wiki.intranet', 'git.corp', '100.64.0.1', '100.127.255.254', '198.18.0.1', '198.19.9.9']) {
+      expect(isMacOnlyHost(h, TUNNEL), h).toBe(true);
+    }
+    for (const h of ['100.63.0.1', '100.128.0.1', '198.20.0.1', 'corp.example.com', 'internal.example.com']) expect(isMacOnlyHost(h, TUNNEL), h).toBe(false);
+  });
+
+  it('a chat card titled from its child\'s brief carries no title, and the agenda never names a child by it', () => {
+    const rec = fullRecord();
+    rec.children.kid.brief = 'BRIEF-MARKER fix the login page for the owner';
+    rec.containers[0].title = 'BRIEF-MARKER fix the login';
+    rec.queue[0] = { ...rec.queue[0], state: 'pending', kind: 'question' } as SuperState['queue'][number];
+    const v = superRemoteView(rec, 'acme', TUNNEL);
+    expect(v.containers.find((c) => c.id === 'chat-kid')?.title).toBeUndefined();
+    expect(JSON.stringify(v.names)).not.toContain('BRIEF-MARKER');
+    expect(JSON.stringify(v)).not.toContain('BRIEF-MARKER');
+  });
+
+  it('titleFromBrief: the brief, a cut of it, or a title that opens with it; never an unrelated title', () => {
+    expect(titleFromBrief('Fix  the login', 'fix the login')).toBe(true);
+    expect(titleFromBrief('Fix the', 'Fix the login page')).toBe(true);
+    expect(titleFromBrief(`${'a'.repeat(40)}…`, `${'a'.repeat(60)}`)).toBe(true);
+    expect(titleFromBrief('Fix login', 'Rebuild the pricing page')).toBe(false);
+    expect(titleFromBrief('Fix login', undefined)).toBe(false);
+    expect(titleFromBrief(undefined, 'brief')).toBe(false);
   });
 });
 
@@ -264,6 +291,29 @@ describe('the remote stage routes', () => {
     await SUPER_VERB_HANDLERS.shape({ token: 't', who: { contextRoot: root }, state: await readSuperState(root) } as unknown as SuperCaller, { container: 'pic', shape: 'small' }, out);
     expect([out.status, out.json.error]).toEqual([409, 'owner_sized']);
     expect(JSON.parse(r.body).state.containers.find((c: { id: string }) => c.id === 'pic')).toMatchObject({ place: 'float' });
+  });
+
+  it('a `brief` change re-titles a card titled from the OLD brief, so the old brief never reaches the view', async () => {
+    const kid = 'bbbbbbbb-0000-4000-8000-00000000000b';
+    await seed({
+      enabled: true,
+      children: { [kid]: { sessionId: kid, brief: 'OLD-BRIEF-MARKER fix the login page', adopted: false, startedAt: 1 } } as never,
+      containers: [
+        { id: 'c-kid', kind: 'chat', ref: kid, shape: 'tall', place: 'float', title: 'OLD-BRIEF-MARKER fix the login page' },
+        { id: 'c-other', kind: 'chat', ref: kid, shape: 'tall', place: 'others', title: 'Owner named this' },
+      ] as never,
+    });
+    const out = { status: 0, json: {} as Record<string, unknown> } as ServerResponse & { status: number; json: Record<string, unknown> };
+    (out as unknown as { writeHead: (n: number) => void }).writeHead = (n: number) => { out.status = n; };
+    (out as unknown as { end: (b?: string) => void }).end = (b?: string) => { out.json = b ? JSON.parse(b) : {}; };
+    await SUPER_VERB_HANDLERS.brief({ token: 't', who: { contextRoot: root }, state: await readSuperState(root) } as unknown as SuperCaller, { child: kid, line: 'Waiting on the login fix' }, out);
+    expect(out.status).toBe(200);
+    const titles = record().containers.map((c) => c.title);
+    expect(titles).toEqual(['Waiting on the login fix', 'Owner named this']);
+    const r = await phone('GET', '/api/agent/super-stage');
+    expect(r.body).not.toContain('OLD-BRIEF-MARKER');
+    expect(r.body).not.toContain('Waiting on the login fix');
+    expect(r.body).toContain('Owner named this');
   });
 
   it('minimise during a presentation (exit with an empty closing) lands; a stale card set is dropped', async () => {

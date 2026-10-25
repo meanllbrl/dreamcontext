@@ -123,6 +123,9 @@ const A = crypto.randomUUID();
 const B = crypto.randomUUID();
 const SUPER = crypto.randomUUID();
 const CHILD = crypto.randomUUID();
+// A delegated child as the Super makes one: its card's title IS its brief (never on a remote screen).
+const KID2 = crypto.randomUUID();
+const KID2_BRIEF = 'BRIEF-AS-TITLE ship the push opt-in';
 const T1 = crypto.randomUUID();
 const T2 = crypto.randomUUID();
 const P1 = crypto.randomUUID();
@@ -181,13 +184,17 @@ function setupScratch() {
     v: 1, session: SUPER, enabled: true,
     containers: [
       { id: 'chat-kid', kind: 'chat', ref: CHILD, shape: 'tall', place: 'float', title: TITLES[CHILD] },
+      { id: 'chat-kid2', kind: 'chat', ref: KID2, shape: 'tall', place: 'float', title: KID2_BRIEF },
       { id: 'img-1', kind: 'image', ref: 'docs/shot.png', shape: 'square', place: 'float', title: 'Shot' },
       { id: 'task-1', kind: 'task', ref: slug, shape: 'square', place: 'float', title: 'Ship the remote stage' },
       { id: 'web-ok', kind: 'web', ref: 'https://example.com/', shape: 'square', place: 'float', title: 'Example' },
       { id: 'web-lo', kind: 'web', ref: 'http://localhost:5173/checkout', shape: 'square', place: 'float', title: 'Checkout preview' },
     ],
     groups: [], view: { mode: 'float' },
-    children: { [CHILD]: { sessionId: CHILD, brief: 'BRIEF-NEVER-REMOTE', adopted: true, startedAt: Date.now() - 60_000, row: 'working' } },
+    children: {
+      [CHILD]: { sessionId: CHILD, brief: 'BRIEF-NEVER-REMOTE', adopted: true, startedAt: Date.now() - 60_000, row: 'working' },
+      [KID2]: { sessionId: KID2, brief: KID2_BRIEF, adopted: false, startedAt: Date.now() - 30_000, row: 'idle' },
+    },
     queue: [], notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [], team: [],
   }));
 }
@@ -459,6 +466,8 @@ try {
   report.check('AC13: the localhost page draws "Bu önizleme Mac\'te açık" and loads nothing from localhost', stage.macOnly.some((t) => /Mac'te açık|open on the Mac/.test(t)) && !stage.iframes.some((s) => /localhost|127\.0\.0\.1/.test(s)), JSON.stringify(stage.macOnly));
   report.check('AC9: the child card, the picture, the task are on the stage (floating)', ['chat-kid', 'img-1', 'task-1'].every((id) => stage.cards.some(([c, w]) => c === id && w === 'float')), JSON.stringify(stage.cards));
   report.check('AC14: the brief never reaches the remote page', !stage.body.includes('BRIEF-NEVER-REMOTE'));
+  const kid2Text = await page.locator('.super-card-frame[data-container-id="chat-kid2"]').innerText().catch(() => '');
+  report.check('AC14: a card titled from its brief shows no brief, named by its place ("Alt sohbet 2")', !stage.body.includes('BRIEF-AS-TITLE') && /Alt sohbet 2|Child chat 2/.test(kid2Text), JSON.stringify(kid2Text.slice(0, 80)));
   await page.screenshot({ path: join(SHOTS, 'computer-1440-stage.png') });
 
   // AC9: an agent `super open` appears within 2 s, without reload.

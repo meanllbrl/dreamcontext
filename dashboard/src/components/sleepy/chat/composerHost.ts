@@ -29,6 +29,8 @@ export interface ComposerHost {
    *  first send takes it ({@link takeBack}) and then sends. Absent: never taken over. */
   readonly takenOver?: boolean;
   takeBack?: () => Promise<boolean>;
+  /** A turn runs right now (read after a take: the Mac's turn may still be running). */
+  readonly busy?: boolean;
   /**
    * Stable id for everything keyed by CONVERSATION rather than by component: the attachment
    * chips and reply quote in `composerScratch`, and the session-stats poll.

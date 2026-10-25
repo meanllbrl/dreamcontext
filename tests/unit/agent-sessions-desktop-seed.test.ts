@@ -158,4 +158,18 @@ describe('GET /api/agent/sessions?of=desktop', () => {
     rmSync(join(root, SUPER_STATE_REL), { force: true });
     resetSuperIndex();
   });
+
+  it('an unreadable Super record fails closed: nothing to seed (it may be a handed-over project)', async () => {
+    writeFileSync(join(root, 'state', '.agent-sessions.json'), JSON.stringify(DESKTOP));
+    mkdirSync(join(root, SUPER_STATE_REL), { recursive: true });
+    resetSuperIndex();
+    try {
+      const r = await phone('GET', '/api/agent/sessions?of=desktop');
+      expect(r.status).toBe(200);
+      expect(JSON.parse(r.body)).toEqual({ sessions: [] });
+    } finally {
+      rmSync(join(root, SUPER_STATE_REL), { recursive: true, force: true });
+      resetSuperIndex();
+    }
+  });
 });

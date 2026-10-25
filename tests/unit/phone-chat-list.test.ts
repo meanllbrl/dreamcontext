@@ -230,3 +230,12 @@ describe('the list is the Mac phone\'s home (AC21)', () => {
     expect(server).toMatch(/tokens\.length \? \{ \.\.\.rest, match: matchSnippet\(lines, tokens\[0\]\) \} : rest/);
   });
 });
+
+describe('a chat closed on the phone', () => {
+  it('is never hidden from Kapalı by the close window: only its Mac row is (a search finds it at once)', () => {
+    const list = code('dashboard/src/components/sleepy/PhoneChatList.tsx');
+    expect(list).toMatch(/if \(r\.kind === 'closed' \|\| r\.kind === 'super'\) return true;/);
+    expect(list).toMatch(/if \(r\.row\.kind === 'mac' && justClosed\.has\(r\.row\.id\)\) return false;/);
+    expect(list).not.toMatch(/kind === 'closed'\) return !justClosed/);
+  });
+});

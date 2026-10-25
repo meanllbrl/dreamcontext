@@ -35,16 +35,23 @@ export function relativeRef(ref: string): string | null {
 }
 
 /** Is this hostname reachable only from the Mac (loopback, private, link-local, `.local`)? */
+const PRIVATE_SUFFIXES = ['.ts.net', '.internal', '.lan', '.home.arpa', '.intranet', '.corp'];
+
 export function isMacOnlyHost(hostname: string, tunnelHost: string | null): boolean {
   const h = hostname.toLowerCase().replace(/\.$/, '');
   if (!h) return true;
   if (tunnelHost && h === tunnelHost.toLowerCase().replace(/\.$/, '')) return true;
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local')) return true;
+  // Names that resolve only on a private network: the tailnet (`*.ts.net` even serves https),
+  // and the private-use suffixes.
+  if (PRIVATE_SUFFIXES.some((x) => h === x.slice(1) || h.endsWith(x))) return true;
   if (h === '0.0.0.0') return true;
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
   if (v4) {
     const [a, b] = [Number(v4[1]), Number(v4[2])];
-    return a === 127 || a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+    return a === 127 || a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)
+      // CGNAT / the tailnet (100.64/10) and the benchmarking range (198.18/15).
+      || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19));
   }
   // Every IPv6 literal: loopback, unspecified, IPv4-mapped, unique-local (fc00::/7) and
   // link-local (fe80::/10) are the Mac's, and a public literal is no page an agent opens.
@@ -61,13 +68,32 @@ function remoteWeb(ref: string, tunnelHost: string | null): Pick<RemoteContainer
   return { ref: url.href };
 }
 
-function remoteContainer(c: SuperState['containers'][number], tunnelHost: string | null): RemoteContainer {
+const fold = (t: string) => t.replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * Is a chat card's title its child's brief (or a cut of it)? Several writers set a card's title
+ * from the brief (resume, reopen, a kept child, succession); the brief is the Super's
+ * instruction and never travels to a remote screen, so such a title does not either.
+ */
+export function titleFromBrief(title: string | undefined, brief: string | undefined): boolean {
+  if (!title || !brief) return false;
+  const t = fold(title);
+  const b = fold(brief);
+  return !!t && (t === b || b.startsWith(t) || t.startsWith(b.slice(0, 40)));
+}
+
+/** A child's brief by its id, own keys only. */
+const briefOf = (state: SuperState, sid: string): string | undefined =>
+  (Object.prototype.hasOwnProperty.call(state.children, sid) ? state.children[sid].brief : undefined);
+
+function remoteContainer(c: SuperState['containers'][number], tunnelHost: string | null, brief?: string): RemoteContainer {
+  const title = c.title && !(c.kind === 'chat' && titleFromBrief(c.title, brief)) ? c.title : undefined;
   const base: RemoteContainer = {
     id: c.id, kind: c.kind, shape: c.shape, place: c.place,
     ...(c.size ? { size: c.size } : {}),
     ...(c.sizeBy ? { sizeBy: c.sizeBy } : {}),
     ...(c.pos ? { pos: { x: c.pos.x, y: c.pos.y } } : {}),
-    ...(c.title ? { title: c.title } : {}),
+    ...(title ? { title } : {}),
     ...(c.min ? { min: true as const } : {}),
     ...(c.heldAt !== undefined ? { heldAt: c.heldAt } : {}),
   };
@@ -119,7 +145,7 @@ export function superRemoteView(state: SuperState, vault: string, tunnelHost: st
   const names: Record<string, string> = {};
   for (const sid of Object.keys(digest.names)) {
     const title = state.containers.find((c) => c.kind === 'chat' && c.ref === sid)?.title;
-    if (title) names[sid] = digest.names[sid];
+    if (title && !titleFromBrief(title, briefOf(state, sid))) names[sid] = title.slice(0, 80);
   }
   const children: Record<string, RemoteChild> = {};
   for (const [sid, ch] of Object.entries(state.children)) if (ID_RE.test(sid)) children[sid] = remoteChild(sid, ch);
@@ -130,7 +156,7 @@ export function superRemoteView(state: SuperState, vault: string, tunnelHost: st
     vault,
     session: state.session,
     enabled: state.enabled,
-    containers: state.containers.map((c) => remoteContainer(c, tunnelHost)),
+    containers: state.containers.map((c) => remoteContainer(c, tunnelHost, c.kind === 'chat' ? briefOf(state, c.ref) : undefined)),
     groups,
     view: remoteView(state.view),
     children,

@@ -87,6 +87,54 @@ describe('the chat client on 4403 and a watch-only mirror', () => {
     s.dispose();
   });
 
+  it('"Buraya al" (takeBack): a double press shares one take; 4409 answers false, a bound reattach true', async () => {
+    const s = await open(true, 'passive');
+    FakeWebSocket.all[0].open();
+    FakeWebSocket.all[0].drop(4409);
+    expect(s.takenOver).toBe(true);
+    const first = s.takeBack();
+    const second = s.takeBack();
+    expect(second).toBe(first);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(FakeWebSocket.all).toHaveLength(2);
+    // Another screen still holds it: the evicting open is refused, the take did not happen.
+    FakeWebSocket.all[1].drop(4409);
+    await expect(first).resolves.toBe(false);
+    // A new press is a new take, and a bound (not watch-only) reattach answers it.
+    const third = s.takeBack();
+    expect(third).not.toBe(first);
+    await vi.advanceTimersByTimeAsync(50);
+    const ws = FakeWebSocket.all[FakeWebSocket.all.length - 1];
+    ws.open();
+    ws.onmessage?.({ data: JSON.stringify({ type: '_meta', subtype: 'reattached', adopted: true, busy: false }) });
+    await expect(third).resolves.toBe(true);
+    s.dispose();
+  });
+
+  it('a take that lands on a watch-only join did not take the chat', async () => {
+    const s = await open(true, 'passive');
+    FakeWebSocket.all[0].open();
+    FakeWebSocket.all[0].drop(4409);
+    const take = s.takeBack();
+    await vi.advanceTimersByTimeAsync(50);
+    const ws = FakeWebSocket.all[FakeWebSocket.all.length - 1];
+    ws.open();
+    ws.onmessage?.({ data: JSON.stringify({ type: '_meta', subtype: 'reattached', adopted: true, busy: true, watchOnly: true }) });
+    await expect(take).resolves.toBe(false);
+    expect(s.handedOver).toBe(true);
+    s.dispose();
+  });
+
+  it('the composer sends only after the take resolves true, never on a refused take', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../../dashboard/src/components/sleepy/chat/Composer.tsx', import.meta.url), 'utf-8');
+    const at = src.indexOf('session.takeBack().then(');
+    expect(at).toBeGreaterThan(0);
+    const body = src.slice(at, src.indexOf('sent();', at));
+    expect(body).toMatch(/if \(!ok\) return;/);
+    expect(body.indexOf('if (!ok) return;')).toBeLessThan(body.indexOf('session.send('));
+  });
+
   it('the pane puts the watch-only banner BEFORE the taken-over branch (its "Buraya al" would reopen into 4403)', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../../dashboard/src/components/sleepy/ChatPane.tsx', import.meta.url), 'utf-8');

@@ -67,9 +67,10 @@ const CLI = join(REPO, 'dist', 'index.js');
 const LOCAL = process.argv.includes('--local');
 
 /** Every page the phone reaches, by its drawer label (English UI). */
+/** Agents and Automations are one page, the AI Team (`nav.aiTeam`); `agents` lands on it too. */
 const PAGES = [
-  ['agents', 'Agents'], ['tasks', 'Tasks'], ['knowledge', 'Knowledge'], ['lab', 'Insights'], ['whiteboards', 'Whiteboard'],
-  ['roadmap', 'Roadmap'], ['automations', 'Automations'], ['sleep', 'Sleep Cycle'], ['core', 'Core'], ['brain', 'Map'],
+  ['automations', 'AI Team'], ['tasks', 'Tasks'], ['knowledge', 'Knowledge'], ['lab', 'Insights'], ['whiteboards', 'Whiteboard'],
+  ['roadmap', 'Roadmap'], ['sleep', 'Sleep Cycle'], ['core', 'Core'], ['brain', 'Map'],
   ['council', 'Council'], ['hypotheses', 'Hypotheses'], ['packs', 'Packs'], ['taxonomy', 'Taxonomy'],
   ['announcements', 'Announcements'], ['about', 'What is this?'],
 ];
@@ -161,6 +162,16 @@ function setupScratch() {
     cli(['init', '-y', '--name', name, '--description', 'A scratch project for the phone check'], path);
     const r = cli(['vaults', 'add', name, path]);
     if (r.status !== 0) throw new Error(`vaults add ${name}: ${r.stderr || r.stdout}`);
+  }
+  // One past chat in each project, so "Proje ▾" narrows a list that has rows of both.
+  for (const [d, title] of [[PROJ, 'Proj past fixture'], [OTHER, 'Other past fixture']]) {
+    const sid = crypto.randomUUID();
+    const ts = new Date(Date.now() - 3600_000).toISOString();
+    const rows = [
+      { type: 'user', message: { role: 'user', content: [{ type: 'text', text: title }] } },
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: `Done: ${title}` }] } },
+    ].map((o) => JSON.stringify({ ...o, cwd: d, uuid: crypto.randomUUID(), timestamp: ts, sessionId: sid }));
+    writeFileSync(join(HOME, '.claude', 'projects', d.replace(/[^a-zA-Z0-9]/g, '-'), `${sid}.jsonl`), `${rows.join('\n')}\n`);
   }
   // Something on every page that lists things.
   for (const t of ['Ship the phone layout', 'Write the release note', 'Fix the drawer label', 'Measure every page on a phone']) cli(['tasks', 'create', t, '--why', 'so the phone pages have something to show']);
@@ -496,16 +507,19 @@ try {
     await mp.waitForTimeout(3000);
     await dismiss(mp);
     report.check('the two-project phone opens on the list', await until(() => onList(mp), 20000));
-    await until(async () => (await mp.locator('[data-testid="list-projects"]:visible .mlist-project').count()) > 0, 10000);
-    const rows = (await mp.locator('[data-testid="list-projects"]:visible .mlist-project').allInnerTexts()).map((x) => x.trim()).sort();
+    // ONE list over every chosen project (hands-free sekmeler W3): "Proje ▾" offers exactly the
+    // chosen projects and narrows the list to one; each row carries its project's tag.
+    const pick = mp.locator('select[data-testid="list-projects"]:visible').first();
+    await until(async () => (await pick.locator('option.mlist-project').count()) > 0, 10000);
+    const rows = (await pick.locator('option.mlist-project').allInnerTexts()).map((x) => x.trim()).sort();
     await mp.screenshot({ path: join(SHOTS, '390x844-list-two-projects.png') });
-    report.check('AC16 several chosen: the list switches between exactly the chosen projects; no project tabs', JSON.stringify(rows) === '["other","proj"]' && (await mp.locator('.project-tabs:visible').count()) === 0, JSON.stringify(rows));
-    // Every project's view stays mounted (hidden): read the list on screen, not the first in the DOM.
-    const shownProject = async () => (await mp.locator('[data-testid="list-projects"]:visible .mlist-project[data-on]').first().innerText().catch(() => '')).trim();
-    const from = await shownProject();
-    const to = from === 'proj' ? 'other' : 'proj';
-    await mp.locator('[data-testid="list-projects"]:visible .mlist-project', { hasText: to }).first().click();
-    report.check(`AC16 …and switches to the other one (${from} -> ${to})`, await until(async () => (await shownProject()) === to, 30000, 500));
+    report.check('AC16 several chosen: "Proje ▾" offers exactly the chosen projects; no project tabs', JSON.stringify(rows) === '["other","proj"]' && (await mp.locator('.project-tabs:visible').count()) === 0, JSON.stringify(rows));
+    const tags = async () => (await mp.locator('.mlist-tag:visible').allInnerTexts()).map((x) => x.trim());
+    // Before: the one list holds rows of BOTH projects (each project's past chat fixture).
+    report.check('AC16 the one list shows both projects\' rows, each tagged', await until(async () => { const x = await tags(); return x.includes('proj') && x.includes('other'); }, 20000, 500), JSON.stringify(await tags()));
+    const to = 'other';
+    await pick.selectOption(to);
+    report.check(`AC16 …and narrows it to ${to}: rows remain, every one tagged ${to}`, await until(async () => { const x = await tags(); return x.length > 0 && x.every((y) => y === to); }, 30000, 500), JSON.stringify(await tags()));
     await mp.waitForTimeout(900);
     await mp.screenshot({ path: join(SHOTS, '390x844-list-switched.png') });
     await mctx.close();
@@ -895,7 +909,8 @@ try {
     const r = (el) => (el ? el.getBoundingClientRect() : null);
     const rs = r(sheet); const rr = r(row); const rw = r(sw);
     return {
-      afterChecklist: row?.previousElementSibling?.getAttribute('data-testid') === 'hf-mac-projects',
+      // The checklist sits in its own card: the row follows that card (or the bare checklist).
+      afterChecklist: !!row?.previousElementSibling && (row.previousElementSibling.getAttribute('data-testid') === 'hf-mac-projects' || !!row.previousElementSibling.querySelector(':scope > [data-testid="hf-mac-projects"]')),
       sheetOverflow: sheet ? sheet.scrollWidth > sheet.clientWidth + 1 : true,
       pageOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
       inSheet: !!(rs && rr && rr.left >= rs.left - 1 && rr.right <= rs.right + 1),

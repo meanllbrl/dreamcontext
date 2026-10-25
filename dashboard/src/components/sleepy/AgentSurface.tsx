@@ -1,6 +1,6 @@
 import {
   useEffect, useMemo, useRef, useState, useReducer, useCallback, useLayoutEffect,
-  type CSSProperties, type TouchEvent as ReactTouchEvent,
+  type CSSProperties,
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import './AgentTerminal.css';
@@ -93,7 +93,7 @@ import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
-import { onWindowActivity, useWindowActivity, pollMs } from '../../lib/windowActivity';
+import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
 import { readSuperStateView, type SuperDigestWire, type SuperStateView } from '../../lib/superTypes';
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
 import { holdSidebarCollapsed } from '../../hooks/useSidebarCollapse';
@@ -110,11 +110,9 @@ import {
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap, remoteSkippedTitles } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
-import { useQuery } from '@tanstack/react-query';
-import { listTap, superRowFor, superTap } from './phoneList';
-import { newlyWaiting, swipeTarget, waitingElsewhere, type HomeRow } from './phoneHome';
-import { usePhoneHome } from './usePhoneHome';
-import { openElsewhere } from './PhoneChatList';
+import { useRemoteStage } from './super/useRemoteStage';
+import { usePhoneChatNav } from './usePhoneChatNav';
+import { PhoneWaitingToast } from './PhoneWaitingToast';
 import { applyLayoutPatch, withPendingPatches, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
@@ -3370,13 +3368,21 @@ export function AgentSurface() {
     if (brief) return brief;
     // A remote stage carries no brief: its chat card's title names the job.
     const card = st?.containers.find((c) => c.kind === 'chat' && c.ref === claudeId)?.title;
-    return sessionListRef.current.find((m) => m.claudeId === claudeId)?.title ?? card ?? claudeId.slice(0, 8);
-  }, []);
+    const own = sessionListRef.current.find((m) => m.claudeId === claudeId)?.title ?? card;
+    if (own) return own;
+    // A child whose only title was its brief (withheld from a remote screen) is named by its place
+    // among the children, never by a bare id.
+    const kids = st ? Object.entries(st.children).sort(([, a], [, b]) => a.startedAt - b.startedAt).map(([sid]) => sid) : [];
+    const at = kids.indexOf(claudeId);
+    return at >= 0 ? t('super.remote.child').replace('{n}', String(at + 1)) : claudeId.slice(0, 8);
+  }, [t]);
   // A remote screen watches the child its stage shows large (D6): a read-only chat on the child,
   // which the Mac makes a watch-only mirror (no composer, no Allow/Deny), opened once per child.
   const remoteTouch = remoteDesktop && typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
   const watchOpenedRef = useRef<Set<string>>(new Set());
-  const remoteShownChild = remoteDesktop && handedOver ? shownChild(superState) : null;
+  const shownCid = remoteDesktop && handedOver ? shownChild(superState) : null;
+  // Only a child that still runs: an ENDED child's card must not start a process from a remote look.
+  const remoteShownChild = shownCid && superState && hasOwnKey(superState.children, shownCid) && superState.children[shownCid].endedAt === undefined ? shownCid : null;
   useEffect(() => {
     const cid = remoteShownChild;
     if (!cid || watchOpenedRef.current.has(cid)) return;
@@ -3417,36 +3423,17 @@ export function AgentSurface() {
     return () => { cancelled = true; };
   }, [capsLoaded, caps?.desktop, scopedApi]);
 
-  // ── The remote stage (hands-free sekmeler W2, D5): a computer on the tunnel ─────────────
-  // The live list (a 200 always) says whether this project is handed over and whether the Mac
-  // runs its Super Agent; then the stage is read from `GET /api/agent/super-stage` and followed
-  // through the `super_stage` frames on the Super's mirror. Taken back: the stage goes.
-  const { data: remoteLive } = useQuery({
-    queryKey: ['remote-live-chats', vault],
-    queryFn: () => scopedApi.get<LiveChatsWire>('/agent/live-chats'),
-    enabled: remoteDesktop && !!vault,
-    refetchInterval: () => pollMs(10_000),
-    retry: false,
+  // ── The remote stage (hands-free sekmeler W2, D5): a computer on the tunnel (useRemoteStage.ts)
+  const dropRemoteStage = useCallback(() => {
+    if (!superStateRef.current?.enabled) return;
+    setSuperState((prev) => (prev ? { ...prev, enabled: false } : prev));
+    setSuperView('panes');
+  }, []);
+  const { superRow: remoteSuperRow } = useRemoteStage({
+    remoteDesktop, vault, api: scopedApi, shown: !!superState?.enabled,
+    onStage: (st) => { superKnownRef.current = true; setSuperState(withPendingEdits(st)); setSuperView('super'); },
+    onOff: dropRemoteStage,
   });
-  const remoteSuperRow = remoteDesktop && vault ? superRowFor(remoteLive, vault) : null;
-  const remoteSuperSession = remoteSuperRow?.conversationId ?? null;
-  useEffect(() => {
-    if (!remoteDesktop) return undefined;
-    if (!remoteSuperSession) {
-      // Not handed over (or taken back): the stage the remote drew goes with it.
-      if (superStateRef.current?.enabled) { setSuperState((prev) => (prev ? { ...prev, enabled: false } : prev)); setSuperView('panes'); }
-      return undefined;
-    }
-    let cancelled = false;
-    void fetchRemoteStage(scopedApi).then((st) => {
-      if (cancelled || !st) return;
-      if (st === 'off' || !st.enabled) { setSuperState((prev) => (prev ? { ...prev, enabled: false } : prev)); setSuperView('panes'); return; }
-      superKnownRef.current = true;
-      setSuperState(withPendingEdits(st));
-      setSuperView('super');
-    });
-    return () => { cancelled = true; };
-  }, [remoteDesktop, remoteSuperSession, scopedApi]);
 
   // ── The Super Agent's own chat: opened (or re-bound) whenever the mode is on ────────
   // Kind chat, mode `super`, pin = the recorded session. Resumed (`--resume`) unless the
@@ -3660,7 +3647,8 @@ export function AgentSurface() {
     const notSaved = (why: unknown) => {
       settle();
       console.warn('[super] the layout was not saved:', why);
-      if (isMacPhoneSurface()) { void fetchRemoteStage(scopedApi).then((st) => { if (st && st !== 'off') setSuperState(withPendingEdits(st)); }); return; }
+      // A remote screen: re-read the stage; a take-back meanwhile ('off') drops it at once.
+      if (isMacPhoneSurface()) { void fetchRemoteStage(scopedApi).then((st) => { if (st === 'off') dropRemoteStage(); else if (st) setSuperState(withPendingEdits(st)); }); return; }
       void fetchSuperState(scopedApi).then((st) => { if (st) setSuperState(withPendingEdits(st)); });
     };
     // A look changes nothing on the stage: its answer (read before the server's lock, every 30 s
@@ -3680,7 +3668,7 @@ export function AgentSurface() {
       (st) => { if (!st) { notSaved('no state in the answer'); return; } settle(); if (!lookOnly) setSuperState(withPendingEdits(st)); },
       notSaved,
     );
-  }, [scopedApi]);
+  }, [scopedApi, dropRemoteStage]);
 
   // O11: a card dropped on the centre (or its "Ask about this") becomes the subject of the
   // owner's next message: a reference appended to the Super Agent's draft once, focused.
@@ -4961,104 +4949,17 @@ export function AgentSurface() {
     return s && s.kind === 'chat' ? (s as ChatSession) : undefined;
   }, []);
 
-  // ── The phone's chat screen across projects (hands-free sekmeler W3, owner D1) ─────────────
-  // The same rows the Sohbetler list draws: a swipe moves to the next / previous OPEN chat in the
-  // list's order, the back button counts chats waiting elsewhere, and a one-line toast above the
-  // composer says when another chat starts waiting (a tap opens it).
-  const chrome = windowChrome;
+  // ── The phone's chat screen across projects (hands-free sekmeler W3, owner D1): swipe, back
+  // badge, waiting toast (usePhoneChatNav.ts) ─────────────────────────────────────────────────
   const phoneChatOn = macPhone && expanded && phoneView === 'chat' && !mobileEscaped && isActive;
-  const phoneHome = usePhoneHome({ vault: vault ?? '', tabs: stackTabs, active: phoneChatOn });
-  const superHereId = phoneHome.live?.supers?.find((x) => x.vault === vault)?.conversationId;
-  const activeClaude = mobileActive ? (sessions.current.get(mobileActive.id)?.claudeId || claudeIdOf.get(mobileActive.id)) : undefined;
-  const phoneCurrentKey = !mobileActive ? null : activeClaude && activeClaude === superHereId ? `super:${vault}` : `${vault}:tab:${mobileActive.id}`;
-  const phoneWaitingElsewhere = phoneChatOn ? waitingElsewhere(phoneHome.rows, phoneCurrentKey) : 0;
-  const [phoneSwipe, setPhoneSwipe] = useState<'next' | 'prev' | null>(null);
-  useEffect(() => {
-    if (!phoneSwipe) return undefined;
-    const timer = setTimeout(() => setPhoneSwipe(null), 260);
-    return () => clearTimeout(timer);
-  }, [phoneSwipe]);
-  /** Open a row of the one list from the chat screen: here as the list does, elsewhere through
-   *  that project's surface (macAdopt.ts). */
-  const goPhoneRow = (r: HomeRow, dir?: 1 | -1) => {
-    if (dir) setPhoneSwipe(dir === 1 ? 'next' : 'prev');
-    if (r.vault !== vault) { openElsewhere(r, chrome); return; }
-    if (r.kind === 'super') {
-      const st = superTap(r.row, stackTabs);
-      if (st && 'select' in st) selectTab(st.select.paneId, st.select.id);
-      else if (st) openSuperOnPhone(st.open);
-      return;
-    }
-    if (r.kind === 'closed') { resumePastSession(r.row.past); return; }
-    const d = listTap(r.row);
-    if ('select' in d) selectTab(d.select.paneId, d.select.id);
-    else if ('adopt' in d) adoptLiveChat(d.adopt);
-  };
-  const swipeFrom = useRef<{ x: number; y: number; at: number } | null>(null);
-  const onPhoneTouchStart = (e: TouchEvent | ReactTouchEvent) => {
-    swipeFrom.current = null;
-    if (!phoneChatOn || e.touches.length !== 1) return;
-    // A code block or a table scrolls sideways, and the composer is the owner's: never a swipe.
-    if ((e.target as HTMLElement | null)?.closest('pre, table, textarea, input, .chat-cmp, .mchat-toast')) return;
-    swipeFrom.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
-  };
-  const onPhoneTouchEnd = (e: TouchEvent | ReactTouchEvent) => {
-    const from = swipeFrom.current;
-    swipeFrom.current = null;
-    if (!from || !phoneChatOn) return;
-    const dx = e.changedTouches[0].clientX - from.x;
-    const dy = e.changedTouches[0].clientY - from.y;
-    if (Math.abs(dx) < 72 || Math.abs(dy) > 48 || Date.now() - from.at > 800) return;
-    const dir: 1 | -1 = dx < 0 ? 1 : -1;
-    const target = swipeTarget(phoneHome.rows, phoneCurrentKey, dir);
-    if (target) goPhoneRow(target, dir);
-  };
-  // NATIVE listeners on the surface: the chat panes are portals whose React parent is not this
-  // element, so a synthetic touch inside a transcript never reaches a React handler here; the DOM
-  // event does (the panes sit inside it). Passive: a swipe never blocks the transcript's scroll.
-  const swipeHandlers = useRef({ start: onPhoneTouchStart, end: onPhoneTouchEnd });
-  swipeHandlers.current = { start: onPhoneTouchStart, end: onPhoneTouchEnd };
-  useEffect(() => {
-    const el = hostRef.current;
-    if (!el || !macPhone) return undefined;
-    const start = (e: TouchEvent) => swipeHandlers.current.start(e);
-    const end = (e: TouchEvent) => swipeHandlers.current.end(e);
-    el.addEventListener('touchstart', start, { passive: true });
-    el.addEventListener('touchend', end, { passive: true });
-    return () => { el.removeEventListener('touchstart', start); el.removeEventListener('touchend', end); };
-  }, [macPhone]);
-  // The toast: a chat that STARTED waiting since the last look, never the one on screen.
-  const seenWaitingRef = useRef<Set<string> | null>(null);
-  const [phoneToast, setPhoneToast] = useState<HomeRow | null>(null);
-  const waitingKeys = phoneHome.rows.filter((r) => r.section === 'waiting').map((r) => r.key).join('|');
-  useEffect(() => {
-    if (!phoneHome.live) return;
-    const waiting = new Set(waitingKeys ? waitingKeys.split('|') : []);
-    // The first answer is the baseline: a chat already waiting when the screen opened is no news.
-    if (seenWaitingRef.current === null) { seenWaitingRef.current = waiting; return; }
-    const fresh = phoneChatOn ? newlyWaiting(phoneHome.rows, seenWaitingRef.current, phoneCurrentKey) : null;
-    seenWaitingRef.current = waiting;
-    if (fresh) setPhoneToast(fresh);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waitingKeys, phoneChatOn, phoneCurrentKey, !!phoneHome.live]);
-  useEffect(() => {
-    if (!phoneToast) return undefined;
-    const timer = setTimeout(() => setPhoneToast(null), 10_000);
-    return () => clearTimeout(timer);
-  }, [phoneToast]);
-  const toastTitle = !phoneToast ? '' : phoneToast.kind === 'super' ? t('handsfree.super.title') : (phoneToast.row.title || t('handsfree.mac.untitled'));
-  const phoneToastEl = phoneToast && phoneChatOn ? (
-    <button
-      type="button"
-      className="mchat-toast"
-      data-testid="chat-waiting-toast"
-      onClick={() => { const r = phoneToast; setPhoneToast(null); goPhoneRow(r); }}
-    >
-      <span className="mchat-toast-dot" aria-hidden />
-      <span className="mchat-toast-text">{t('handsfree.chat.waitingToast').replace('{title}', () => toastTitle)}</span>
-      <span className="mchat-toast-go">{t('handsfree.chat.waitingOpen')} ›</span>
-    </button>
-  ) : null;
+  const phoneChatNav = usePhoneChatNav({
+    vault: vault ?? '', tabs: stackTabs, active: phoneChatOn, enabled: macPhone,
+    activeTabId: mobileActive?.id ?? null,
+    activeClaude: mobileActive ? (sessions.current.get(mobileActive.id)?.claudeId || claudeIdOf.get(mobileActive.id)) : undefined,
+    hostRef, chrome: windowChrome,
+    open: { selectTab, openSuperOnPhone, resumePastSession, adoptLiveChat },
+  });
+  const phoneToastEl = phoneChatOn ? <PhoneWaitingToast row={phoneChatNav.toast} onOpen={phoneChatNav.openToast} /> : null;
   // Collapsed dock rows — one chip per session, in roster order. Never the Super Agent (it is
   // not a tab; its queue speaks through the hand-over button's dot and the queue head).
   const dockRows: SessionRow[] = sessionList.filter((meta) => !isSuperSession(meta, superState?.session)).map((meta) => {
@@ -5408,7 +5309,7 @@ export function AgentSurface() {
         /* The phone layer's switch — every rule in `MobileChat.css` hangs off this one
            attribute, so the desktop layout is untouched at any width. */
         data-mobile={isMobile ? 'true' : undefined}
-        data-swipe={phoneSwipe ?? undefined}
+        data-swipe={phoneChatNav.swipe ?? undefined}
         data-phone-nav={macPhone && phoneNav ? phoneNav : undefined}
         /* The live pane count, for the focus-widening math in CSS — the focused pane's
            extra width is capped at what is left once every OTHER pane keeps `--pane-min`,
@@ -5435,15 +5336,18 @@ export function AgentSurface() {
                     if (phoneChatMark.current && window.history.state?.phoneChat === phoneChatMark.current) window.history.back();
                     else setPhoneView('list');
                   }}
-                  aria-label={t('handsfree.list.back')}
+                  // The waiting count is part of the button's name (a span's own label is never read).
+                  aria-label={phoneChatNav.waitingElsewhere > 0
+                    ? `${t('handsfree.list.back')}, ${t('handsfree.chat.waitingBadge').replace('{n}', String(phoneChatNav.waitingElsewhere))}`
+                    : t('handsfree.list.back')}
                   data-testid="chat-back"
                 >
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <path d="M12.5 4.5 7 10l5.5 5.5" />
                   </svg>
                   {/* Chats waiting on the owner elsewhere, across projects (W3). */}
-                  {phoneWaitingElsewhere > 0 && (
-                    <span className="mchat-back-badge" data-testid="chat-back-badge" aria-label={t('handsfree.chat.waitingBadge').replace('{n}', String(phoneWaitingElsewhere))}>{phoneWaitingElsewhere}</span>
+                  {phoneChatNav.waitingElsewhere > 0 && (
+                    <span className="mchat-back-badge" data-testid="chat-back-badge" aria-hidden>{phoneChatNav.waitingElsewhere}</span>
                   )}
                 </button>
               ) : (

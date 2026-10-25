@@ -64,6 +64,7 @@ import { readMachineFacts } from './machine.js';
 import { tmpdir } from 'node:os';
 import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
 import { ensureTidy, keepOwnerLooked, touchCards, viewShows, type TidyIo } from '../../lib/super/tidy.js';
+import { titleFromBrief } from '../../lib/super/remote-view.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -1062,8 +1063,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     await writeSuper(c.who.contextRoot, (s) => {
       const ch = s.children[child];
       if (!ch) return;
+      const was = ch.brief;
       ch.brief = line;
       if (task) ch.task = task;
+      // A card titled from the old brief follows the new one (as a resume would re-title it): an
+      // old brief never lingers as a title, where the remote stage could no longer tell it apart.
+      for (const k of s.containers) if (k.kind === 'chat' && k.ref === child && titleFromBrief(k.title, was)) k.title = line.slice(0, MAX_TITLE);
     });
     ok(res, { child, brief: line, ...(task ? { task } : {}) });
   },

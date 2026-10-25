@@ -1745,7 +1745,12 @@ export function Composer({
     // first send takes the chat, then sends, once. A take that fails leaves the text here.
     if (session.takenOver && session.takeBack) {
       void session.takeBack().then((ok: boolean) => {
-        if (!ok || session.send(message) === false) return;
+        if (!ok) return;
+        // The same three deliveries as any send, now that the chat is here: a turn the Mac was
+        // running is steered (or queued), a ⇡ queues, an idle chat starts a turn.
+        if (mode === 'queue') session.enqueue(message);
+        else if (session.busy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
+        else if (session.send(message) === false) return;
         sent();
       });
       return;

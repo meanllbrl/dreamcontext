@@ -2242,6 +2242,9 @@ export function createChatSession(
   /** "Buraya al": take the chat back — the one open that evicts the other screen (4409). */
   function takeBack(): Promise<boolean> {
     if (disposed) return Promise.resolve(false);
+    // A take already on its way (a double press): its answer is this one's, and no second socket
+    // is opened behind the first (an orphaned attempt could bind on the server after it).
+    if (pendingTake) return pendingTake;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     reconnectAttempt = 0;
     // An earlier take still waiting is answered by this one's outcome.
@@ -2250,10 +2253,13 @@ export function createChatSession(
       const timer = setTimeout(() => settleTake(false), CONNECT_TIMEOUT_MS);
       takeWaiter = (ok) => { clearTimeout(timer); earlier?.(ok); resolve(ok); };
     });
+    pendingTake = done;
+    void done.finally(() => { if (pendingTake === done) pendingTake = null; });
     applyAndNotify(() => { session.takenOver = false; session.status = 'connecting'; });
     reconnectNow(REATTACH_EVICT);
     return done;
   }
+  let pendingTake: Promise<boolean> | null = null;
   /** The take in flight ({@link takeBack}), answered once. */
   let takeWaiter: ((ok: boolean) => void) | null = null;
   function settleTake(ok: boolean): void {

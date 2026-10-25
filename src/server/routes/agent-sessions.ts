@@ -537,11 +537,13 @@ export async function handleAgentSessionsGet(
   }
   const phone = isPhoneSocket(_req);
   let superState = emptySuperState();
-  try { superState = await readSuperState(contextRoot, superSanitizeOpts()); } catch { /* no super record: nothing held */ }
+  let superUnread = false;
+  try { superState = await readSuperState(contextRoot, superSanitizeOpts()); } catch { superUnread = true; /* no super record: nothing held */ }
   // A remote screen opening this project on the desktop layout seeds its tabs from the Mac
   // window's (D3): read-only, narrowed, never written.
   if (phone && new URL(_req.url ?? '/', 'http://x').searchParams.get('of') === 'desktop') {
-    sendJson(res, 200, { sessions: desktopSeed(readSurface(contextRoot, false), superState) });
+    // An unreadable record may be a handed-over project: the seed fails closed (nothing).
+    sendJson(res, 200, { sessions: superUnread ? [] : desktopSeed(readSurface(contextRoot, false), superState) });
     return;
   }
   const saved = readSurface(contextRoot, phone);
