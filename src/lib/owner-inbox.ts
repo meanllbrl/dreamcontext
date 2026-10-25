@@ -4,7 +4,8 @@ import { readLocalJson, updateLocalJson } from './local-store.js';
 /**
  * M1, the owner inbox: `<localDir>/owner-inbox.json`. Owner-waiting rows that need NO Super
  * session (a held secret, a hand-edited assignment, a renamed agent, a synced pattern to adopt).
- * Machine-local like every M0 record: a synced row would raise a teammate's buttons here.
+ * Machine-local like every M0 record: a synced row would raise a teammate's buttons here. Task
+ * jobs raise theirs from the CLI host as well as the server (C1).
  *
  * Every row has a death. Writers dedupe on `dedupeKey` (re-raising a row that is already open
  * keeps the first and refreshes its words), a writer that owns a kind closes the rows whose
@@ -19,9 +20,22 @@ export type InboxKind =
   | 'parked'
   | 'replaced-by-sync'
   | 'adopt-pattern'
-  | 'unowned';
+  | 'unowned'
+  // Task jobs (C1): each dies when its task moves on (agents/task-starter.ts reconcileTaskRows).
+  | 'task-start-missed'
+  | 'task-orphaned'
+  | 'task-stopped'
+  | 'task-blocked'
+  | 'task-plan'
+  | 'task-question'
+  | 'task-stalled'
+  | 'task-review'
+  | 'task-stuck';
 
-export type InboxAction = 'start' | 'ignore' | 'adopt' | 'dismiss' | 'start-all' | 'review';
+export type InboxAction =
+  | 'start' | 'ignore' | 'adopt' | 'dismiss' | 'start-all' | 'review'
+  | 'start-now' | 'reschedule' | 'stop' | 'let-finish' | 'continue' | 'take-over'
+  | 'approve-plan' | 'change-plan' | 'one-more-round' | 'cancel' | 'open-task' | 'complete' | 'send-back';
 
 export interface InboxRow {
   id: string;

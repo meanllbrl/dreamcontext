@@ -106,6 +106,17 @@ interface SessionBinding {
    *  was read from, so a moved or renamed file cannot launder a binding. */
   slug: string;
   at: string;
+  /** A task step's session (AI Team v2 C1-14): resumed only by its task host, never by a talk.
+   *  The tag outlives the machine-local task registry, so a finished task's session never
+   *  becomes the agent's conversation. */
+  kind?: 'task';
+  taskId?: string;
+}
+
+/** The tag a task step's binding carries. */
+export interface BindingTag {
+  kind: 'task';
+  taskId: string;
 }
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
@@ -170,6 +181,7 @@ function readAll(slug: string, home: string, nowMs: number): Record<string, Sess
         sessionId: rawId,
         slug,
         at: typeof b.at === 'string' ? b.at : '',
+        ...(b.kind === 'task' && typeof b.taskId === 'string' ? { kind: 'task' as const, taskId: b.taskId } : {}),
       };
       if (!isLive(binding, nowMs)) continue;
       out[id] = binding;
@@ -230,11 +242,15 @@ export function recordAutomationSession(
   sessionId: string | null,
   home: string = homedir(),
   nowMs: number = Date.now(),
+  tag?: BindingTag,
 ): boolean {
   if (!isSafeAutomationSlug(slug)) return false;
   if (!isSafeSessionId(sessionId)) return false;
   const all = readAll(slug, home, nowMs);
-  all[sessionId] = { sessionId, slug, at: new Date(nowMs).toISOString() };
+  // A tag is never dropped by a later untagged write: once a task's, always a task's.
+  const prior = all[sessionId];
+  const keep = tag ?? (prior?.kind === 'task' && prior.taskId ? { kind: 'task' as const, taskId: prior.taskId } : undefined);
+  all[sessionId] = { sessionId, slug, at: new Date(nowMs).toISOString(), ...(keep ?? {}) };
   writeAll(slug, home, all, nowMs);
   return true;
 }
@@ -268,6 +284,8 @@ export function latestBoundSession(slug: string, home: string = homedir()): stri
   let newest: SessionBinding | null = null;
   let newestAt = -Infinity;
   for (const binding of Object.values(readAll(slug, home, Date.now()))) {
+    // A task step's session is never the agent's conversation (C1-14): skipped.
+    if (binding.kind === 'task') continue;
     // Every binding surviving `readAll` has a parseable `at` (an unparseable one
     // is treated as expired), so this comparison is always meaningful.
     const at = Date.parse(binding.at);
@@ -315,6 +333,37 @@ export function isAutomationBoundSession(sessionId: string, home: string = homed
     if (readAll(slug, home, nowMs)[sessionId]) return slug;
   }
   return null;
+}
+
+/**
+ * The task a session was bound to as a task step on this machine, or null. Read by every resume
+ * gate (the answer and talk paths, the chat socket): a task session resumes only through its host.
+ */
+export function taskBindingOf(sessionId: string, home: string = homedir()): { slug: string; taskId: string } | null {
+  if (!isSafeSessionId(sessionId)) return null;
+  const dir = automationSessionsDir(home);
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const nowMs = Date.now();
+  for (const name of names.sort()) {
+    if (!name.endsWith(SESSIONS_FILE_SUFFIX)) continue;
+    const slug = name.slice(0, -SESSIONS_FILE_SUFFIX.length);
+    if (!isSafeAutomationSlug(slug)) continue;
+    const b = readAll(slug, home, nowMs)[sessionId];
+    if (b?.kind === 'task' && b.taskId) return { slug, taskId: b.taskId };
+  }
+  return null;
+}
+
+/** Whether this agent has bound sessions and every one of them is a task step's. */
+export function onlyTaskSessions(slug: string, home: string = homedir()): boolean {
+  if (!isSafeAutomationSlug(slug)) return false;
+  const all = Object.values(readAll(slug, home, Date.now()));
+  return all.length > 0 && all.every((b) => b.kind === 'task');
 }
 
 // ─── Retirement ──────────────────────────────────────────────────────────────

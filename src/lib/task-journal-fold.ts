@@ -168,7 +168,7 @@ export interface CardFold {
 
 const CLI_ENTRY = /^### (\d{4}-\d{2}-\d{2}) - (.+)$/;
 /** The titles the CLI's changelog writers give an entry: tasks log, status/complete, priority/urgency, handoff, builder sessions. */
-const CLI_TITLE = /^(?:Session Update|Completed|Cancelled|Status → [\w-]+|Priority changed|Urgency changed|Handoff)$/;
+const CLI_TITLE = /^(?:Session Update|(?:Completed|Cancelled|Status → [\w-]+)(?: \(by [a-z]+(?::[a-z0-9-]+)?\))?|Priority changed|Urgency changed|Handoff)$/;
 /** What those writers put under the heading: `- ` bullets, nothing else. */
 const CLI_BULLET = /^- \S/;
 /** No CLI heading is longer; a longer line is not even looked at. */

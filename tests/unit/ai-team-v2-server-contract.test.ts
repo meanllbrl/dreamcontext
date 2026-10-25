@@ -27,7 +27,7 @@ import { createAutomation, getRunTarget } from '../../src/lib/automations/store.
 import { approveAutomation, checkApproval, manifestHash } from '../../src/lib/automations/registry.js';
 import { AGENT_CHAT_ENV, AGENT_SELF_ENV, insideAgentRun } from '../../src/lib/automations/types.js';
 import { resumeRunsBypass } from '../../src/server/routes/agent-chat.js';
-import { levelBrief, levelPermissionArgs, REVIEW_DISALLOWED_TOOLS } from '../../src/lib/agents/permission.js';
+import { levelBrief, levelPermissionArgs, REVIEW_DISALLOWED_TOOLS, TASK_DOER_ALLOWED, TASK_REVIEWER_ALLOWED } from '../../src/lib/agents/permission.js';
 import { composePrompt } from '../../src/lib/automations/runner.js';
 import { prepareAgentChat } from '../../src/lib/whiteboards/card-chat.js';
 import {
@@ -197,6 +197,7 @@ describe('AC-A1-1 autonomy', () => {
 describe('AC-A1-2 level → permission envelope', () => {
   const mode = (args: string[]) => args[args.indexOf('--permission-mode') + 1];
   const disallowed = (args: string[]) => (args.includes('--disallowedTools') ? args[args.indexOf('--disallowedTools') + 1] : null);
+  const allowed = (args: string[]) => (args.includes('--allowedTools') ? args[args.indexOf('--allowedTools') + 1] : null);
 
   it('every level × step of the table', () => {
     expect(mode(levelPermissionArgs('ask', 'chat'))).toBe('default');
@@ -218,6 +219,9 @@ describe('AC-A1-2 level → permission envelope', () => {
       const review = levelPermissionArgs(level, 'review');
       expect(mode(review)).toBe(level === 'free' ? 'bypassPermissions' : 'auto');
       expect(disallowed(review)).toBe(REVIEW_DISALLOWED_TOOLS.join(' '));
+      // Under auto a task step's own verbs are pre-approved (C1, M4); bypass needs nothing.
+      expect(allowed(review)).toBe(level === 'free' ? null : TASK_REVIEWER_ALLOWED);
+      expect(allowed(levelPermissionArgs(level, 'work'))).toBe(level === 'free' ? null : TASK_DOER_ALLOWED);
     }
   });
 
@@ -447,7 +451,7 @@ describe('AC-A1-4 the stage', () => {
     await handleAgentsStage(fakeReq(), open, { slug: 'scout' }, contextRoot);
     expect(open.status).toBe(200);
     expect(Object.keys(open.json().stage as object).sort()).toEqual(
-      ['autonomy', 'face', 'files', 'homeLive', 'homeSessionId', 'inbox', 'liveJobs', 'owner', 'reports', 'routines', 'slug', 'title'].sort(),
+      ['autonomy', 'face', 'files', 'homeLive', 'homeSessionId', 'inbox', 'liveJobs', 'owner', 'reports', 'routines', 'slug', 'taskJobs', 'title'].sort(),
     );
     const missing = fakeRes();
     await handleAgentsStage(fakeReq(), missing, { slug: 'nobody' }, contextRoot);

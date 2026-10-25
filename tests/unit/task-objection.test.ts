@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, readFileSync, realpathSync, existsSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import matter from 'gray-matter';
+import { parseStatusHistory } from '../../src/lib/task-history.js';
 import { getTaskBackend } from '../../src/lib/task-backend/index.js';
 import {
   OBJECTIONS_REL_PATH,
@@ -80,6 +81,8 @@ describe('the five kinds', () => {
     expect(read('real-work').body).toContain(`- [ ] Sleep Made This (itiraz ${r.record.id})`);
     expect(read('sleep-made').fm.status).toBe('cancelled');
     expect(read('sleep-made').body).toContain(`itiraz ${r.record.id}`);
+    // Who moved it (AI Team v2 C1-13): the owner, by objection.
+    expect(parseStatusHistory(read('sleep-made').body)[0]).toMatchObject({ to: 'cancelled', by: 'owner', reason: `Objection ${r.record.id}.` });
     expect(existsSync(join(ctx, 'state', 'sleep-made.md'))).toBe(true);
   });
 

@@ -82,3 +82,32 @@ describe('killRunGroup is CLI-only — no automatic reaper', () => {
     expect(src).not.toMatch(/import\s*\{[^}]*\bkillRunGroup\b[^}]*\}\s*from/);
   });
 });
+
+/** The body of `export function <name>(` in `src`, by brace matching from its first `{`. */
+function functionBody(src: string, name: string): string {
+  const start = src.indexOf(`export function ${name}(`);
+  if (start < 0) throw new Error(`no export function ${name}`);
+  let i = src.indexOf('{', src.indexOf(')', start));
+  // Skip a return-type annotation's braces: the body opens at the first `{` after `): …`.
+  const open = src.slice(start).search(/\)\s*(?::[^{]+)?\{/) + start;
+  i = src.indexOf('{', open);
+  let depth = 0;
+  for (let j = i; j < src.length; j++) {
+    if (src[j] === '{') depth++;
+    if (src[j] === '}') depth--;
+    if (depth === 0) return src.slice(i, j + 1);
+  }
+  return src.slice(i);
+}
+
+describe('task jobs never reap on their own (AI Team v2 C1-4)', () => {
+  const STARTER = join(__dirname, '..', '..', 'src', 'lib', 'agents', 'task-starter.ts');
+  it.each(['reconcileTaskJobs', 'startDueTaskJobs'])('%s sends no signal but the liveness probe', (name) => {
+    const body = functionBody(readFileSync(STARTER, 'utf-8'), name);
+    expect(body.length).toBeGreaterThan(200);
+    expect(body).not.toMatch(/killGroup|killRunGroup|SIGKILL|SIGTERM|process\.kill\(/);
+  });
+  it('only a human Stop kills: stopTaskAction is where the group kill lives', () => {
+    expect(functionBody(readFileSync(STARTER, 'utf-8'), 'stopTaskAction')).toMatch(/killGroup\(/);
+  });
+});

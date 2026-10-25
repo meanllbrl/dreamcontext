@@ -56,6 +56,7 @@ import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
 import { readAccountWait } from './account.js';
 import { scanOutsideAssignments } from '../agents/outside-assignments.js';
+import { reconcileTaskJobs, startDueTaskJobs, type TaskJobDeps } from '../agents/task-starter.js';
 import { currentLogin, foreignOwner } from '../agents/owner.js';
 import { placement } from '../agents/active.js';
 import { pollTelegram, type PollResult } from './telegram.js';
@@ -89,6 +90,8 @@ export interface TickOptions {
    *  to the real poller, which is itself a no-op when Telegram is unconfigured
    *  (the overwhelmingly common case). */
   pollTelegram?: (contextRoot: string, home?: string) => Promise<PollResult>;
+  /** Task jobs' injectables (the host spawn, the liveness probe). Tests only. */
+  taskJobs?: Omit<TaskJobDeps, 'home' | 'now'>;
 }
 
 /** Per-manifest disposition for one `tickProject` pass — lets a caller log or
@@ -198,6 +201,13 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   // Hand edits arriving by sync raise owner rows here instead of starting anything (B1-5), and
   // ledger records of tasks that moved on die.
   scanOutsideAssignments(contextRoot, opts.home);
+
+  // Task jobs (C1): settle what died, then start what is due. Each step runs in a DETACHED host,
+  // so this never waits for one: the routines below fire on time while task jobs run.
+  const taskDeps: TaskJobDeps = { ...(opts.taskJobs ?? {}), home: opts.home, now: () => now, log: logFn };
+  reconcileTaskJobs(contextRoot, taskDeps);
+  const taskRuns = startDueTaskJobs(contextRoot, taskDeps);
+  if (taskRuns.length) logFn(`[automations] started ${taskRuns.length} task job step(s): ${taskRuns.join(', ')}`);
 
   // ── Drain, BEFORE isDue() (D9/A4/R5 — see this module's header) ──────────
   const drained = accountWait === null ? drainQueue(projectRoot, opts.home, now.getTime()) : [];

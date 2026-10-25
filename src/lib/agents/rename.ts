@@ -1,3 +1,4 @@
+import { renameOrForgetAgentTaskJobs } from './task-jobs.js';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import * as git from '../git-sync/git.js';
@@ -184,4 +185,5 @@ function gitCwdOf(contextRoot: string): string {
 
 function renameOrForgetAssignmentsSafe(projectRoot: string, from: string, to: string, home?: string): void {
   try { renameOrForgetAgentAssignments(projectRoot, from, to, home); } catch { /* see the ledger */ }
+  renameOrForgetAgentTaskJobs(projectRoot, from, to, home);
 }

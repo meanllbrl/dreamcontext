@@ -62,6 +62,7 @@ let stateDir: string;
 let prevCwd: string;
 let prevSession: string | undefined;
 let prevAutoSleep: string | undefined;
+let prevClaudeCode: string | undefined;
 
 async function cli(...argv: string[]): Promise<void> {
   const program = new Command();
@@ -206,14 +207,19 @@ describe('task backend golden (M1 — byte-identical state/*.md)', () => {
     // happens to run in, nor on a sleep cycle a developer's env may claim (lib/filing-basis.ts).
     prevSession = process.env.CLAUDE_CODE_SESSION_ID;
     prevAutoSleep = process.env.DREAMCONTEXT_AUTO_SLEEP;
+    prevClaudeCode = process.env.CLAUDECODE;
     delete process.env.CLAUDE_CODE_SESSION_ID;
     delete process.env.DREAMCONTEXT_AUTO_SLEEP;
+    // A status change names its author (lib/task-history.ts): the owner at a terminal, not the
+    // Claude Code session the suite may happen to run inside.
+    delete process.env.CLAUDECODE;
     await runOperationScript();
   });
 
   afterAll(() => {
     if (prevSession !== undefined) process.env.CLAUDE_CODE_SESSION_ID = prevSession;
     if (prevAutoSleep !== undefined) process.env.DREAMCONTEXT_AUTO_SLEEP = prevAutoSleep;
+    if (prevClaudeCode !== undefined) process.env.CLAUDECODE = prevClaudeCode;
     process.chdir(prevCwd);
     rmSync(projectRoot, { recursive: true, force: true });
   });

@@ -1,3 +1,4 @@
+import { isTaskStepRunOf } from '../../lib/agents/task-delivery.js';
 import { Command } from 'commander';
 import { dirname } from 'node:path';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
@@ -1330,7 +1331,9 @@ export function registerAutomationsCommand(program: Command): void {
         // routine is never set up without one (`create --answer`).
         const conversationRoutine = !!opts.routine
           && ownerInTurn(root, slug, process.env.DREAMCONTEXT_AUTOMATION_RUN);
-        if (manifest.review === 'off' && !conversationRoutine) {
+        // A task job's step is watched too: its task waits on the owner (AI Team v2 C1-5).
+        const taskStepQuestion = isTaskStepRunOf(root, slug);
+        if (manifest.review === 'off' && !conversationRoutine && !taskStepQuestion) {
           warn(`"${slug}" has review off — a proposal would be created that nothing is watching for.`);
           console.log(chalk.dim(`  Set \`review: agent\` in automations/${slug}.md, then re-approve (it is a hashed field).`));
           console.log(chalk.dim('  That applies to --choice too: buttons nobody is watching for are still nobody watching.'));

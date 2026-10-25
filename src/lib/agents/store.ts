@@ -1,3 +1,4 @@
+import { stopAgentTaskJobs } from './task-starter.js';
 import { mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import fg from 'fast-glob';
@@ -553,6 +554,8 @@ export function removeAgent(contextRoot: string, slug: string, opts: { home?: st
   revokeAgent(dirname(contextRoot), slug, automationFileTarget(contextRoot, slug), opts.home);
   // Its machine-local entries die with it (the stage's home session).
   forgetAgentLocal(dirname(contextRoot), slug, opts.home);
+  // Its task jobs: queued steps stop ("agent gone"), its sessions are forgotten (C1-5).
+  stopAgentTaskJobs(contextRoot, slug, opts.home);
   reparentReports(contextRoot, slug, agent.reportsTo);
   return { removed: true };
 }

@@ -27,7 +27,7 @@ import {
   writeAutomationsRegistry,
 } from '../../src/lib/automations/registry.js';
 import { renderAutomationsSection } from '../../src/lib/automations/snapshot.js';
-import { prepareAssignment, commitAssignment, consumeAssignmentStart } from '../../src/lib/agents/task-assignment.js';
+import { prepareAssignment, commitAssignment } from '../../src/lib/agents/task-assignment.js';
 import { prepareAgentChat } from '../../src/lib/whiteboards/card-chat.js';
 import { resolveSpawnScope } from '../../src/lib/automations/board-scope.js';
 import { mergeAgentActive, mergeAgentManifest, mergeConfigJson, classifyPath } from '../../src/lib/git-sync/semantic-merge.js';
@@ -36,7 +36,7 @@ import { buildRecentHistoryBlock } from '../../src/lib/automations/history.js';
 import { updateSetupConfig } from '../../src/lib/setup-config.js';
 import { adoptPattern, confirmAgentSyncHere, effectivePattern, readPendingRestores, recordThreadEntryHere, resolvePendingRestores, stampOwners } from '../../src/lib/agents/agent-sync.js';
 import { currentOwnAssignments, scanOutsideAssignments } from '../../src/lib/agents/outside-assignments.js';
-import { forgetTaskAssignments, readAssignmentLedger, seedAssignmentLedger } from '../../src/lib/agents/assignment-ledger.js';
+import { consumeArmedStart, forgetTaskAssignments, readAssignmentLedger, seedAssignmentLedger } from '../../src/lib/agents/assignment-ledger.js';
 import { listInboxRows } from '../../src/lib/owner-inbox.js';
 import { placement, writeActiveHere } from '../../src/lib/agents/active.js';
 import { handleAgentsApprove, handleAgentsDelete, handleAgentsPlace, handleAgentsUpdate, handleAgentsList, type AgentSummary } from '../../src/server/routes/agents.js';
@@ -341,9 +341,10 @@ describe('hand edits arriving by sync start nothing (B1-5, AC-B1-3)', () => {
     const prep = prepareAssignment(contextRoot, 'c', 'researcher', { source: 'cli' });
     if (!prep.ok) throw new Error(prep.message);
     commitAssignment(contextRoot, prep, NOW);
-    expect(consumeAssignmentStart(contextRoot, prep)).toBe(true);
+    // The drain's claim spends the armed start (C1); then a synced edit queues a rework with no ticket.
+    expect(consumeArmedStart(projectRoot, prep.task.id, 'work', 0)).toBe(true);
     const raw = readFileSync(join(contextRoot, 'state', 'c.md'), 'utf-8');
-    writeFileSync(join(contextRoot, 'state', 'c.md'), raw.replace(/^agent: researcher$/m, 'agent: researcher\nagent_state: queued\nagent_step: rework'), 'utf-8');
+    writeFileSync(join(contextRoot, 'state', 'c.md'), raw.replace(/^agent_step: work$/m, 'agent_step: rework'), 'utf-8');
     scanOutsideAssignments(contextRoot);
     expect(outsideRows().some((r) => r.ref === 'c' && r.dedupeKey.includes(':queued:rework'))).toBe(true);
   });
@@ -353,7 +354,7 @@ describe('hand edits arriving by sync start nothing (B1-5, AC-B1-3)', () => {
     const prep = prepareAssignment(contextRoot, 'd', 'researcher', { source: 'cli' });
     if (!prep.ok) throw new Error(prep.message);
     commitAssignment(contextRoot, prep, NOW);
-    consumeAssignmentStart(contextRoot, prep);
+    consumeArmedStart(projectRoot, prep.task.id, 'work', 0);
     forgetTaskAssignments(projectRoot, 'task_d');
     scanOutsideAssignments(contextRoot);
     expect(outsideRows().some((r) => r.ref === 'd')).toBe(true);

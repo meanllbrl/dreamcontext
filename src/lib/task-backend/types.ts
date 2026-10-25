@@ -348,7 +348,8 @@ export interface TaskBackend {
   ): Promise<void>;
   /** `entry` is the fully formatted changelog block (callers own the label format). */
   addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void>;
-  complete(slug: string, summary?: string): Promise<TaskData>;
+  /** `by` is the change's author label (`owner`, `agent:<slug>`, …; lib/task-history.ts). */
+  complete(slug: string, summary?: string, opts?: { by?: string }): Promise<TaskData>;
   /**
    * Delete a task (remote backends propagate the deletion on sync).
    *

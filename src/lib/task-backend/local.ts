@@ -661,11 +661,12 @@ ${input.why || '(To be defined)'}
     }
   }
 
-  async complete(slug: string, summary?: string): Promise<TaskData> {
+  async complete(slug: string, summary?: string, opts: { by?: string } = {}): Promise<TaskData> {
     const now = today();
+    const by = opts.by && /^[a-z]+(?::[a-z0-9-]+)?$/.test(opts.by) ? ` (by ${opts.by})` : '';
     await this.addChangelog(
       slug,
-      `### ${now} - Completed\n- ${summary ?? 'Task completed.'}`,
+      `### ${now} - Completed${by}\n- ${summary ?? 'Task completed.'}`,
       { createIfMissing: true },
     );
     // Completing stamps the REAL end of the window, so the timeline shows what

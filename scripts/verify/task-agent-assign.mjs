@@ -5,10 +5,12 @@
  *   npm run build && npm run verify:task-agent-assign
  *
  * A task can be handed to one of the project's agents: the task gets `agent: <slug>`, an open
- * task moves to In progress, the agent runs on it through the existing run path, and one result
- * line lands in the task's changelog. This drives that path against the REAL server
- * (`POST /api/tasks/:slug/assign-agent`), the REAL runner and the REAL React surface, with
- * `claude` replaced by a stand-in that records the prompt it got and answers at once.
+ * task moves to In progress, and the agent's step runs as a TASK JOB (AI Team v2 C1): a detached
+ * host runs the agent with the task in its prompt, and the agent hands the work in with
+ * `dreamcontext tasks deliver`, which moves the task to In Review "by agent:<slug>". This drives
+ * that path against the REAL server (`POST /api/tasks/:slug/assign-agent`), the REAL task host
+ * and runner and the REAL React surface, with `claude` replaced by a stand-in that records the
+ * prompt it got, delivers with the env its host gave it, and answers at once.
  *
  * WHAT IT PROVES, each check naming the mutation it guards:
  *   T1  the composer shows what will happen and what syncs (the disclosure); the assignment sets
@@ -58,15 +60,21 @@ const TASKS = {
   dark: { slug: 'draft-the-launch-note', name: 'Draft the launch note', status: 'todo' },
 };
 
-/** The runner's `claude -p <prompt> --output-format json`: record the prompt, answer success. */
+/** The runner's `claude -p <prompt> --output-format json`: record the prompt, deliver when it is a
+ *  task job's step (its host set the run's id, token and task in the env), answer success. */
 const STANDIN = `#!${process.execPath}
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 const argv = process.argv.slice(2);
 const i = argv.indexOf('-p');
 const prompt = i === -1 ? '' : (argv[i + 1] || '');
 const dir = ${JSON.stringify(PROMPTS)};
 mkdirSync(dir, { recursive: true });
 writeFileSync(dir + '/' + (process.env.DREAMCONTEXT_AUTOMATION_SLUG || 'unknown') + '-' + Date.now() + '-' + process.pid + '.txt', prompt);
+if (process.env.DREAMCONTEXT_TASK_ID) {
+  // This build's CLI, by path: a \`dreamcontext\` installed next to node would be another version.
+  spawnSync(process.execPath, [${JSON.stringify(DIST_INDEX)}, 'tasks', 'deliver', process.env.DREAMCONTEXT_TASK_ID, '--note', 'Looked at it.'], { stdio: 'ignore', env: process.env });
+}
 process.stdout.write(JSON.stringify({ session_id: 'standin-assign', is_error: false,
   result: 'Done.\\n\\n## Detail\\n\\nLooked at it.\\n', total_cost_usd: 0.01, num_turns: 1,
   duration_ms: 1000, permission_denials: [] }) + '\\n');
@@ -102,8 +110,10 @@ function cli(args) {
 const taskPath = (t) => join(STATE, `${t.slug}.md`);
 const taskText = (t) => (existsSync(taskPath(t)) ? readFileSync(taskPath(t), 'utf-8') : '');
 const field = (t, key) => (new RegExp(`^${key}: ['"]?([^'"\\n]*)['"]?$`, 'm').exec(taskText(t)) ?? [])[1] ?? null;
-const resultLine = (t, agent) => new RegExp(
-  `### \\d{4}-\\d{2}-\\d{2} - Agent ${agent.title} \\(\`${agent.slug}\`\\)\\n- Run \\S+: ok\\. Document: `).test(taskText(t));
+/** The task job's delivery, by the agent (C1): the task moved to In Review in its own name. */
+const resultLine = (t, agent) => new RegExp(`### \\d{4}-\\d{2}-\\d{2} - Status → in_review \\(by agent:${agent.slug}\\)`).test(taskText(t));
+/** The assignment's own move, by the owner. */
+const movedByOwner = (t) => /Status → in_progress \(by owner\)/.test(taskText(t));
 const promptsFor = (agent) => (existsSync(PROMPTS) ? readdirSync(PROMPTS) : [])
   .filter((f) => f.startsWith(`${agent.slug}-`)).map((f) => readFileSync(join(PROMPTS, f), 'utf-8'));
 
@@ -136,6 +146,17 @@ function seed() {
   spawnSync('git', ['init', '-q'], { cwd: PROJ });
   writeFileSync(join(BIN, 'claude'), STANDIN);
   chmodSync(join(BIN, 'claude'), 0o755);
+  // A current, low usage reading: a task job is unattended work, so account protection decides
+  // its start from this (no /usage probe of the stand-in).
+  writeFileSync(join(HOME, '.claude.json'), JSON.stringify({
+    cachedUsageUtilization: {
+      fetchedAtMs: Date.now() + 3_600_000,
+      utilization: {
+        five_hour: { utilization: 10, resets_at: new Date(Date.now() + 3 * 3_600_000).toISOString() },
+        seven_day: { utilization: 10, resets_at: new Date(Date.now() + 40 * 3_600_000).toISOString() },
+      },
+    },
+  }));
   cli(['vaults', 'add', 'proj', PROJ]);
 
   cli(['agents', 'create', SCOUT.slug, '--title', SCOUT.title, '--prompt', 'You read the project and report what changed, briefly.']);
@@ -227,12 +248,13 @@ async function functional(browser, base) {
       await composer.innerText().catch(() => ''));
     // Guards an assignment that only shows a face (no field) or forgets the status rule.
     check('the task file now says agent: scout', field(TASKS.todo, 'agent') === SCOUT.slug, taskText(TASKS.todo).slice(0, 400));
-    check('…and status: in_progress (moved from To Do)', field(TASKS.todo, 'status') === 'in_progress');
+    // The job may already have delivered (In Review): the assignment's own move is in the history.
+    check('…and status: in_progress (moved from To Do)', movedByOwner(TASKS.todo), taskText(TASKS.todo).split('## Changelog')[1]?.slice(0, 300));
     // Guards a route that commits the field but never starts the run.
     const ran = await until(async () => promptsFor(SCOUT).some((p) => p.includes(TASKS.todo.name)), 30000);
     check('the agent ran through the run path, with the task in its prompt', ran, `prompts: ${promptsFor(SCOUT).length}`);
     // Guards a run whose outcome never reaches the task.
-    check('the result line lands in the task changelog: "Agent Scout (`scout`)" then "Run …: ok. Document: …"',
+    check('the job\'s delivery lands on the task: In Review "by agent:scout"',
       await until(async () => resultLine(TASKS.todo, SCOUT), 30000), taskText(TASKS.todo).split('## Changelog')[1]?.slice(0, 400));
     await primary().click(); // Close
     const detailFace = page.locator('.task-agent-row .task-agent-face[aria-label="Assigned to Scout"]');
@@ -278,10 +300,10 @@ async function functional(browser, base) {
     check('"Approve and assign" approves the agent to run on this machine',
       await until(async () => !!registryEntry()?.agentApprovals?.[DIGEST.slug], 10000));
     check('…then assigns: agent: digest, status in_progress',
-      await until(async () => field(TASKS.gated, 'agent') === DIGEST.slug && field(TASKS.gated, 'status') === 'in_progress', 10000),
+      await until(async () => field(TASKS.gated, 'agent') === DIGEST.slug && movedByOwner(TASKS.gated), 10000),
       taskText(TASKS.gated).slice(0, 300));
     check('…and confirms in place', await until(async () => (await composer.locator('.ata-done').count()) === 1, 10000));
-    check('…and the agent ran and logged its result', await until(async () => resultLine(TASKS.gated, DIGEST), 30000),
+    check('…and the agent ran and delivered', await until(async () => resultLine(TASKS.gated, DIGEST), 30000),
       taskText(TASKS.gated).split('## Changelog')[1]?.slice(0, 300));
 
     check('[light] no uncaught page errors', ui.errors.length === 0, ui.errors.slice(0, 3).join(' | '));
@@ -335,8 +357,11 @@ function cliLeg() {
   const promptsBefore = promptsFor(SCOUT).length;
   // The sentinel: the same command outside a run works, so the refusal above is the env's doing.
   const ok = run(['tasks', 'assign-agent', TASKS.cli.slug, SCOUT.slug]);
-  check('outside a run, the same command assigns, runs the agent in the foreground, and logs the result',
-    ok.status === 0 && field(TASKS.cli, 'agent') === SCOUT.slug && field(TASKS.cli, 'status') === 'in_progress'
+  // The step runs in a detached host (C1): wait for its delivery, not for the command.
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline && !resultLine(TASKS.cli, SCOUT)) spawnSync('sleep', ['0.2']);
+  check('outside a run, the same command assigns, starts the job in the background, and its delivery lands',
+    ok.status === 0 && field(TASKS.cli, 'agent') === SCOUT.slug && movedByOwner(TASKS.cli)
       && promptsFor(SCOUT).length === promptsBefore + 1 && resultLine(TASKS.cli, SCOUT),
     `exit=${ok.status} agent=${field(TASKS.cli, 'agent')} status=${field(TASKS.cli, 'status')} ${ok.out.slice(-300)}`);
 }

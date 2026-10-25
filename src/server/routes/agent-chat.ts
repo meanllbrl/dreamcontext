@@ -74,6 +74,7 @@ import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFr
 import { chatSpawnAccount } from '../../lib/automations/account.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
+import { taskOfAnySession } from '../../lib/agents/task-starter.js';
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
@@ -655,6 +656,11 @@ export function resumeRunsBypass(bypass: boolean, contextRoot: string, chatAgent
   return !!chatAgent && getRunTarget(contextRoot, chatAgent, 'agent')?.autonomy === 'free';
 }
 
+/** True when any of `ids` is a task step's session on this machine (registry or binding tag). */
+export function refusesTaskSession(contextRoot: string, ids: readonly (string | null | undefined)[], home?: string): boolean {
+  return ids.some((id) => !!id && taskOfAnySession(contextRoot, id, home) !== null);
+}
+
 export function shouldRejectAutomationResume(
   bypass: boolean,
   resumeId: string,
@@ -1164,6 +1170,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // so a tab-session mapping can never launder an unbound automation session id into a
     // resumable one.
     if (shouldRejectAutomationResume(resumeRunsBypass(bypass, join(projectRoot, '_dream_context'), chatAgent), resumeId, join(projectRoot, '_dream_context'))) {
+      rejectUpgrade(socket, 403);
+      return;
+    }
+    // A task step's session never opens in a chat tab (AI Team v2 C1-14): only its task host
+    // resumes it, under its step's envelope and in its worktree. Server-side, so the pane's
+    // `bypass` flag changes nothing; the stage shows its transcript read-only instead.
+    if (refusesTaskSession(join(projectRoot, '_dream_context'), [resumeId, sessionId])) {
       rejectUpgrade(socket, 403);
       return;
     }

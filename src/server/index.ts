@@ -273,6 +273,7 @@ import {
 import { listVaults } from '../lib/vaults.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
+import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
 import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
@@ -1425,6 +1426,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // the app onto the new version. Self-gates to DREAMCONTEXT_DESKTOP=1.
       startUpgradeReadyWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk);
       startOrphanSweep();
+      // Task jobs: settle what died and start what is due, now and every minute (C1-3).
+      startTaskJobLoop();
       // Mac mode lives in the desktop server: the CLI finds it through this hint, and a state
       // left `on` by a crashed server is repaired now (orphan tunnel, sleep, LPM, devices).
       if (isDesktop() && process.platform === 'darwin') {

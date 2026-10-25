@@ -27,6 +27,8 @@ import {
 import { isSafeAutomationSlug, readManifestFrontmatter } from '../../lib/agents/slot.js';
 import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutomationPhoto } from '../../lib/automations/store.js';
 import { readThread } from '../../lib/automations/threads.js';
+import { listInboxRows, type InboxRow } from '../../lib/owner-inbox.js';
+import { findTaskHead, readTaskJobs } from '../../lib/agents/task-jobs.js';
 import { readStageHomeSession } from '../../lib/local-store.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import { agentActivity } from '../automation-job.js';
@@ -602,8 +604,11 @@ export interface StageView {
   files: { path: string; kind: StageFileKind; at: string; slug: string }[];
   /** Its routines (scheduled automations that run as it). */
   routines: { slug: string; title: string; enabled: boolean; nextFireAt: string | null; cadence: string; face: AgentFace }[];
-  /** Rows waiting on the owner about this agent (the owner inbox arrives with task assignment). */
-  inbox: unknown[];
+  /** Rows waiting on the owner about this agent (M1). */
+  inbox: InboxRow[];
+  /** Its task-job steps on this machine (M0 claims): task steps run in detached hosts, not as
+   *  server jobs, so the stage reads them here. A task session is shown read-only, never chatted. */
+  taskJobs: { taskId: string; taskSlug: string; taskName: string; step: string; role: string; round: number; phase: string; sessionId: string | null; claimedAt: string }[];
 }
 
 /** The stage view of `slug`, or null when there is no such agent. Read-only. */
@@ -663,7 +668,15 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
       cadence: cadenceLabel(m),
       face: faceOf(m.slug, parseFace(readManifestFrontmatter(m.path)?.data.face)),
     })),
-    inbox: [],
+    inbox: listInboxRows(dirname(contextRoot)).filter((r) => r.agent === slug),
+    taskJobs: readTaskJobs(dirname(contextRoot)).claims
+      .filter((c) => c.agent === slug && c.phase !== 'claiming')
+      .map((c) => ({
+        taskId: c.taskId,
+        taskSlug: c.taskSlug,
+        taskName: findTaskHead(contextRoot, c.taskId)?.name ?? c.taskSlug,
+        step: c.step, role: c.role, round: c.round, phase: c.phase, sessionId: c.sessionId, claimedAt: c.claimedAt,
+      })),
   };
 }
 

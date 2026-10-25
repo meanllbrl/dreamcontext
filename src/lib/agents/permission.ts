@@ -28,6 +28,15 @@ export const AGENT_STEPS: readonly AgentStep[] = ['chat', 'plan', 'work', 'rewor
 /** The tools a reviewer never has. */
 export const REVIEW_DISALLOWED_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'] as const;
 
+/**
+ * Under `auto`, a task step's OWN verbs are pre-approved so they never pay the classifier: the
+ * doer's delivery, the reviewer's verdict, and asking the owner. The Assistant's precedent
+ * (agent-chat.ts `assistantAllowedTools`): the matcher refuses compound commands, and the verbs
+ * themselves check the run's token. One comma-joined value (the flag is variadic).
+ */
+export const TASK_DOER_ALLOWED = ['Bash(dreamcontext tasks deliver:*)', 'Bash(dreamcontext automations propose:*)'].join(',');
+export const TASK_REVIEWER_ALLOWED = ['Bash(dreamcontext tasks review:*)', 'Bash(dreamcontext automations propose:*)'].join(',');
+
 /** The permission argv for `level` at `step`. Throws for a `plan` step below the Ask level: only
  *  an Ask agent plans first, so a plan step anywhere else is a caller bug. */
 export function levelPermissionArgs(level: AgentAutonomy, step: AgentStep): string[] {
@@ -39,10 +48,13 @@ export function levelPermissionArgs(level: AgentAutonomy, step: AgentStep): stri
       return ['--permission-mode', 'plan', '--disallowedTools', QUESTION_DISALLOWED_TOOLS];
     case 'work':
     case 'rework':
-      return ['--permission-mode', level === 'free' ? 'bypassPermissions' : 'auto'];
+      return level === 'free'
+        ? ['--permission-mode', 'bypassPermissions']
+        : ['--permission-mode', 'auto', '--allowedTools', TASK_DOER_ALLOWED];
     case 'review':
       return [
         '--permission-mode', level === 'free' ? 'bypassPermissions' : 'auto',
+        ...(level === 'free' ? [] : ['--allowedTools', TASK_REVIEWER_ALLOWED]),
         '--disallowedTools', REVIEW_DISALLOWED_TOOLS.join(' '),
       ];
   }

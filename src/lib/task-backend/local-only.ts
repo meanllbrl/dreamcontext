@@ -75,6 +75,23 @@ export const KNOWN_LOCAL_ONLY_TASK_FIELDS: readonly string[] = [
   'filing_basis',
   // The owner's approval of an agent-opened task (lib/task-filing-approval.ts): no remote field.
   'filing_approved',
+  // A task job (AI Team v2 C1, lib/agents/task-jobs.ts): display and coordination only; every
+  // fact a start or a refusal depends on lives machine-local (M0), never in these.
+  'reviewer',
+  'agent_state',
+  'agent_step',
+  'agent_start_at',
+  'agent_queued_at',
+  'agent_workspace',
+  'agent_repo',
+  'agent_claimed_machine',
+  'agent_claimed_at',
+  'agent_blocked',
+  'agent_stopped',
+  'review_round',
+  'review_cap',
+  'review_passed',
+  'deliveries',
 ];
 
 /** Identity fields the mirror-rebuild path mints fresh rather than restoring. */

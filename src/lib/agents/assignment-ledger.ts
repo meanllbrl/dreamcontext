@@ -94,6 +94,34 @@ export function consumeArmedStart(projectRoot: string, taskId: string, step: str
   return had;
 }
 
+/** Spend the armed starts of a task (a Stop, a deleted agent), all of them or one step's: nothing
+ *  synced can start it again. */
+export function disarmTask(projectRoot: string, taskId: string, home?: string, step?: string): void {
+  const hit = (a: ArmedStart): boolean => a.taskId === taskId && (step === undefined || a.step === step);
+  try {
+    if (!readAssignmentLedger(projectRoot, home).armed.some(hit)) return;
+    updateLocalJson<LedgerFile>(projectRoot, FILE, EMPTY, (cur) => {
+      const f = clean(cur);
+      return { ...f, armed: f.armed.filter((a) => !hit(a)) };
+    }, home);
+  } catch {
+    // an armed start left behind still needs the synced state to match a step, round and agent
+  }
+}
+
+/** The death of ONE role's record on a task (its reviewer deleted): the other role's stays. */
+export function forgetTaskRole(projectRoot: string, taskId: string, role: AssignmentRole, home?: string): void {
+  try {
+    if (!readAssignmentLedger(projectRoot, home).records.some((r) => r.taskId === taskId && r.role === role)) return;
+    updateLocalJson<LedgerFile>(projectRoot, FILE, EMPTY, (cur) => {
+      const f = clean(cur);
+      return { ...f, records: f.records.filter((r) => !(r.taskId === taskId && r.role === role)) };
+    }, home);
+  } catch {
+    // a stale reviewer record only names an agent that no longer exists, which cannot run
+  }
+}
+
 /** The ledger record for `(taskId, role, agent)`, or null. */
 export function ledgerRecordFor(projectRoot: string, taskId: string, role: AssignmentRole, agent: string, home?: string): LedgerRecord | null {
   return readAssignmentLedger(projectRoot, home).records.find((r) => r.taskId === taskId && r.role === role && r.agent === agent) ?? null;
