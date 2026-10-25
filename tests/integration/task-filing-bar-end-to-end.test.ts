@@ -126,7 +126,10 @@ describe('tasks create under a live sleep cycle', () => {
   it('lets a HUMAN through mid-cycle, and tells an unknown caller how', () => {
     startCycle();
     expect(cli(`tasks create "my own task" --by human --why "${THIN_WHY}"`).code).toBe(0);
-    expect(cli(`tasks create "another vague one" --why "${THIN_WHY}"`).out).toContain('--by human');
+    // With a basis, so the hint comes from the bar's own refusal and not from the basis check's.
+    const unknown = cli(`tasks create "another vague one" ${ASK_BASIS} --why "${THIN_WHY}"`).out;
+    expect(unknown).toContain('at least 40 characters');
+    expect(unknown).toContain('--by human');
   });
 
   it('counts filed tasks against the cap and then refuses', () => {
