@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
-import { isLightMode } from '../../../lib/lightMode';
 import { MAX_CONTAINERS, PRESENT_LAYOUTS, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
-import { SleepyMascot } from '../SleepyMascot';
 import type { ChatSession } from '../chatSession';
-import { prefersReducedMotion } from './motionRunner';
 import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
 import { GroupPanel } from './GroupPanel';
@@ -26,6 +23,7 @@ import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage,
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
+import { BrandMark } from '../../brand/BrandMark';
 import { useTasks } from '../../../hooks/useTasks';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
@@ -193,9 +191,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }, [presented, state.containers]);
   /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
+  const queueUp = !!queueHead(state);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, asking: ownerAsk, layoutChoices: layoutChoices.length }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, ownerAsk, layoutChoices.length],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, ownerAsk, layoutChoices.length, queueUp],
   );
   cuesPlanRef.current = plan;
   const planRef = useRef(plan);
@@ -482,7 +481,6 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // on the choreography's first frame and is over before its end (≥ 440 ms). Decided once, at
   // mount: a surface that mounts with nothing flying (a reload, a take-back reversed back here)
   // and the crossfade (Light mode, reduced motion) have the cape simply on.
-  const [capeOn] = useState(() => motion === 'running' && !prefersReducedMotion() && !isLightMode());
 
   const head = queueHead(state);
   // What each child's card says it waits on the owner for: a question it asks, or something only he can do.
@@ -623,7 +621,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           <div className="super-centre-bg" aria-hidden />
           <div className="super-centre-clip">
             <div className="super-centre-head">
-              <SleepyMascot size={28} compact mood={status.mood} mode="super" capeOn={capeOn} />
+              <BrandMark size={28} />
               <span className="super-centre-name">{t('super.centre.name')}</span>
               {plan.chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
               {plan.chat === 'column' && !agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
