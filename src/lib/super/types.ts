@@ -14,7 +14,7 @@ export const SUPER_STATE_VERSION = 1 as const;
 
 /** What a container can show. `chat` is a child chat's card; `agenda` the super's own agenda
  *  (Waiting on you / Now / Done / Up next, one per stage); the rest are read-only views. */
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser', 'team', 'agenda'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
 
 /** The agenda card's one ref: there is one agenda per stage (owner 2026-10-22: "a card, not a
@@ -73,6 +73,21 @@ export function minSizeFor(kind: ContainerKind): ContainerSize {
   return kind === 'web' || kind === 'browser' ? 'large' : 'small';
 }
 
+/** A media card (a picture, a PDF, a clip): a project file shown as it is. Several opened in
+ *  one call group themselves, and `--for <child>` links them to a child's job (image-group.ts,
+ *  tidy.ts). */
+export function isMediaKind(kind: ContainerKind): boolean {
+  return kind === 'image' || kind === 'pdf' || kind === 'video';
+}
+
+/** The size a card opens at when the agent names none: the agenda at the size that holds its
+ *  four sections, a clip wide (16:9 fits a 3x2 tile), a PDF large (a page reads at 2x2). */
+export function defaultSizeFor(kind: ContainerKind): ContainerSize {
+  if (kind === 'agenda') return AGENDA_SIZE;
+  if (kind === 'video') return 'wide';
+  return kind === 'pdf' ? 'large' : 'small';
+}
+
 /** The larger of two sizes (the list runs small → wide). */
 export function atLeastSize(size: ContainerSize, min: ContainerSize): ContainerSize {
   return CONTAINER_SIZES.indexOf(size) >= CONTAINER_SIZES.indexOf(min) ? size : min;
@@ -88,7 +103,7 @@ export interface SuperContainer {
   id: string;
   kind: ContainerKind;
   /** What it shows: a session id (chat), an insight/task/knowledge/whiteboard/board slug, a
-   *  URL (web) or a project-relative path (image). Validated per kind at `open`. */
+   *  URL (web) or a project-relative path (image, pdf, video). Validated per kind at `open`. */
   ref: string;
   shape: ContainerShape;
   /** The size preset it floats at (absent = small). */
@@ -113,8 +128,9 @@ export interface SuperContainer {
   /** A live child's chat card the OWNER put away himself (dragged to Others or grouped), epoch
    *  ms: it stays there until that run finishes (live.ts). Server-written from his layout only. */
   heldAt?: number;
-  /** A picture the super showed for a child's job (`super open image … --for <child>`): it goes
-   *  to Others once that job moves on after `forAt` (tidy.ts `jobMovedOn`). Images only. */
+  /** A picture, PDF or clip the super showed for a child's job (`super open image|pdf|video …
+   *  --for <child>`): it goes to Others once that job moves on after `forAt` (tidy.ts
+   *  `jobMovedOn`). Media cards only (`isMediaKind`). */
   forChild?: string;
   /** When it was (last) shown for that job (epoch ms), beside `forChild`. */
   forAt?: number;
@@ -272,9 +288,11 @@ export function layoutFits(layout: PresentLayout, cards: readonly LayoutCard[]):
 }
 
 /** The layout the cards pick when none is given: 1 spotlight, a child's page with its chat
- *  review, 2 compare, 3-4 grid, 5-8 filmstrip. */
+ *  review, 2 compare, 3-4 grid, 5-8 filmstrip; 2+ clips (all video) a filmstrip. */
 export function defaultLayout(cards: readonly LayoutCard[]): PresentLayout {
   if (cards.length <= 1) return 'spotlight';
+  // Clips: one big player over a strip of the rest.
+  if (cards.length <= MAX_FILMSTRIP && cards.every((c) => c.kind === 'video')) return 'filmstrip';
   if (isReviewSet(cards)) return 'review';
   if (cards.length === 2) return 'compare';
   return cards.length <= MAX_PRESENT ? 'grid' : 'filmstrip';
@@ -1281,6 +1299,8 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   groups them; a picture opened within 2 minutes of the last joins its group). \`--no-group\` only
   when the owner wants them apart. Pictures of a child's work: always \`--for <child>\`, so they
   go to Others once that job moves on (you send it new work, end it, or he saw a newer result).
+- A PDF or a clip to show: \`super open pdf|video <path…>\` (a project file; a PDF opens large, a
+  clip wide and plays only when he clicks it). Several are one group and take \`--for\`, like pictures.
 - Every card you open gets a short human name: \`--title "…"\`, several with \`--titles "a|b|c"\`.
   What is decided or finished goes to Others at once (\`super stack <card|group>\`); the stage
   also moves a card nobody touched for 45 minutes and a finished job the owner saw.

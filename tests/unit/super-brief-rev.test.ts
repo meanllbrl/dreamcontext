@@ -94,6 +94,13 @@ describe('the briefing carries the jarvis sections and its revision', () => {
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) expect(t).toContain('A message ending `[On page <page> …]` was written from the dock');
   });
 
+  it('rev 11 (2026-10-25): PDFs and clips go on the stage, in the briefing and in the update', () => {
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('`super open pdf|video <path…>`');
+      expect(t).toContain('plays only when he clicks it');
+    }
+  });
+
   it('rev 10 (2026-10-23): which answer is to which message, in the briefing and in the update', () => {
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('`<owner-msg ref="…"/>`');

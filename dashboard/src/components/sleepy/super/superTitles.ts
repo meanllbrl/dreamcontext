@@ -58,7 +58,9 @@ export function cardTitle(c: Pick<SuperContainer, 'kind' | 'ref' | 'title'>, fro
   switch (c.kind) {
     case 'team': return from.team(c.ref) ?? c.ref;
     case 'task': return from.task(c.ref) || humanizeWords(c.ref);
-    case 'image': return humanizeFile(c.ref);
+    case 'image':
+    case 'pdf':
+    case 'video': return humanizeFile(c.ref);
     case 'web': return pageName(c.ref);
     case 'browser': return c.ref.slice(0, 8);
     default: return humanizeWords(c.ref);

@@ -137,7 +137,7 @@ describe('super types — server record <-> window mirror', () => {
     expect(client.readSuperStateView({ v: 2 })).toBeNull();
     const v = client.readSuperStateView({
       ...server.emptySuperState(), vault: 'acme-app', session: null,
-      containers: [{ id: 'c1', kind: 'video', ref: 'x', shape: 'tall', place: 'float' }, { id: 'c2', kind: 'task', ref: 'x', shape: 'tall', place: 'float', pos: { x: 3, y: 0 } }],
+      containers: [{ id: 'c1', kind: 'movie', ref: 'x', shape: 'tall', place: 'float' }, { id: 'c2', kind: 'task', ref: 'x', shape: 'tall', place: 'float', pos: { x: 3, y: 0 } }],
       view: { mode: 'half', card: 'c1' },
       queue: [{ id: 'q', sessionId: 's', kind: 'permission', state: 'weird', createdAt: 1 }],
       notes: { s: 'hello' },

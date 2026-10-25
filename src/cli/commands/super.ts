@@ -80,7 +80,7 @@ function print(r: CallResult): void {
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
 const usage = (message: string) => print({ status: 400, body: { error: 'invalid_args', message } });
 
-const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | browser | team | agenda';
+const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda';
 
 export function registerSuperCommand(program: Command): void {
   const s = program
@@ -117,14 +117,14 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('open <kind> [refs...]')
-    .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once. \`open agenda\` (no ref) brings back the owner's agenda card (Waiting on you, Now, Done, Up next)`)
+    .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path (image, pdf, video: a project file); up to 12 refs of one kind at once. \`open agenda\` (no ref) brings back the owner's agenda card (Waiting on you, Now, Done, Up next)`)
     .option('--group <name>', 'Put every card opened here in ONE group of this name (a set the owner asked to see)')
-    .option('--no-group', 'Images only: leave them as separate cards (pictures group themselves: 2+ in one call are a new group; one picture within 2 minutes of the last joins its group)')
+    .option('--no-group', 'Images, PDFs and videos only: leave them as separate cards (they group themselves: 2+ in one call are a new group; one within 2 minutes of the last of its kind joins its group)')
     .option('--shape <shape>', 'small | medium | large | wide (the card\'s size, 1x1 2x1 2x2 3x2 tiles; a size the owner chose is kept), or square | tall (recorded only)')
-    .option('--size <size>', 'small | medium | large | wide: the same as --shape with a size (a web or browser card is never under large, and opens side by side)')
+    .option('--size <size>', 'small | medium | large | wide: the same as --shape with a size (a web or browser card is never under large, and opens side by side; unnamed, a video opens wide and a PDF large)')
     .option('--title <text>', 'Its label (one ref only)')
     .option('--titles <a|b|c>', 'One label per ref, in order, separated by | (several refs)')
-    .option('--for <child>', 'Images only: the child whose job these pictures show; they go to Others once that job moves on (you send it new work, it is ended, or the owner saw a newer result)')
+    .option('--for <child>', 'Images, PDFs and videos only: the child whose job these show; they go to Others once that job moves on (you send it new work, it is ended, or the owner saw a newer result)')
     .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; titles?: string; group?: string | false; for?: string }) =>
       kind !== 'agenda' && !refs.length ? usage('name at least one ref') : run('open', refs.length <= 1
         ? { kind, ref: refs[0] ?? '', shape: o.shape, size: o.size, title: o.title ?? o.titles?.split('|')[0], group: o.group, for: o.for }

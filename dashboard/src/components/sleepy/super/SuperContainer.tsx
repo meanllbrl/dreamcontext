@@ -28,9 +28,12 @@ import { WebFrameControl } from '../../../lib/webFrameControl';
 import type { WebPick } from '../../../lib/webPick';
 
 /** What a card opens full screen (owner 2026-10-22): a picture, a project web page, a page on the
- *  web or this computer (only once its frame is allowed), or a board. */
+ *  web or this computer (only once its frame is allowed), a board, a PDF (the chat's full-window
+ *  PdfViewer) or a clip (its own player's full screen, asked of the card's `<video>`). */
 export type CardFullscreen =
   | { kind: 'image'; path: string; title: string }
+  | { kind: 'pdf'; path: string; title: string }
+  | { kind: 'video'; path: string; title: string }
   | { kind: 'html'; path: string; title: string }
   | { kind: 'page'; href: string; title: string }
   | { kind: 'board'; path: string; title: string };
@@ -38,6 +41,8 @@ export type CardFullscreen =
 /** The full-screen subject of a card, or null when it has none (yet). */
 export function fullscreenOf(c: Container, title: string, allowedHref: string | null): CardFullscreen | null {
   if (c.kind === 'image') return { kind: 'image', path: c.ref, title };
+  if (c.kind === 'pdf') return { kind: 'pdf', path: c.ref, title };
+  if (c.kind === 'video') return { kind: 'video', path: c.ref, title };
   if (c.kind === 'board') return { kind: 'board', path: c.ref, title };
   if (c.kind === 'whiteboard') { const path = whiteboardPath(c.ref); return path ? { kind: 'board', path, title } : null; }
   if (c.kind !== 'web') return null;
@@ -45,11 +50,12 @@ export function fullscreenOf(c: Container, title: string, allowedHref: string | 
   const lower = c.ref.toLowerCase().split(/[?#]/)[0];
   if (lower.endsWith('.html') || lower.endsWith('.htm')) return { kind: 'html', path: c.ref, title };
   if (inlineMediaKind(c.ref) === 'image') return { kind: 'image', path: c.ref, title };
+  if (lower.endsWith('.pdf')) return { kind: 'pdf', path: c.ref, title };
   return null;
 }
 
 export const KIND_GLYPH: Record<Container['kind'], string> = {
-  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', browser: '◉', team: '◈', agenda: '☰',
+  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', pdf: '▥', video: '▶', browser: '◉', team: '◈', agenda: '☰',
 };
 
 /** A whiteboard's board file, from its slug (`whiteboards/<slug>/<slug>.excalidraw.md`). */
@@ -201,13 +207,21 @@ export function SuperContainer(props: SuperContainerProps) {
   // A page's frame allowed and shown (its trust gate passed): from then on it may open full screen.
   const [allowedHref, setAllowedHref] = useState<string | null>(null);
   const full = fullscreenOf(c, props.title, allowedHref);
-  const openFull = full ? () => props.onFullscreen(c.id, full) : undefined;
+  const openFull = full ? () => (full.kind === 'video' ? videoFullscreen() : props.onFullscreen(c.id, full)) : undefined;
   // The size menu (and, on a small tile, the "more" menu that holds it). A card parked off the
   // stage closes it (a hidden menu would keep the window's arrow keys and Esc).
   const [menu, setMenu] = useState<null | 'size' | 'more'>(null);
   useEffect(() => { if (props.parked) setMenu(null); }, [props.parked]);
   const drawnSize: ContainerSize = plan.size ?? sizeOf(c);
   const frameRef = useRef<HTMLDivElement | null>(null);
+  // A clip full screen is its own player's (MediaEmbed's `<video>`, no second player); a tile
+  // that draws none yet shows it side by side, where it plays.
+  const videoFullscreen = () => {
+    const v = frameRef.current?.querySelector<HTMLVideoElement & { webkitEnterFullscreen?: () => void }>('video');
+    if (!v) { props.onSideBySide(c.id); return; }
+    if (v.requestFullscreen) void v.requestFullscreen().catch(() => v.webkitEnterFullscreen?.());
+    else v.webkitEnterFullscreen?.();
+  };
   const small = drawnSize === 'small';
   const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
   // The agenda is never closed: its close collapses it to its pill in the bottom-left corner.
@@ -253,9 +267,9 @@ export function SuperContainer(props: SuperContainerProps) {
         left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: cardZIndex(plan.z, c.kind === 'agenda'),
         ...(props.cue ? { ['--cue-dx' as string]: `${props.cue.dx}px`, ['--cue-dy' as string]: `${props.cue.dy}px` } : {}),
       }}
-      onPointerDown={floating && !props.parked ? (e) => props.onPress(e, c.id) : undefined}
+      onPointerDown={floating && !props.parked ? (e) => { if (!inFullscreen(e.target)) props.onPress(e, c.id); } : undefined}
       onClick={thumb ? () => props.onSelectThumb?.(c.id)
-        : floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button')) openCard(); } : undefined}
+        : floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button') && !inFullscreen(e.target)) openCard(); } : undefined}
       onKeyDown={onKeyDown}
     >
       <div className="super-card-lift" aria-hidden />
@@ -348,6 +362,13 @@ export function SuperContainer(props: SuperContainerProps) {
       )}
     </div>
   );
+}
+
+/** A press inside what is full screen now (a floating clip's own player): the player's, never the
+ *  card's grab or "show side by side", which would move the card or remount the player. */
+function inFullscreen(target: EventTarget): boolean {
+  const fs = document.fullscreenElement;
+  return !!fs && target instanceof Node && fs.contains(target);
 }
 
 /** working → the accent glow rises; asking → the waiting glow; anything else fades (F5). */
@@ -674,6 +695,12 @@ function viewFor(p: BodyProps): ReactNode {
     }
     case 'image':
       return <div className="super-card-view"><DocumentReader path={c.ref} onOpen={() => { /* read-only: links stay closed */ }} embedded /></div>;
+    case 'pdf':
+    case 'video':
+      // The chat's own viewers through the shared reader: a PDF in PdfViewer (embedded), a clip in
+      // MediaEmbed (controls, never autoplay). Off the stage the card is not drawn, so a clip
+      // stops with it; a floating card's body is inert, so it plays once shown side by side.
+      return <div className={`super-card-view super-card-view--${c.kind}`}><DocumentReader path={c.ref} onOpen={() => { /* read-only: links stay closed */ }} embedded /></div>;
     case 'browser':
       return <div className="super-card-view super-card-view--browser"><BrowserCard sessionId={p.browserSessionId} live={!!p.browserLive} large /></div>;
     case 'team':

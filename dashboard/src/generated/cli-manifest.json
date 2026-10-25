@@ -3242,7 +3242,7 @@
     },
     {
       "path": "super open",
-      "desc": "Open floating cards: chat | insight | task | knowledge | whiteboard | board | web | image | browser | team | agenda. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path; up to 12 refs of one kind at once. `open agenda` (no ref) brings back the owner's agenda card (Waiting on you, Now, Done, Up next)",
+      "desc": "Open floating cards: chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path (image, pdf, video: a project file); up to 12 refs of one kind at once. `open agenda` (no ref) brings back the owner's agenda card (Waiting on you, Now, Done, Up next)",
       "args": [
         "<kind>",
         "[refs...]"

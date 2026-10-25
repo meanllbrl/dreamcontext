@@ -34,7 +34,7 @@
  * card's clock again, so nothing is swept at once after one.
  */
 import { resolve } from 'node:path';
-import { DONE_SETTLE_MS, type SuperContainer, type SuperState } from './types.js';
+import { DONE_SETTLE_MS, isMediaKind, type SuperContainer, type SuperState } from './types.js';
 import { chatIsBusy, childIsLive, type BusyTest } from './live.js';
 
 export const TIDY_IDLE_MS = 45 * 60_000;
@@ -111,7 +111,7 @@ export function keepOwnerLooked(s: SuperState, ids: Iterable<string>): string[] 
   for (const g of s.groups) if (want.has(g.id)) for (const id of g.cards) want.add(id);
   const out: string[] = [];
   for (const c of s.containers) {
-    if (c.kind !== 'image' || !want.has(c.id) || jobMovedOn(c, s.children) === undefined) continue;
+    if (!isMediaKind(c.kind) || !want.has(c.id) || jobMovedOn(c, s.children) === undefined) continue;
     delete c.forChild;
     delete c.forAt;
     out.push(c.id);
@@ -171,7 +171,7 @@ export function planTidy(s: SuperState, touched: (id: string) => number | undefi
   const verdict = (id: string): 'seen' | 'idle' | undefined => {
     const c = s.containers.find((k) => k.id === id);
     if (!c || shown.has(id) || c.by === 'auto' || c.sizeBy === 'owner' || c.kind === 'agenda') return undefined;
-    const on = c.kind === 'image' ? jobMovedOn(c, s.children) : undefined;
+    const on = isMediaKind(c.kind) ? jobMovedOn(c, s.children) : undefined;
     if (on !== undefined) {
       if (now - on < graceMs()) return undefined;
       moved.add(id);

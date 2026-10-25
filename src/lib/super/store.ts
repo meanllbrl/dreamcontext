@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
-  CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, MAX_HELD,
+  CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_FILMSTRIP, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent,
   type AskShow, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
@@ -141,8 +141,8 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
       ...(c.by === 'auto' && typeof c.of === 'string' && Object.prototype.hasOwnProperty.call(children, c.of) ? { of: c.of } : {}),
       ...(c.kind === 'agenda' && c.min === true ? { min: true as const } : {}),
       ...(c.kind === 'chat' && typeof c.heldAt === 'number' && Number.isFinite(c.heldAt) && c.heldAt > 0 ? { heldAt: Math.min(c.heldAt, Date.now()) } : {}),
-      // A picture shown for a child's job: only a picture, only a child the record holds.
-      ...(c.kind === 'image' && typeof c.forChild === 'string' && Object.prototype.hasOwnProperty.call(children, c.forChild) && (finite(c.forAt) ?? -1) >= 0
+      // Media shown for a child's job: only a media card, only a child the record holds.
+      ...(isMediaKind(c.kind) && typeof c.forChild === 'string' && Object.prototype.hasOwnProperty.call(children, c.forChild) && (finite(c.forAt) ?? -1) >= 0
         ? { forChild: c.forChild, forAt: finite(c.forAt) as number } : {}),
       // A picture's shape (server-read): finite and in range, else dropped (drawn as today).
       ...(c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect >= ASPECT_MIN && c.aspect <= ASPECT_MAX

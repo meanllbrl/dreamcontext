@@ -12,7 +12,7 @@ import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
-  AGENDA_REF, AGENDA_SIZE, MAX_PAD, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, dissolveGroups, floatCount, isPageKind, leaveGroups, minSizeFor, viewWithout,
+  AGENDA_REF, MAX_PAD, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
@@ -97,6 +97,9 @@ type Params = Record<string, string>;
 const MAX_TEXT = 100_000;
 const SLUG_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
+const PDF_EXT_RE = /\.pdf$/i;
+/** The clips the window's player takes (`MEDIA_KIND_BY_EXT` video in chatEntities.ts). */
+const VIDEO_EXT_RE = /\.(mp4|m4v|mov|webm)$/i;
 const DELEGATE_TIMEOUT_MS = 30_000;
 /** `super open <kind> <ref…>` takes at most this many refs at once. */
 const MAX_OPEN_REFS = 12;
@@ -250,10 +253,17 @@ function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown
         ? { ref: w.href }
         : { error: `a web container shows an https page, a dev server on localhost (never this app's own ports) or a project file (${w.reason})` };
     }
-    case 'image': {
+    case 'image':
+    case 'pdf':
+    case 'video': {
+      // One path rule for every media card; the bytes come only through `/agent/file`, which
+      // serves the project root and nothing outside it.
+      const what = kind === 'image' ? 'an image' : kind === 'pdf' ? 'a PDF' : 'a video';
       if (ref.length > 1024 || ref.startsWith('/') || ref.includes('\\') || ref.split('/').some((s) => s === '..' || s === '' || s === '.')) {
-        return { error: 'an image is a project-relative path with no ".." steps' };
+        return { error: `${what} is a project-relative path with no ".." steps` };
       }
+      if (kind === 'pdf') return PDF_EXT_RE.test(ref) ? { ref } : { error: 'a PDF is a .pdf file' };
+      if (kind === 'video') return VIDEO_EXT_RE.test(ref) ? { ref } : { error: 'a video is a .mp4, .m4v, .mov or .webm file' };
       return IMAGE_EXT_RE.test(ref) ? { ref } : { error: 'an image is a .png, .jpg, .gif, .webp or .svg file' };
     }
     case 'whiteboard':
@@ -370,8 +380,8 @@ function mcpRefused(root: string, job: Job, res: ServerResponse): boolean {
 /** The stage's own tidying (tidy.ts) reads and writes the record the way every verb does. */
 const TIDY_IO: TidyIo = { read: (root) => readSuperState(root, superSanitizeOpts()), write: (root, fn) => writeSuper(root, fn) };
 
-/** The super's last `open image`, per vault (image-group.ts): the next one within the window
- *  joins its group. In memory: a restart only ends a chain. */
+/** The super's last `open image|pdf|video`, per vault and kind (image-group.ts): the next one of
+ *  that kind within the window joins its group. In memory: a restart only ends a chain. */
 const imageChains = new Map<string, ImageChain>();
 
 /** The file seam the picture-question check reads through (tests swap it). */
@@ -845,10 +855,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (str(b.group) && !groupName) { refuse(res, 400, 'invalid_args', 'a group needs a name'); return; }
     // `--no-group`: the cards stand alone and the picture chain ends here.
     const noGroup = b.group === false;
-    // `--for <child>`: pictures shown for that child's job, which go to Others once the job moves
-    // on (tidy.ts). Images only, and only one of the super's children.
+    // `--for <child>`: pictures, PDFs or clips shown for that child's job, which go to Others once
+    // the job moves on (tidy.ts). Media cards only, and only one of the super's children.
     const forChild = str(b.for);
-    if (b.for !== undefined && kind !== 'image') { refuse(res, 400, 'invalid_args', '--for links pictures only (kind image)'); return; }
+    if (b.for !== undefined && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--for links media only (kind image, pdf or video)'); return; }
     if (b.for !== undefined && (!forChild || !SESSION_ID_RE.test(forChild) || !hasChild(c.state, forChild))) {
       refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)');
       return;
@@ -861,10 +871,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     const root = c.who.contextRoot;
     const now = Date.now();
+    // One chain per vault and media kind: a PDF opened between two pictures leaves their chain be.
+    const chainKey = `${root}\0${kind}`;
     // Pictures opened together are one group (image-group.ts): 2+ in one call, or one call after
     // another within IMAGE_CHAIN_MS. Decided against the record inside the locked write.
     const auto = (s: SuperState): ImageGroupPlan =>
-      kind === 'image' && !groupName && !noGroup ? planImageGroup(s, ids, refs, imageChains.get(root), now, forChild) : null;
+      isMediaKind(kind as ContainerKind) && !groupName && !noGroup ? planImageGroup(s, ids, refs, imageChains.get(chainKey), now, forChild, kind as ContainerKind) : null;
     // `before`: the record as it stood before a pull (below): what floated, and on its own, then.
     const plan = (s: SuperState, before: SuperState = s): { fits: boolean; limit: 'stage' | 'record'; fresh: number; groupId: string | null; name: string; cards: string[] } => {
       const fresh = ids.filter((id) => !s.containers.some((k) => k.id === id)).length;
@@ -893,7 +905,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // A picture shown again for a job leaves a group of another job's (or turned-down) pictures
     // first, to go with this job's new set (image-group.ts `picturesToPull`).
     const pull = (s: SuperState): SuperState => {
-      if (kind === 'image' && !groupName) { const out = picturesToPull(s, ids, forChild); if (out.length) leaveGroups(s, out); }
+      if (isMediaKind(kind as ContainerKind) && !groupName) { const out = picturesToPull(s, ids, forChild); if (out.length) leaveGroups(s, out); }
       return s;
     };
     const first = plan(pull(structuredClone(c.state)), c.state);
@@ -943,8 +955,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
           setAspect(have, aspects);
           return;
         }
-        // The agenda opens at the size that holds its four sections, unless a size is named.
-        const size = atLeastSize(sizeArg ?? (kind === 'agenda' ? AGENDA_SIZE : 'small'), minSizeFor(kind as ContainerKind));
+        // Its kind's opening size (the agenda, a clip, a PDF: defaultSizeFor), unless a size is named.
+        const size = atLeastSize(sizeArg ?? defaultSizeFor(kind as ContainerKind), minSizeFor(kind as ContainerKind));
         s.containers.push({
           id: ids[i], kind: kind as ContainerKind, ref,
           shape: shapeArg ?? defaultShape(kind as ContainerKind),
@@ -972,9 +984,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (g) g.place = 'float';
       }
       // The picture chain: the next image open within the window joins where this one went.
-      if (kind === 'image') {
-        if (noGroup) imageChains.delete(root);
-        else imageChains.set(root, { at: now, card: ids[0], group: s.groups.find((g) => g.cards.includes(ids[0]))?.id ?? null });
+      if (isMediaKind(kind as ContainerKind)) {
+        if (noGroup) imageChains.delete(chainKey);
+        else imageChains.set(chainKey, { at: now, card: ids[0], group: s.groups.find((g) => g.cards.includes(ids[0]))?.id ?? null });
       }
     });
     if (childGone) { refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)'); return; }

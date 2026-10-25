@@ -192,7 +192,7 @@ function PlainTile({ container: c, title }: { container: Container; title: strin
       <TileTop kind={c.kind} />
       <div className="super-tile-title">{title}</div>
       {where && <div className="super-tile-line super-tile-line--one">{where}</div>}
-      <div className="super-tile-foot"><span>{t('super.tile.live')}</span></div>
+      <div className="super-tile-foot"><span>{t(c.kind === 'video' ? 'super.tile.plays' : c.kind === 'pdf' ? 'super.tile.reads' : 'super.tile.live')}</span></div>
     </div>
   );
 }

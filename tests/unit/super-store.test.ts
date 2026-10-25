@@ -131,7 +131,7 @@ describe('hostile fields are dropped (D2)', () => {
     const containers = [
       { id: 'a', kind: 'chat', ref: 'c-1', shape: 'square', place: 'others' },
       { id: 'a', kind: 'chat', ref: 'c-2', shape: 'tall', place: 'float' },
-      { id: 'b', kind: 'video', ref: 'x', shape: 'tall', place: 'float' },
+      { id: 'b', kind: 'movie', ref: 'x', shape: 'tall', place: 'float' },
       { id: 'c', kind: 'web', ref: 'https://example.com', shape: 'round', place: 'nowhere' },
       { id: 'd', kind: 'task', ref: 'my-task' },
       ...Array.from({ length: MAX_CONTAINERS + 8 }, (_, i) => ({ id: `n-${i}`, kind: 'insight', ref: `i-${i}`, shape: 'square', place: 'float' })),

@@ -532,7 +532,7 @@ plain, high-level lines in his words. Keep it true as you work:
 \`super half <card>\` (side by side), \`present <card…>\` (1-8), \`stack <card>\` (Others),
 \`group <card…>\`; \`--off\` / \`float\` undo. \`@card:<id>\` names a card he dropped on you.
 \`present … [--layout spotlight|compare|grid|filmstrip|review]\`: leave it off and the cards pick it
-(1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip; a page with its child's chat: review).
+(1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip, 2+ clips filmstrip; a page with its child's chat: review).
 \`kept: owner_layout\` in the answer = he chose that layout: leave it.
 Sizes: \`super shape <card> small|medium|large|wide\` (or \`open … --size\`); large/wide for
 something read at a glance (a picture, a chart). A 409 owner_sized means he chose it: leave it.
