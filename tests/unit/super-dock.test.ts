@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { superDockOn, superDockPill, superSlotFor } from '../../dashboard/src/components/sleepy/super/superHandover.js';
+import { superDockLift, superDockOn, superDockPill, superSlotFor } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import { showQuestionCard } from '../../dashboard/src/components/sleepy/super/JobBar.js';
 import type { SuperQueueItem, SuperStateView } from '../../dashboard/src/lib/superTypes.js';
 
@@ -26,6 +26,16 @@ describe('the gate and the slot', () => {
     for (const k of ['handedOver', 'enabled', 'desktop', 'agentsEnabled'] as const) expect(superDockOn({ ...on, [k]: false })).toBe(false);
     // T4: the view still 'super' (handedOver) but the record pushed enabled:false: off.
     expect(superDockOn({ ...on, enabled: undefined })).toBe(false);
+  });
+
+  it('lifts only on a whiteboard WITH a board open and on AI Team (criterion 16)', () => {
+    expect(superDockLift({ page: 'whiteboards', board: 'launch-plan' })).toBe('board');
+    expect(superDockLift({ page: 'whiteboards' })).toBeNull();
+    expect(superDockLift({ page: 'agents' })).toBe('team');
+    expect(superDockLift({ page: 'automations' })).toBe('team');
+    for (const page of ['tasks', 'lab', 'knowledge']) expect(superDockLift({ page })).toBeNull();
+    expect(superDockLift(null)).toBeNull();
+    expect(read('dashboard/src/components/sleepy/AgentSurface.tsx')).toMatch(/const dockLift = superDockLift\(pageCtx/);
   });
 
   it('homes the Super chat in the dock only while the window is open and the overlay folded', () => {

@@ -165,6 +165,8 @@ async function runEngine(engineName) {
   mkdirSync(join(PROJ, '_dream_context', 'lab', 'scripts'), { recursive: true });
   writeFileSync(join(PROJ, '_dream_context', 'lab', 'scripts', 'weekly-active-users.mjs'), wauScript);
   must('lab sync', dc('lab', 'sync', 'weekly-active-users'));
+  // One AI Team member, so the AI Team page draws its conversation and composer (criterion 16).
+  must('agent', dc('agents', 'create', 'scout', '--title', 'Scout', '--prompt', 'You read the product funnel and name what moved.'));
 
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
@@ -341,6 +343,8 @@ async function runEngine(engineName) {
     await page.waitForTimeout(1200);
     const near = await pageControlsNear();
     const pb = await pill.first().boundingBox();
+    ok('whiteboard (board open): the board\'s bottom-right control is measured', near.some((r) => /help/.test(r.cls)), JSON.stringify(near));
+    ok('…the corner is lifted for the board (data-lift="board")', (await dock.getAttribute('data-lift')) === 'board');
     ok('whiteboard (board open): the pill is >= 12 px clear of the board\'s bottom-right controls', near.every((r) => !overlaps(pb, r, 12)), JSON.stringify({ pb, near }));
     await pill.first().click();
     await until(page, async () => (await win.count()) === 1, 5000);
@@ -373,19 +377,28 @@ async function runEngine(engineName) {
 
     console.log('── AI Team: lifted above its composer');
     await nav('AI Team');
-    await page.waitForTimeout(1200);
-    const nearTeam = await pageControlsNear();
+    // The only member opens by itself; otherwise pick it from the list.
+    if (!(await until(page, async () => (await page.locator('.aiteam-composer').count()) > 0, 5000))) await page.getByText('Scout', { exact: true }).first().click();
+    const teamComposer = page.locator('.aiteam-composer').first();
+    ok('AI Team: the member\'s conversation and its composer are on screen', await until(page, async () => (await teamComposer.count()) === 1 && (await teamComposer.isVisible()), 15000));
+    await page.waitForTimeout(800);
+    const cb = await teamComposer.boundingBox();
     const pt = await pill.first().boundingBox();
-    ok('AI Team: the pill is >= 12 px clear of the page\'s bottom-right controls', nearTeam.every((r) => !overlaps(pt, r, 12)), JSON.stringify({ pt, near: nearTeam.filter((r) => overlaps(pt, r, 12)) }));
+    ok('…the corner is lifted for AI Team (data-lift="team")', (await dock.getAttribute('data-lift')) === 'team');
+    ok('AI Team: the pill is >= 12 px clear of the composer (measured)', !!cb && !!pt && !overlaps(pt, cb, 12), JSON.stringify({ pt, cb }));
     await pill.first().click();
     await until(page, async () => (await win.count()) === 1, 5000);
     const wt = await win.boundingBox();
-    ok('AI Team: the window is >= 12 px clear of them too', nearTeam.every((r) => !overlaps(wt, r, 12)), JSON.stringify({ wt, near: nearTeam.filter((r) => overlaps(wt, r, 12)) }));
+    ok('AI Team: the window is >= 12 px clear of the composer (measured)', !!cb && !!wt && !overlaps(wt, cb, 12), JSON.stringify({ wt, cb }));
     await shotSet('09-dock-open-ai-team');
     await dock.locator('[data-testid="super-dock-minimize"]').click();
 
     console.log('── a Super question: the pill asks and bounces until answered');
     await nav('Tasks');
+    // No board open (and no other page with its own bottom control): no lift, the pill at the plain inset.
+    const plain = await pill.first().boundingBox();
+    const vh = page.viewportSize().height;
+    ok('a page with no board open: no lift, the pill at the plain inset', (await dock.getAttribute('data-lift')) === null && !!plain && Math.abs(plain.y + plain.height - (vh - 20)) <= 1, JSON.stringify({ plain, vh }));
     await pill.first().click();
     await sendInDock('GO-ASKOWNER');
     ok('super ask ran', await until(page, async () => reports().some((r) => r.kind === 'asked'), 30000));
@@ -462,7 +475,8 @@ async function runEngine(engineName) {
     ok('after a reload: the pill shows', await until(page, async () => (await pill.count()) === 1, 15000));
     await page.waitForTimeout(1000);
     const frames0 = await page.evaluate(() => window.__oldStackFrames);
-    ok('…and no animation frame from the first one on ever had the old stack', frames0 === 0, `${frames0} frames`);
+    const watching = await page.evaluate(() => window.__watchOldStack === true);
+    ok('…and no animation frame from the first one on ever had the old stack (the watcher ran)', watching && frames0 === 0, `watching ${watching}, ${frames0} frames`);
     await page.evaluate(() => sessionStorage.removeItem('verify-watch-old-stack'));
 
     console.log('── take back from this window');

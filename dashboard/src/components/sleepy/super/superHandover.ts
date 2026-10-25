@@ -1102,6 +1102,14 @@ export interface SuperDockPill {
   news: boolean;
 }
 
+/** How far the corner lifts on this page (D4): a whiteboard WITH a board open (its help button),
+ *  AI Team (its composer); any other page, and the whiteboard page with no board open, none. */
+export function superDockLift(ctx: { page: string; board?: string } | null | undefined): 'board' | 'team' | null {
+  if (!ctx) return null;
+  if (ctx.page === 'whiteboards') return ctx.board ? 'board' : null;
+  return ctx.page === 'automations' || ctx.page === 'agents' ? 'team' : null;
+}
+
 /** The pill's model; null = draw nothing (Super off, or the record not read yet). */
 export function superDockPill(opts: {
   on: boolean;

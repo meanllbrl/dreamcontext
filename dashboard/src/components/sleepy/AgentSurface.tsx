@@ -110,7 +110,7 @@ import {
   homedSessions, isSuperSession, markedChildren, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
   linkOpensSuperStage, presenceChatId, leanMcpFor, agendaAboutBlock, agendaAboutChipName, type AgendaRow,
-  freshPending, superDockOn, superDockPill, superSlotFor,
+  freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap } from './super/superApi';
@@ -4941,8 +4941,7 @@ export function AgentSurface() {
     superAttention: !!superChatSession?.attention,
   });
   // The page the corner sits on lifts it above the page's own bottom control.
-  const dockLift: 'board' | 'team' | null = pageCtx?.page === 'whiteboards' && 'board' in pageCtx && pageCtx.board ? 'board'
-    : pageCtx?.page === 'automations' || pageCtx?.page === 'agents' ? 'team' : null;
+  const dockLift = superDockLift(pageCtx as { page: string; board?: string } | null);
   const openSuperDock = () => {
     if (superState?.enabled && superState.session && !superChatRef.current) ensureSuperSession(superState.session);
     superChatRef.current?.clearAttention();

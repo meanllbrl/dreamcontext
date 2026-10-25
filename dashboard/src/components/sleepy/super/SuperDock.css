@@ -20,7 +20,7 @@
    Team's composer); scripts/verify/super-dock.mjs measures both boxes, so a page that grows its
    control fails there, not silently. */
 .super-dock[data-lift='board'] { --super-dock-lift: calc(var(--space-12) + var(--space-4)); }
-.super-dock[data-lift='team'] { --super-dock-lift: calc(var(--space-20) + var(--space-1)); }
+.super-dock[data-lift='team'] { --super-dock-lift: calc(var(--space-28) + var(--space-4)); }
 
 /* The pill: the stage's Others pill at its own size, the dreamcontext logo where Others has its sheets
    (the same mark and name as the Super header, owner 2026-10-25). */
