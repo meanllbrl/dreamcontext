@@ -234,6 +234,14 @@ export interface AutomationDialogInitial {
  *  - K92 — Model and Effort are closed dropdowns (values); mode and days are
  *          chips (they change what the form shows).
  */
+
+/** The slug a new agent will most likely get from its name (the server's own rule: lowercase,
+ *  accents dropped, runs of other characters to one dash), so the create preview shows the figure
+ *  it will wear. A taken pair still moves it to the next free one when it is created. */
+function previewSlug(title: string): string {
+  return title.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'new-agent';
+}
+
 export function AutomationDialog({
   automation: agent,
   onClose,
@@ -260,7 +268,9 @@ export function AutomationDialog({
   /** Only a plain create picks an agent: an edit keeps what it runs as, and a whiteboard's
    *  create makes that board's own agent. */
   const pickable = !editing && !start?.whiteboard;
-  const roster = useAgents({ enabled: pickable });
+  const rosterQ = useAgents({ enabled: pickable });
+  // Only agents this machine owns take a routine (B1-4: a routine is a write to its agent).
+  const roster = useMemo(() => ({ ...rosterQ, data: rosterQ.data?.filter((a) => !a.readOnly) }), [rosterQ]);
   // A starter arrives with its own description, so it opens on the self-contained form.
   const [choice, setChoice] = useState<string>(start ? OWN_AGENT : '');
   const bound = pickable && choice !== OWN_AGENT;
@@ -271,7 +281,7 @@ export function AutomationDialog({
   const [job, setJob] = useState('');
   // Nothing to pick from: the only way forward in the dialog is the self-contained form.
   useEffect(() => {
-    if (pickable && roster.isSuccess && roster.data.length === 0 && choice === '') setChoice(OWN_AGENT);
+    if (pickable && roster.isSuccess && (roster.data ?? []).length === 0 && choice === '') setChoice(OWN_AGENT);
   }, [pickable, roster.isSuccess, roster.data, choice]);
   const unapprovedAgent = bound && choice
     ? (pickedAgent && !pickedAgent.approvedForChat) || refusedSlug === choice
@@ -613,7 +623,7 @@ export function AutomationDialog({
               </button>
             </div>
             <span className="agent-note">
-              {roster.isSuccess && roster.data.length === 0 ? t('automations.pickAgentNone') : t('automations.pickAgentHint')}
+              {roster.isSuccess && (roster.data ?? []).length === 0 ? t('automations.pickAgentNone') : t('automations.pickAgentHint')}
             </span>
             {unapprovedAgent && (
               /* The 409 `agent_unapproved`, in place: what is wrong and the one way to fix it. */
@@ -669,7 +679,7 @@ export function AutomationDialog({
         <div className="agent-photo-row">
           {preview
             ? <span className="agent-av agent-photo-preview"><img src={preview} alt="" /></span>
-            : <AgentAvatar slug={agent?.slug ?? ''} title={title || 'New agent'} hasPhoto={!!agent?.hasPhoto} size={56} />}
+            : <AgentAvatar slug={agent?.slug ?? previewSlug(title)} title={title || 'New agent'} hasPhoto={!!agent?.hasPhoto} size={56} />}
           <div className="agent-photo-side">
             <div className="agent-photo-controls">
               <button type="button" className="agent-btn" onClick={() => fileRef.current?.click()}>Upload photo</button>

@@ -7,7 +7,8 @@ import {
   buildBoardTurn, buildPatternBlock, buildScopeLine, buildSoulBlock, buildTurnLearningDirective, markerNonce, newTurnNonce,
   sanitizeAutomationPrompt,
 } from '../automations/runner.js';
-import { AGENT_BOARD_ENV, AGENT_SELF_ENV, type AutomationManifest } from '../automations/types.js';
+import { AGENT_BOARD_ENV, AGENT_CHAT_ENV, AGENT_SELF_ENV, DEFAULT_AGENT_AUTONOMY, type AutomationManifest } from '../automations/types.js';
+import { levelBrief, levelPermissionArgs } from '../agents/permission.js';
 import { resolveWhiteboardPath } from './store.js';
 import { isValidWhiteboardSlug } from './validate.js';
 
@@ -83,6 +84,9 @@ export type CardChatPrep =
     briefing: string;
     /** The scoped permission argv (`--permission-mode dontAsk …`) for a home-board agent, null otherwise. */
     permissionArgs: string[] | null;
+    /** An agent Chat tab's permission argv from its autonomy level (M4), decided here from the
+     *  manifest; null for a card and for a scoped agent (its board rules win). */
+    levelArgs: string[] | null;
     env: Record<string, string>;
     /** Removes the scratch folder a scoped session was given. Idempotent. */
     dispose: () => void;
@@ -110,8 +114,11 @@ function prepareEnvelope(
   const scoped = resolveSpawnScope(contextRoot, target, home, 'identity');
   if (!scoped.ok) return { ok: false, reason: scoped.reason };
   const manifest = identityOnly(target);
+  // Every conversation with an agent is marked, scoped or not: an owner-only CLI verb (autonomy,
+  // filing approval, assigning work) refuses it as it refuses a run (`insideAgentRun`).
+  const marked = (scope: BoardScope | null): Record<string, string> => ({ [AGENT_CHAT_ENV]: target.slug, ...cardEnv(scope) });
   if (!scoped.scope) {
-    return { ok: true, manifest, briefing: briefing(manifest, null), permissionArgs: null, env: cardEnv(null), dispose: () => {} };
+    return { ok: true, manifest, briefing: briefing(manifest, null), permissionArgs: null, levelArgs: null, env: marked(null), dispose: () => {} };
   }
   const prepared = prepareScopePaths(contextRoot, scoped.scope);
   if (!prepared.ok) return { ok: false, reason: `could not limit it to its board: ${prepared.reason}` };
@@ -120,7 +127,8 @@ function prepareEnvelope(
     manifest,
     briefing: briefing(manifest, scoped.scope),
     permissionArgs: boardScopeArgs(scoped.scope, prepared.paths),
-    env: { ...cardEnv(scoped.scope), ...scopeEnv(scoped.scope, prepared.paths) },
+    levelArgs: null,
+    env: { ...marked(scoped.scope), ...scopeEnv(scoped.scope, prepared.paths) },
     dispose: prepared.paths.dispose,
   };
 }
@@ -180,6 +188,8 @@ export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | nul
     sanitizeAutomationPrompt(m.prompt).trim(),
     '--- END WHO YOU ARE ---',
     ...(soul ? ['', soul] : []),
+    '',
+    levelBrief(m.autonomy ?? DEFAULT_AGENT_AUTONOMY),
     ...(pattern ? ['', pattern] : []),
     ...(learning ? ['', learning] : []),
   ].join('\n');
@@ -193,13 +203,18 @@ export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | nul
 export function prepareAgentChat(contextRoot: string, slug: string, home?: string): CardChatPrep {
   const target = getRunTarget(contextRoot, slug, 'agent');
   if (!target) return { ok: false, reason: `no agent named "${slug}" in this project` };
-  return prepareEnvelope(
+  const prep = prepareEnvelope(
     contextRoot,
     target,
     (scope): Record<string, string> => (scope ? { [CARD_AGENT_ENV]: slug, [CARD_BOARD_ENV]: scope.board } : {}),
     (m, scope) => agentChatBriefing(m, scope),
     home,
   );
+  // The level decides the mode, on the server, from the approved manifest: the pane's own
+  // Auto/Bypass switch never reaches an agent's conversation. A home-board agent keeps its
+  // board's scoped envelope (stricter than any level).
+  if (prep.ok && !prep.permissionArgs) prep.levelArgs = levelPermissionArgs(target.autonomy ?? DEFAULT_AGENT_AUTONOMY, 'chat');
+  return prep;
 }
 
 /**

@@ -174,6 +174,8 @@ export interface ClaudeAccountWire {
   /** The API refused this account; it stays out until then (epoch ms). */
   refusedUntil?: number;
   refusedWindow?: 'session' | 'weekly';
+  /** "Only mine": unattended agent work never starts on it. Absent on an older server. */
+  ownerOnly?: boolean;
 }
 
 /** How auto-switch picks the next account. Mirrors `SwitchStrategy` on the server. */
@@ -193,6 +195,10 @@ export interface ClaudeAccountsResponse {
   autoSwitch: boolean;
   switchStrategy: SwitchStrategy;
   switchWeights: SwitchWeights;
+  /** Account protection: unattended agent work starts only under this percent on both windows. */
+  agentThreshold?: number;
+  /** When unattended agent work waits for an account, the time it wakes (epoch ms); null otherwise. */
+  agentWaitUntil?: number | null;
 }
 
 const NO_ACCOUNTS: ClaudeAccountsResponse = {

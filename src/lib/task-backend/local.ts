@@ -8,7 +8,7 @@ import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../f
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
 import { normalizeRice } from '../rice.js';
-import { isFiledBy, readFilingBasis } from '../filing-basis.js';
+import { isFiledBy, readFilingApproved, readFilingBasis } from '../filing-basis.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { healTaskRemoved, healTaskRename } from '../feature-links.js';
 import { appendTombstone } from '../task-tombstones.js';
@@ -276,6 +276,7 @@ export function readTaskFile(filePath: string, statuses: readonly StatusDef[] = 
         : {},
     filed_by: isFiledBy(data.filed_by) ? data.filed_by : null,
     filing_basis: readFilingBasis(data.filing_basis),
+    ...(readFilingApproved(data.filing_approved) ? { filing_approved: readFilingApproved(data.filing_approved) as { at: string } } : {}),
     why: readSectionSafe(filePath, 'Why'),
     user_stories: readSectionSafe(filePath, 'User Stories'),
     acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
@@ -661,11 +662,12 @@ ${input.why || '(To be defined)'}
     }
   }
 
-  async complete(slug: string, summary?: string): Promise<TaskData> {
+  async complete(slug: string, summary?: string, opts: { by?: string } = {}): Promise<TaskData> {
     const now = today();
+    const by = opts.by && /^[a-z]+(?::[a-z0-9-]+)?$/.test(opts.by) ? ` (by ${opts.by})` : '';
     await this.addChangelog(
       slug,
-      `### ${now} - Completed\n- ${summary ?? 'Task completed.'}`,
+      `### ${now} - Completed${by}\n- ${summary ?? 'Task completed.'}`,
       { createIfMissing: true },
     );
     // Completing stamps the REAL end of the window, so the timeline shows what

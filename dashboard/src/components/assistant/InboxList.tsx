@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { buildAppLink, routeAppLink } from '../../lib/appLink';
 import {
   accountLine, ago, automationPhotoUrl,
-  type AutomationPost, type FinishedNotice, type InboxNotice, type RunningAutomation,
+  type AutomationPost, type FinishedNotice, type InboxNotice, type OwnerTaskRow, type RunningAutomation,
 } from './notchModel';
 
 /**
@@ -158,10 +158,32 @@ function RunningRow({ r, now }: { r: RunningAutomation; now: number }) {
   );
 }
 
-export function InboxList({ notices, posts, running, muted, onNoticeGone, onPostGone }: {
+/** A task job waiting on the owner: opens the task, where its buttons are (AI Team v2 C2). */
+function TaskRow({ r, now }: { r: OwnerTaskRow; now: number }) {
+  return (
+    <li className="dc-inbox__row" data-kind="task" data-task-kind={r.kind}>
+      <button
+        type="button"
+        className="dc-inbox__main"
+        onClick={() => openLink(buildAppLink({ kind: 'page', vault: r.vault, page: 'tasks', id: r.task }))}
+        title={`Open this task in ${r.vault}`}
+      >
+        <span className="dc-inbox__icon dc-inbox__icon--task" aria-hidden>●</span>
+        <span className="dc-inbox__body">
+          <span className="dc-inbox__head"><strong>{r.title}</strong><span className="dc-inbox__where"> · {r.vault}</span><span className="dc-inbox__ago">{ago(Date.parse(r.at) || now, now)}</span></span>
+          {r.detail && <span className="dc-inbox__sub">{r.detail}</span>}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+export function InboxList({ notices, posts, running, tasks = [], muted, onNoticeGone, onPostGone }: {
   notices: InboxNotice[];
   posts: AutomationPost[];
   running: RunningAutomation[];
+  /** Task jobs waiting on the owner, from every project. */
+  tasks?: OwnerTaskRow[];
   muted: Array<{ vault: string; slug: string }>;
   onNoticeGone: (id: string) => void;
   onPostGone: (key: string) => void;
@@ -171,6 +193,12 @@ export function InboxList({ notices, posts, running, muted, onNoticeGone, onPost
   const count = notices.length + posts.length;
   return (
     <>
+      {tasks.length > 0 && (
+        <section className="dc-inbox" aria-label="Tasks waiting on you">
+          <h3 className="dc-notch__section">Waiting on you</h3>
+          <ul>{tasks.map((r) => <TaskRow key={r.key} r={r} now={now} />)}</ul>
+        </section>
+      )}
       {count > 0 && (
         <section className="dc-inbox" aria-label="Notifications">
           <h3 className="dc-notch__section">Notifications</h3>

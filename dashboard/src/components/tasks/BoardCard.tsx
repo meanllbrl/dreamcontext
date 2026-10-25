@@ -8,6 +8,9 @@ import {
   assigneeHue, assigneeInitials, criteriaCount, dueInfo, fmtUpdated, levelLabel, prioColor, subtaskProgress,
   tagHue, taskAssignees, taskAgent, taskName, taskRice, urgColor,
 } from './boardModel';
+import { JobChipView } from './JobChipView';
+import { jobChip } from '../../lib/taskAgentJob';
+import { useI18n } from '../../context/I18nContext';
 import { TaskAgentFace } from './AssignToAgentComposer';
 import { BoardSubtasks } from './BoardSubtasks';
 
@@ -95,6 +98,9 @@ export function BoardCard({
   const assignees = taskAssignees(task);
   const name = taskName(task);
   const agent = taskAgent(task);
+  const { t } = useI18n();
+  // The agent job's one chip: scheduled, queued, working, reviewing, round result, passed, stuck.
+  const chip = jobChip(task.agent_job, t);
   const nameOf = (slug: string) => (assigneeName ? assigneeName(slug) : slug);
   const crit = criteriaCount(task);
   const prog = subtaskProgress(subtasks, sm);
@@ -134,6 +140,8 @@ export function BoardCard({
       {cp.description && task.description && (
         <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', lineHeight: 1.5, margin: '0 0 9px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{task.description}</div>
       )}
+
+      {chip && <div className="bd-card-job"><JobChipView chip={chip} /></div>}
 
       {cp.tags && tags.length > 0 && (
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>

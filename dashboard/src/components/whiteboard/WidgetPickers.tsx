@@ -241,8 +241,9 @@ export function AgentPicker({ onPick, onNew }: { onPick: Pick; onNew: () => void
   const { data, isLoading, isError } = useAgents();
   const unapproved = tx('agents.picker.unapproved', 'Not approved for chat on this Mac');
   const ready = useMemo(() => new Set((data ?? []).filter((a) => a.approvedForChat).map((a) => a.slug)), [data]);
+  // A teammate's agent is read-only here (B1-4): it never goes onto a board from this machine.
   const rows = useMemo(() => data
-    ?.filter((a) => isAgentSlugShape(a.slug))
+    ?.filter((a) => isAgentSlugShape(a.slug) && !a.readOnly)
     .map((a) => ({
       slug: a.slug,
       title: a.title,

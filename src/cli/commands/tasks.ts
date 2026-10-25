@@ -1,3 +1,4 @@
+import { approveFiling } from '../../lib/task-filing-approval.js';
 import { Command } from 'commander';
 import { join, basename, dirname } from 'node:path';
 import chalk from 'chalk';
@@ -49,9 +50,16 @@ import {
 } from '../../lib/handoff-readiness.js';
 import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
 import { superHandoffCommand, superHandoffContext } from '../../lib/super/handoff-task.js';
-import { commitAssignment, logAssignmentResult, prepareAssignment } from '../../lib/agents/task-assignment.js';
-import { runAutomation } from '../../lib/automations/runner.js';
-import { AGENT_SELF_ENV } from '../../lib/automations/types.js';
+import { commitAssignment, prepareAssignment } from '../../lib/agents/task-assignment.js';
+import {
+  approvePlanAction, cancelTaskAction, changePlanAction, continueTaskAction, endTaskJobIfClosed, letFinishAction, oneMoreRoundAction,
+  rescheduleAction, sendBackAction, startDueTaskJobs, startNowAction, stopTaskAction, takeOverAction, unassignTaskJob,
+  type ActionResult,
+} from '../../lib/agents/task-starter.js';
+import { runTaskJob } from '../../lib/agents/task-host.js';
+import { deliverTask, reviewTask } from '../../lib/agents/task-delivery.js';
+import { insideAgentRun } from '../../lib/automations/types.js';
+import { authorLabel, cliStatusAuthor, statusChangeEntry } from '../../lib/task-history.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
@@ -1608,6 +1616,25 @@ export function registerTasksCommand(program: Command): void {
       success(`${slug}: basis ${filing.basis?.kind}${filing.basis?.verified ? ' (quote found in this session)' : ''}${fields.filed_by ? `, filed_by ${fields.filed_by}` : ''}`);
     });
 
+  // Approval: the owner keeps a task an agent opened (lib/task-filing-approval.ts).
+  tasks
+    .command('approve-filing')
+    .argument('<name>', 'Task slug or name')
+    .description('Approve a task an agent opened: keep it as it is (the counterpart of `tasks object`); the status does not change')
+    .action(async (name: string) => {
+      const backend = getTaskBackend();
+      const root = ensureContextRoot();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) { process.exitCode = 1; return; }
+      const result = await approveFiling(root, backend, slug);
+      if (!result.ok) {
+        error(result.message);
+        process.exitCode = 1;
+        return;
+      }
+      success(result.already ? `${slug} was already approved.` : `Approved ${slug}.`);
+    });
+
   // Objections: the owner says a task an agent opened was wrong (lib/task-objection.ts).
   tasks
     .command('object')
@@ -1858,6 +1885,7 @@ export function registerTasksCommand(program: Command): void {
     .argument('[summary...]', 'Completion summary')
     .description('Mark a task as completed')
     .action(async (name: string, summaryParts: string[]) => {
+      if (refuseInsideTaskRun()) return;
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
@@ -1876,7 +1904,8 @@ export function registerTasksCommand(program: Command): void {
           (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
       if (await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
 
-      await backend.complete(slug, summary);
+      await backend.complete(slug, summary, { by: authorLabel(cliStatusAuthor()) });
+      endTaskJobIfClosed(ensureContextRoot(), slug);
       success(`Task completed: ${slug}`);
       // `complete()` stamps the real end of the window (and the start too, when a
       // task went straight from not-started to done). Report it, so this verb is
@@ -1892,6 +1921,7 @@ export function registerTasksCommand(program: Command): void {
     .argument('[reason...]', 'Optional reason for the status change')
     .description('Change a task\'s status (logs the change; stamps start_date on the first active-kind status if unset, due_date on completed)')
     .action(async (name: string, newStatus: string, reasonParts: string[]) => {
+      if (refuseInsideTaskRun()) return;
       const defs = statusSet();
       const validStatuses = statusKeys(defs);
       if (!validStatuses.includes(newStatus)) {
@@ -1915,14 +1945,8 @@ export function registerTasksCommand(program: Command): void {
       if (isDone(defs, newStatus) && await blockOnSleepEvalGate(backend, ensureContextRoot(), slug)) return;
 
       const reason = reasonParts.join(' ').trim();
-      const headerLabel = isDone(defs, newStatus) ? 'Completed'
-        : isCancelled(defs, newStatus) ? 'Cancelled'
-        : `Status → ${newStatus}`;
-      const logContent = reason
-        ? `### ${today()} - ${headerLabel}\n- ${reason}`
-        : `### ${today()} - ${headerLabel}`;
-
-      await backend.addChangelog(slug, logContent, { createIfMissing: true });
+      // Who moved it rides the heading (lib/task-history.ts): owner, agent:<slug>, claude, sleep.
+      await backend.addChangelog(slug, statusChangeEntry(newStatus, cliStatusAuthor(), defs, reason || null), { createIfMissing: true });
 
       // Stamp real-world timing onto the date window: `in_progress` records when
       // work actually began, `completed` records when it actually ended (see
@@ -1933,6 +1957,7 @@ export function registerTasksCommand(program: Command): void {
       const before = stamping ? await backend.get(slug) : null;
       const dates = stamping ? dateUpdatesForStatus(newStatus, before, now, defs) : {};
       await backend.updateFields(slug, { status: newStatus, updated_at: now, ...dates });
+      endTaskJobIfClosed(ensureContextRoot(), slug);
       success(`Task ${slug} → ${newStatus}`);
       reportDateStamps(newStatus, dates, before?.due_date);
     });
@@ -1965,18 +1990,23 @@ export function registerTasksCommand(program: Command): void {
       ));
     });
 
-  // Assign to agent — the same shared steps as the dashboard route, then a
-  // foreground run of the agent's call target with the task as data.
+  // Assign to agent — the same shared steps as the dashboard route, then the
+  // task drain: a due step starts in a detached host, a future one waits.
   tasks
     .command('assign-agent')
     .argument('<task>', 'Task name or slug')
     .argument('[agent]', 'Agent slug')
     .option('--note <text>', 'A note for the agent (fenced as data with the task)')
-    .option('--clear', 'Remove the agent from the task (runs nothing)')
-    .description('Assign a task to an agent: sets agent:, moves an open task to in_progress, and runs the agent on it now')
-    .action(async (name: string, agentSlug: string | undefined, opts: { note?: string; clear?: boolean }) => {
+    .option('--at <instant>', 'Start at this date and time, with its time zone (2026-11-02T09:00:00+03:00); default now')
+    .option('--workspace <kind>', 'code (a worktree of a linked repo) or doc (the brain); default doc')
+    .option('--repo <name>', 'The linked repo a code task works in (default: the only one present)')
+    .option('--reviewer <agent>', 'An agent of yours that reviews each delivery (default: you review)')
+    .option('--review-cap <n>', 'Review rounds before the task asks you (1-10, default 5)')
+    .option('--clear', 'Remove the agent from the task (stops its run, runs nothing)')
+    .description('Assign a task to an agent: sets agent:, moves an open task to in_progress, and starts it now or at --at')
+    .action(async (name: string, agentSlug: string | undefined, opts: { note?: string; clear?: boolean; at?: string; workspace?: string; repo?: string; reviewer?: string; reviewCap?: string }) => {
       // An agent run never hands work to an agent: that is the owner's call.
-      if (process.env[AGENT_SELF_ENV] !== undefined || process.env.DREAMCONTEXT_AUTOMATION_RUN !== undefined) {
+      if (insideAgentRun()) {
         error('An agent run cannot assign tasks to agents. Ask the owner to assign it from the Tasks page.');
         process.exitCode = 1;
         return;
@@ -1986,7 +2016,8 @@ export function registerTasksCommand(program: Command): void {
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
       if (opts.clear) {
-        await backend.updateFields(slug, { agent: null, updated_at: today() });
+        stopTaskAction(root, slug);
+        unassignTaskJob(root, slug);
         success(`Cleared the agent on ${slug}.`);
         return;
       }
@@ -1995,32 +2026,92 @@ export function registerTasksCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
-      const prep = prepareAssignment(root, slug, agentSlug, { source: 'cli', ...(opts.note !== undefined ? { note: opts.note } : {}) });
+      if (opts.workspace !== undefined && opts.workspace !== 'code' && opts.workspace !== 'doc') {
+        error('--workspace is code or doc.');
+        process.exitCode = 1;
+        return;
+      }
+      const prep = prepareAssignment(root, slug, agentSlug, {
+        source: 'cli',
+        ...(opts.note !== undefined ? { note: opts.note } : {}),
+        ...(opts.at !== undefined ? { startAt: opts.at } : {}),
+        ...(opts.workspace ? { workspace: opts.workspace as 'code' | 'doc' } : {}),
+        ...(opts.repo ? { repo: opts.repo } : {}),
+        ...(opts.reviewer ? { reviewer: opts.reviewer } : {}),
+        ...(opts.reviewCap !== undefined ? { reviewCap: Number(opts.reviewCap) } : {}),
+      });
       if (!prep.ok) {
         error(prep.message);
         process.exitCode = 1;
         return;
       }
-      const fireAt = new Date();
       const agentTitle = prep.target.agentTitle || prep.target.title;
-      const { statusMoved, from } = commitAssignment(root, prep, fireAt, { source: 'cli' });
-      info(`Assigned ${slug} to ${agentTitle}${statusMoved ? ` (status ${from ?? 'none'} → in_progress)` : ''}. Running it now…`);
-      const outcome = await runAutomation(root, prep.target.slug, {
-        host: 'cli',
-        force: true,
-        fireAt,
-        target: 'agent',
-        task: { slug: prep.task.slug, name: prep.task.name, note: prep.dataNote },
-      });
-      logAssignmentResult(root, slug, { slug: prep.target.slug, title: agentTitle }, {
-        status: outcome.status, outputPath: outcome.outputPath, runId: fireAt.toISOString(),
-      });
-      if (outcome.status === 'ok' || outcome.status.startsWith('awaiting-')) {
-        success(`${agentTitle} finished: ${outcome.status}.`);
-      } else {
-        error(`${agentTitle}: ${outcome.status}${outcome.error ? ` — ${outcome.error}` : ''}`);
+      const { statusMoved, from, state, step } = commitAssignment(root, prep, new Date(), { source: 'cli' });
+      const started = startDueTaskJobs(root);
+      const moved = statusMoved ? ` (status ${from ?? 'none'} → in_progress)` : '';
+      if (started.length) success(`Assigned ${slug} to ${agentTitle}${moved}. Its ${step} step started in the background.`);
+      else if (state === 'scheduled') success(`Assigned ${slug} to ${agentTitle}${moved}. It starts at ${prep.job.startAt}.`);
+      else success(`Assigned ${slug} to ${agentTitle}${moved}. It is queued and starts when ${agentTitle} is free.`);
+    });
+
+  // The task host: one claimed step of a task job, run to its settle (spawned detached by the drain).
+  tasks
+    .command('run-job', { hidden: true })
+    .argument('<task>', 'Task slug')
+    .requiredOption('--run <id>', 'The claimed run id')
+    .description('Run one claimed step of a task job (started by the scheduler; not for direct use)')
+    .action(async (slug: string, opts: { run: string }) => {
+      const root = ensureContextRoot();
+      const result = await runTaskJob(root, slug, opts.run, { log: (l) => console.log(l) });
+      console.log(`[tasks] ${slug} ${opts.run}: ${result.state ?? 'nothing to do'}`);
+    });
+
+  // Deliver: the assigned run hands its work in (the task moves to In Review).
+  tasks
+    .command('deliver')
+    .argument('<task>', 'Task id or slug')
+    .requiredOption('--note <text>', 'What you did')
+    .option('--doc <path>', 'A brain document you wrote (repeatable)', collectOpt, [])
+    .option('--board <path>', 'A whiteboard you drew (repeatable)', collectOpt, [])
+    .option('--file <path>', 'A file in your workspace to hand in (repeatable)', collectOpt, [])
+    .description('Hand in a task job\'s work (only the run the task was assigned to)')
+    .action((task: string, opts: { note: string; doc: string[]; board: string[]; file: string[] }) => {
+      const result = deliverTask(ensureContextRoot(), task, { note: opts.note, docs: opts.doc, boards: opts.board, files: opts.file });
+      if (!result.ok) { error(result.message); process.exitCode = 1; return; }
+      success(result.state === 'queued'
+        ? `Delivered round ${result.round}: ${result.task} is In Review and its reviewer is next.`
+        : `Delivered round ${result.round}: ${result.task} is In Review, waiting for the owner.`);
+    });
+
+  // Review: the reviewer's run records its verdict.
+  tasks
+    .command('review')
+    .argument('<task>', 'Task id or slug')
+    .requiredOption('--verdict <v>', 'pass or fail')
+    .option('--finding <text>', 'An unmet criterion and what is wrong (repeatable)', collectOpt, [])
+    .description('Record a review verdict on a delivery (only the reviewer run of that round)')
+    .action((task: string, opts: { verdict: string; finding: string[] }) => {
+      const result = reviewTask(ensureContextRoot(), task, { verdict: opts.verdict, findings: opts.finding });
+      if (!result.ok) { error(result.message); process.exitCode = 1; return; }
+      success(`Recorded ${opts.verdict} for round ${result.round} of ${result.task}. Stop here; the verdict applies when your run ends.`);
+    });
+
+  // The owner's answers to a task job's rows (the same actions as the inbox buttons).
+  tasks
+    .command('agent-action')
+    .argument('<task>', 'Task id or slug')
+    .argument('<action>', 'start-now | reschedule | stop | let-finish | continue | take-over | approve-plan | change-plan | one-more-round | cancel | send-back')
+    .argument('[text...]', 'The new start (reschedule) or your words (change-plan, send-back)')
+    .description('Answer a task job: stop it, continue it, approve its plan, give it one more review round…')
+    .action((task: string, action: string, textParts: string[]) => {
+      if (insideAgentRun()) {
+        error('An agent run cannot answer its own task job. Ask the owner.');
         process.exitCode = 1;
+        return;
       }
+      const result = taskAgentAction(ensureContextRoot(), task, action, textParts.join(' ').trim());
+      if (!result.ok) { error(result.message); process.exitCode = 1; return; }
+      success(`${action}: done.`);
     });
 
   // Log entry (cross-session continuity)
@@ -2624,4 +2715,34 @@ function checkWorkflow(file: string): string[] {
   }
 
   return issues;
+}
+
+/** An agent's task step never sets its task's status: its delivery and its reviewer do. */
+function refuseInsideTaskRun(): boolean {
+  if (process.env.DREAMCONTEXT_TASK_RUN === undefined) return false;
+  error('A task job never changes its task\'s status itself: hand the work in with `dreamcontext tasks deliver`.');
+  process.exitCode = 1;
+  return true;
+}
+
+function collectOpt(value: string, prior: string[]): string[] {
+  return [...prior, value];
+}
+
+/** The owner's action on a task job, by name (the CLI twin of the inbox buttons). */
+export function taskAgentAction(root: string, task: string, action: string, text: string): ActionResult {
+  switch (action) {
+    case 'start-now': return startNowAction(root, task);
+    case 'reschedule': return rescheduleAction(root, task, text);
+    case 'stop': return stopTaskAction(root, task);
+    case 'let-finish': return letFinishAction(root, task);
+    case 'continue': return continueTaskAction(root, task);
+    case 'take-over': return takeOverAction(root, task);
+    case 'approve-plan': return approvePlanAction(root, task);
+    case 'change-plan': return changePlanAction(root, task, text);
+    case 'one-more-round': return oneMoreRoundAction(root, task);
+    case 'cancel': return cancelTaskAction(root, task);
+    case 'send-back': return sendBackAction(root, task, text);
+    default: return { ok: false, code: 'unknown_action', message: `Unknown action "${action}".` };
+  }
 }

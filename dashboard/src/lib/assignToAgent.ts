@@ -34,7 +34,8 @@ export function tr(t: Translate, key: string, fallback: string, vars: Record<str
  * common case (an approved agent) sits at the top.
  */
 export function offeredAgents(agents: readonly AgentSummary[] | undefined): AgentSummary[] {
-  return [...(agents ?? [])].sort((a, b) => {
+  // A teammate's agent is read-only here: nobody but its owner gives it a task (B1-4).
+  return [...(agents ?? [])].filter((a) => !a.readOnly).sort((a, b) => {
     if (a.approvedToRun !== b.approvedToRun) return a.approvedToRun ? -1 : 1;
     return a.title.localeCompare(b.title);
   });
@@ -82,6 +83,16 @@ export function refusalView(err: AssignAgentError, agentName: string, t: Transla
       return line('tasks.assignUnknownTask', 'This task is no longer here. It may have been renamed or deleted.');
     case 'missing_agent':
       return line('tasks.assignPickAgent', 'Pick an agent');
+    case 'invalid_start':
+      return line('tasks.assignWhenPast', 'Pick a time in the future.');
+    case 'no_repo':
+      return line('tasks.assignNoRepo', 'That repository is not on this Mac. Pick Docs, or link the repository first.');
+    case 'unknown_reviewer':
+      return line('tasks.assignUnknownReviewer', 'That reviewer is no longer here. Pick another.');
+    case 'reviewer_is_agent':
+      return line('tasks.assignReviewerIsAgent', 'An agent cannot review its own work. Pick another reviewer.');
+    case 'not_owner':
+      return line('tasks.assignNotOwner', '{name} belongs to a teammate. Only its owner gives it tasks.');
     default:
       return line('tasks.assignFailed', "Couldn't assign the task. {reason}", {
         reason: tr(t, 'tasks.assignTryAgain', 'Try again in a moment.'),
@@ -89,8 +100,10 @@ export function refusalView(err: AssignAgentError, agentName: string, t: Transla
   }
 }
 
-/** The confirmation once the run has started. */
-export function assignedMessage(result: AssignAgentResult, agentName: string, t: Translate): string {
+/** The confirmation once the job is placed: started, scheduled for `when`, or waiting its turn. */
+export function assignedMessage(result: AssignAgentResult, agentName: string, t: Translate, when = ''): string {
+  if (result.state === 'scheduled') return tr(t, 'tasks.assignedScheduled', '{name} starts on this task at {when}.', { name: agentName, when });
+  if (result.state === 'queued') return tr(t, 'tasks.assignedQueued', '{name} is busy. The task waits its turn.', { name: agentName });
   return result.statusMoved
     ? tr(t, 'tasks.assignedMoved', '{name} is working on this task. Its status moved to In progress.', { name: agentName })
     : tr(t, 'tasks.assigned', '{name} is working on this task.', { name: agentName });

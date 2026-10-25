@@ -70,7 +70,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, idlePlaceholder, readOnly,
+  signInCommand, bare, agentBound, idlePlaceholder, readOnly,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -91,6 +91,8 @@ function ChatPaneHostInner({
   signInCommand: string;
   /** See ChatPane's `bare`: a host that fixes the agent's envelope (a whiteboard agent card). */
   bare?: boolean;
+  /** See ChatPane's `agentBound`: the full pane, bound to one agent (the AI Team page). */
+  agentBound?: boolean;
   idlePlaceholder?: string;
   /** A handed-over Super Agent's child: the owner looks, never types (ChatPane's `readOnly`).
    *  A primitive, so the memo boundary holds. */
@@ -137,6 +139,7 @@ function ChatPaneHostInner({
       canSignInInApp={canSignInInApp}
       signInCommand={signInCommand}
       bare={bare}
+      agentBound={agentBound}
       idlePlaceholder={idlePlaceholder}
       readOnly={readOnly}
     />

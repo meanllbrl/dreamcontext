@@ -9,6 +9,7 @@ import {
   ClaudeAccountError,
   accountIdFromEmail,
   accountEnvFor,
+  agentThresholdFor,
   autoSwitchEnabled,
   getClaudeAccount,
   isSafeAccountId,
@@ -19,6 +20,8 @@ import {
   reorderClaudeAccounts,
   resolveConfigDir,
   sandboxDirFor,
+  setAccountOwnerOnly,
+  setAgentThreshold,
   setAutoSwitchEnabled,
   setPreferredClaudeAccount,
   setSwitchPolicy,
@@ -33,7 +36,7 @@ import { claudeAuthStatus, resetClaudeAuthCache } from '../../lib/claude-auth.js
 import { readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
 import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
 import { readAccountRejections } from '../../lib/claude-limit-rejections.js';
-import { chatSpawnAccount } from '../../lib/automations/account.js';
+import { chatSpawnAccount, clearAccountWait, readAccountWait } from '../../lib/automations/account.js';
 
 /**
  * The multi-account surface: list the accounts, add one through the CLI's OWN OAuth flow,
@@ -68,6 +71,8 @@ interface AccountWire {
   preferred: boolean;
   /** True for account #0 — the one signed in to the real `~/.claude`. */
   isPrimary: boolean;
+  /** "Only mine": unattended agent work never starts on it. */
+  ownerOnly: boolean;
   /**
    * `ok` — usable. `needs-relogin` — its credential is gone; the UI says "sign in again"
    * rather than showing an ambiguous blank row.
@@ -139,6 +144,7 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
       tier: acc.tier,
       preferred: acc.preferred,
       isPrimary: acc.configDir === null,
+      ownerOnly: acc.ownerOnly === true,
       state: hasIdentity ? 'ok' : 'needs-relogin',
       limits,
       fetchedAtMs,
@@ -160,6 +166,10 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
     autoSwitch: autoSwitchEnabled(home),
     switchStrategy: switchStrategyFor(home),
     switchWeights: switchWeightsFor(home),
+    // Account protection (automations/account.ts): the threshold unattended agent work needs both
+    // windows under, and when it waits because no account qualifies (null = not waiting).
+    agentThreshold: agentThresholdFor(home),
+    agentWaitUntil: readAccountWait(home),
   });
 }
 
@@ -533,4 +543,47 @@ export async function handleAgentAccountsSwitchPolicy(req: IncomingMessage, res:
 
   const saved = setSwitchPolicy(patch);
   sendJson(res, 200, { switchStrategy: saved.strategy, switchWeights: saved.weights });
+}
+
+/**
+ * POST /api/agent/accounts/owner-only — `{ id, ownerOnly }`. Marks an account "Only mine": no
+ * unattended agent work (routines, task jobs) starts on it. Clears a standing account wait, since
+ * the set of usable accounts just changed.
+ */
+export async function handleAgentAccountsOwnerOnly(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!agentGuard(req, res)) return;
+  const body = await parseJsonBody(req);
+  const id = typeof body?.id === 'string' ? body.id : '';
+  if (typeof body?.ownerOnly !== 'boolean' || !isSafeAccountId(id)) {
+    sendError(res, 422, 'bad_request', 'Send `id` and `ownerOnly` (true or false).');
+    return;
+  }
+  try {
+    const account = setAccountOwnerOnly(id, body.ownerOnly);
+    clearAccountWait();
+    sendJson(res, 200, { id: account.id, ownerOnly: account.ownerOnly === true });
+  } catch (err) {
+    sendError(res, err instanceof ClaudeAccountError ? 422 : 500, 'account_error', (err as Error).message);
+  }
+}
+
+/**
+ * POST /api/agent/accounts/agent-threshold — `{ percent }`, a whole number 1..100. Unattended
+ * agent work starts only on an account whose 5-hour and weekly windows are both under it.
+ */
+export async function handleAgentAccountsAgentThreshold(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!agentGuard(req, res)) return;
+  const body = await parseJsonBody(req);
+  const percent = body?.percent;
+  if (typeof percent !== 'number' || !Number.isInteger(percent) || percent < 1 || percent > 100) {
+    sendError(res, 422, 'bad_request', '`percent` must be a whole number from 1 to 100.');
+    return;
+  }
+  try {
+    const saved = setAgentThreshold(percent);
+    clearAccountWait();
+    sendJson(res, 200, { agentThreshold: saved });
+  } catch (err) {
+    sendError(res, err instanceof ClaudeAccountError ? 422 : 500, 'account_error', (err as Error).message);
+  }
 }

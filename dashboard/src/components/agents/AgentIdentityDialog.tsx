@@ -4,8 +4,10 @@ import { useI18n } from '../../context/I18nContext';
 import {
   useAgent,
   useCreateAgentIdentity,
+  useCreateGlobalAgent,
   useUpdateAgentIdentity,
   useUploadAgentIdentityPhoto,
+  type AgentAutonomy,
   type AgentEffort,
   type AgentIdentityPatch,
   type AgentSummary,
@@ -31,11 +33,15 @@ export interface IdentityForm {
   learning: boolean;
   /** How it works, free text. `''` is no soul (the default); a template only fills this. */
   soul: string;
+  /** How much it decides alone; sets the permission mode of its sessions. Edit only. */
+  autonomy: AgentAutonomy;
 }
+
+const AUTONOMY_LEVELS: readonly AgentAutonomy[] = ['ask', 'balanced', 'free'];
 
 /** A new agent's form: blank, and learning on (the store's own default for a new agent). */
 export const EMPTY_IDENTITY_FORM: IdentityForm = {
-  title: '', prompt: '', model: '', effort: '', whiteboard: '', learning: true, soul: '',
+  title: '', prompt: '', model: '', effort: '', whiteboard: '', learning: true, soul: '', autonomy: 'balanced',
 };
 
 /** A new agent's form, with its home board preset when the create was asked for from a board. */
@@ -55,6 +61,7 @@ export function formFromAgent(agent: AgentSummary, prompt: string, learning: boo
     whiteboard: agent.whiteboard ?? '',
     learning,
     soul,
+    autonomy: agent.autonomy ?? 'balanced',
   };
 }
 
@@ -93,6 +100,7 @@ export function identityPatch(before: IdentityForm, after: IdentityForm): AgentI
   if (after.whiteboard !== before.whiteboard) patch.whiteboard = after.whiteboard || null;
   if (after.learning !== before.learning) patch.learning = after.learning;
   if (after.soul.trim() !== before.soul.trim()) patch.soul = after.soul.trim();
+  if (after.autonomy !== before.autonomy) patch.autonomy = after.autonomy;
   return patch;
 }
 
@@ -110,7 +118,7 @@ export function identityErrorKey(err: unknown): 'agents.identity.truncated' | 'a
  * is the whole prompt, never a preview.
  */
 export function AgentIdentityDialog({
-  slug, whiteboard, onClose, onSaved, inline = false, initial, onDraftTitle, note, submitLabel,
+  slug, whiteboard, onClose, onSaved, inline = false, initial, onDraftTitle, note, submitLabel, scope,
 }: {
   /** The agent to edit, or null to create one. */
   slug: string | null;
@@ -129,15 +137,21 @@ export function AgentIdentityDialog({
   note?: string;
   /** Replaces the create button's words (AI Team: "Add to team"). */
   submitLabel?: string;
+  /** Create only: `global` makes this machine's global agent from the launcher (D1), with no
+   *  project behind the form, so no photo and no home board. */
+  scope?: 'global';
 }) {
   const { t } = useI18n();
   const editing = slug !== null;
   const detail = useAgent(slug, { fresh: true });
-  const boards = useWhiteboardList();
+  // A global agent has neither: both belong to one project (an edit learns it from the read).
+  const global = scope === 'global' || detail.data?.agent.scope === 'global';
+  const boards = useWhiteboardList({ enabled: scope !== 'global' });
   const create = useCreateAgentIdentity();
+  const createGlobal = useCreateGlobalAgent();
   const update = useUpdateAgentIdentity();
   const upload = useUploadAgentIdentityPhoto();
-  const busy = create.isPending || update.isPending || upload.isPending;
+  const busy = create.isPending || createGlobal.isPending || update.isPending || upload.isPending;
 
   const [form, setForm] = useState<IdentityForm>(() => (editing ? EMPTY_IDENTITY_FORM : { ...createForm(whiteboard), ...initial }));
   const draftTitle = useRef(onDraftTitle);
@@ -175,7 +189,7 @@ export function AgentIdentityDialog({
   const agentTitle = detail.data?.agent.title ?? '';
   const heading = editing
     ? t('agents.identity.editTitle').replace('{name}', agentTitle)
-    : t('agents.identity.createTitle');
+    : scope === 'global' ? t('agents.identity.createGlobalTitle') : t('agents.identity.createTitle');
 
   const set = <K extends keyof IdentityForm>(key: K, value: IdentityForm[K]) => {
     setForm((cur) => ({ ...cur, [key]: value }));
@@ -245,15 +259,22 @@ export function AgentIdentityDialog({
       update.mutate({ slug, patch }, { onSuccess: finish, onError: fail });
       return;
     }
-    create.mutate({
+    const draft = {
       title: form.title.trim(),
       prompt: form.prompt.trim(),
       model: form.model || null,
       effort: form.effort || null,
-      whiteboard: form.whiteboard || null,
       learning: form.learning,
       ...(form.soul.trim() ? { soul: form.soul.trim() } : {}),
-    }, { onSuccess: finish, onError: fail });
+    };
+    if (scope === 'global') {
+      createGlobal.mutate(draft, {
+        onSuccess: (saved) => onSaved(saved.slug, t('agents.identity.created').replace('{name}', saved.title)),
+        onError: fail,
+      });
+      return;
+    }
+    create.mutate({ ...draft, whiteboard: form.whiteboard || null }, { onSuccess: finish, onError: fail });
   };
 
   const boardList = boards.data ?? [];
@@ -269,7 +290,7 @@ export function AgentIdentityDialog({
 
         {editing && detail.isError && <p className="aid-error" role="alert">{t('agents.page.loadFailed')}</p>}
 
-        <div className="aid-photo">
+        {!global && <div className="aid-photo">
           {preview
             ? <span className="aid-photo-preview"><img src={preview} alt="" /></span>
             : (
@@ -294,7 +315,8 @@ export function AgentIdentityDialog({
               onChange={(e) => { pickFile(e.target.files?.[0]); e.target.value = ''; }}
             />
           </div>
-        </div>
+        </div>}
+        {scope === 'global' && <p className="aid-note" data-global-note>{t('agents.identity.globalNote')}</p>}
 
         <label className="aid-field">
           <span className="aid-label">{t('agents.identity.name')}</span>
@@ -395,14 +417,14 @@ export function AgentIdentityDialog({
               {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
             </select>
           </label>
-          <label className="aid-field">
+          {!global && <label className="aid-field">
             <span className="aid-label">{t('agents.identity.board')}</span>
             <select className="aid-select" value={form.whiteboard} onChange={(e) => set('whiteboard', e.target.value)} disabled={!ready}>
               <option value="">{t('agents.identity.noBoard')}</option>
               {boardList.filter((b) => !b.corrupt).map((b) => <option key={b.slug} value={b.slug}>{b.name}</option>)}
               {boardMissing && <option value={form.whiteboard}>{form.whiteboard}</option>}
             </select>
-          </label>
+          </label>}
         </div>
 
         <label className="aid-check">
@@ -414,6 +436,48 @@ export function AgentIdentityDialog({
           />
           <span>{t('agents.identity.learning')}</span>
         </label>
+
+        {editing && !detail.data?.agent.implicit && (
+          <fieldset className="aid-autonomy" disabled={!ready}>
+            <legend className="aid-label" id="aid-autonomy-legend">{t('aiteam.autonomy.title')}</legend>
+            <div
+              className="aid-segmented"
+              role="radiogroup"
+              aria-labelledby="aid-autonomy-legend"
+              onKeyDown={(e) => {
+                // One Tab stop; the arrows move the choice (the radio pattern).
+                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                e.preventDefault();
+                const at = AUTONOMY_LEVELS.indexOf(form.autonomy);
+                const next = AUTONOMY_LEVELS[(at + (e.key === 'ArrowRight' ? 1 : AUTONOMY_LEVELS.length - 1)) % AUTONOMY_LEVELS.length];
+                set('autonomy', next);
+                (e.currentTarget.querySelector(`[data-autonomy="${next}"]`) as HTMLButtonElement | null)?.focus();
+              }}
+            >
+              {AUTONOMY_LEVELS.map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  role="radio"
+                  aria-checked={form.autonomy === level}
+                  tabIndex={form.autonomy === level ? 0 : -1}
+                  className={`aid-segment${form.autonomy === level ? ' is-on' : ''}`}
+                  onClick={() => set('autonomy', level)}
+                  data-autonomy={level}
+                >
+                  {t(`aiteam.autonomy.${level}`)}
+                </button>
+              ))}
+            </div>
+            <ul className="aid-autonomy-lines">
+              {AUTONOMY_LEVELS.map((level) => (
+                <li key={level} className={form.autonomy === level ? 'is-on' : undefined}>
+                  <b>{t(`aiteam.autonomy.${level}`)}</b> {t(`aiteam.autonomy.${level}.desc`)}
+                </li>
+              ))}
+            </ul>
+          </fieldset>
+        )}
 
         <p className="aid-note">{note ?? t('agents.identity.callSettingsNote')}</p>
 

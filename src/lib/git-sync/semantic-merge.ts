@@ -17,6 +17,7 @@ import { loadStatuses } from '../overrides.js';
 import { DEFAULT_STATUSES, pickMergedStatus, type StatusDef } from '../task-status.js';
 import { parseWhiteboard, serializeWhiteboard, type Whiteboard } from '../whiteboards/format.js';
 import { mergeElements, stripTombstones } from '../whiteboards/merge.js';
+import { parkConflictCopy } from '../agents/agent-sync.js';
 import { WhiteboardCorruptError } from '../whiteboards/errors.js';
 import {
   boardSpecToFile,
@@ -51,6 +52,15 @@ export type MergeClass =
   | 'whiteboard-md'
   /** `lab/boards/*.md`: union of cards by id (mergeLabBoard). `lab/blocks/*.md` stays on the prose path. */
   | 'lab-board'
+  /** `agents/*.md`, `automations/*.md` (AI Team v2 B1-8): never blended. Same id: the owner's copy
+   *  (later `updated` between two machines of one login), the incoming copy anywhere else; two ids:
+   *  the incoming file keeps the slug, ours is parked and comes back renamed (mergeAgentManifest). */
+  | 'agent-manifest'
+  /** `agents/.active/*.json`: later `since` wins, tie → lower machine id (mergeAgentActive). */
+  | 'agent-active'
+  /** A file under `automations/output/<slug>/` or `automations/threads/<slug>/`: an add/add parks
+   *  ours beside the renamed agent; an edit of a shared file takes the prose path. */
+  | 'agent-file'
   | 'other'
   /**
    * full-repo only: a real project/code file (anything NOT under `_dream_context/`).
@@ -74,6 +84,9 @@ export function classifyPath(relPath: string): MergeClass {
   if (/^knowledge\//.test(norm)) return 'knowledge-md';
   if (/^whiteboards\/([^/]+)\/\1\.excalidraw\.md$/.test(norm)) return 'whiteboard-md';
   if (/^lab\/boards\/[^/]+\.md$/.test(norm)) return 'lab-board';
+  if (/^agents\/\.active\/[a-z0-9][a-z0-9-]*\.json$/.test(norm)) return 'agent-active';
+  if (/^(?:agents|automations)\/[a-z0-9][a-z0-9-]*\.md$/.test(norm)) return 'agent-manifest';
+  if (/^automations\/(?:output|threads)\/[a-z0-9][a-z0-9-]*\/[^/]+$/.test(norm)) return 'agent-file';
   return 'other';
 }
 
@@ -214,6 +227,68 @@ function unionArrayValues(a: unknown, b: unknown): unknown[] {
   return [...arrA, ...arrB.filter((x) => !seen.has(JSON.stringify(x)))];
 }
 
+
+// ─── agents/.active/*.json — later `since` wins (B1-7) ───────────────────────
+
+/** How far ahead of now a `since` may be and still count: a writer stamps at most now + 5 min. */
+const ACTIVE_FUTURE_SLACK_MS = 5 * 60_000;
+
+function parseActive(text: string, nowMs: number): { machine: string; since: number } | null {
+  const o = parseJsonObject(text);
+  const since = typeof o.since === 'string' ? Date.parse(o.since) : NaN;
+  if (typeof o.machine !== 'string' || !o.machine || !Number.isFinite(since) || since > nowMs + ACTIVE_FUTURE_SLACK_MS) return null;
+  return { machine: o.machine, since };
+}
+
+/** Same login, several machines: the later `since` wins, a tie goes to the lower machine id, and a
+ *  side with no usable record loses. Never a handoff to the agent merge. */
+export function mergeAgentActive(ours: string, theirs: string, now: Date = new Date()): { merged: string } {
+  const o = parseActive(ours, now.getTime());
+  const t = parseActive(theirs, now.getTime());
+  if (!o) return { merged: theirs };
+  if (!t) return { merged: ours };
+  if (o.since !== t.since) return { merged: o.since > t.since ? ours : theirs };
+  return { merged: o.machine <= t.machine ? ours : theirs };
+}
+
+// ─── agents/*.md, automations/*.md — never blended (B1-8) ────────────────────
+
+function manifestFields(text: string): { id: string; owner: string | null; updated: number } | null {
+  try {
+    const data = (matter(text, {}).data ?? {}) as Record<string, unknown>;
+    const id = typeof data.id === 'string' ? data.id.trim() : '';
+    const owner = typeof data.owner === 'string' && data.owner.trim() ? data.owner.trim() : null;
+    // YAML reads an unquoted ISO stamp as a Date; a quoted one as text.
+    const updated = data.updated instanceof Date ? data.updated.getTime() : typeof data.updated === 'string' ? Date.parse(data.updated) : NaN;
+    return { id, owner, updated: Number.isFinite(updated) ? updated : 0 };
+  } catch {
+    return null;
+  }
+}
+
+export type AgentManifestMerge =
+  | { kind: 'take'; merged: string }
+  /** Two creators, one slug: the incoming file keeps the path, ours must be parked. */
+  | { kind: 'park-ours'; merged: string };
+
+/**
+ * One conflicted agent or automation manifest. Same `id`: on the owner's machine the local copy
+ * wins, except that between two machines of the same login the later `updated` wins; on any other
+ * machine the incoming copy wins (it is read-only there). Different ids (add/add): never merged.
+ */
+export function mergeAgentManifest(ours: string, theirs: string, login: string | undefined): AgentManifestMerge {
+  const o = manifestFields(ours);
+  const t = manifestFields(theirs);
+  if (!o || !ours.trim()) return { kind: 'take', merged: theirs };
+  if (!t || !theirs.trim()) return { kind: 'take', merged: ours };
+  if (o.id && t.id && o.id !== t.id) return { kind: 'park-ours', merged: theirs };
+  const same = (a: string | null, b: string | undefined): boolean => !!a && !!b && a.toLowerCase() === b.toLowerCase();
+  const owner = o.owner ?? t.owner;
+  if (!login || !same(owner, login)) return { kind: 'take', merged: theirs };
+  if (same(t.owner, login) && t.updated > o.updated) return { kind: 'take', merged: theirs };
+  return { kind: 'take', merged: ours };
+}
+
 // ─── state/.config.json — pack/platform union, peopleIdentity union ────────
 
 export function mergeConfigJson(_base: string, ours: string, theirs: string): { merged: string } {
@@ -231,6 +306,9 @@ export function mergeConfigJson(_base: string, ours: string, theirs: string): { 
   const oIdentity = o.peopleIdentity && typeof o.peopleIdentity === 'object' ? (o.peopleIdentity as Record<string, unknown>) : {};
   const tIdentity = t.peopleIdentity && typeof t.peopleIdentity === 'object' ? (t.peopleIdentity as Record<string, unknown>) : {};
   merged.peopleIdentity = { ...tIdentity, ...oIdentity };
+  // The agent-sync switch is ORed: one side turning it on turns it on, nothing writes it false.
+  if (o.agentSync === true || t.agentSync === true) merged.agentSync = true;
+  else delete merged.agentSync;
   return { merged: `${JSON.stringify(merged, null, 2)}\n` };
 }
 
@@ -625,6 +703,12 @@ export interface ResolveConflictsOptions {
    * it to the human instead of ever running the markdown/prose merge on it.
    */
   fullRepo?: boolean;
+  /** This machine's identity (`agents/owner.ts` currentLogin), for the `agent-manifest` class. */
+  login?: string;
+  /** The home whose M0 store parks an add/add copy (tests). */
+  home?: string;
+  /** The incoming commit (MERGE_HEAD), recorded on a parked copy. */
+  remoteSha?: string;
 }
 
 /** True for a conflicted path that is a real project/code file in full-repo mode (not a brain file). */
@@ -755,6 +839,47 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
         const board = mergeLabBoard(base, ours, theirs, basename(relPath, '.md'));
         mergedContent = board.merged;
         for (const note of board.notes) notes.push(`${relPath}: ${note}`);
+        break;
+      }
+      case 'agent-active':
+        mergedContent = mergeAgentActive(ours, theirs).merged;
+        break;
+      case 'agent-manifest': {
+        const pick = mergeAgentManifest(ours, theirs, opts.login);
+        if (pick.kind === 'park-ours') {
+          if (!opts.contextRoot) {
+            deferredToAgent.push({ path: relPath, class: cls });
+            continue;
+          }
+          try {
+            parkConflictCopy(opts.contextRoot, relPath, ours, opts.remoteSha ?? '', opts.home);
+          } catch {
+            deferredToAgent.push({ path: relPath, class: cls });
+            continue;
+          }
+          notes.push(`${relPath}: a teammate's member arrived with the same name; yours comes back renamed after the merge.`);
+        }
+        mergedContent = pick.merged;
+        break;
+      }
+      case 'agent-file': {
+        // add/add (no base): the incoming file keeps the path, ours waits for its renamed agent.
+        if (!base && ours && theirs && opts.contextRoot) {
+          try {
+            parkConflictCopy(opts.contextRoot, relPath, ours, opts.remoteSha ?? '', opts.home);
+            mergedContent = theirs;
+            break;
+          } catch {
+            deferredToAgent.push({ path: relPath, class: cls });
+            continue;
+          }
+        }
+        const doc = mergeMarkdownDoc(base, ours, theirs);
+        if (doc.needsAgent) {
+          deferredToAgent.push({ path: relPath, class: cls });
+          continue;
+        }
+        mergedContent = doc.merged;
         break;
       }
       case 'knowledge-md':

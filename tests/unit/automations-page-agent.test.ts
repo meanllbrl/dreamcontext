@@ -109,9 +109,10 @@ describe('the member card shows the agent\'s face and title', () => {
     expect(html).toContain('Morning scout');
   });
 
-  it('draws the agent\'s initials when there is no photo', () => {
+  it('draws the agent\'s figure when there is no photo (AI Team v2: the figure replaced the initials)', () => {
     const html = renderCard(summary({ agent: 'scout', agentTitle: 'Scout' }));
-    expect(html).toMatch(/class="agent-av"[^>]*>S</);
+    expect(html).toMatch(/class="agent-av agent-av--figure"/);
+    expect(html).toMatch(/<svg class="agent-figure"[^>]*data-shape="\d"/);
   });
 
   it('a legacy automation (no agent on the wire) still renders as before', () => {

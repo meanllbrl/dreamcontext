@@ -1,6 +1,9 @@
+import { randomBytes } from 'node:crypto';
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import {
-  autoSwitchEnabled, listClaudeAccounts, resolveConfigDir, switchStrategyFor, switchWeightsFor,
+  agentThresholdFor, autoSwitchEnabled, claudeAccountsFilePath, listClaudeAccounts, resolveConfigDir, switchStrategyFor, switchWeightsFor,
   type ClaudeAccount,
 } from '../claude-accounts.js';
 import {
@@ -281,4 +284,145 @@ async function decide(deps: PickDeps): Promise<AutomationAccount> {
   const winner = choice.accountId === null ? null : accounts.find((a) => a.id === choice.accountId);
   if (!winner || exclude.has(winner.id)) return fallback;
   return toAccount(winner, home);
+}
+
+// ─── Account protection for UNATTENDED agent work (owner, 2026-10-24) ─────────────────────
+//
+// A routine or a task job nobody is watching starts only on the first account in the owner's
+// order whose 5-hour AND weekly windows are both under the threshold (machine setting, default
+// 80%), never on an account marked "Only mine", never on one signed out or refused. A FILTER over
+// the picker's own pieces (the register order, the recorded refusals and sign-outs, the cached
+// reading, the probe and its rollover rule: a reading older than its reset counts as 0%), not a
+// second chooser. Nothing left: the start waits until the earliest window reset or refusal end.
+// Owner-typed messages never pass through here: a person at the keyboard decides for themself.
+
+export type ProtectedPick = { account: AutomationAccount } | { waitUntil: number };
+
+/** When nothing at all says when an account frees up (every one is "Only mine" or signed out). */
+const UNKNOWN_WAIT_MS = 30 * 60_000;
+
+/** Future resets of the windows that keep `reading` from serving at `threshold`. */
+function blockingResets(reading: UsageLimitsResponse, threshold: number, now: number): number[] {
+  return reading.limits
+    .filter((l) => (l.lockedReason || l.percent >= threshold) && Number.isFinite(l.resetsAt) && l.resetsAt > now)
+    .map((l) => l.resetsAt);
+}
+
+export async function protectedAutomationAccount(deps: PickDeps & { threshold?: number } = {}): Promise<ProtectedPick> {
+  const c = contextFor(deps);
+  const { home, now, rejectedUntil } = c;
+  const threshold = deps.threshold ?? agentThresholdFor(home);
+  const probe = deps.probe ?? ((dir: string) => probeAccountUsage(dir, { home }));
+  const wakes: number[] = [];
+
+  /** The reading to decide on: the cache when it is current, else a probe; null = cannot serve. */
+  const readingFor = async (dir: string): Promise<UsageLimitsResponse | null> => {
+    const cached = cachedUsage(dir);
+    if (usageReadingIsCurrent(cached, now)) return cached;
+    const outcome = await probe(dir);
+    if (outcome.status === 'ok') return outcome.limits;
+    if (outcome.status === 'needs-relogin') return null;
+    // A probe that failed leaves the old reading, read through the rollover rule.
+    return cached;
+  };
+  const serves = async (dir: string): Promise<boolean> => {
+    const reading = await readingFor(dir);
+    if (!reading) return false;
+    if (!shouldSwitchAway(reading, threshold, now)) return true;
+    wakes.push(...blockingResets(reading, threshold, now));
+    return false;
+  };
+
+  if (c.accounts.length === 0) {
+    // No register: the machine's own `~/.claude` is the only account there is.
+    if (await serves(c.fallback.configDir)) return { account: c.fallback };
+  } else {
+    const out = signedOutAccounts(c.accounts, home, now);
+    // Auto-switch off means "never change accounts": the preferred one is the only candidate.
+    const order = autoSwitchEnabled(home) ? c.accounts : c.preferred ? [c.preferred] : c.accounts.slice(0, 1);
+    for (const a of order) {
+      if (a.ownerOnly || out.has(a.id) || c.exclude.has(a.id)) continue;
+      const refused = rejectedUntil[a.id];
+      if (refused) {
+        if (refused.until > now) wakes.push(refused.until);
+        continue;
+      }
+      if (await serves(a.configDir ?? home)) return { account: toAccount(a, home) };
+    }
+  }
+  return { waitUntil: wakes.length > 0 ? Math.min(...wakes) : now + UNKNOWN_WAIT_MS };
+}
+
+/**
+ * The account a RESUME of an agent's session goes out on (an answer, a reply): the usual pick,
+ * moved off an "Only mine" account to the first other signed-in one when one exists. Never
+ * gated by the threshold: a person typed the message that resumes it.
+ */
+export function withoutOwnerOnly(account: AutomationAccount, deps: Pick<PickDeps, 'home' | 'now'> = {}): AutomationAccount {
+  try {
+    const home = deps.home ?? homedir();
+    const accounts = listClaudeAccounts(home);
+    if (!accounts.find((a) => a.id === account.id)?.ownerOnly) return account;
+    const out = signedOutAccounts(accounts, home, deps.now ?? Date.now());
+    const other = accounts.find((a) => !a.ownerOnly && !out.has(a.id));
+    return other ? toAccount(other, home) : account;
+  } catch {
+    return account;
+  }
+}
+
+// ─── The wait, machine-wide ────────────────────────────────────────────────────────────────
+//
+// `~/.dreamcontext/automations-account-wait.json`: when unattended work last found no account
+// to start on, and when the earliest one frees up. Machine-local (accounts are this machine's).
+// The tick skips every unattended start until `wakeAt`, so a full machine is not probed every
+// five minutes, and the fire stays owed (its watermark is never advanced) and runs on the first
+// tick after. Changing the threshold or an "Only mine" mark clears it.
+
+export function accountWaitPath(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'automations-account-wait.json');
+}
+
+/**
+ * `wakeAt` (epoch ms) while it is still in the future, else null. Never throws.
+ *
+ * A wait is a conclusion about the accounts AS THEY WERE: when the account register changed after
+ * it was recorded (an account added, removed, reordered or signed in again, auto-switch, the
+ * threshold or an "Only mine" mark), the wait no longer holds and reads as none, so the next
+ * start decides afresh.
+ */
+export function readAccountWait(home: string = homedir(), now: number = Date.now()): number | null {
+  try {
+    const path = accountWaitPath(home);
+    if (!lstatSync(path).isFile()) return null;
+    const rec = JSON.parse(readFileSync(path, 'utf-8')) as { wakeAt?: unknown; at?: unknown };
+    const v = rec.wakeAt;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v <= now) return null;
+    const at = typeof rec.at === 'number' && Number.isFinite(rec.at) ? rec.at : 0;
+    if (registerChangedSince(home, at)) return null;
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+/** Did the account register (`claude-accounts.json`) change after `at`? Missing ⇒ no. */
+function registerChangedSince(home: string, at: number): boolean {
+  try {
+    return statSync(claudeAccountsFilePath(home)).mtimeMs > at;
+  } catch {
+    return false;
+  }
+}
+
+export function recordAccountWait(wakeAt: number, home: string = homedir(), now: number = Date.now()): void {
+  const path = accountWaitPath(home);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ wakeAt, at: now }) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  renameSync(tmp, path);
+}
+
+export function clearAccountWait(home: string = homedir()): void {
+  try { rmSync(accountWaitPath(home), { force: true }); } catch { /* nothing to clear */ }
 }

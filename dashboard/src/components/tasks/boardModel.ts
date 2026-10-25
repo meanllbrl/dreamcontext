@@ -65,6 +65,9 @@ export interface BoardFilters {
   tags: FieldFilter; version: FieldFilter; assignee: FieldFilter;
   /** `related_feature` slugs; `none` = a task with no feature. */
   feature: FieldFilter;
+  /** The agent a task is assigned to (its slug); `none` = no agent (AI Team v2 C2). Absent from
+   *  views saved before it, which read as "any". */
+  agent: FieldFilter;
   due: DueFilter; minRice: number;
 }
 export interface ViewConfig {
@@ -112,14 +115,14 @@ export interface LocalBoard {
 
 // ─── Defaults ────────────────────────────────────────────────────────────────────
 
-export const FILTER_FIELDS: (keyof BoardFilters)[] = ['status', 'priority', 'urgency', 'tags', 'version', 'assignee', 'feature'];
+export const FILTER_FIELDS: (keyof BoardFilters)[] = ['status', 'priority', 'urgency', 'tags', 'version', 'assignee', 'feature', 'agent'];
 
 export function emptyFieldFilter(): FieldFilter { return { inc: [], exc: [] }; }
 export function emptyFilters(): BoardFilters {
   return {
     status: emptyFieldFilter(), priority: emptyFieldFilter(), urgency: emptyFieldFilter(),
     tags: emptyFieldFilter(), version: emptyFieldFilter(), assignee: emptyFieldFilter(),
-    feature: emptyFieldFilter(),
+    feature: emptyFieldFilter(), agent: emptyFieldFilter(),
     due: 'all', minRice: 0,
   };
 }
@@ -199,7 +202,7 @@ function normFilters(v: unknown): BoardFilters {
   return {
     status: asFieldFilter(o.status), priority: asFieldFilter(o.priority), urgency: asFieldFilter(o.urgency),
     tags: asFieldFilter(o.tags), version: normVersionFilter(asFieldFilter(o.version)), assignee: asFieldFilter(o.assignee),
-    feature: asFieldFilter(o.feature),
+    feature: asFieldFilter(o.feature), agent: asFieldFilter(o.agent),
     due: (typeof o.due === 'string' ? o.due : 'all') as DueFilter,
     minRice: typeof o.minRice === 'number' ? o.minRice : 0,
   };
@@ -335,6 +338,9 @@ export function taskAgent(t: Task): string | null {
   return slug || null;
 }
 export function taskVersion(t: Task): string { return t.version && t.version.trim() ? t.version : 'none'; }
+/** The board's agent filter value: the agent's slug, or `'none'`. */
+export function taskAgentKey(t: Task): string { return taskAgent(t) ?? 'none'; }
+
 /** The task's feature slug, or `'none'`. */
 export function taskFeature(t: Task): string { return t.related_feature && t.related_feature.trim() ? t.related_feature : 'none'; }
 
@@ -568,6 +574,7 @@ export function filterTasks(tasks: Task[], f: BoardFilters, search: string, vers
     if (!matchAssignee(t, f.assignee)) return false;
     if (!matchVersionField(taskVersion(t), f.version, versionMeta)) return false;
     if (!matchField(taskFeature(t), f.feature)) return false;
+    if (!matchField(taskAgentKey(t), f.agent)) return false;
     if (f.tags.inc.length && !f.tags.inc.some((tg) => t.tags.includes(tg))) return false;
     if (f.tags.exc.length && f.tags.exc.some((tg) => t.tags.includes(tg))) return false;
     if (f.minRice) { const r = taskRice(t); if (!(r != null && r >= f.minRice)) return false; }

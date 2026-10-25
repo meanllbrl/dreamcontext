@@ -669,7 +669,7 @@ export function Notch() {
   }, [inbox]);
   const notices = inbox.notices.filter((n) => !gone.has(n.id));
   const posts = inbox.posts.filter((p) => !gone.has(p.key));
-  const inboxCount = notices.length + posts.length;
+  const inboxCount = notices.length + posts.length + inbox.tasks.length;
 
   // The last turn across every project just ended: green for a moment, then idle.
   const busyCount = rollup.working + rollup.starting;
@@ -1750,6 +1750,7 @@ export function Notch() {
             notices={notices}
             posts={posts}
             running={inbox.running}
+            tasks={inbox.tasks}
             muted={inbox.muted}
             onNoticeGone={hide}
             onPostGone={hide}

@@ -32,12 +32,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { win32PowerShell } from '../proc.js';
+import { effectivePattern } from '../agents/agent-sync.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
-import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAccount } from './account.js';
+import { automationAccountWithoutProbe, pickAutomationAccount, withoutOwnerOnly, type AutomationAccount } from './account.js';
 import { appendThreadEntry } from './threads.js';
-import { latestBoundSession, readAutomationSession, retireAutomationSession } from './session-registry.js';
+import { latestBoundSession, onlyTaskSessions, readAutomationSession, retireAutomationSession, taskBindingOf } from './session-registry.js';
+import { queueTaskAnswer, taskOfAnySession, taskSessionRefusal, waitingClaimFor } from '../agents/task-starter.js';
 import {
   canResume as canResumeQuestion,
   claimQuestion,
@@ -593,6 +595,9 @@ function sessionIsInTabRoster(contextRoot: string, sessionId: string): boolean {
  * indefinite grant.
  */
 function retireIfDone(contextRoot: string, q: AutomationQuestion, sessionId: string, home: string): void {
+  // A task step's session is resumed by its host for the task's next step (a second question in
+  // the same session must still resolve): never retired here.
+  if (taskBindingOf(sessionId, home)) return;
   const latest = refreshQuestion(contextRoot, q);
   // (a) settled, with nothing further pending for this automation.
   if (!latest || latest.state === 'pending') return;
@@ -678,12 +683,20 @@ export async function resumeWithAnswer(
     };
   }
 
+  // A TASK STEP's session resumes only through its task host (C1-14). With no claim waiting on
+  // the owner (the task was unassigned, cancelled or deleted), the answer is refused up front.
+  const taskOwner = taskOfAnySession(contextRoot, sessionId, opts.home);
+  if (taskOwner && !waitingClaimFor(contextRoot, taskOwner.taskId, sessionId, opts.home)) {
+    return { question, status: 'refused', error: taskSessionRefusal(contextRoot, taskOwner.taskId), result: null };
+  }
+
   const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
   if (!lockPath) {
     return { question, status: 'refused', error: LOCK_BUSY_REASON, result: null };
   }
 
   let resume: ResumeScope | null = null;
+  let queuedForTask = false;
   try {
     // BEFORE the claim: a refusal here must leave the question pending, since nothing ran.
     const envelope = resolveResumeScope(contextRoot, question.slug, opts, question.target);
@@ -699,6 +712,29 @@ export async function resumeWithAnswer(
       return { question: claim.question ?? question, status: 'refused', error: claim.reason, result: null };
     }
     const claimed = claim.question;
+
+    // The task branch, AFTER the claim (the question leaves `pending`, so the drain's open-question
+    // skip no longer holds the step) and BEFORE any spawn: the answer is stored and the step
+    // re-queued; the host resumes the same session at the next drain. A refused re-queue keeps the
+    // answer on record, never reopens the question.
+    if (taskOwner) {
+      const queued = queueTaskAnswer(contextRoot, sessionId, answerText, { home: opts.home });
+      if (!queued.ok) {
+        return {
+          question: noteQuestionResolution(contextRoot, claimed, { error: `not delivered: the task was already continued` }),
+          status: 'refused',
+          error: queued.message,
+          result: null,
+        };
+      }
+      queuedForTask = true;
+      return {
+        question: noteQuestionResolution(contextRoot, claimed, { note: 'Queued to resume the task.', error: null }),
+        status: 'ok',
+        error: null,
+        result: null,
+      };
+    }
 
     // The run hints default to the question's OWN run, so a session resumed from a button
     // press knows it is inside a run (its `post` lands in that run's thread, and
@@ -772,7 +808,7 @@ export async function resumeWithAnswer(
           kind: 'system',
           event: 'replied',
           via: 'runner',
-          text: `Question answered via ${via}. Session resumed.`,
+          text: queuedForTask ? `Question answered via ${via}. Queued to resume.` : `Question answered via ${via}. Session resumed.`,
         });
       } catch {
         // a thread that cannot be written leaves the answer itself untouched
@@ -796,6 +832,11 @@ function spawnSessionResume(
   resume: ResumeScope | null = null,
 ): Promise<ClaudeExecution> {
   const nowFn = opts.now ?? (() => new Date());
+  // Never a task step's session, whoever asks (C1-14): only its host resumes it.
+  if (taskBindingOf(sessionId, opts.home ?? homedir())) {
+    const at = nowFn();
+    return Promise.resolve({ spawned: false, timedOut: false, exitCode: null, stdout: '', stderrTail: '', startedAt: at, finishedAt: at, result: null });
+  }
   const timeoutMs = (opts.timeoutMinutes ?? m.timeoutMinutes) * 60_000;
   // THE SECOND HALF OF THE ENV GUARD. `VerdictOptions.env` is typed to the two hint
   // keys, but a type is not a runtime boundary — `any` at a call site, a JSON body
@@ -816,10 +857,12 @@ function spawnSessionResume(
   // the caller: nothing in `opts.env` can name a board, a self or a scratch folder.
   const scopeVars = resume ? scopeEnv(resume.scope, resume.paths) : {};
   const scopeArgs = resume ? boardScopeArgs(resume.scope, resume.paths) : null;
+  // Never an "Only mine" account (account protection): the owner's reply resumes agent work, so
+  // it leaves the accounts they keep for themself alone; the threshold does not gate it.
   const quick = automationAccountWithoutProbe({ home: opts.home });
   return quick
-    ? spawnOn(quick)
-    : pickAutomationAccount({ home: opts.home }).then(spawnOn);
+    ? spawnOn(withoutOwnerOnly(quick, { home: opts.home }))
+    : pickAutomationAccount({ home: opts.home }).then((a) => spawnOn(withoutOwnerOnly(a, { home: opts.home })));
 
   function spawnOn(account: AutomationAccount): Promise<ClaudeExecution> {
     ensureSandbox(account.configDir, opts.home);
@@ -1021,6 +1064,11 @@ export async function resumeWithMessage(
   };
   const waits = (opts.lockWaitMs ?? 0) > 0;
   const sessionId = latestBoundSession(slug, home);
+  // An agent that has only worked on tasks has no conversation of its own: its task sessions
+  // resume through their tasks, never from a thread or Telegram message (C1-14).
+  if (!sessionId && onlyTaskSessions(slug, home)) {
+    return { status: 'refused', error: 'This agent has only worked on tasks so far: reply on the task.', result: null, costUsd: null };
+  }
   if (!sessionId && !waits) return noSession;
 
   const lockPath = await acquireRunLockWaiting(contextRoot, manifest, nowFn, opts);
@@ -1042,6 +1090,8 @@ export async function resumeWithMessage(
     }
     const liveSessionId = waits ? latestBoundSession(slug, home) ?? sessionId : sessionId;
     if (!liveSessionId) return noSession;
+    const taskOwner = taskOfAnySession(contextRoot, liveSessionId, opts.home);
+    if (taskOwner) return { status: 'refused', error: taskSessionRefusal(contextRoot, taskOwner.taskId), result: null, costUsd: null };
     const envelope = resolveResumeScope(contextRoot, slug, opts);
     if (!envelope.ok) return { status: 'refused', error: envelope.reason, result: null, costUsd: null };
     resume = envelope.resume;
@@ -1056,7 +1106,12 @@ export async function resumeWithMessage(
       nowFn().toISOString(),
       liveSessionId,
       thread
-        ? buildThreadMessagePreamble(messageText, envelope.manifest, turn ?? { nonce: newTurnNonce(), board: '', refs: '' })
+        ? buildThreadMessagePreamble(
+          messageText,
+          // The agent's notes as THIS machine adopted them (B1-6), never a synced edit from elsewhere.
+          { ...envelope.manifest, pattern: effectivePattern(contextRoot, envelope.manifest.agent || slug, envelope.manifest.pattern ?? '') },
+          turn ?? { nonce: newTurnNonce(), board: '', refs: '' },
+        )
         : buildMessagePreamble(messageText, turn),
       opts,
       resume,

@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../../../hooks/useTasks';
-import { useObjectToTask, useStatusModel } from '../../../hooks/useTasks';
+import { useApproveFiling, useObjectToTask, useStatusModel } from '../../../hooks/useTasks';
 import { useI18n } from '../../../context/I18nContext';
-import { canObject, filingView, objectionResultLine, shortDate } from '../../../lib/taskObjection';
+import { canApprove, canObject, filingView, objectionResultLine, shortDate } from '../../../lib/taskObjection';
 import { GiveToAgentMenu } from './GiveToAgentMenu';
 import { ObjectionDialog } from './ObjectionDialog';
 import './ObjectionDialog.css';
@@ -15,21 +15,74 @@ import './ObjectionDialog.css';
 function FilingRow({ task, onObject, buttonRef }: { task: Task; onObject: () => void; buttonRef: React.RefObject<HTMLButtonElement | null> }) {
   const { t, locale } = useI18n();
   const sm = useStatusModel();
+  const approve = useApproveFiling();
+  const [showBasis, setShowBasis] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const moreRef = useRef<HTMLSpanElement>(null);
+  // The ⋯ menu closes on a click outside it and on Escape.
+  useEffect(() => {
+    if (!menu) return;
+    const down = (e: PointerEvent) => { if (!moreRef.current?.contains(e.target as Node)) setMenu(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setMenu(false); buttonRef.current?.focus(); } };
+    moreRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key, true); };
+  }, [menu]);
   const view = filingView(task, t, locale);
   if (!view) return null;
+  const basis = view.line !== null
+    ? <span className={view.tone === 'unknown' ? 'filing-muted' : undefined}>{view.line}</span>
+    : (
+      <>
+        <span>{view.label}</span>
+        <span className={`filing-quote ${view.italic ? 'filing-quote--defect' : ''}`}>«{view.quote}»</span>
+      </>
+    );
+  // Approved (owner, 2026-10-24): the row folds into one line of chips. The status never changed;
+  // the request is one click away and Object is still in the menu.
+  if (task.filing_approved && !task.objection?.applied) {
+    return (
+      <div className="filing-chips" data-testid="filing-approved">
+        <span className={`filing-chip filing-chip--${view.tone}`}>{view.chip}</span>
+        <span className="filing-chip filing-chip--approved">{[t('tasks.approve.approved'), shortDate(task.filing_approved.at, locale)].filter(Boolean).join(' · ')}</span>
+        <button type="button" className="filing-chip-btn" aria-expanded={showBasis} onClick={() => setShowBasis((v) => !v)}>
+          {t('tasks.approve.request')} <span aria-hidden="true">{showBasis ? '▾' : '▸'}</span>
+        </button>
+        {canObject(task, sm.isCancelled) && (
+          <span className="filing-more" ref={moreRef}>
+            <button ref={buttonRef} type="button" className="filing-chip-btn" aria-haspopup="menu" aria-expanded={menu} aria-label={t('tasks.approve.more')} onClick={() => setMenu((v) => !v)}>⋯</button>
+            {menu && (
+              <span className="filing-more-menu" role="menu">
+                <button type="button" role="menuitem" className="filing-more-item" data-testid="object-btn" onClick={() => { setMenu(false); onObject(); }}>
+                  {t('tasks.objection.button')}
+                </button>
+              </span>
+            )}
+          </span>
+        )}
+        {showBasis && <div className="filing-text filing-text--folded">{basis}</div>}
+      </div>
+    );
+  }
   return (
     <div className="filing-row" data-testid="filing-row">
       <div className="filing-text">
         <span className={`filing-chip filing-chip--${view.tone}`}>{view.chip}</span>
-        {view.line !== null
-          ? <span className={view.tone === 'unknown' ? 'filing-muted' : undefined}>{view.line}</span>
-          : (
-            <>
-              <span>{view.label}</span>
-              <span className={`filing-quote ${view.italic ? 'filing-quote--defect' : ''}`}>«{view.quote}»</span>
-            </>
-          )}
+        {basis}
       </div>
+      {canApprove(task, sm.isCancelled) && (
+        <button
+          type="button"
+          className="filing-approve-btn"
+          data-testid="approve-btn"
+          disabled={approve.isPending}
+          onClick={() => approve.mutate({ slug: task.slug })}
+        >
+          {t('tasks.approve.button')}
+        </button>
+      )}
+      {approve.error && <span className="filing-error" role="alert">{approve.error.message}</span>}
       {canObject(task, sm.isCancelled) && (
         <button ref={buttonRef} type="button" className="filing-object-btn" data-testid="object-btn" onClick={onObject}>
           {t('tasks.objection.button')}

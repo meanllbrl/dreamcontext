@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
+import { ownerLabel } from '../../lib/agents/owner.js';
 import {
   getAutomation,
   listAutomations,
@@ -27,6 +29,7 @@ import {
 } from '../../lib/automations/store.js';
 import { getAgent, removeAgent, withRestamp } from '../../lib/agents/store.js';
 import { agentKeyOf, readManifestFrontmatter } from '../../lib/agents/slot.js';
+import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import type { AgentIdentityPatch } from '../../lib/agents/types.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
@@ -88,6 +91,7 @@ const SAY_MAX_CHARS = 2000;
 import {
   AutomationError,
   AUTOMATION_MODES,
+  DEFAULT_AGENT_AUTONOMY,
   EFFORT_LEVELS,
   MAX_TIMEOUT_MINUTES,
   WEEKDAYS,
@@ -191,6 +195,8 @@ interface AutomationSummary {
    *  one. One server-side string so the card, the profile popover and the CLI
    *  can never word an agent's cadence differently. */
   cadenceLabel: string;
+  /** Its figure: the face stamped on its file, else the bare hash of its slug. */
+  face: AgentFace;
   model: string | null;
   /** On the summary (not only the detail) because the Edit dialog prefills
    *  from the LIST — opening it must not have to fetch the manifest first, or
@@ -295,6 +301,7 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     hasPhoto: resolveAutomationPhoto(contextRoot, m.photo) !== null,
     description: m.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
     cadenceLabel: cadenceLabel(m),
+    face: faceOf(m.slug, m.path ? parseFace(readManifestFrontmatter(m.path)?.data.face) : null),
     model: m.model,
     effort: m.effort,
     timeoutMinutes: m.timeoutMinutes,
@@ -461,6 +468,9 @@ export async function handleAutomationsShow(
         // Hashed when non-empty, and LAST in APPROVAL_DIFF_FIELDS: the agent's
         // `## Soul`, how it works. A reviewer approving here must see it.
         soul: manifest.soul,
+        // Hashed when not `balanced`, and LAST in APPROVAL_DIFF_FIELDS: how much its agent
+        // decides alone, which is the permission mode of its sessions.
+        autonomy: manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY,
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -571,6 +581,7 @@ export async function handleAutomationsRunNow(
       sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
       return;
     }
+    if (refuseNotOwner(res, manifest)) return;
     const { job, started } = startAutomationJob(contextRoot, params.slug);
     sendJson(res, 200, { job, started });
   } catch {
@@ -596,10 +607,12 @@ export async function handleAutomationsApprove(
       sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
       return;
     }
+    if (refuseNotOwner(res, manifest)) return;
     const projectRoot = dirname(contextRoot);
     const entry = approveAutomation(projectRoot, manifest, new Date());
     sendJson(res, 200, { slug: manifest.slug, approval: entry });
-  } catch {
+  } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
     sendError(res, 500, 'approve_failed', 'Failed to approve the automation.');
   }
 }
@@ -629,10 +642,12 @@ async function setEnabled(
 ): Promise<void> {
   const verb = enabled ? 'enable' : 'disable';
   try {
-    if (!getAutomation(contextRoot, params.slug)) {
+    const current = getAutomation(contextRoot, params.slug);
+    if (!current) {
       sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
       return;
     }
+    if (refuseNotOwner(res, current)) return;
     const updated = setAutomationEnabled(contextRoot, params.slug, enabled);
     sendJson(res, 200, { automation: summarize(dirname(contextRoot), contextRoot, updated) });
   } catch (err) {
@@ -747,6 +762,9 @@ export async function handleAutomationsQuestionAnswer(
       sendError(res, 404, 'not_found', 'That question is not open — it may have been answered elsewhere.');
       return;
     }
+    // A teammate's agent asks nothing here, and nobody here answers for it.
+    const asked = getAutomation(contextRoot, question.slug);
+    if (asked && refuseNotOwner(res, asked)) return;
     const body = await parseJsonBody(req);
     const answer = typeof body?.answer === 'string' ? body.answer : '';
     if (!answer.trim()) {
@@ -849,6 +867,7 @@ export async function handleAutomationsQuestionAnswer(
       result: outcome.result,
     });
   } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
     console.error('[automations] question answer failed:', err);
     sendError(res, 500, 'question_failed', 'Failed to answer the question.');
   }
@@ -906,10 +925,12 @@ export async function handleAutomationsTelegramSet(
   contextRoot: string,
 ): Promise<void> {
   try {
-    if (!getAutomation(contextRoot, params.slug)) {
+    const target = getAutomation(contextRoot, params.slug);
+    if (!target) {
       sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
       return;
     }
+    if (refuseNotOwner(res, target)) return;
     const body = await parseJsonBody(req);
     const botToken = typeof body?.botToken === 'string' ? body.botToken.trim() : '';
     const chatId = typeof body?.chatId === 'string' ? body.chatId.trim() : '';
@@ -921,6 +942,7 @@ export async function handleAutomationsTelegramSet(
     writeTelegramConfigForSlug(params.slug, { botToken, chatId, offset: existing?.offset ?? 0 });
     sendJson(res, 200, { telegram: telegramView(readTelegramConfigForSlug(params.slug)) });
   } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
     if (err instanceof AutomationError) {
       sendError(res, 400, 'telegram_rejected', err.message);
       return;
@@ -1183,6 +1205,7 @@ export async function handleAutomationsCreate(
 
     sendJson(res, 200, { automation: summarize(dirname(contextRoot), contextRoot, manifest) });
   } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
     if (err instanceof AutomationError) {
       sendError(res, 400, 'invalid', err.message);
       return;
@@ -1331,6 +1354,7 @@ export async function handleAutomationsUpdate(
       ...(stamped ? {} : { needsApproval: true }),
     });
   } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
     if (err instanceof AutomationError) {
       sendError(res, 400, 'invalid', err.message);
       return;
@@ -1437,6 +1461,7 @@ export async function handleAutomationsDelete(
       try {
         revokeApproval(dirname(contextRoot), params.slug);
       } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
         console.error('[automations] delete: could not revoke approval', err);
       }
       sendJson(res, 200, { ok: true, slug: params.slug, agentKept: getAgent(contextRoot, boundTo) ? boundTo : null });
@@ -1445,6 +1470,7 @@ export async function handleAutomationsDelete(
     try {
       revokeApproval(dirname(contextRoot), params.slug);
     } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
       // The manifest is already gone, which is the part that matters — a
       // registry that could not be rewritten must not turn a completed delete
       // into an error the user would retry against a slug that no longer exists.
@@ -1452,6 +1478,7 @@ export async function handleAutomationsDelete(
     }
     sendJson(res, 200, { ok: true, slug: params.slug });
   } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
     if (err instanceof AutomationError) {
       sendError(res, 400, 'invalid', err.message);
       return;
@@ -1493,6 +1520,7 @@ export async function handleAutomationsPhotoUpload(
     sendError(res, 404, 'not_found', `Agent not found: ${slug}`);
     return;
   }
+  if (refuseNotOwner(res, target)) return;
   const image = await receivePhoto(req, res);
   if (!image) return;
   try {
@@ -1504,6 +1532,7 @@ export async function handleAutomationsPhotoUpload(
     const manifest = updateAutomation(contextRoot, slug, { photo: rel });
     sendJson(res, 200, { automation: summarize(dirname(contextRoot), contextRoot, manifest) });
   } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
     if (err instanceof AutomationError) {
       sendError(res, 400, 'invalid', err.message);
       return;
@@ -2058,9 +2087,9 @@ export type SayVia = 'dashboard' | 'assistant' | 'super';
 
 export type SayResult =
   | { ok: true; status: 200; body: Record<string, unknown> }
-  | { ok: false; status: 400 | 404 | 409; code: string; message: string };
+  | { ok: false; status: 400 | 403 | 404 | 409; code: string; message: string };
 
-const sayRefusal = (status: 400 | 404 | 409, code: string, message: string): SayResult =>
+const sayRefusal = (status: 400 | 403 | 404 | 409, code: string, message: string): SayResult =>
   ({ ok: false, status, code, message });
 
 /**
@@ -2102,7 +2131,11 @@ export function sayToAgent(
     // unapproved agent leaves the owner's words sitting in the channel under
     // an answer that is only ever going to be "it is not approved".
     const projectRoot = dirname(contextRoot);
-    if (!checkApproval(projectRoot, manifest, undefined, 'run').approved) {
+    const verdict = checkApproval(projectRoot, manifest, undefined, 'run');
+    if (!verdict.approved && verdict.reason === 'not_owner') {
+      return sayRefusal(403, 'not_owner', `${manifest.agentTitle || manifest.title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here: only its owner talks to it.`);
+    }
+    if (!verdict.approved) {
       return sayRefusal(
         409, 'say_unapproved',
         `${manifest.title} is not approved on this machine yet. Approve it, then ask again.`,
@@ -2282,6 +2315,7 @@ export async function handleAutomationsThreadReply(
       sendError(res, 404, 'not_found', `Automation not found: ${slug}`);
       return;
     }
+    if (refuseNotOwner(res, manifest)) return;
     if (!manifest.enabled) {
       sendError(res, 409, 'reply_disabled', `${manifest.title} is turned off. Turn it on to reply.`);
       return;

@@ -121,6 +121,8 @@ export function AgentMemberCard({
   onToast: (msg: string) => void;
 }) {
   const { t } = useI18n();
+  // A teammate's routine (B1-4): read-only here, no switch and no Edit.
+  const teammates = summary.approvalReason === 'not_owner';
   const setEnabled = useSetAutomationEnabled();
   const scheduled = summary.mode === 'sched';
   const lastWhen = fmtWhen(summary.cache?.lastFireAt ?? summary.cache?.lastRunAt ?? null);
@@ -186,7 +188,7 @@ export function AgentMemberCard({
             {boardWords && <> · <span className="agent-card-board">{boardWords}</span></>}
           </p>
         </div>
-        {scheduled && (
+        {scheduled && !teammates && (
           /* One of the three places the accent is allowed (K8): an ON switch. */
           <button
             type="button"
@@ -220,7 +222,7 @@ export function AgentMemberCard({
           )}
         </p>
         <div className="agent-card-actions">
-          <button type="button" className="agent-card-btn" onClick={() => onEdit(summary.slug)}>Edit</button>
+          {!teammates && <button type="button" className="agent-card-btn" onClick={() => onEdit(summary.slug)}>Edit</button>}
           <button type="button" className="agent-card-btn" onClick={() => onOpenDetail(summary.slug)}>Runs</button>
         </div>
       </footer>

@@ -157,8 +157,10 @@ export async function defaultBranchSet(repoPath: string): Promise<Set<string>> {
   return set;
 }
 
-async function branchExists(repoPath: string, branch: string): Promise<boolean> {
-  return (await git(repoPath, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])).code === 0;
+/** `lazy`: `['--no-lazy-fetch']` on the task path, where a ref to a missing object must never be
+ *  fetched through the transport the repo config names (`show-ref --verify` reads the object). */
+async function branchExists(repoPath: string, branch: string, lazy: readonly string[] = []): Promise<boolean> {
+  return (await git(repoPath, [...lazy, 'show-ref', '--verify', '--quiet', `refs/heads/${branch}`])).code === 0;
 }
 
 async function isDirty(worktree: string): Promise<boolean> {
@@ -180,6 +182,9 @@ export interface CreatedWorktree { path: string; branch: string; repo: string; r
 
 export async function createChildWorktree(o: {
   projectRoot: string; repo: unknown; slug: unknown; base?: unknown; home?: string;
+  /** A task job's worktree: made with `--no-checkout`, the caller fills it (agents/raw-checkout.ts),
+   *  so the host never runs a conversion the repo's config names. */
+  noCheckout?: boolean;
 }): Promise<CreatedWorktree> {
   const home = o.home ?? homedir();
   const repo = resolveWorktreeRepo(o.projectRoot, o.repo, o.home);
@@ -191,15 +196,54 @@ export async function createChildWorktree(o: {
   const root = superWorktreeRoot(home);
   const path = safeChildPath(root, `${sanitizeRepoName(repo.name)}-super-${o.slug}`);
   if (!path) throw new WorktreeRefused('invalid_slug', 'the worktree path would leave ~/.claude-worktrees');
-  const verify = await git(repo.path, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${base}^{commit}`]);
+  // A task worktree never fetches a missing object lazily: that runs the repo config's transport.
+  const lazy = o.noCheckout ? ['--no-lazy-fetch'] : [];
+  const verify = await git(repo.path, [...lazy, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${base}^{commit}`]);
   const sha = verify.stdout.trim();
   if (verify.code !== 0 || !/^[0-9a-f]{40,64}$/.test(sha)) throw new WorktreeRefused('invalid_base', `"${base}" is not a commit in ${repo.name}`);
-  if (await branchExists(repo.path, branch)) throw new WorktreeRefused('branch_exists', `${branch} already exists in ${repo.name}; pick another slug`);
+  if (await branchExists(repo.path, branch, lazy)) throw new WorktreeRefused('branch_exists', `${branch} already exists in ${repo.name}; pick another slug`);
   try { await fsp.lstat(path); throw new WorktreeRefused('path_exists', `${path} already exists`); }
   catch (err) { if (err instanceof WorktreeRefused) throw err; }
   await fsp.mkdir(root, { recursive: true });
-  await gitOk(repo.path, ['worktree', 'add', '-b', branch, path, sha], 'git worktree add');
+  await gitOk(repo.path, [...lazy, 'worktree', 'add', ...(o.noCheckout ? ['--no-checkout'] : []), '-b', branch, path, sha], 'git worktree add');
   return { path, branch, repo: repo.name, repoPath: repo.path, base: sha };
+}
+
+/**
+ * A task job's worktree (AI Team v2 C1-6): `<repo>-super-<slug>` on branch `super/<slug>`, made
+ * ONCE and reused by every later step. Listed on that branch → reused as it is; the branch exists
+ * but no worktree has it (a removed worktree, a retry after a failed spawn) → re-attached without
+ * `-b`; neither → created from `base`. Every add is `--no-checkout` (`added: true`): the caller
+ * fills it raw (agents/raw-checkout.ts). `base` in the result is the branch's fork point only when
+ * this call created it; on reuse it is null and the caller keeps the one it recorded.
+ */
+export async function attachChildWorktree(o: {
+  projectRoot: string; repo: unknown; slug: unknown; base?: unknown; home?: string;
+}): Promise<Omit<CreatedWorktree, 'base'> & { base: string | null; created: boolean; added: boolean }> {
+  const home = o.home ?? homedir();
+  const repo = resolveWorktreeRepo(o.projectRoot, o.repo, o.home);
+  if (!validSlug(o.slug)) throw new WorktreeRefused('invalid_slug', 'slug must be a-z, 0-9 and -, starting with a letter or digit, at most 60 characters');
+  const branch = `super/${o.slug}`;
+  if (!SUPER_BRANCH_RE.test(branch)) throw new WorktreeRefused('invalid_slug', 'the branch name would be invalid');
+  const root = superWorktreeRoot(home);
+  const path = safeChildPath(root, `${sanitizeRepoName(repo.name)}-super-${o.slug}`);
+  if (!path) throw new WorktreeRefused('invalid_slug', 'the worktree path would leave ~/.claude-worktrees');
+  const realPath = await real(path);
+  const listed = (await porcelain(repo.path)).find((e) => e.path === path || e.path === realPath);
+  if (listed) {
+    if (listed.branch !== branch) throw new WorktreeRefused('path_exists', `${path} is a worktree of another branch`);
+    return { path, branch, repo: repo.name, repoPath: repo.path, base: null, created: false, added: false };
+  }
+  try { await fsp.lstat(path); throw new WorktreeRefused('path_exists', `${path} already exists and is not this task's worktree`); }
+  catch (err) { if (err instanceof WorktreeRefused) throw err; }
+  await fsp.mkdir(root, { recursive: true });
+  if (await branchExists(repo.path, branch, ['--no-lazy-fetch'])) {
+    // Re-attaching a branch the agent wrote, with a config the agent could write: no checkout here.
+    await gitOk(repo.path, ['--no-lazy-fetch', 'worktree', 'add', '--no-checkout', path, branch], 'git worktree add');
+    return { path, branch, repo: repo.name, repoPath: repo.path, base: null, created: false, added: true };
+  }
+  const created = await createChildWorktree({ projectRoot: o.projectRoot, repo: repo.name, slug: o.slug, base: o.base, home: o.home, noCheckout: true });
+  return { ...created, created: true, added: true };
 }
 
 /** Undo a worktree `createChildWorktree` just made, when NO child was told about it (the window

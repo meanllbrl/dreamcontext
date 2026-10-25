@@ -232,7 +232,14 @@ function CardLines({ lines, name, tx }: { lines: readonly SaidLine[]; name: stri
  * portaled into it (the notch's own mount). `bare`: the agent's envelope is the server's to
  * decide, so the composer offers no mode, permission or model switch.
  */
-export function CardChat({ session, reopen, placeholder }: { session: ChatSession; reopen: () => void; placeholder: string }) {
+export function CardChat({ session, reopen, placeholder, pane = false }: {
+  session: ChatSession;
+  reopen: () => void;
+  placeholder: string;
+  /** The full Chat pane (the AI Team page's conversation), not a board card's slim one: only the
+   *  controls that cannot reach an agent-bound session stay out (ChatPane `agentBound`). */
+  pane?: boolean;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
   useLayoutEffect(() => {
@@ -258,7 +265,7 @@ export function CardChat({ session, reopen, placeholder }: { session: ChatSessio
   }), [session]);
 
   return (
-    <div className="wb-agent-chat" ref={hostRef}>
+    <div className={pane ? 'agent-chat-pane-host' : 'wb-agent-chat'} ref={hostRef}>
       {createPortal(
         <ChatPaneHost
           session={session}
@@ -270,7 +277,8 @@ export function CardChat({ session, reopen, placeholder }: { session: ChatSessio
           permissionMode="auto"
           canSignInInApp={false}
           signInCommand="claude auth login"
-          bare
+          bare={!pane}
+          agentBound={pane}
           idlePlaceholder={placeholder}
         />,
         session.container,

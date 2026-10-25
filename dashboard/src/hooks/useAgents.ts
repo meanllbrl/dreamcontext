@@ -1,3 +1,8 @@
+import { pollMs } from '../lib/windowActivity';
+import type { AgentFace } from '../../../src/lib/agents/figure.js';
+
+/** How much an agent decides alone; mirrors `AGENT_AUTONOMY_LEVELS` (src/lib/automations/types.ts). */
+export type AgentAutonomy = 'ask' | 'balanced' | 'free';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 
@@ -58,10 +63,31 @@ export interface AgentSummary {
   reportsTo: string | null;
   /** `team` as written; drawn only on a lead (an agent someone reports to). Unhashed. */
   team: string | null;
+  /** How much it decides alone (the permission mode of its sessions). Optional: an older server
+   *  sends none, which reads as `balanced`. */
+  autonomy?: AgentAutonomy;
+  /** Its figure (stamped face, else the bare hash). */
+  face?: AgentFace;
   approvedForChat: boolean;
   approvedToRun: boolean;
   /** Why it may not run, when `approvedToRun` is false. */
   approvalReason: string | null;
+  /** Its creator's login (`machine:<id>`, `unowned`); null on an unstamped file. Optional: an
+   *  older server sends none. */
+  owner?: string | null;
+  /** How the owner reads in a sentence. */
+  ownerLabel?: string | null;
+  /** Someone else's agent: read-only here (no composer, no edit, no assign). */
+  readOnly?: boolean;
+  /** `global`: this machine's agent, listed in every project and kept out of every brain (AI Team
+   *  v2 D1). Optional: an older server sends none, which reads as `project`. */
+  scope?: 'project' | 'global';
+  /** The owner's other machine runs it (same login, several machines). */
+  runsElsewhere?: { machine: string; name: string } | null;
+  /** Arrived by sync and was not created on this machine. */
+  arrivedBySync?: boolean;
+  /** Who authored the synced change that needs a re-approval. */
+  syncedChangeBy?: string | null;
   /** Synthesised from a not-yet-split legacy automation file. */
   implicit: boolean;
   /** Its call settings differ from the defaults (shown read-only, never edited here). */
@@ -104,6 +130,8 @@ export interface AgentIdentityDraft {
   learning?: boolean;
   /** How it works. `''` clears it on an edit. Nothing records a template it started from. */
   soul?: string;
+  /** How much it decides alone. Not on create (every new agent starts `balanced`). */
+  autonomy?: AgentAutonomy;
 }
 
 /** An identity edit: every field optional, so a dialog that omits one never blanks it. */
@@ -138,6 +166,43 @@ export function useAgent(slug: string | null, opts: { fresh?: boolean } = {}) {
     retry: 0,
     // `fresh`: an edit dialog writes back what it read, so it must never start from a copy.
     ...(opts.fresh ? { refetchOnMount: 'always' as const } : {}),
+  });
+}
+
+/** A global agent as the launcher lists it (AI Team v2 D1): no project, so no usage. */
+export interface GlobalAgentRow {
+  slug: string;
+  title: string;
+  roleLine: string;
+  description: string;
+  face?: AgentFace;
+  autonomy: AgentAutonomy;
+  model: string | null;
+  approvedToRun: boolean;
+}
+
+/** This machine's global agents, read without a project (the launcher). */
+export function useGlobalAgents(opts: { enabled?: boolean } = {}) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['global-agents'],
+    queryFn: () => api.get<{ agents: GlobalAgentRow[] }>('/launcher/global-agents').then((r) => r.agents),
+    retry: 0,
+    enabled: opts.enabled ?? true,
+  });
+}
+
+/** Create a global agent from the launcher, granted on this machine (no project needed). */
+export function useCreateGlobalAgent() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: (draft: AgentIdentityDraft) =>
+      api.post<{ agent: GlobalAgentRow }>('/launcher/global-agents', draft).then((r) => r.agent),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['global-agents'] });
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+    },
   });
 }
 
@@ -250,4 +315,132 @@ export function approvalState(a: Pick<AgentSummary, 'approvedForChat' | 'approve
 export function findAgent(agents: readonly AgentSummary[] | undefined, slug: string | null | undefined): AgentSummary | null {
   if (!slug) return null;
   return (agents ?? []).find((a) => a.slug === slug) ?? null;
+}
+
+/** A posted file's kind, as the stage route classifies it. */
+export type StageFileKind = 'doc' | 'board' | 'image' | 'data' | 'other';
+
+/** `GET /api/agents/:slug/stage` — what the agent's stage draws around its live conversation.
+ *  Mirrors `StageView` (src/server/routes/agents.ts). */
+export interface AgentStageView {
+  slug: string;
+  title: string;
+  face: AgentFace;
+  autonomy: AgentAutonomy;
+  homeSessionId: string | null;
+  homeLive: boolean;
+  owner: string | null;
+  liveJobs: { slug: string; title: string; since: number; runId: string | null; lastLine: string | null }[];
+  reports: { slug: string; id: string; runId: string; at: string; text: string; files: string[] }[];
+  files: { path: string; kind: StageFileKind; at: string; slug: string }[];
+  routines: { slug: string; title: string; enabled: boolean; nextFireAt: string | null; cadence: string; face: AgentFace }[];
+  /** This machine's owner-inbox rows about this agent (M1). */
+  inbox: OwnerInboxRow[];
+  /** Its task-job steps running on this machine (M0 claims). A task session is shown read-only,
+   *  never chatted. Absent from an older server. */
+  taskJobs?: { taskId: string; taskSlug: string; taskName: string; step: string; role: string; round: number; phase: string; sessionId: string | null; claimedAt: string }[];
+}
+
+/** How often the stage re-reads its cards while it is on screen. */
+export const STAGE_POLL_MS = 5000;
+
+/** One agent's stage. Polled while mounted: a routine's run starts and ends on its own. */
+export function useAgentStage(slug: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agents', slug, 'stage'],
+    queryFn: () => api.get<{ stage: AgentStageView }>(`/agents/${encodeURIComponent(slug ?? '')}/stage`).then((r) => r.stage),
+    enabled: !!slug,
+    retry: 0,
+    refetchInterval: () => pollMs(STAGE_POLL_MS),
+  });
+}
+
+// ─── Agent sync (AI Team v2, wave B1) ───────────────────────────────────────────────────────
+
+/** `GET /api/agents/sync` — mirrors `handleAgentSyncState` (src/server/routes/agent-sync.ts). */
+export interface AgentSyncState {
+  switchOn: boolean;
+  confirmedHere: boolean;
+  active: boolean;
+  confirmedAt: string | null;
+  login: string;
+  machine: { id: string; name: string };
+  /** How many of this machine's files would start to sync. */
+  filesToSync: number;
+  /** Secret-scan hits in them: a `block` never pushes, a `warn` pushes once confirmed. */
+  hits: { file: string; line: number; rule: string; severity: 'block' | 'warn' }[];
+  unowned: string[];
+  parked: string[];
+}
+
+/** One owner-inbox row — mirrors `InboxRow` (src/lib/owner-inbox.ts). */
+export interface OwnerInboxRow {
+  id: string;
+  kind: 'secret-held' | 'assigned-outside' | 'assigned-elsewhere' | 'renamed' | 'parked' | 'replaced-by-sync' | 'adopt-pattern' | 'unowned'
+    // Task jobs (AI Team v2 C1): each dies when its task moves on. `ref` is the task slug.
+    | 'task-start-missed' | 'task-orphaned' | 'task-stopped' | 'task-blocked' | 'task-plan'
+    | 'task-question' | 'task-stalled' | 'task-review' | 'task-stuck';
+  ref: string;
+  agent: string | null;
+  title: string;
+  detail?: string;
+  actions: ('start' | 'ignore' | 'adopt' | 'dismiss' | 'start-all' | 'review'
+    | 'start-now' | 'reschedule' | 'stop' | 'let-finish' | 'continue' | 'take-over'
+    | 'approve-plan' | 'change-plan' | 'one-more-round' | 'cancel' | 'open-task' | 'complete' | 'send-back')[];
+  createdAt: string;
+}
+
+export function useAgentSync() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agents', 'sync'],
+    queryFn: () => api.get<AgentSyncState>('/agents/sync'),
+    retry: 0,
+  });
+}
+
+/** Turn agent sync on (when off) and confirm it on THIS machine. */
+export function useConfirmAgentSync() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<AgentSyncState>('/agents/sync/confirm', {}),
+    onSuccess: () => invalidateAgent(queryClient),
+  });
+}
+
+export function useOwnerInbox() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agents', 'inbox'],
+    queryFn: () => api.get<{ rows: OwnerInboxRow[] }>('/agents/inbox').then((r) => r.rows),
+    retry: 0,
+    refetchInterval: () => pollMs(30_000),
+  });
+}
+
+export function useAnswerInbox() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action, text }: { id: string; action: OwnerInboxRow['actions'][number]; text?: string }) =>
+      api.post<{ ok: boolean; rows: OwnerInboxRow[] }>(`/agents/inbox/${encodeURIComponent(id)}`, text ? { action, text } : { action }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agents', 'inbox'] });
+      // A task row's answer moves its task (C1): the board and the drawer follow.
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      invalidateAgent(queryClient);
+    },
+  });
+}
+
+/** Run this agent on this machine from now on (same login, several machines). */
+export function useBringAgentHere() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<{ active: unknown }>(`/agents/${encodeURIComponent(slug)}/bring-here`, {}),
+    onSuccess: (_r, slug) => invalidateAgent(queryClient, slug),
+  });
 }

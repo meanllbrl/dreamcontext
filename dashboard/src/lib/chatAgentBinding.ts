@@ -23,3 +23,18 @@ export function bindChatAgent(claudeId: string, agent: string): void {
 export function chatAgentFor(claudeId: string): string {
   return bindings.get(claudeId) ?? '';
 }
+
+/**
+ * Conversations opened from an agent's STAGE (the AI Team page). The first one the server
+ * accepts becomes the stage's home session, recorded on this machine (`stage=1` on the chat URL,
+ * read by the upgrade). Keyed like the agent binding, so a respawn keeps the flag.
+ */
+const stageChats = new Set<string>();
+
+export function bindStageChat(claudeId: string): void {
+  stageChats.add(claudeId);
+}
+
+export function isStageChat(claudeId: string): boolean {
+  return stageChats.has(claudeId);
+}

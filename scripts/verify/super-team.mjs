@@ -254,7 +254,7 @@ async function run(engineName, base) {
   await head.getByTestId('super-queue-open-team').click();
   ok(tag('T2 the AI Team page opens'), await until(page, async () => (await page.locator('.aiteam:visible').count()) === 1, 15000));
   ok(tag('T2 with the member open and its approval waiting'), await until(page, async () =>
-    (await page.locator('.aiteam-convo:visible').filter({ hasText: 'Scout' }).count()) >= 1
+    (await page.locator('.aiteam-stage:visible, .aiteam-convo:visible').filter({ hasText: 'Scout' }).count()) >= 1
     && (await page.locator('[data-team-approval]:visible').count()) === 1, 15000));
   await page.screenshot({ path: join(OUT, `${engineName}-ai-team.png`) });
 
@@ -338,7 +338,7 @@ async function run(engineName, base) {
   await page.mouse.click(cb.x + cb.width / 2, cb.y + cb.height / 2);
   ok(tag('T4 a click on the card opens the member in AI Team'), await until(page, async () =>
     (await page.locator('.aiteam:visible').count()) === 1
-    && (await page.locator('.aiteam-convo:visible').filter({ hasText: 'Scout' }).count()) >= 1, 15000));
+    && (await page.locator('.aiteam-stage:visible, .aiteam-convo:visible').filter({ hasText: 'Scout' }).count()) >= 1, 15000));
   await page.screenshot({ path: join(OUT, `${engineName}-team-card-opened.png`) });
 
   ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));

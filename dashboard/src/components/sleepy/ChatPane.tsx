@@ -643,7 +643,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, idlePlaceholder, readOnly = false,
+  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -717,6 +717,10 @@ export function ChatPane({
    *  permission or model controls in the composer, since none of them would reach it, and no
    *  live rail (quest, team), pinned shelf (branch) or empty-state hero; the host draws its own. */
   bare?: boolean;
+  /** The full pane bound to ONE agent whose envelope its host fixes (the AI Team page): every
+   *  Chat control, except the mode menu and the agent picker (it speaks as that agent) and the
+   *  permission segment (the agent's autonomy decides it). */
+  agentBound?: boolean;
   /** The composer's idle placeholder, when the host names who is listening. */
   idlePlaceholder?: string;
   /** A child of the handed-over Super Agent (plan-r7 D10, owner decision 3): the owner looks,
@@ -2631,13 +2635,13 @@ export function ChatPane({
           // value goes down beside the session's, and the menu's note states the scope.
           permissionMode={inBypass ? 'bypass' : 'auto'}
           projectPermissionMode={permissionMode}
-          onPermissionModeChange={bare ? undefined : onPermissionModeChange}
+          onPermissionModeChange={bare || agentBound ? undefined : onPermissionModeChange}
           mode={mode}
           // The Super Agent's own chat has no mode menu and no agent picker: only the owner's
           // Take it back leaves the mode (plan-r7 D4b), and it is always Claude in the cape.
-          onModeChange={bare || mode === 'super' ? undefined : onModeChange}
+          onModeChange={bare || agentBound || mode === 'super' ? undefined : onModeChange}
           agent={session.agent}
-          onAgentPick={bare || mode === 'super' ? undefined : onAgentPick}
+          onAgentPick={bare || agentBound || mode === 'super' ? undefined : onAgentPick}
           showModel={!bare}
           idlePlaceholder={idlePlaceholder}
           // One object, not two cards: whenever the shelf grows a bordered shell above the

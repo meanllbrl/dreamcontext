@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  DEFAULT_AGENT_AUTONOMY,
   DEFAULT_CATCHUP_HOURS,
   type ApprovalBinding,
   type AutomationJob,
@@ -55,6 +56,7 @@ export function isLegacyAutomation(data: Record<string, unknown>): boolean {
 export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: AutomationJob | null } {
   const isCall = m.mode === 'call';
   const agent: AgentManifest = {
+    scope: 'project',
     slug: m.slug,
     id: deriveAgentId(m.id, m.slug),
     title: m.title,
@@ -71,6 +73,11 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     // A legacy file holds no team placement: it stays a root until it is split.
     reportsTo: null,
     team: null,
+    // A legacy file holds no autonomy (the default) and no stamped face.
+    autonomy: m.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    face: null,
+    owner: m.owner ?? null,
+    updated: null,
     call: isCall
       ? {
           timeoutMinutes: m.timeoutMinutes,
@@ -106,6 +113,8 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     outputInstructions: m.outputInstructions,
     job: '',
     flow: m.flow ?? null,
+    owner: m.owner ?? null,
+    updated: null,
     path: m.path,
     body: m.body,
   };
@@ -140,6 +149,11 @@ export function composeRun(
     whiteboard: agent.whiteboard,
     agent: agent.slug,
     agentTitle: agent.title,
+    // Only a level other than the default rides the target, so a composed target stays field for
+    // field what a legacy read gives (the hash omits the default either way).
+    ...(agent.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: agent.autonomy } : {}),
+    // Unhashed; carried only when stamped, so an unstamped pair composes as before.
+    ...(agent.owner ? { owner: agent.owner } : {}),
   };
   if (job) {
     return {
@@ -160,6 +174,8 @@ export function composeRun(
       flow: job.flow ?? null,
       job: job.job,
       ...identity,
+      // A routine answers to its own owner too, when that is someone else (`foreignOwner`).
+      ...(job.owner && job.owner !== agent.owner ? { jobOwner: job.owner } : {}),
       runKind: 'automation',
       bindings: [],
       legacyKey: false,
@@ -188,6 +204,9 @@ export function composeRun(
     flow: call.flow ?? null,
     job: '',
     ...identity,
+    // Unhashed: where the agent's own approval lives (D1). Its call target only: a routine bound to
+    // a global agent belongs to its project, and is approved in that project's bucket.
+    ...(agent.scope === 'global' ? { agentScope: 'global' as const } : {}),
     runKind: 'agent',
     bindings: [...bindings],
     legacyKey,

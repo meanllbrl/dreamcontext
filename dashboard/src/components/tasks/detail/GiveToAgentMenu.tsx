@@ -42,6 +42,8 @@ export function GiveToAgentMenu({ task, onError }: { task: Task; onError: (msg: 
   const [delegating, setDelegating] = useState(false);
   const current = taskAgent(task);
   const currentName = current ? findAgent(agents, current)?.title ?? current : '';
+  // A teammate's agent holds the task: it is read-only here, so nothing hands the task on or clears it.
+  const heldByTeammate = !!current && findAgent(agents, current)?.readOnly === true;
 
   useEffect(() => {
     if (!open) return;
@@ -65,7 +67,7 @@ export function GiveToAgentMenu({ task, onError }: { task: Task; onError: (msg: 
           <TaskAgentFace slug={current} size={22} />
         </span>
       )}
-      <button
+      {!heldByTeammate && <button
         type="button"
         className="gta-btn"
         data-testid="give-to-agent"
@@ -74,8 +76,8 @@ export function GiveToAgentMenu({ task, onError }: { task: Task; onError: (msg: 
         onClick={() => setOpen((v) => !v)}
       >
         {t('tasks.assignToAgent')} <span aria-hidden>▾</span>
-      </button>
-      {open && (
+      </button>}
+      {open && !heldByTeammate && (
         <>
           <div className="gta-scrim" onClick={() => setOpen(false)} />
           <div className="gta-menu" role="menu">

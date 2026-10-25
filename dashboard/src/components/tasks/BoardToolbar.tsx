@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, type CSSProperties } from 'react';
+import { findAgent, useAgents } from '../../hooks/useAgents';
 import type { Task } from '../../hooks/useTasks';
 import { useStatusModel, useFeatureOptions } from '../../hooks/useTasks';
 import { HardRefreshChip, SyncChip, useCloudSync } from './SyncChip';
@@ -9,7 +10,7 @@ import {
   type BoardFilters, type CardProps, type Dim, type DueFilter, type SortKey,
   PRIO_ORDER, SORT_LABEL, URG_ORDER,
   BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
-  dimGet, levelLabel, prioColor, taskAssignees, taskFeature, taskVersion, urgColor,
+  dimGet, levelLabel, prioColor, taskAgentKey, taskAssignees, taskFeature, taskVersion, urgColor,
 } from './boardModel';
 import { type BarFit, fitOnLayout, fitOnResize, fitRetest, initialFit, menusToClose } from './toolbarCollapse';
 
@@ -77,6 +78,7 @@ interface FieldOpt { value: string; label: string; color: string | null; count: 
 export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilter, activeVersion, releasedVersions, openMenu, setOpenMenu, onNewTask, onAuthorWithAgent, agentReady, flash }: BoardToolbarProps) {
   const sm = useStatusModel();
   const { data: featureOptions = [] } = useFeatureOptions();
+  const { data: agents } = useAgents();
   const [filterPane, setFilterPane] = useState<keyof BoardFilters | 'sort' | null>(null);
   // The Versions & Sprints popover shows the filter list, or (after "Manage versions") the manager.
   const [managingVersions, setManagingVersions] = useState(false);
@@ -101,6 +103,9 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   const featureName = new Map(featureOptions.map((o) => [o.slug, o.name ?? o.slug] as const));
   const featureValues = Array.from(new Set([...featureOptions.map((o) => o.slug), ...allTasks.map(taskFeature).filter((v) => v !== 'none')]));
   const featureLabelOf = (v: string) => (v === 'none' ? 'No feature' : featureName.get(v) ?? v);
+  // Agents: the roster plus any slug a task names that is no longer on it.
+  const agentValues = Array.from(new Set([...(agents ?? []).map((a) => a.slug), ...allTasks.map(taskAgentKey).filter((v) => v !== 'none')]));
+  const agentLabelOf = (v: string) => (v === 'none' ? 'No agent' : findAgent(agents, v)?.title ?? v);
 
   const fieldOpts = (key: keyof BoardFilters): FieldOpt[] => {
     if (key === 'status') return sm.order.map((k) => ({ value: k, label: sm.labelOf(k), color: sm.colorOf(k), count: countBy('status', k) }));
@@ -112,13 +117,14 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       .map((k) => ({ value: k, label: k === 'none' ? 'No version' : k, color: null, count: countBy('version', k) }));
     if (key === 'assignee') return assignees.map((a) => ({ value: a.value, label: a.label, color: a.value === 'none' ? null : a.color, count: countAssignee(a.value) }));
     if (key === 'feature') return [...featureValues, 'none'].map((v) => ({ value: v, label: featureLabelOf(v), color: null, count: allTasks.filter((t) => taskFeature(t) === v).length }));
+    if (key === 'agent') return [...agentValues, 'none'].map((v) => ({ value: v, label: agentLabelOf(v), color: null, count: allTasks.filter((t) => taskAgentKey(t) === v).length }));
     return allTags.map((tg) => ({ value: tg, label: tg, color: null, count: allTasks.filter((t) => t.tags.includes(tg)).length }));
   };
 
   const FIELD_DEFS: { key: keyof BoardFilters; label: string }[] = [
     { key: 'status', label: 'Status' }, { key: 'priority', label: 'Priority' }, { key: 'urgency', label: 'Urgency' },
     { key: 'assignee', label: 'Assignee' }, { key: 'version', label: 'Versions & Sprints' }, { key: 'feature', label: 'Feature' },
-    { key: 'tags', label: 'Tags' },
+    { key: 'agent', label: 'Agent' }, { key: 'tags', label: 'Tags' },
   ];
 
   const fieldSummary = (key: keyof BoardFilters): { text: string; active: boolean } => {

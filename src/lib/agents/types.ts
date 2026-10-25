@@ -9,14 +9,17 @@
  * the automations contract root and re-exported here, so the two modules cannot
  * drift apart.
  */
+import type { AgentFace } from './figure.js';
 import {
   DEFAULT_TIMEOUT_MINUTES,
+  type AgentAutonomy,
   type EffortLevel,
   type FlowGraph,
   type ReviewMode,
 } from '../automations/types.js';
 
-export type { ApprovalBinding, ApprovalUse, AutomationSlot, RunKind } from '../automations/types.js';
+export type { AgentAutonomy, ApprovalBinding, ApprovalUse, AutomationSlot, RunKind } from '../automations/types.js';
+export type { AgentFace } from './figure.js';
 
 /** The agents folder, contextRoot-relative. */
 export const AGENTS_DIR = 'agents';
@@ -55,6 +58,9 @@ export const DEFAULT_CALL_SETTINGS: Readonly<AgentCallSettings> = Object.freeze(
   notify: true,
 });
 
+/** Where an agent lives: in this brain, or on this machine for every project (D1). */
+export type AgentScope = 'project' | 'global';
+
 export interface AgentManifest {
   slug: string;
   id: string;
@@ -81,6 +87,19 @@ export interface AgentManifest {
   /** `team`: its team's name, read only when someone reports to it. Unhashed. */
   team: string | null;
   call: AgentCallSettings;
+  /** How much it decides alone (`ask` | `balanced` | `free`); `balanced` when absent or
+   *  unreadable. Hashed only when not `balanced` (see `canonicalApprovalPayload`). */
+  autonomy: AgentAutonomy;
+  /** Its figure (`face: {shape, color}`), stamped at create; null on a manifest written before
+   *  figures existed (the page then draws the bare hash). Unhashed, like `photo`. */
+  face: AgentFace | null;
+  /** Its creator's GitHub login (`owner:`), `machine:<id>` before anyone signed in on that machine,
+   *  `unowned` when no creator could be worked out, null on a file the migration has not stamped
+   *  yet. Unhashed. Only the owner writes, runs, talks to or assigns it (`agents/owner.ts`). */
+  owner: string | null;
+  /** When its owner last wrote it (`updated:`, ISO), unhashed: between two machines of the same
+   *  login, the later one wins a same-id merge. Null before the first owner write. */
+  updated: string | null;
   /** The id of the legacy automation file this agent came from, or null. On an
    *  agent synthesised from a not-yet-split legacy file it is that file's id, so
    *  the composed call target keeps the legacy id byte for byte. */
@@ -88,6 +107,9 @@ export interface AgentManifest {
   /** True when this agent was synthesised from a legacy automation file on read
    *  (no `agents/<slug>.md` exists for it yet). */
   implicit: boolean;
+  /** `global`: an agent of this machine listed in every project (`~/.dreamcontext/agents/<slug>.md`,
+   *  D1, `scope.ts`); `project`: one of this brain. Unhashed. */
+  scope: AgentScope;
   path: string;
   body: string;
 }
@@ -105,6 +127,7 @@ export interface AgentInput {
   whiteboard?: string | null;
   photo?: string | null;
   shared?: boolean;
+  autonomy?: AgentAutonomy;
 }
 
 /**
@@ -112,7 +135,7 @@ export interface AgentInput {
  * settings: no verb edits those in this build, and `withRestamp` re-approves
  * only what this patch can express.
  */
-export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'photo'>>;
+export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'photo' | 'autonomy'>>;
 
 /**
  * Where an agent sits in the team: its manager and its team's name. `null` clears a key,

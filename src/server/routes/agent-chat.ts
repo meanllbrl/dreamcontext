@@ -35,6 +35,9 @@ import { advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRu
 import { safeChildPath } from '../safe-path.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
+import { recordStageHomeSession } from '../../lib/local-store.js';
+import { getRunTarget } from '../../lib/automations/store.js';
+import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
@@ -74,6 +77,7 @@ import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFr
 import { chatSpawnAccount } from '../../lib/automations/account.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
+import { taskOfAnySession } from '../../lib/agents/task-starter.js';
 import { resolveBoardAssets } from './knowledge.js';
 import { isTrustedRemotePeer } from '../remote-access.js';
 import { assistantContextRoot, assistantExists, isAssistantVault, readAssistantConfig, DEFAULT_ASSISTANT_CONFIG, DEFAULT_ASSISTANT_MODEL, type Autonomy } from '../../lib/assistant/home.js';
@@ -269,8 +273,10 @@ async function awaitResumeHandoff(contextRoot: string, resumeId: string): Promis
   if (!resumeId) return;
   const mapped = resolveAgentSession(contextRoot, resumeId);
   // Only conversations that actually EXIST can produce the bad fall-through, so an id with no
-  // transcript never costs a wait.
-  const candidates = [mapped, resumeId].filter((c) => c && claudeConversationExists(c));
+  // transcript never costs a wait, unless a live child still holds it: a respawn of a conversation
+  // that has not written its transcript yet (a stage respawned at a new autonomy level before its
+  // first answer) would otherwise be refused as held instead of waiting out the hand-off.
+  const candidates = [mapped, resumeId].filter((c) => c && (claudeConversationExists(c) || liveConversations.has(c)));
   if (!candidates.length) return;
   const deadline = Date.now() + RESUME_HANDOFF_WAIT_MS;
   let polls = 0;
@@ -704,6 +710,21 @@ export function backgroundOutputPath(cwd: string, conversationId: string, taskId
 // that spawns the resumable `claude` process this gate exists to guard — is never reached.
 // (A second, unrelated `spawn` lower in this file opens a file with the OS's default
 // app/file-manager for the file-open HTTP route; it is not part of this WS upgrade path.)
+/**
+ * Will this open run `bypassPermissions`? The pane's flag, or an agent conversation at the Free
+ * level (its level decides its mode, agents/permission.ts, whatever the pane says). The T24 gate
+ * below guards exactly the resumes this is true for.
+ */
+export function resumeRunsBypass(bypass: boolean, contextRoot: string, chatAgent: string | null): boolean {
+  if (bypass) return true;
+  return !!chatAgent && getRunTarget(contextRoot, chatAgent, 'agent')?.autonomy === 'free';
+}
+
+/** True when any of `ids` is a task step's session on this machine (registry or binding tag). */
+export function refusesTaskSession(contextRoot: string, ids: readonly (string | null | undefined)[], home?: string): boolean {
+  return ids.some((id) => !!id && taskOfAnySession(contextRoot, id, home) !== null);
+}
+
 export function shouldRejectAutomationResume(
   bypass: boolean,
   resumeId: string,
@@ -754,6 +775,10 @@ export function shouldRejectAutomationResume(
   const CACHE_FILE_SUFFIX = '.json';
   let cacheFileNames: string[] = [];
   try { cacheFileNames = readdirSync(automationCacheDir(contextRoot)); } catch { cacheFileNames = []; }
+  // A global agent's cache lives in its own folder for this project (D1): its runs count too.
+  for (const slug of listGlobalAgentSlugs()) {
+    if (isGlobalAgentHere(contextRoot, slug)) cacheFileNames.push(`${slug}${CACHE_FILE_SUFFIX}`);
+  }
 
   const claimedByAutomation = cacheFileNames.some((name) => {
     if (!name.endsWith(CACHE_FILE_SUFFIX)) return false;
@@ -1227,13 +1252,23 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     const agentAsked = url.searchParams.has('chatAgent');
     const chatAgent = agentAsked && !assistant && !card ? parseChatAgent(url.searchParams.get('chatAgent')) : null;
     if (agentAsked && !chatAgent) { rejectUpgrade(socket, 400); return; }
+    // The agent's STAGE (AI Team page): an agent chat whose first accepted conversation becomes
+    // the stage's home session, recorded once in the machine-local store (lib/local-store.ts).
+    const stageAgent = chatAgent && url.searchParams.get('stage') === '1' ? chatAgent : null;
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
     // called at all (and therefore before `resolveAgentSession`, currently agent-chat.ts:250),
     // so a tab-session mapping can never launder an unbound automation session id into a
     // resumable one.
-    if (shouldRejectAutomationResume(bypass, resumeId, join(projectRoot, '_dream_context'))) {
+    if (shouldRejectAutomationResume(resumeRunsBypass(bypass, join(projectRoot, '_dream_context'), chatAgent), resumeId, join(projectRoot, '_dream_context'))) {
+      rejectUpgrade(socket, 403);
+      return;
+    }
+    // A task step's session never opens in a chat tab (AI Team v2 C1-14): only its task host
+    // resumes it, under its step's envelope and in its worktree. Server-side, so the pane's
+    // `bypass` flag changes nothing; the stage shows its transcript read-only instead.
+    if (refusesTaskSession(join(projectRoot, '_dream_context'), [resumeId, sessionId])) {
       rejectUpgrade(socket, 403);
       return;
     }
@@ -1322,7 +1357,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
         let accepted = false;
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+        const onAccepted = (): void => {
+          accepted = true;
+          const conversation = sessionId || resumeId;
+          if (!stageAgent || !conversation) return;
+          try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
+        };
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
         settleSupersede(accepted);
       });
     })();
@@ -1955,7 +1996,9 @@ export function startChatSession(
     '--permission-prompt-tool', 'stdio',
     // A home-board card runs under its board's rules (dontAsk, project settings only, an exact
     // allowlist), in place of the pane's mode, exactly as its runs do (board-scope.ts).
-    ...(envelope?.permissionArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
+    // An agent in a Chat tab (its stage included) runs at its autonomy level (agents/permission.ts),
+    // decided above from its manifest; the pane's bypass flag never reaches it.
+    ...(envelope?.permissionArgs ?? agentChat?.levelArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
     ...briefingArg,
     ...agentsArg,
     // The `--settings` file is a flag source the scope cannot narrow: a scoped card goes without.
@@ -3935,7 +3978,8 @@ export function startChatSession(
     // new mode) is LOAD-BEARING for every switch INTO bypass, not just a courtesy for an older
     // CLI. Verified end to end: the respawned `--resume` session boots on `bypassPermissions`.
     // The Assistant's permission mode is its AUTONOMY setting — a pane switch must not move it.
-    if (msg.type === 'setPermissionMode' && !isAssistant && !scopedCard && (msg.mode === 'auto' || msg.mode === 'bypass')) {
+    // An agent's mode is its autonomy level, so a pane switch must not move it either.
+    if (msg.type === 'setPermissionMode' && !isAssistant && !scopedCard && !agentChat?.levelArgs && (msg.mode === 'auto' || msg.mode === 'bypass')) {
       const requestId = sanitizeControlId(msg.requestId) || randomUUID();
       writeStdin({
         type: 'control_request',

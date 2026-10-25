@@ -252,3 +252,66 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ─── When / where: two-way segmented choices ─── */
+.ata-seg {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  align-self: flex-start;
+}
+
+.ata-seg-opt {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.ata-seg-opt:hover:not(:disabled) {
+  background: var(--color-bg-secondary);
+}
+
+.ata-seg-opt:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.ata-seg-opt:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.ata-seg-opt:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ata-seg-opt--on {
+  border-color: var(--color-border-hover);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+.ata-when-input {
+  max-width: 280px;
+}
+
+.ata-warn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning-ink);
+  font-size: var(--font-size-sm);
+}

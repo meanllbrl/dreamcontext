@@ -31,7 +31,7 @@ import { handleWindowCommand } from './routes/window-control.js';
 import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
-import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
+import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksFilingApproval, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksAgentAction, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
 import { handleTaskAssetsList, handleTaskAssetRaw, handleTaskAssetUpload } from './routes/task-assets.js';
 import { handleSleepEvalLabelsGet, handleSleepEvalLabelsPost } from './routes/sleep-eval.js';
 import { handleSleepGet, handleSleepUpdate, handleSleepAutoGet, handleSleepAutoPut, handleSleepAutoCancel, handleSleepSpecialistsGet } from './routes/sleep.js';
@@ -152,13 +152,22 @@ import {
   handleAgentsList,
   handleAgentsShow,
   handleAgentsCreate,
+  handleLauncherGlobalAgents,
+  handleLauncherGlobalAgentsCreate,
   handleAgentsUpdate,
   handleAgentsDelete,
   handleAgentsApprove,
   handleAgentsPlace,
-  handleAgentsPhotoGet,
+  handleAgentsPhotoGet, handleAgentsStage,
   handleAgentsPhotoUpload,
 } from './routes/agents.js';
+import {
+  handleAgentSyncState,
+  handleAgentSyncConfirm,
+  handleAgentsInbox,
+  handleAgentsInboxAction,
+  handleAgentsBringHere,
+} from './routes/agent-sync.js';
 import {
   handleThesesList,
   handleThesesCreate,
@@ -202,7 +211,7 @@ import { claimOwnedPort } from './owned-ports.js';
 import { closeAllWebSessions } from './web-session-proxy.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
-  handleAgentAccountsSwitchPolicy, handleAgentAccountsList,
+  handleAgentAccountsSwitchPolicy, handleAgentAccountsList, handleAgentAccountsOwnerOnly, handleAgentAccountsAgentThreshold,
   handleAgentAccountsLogin, handleAgentAccountsRelogin, handleAgentAccountsPreferred, handleAgentAccountsRefresh,
   handleAgentAccountsReorder, handleAgentAccountsRemove,
 } from './routes/agent-accounts.js';
@@ -269,6 +278,7 @@ import {
 import { listVaults } from '../lib/vaults.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
+import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
 import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
@@ -346,7 +356,9 @@ export function buildRouter(): Router {
   // Assign to agent: sets `agent:`, applies the status rule, starts the agent's
   // call-target run with the task as data (409 when it is not approved to run).
   router.post('/api/tasks/:slug/assign-agent', handleTasksAssignAgent);
+  router.post('/api/tasks/:slug/agent-action', handleTasksAgentAction);
   router.post('/api/tasks/:slug/objection', handleTasksObjection);
+  router.post('/api/tasks/:slug/filing-approval', handleTasksFilingApproval);
   router.post('/api/tasks/:slug/insert', handleTasksInsert);
 
   // Sleep
@@ -457,6 +469,9 @@ export function buildRouter(): Router {
   router.get('/api/launcher/defaults', handleLauncherDefaults);
   router.get('/api/launcher/catalog', handleLauncherCatalog);
   router.post('/api/launcher/register', handleLauncherRegister);
+  // This machine's global agents (D1): listed and created from the launcher, no project needed.
+  router.get('/api/launcher/global-agents', handleLauncherGlobalAgents);
+  router.post('/api/launcher/global-agents', handleLauncherGlobalAgentsCreate);
 
   // The dreamcontext Assistant (vault-agnostic; every route self-gates — see routes/assistant.ts).
   router.get('/api/assistant/status', handleAssistantStatus);
@@ -572,6 +587,8 @@ export function buildRouter(): Router {
   router.post('/api/agent/accounts/remove', handleAgentAccountsRemove);
   router.post('/api/agent/accounts/auto-switch', handleAgentAccountsAutoSwitch);
   router.post('/api/agent/accounts/switch-policy', handleAgentAccountsSwitchPolicy);
+  router.post('/api/agent/accounts/owner-only', handleAgentAccountsOwnerOnly);
+  router.post('/api/agent/accounts/agent-threshold', handleAgentAccountsAgentThreshold);
   // The MCP panel behind `/mcp` in Chat. Deliberately NOT vault-agnostic: a server can be
   // PROJECT-scoped (the repo's `.mcp.json`, how a team shares servers), and that scope is
   // resolved from the working directory — so every leg needs the project.
@@ -784,12 +801,19 @@ export function buildRouter(): Router {
   // differ by method or segment count.
   router.get('/api/agents', handleAgentsList);
   router.post('/api/agents', handleAgentsCreate);
+  // Agent sync (B1): literal segments BEFORE `/:slug`, which would otherwise capture them.
+  router.get('/api/agents/sync', handleAgentSyncState);
+  router.post('/api/agents/sync/confirm', handleAgentSyncConfirm);
+  router.get('/api/agents/inbox', handleAgentsInbox);
+  router.post('/api/agents/inbox/:id', handleAgentsInboxAction);
   router.get('/api/agents/:slug', handleAgentsShow);
+  router.post('/api/agents/:slug/bring-here', handleAgentsBringHere);
   router.post('/api/agents/:slug/update', handleAgentsUpdate);
   router.post('/api/agents/:slug/delete', handleAgentsDelete);
   router.post('/api/agents/:slug/approve', handleAgentsApprove);
   router.post('/api/agents/:slug/place', handleAgentsPlace);
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
+  router.get('/api/agents/:slug/stage', handleAgentsStage);
   router.post('/api/agents/:slug/photo', handleAgentsPhotoUpload);
   router.get('/api/automations', handleAutomationsList);
   // Create is a POST on the COLLECTION, so it shares no shape with any `/:slug`
@@ -1418,6 +1442,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       startOrphanSweep();
       // Voice takes older than 24 h (or past 200 MB) go now, not at the next take.
       pruneTakes();
+      // Task jobs: settle what died and start what is due, now and every minute (C1-3).
+      startTaskJobLoop();
       // Mac mode lives in the desktop server: the CLI finds it through this hint, and a state
       // left `on` by a crashed server is repaired now (orphan tunnel, sleep, LPM, devices).
       if (isDesktop() && process.platform === 'darwin') {

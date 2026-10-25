@@ -54,6 +54,11 @@ import { drainQueue, enqueueFire } from './queue.js';
 import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
 import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
+import { readAccountWait } from './account.js';
+import { scanOutsideAssignments } from '../agents/outside-assignments.js';
+import { reconcileTaskJobs, startDueTaskJobs, type TaskJobDeps } from '../agents/task-starter.js';
+import { currentLogin, foreignOwner } from '../agents/owner.js';
+import { placement } from '../agents/active.js';
 import { pollTelegram, type PollResult } from './telegram.js';
 
 /** The real poller. Cheap when Telegram is off: `readTelegramConfig` returns
@@ -85,6 +90,8 @@ export interface TickOptions {
    *  to the real poller, which is itself a no-op when Telegram is unconfigured
    *  (the overwhelmingly common case). */
   pollTelegram?: (contextRoot: string, home?: string) => Promise<PollResult>;
+  /** Task jobs' injectables (the host spawn, the liveness probe). Tests only. */
+  taskJobs?: Omit<TaskJobDeps, 'home' | 'now'>;
 }
 
 /** Per-manifest disposition for one `tickProject` pass — lets a caller log or
@@ -102,7 +109,7 @@ export interface TickOptions {
  *  mapping. */
 export interface SlugVerdict {
   slug: string;
-  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned' | 'awaiting-review' | 'awaiting-approval';
+  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned' | 'awaiting-review' | 'awaiting-approval' | 'waiting-for-account' | 'read-only' | 'runs-elsewhere';
 }
 
 export interface TickProjectResult {
@@ -185,8 +192,25 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   // must not hand them a second run for the same owed fire.
   const drainedAndRan = new Set<string>();
 
+  // Account protection's wait (account.ts): while every account this machine may use for
+  // unattended work is past its threshold, nothing starts and nothing is drained. Every fire
+  // stays owed (queue entries untouched, watermarks not advanced) and runs on the first tick
+  // after the earliest account frees up.
+  const accountWait = readAccountWait(opts.home, now.getTime());
+
+  // Hand edits arriving by sync raise owner rows here instead of starting anything (B1-5), and
+  // ledger records of tasks that moved on die.
+  scanOutsideAssignments(contextRoot, opts.home);
+
+  // Task jobs (C1): settle what died, then start what is due. Each step runs in a DETACHED host,
+  // so this never waits for one: the routines below fire on time while task jobs run.
+  const taskDeps: TaskJobDeps = { ...(opts.taskJobs ?? {}), home: opts.home, now: () => now, log: logFn };
+  reconcileTaskJobs(contextRoot, taskDeps);
+  const taskRuns = startDueTaskJobs(contextRoot, taskDeps);
+  if (taskRuns.length) logFn(`[automations] started ${taskRuns.length} task job step(s): ${taskRuns.join(', ')}`);
+
   // ── Drain, BEFORE isDue() (D9/A4/R5 — see this module's header) ──────────
-  const drained = drainQueue(projectRoot, opts.home, now.getTime());
+  const drained = accountWait === null ? drainQueue(projectRoot, opts.home, now.getTime()) : [];
   for (const fire of drained) {
     // Re-resolve the manifest rather than trusting the queue entry: it may
     // have been removed, or disabled, since it was queued.
@@ -239,6 +263,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       fireAt: new Date(firedAtMs),
       home: opts.home,
       log: logFn,
+      unattended: true,
     });
     ran.push(outcome);
     verdicts.push({ slug: fire.slug, verdict: verdictFor(outcome.status) });
@@ -249,6 +274,17 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   // ── isDue(), for everything the drain phase didn't already run ──────────
   for (const manifest of manifests) {
     if (drainedAndRan.has(manifest.slug)) continue;
+
+    // A teammate's routine is read-only here, and the owner's other machine runs its own: neither
+    // is tried (the runner would refuse it anyway, every tick, into its history).
+    if (foreignOwner(manifest)) {
+      verdicts.push({ slug: manifest.slug, verdict: 'read-only' });
+      continue;
+    }
+    if (!placement(contextRoot, manifest.agent || manifest.slug, manifest.owner ?? null, opts.home, now).here) {
+      verdicts.push({ slug: manifest.slug, verdict: 'runs-elsewhere' });
+      continue;
+    }
 
     if (!manifest.enabled) {
       verdicts.push({ slug: manifest.slug, verdict: 'disabled' });
@@ -265,6 +301,13 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       verdicts.push({ slug: manifest.slug, verdict: due.reason });
       continue;
     }
+    // Re-read per slug: an earlier start this very pass may have found every account full.
+    const waitUntil = accountWait ?? readAccountWait(opts.home, now.getTime());
+    if (waitUntil !== null) {
+      logFn(`[automations] ${manifest.slug} is due but waits for an account until ${new Date(waitUntil).toISOString()}`);
+      verdicts.push({ slug: manifest.slug, verdict: 'waiting-for-account' });
+      continue;
+    }
 
     logFn(`[automations] ${manifest.slug} is due (fire ${due.fireAt?.toISOString() ?? 'unknown'}) — running`);
     const outcome = await runImpl(contextRoot, manifest.slug, {
@@ -272,6 +315,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       fireAt: due.fireAt ?? now,
       home: opts.home,
       log: logFn,
+      unattended: true,
     });
     ran.push(outcome);
     verdicts.push({ slug: manifest.slug, verdict: verdictFor(outcome.status) });

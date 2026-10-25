@@ -2,6 +2,8 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } 
 import { dirname, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { checkApproval } from './registry.js';
+import { ownerLabel } from '../agents/owner.js';
+import { placement } from '../agents/active.js';
 import { outputRootDir } from './store.js';
 import { resolveWhiteboardPath } from '../whiteboards/store.js';
 import { identityOnly } from '../agents/compose.js';
@@ -158,11 +160,19 @@ export function resolveSpawnScope(
   use: ApprovalUse = 'run',
 ): SpawnScopeResult {
   const approval = checkApproval(dirname(root), m, home, use);
+  if (!approval.approved && approval.reason === 'not_owner') {
+    return { ok: false, reason: `"${m.slug}" belongs to ${ownerLabel(approval.owner)}, so it is read-only here: only its owner talks to it or runs it` };
+  }
   if (!approval.approved) {
     return {
       ok: false,
       reason: `"${m.slug}" is not approved as it stands (${approval.reason}); approve it again before talking to it`,
     };
+  }
+  // Same login, several machines: only the machine the owner brought it to runs it (B1-7).
+  const where = placement(root, m.agent || m.slug, m.owner ?? null, home);
+  if (!where.here) {
+    return { ok: false, reason: `"${m.slug}" runs on ${where.name}; bring it here on the AI Team page to run it on this machine` };
   }
   const scoped = use === 'identity' ? identityOnly(m) : m;
   const fromManifest = scoped.whiteboard ?? null;

@@ -15,6 +15,13 @@
       ]
     },
     {
+      "path": "agents bring-here",
+      "desc": "Run this agent on THIS machine from now on (same login, several machines); the other machine stops at its next pull",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
       "path": "agents create",
       "desc": "Create an agent, approved on this machine",
       "args": [
@@ -47,8 +54,14 @@
         "--effort",
         "--whiteboard",
         "--reports-to",
-        "--team"
+        "--team",
+        "--autonomy"
       ]
+    },
+    {
+      "path": "agents inbox",
+      "desc": "What waits for you here: held secrets, tasks assigned outside the app, renamed agents, patterns to adopt",
+      "args": []
     },
     {
       "path": "agents list",
@@ -75,6 +88,11 @@
       "args": [
         "<slug>"
       ]
+    },
+    {
+      "path": "agents sync",
+      "desc": "Agents ride the brain sync: show the switch and this machine's state, or confirm it here",
+      "args": []
     },
     {
       "path": "agents unshare",
@@ -3419,6 +3437,13 @@
       "desc": "Create tasks, log progress, insert into sections, and mark complete",
       "args": [],
       "group": true
+    },
+    {
+      "path": "tasks approve-filing",
+      "desc": "Approve a task an agent opened: keep it as it is (the counterpart of `tasks object`); the status does not change",
+      "args": [
+        "<name>"
+      ]
     },
     {
       "path": "tasks assign-agent",

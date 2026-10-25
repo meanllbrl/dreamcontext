@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import { delimiter, join, win32, resolve } from 'node:path';
+import { delimiter, isAbsolute, join, win32, resolve } from 'node:path';
 
 /**
  * Thin, testable git wrapper over `execFileSync` (pattern from
@@ -516,7 +516,8 @@ export function commit(
     run(cwd, ['commit', '--no-verify', '-m', message], { env });
   } catch (err) {
     const msg = (err as Error).message ?? '';
-    if (/nothing to commit|nothing added to commit/i.test(msg)) return null;
+    // `no changes added`: every change was unstaged again (the agent staging pass held a secret).
+    if (/nothing to commit|nothing added to commit|no changes added to commit/i.test(msg)) return null;
     throw err;
   }
   return currentSha(cwd);
@@ -582,5 +583,169 @@ export function abortMerge(cwd: string): void {
     run(cwd, ['merge', '--abort']);
   } catch {
     /* best-effort — if there's nothing to abort, the tree is already clean */
+  }
+}
+
+// ─── Agent sync helpers (AI Team v2 B1: the staging pass, the pull-collision guard) ─────────
+
+/** Every path staged right now (repo-relative), NUL-split. `[]` on any failure. */
+export function stagedPaths(cwd: string, pathspecs: string[] = []): string[] {
+  try {
+    const args = ['diff', '--cached', '--name-only', '-z'];
+    return run(cwd, pathspecs.length > 0 ? [...args, '--', ...pathspecs] : args).split('\0').filter((p) => p.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** Unstage one path: the index goes back to HEAD's version (or drops a new file). Best effort. */
+export function restoreStaged(cwd: string, relPath: string): void {
+  try {
+    run(cwd, ['restore', '--staged', '--', relPath]);
+  } catch {
+    try { run(cwd, ['rm', '--cached', '--quiet', '--', relPath]); } catch { /* not staged at all */ }
+  }
+}
+
+/** The object id of `relPath` in the index (`:path`) or in `rev` (`rev:path`), or null. */
+export function blobId(cwd: string, spec: string): string | null {
+  try {
+    return run(cwd, ['rev-parse', '--verify', '--quiet', spec]).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The text of `spec` (`:path`, `HEAD:path`), or null when absent or unreadable. */
+export function showSpec(cwd: string, spec: string): string | null {
+  try {
+    return run(cwd, ['show', spec]);
+  } catch {
+    return null;
+  }
+}
+
+/** Paths ADDED between two commits (`HEAD...<remote>` from the merge base), repo-relative. */
+export function addedPaths(cwd: string, range: string): string[] {
+  try {
+    return run(cwd, ['diff', '--name-only', '--diff-filter=A', '-z', range]).split('\0').filter((p) => p.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** Every path tracked in `rev`, repo-relative. `[]` on failure. */
+export function treePaths(cwd: string, rev: string): string[] {
+  try {
+    return run(cwd, ['ls-tree', '-r', '-z', '--name-only', rev]).split('\0').filter((p) => p.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** The absolute path of a file inside the git dir (`info/exclude`), or null outside a repo. */
+export function gitPathFor(cwd: string, name: string): string | null {
+  try {
+    const p = run(cwd, ['rev-parse', '--git-path', name]).trim();
+    return p ? (isAbsolute(p) ? p : join(cwd, p)) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The repo top-level, or null. */
+export function topLevel(cwd: string): string | null {
+  try {
+    return run(cwd, ['rev-parse', '--show-toplevel']).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The author email of the commit that ADDED `relPath` (the oldest add), or null. */
+export function addAuthorEmail(cwd: string, relPath: string): string | null {
+  try {
+    const out = run(cwd, ['log', '--diff-filter=A', '--format=%ae', '--', relPath]).trim().split('\n').filter(Boolean);
+    return out.length > 0 ? out[out.length - 1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The author email of the newest commit touching `relPath`, or null. */
+export function lastAuthorEmail(cwd: string, relPath: string): string | null {
+  try {
+    return run(cwd, ['log', '-1', '--format=%ae', '--', relPath]).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Untracked files an ignore rule holds back, under `pathspecs` (repo-relative). `[]` on failure. */
+export function ignoredUntracked(cwd: string, pathspecs: string[]): string[] {
+  try {
+    return run(cwd, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z', '--', ...pathspecs]).split('\0').filter((p) => p.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** `git add -f -- <path>`: stage one file past every ignore rule. Best effort. */
+export function forceAddPath(cwd: string, relPath: string): void {
+  try {
+    run(cwd, ['add', '-f', '--', relPath]);
+  } catch {
+    // stays unstaged; the next pass tries again
+  }
+}
+
+export interface RawEntry {
+  path: string;
+  /** Git file modes as printed (`100644`, `120000`, `160000`; `000000` = absent on that side). */
+  oldMode: string;
+  newMode: string;
+}
+
+/**
+ * Every changed path of `range` (`HEAD...<remote>`) with its modes on both sides, renames split
+ * into a delete and an add. THROWS when git cannot answer: a caller guarding a pull must fail
+ * closed, never read "nothing changed" from an error.
+ */
+export function rawEntries(cwd: string, range: string, pathspecs: string[] = []): RawEntry[] {
+  const args = ['diff', '--raw', '-z', '--no-abbrev', '--no-renames', range];
+  const parts = run(cwd, pathspecs.length > 0 ? [...args, '--', ...pathspecs] : args).split('\0');
+  const out: RawEntry[] = [];
+  for (let i = 0; i < parts.length - 1; i++) {
+    const m = parts[i].match(/^:(\d{6}) (\d{6}) /);
+    if (!m) continue;
+    const path = parts[i + 1];
+    if (path) out.push({ path, oldMode: m[1], newMode: m[2] });
+    i++;
+  }
+  return out;
+}
+
+/**
+ * The entries directly inside folder `dir` (repo-relative, '' = the top) of `rev`: their names and
+ * modes (`040000` for a folder, `120000` for a symlink). Run from the repo's top folder. THROWS
+ * when git cannot answer.
+ */
+export function treeChildren(cwd: string, rev: string, dir: string): { name: string; mode: string }[] {
+  const out = run(cwd, dir ? ['ls-tree', '-z', rev, '--', `${dir}/`] : ['ls-tree', '-z', rev]);
+  const children: { name: string; mode: string }[] = [];
+  for (const line of out.split('\0')) {
+    const tab = line.indexOf('\t');
+    if (tab === -1) continue;
+    children.push({ name: line.slice(tab + 1).split('/').pop() ?? '', mode: line.split(' ')[0] });
+  }
+  return children;
+}
+
+/** This repo's configured `user.email` (local, else global), or null. */
+export function configuredEmail(cwd: string): string | null {
+  try {
+    return run(cwd, ['config', 'user.email']).trim() || null;
+  } catch {
+    return null;
   }
 }

@@ -8,6 +8,7 @@ import { success, error, header, warn } from '../../lib/format.js';
 import {
   agentUsage,
   createAgent,
+  createGlobalAgent,
   getAgent,
   listAgents,
   removeAgent,
@@ -17,6 +18,11 @@ import {
 } from '../../lib/agents/store.js';
 import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/types.js';
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
+import { assertOwned, ownerLabel } from '../../lib/agents/owner.js';
+import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../lib/agents/agent-sync.js';
+import { writeActiveHere } from '../../lib/agents/active.js';
+import { scanOutsideAssignments } from '../../lib/agents/outside-assignments.js';
+import { listInboxRows } from '../../lib/owner-inbox.js';
 import { getRunTarget, parsePattern, setAutomationShared } from '../../lib/automations/store.js';
 import { SOUL_TEMPLATE_IDS, soulTemplate } from '../../lib/agents/soul-templates.js';
 import { shareAgent, shareAutomation, unshareAgent, unshareAutomation } from '../../lib/automations/sharing.js';
@@ -27,12 +33,27 @@ import {
   registerProject,
 } from '../../lib/automations/registry.js';
 import {
+  AGENT_AUTONOMY_LEVELS,
   AGENT_SELF_ENV,
   APPROVAL_DIFF_FIELDS,
   AutomationError,
   EFFORT_LEVELS,
+  insideAgentRun,
+  type AgentAutonomy,
   type EffortLevel,
 } from '../../lib/automations/types.js';
+
+/** An `--autonomy` value. Refused inside an agent run: an agent does not set its own level. */
+function readAutonomyOption(v: string | undefined): AgentAutonomy | undefined {
+  if (v === undefined) return undefined;
+  if (insideAgentRun()) {
+    throw new AutomationError('An agent cannot change an autonomy level. Ask the owner to set it on the AI Team page.');
+  }
+  if (!(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
+    throw new AutomationError(`Invalid autonomy "${v}": expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);
+  }
+  return v as AgentAutonomy;
+}
 
 /** The env vars a Claude session or an agent run carries. */
 const SELF_APPROVAL_ENVS = ['CLAUDECODE', AGENT_SELF_ENV, 'DREAMCONTEXT_AUTOMATION_RUN'] as const;
@@ -99,13 +120,16 @@ export function resolveSoulOption(opts: SoulOptions): string | undefined {
   return undefined;
 }
 
-function verdicts(root: string, slug: string): { chat: boolean; run: boolean } | null {
+function verdicts(root: string, slug: string): { chat: boolean; run: boolean; readOnlyOwner: string | null } | null {
   const target = getRunTarget(root, slug, 'agent');
   if (!target) return null;
   const projectRoot = dirname(root);
+  const run = checkApproval(projectRoot, target, undefined, 'run');
   return {
     chat: checkApproval(projectRoot, target, undefined, 'identity').approved,
-    run: checkApproval(projectRoot, target, undefined, 'run').approved,
+    run: run.approved,
+    // Someone else's agent: read-only here, never "needs approval" (B1-4).
+    readOnlyOwner: !run.approved && run.reason === 'not_owner' ? run.owner : null,
   };
 }
 
@@ -126,8 +150,11 @@ export function registerAgentsCommand(program: Command): void {
         return {
           slug: a.slug,
           title: a.title,
+          scope: a.scope,
           approvedForChat: v?.chat ?? false,
           approvedToRun: v?.run ?? false,
+          owner: a.owner,
+          readOnly: !!v?.readOnlyOwner,
           implicit: a.implicit,
           reportsTo: a.reportsTo,
           team: a.team,
@@ -144,9 +171,12 @@ export function registerAgentsCommand(program: Command): void {
       }
       console.log(header('Agents'));
       const line = (r: (typeof rows)[number]) => {
-        const state = r.approvedToRun ? chalk.green('may run') : r.approvedForChat ? chalk.yellow('chat only') : chalk.red('needs approval');
+        const state = r.readOnly
+          ? chalk.dim(`${ownerLabel(r.owner ?? '')}'s · read-only`)
+          : r.approvedToRun ? chalk.green('may run') : r.approvedForChat ? chalk.yellow('chat only') : chalk.red('needs approval');
         const used = r.automations.length > 0 ? chalk.dim(` · runs ${r.automations.join(', ')}`) : '';
-        return `${chalk.bold(r.slug)}  ${r.title}  ${state}${used}`;
+        const scope = r.scope === 'global' ? chalk.cyan(' · global') : '';
+        return `${chalk.bold(r.slug)}  ${r.title}  ${state}${scope}${used}`;
       };
       if (!opts.tree) {
         for (const r of rows) console.log(`  ${line(r)}`);
@@ -191,14 +221,14 @@ export function registerAgentsCommand(program: Command): void {
           agent: {
             slug: agent.slug, title: agent.title, prompt: agent.prompt, soul: agent.soul, pattern, model: agent.model, effort: agent.effort,
             learning: agent.learning, whiteboard: agent.whiteboard, shared: agent.shared, implicit: agent.implicit,
-            reportsTo: agent.reportsTo, team: agent.team,
+            reportsTo: agent.reportsTo, team: agent.team, autonomy: agent.autonomy,
             approvedForChat: v.chat, approvedToRun: v.run, usedBy: usage,
           },
         }, null, 2));
         return;
       }
       console.log(header(`${agent.title} (${agent.slug})`));
-      console.log(`  model: ${agent.model ?? 'default'}  effort: ${agent.effort ?? 'default'}  learning: ${agent.learning ? 'on' : 'off'}`);
+      console.log(`  model: ${agent.model ?? 'default'}  effort: ${agent.effort ?? 'default'}  learning: ${agent.learning ? 'on' : 'off'}  autonomy: ${agent.autonomy}`);
       if (agent.whiteboard) console.log(`  home board: ${agent.whiteboard}`);
       console.log(`  reports to: ${agent.reportsTo ?? 'you'}${agent.team ? `  team: ${agent.team}` : ''}`);
       console.log(`  chat: ${v.chat ? 'approved' : 'not approved'}  run: ${v.run ? 'approved' : 'not approved'}`);
@@ -226,7 +256,36 @@ export function registerAgentsCommand(program: Command): void {
     .option('--effort <level>', `Effort (${EFFORT_LEVELS.join(', ')})`)
     .option('--whiteboard <board>', 'Home board: the agent acts only on it')
     .option('--no-learning', 'Do not keep a pattern of lessons')
-    .action((slug: string, opts: SoulOptions & { title: string; prompt: string; model?: string; effort?: string; whiteboard?: string; learning: boolean }) => {
+    .option('--scope <scope>', 'project (this brain, default) or global (this machine: listed in every project, never in a brain)', 'project')
+    .action((slug: string, opts: SoulOptions & { title: string; prompt: string; model?: string; effort?: string; whiteboard?: string; learning: boolean; scope: string }) => {
+      if (opts.scope !== 'project' && opts.scope !== 'global') {
+        fail(new Error(`--scope is project or global, not "${opts.scope}".`));
+        return;
+      }
+      // Inside an agent run, nothing it creates is approved by it: the owner approves on the AI Team
+      // page (a self-approved global agent would run in every project of this machine).
+      const selfRun = insideAgentRun();
+      const approve = selfRun ? {} : { approve: { now: new Date() } };
+      const unapproved = selfRun ? ' It waits for the owner\'s approval on the AI Team page.' : '';
+      if (opts.scope === 'global') {
+        try {
+          const soul = resolveSoulOption(opts);
+          createGlobalAgent({
+            slug,
+            title: opts.title,
+            prompt: opts.prompt,
+            soul: soul ?? '',
+            model: opts.model ?? null,
+            effort: readEffort(opts.effort) ?? null,
+            whiteboard: opts.whiteboard ?? null,
+            learning: opts.learning,
+          }, approve);
+          success(`Created the global agent "${slug}" (~/.dreamcontext/agents/${slug}.md): every project lists it${selfRun ? '.' + unapproved : ', approved on this machine.'}`);
+        } catch (err) {
+          fail(err);
+        }
+        return;
+      }
       const root = ensureContextRoot();
       try {
         const soul = resolveSoulOption(opts);
@@ -240,8 +299,8 @@ export function registerAgentsCommand(program: Command): void {
           effort: readEffort(opts.effort) ?? null,
           whiteboard: opts.whiteboard ?? null,
           learning: opts.learning,
-        }, { approve: { now: new Date() } });
-        success(`Created the agent "${slug}" (agents/${slug}.md), approved on this machine.`);
+        }, approve);
+        success(`Created the agent "${slug}" (agents/${slug}.md)${selfRun ? '.' + unapproved : ', approved on this machine.'}`);
       } catch (err) {
         fail(err);
       }
@@ -263,7 +322,8 @@ export function registerAgentsCommand(program: Command): void {
     .option('--no-learning', 'Stop keeping a pattern of lessons')
     .option('--reports-to <agent>', 'The agent it reports to ("none" = straight to you). Unhashed: changes only how the team is drawn')
     .option('--team <name>', 'Its team\'s name, carried by a lead and inherited by its reports ("none" removes it). Unhashed')
-    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; learning?: boolean; reportsTo?: string; team?: string }) => {
+    .option('--autonomy <level>', `How much it decides alone (${AGENT_AUTONOMY_LEVELS.join(', ')}); sets the permission mode of its sessions`)
+    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
       const root = ensureContextRoot();
       try {
         const patch: AgentIdentityPatch = {};
@@ -276,6 +336,8 @@ export function registerAgentsCommand(program: Command): void {
         if (effort !== undefined) patch.effort = effort;
         if (opts.whiteboard !== undefined) patch.whiteboard = opts.whiteboard || null;
         if (opts.learning !== undefined) patch.learning = opts.learning;
+        const autonomy = readAutonomyOption(opts.autonomy);
+        if (autonomy !== undefined) patch.autonomy = autonomy;
         const place: AgentPlacementPatch = {};
         if (opts.reportsTo !== undefined) place.reportsTo = opts.reportsTo === 'none' ? null : opts.reportsTo;
         if (opts.team !== undefined) place.team = opts.team;
@@ -432,5 +494,85 @@ export function registerAgentsCommand(program: Command): void {
       } catch (err) {
         fail(err);
       }
+    });
+
+  agents
+    .command('sync')
+    .description('Agents ride the brain sync: show the switch and this machine\'s state, or confirm it here')
+    .option('--confirm', 'Turn agent sync on (if off) and confirm it on THIS machine: its agents start to sync')
+    .option('--json', 'Emit as JSON')
+    .action((opts: { confirm?: boolean; json?: boolean }) => {
+      const root = ensureContextRoot();
+      if (opts.confirm) {
+        // The owner's call, never an agent's: confirming publishes this machine's agents.
+        if (insideAgentRun()) {
+          error('An agent run cannot turn on agent sync. Ask the owner to confirm it on the AI Team page.');
+          process.exitCode = 1;
+          return;
+        }
+        const r = confirmAgentSyncHere(root);
+        success(`Agent sync is on for this machine${r.renamed > 0 ? ` (${r.renamed} thread day file${r.renamed === 1 ? '' : 's'} renamed for this machine)` : ''}. The next brain sync pushes your agents; run \`dreamcontext brain sync\` to send them now.`);
+        return;
+      }
+      const state = agentSyncState(root);
+      const preview = state.active ? { files: [] as string[], hits: [] as { file: string; line: number; rule: string; severity: string }[] } : agentSyncPreview(root);
+      if (opts.json) {
+        console.log(JSON.stringify({ ...state, filesToSync: preview.files.length, hits: preview.hits }, null, 2));
+        return;
+      }
+      console.log(header('Agent sync'));
+      console.log(`  Brain switch: ${state.switchOn ? chalk.green('on') : chalk.dim('off')}`);
+      console.log(`  This machine: ${state.confirmedHere ? chalk.green('confirmed') : chalk.yellow('not confirmed')}`);
+      if (!state.active) {
+        console.log(chalk.dim(`  ${preview.files.length} file(s) would start to sync from here. Every machine on this brain must run this version first: an older version overwrites its own same-named agents when it pulls.`));
+        for (const h of preview.hits) console.log(`  ${h.severity === 'block' ? chalk.red('held') : chalk.yellow('check')}  ${h.file}:${h.line}  ${h.rule}`);
+      }
+    });
+
+  agents
+    .command('bring-here')
+    .argument('<slug>', 'Agent slug')
+    .description('Run this agent on THIS machine from now on (same login, several machines); the other machine stops at its next pull')
+    .action((slug: string) => {
+      const root = ensureContextRoot();
+      if (insideAgentRun()) {
+        error('An agent run cannot move an agent between machines. Ask the owner.');
+        process.exitCode = 1;
+        return;
+      }
+      const agent = getAgent(root, slug);
+      if (!agent) {
+        error(`No agent named "${slug}" in this project.`);
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        assertOwned({ owner: agent.owner }, agent.title || slug);
+        writeActiveHere(root, slug, agent.owner);
+        success(`${agent.title || slug} runs on this machine now. Run \`dreamcontext brain sync\` so your other machine learns it at its next pull.`);
+      } catch (err) {
+        fail(err);
+      }
+    });
+
+  agents
+    .command('inbox')
+    .description('What waits for you here: held secrets, tasks assigned outside the app, renamed agents, patterns to adopt')
+    .option('--json', 'Emit as JSON')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      scanOutsideAssignments(root);
+      const rows = listInboxRows(dirname(root));
+      if (opts.json) {
+        console.log(JSON.stringify({ rows }, null, 2));
+        return;
+      }
+      if (rows.length === 0) {
+        console.log(chalk.dim('Nothing waits for you.'));
+        return;
+      }
+      console.log(header('Waiting for you'));
+      for (const r of rows) console.log(`  ${chalk.bold(r.kind)}  ${r.title}${r.detail ? chalk.dim(` (${r.detail})`) : ''}`);
+      console.log(chalk.dim('  Answer them on the AI Team page.'));
     });
 }

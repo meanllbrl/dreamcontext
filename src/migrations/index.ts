@@ -10,6 +10,7 @@ import { migration0230SoulSplit } from './0.23.0-soul-split.js';
 import { migration0280 } from './0.28.0.js';
 import { migration0310 } from './0.31.0.js';
 import { migration0320 } from './0.32.0.js';
+import { migration0345 } from './0.34.5.js';
 import type { Migration } from './types.js';
 
 /**
@@ -22,7 +23,19 @@ import type { Migration } from './types.js';
 // the runner gates each step by its own id, merges same-version changelog
 // entries, and unfinishedAgentTasks matches each agentTask id separately.
 // The user-split entry stays FIRST so its residue task is printed first.
-export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320];
+export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345];
+
+/**
+ * The registry as read at CALL time. A migration module sits in an import cycle (0.31.0 → the
+ * agents store → the task starter → migrate-and-stamp → here): when the cycle is entered through
+ * a migration, `REGISTRY` above is built while that migration's binding is still unset, so it
+ * holds `undefined`. The live bindings are set by the time anything calls in.
+ */
+function registry(): Migration[] {
+  return REGISTRY.includes(undefined as unknown as Migration)
+    ? [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345]
+    : REGISTRY;
+}
 
 /**
  * Return all migrations whose version falls in the half-open range (from, to].
@@ -32,7 +45,7 @@ export const REGISTRY: Migration[] = [migration070, migration072, migration080, 
  * Reuses compareVersions from src/lib/version-check.ts.
  */
 export function pendingMigrations(from: string, to: string): Migration[] {
-  return REGISTRY.filter(
+  return registry().filter(
     (m) =>
       compareVersions(m.version, from) > 0 &&
       compareVersions(m.version, to) <= 0,
@@ -46,7 +59,7 @@ export function pendingMigrations(from: string, to: string): Migration[] {
  */
 export function migrationsToRun(from: string, to: string): Migration[] {
   const inRange = compareVersions(to, from) >= 0 ? pendingMigrations(from, to) : [];
-  const everyRun = REGISTRY.filter(
+  const everyRun = registry().filter(
     (m) => m.everyRun && compareVersions(m.version, to) <= 0 && !inRange.includes(m),
   );
   return [...inRange, ...everyRun].sort((a, b) => compareVersions(a.version, b.version));
@@ -69,7 +82,7 @@ export function migrationsToRun(from: string, to: string): Migration[] {
  */
 export function unfinishedAgentTasks(contextRoot: string, toVersion: string): Migration[] {
   const ledger = readLedger(contextRoot);
-  return REGISTRY.filter((m) => {
+  return registry().filter((m) => {
     if (!m.agentTask) return false;
     // Opt-in tasks are an offer, not an obligation — never "unfinished".
     if (m.agentTask.optIn) return false;

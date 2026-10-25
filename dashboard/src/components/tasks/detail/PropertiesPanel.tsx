@@ -12,6 +12,9 @@ import { AddCustomFieldForm } from '../AddCustomFieldForm';
 import { TaskField } from './TaskSection';
 import { TaskDateField } from './TaskDateField';
 import { RiceField } from './RiceField';
+import { TaskAgentFace } from '../AssignToAgentComposer';
+import { findAgent, useAgents } from '../../../hooks/useAgents';
+import { tr } from '../../../lib/assignToAgent';
 import { useSectionCollapse, type SectionId } from './useSectionCollapse';
 
 export type Updates = UpdateTaskInput['updates'];
@@ -38,6 +41,8 @@ const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const;
  */
 export function PropertiesPanel({ task, allTasks, update, onDelete, deleting, parentError, setParentError }: PropertiesPanelProps) {
   const { t } = useI18n();
+  const { data: agents } = useAgents();
+  const nameOf = (slug: string) => findAgent(agents, slug)?.title ?? slug;
   const sm = useStatusModel();
   const sections = useSectionCollapse();
   const { data: members } = useTaskMembers();
@@ -151,6 +156,25 @@ export function PropertiesPanel({ task, allTasks, update, onDelete, deleting, pa
             onChange={(v) => update({ related_feature: (v ?? '').trim() || null })}
           />
         </TaskField>
+        {task.agent && (
+          <>
+            <TaskField label={tr(t, 'tasks.job.agent', 'Agent')}>
+              <span className="prop-agent"><TaskAgentFace slug={task.agent} size={20} />{nameOf(task.agent)}</span>
+            </TaskField>
+            <TaskField label={tr(t, 'tasks.assignReviewer', 'Reviewer')}>
+              <span className="prop-agent">{task.agent_job?.reviewer
+                ? <><TaskAgentFace slug={task.agent_job.reviewer} size={20} />{nameOf(task.agent_job.reviewer)}</>
+                : tr(t, 'tasks.assignReviewerYou', 'You review it')}</span>
+            </TaskField>
+            {task.agent_job?.workspace && (
+              <TaskField label={tr(t, 'tasks.assignWhere', 'Where it works')}>
+                <span className="prop-agent">{task.agent_job.workspace === 'code'
+                  ? `${tr(t, 'tasks.assignCode', 'Code')}${task.agent_job.repo ? ` · ${task.agent_job.repo}` : ''}`
+                  : tr(t, 'tasks.assignDoc', 'Docs')}</span>
+              </TaskField>
+            )}
+          </>
+        )}
         <button
           type="button"
           className="props-more"

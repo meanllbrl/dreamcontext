@@ -99,6 +99,9 @@ export interface TaskData {
   filed_by: FiledBy | null;
   /** Why it was opened (lib/filing-basis.ts), null when nothing was recorded. */
   filing_basis: FilingBasis | null;
+  /** The owner approved this agent-opened task (lib/task-filing-approval.ts). Local-only. Absent
+   *  until approved, so a task nobody approved is the exact object it always was. */
+  filing_approved?: { at: string };
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -345,7 +348,8 @@ export interface TaskBackend {
   ): Promise<void>;
   /** `entry` is the fully formatted changelog block (callers own the label format). */
   addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void>;
-  complete(slug: string, summary?: string): Promise<TaskData>;
+  /** `by` is the change's author label (`owner`, `agent:<slug>`, …; lib/task-history.ts). */
+  complete(slug: string, summary?: string, opts?: { by?: string }): Promise<TaskData>;
   /**
    * Delete a task (remote backends propagate the deletion on sync).
    *

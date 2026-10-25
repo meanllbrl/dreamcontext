@@ -389,6 +389,18 @@
      Each consumer names itself under `.project-instance[data-sidebar="collapsed"]` instead
      (see `.agent-surface` in AgentTerminal.css), which restyles that element alone. */
   --app-content-left: var(--sidebar-width);
+
+  /* Agent figure identity tones (B · Rüya, ajan-figur/NOT.md). Identity only, never a state:
+     no green (working) and no magenta (asking). */
+  --agent-face-violet: #7b68ee;
+  --agent-face-plum: #8200a6;
+  --agent-face-indigo: #2535e2;
+  --agent-face-sky: #0091ff;
+  --agent-face-teal: #0e9a9a;
+  --agent-face-coral: #ff5b36;
+  --agent-face-amber: #e08c0c;
+  --agent-face-rose: #d63f95;
+  --agent-face-eye: var(--color-snow);
 }
 
 /* ─── Dark Mode — ClickUp doesn't ship a canonical dark, so we derive:
@@ -536,4 +548,16 @@
   --glass-bg: rgba(28, 31, 42, 0.78);
   --glass-bg-hover: rgba(28, 31, 42, 0.92);
   --glass-border: rgba(255, 255, 255, 0.08);
+
+  /* Agent figure identity tones (B · Rüya, ajan-figur/NOT.md). Identity only, never a state:
+     no green (working) and no magenta (asking). */
+  --agent-face-violet: #9d8cff;
+  --agent-face-plum: #c26be0;
+  --agent-face-indigo: #7280ff;
+  --agent-face-sky: #38a9ff;
+  --agent-face-teal: #22d3ee;
+  --agent-face-coral: #ff7a5c;
+  --agent-face-amber: #ffae3b;
+  --agent-face-rose: #f472b6;
+  --agent-face-eye: var(--color-snow);
 }

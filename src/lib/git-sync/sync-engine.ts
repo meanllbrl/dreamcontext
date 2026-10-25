@@ -21,6 +21,17 @@ import { type ResolvedToken } from '../task-backend/secrets.js';
 import { BrainSyncTokenSession } from './token-fallback.js';
 import { mapLoginToPerson } from '../task-backend/identity.js';
 import { getPerson } from '../people-store.js';
+import {
+  agentStagePass,
+  applyAgentPrivacy,
+  detectReplacedManifests,
+  guardPullCollisions,
+  heldSecretPaths,
+  pendingOwnAgentFiles,
+  resolvePendingRestores,
+  strictWarns,
+} from '../agents/agent-sync.js';
+import { currentLogin } from '../agents/owner.js';
 
 /**
  * The sync-engine orchestrator — single entry point (`runBrainSync`) for
@@ -133,7 +144,8 @@ const EMPTY_SCRUB = { blocks: [] as ScrubHit[], warns: [] as ScrubHit[] };
  * has its own unconditional effective-strict check and does not use this.
  */
 function isBlockingScrub(scrub: { blocks: ScrubHit[]; warns: ScrubHit[] }, strict: boolean): boolean {
-  return scrub.blocks.length > 0 || (strict && scrub.warns.length > 0);
+  // WARN hits under agents/ and automations/ are reported, never counted toward strict (B1, M3).
+  return scrub.blocks.length > 0 || (strict && strictWarns(scrub.warns).length > 0);
 }
 
 /** Injectable dependencies — tests supply a fake `git` module + fakes for the rest. */
@@ -153,6 +165,14 @@ export interface SyncEngineDeps {
   readGlobalGitHubToken: typeof readGlobalGitHubToken;
   /** Stale-per-project-token self-heal: demote (never delete) the shadowing per-project `github.token`. */
   demoteProjectGitHubToken: typeof demoteProjectGitHubToken;
+  /** M3: the staging pass that holds back agent files carrying a secret (after every stage). */
+  agentStagePass: typeof agentStagePass;
+  /** B1-2: park untracked local agent files a pull would overwrite, before the merge. */
+  guardPullCollisions: typeof guardPullCollisions;
+  /** B1-2: bring parked files back (renamed once the merge committed) at the end of every sync. */
+  resolvePendingRestores: typeof resolvePendingRestores;
+  /** B1-2: this machine's ignored agent files the staging pass will force-add (agent sync confirmed). */
+  pendingOwnAgentFiles: typeof pendingOwnAgentFiles;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -167,7 +187,30 @@ const defaultDeps: SyncEngineDeps = {
   readGlobalGitHubLogin,
   readGlobalGitHubToken,
   demoteProjectGitHubToken,
+  agentStagePass,
+  guardPullCollisions,
+  resolvePendingRestores,
+  pendingOwnAgentFiles,
 };
+
+/** Uncommitted changes, plus this machine's own agent files waiting to be force-added: an ignored
+ *  file never shows in `git status`, so without them a confirmed machine would never send them. */
+function dirtyPaths(ctx: Ctx): string[] {
+  // A file held back for a secret is not a change to send (it would read dirty on every sync).
+  const held = heldSecretPaths(ctx.contextRoot);
+  return [...ctx.d.git.statusPorcelainTracked(ctx.gitCwd), ...ctx.d.pendingOwnAgentFiles(ctx.gitCwd, ctx.contextRoot)]
+    .filter((p) => !held.has(p));
+}
+
+/**
+ * Stage for a sync commit: everything (or the brain only, in-tree), then the agent staging pass
+ * (M3) unstages agent and automation files that carry a secret. ONE helper every stage site calls.
+ */
+function stageForSync(ctx: Ctx, scope: 'all' | 'brain' = 'all'): void {
+  if (scope === 'brain') ctx.d.git.stagePath(ctx.gitCwd, '_dream_context');
+  else ctx.d.git.stageAll(ctx.gitCwd);
+  ctx.d.agentStagePass(ctx.gitCwd, ctx.contextRoot);
+}
 
 interface Ctx {
   d: SyncEngineDeps;
@@ -339,6 +382,9 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
   // BEFORE anything is staged — else the sync lock (and worse, secrets) get
   // committed and pushed. Gitignore-first, on every sync, defensively.
   if (mode === 'full-repo') ensureFullRepoGitignore(projectRoot, config?.taskBackend);
+  // This machine's private agent files stay out of git until its owner confirms agent sync HERE
+  // (`.git/info/exclude`, machine-local), whatever the pulled `.gitignore` says.
+  applyAgentPrivacy(contextRoot);
 
   // In-tree NEVER syncs/merges with a remote — commit-only, always scrubbed
   // (S2). It bypasses the reentrancy guard entirely: that machinery exists
@@ -416,6 +462,10 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     else if (opts.mode === 'pull-only') result = await pullOnlySync(ctx);
     else if (opts.mode === 'push-only') result = await pushOnlySync(ctx);
     else result = await autoSync(ctx);
+    // Parked agent files come back at the end of EVERY sync call (renamed once a merge committed).
+    const restored = await d.resolvePendingRestores(gitCwd, contextRoot);
+    if (restored.length > 0) result = { ...result, note: [result.note, ...restored].filter(Boolean).join(' ') };
+    detectReplacedManifests(contextRoot);
     // Stamp the stale-per-project-token self-heal (if it fired) onto the result.
     return applyHealInfo(ctx, result);
   } finally {
@@ -427,7 +477,7 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
 
 function commitInTree(ctx: Ctx): SyncResult {
   const { d, gitCwd } = ctx;
-  d.git.stagePath(gitCwd, '_dream_context');
+  stageForSync(ctx, 'brain');
   const hits = d.scrubStagedFiles(gitCwd, { pathPrefix: '_dream_context/' });
   const scrub = summarizeScrub(hits);
   if (isBlockingScrub(scrub, ctx.strict)) return { action: 'blocked-scrub', scrub };
@@ -510,6 +560,10 @@ async function fetchRemoteIfExists(ctx: Ctx, session: BrainSyncTokenSession): Pr
 /** Attempt `attemptMerge`; on conflict, resolve deterministically and defer the rest to the agent. */
 function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcome {
   const { d, gitCwd, contextRoot, projectRoot, config } = ctx;
+  // B1-2: incoming NEW agent files landing where this machine holds an untracked one of the same
+  // name park the local one first (moved, so git never refuses the merge).
+  const guard = d.guardPullCollisions(gitCwd, contextRoot, ctx.remoteRef);
+  if (!guard.ok) return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: guard.note }, needsTaskSync: false };
   let mergeResult: { clean: boolean; conflicts: string[] };
   try {
     mergeResult = d.git.attemptMerge(gitCwd, ctx.remoteRef);
@@ -535,7 +589,12 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
     return { result: blocked, needsTaskSync: false };
   }
 
-  const resolution = d.resolveConflicts(gitCwd, mergeResult.conflicts, { fullRepo: ctx.mode === 'full-repo', contextRoot });
+  const resolution = d.resolveConflicts(gitCwd, mergeResult.conflicts, {
+    fullRepo: ctx.mode === 'full-repo',
+    contextRoot,
+    login: currentLogin(),
+    remoteSha: d.git.revParse(gitCwd, 'MERGE_HEAD') ?? undefined,
+  });
   const needsTaskSync = computeNeedsTaskSync(config, resolution.resolved);
 
   // CODE conflict (full-repo, a file outside `_dream_context/`): git's semantic
@@ -670,7 +729,7 @@ async function autoSync(ctx: Ctx): Promise<SyncResult> {
   // work never pushed. Without this the next sync would noop and silently strand
   // those commits (the tree is clean, the remote isn't ahead) — they must go out.
   const localAhead = remoteExists ? d.git.revListCount(gitCwd, `${ctx.remoteRef}..HEAD`) : 0;
-  const dirty = d.git.statusPorcelainTracked(gitCwd);
+  const dirty = dirtyPaths(ctx);
   // Empty remote + existing local commits (e.g. attach right after a detach):
   // there's nothing to fetch OR commit, but the branch still has to be born.
   const needsBootstrapPush = !remoteExists && !!d.git.currentSha(gitCwd);
@@ -679,11 +738,13 @@ async function autoSync(ctx: Ctx): Promise<SyncResult> {
 
   let scrub = EMPTY_SCRUB;
   if (dirty.length > 0) {
-    d.git.stageAll(gitCwd);
+    stageForSync(ctx);
     const hits = d.scrubStagedFiles(gitCwd);
     scrub = summarizeScrub(hits);
     if (isBlockingScrub(scrub, ctx.strict)) return { action: 'blocked-scrub', scrub };
-    d.git.commit(gitCwd, syncCommitMessage(ctx), authorFor(ctx));
+    const sha = d.git.commit(gitCwd, syncCommitMessage(ctx), authorFor(ctx));
+    // Every change was held back (the agent staging pass): nothing to send, nothing to fetch.
+    if (sha === null && remoteExists && aheadCount === 0 && localAhead === 0) return { action: 'noop', scrub };
   }
 
   let needsTaskSync = false;
@@ -724,7 +785,7 @@ async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
   const aheadCount = d.git.revListCount(gitCwd, `HEAD..${ctx.remoteRef}`);
   if (aheadCount === 0) return { action: 'noop', scrub: EMPTY_SCRUB };
 
-  const dirty = d.git.statusPorcelainTracked(gitCwd);
+  const dirty = dirtyPaths(ctx);
   let scrub = EMPTY_SCRUB;
   let checkpointSha: string | undefined;
   if (dirty.length > 0) {
@@ -738,7 +799,7 @@ async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
         note: 'You have uncommitted local edits and auto-checkpoint-on-open is off — skipped the pull so your WIP is untouched. Sync from the sidebar when ready.',
       };
     }
-    d.git.stageAll(gitCwd);
+    stageForSync(ctx);
     const hits = d.scrubStagedFiles(gitCwd);
     scrub = summarizeScrub(hits);
     // Headless (background session-start pull, `foreground` unset) has no human
@@ -746,7 +807,7 @@ async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
     // callers (the dashboard's auto-open pull + manual button) have a human
     // present, so only real secrets (BLOCK) stop them; absolute-path WARNs —
     // common across a whole code repo in `full-repo` mode — stay non-blocking.
-    const blocks = ctx.foreground ? scrub.blocks.length > 0 : scrub.blocks.length > 0 || scrub.warns.length > 0;
+    const blocks = ctx.foreground ? scrub.blocks.length > 0 : scrub.blocks.length > 0 || strictWarns(scrub.warns).length > 0;
     if (blocks) {
       return {
         action: 'blocked-scrub',
@@ -782,7 +843,7 @@ async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
 
 async function pushOnlySync(ctx: Ctx): Promise<SyncResult> {
   const { d, gitCwd } = ctx;
-  d.git.stageAll(gitCwd);
+  stageForSync(ctx);
   const hits = d.scrubStagedFiles(gitCwd);
   let scrub = summarizeScrub(hits);
   if (isBlockingScrub(scrub, ctx.strict)) return { action: 'blocked-scrub', scrub };
@@ -805,7 +866,7 @@ async function pushOnlySync(ctx: Ctx): Promise<SyncResult> {
 
 async function continueMerge(ctx: Ctx): Promise<SyncResult> {
   const { d, gitCwd, contextRoot, projectRoot } = ctx;
-  d.git.stageAll(gitCwd);
+  stageForSync(ctx);
   const hits = d.scrubStagedFiles(gitCwd);
   const scrub = summarizeScrub(hits);
   if (isBlockingScrub(scrub, ctx.strict)) return { action: 'blocked-scrub', scrub };
@@ -838,10 +899,10 @@ async function resumeHandoff(ctx: Ctx): Promise<SyncResult> {
 
   // FOREGROUND flow: WARN stays non-blocking here UNLESS --strict is set
   // (a human/agent is present, so it's not effective-strict like headless pull-only).
-  const dirty = d.git.statusPorcelainTracked(gitCwd);
+  const dirty = dirtyPaths(ctx);
   const scrub = EMPTY_SCRUB;
   if (dirty.length > 0) {
-    d.git.stageAll(gitCwd);
+    stageForSync(ctx);
     const hits = d.scrubStagedFiles(gitCwd);
     const s = summarizeScrub(hits);
     if (isBlockingScrub(s, ctx.strict)) return { action: 'blocked-scrub', scrub: s };

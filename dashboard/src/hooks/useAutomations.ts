@@ -1,3 +1,4 @@
+import type { AgentFace } from '../../../src/lib/agents/figure.js';
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
@@ -49,7 +50,7 @@ export interface AutomationSchedule {
 }
 
 /** Why `approved` is false — mirrors registry.ts's `ApprovalVerdict['reason']`. */
-export type ApprovalReason = 'never-approved' | 'manifest-changed' | 'payload-format-changed';
+export type ApprovalReason = 'never-approved' | 'manifest-changed' | 'payload-format-changed' | 'not_owner';
 
 export interface AutomationCacheSummary {
   status: RunStatus | null;
@@ -93,6 +94,8 @@ export interface AutomationSummary {
   /** `scheduleLabel` for a scheduled agent, 'When you call it' for an on-call
    *  one. Computed server-side so no surface words a cadence differently. */
   cadenceLabel: string;
+  /** Its figure (stamped face, else the bare hash). Optional: an older server sends none. */
+  face?: AgentFace;
   enabled: boolean;
   schedule: AutomationSchedule | null;
   scheduleLabel: string;
@@ -284,6 +287,9 @@ export interface AutomationManifestDetail {
    *  automation's composed hash includes it, so an Approve here grants it too.
    *  `''`, or absent on an older backend, means no soul. */
   soul?: string;
+  /** Hashed when not `balanced`, LAST: its agent's autonomy level, which decides the permission
+   *  mode of every session it runs in. Absent on an older backend, which means `balanced`. */
+  autonomy?: 'ask' | 'balanced' | 'free';
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;

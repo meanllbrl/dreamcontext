@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApi, useVault } from '../../context/VaultContext';
+import { useI18n } from '../../context/I18nContext';
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { requestClaudeSignIn } from '../../lib/claudeAuth';
 import {
@@ -221,6 +222,11 @@ export function ClaudeAccounts() {
   const autoSwitch = data?.autoSwitch ?? true;
   const strategy: SwitchStrategy = data?.switchStrategy ?? 'score';
   const savedWeights: SwitchWeights = data?.switchWeights ?? DEFAULT_WEIGHTS;
+  const { t, locale } = useI18n();
+  const agentThreshold = data?.agentThreshold ?? 80;
+  const agentWaitUntil = data?.agentWaitUntil ?? null;
+  const [thresholdDraft, setThresholdDraft] = useState(String(agentThreshold));
+  useEffect(() => { setThresholdDraft(String(agentThreshold)); }, [agentThreshold]);
 
   // A local order wins while it matches the server's SET of accounts; reconciling on the id
   // list rather than the objects means a background refetch cannot fight a row mid-drag, but
@@ -389,6 +395,13 @@ export function ClaudeAccounts() {
   // windows is left — the comparison between rows is what this panel is for. Read with
   // `dataUpdatedAt`, which moves on every refetch even when the numbers did not: without it an
   // unchanged answer repaints nothing, and "back in 1h 5m" stands still for an hour.
+  /** Save the threshold when it is a whole percent that changed; anything else snaps back. */
+  const saveThreshold = (): void => {
+    const n = Number(thresholdDraft);
+    if (!Number.isInteger(n) || n < 1 || n > 100) { setThresholdDraft(String(agentThreshold)); return; }
+    if (n === agentThreshold) return;
+    void run('threshold', () => api.post('/agent/accounts/agent-threshold', { percent: n }));
+  };
   const now = Math.max(Date.now(), dataUpdatedAt);
 
   return (
@@ -549,6 +562,16 @@ export function ClaudeAccounts() {
                         {busy === `relogin-${a.id}` ? 'Waiting for the browser…' : 'Sign in again'}
                       </button>
                     )}
+                    <label className="dc-acct-onlymine" title={t('accounts.onlyMine.hint')}>
+                      <input
+                        type="checkbox"
+                        checked={a.ownerOnly === true}
+                        disabled={busy !== ''}
+                        data-only-mine={a.id}
+                        onChange={() => void run(`only-${a.id}`, () => api.post('/agent/accounts/owner-only', { id: a.id, ownerOnly: !a.ownerOnly }))}
+                      />
+                      <span>{t('accounts.onlyMine')}</span>
+                    </label>
                     <button
                       type="button"
                       className="btn btn--danger-ghost btn--sm"
@@ -626,6 +649,36 @@ export function ClaudeAccounts() {
             }
           />
 
+          {/* ACCOUNT PROTECTION for unattended agent work (routines, task jobs): the threshold both
+              windows must be under, and when that work is waiting for an account. */}
+          <SettingRow
+            title={t('accounts.threshold.title')}
+            hint={t('accounts.threshold.hint')}
+            control={
+              <span className="dc-acct-threshold">
+                <input
+                  type="number"
+                  className="settings-text-input dc-acct-threshold-input"
+                  min={1}
+                  max={100}
+                  step={1}
+                  aria-label={t('accounts.threshold.title')}
+                  value={thresholdDraft}
+                  disabled={busy !== ''}
+                  onChange={(e) => setThresholdDraft(e.target.value)}
+                  onBlur={saveThreshold}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveThreshold(); }}
+                />
+                <span aria-hidden="true">%</span>
+              </span>
+            }
+          />
+          {agentWaitUntil && agentWaitUntil > now && (
+            <p className="dc-acct-waiting" data-agent-wait>
+              {t('accounts.waiting').replace('{time}', waitWords(agentWaitUntil, locale))}
+            </p>
+          )}
+
           {/* The MODE. Only drawn when auto-switch is on and there is something to switch
               between — a rule for picking among accounts is not a setting on a machine with
               one account, and it is not a setting at all when nothing switches. */}
@@ -644,4 +697,13 @@ export function ClaudeAccounts() {
       </div>
     </div>
   );
+}
+
+/** When the wait ends: the time today, else the day and the time (a weekly reset can be days away). */
+function waitWords(at: number, locale: string): string {
+  const d = new Date(at);
+  const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' })} ${time}`;
 }

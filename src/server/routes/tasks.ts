@@ -1,7 +1,9 @@
+import { dirname } from 'node:path';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { today, slugify } from '../../lib/id.js';
 import { assertTaskFilingBar, isSleepCycleLive, recordCycleTaskFiled } from '../../lib/task-filing-bar.js';
 import { decideFiling, filingFields } from '../../lib/filing-basis.js';
+import { approveFiling } from '../../lib/task-filing-approval.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { currentSyncJob, startSyncJob } from '../sync-job.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
@@ -15,7 +17,13 @@ import { developHandoffGaps, developHandoffNotes } from '../../lib/handoff-readi
 import { getAgent } from '../../lib/agents/store.js';
 import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
 import { commitAssignment, prepareAssignment, type AssignmentRefusal } from '../../lib/agents/task-assignment.js';
-import { currentAutomationJob, startAutomationJob } from '../automation-job.js';
+import { endTaskJobIfClosed, reconcileTaskRows, startDueTaskJobs, stopTaskAction, taskIdOfRow, unassignTaskJob } from '../../lib/agents/task-starter.js';
+import { parseStatusHistory, recordStatusChange } from '../../lib/task-history.js';
+import { agentJobDetailOf, agentJobOf, type AgentJob } from '../../lib/agents/task-job-api.js';
+import { readTaskJobs } from '../../lib/agents/task-jobs.js';
+import { listInboxRows, resolveInboxRow } from '../../lib/owner-inbox.js';
+import { answerTaskAction } from './agent-sync.js';
+import { refuseNotOwner } from './owner-guard.js';
 import {
   loadTaskOverride,
   loadStatuses,
@@ -95,9 +103,26 @@ async function objectionReadCtx(contextRoot: string, backend: TaskBackend): Prom
 function toApiTask(
   task: TaskData,
   ctx?: ObjectionReadCtx,
-): Omit<TaskData, 'raw' | 'rawBody'> & { objection: ObjectionView | null } {
+): Omit<TaskData, 'raw' | 'rawBody'> & { objection: ObjectionView | null; agent_job: AgentJob | null } {
   const { raw: _raw, rawBody: _rawBody, ...api } = task;
-  return { ...api, objection: ctx ? objectionView(ctx.records, task.slug, ctx.rules, ctx.nameOf) : null };
+  return {
+    ...api,
+    objection: ctx ? objectionView(ctx.records, task.slug, ctx.rules, ctx.nameOf) : null,
+    agent_job: agentJobOf(task.raw ?? {}),
+  };
+}
+
+/** One task as the drawer reads it (AI Team v2 C2): the job's deliveries and this machine's rows
+ *  about it, and who moved its status (any task, agent or not). */
+async function toApiTaskDetail(contextRoot: string, backend: TaskBackend, task: TaskData) {
+  return {
+    ...toApiTask(task, await objectionReadCtx(contextRoot, backend)),
+    agent_job: agentJobDetailOf(
+      task.raw ?? {}, task.id, listInboxRows(dirname(contextRoot)),
+      readTaskJobs(dirname(contextRoot)).claims.find((c) => c.taskId === task.id && c.sessionId)?.sessionId ?? null,
+    ),
+    status_history: parseStatusHistory(task.changelog ?? ''),
+  };
 }
 
 function backendFor(contextRoot: string): TaskBackend {
@@ -964,8 +989,54 @@ export async function handleTasksGet(
     return;
   }
 
-  sendJson(res, 200, { task: toApiTask(task, await objectionReadCtx(contextRoot, backend)) });
+  sendJson(res, 200, { task: await toApiTaskDetail(contextRoot, backend, task) });
 }
+
+/**
+ * POST /api/tasks/:slug/agent-action {action, text?} — the owner answers the task's agent job from
+ * the drawer (AI Team v2 C2): the same actions as its owner-inbox rows and `tasks agent-action`.
+ * The rows of this task offering that action close with it. 409 with the action's refusal.
+ */
+export async function handleTasksAgentAction(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  const body = await parseJsonBody(req);
+  const action = typeof body?.action === 'string' ? body.action : '';
+  if (!TASK_AGENT_ACTIONS.has(action)) { sendError(res, 400, 'bad_action', `Unknown action "${action}".`); return; }
+  let taskId: string | null = null;
+  try {
+    taskId = (await backendFor(contextRoot).get(slug))?.id ?? null;
+    const result = await answerTaskAction(contextRoot, slug, action, typeof body?.text === 'string' ? body.text : '');
+    if (!result.ok) { sendError(res, result.code === 'not_owner' ? 403 : 409, result.code, result.message); return; }
+  } catch (err) {
+    console.error('[tasks] agent-action failed', err);
+    sendError(res, 500, 'agent_action_failed', 'Failed to answer the task job.');
+    return;
+  }
+  // The action is applied: what follows only tidies, so its failure never reads as the action's.
+  try {
+    const projectRoot = dirname(contextRoot);
+    for (const r of listInboxRows(projectRoot)) {
+      if (taskId && r.kind.startsWith('task-') && taskIdOfRow(r) === taskId && (r.actions as string[]).includes(action)) resolveInboxRow(projectRoot, r.id);
+    }
+    reconcileTaskRows(contextRoot);
+    recordDashboardChange(contextRoot, { entity: 'task', action: 'update', target: slug, field: 'agent', summary: `Task '${slug}': ${action}` });
+  } catch (err) {
+    console.error('[tasks] agent-action tidy failed', err);
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+/** The actions the drawer may send (the inbox rows' task actions). */
+const TASK_AGENT_ACTIONS: ReadonlySet<string> = new Set([
+  'start-now', 'reschedule', 'stop', 'let-finish', 'continue', 'take-over', 'approve-plan',
+  'change-plan', 'one-more-round', 'cancel', 'send-back', 'complete',
+]);
 
 /**
  * POST /api/tasks/:slug/objection — the owner objects to a task an agent opened
@@ -1013,6 +1084,34 @@ export async function handleTasksObjection(
     outcome: result.outcome,
     task: task ? toApiTask(task, await objectionReadCtx(contextRoot, backend)) : null,
   });
+}
+
+/**
+ * POST /api/tasks/:slug/filing-approval — the owner keeps a task an agent opened ("Approve",
+ * beside "Object"). One engine with `dreamcontext tasks approve-filing` (lib/task-filing-approval.ts):
+ * 200 with the task (also when it was already approved), 409 `filed_by_owner` / `cancelled`,
+ * 403 `agent_run`, 404. The status never changes.
+ */
+export async function handleTasksFilingApproval(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  const backend = backendFor(contextRoot);
+  const result = await approveFiling(contextRoot, backend, slug);
+  if (!result.ok) { sendError(res, result.status, result.code, result.message); return; }
+  if (!result.already) {
+    recordDashboardChange(contextRoot, {
+      entity: 'task',
+      action: 'update',
+      target: `state/${slug}.md`,
+      summary: `Approved '${result.task.name}'`,
+    });
+  }
+  sendJson(res, 200, { task: toApiTask(result.task, await objectionReadCtx(contextRoot, backend)), already: result.already });
 }
 
 /**
@@ -1127,6 +1226,13 @@ export async function handleTasksUpdate(
     if (typeof body.agent !== 'string' || !isSafeAutomationSlug(body.agent) || !getAgent(contextRoot, body.agent)) {
       sendError(res, 400, 'invalid_agent', 'agent must be the slug of an agent in this project, or null.');
       return;
+    }
+  }
+  // Only an agent's owner gives it a task or takes one off it (B1-4): a teammate's is read-only.
+  if (body.agent !== undefined && (body.agent ?? null) !== (existing.agent ?? null)) {
+    for (const s of [existing.agent, body.agent]) {
+      const a = typeof s === 'string' && isSafeAutomationSlug(s) ? getAgent(contextRoot, s) : null;
+      if (a && refuseNotOwner(res, { slug: a.slug, owner: a.owner, title: a.title })) return;
     }
   }
   // `parent_task` (local-only, two levels max): a task slug, or null to clear.
@@ -1373,11 +1479,22 @@ export async function handleTasksUpdate(
   }
 
   updates.updated_at = today();
-  const task = await backend.updateFields(
+  // Clearing the agent ends its task job first (its run stops, its machine-local records die).
+  const unassigning = body.agent === null && !!existing.agent;
+  if (unassigning) stopTaskAction(contextRoot, slug);
+  let task = await backend.updateFields(
     slug,
     updates,
     bodyChanged && newBody !== null ? { body: newBody } : undefined,
   );
+  if (unassigning) unassignTaskJob(contextRoot, slug);
+  // Who moved it (C1-13): a status changed from the dashboard is the owner's.
+  if (typeof updates.status === 'string' && updates.status !== existing.status) {
+    await recordStatusChange(backend, slug, { to: updates.status, who: { kind: 'owner' }, defs: loadStatuses(contextRoot) });
+    // A task its owner closed ends its agent's job (a live run is stopped, nothing reopens it).
+    endTaskJobIfClosed(contextRoot, slug);
+    task = (await backend.get(slug)) ?? task;
+  }
 
   // Bidirectional invariant: the feature side (related_tasks membership)
   // follows every task-side related_feature change.
@@ -1395,7 +1512,7 @@ export async function handleTasksUpdate(
     summary: buildFieldSummary('task', `state/${slug}.md`, fieldChanges),
   });
 
-  sendJson(res, 200, { task: toApiTask(task, await objectionReadCtx(contextRoot, backend)) });
+  sendJson(res, 200, { task: await toApiTaskDetail(contextRoot, backend, task) });
 }
 
 /**
@@ -1531,25 +1648,28 @@ export async function handleTasksInsert(
 }
 
 /** The HTTP status each assignment refusal answers with. */
-const ASSIGN_REFUSAL_STATUS: Record<AssignmentRefusal, 400 | 404 | 409> = {
+const ASSIGN_REFUSAL_STATUS: Record<AssignmentRefusal, 400 | 403 | 404 | 409> = {
   unknown_task: 404,
   unknown_agent: 404,
   agent_not_approved_to_run: 409,
+  not_owner: 403,
   agent_disabled: 409,
   note_too_long: 400,
+  invalid_start: 400,
+  invalid_workspace: 400,
+  no_repo: 409,
+  unknown_reviewer: 404,
+  reviewer_is_agent: 400,
 };
 
 /**
- * POST /api/tasks/:slug/assign-agent {agent, note?} — "Assign to agent".
+ * POST /api/tasks/:slug/assign-agent {agent, note?, startAt?, workspace?, repo?, reviewer?, reviewCap?}
+ * — "Assign to agent" (AI Team v2 C1-2).
  *
- * The shared steps (`prepareAssignment` → `commitAssignment`), then the EXISTING
- * ask run on the agent's call target with the task as data. A note typed here is
- * the owner speaking, so it rides as the run's ask under the task wording. The
- * run's result is logged on the task by the job itself (`logAssignmentResult`).
- *
- * 409 `agent_not_approved_to_run` names the Agents page and no command. 409
- * `agent_busy` when the agent is already running: an adopted job would carry
- * neither this task nor this note.
+ * The shared steps (`prepareAssignment` → `commitAssignment`), then ONE drain: a due step starts
+ * in a detached host at once, a future one waits `scheduled`, and an agent that is busy queues it
+ * (`queued`; no more 409 `agent_busy`). The agent and the reviewer must be the caller's own and
+ * approved; a teammate's agent is refused 403 `not_owner` here as in the CLI.
  */
 export async function handleTasksAssignAgent(
   req: IncomingMessage,
@@ -1564,31 +1684,37 @@ export async function handleTasksAssignAgent(
     sendError(res, 400, 'missing_agent', 'Name the agent to assign.');
     return;
   }
-  if (body.note !== undefined && body.note !== null && typeof body.note !== 'string') {
-    sendError(res, 400, 'invalid_note', 'note must be text.');
+  for (const k of ['note', 'startAt', 'repo', 'reviewer'] as const) {
+    if (body[k] !== undefined && body[k] !== null && typeof body[k] !== 'string') {
+      sendError(res, 400, `invalid_${k}`, `${k} must be text.`);
+      return;
+    }
+  }
+  if (body.workspace !== undefined && body.workspace !== 'code' && body.workspace !== 'doc') {
+    sendError(res, 400, 'invalid_workspace', 'workspace is code or doc.');
+    return;
+  }
+  if (body.reviewCap !== undefined && body.reviewCap !== null && typeof body.reviewCap !== 'number') {
+    sendError(res, 400, 'invalid_reviewCap', 'reviewCap must be a number.');
     return;
   }
   const prep = prepareAssignment(contextRoot, slug, body.agent.trim(), {
     source: 'dashboard',
     ...(typeof body.note === 'string' ? { note: body.note } : {}),
+    ...(typeof body.startAt === 'string' ? { startAt: body.startAt } : {}),
+    ...(body.workspace ? { workspace: body.workspace as 'code' | 'doc' } : {}),
+    ...(typeof body.repo === 'string' ? { repo: body.repo } : {}),
+    ...(typeof body.reviewer === 'string' ? { reviewer: body.reviewer } : {}),
+    ...(typeof body.reviewCap === 'number' ? { reviewCap: body.reviewCap } : {}),
   });
   if (!prep.ok) {
     sendError(res, ASSIGN_REFUSAL_STATUS[prep.code], prep.code, prep.message);
     return;
   }
-  if (currentAutomationJob(contextRoot, prep.target.slug)?.status === 'running') {
-    sendError(res, 409, 'agent_busy', `${prep.target.agentTitle || prep.target.title} is running right now. Assign the task when it finishes.`);
-    return;
-  }
   try {
     const fireAt = new Date();
-    const { statusMoved } = commitAssignment(contextRoot, prep, fireAt);
-    const { job } = startAutomationJob(contextRoot, prep.target.slug, {
-      text: prep.ownerNote ?? '',
-      fireAt,
-      task: { slug: prep.task.slug, name: prep.task.name },
-      target: 'agent',
-    });
+    const { statusMoved, state, step } = commitAssignment(contextRoot, prep, fireAt);
+    const started = startDueTaskJobs(contextRoot);
     recordDashboardChange(contextRoot, {
       entity: 'task',
       action: 'update',
@@ -1596,7 +1722,8 @@ export async function handleTasksAssignAgent(
       field: 'agent',
       summary: `Assigned task '${slug}' to the agent '${prep.target.slug}'`,
     });
-    sendJson(res, 202, { jobId: job.id, runId: fireAt.toISOString(), statusMoved });
+    const runId = started[0] ?? '';
+    sendJson(res, 202, { jobId: runId, runId, statusMoved, state: started.length ? 'starting' : state, step, started: started.length > 0 });
   } catch (err) {
     console.error('[tasks] assign-agent failed', err);
     sendError(res, 500, 'assign_failed', 'Failed to assign the task.');

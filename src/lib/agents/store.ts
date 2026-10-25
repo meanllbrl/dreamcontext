@@ -1,11 +1,14 @@
-import { mkdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { stopAgentTaskJobs } from './task-starter.js';
+import { chmodSync, mkdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { lockHolderPid } from '../file-lock.js';
 import fg from '../glob.js';
 import matter from 'gray-matter';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { generateId } from '../id.js';
 import {
   AutomationError,
+  DEFAULT_AGENT_AUTONOMY,
   DEFAULT_TIMEOUT_MINUTES,
   MAX_TIMEOUT_MINUTES,
   PATTERN_HEADING,
@@ -14,9 +17,15 @@ import {
   type ApprovalBinding,
   type AutomationJob,
   type AutomationManifest,
+  parseAutonomy,
   type ReviewMode,
   type RunKind,
 } from '../automations/types.js';
+import { parseFace } from './figure.js';
+import { nextFreeFace } from './faces.js';
+import { forgetAgentLocal } from '../local-store.js';
+import { GLOBAL_REGISTRY_KEY, globalAgentExists, globalAgentHome, globalAgentPath, globalAgentsDir, hasProjectMember, isGlobalAgentHere, listGlobalAgentSlugs } from './scope.js';
+import { appendGlobalJournal, consolidateGlobalMemory, readGlobalPattern } from './global-memory.js';
 import {
   assertRegularFile,
   automationFileTarget,
@@ -25,10 +34,12 @@ import {
   extractSection,
   getRunTarget,
   listManifestFiles,
+  lockPathFor,
   numberOrDefault,
   parseEffort,
   parseFlowSection,
   patchManifestFrontmatter,
+  stampOwnerWrite,
   pathOccupied,
   readManifestParts,
   removeAutomation,
@@ -42,11 +53,13 @@ import {
   type ManifestParts,
   type RecordLessonInput,
 } from '../automations/store.js';
-import { approveAutomation, checkApproval, manifestHash, revokeAgent } from '../automations/registry.js';
+import { approveAutomation, checkApproval, listRegisteredProjects, manifestHash, revokeAgent } from '../automations/registry.js';
 import { readWhiteboard, listWhiteboards } from '../whiteboards/store.js';
 import { liveElements } from '../whiteboards/ops.js';
 import { widgetPayloadOf } from '../whiteboards/widgets.js';
 import { classifyAutomationSlot, isSafeAutomationSlug, parseManifestFrontmatter, readManifestFrontmatter } from './slot.js';
+import { assertOwned, currentLogin, parseOwner } from './owner.js';
+import { adoptPattern, agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from './agent-sync.js';
 import { composeRun, legacyPair } from './compose.js';
 import { normalizeSoul } from './soul-templates.js';
 import { validateSoul } from './soul.js';
@@ -61,6 +74,7 @@ import {
   type AgentInput,
   type AgentManifest,
   type AgentPlacementPatch,
+  type AgentScope,
 } from './types.js';
 
 /**
@@ -115,7 +129,7 @@ function parseReview(v: unknown): ReviewMode {
  * read whether or not a `call:` block exists, because they change what a called
  * run does.
  */
-export function readAgentFile(filePath: string): AgentManifest {
+export function readAgentFile(filePath: string, scope: AgentScope = 'project'): AgentManifest {
   assertRegularFile(filePath);
   const { data, content } = parseManifestFrontmatter(readFileSync(filePath, 'utf-8'));
   const slug = basename(filePath, '.md');
@@ -148,11 +162,31 @@ export function readAgentFile(filePath: string): AgentManifest {
     reportsTo: typeof data.reports_to === 'string' && isSafeAutomationSlug(data.reports_to.trim()) ? data.reports_to.trim() : null,
     team: readTeamLabel(data.team),
     call: callSettings,
+    autonomy: parseAutonomy(data.autonomy),
+    face: parseFace(data.face),
+    owner: parseOwner(data.owner),
+    updated: strOrNull(data.updated),
     migratedFrom: strOrNull(data.migrated_from),
     implicit: false,
+    scope,
     path: filePath,
     body: content.trim(),
   };
+}
+
+/**
+ * One GLOBAL agent (D1, `scope.ts`), or null when it is missing or unreadable. Its pattern is its
+ * memory (`global-memory.ts`: the folded memory plus the journal not yet folded), never a
+ * `## Pattern` section, and it reports to the owner in every project (no place in a team).
+ */
+export function readGlobalAgent(slug: string, home?: string): AgentManifest | null {
+  if (!globalAgentExists(slug, home)) return null;
+  try {
+    const agent = readAgentFile(globalAgentPath(slug, home), 'global');
+    return { ...agent, pattern: readGlobalPattern(slug, home), reportsTo: null, team: null, shared: false };
+  } catch {
+    return null;
+  }
 }
 
 /** An empty identity for an agent missing on this machine (a shared automation
@@ -175,8 +209,13 @@ export function placeholderAgent(slug: string): AgentManifest {
     reportsTo: null,
     team: null,
     call: { ...DEFAULT_CALL_SETTINGS },
+    autonomy: DEFAULT_AGENT_AUTONOMY,
+    face: null,
+    owner: null,
+    updated: null,
     migratedFrom: null,
     implicit: false,
+    scope: 'project',
     path: '',
     body: '',
   };
@@ -240,6 +279,12 @@ function resolveAgents(contextRoot: string, files: readonly SlotFile[]): AgentMa
       // a symlinked or broken agent file is skipped, like a broken manifest
     }
   }
+  // This machine's global agents (D1), each unless a project member of its name shadows it here.
+  for (const slug of listGlobalAgentSlugs()) {
+    if (agents.has(slug) || hasProjectMember(contextRoot, slug)) continue;
+    const agent = readGlobalAgent(slug);
+    if (agent) agents.set(slug, agent);
+  }
   return [...agents.values()].sort(bySlug);
 }
 
@@ -249,6 +294,8 @@ function callTargetFrom(contextRoot: string, agent: AgentManifest, files: readon
     const job = boundJobOf(f, agent.slug);
     if (job) bindings.push({ slug: job.slug, sha256: manifestHash(composeRun(agent, job)) });
   }
+  // A global agent has no legacy record anywhere: its approval is its `global` grant alone.
+  if (agent.scope === 'global') return composeRun(agent, null, bindings, false);
   const slot = classifyAutomationSlot(contextRoot, agent.slug);
   return composeRun(agent, null, bindings, slot === 'absent' || slot === 'legacy-call');
 }
@@ -272,7 +319,8 @@ export function getAgent(contextRoot: string, slug: string): AgentManifest | nul
     }
   }
   const path = agentPath(contextRoot, slug);
-  if (!pathOccupied(path)) return null;
+  // No member of this name here: this machine's global agent of that name, if there is one (D1).
+  if (!pathOccupied(path)) return isGlobalAgentHere(contextRoot, slug) ? readGlobalAgent(slug) : null;
   try {
     return readAgentFile(path);
   } catch {
@@ -308,14 +356,14 @@ export function ensureAgentsGitignore(contextRoot: string): void {
   }
 }
 
-const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'photo']);
+const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'photo', 'autonomy']);
 
 /** An identity patch at runtime too: a caller passing call settings (or anything
  *  else) through an untyped surface is refused, never silently dropped. */
 function assertIdentityPatch(patch: AgentIdentityPatch): void {
   for (const key of Object.keys(patch)) {
     if (!IDENTITY_PATCH_KEYS.has(key)) {
-      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board and photo.`);
+      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board, photo and autonomy.`);
     }
   }
 }
@@ -334,6 +382,7 @@ function applyIdentityPatch(agent: AgentManifest, patch: AgentIdentityPatch): Ag
     learning: patch.learning === undefined ? agent.learning : patch.learning,
     whiteboard: patch.whiteboard === undefined ? agent.whiteboard : patch.whiteboard,
     photo: patch.photo === undefined ? agent.photo : patch.photo,
+    autonomy: patch.autonomy === undefined ? agent.autonomy : parseAutonomy(patch.autonomy),
   };
 }
 
@@ -371,6 +420,8 @@ function identityFrontmatter(a: AgentManifest): Record<string, unknown> {
     ...(a.effort ? { effort: a.effort } : {}),
     ...(a.learning ? { learning: true } : {}),
     ...(a.whiteboard ? { whiteboard: a.whiteboard } : {}),
+    // Only a level other than the default is written, so an ordinary agent's file is unchanged.
+    ...(a.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: a.autonomy } : {}),
   };
 }
 
@@ -399,9 +450,11 @@ export function createAgent(contextRoot: string, input: AgentInput, opts: Create
     whiteboard: input.whiteboard ?? null,
     photo: input.photo ?? null,
     shared: input.shared === true,
+    autonomy: parseAutonomy(input.autonomy),
   };
   validateIdentity(contextRoot, draft);
   const path = agentPath(contextRoot, slug);
+  if (globalAgentExists(slug)) throw new AutomationError(`"${slug}" is already the name of one of your global agents.`);
   if (getAgent(contextRoot, slug) || pathOccupied(automationPath(contextRoot, slug)) || pathOccupied(path)) {
     throw new AutomationError(`"${slug}" is already the name of an agent or an automation.`);
   }
@@ -412,15 +465,75 @@ export function createAgent(contextRoot: string, input: AgentInput, opts: Create
     title: draft.title,
     ...identityFrontmatter(draft),
     shared: draft.shared,
+    // Stamped once, here: the next free face in this vault (agents + automations), so adding a
+    // member never moves anyone else's face.
+    face: nextFreeFace(contextRoot, slug),
+    // Its creator, unhashed: everyone else reads it, read-only (`agents/owner.ts`).
+    owner: currentLogin(),
+    updated: new Date().toISOString(),
   };
   const soul = draft.soul ? `\n## Soul\n\n${draft.soul}\n` : '';
   createManifestText(path, matter.stringify(`## Prompt\n\n${draft.prompt}\n${soul}`, frontmatter));
+  // Created HERE: once agents sync, this is what tells this machine's own from what arrived.
+  if (agentSyncSwitchOn(contextRoot)) recordCreatedLocally(contextRoot, `agents/${slug}.md`);
   const agent = readAgentFile(path);
   if (opts.approve) {
     const target = getRunTarget(contextRoot, slug, 'agent');
     if (target) approveAutomation(dirname(contextRoot), target, opts.approve.now, opts.approve.home);
   }
   return agent;
+}
+
+/**
+ * Create a GLOBAL agent (D1): `~/.dreamcontext/agents/<slug>.md` on this machine, listed in every
+ * project, never in a brain. No photo and no home board (both are a project's); its memory is its
+ * own journal (`global-memory.ts`). `approve` grants it in the registry's `global` bucket, so one
+ * approval covers every project.
+ */
+export function createGlobalAgent(input: AgentInput, opts: CreateAgentOptions = {}): AgentManifest {
+  const slug = input.slug.trim();
+  if (input.photo || input.whiteboard) throw new AutomationError('A global agent has no photo and no home board: both belong to one project.');
+  const draft: AgentManifest = {
+    ...placeholderAgent(slug),
+    scope: 'global',
+    title: input.title?.trim() ?? '',
+    prompt: input.prompt?.trim() ?? '',
+    soul: normalizeSoul(input.soul ?? ''),
+    model: input.model ?? null,
+    effort: input.effort ?? null,
+    learning: input.learning ?? true,
+    autonomy: parseAutonomy(input.autonomy),
+  };
+  validateAutomationForWrite({ slug, title: draft.title, mode: 'call', model: draft.model, effort: draft.effort, photo: null, whiteboard: null });
+  if (!draft.prompt.trim()) throw new AutomationError('An agent needs a prompt: it is who the agent is.');
+  validateSoul(draft.soul);
+  const path = globalAgentPath(slug);
+  if (pathOccupied(path)) throw new AutomationError(`"${slug}" is already the name of one of your global agents.`);
+  // A folder with no agent file is what a deleted one left (a late run write): never inherited.
+  if (pathOccupied(globalAgentHome(slug))) rmSync(globalAgentHome(slug), { recursive: true, force: true });
+  mkdirSync(globalAgentsDir(), { recursive: true, mode: 0o700 });
+  try { chmodSync(globalAgentsDir(), 0o700); } catch { /* best effort */ }
+  const frontmatter = {
+    id: generateId('agt'),
+    title: draft.title,
+    ...identityFrontmatter(draft),
+    owner: currentLogin(),
+    updated: new Date().toISOString(),
+  };
+  const soul = draft.soul ? `\n## Soul\n\n${draft.soul}\n` : '';
+  createManifestText(path, matter.stringify(`## Prompt\n\n${draft.prompt}\n${soul}`, frontmatter));
+  const agent = readGlobalAgent(slug);
+  if (!agent) throw new AutomationError(`The global agent "${slug}" could not be read back.`);
+  if (opts.approve) approveAutomation(GLOBAL_REGISTRY_KEY, composeRun(agent, null, [], false), opts.approve.now, opts.approve.home);
+  return agent;
+}
+
+/** Every global agent of this machine, sorted (the launcher's list). */
+export function listGlobalAgents(): AgentManifest[] {
+  return listGlobalAgentSlugs().flatMap((slug) => {
+    const a = readGlobalAgent(slug);
+    return a ? [a] : [];
+  });
 }
 
 /**
@@ -433,8 +546,15 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
   assertIdentityPatch(patch);
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
+  if (agent.scope === 'global' && (patch.photo || patch.whiteboard)) {
+    throw new AutomationError('A global agent has no photo and no home board: both belong to one project.');
+  }
   const next = applyIdentityPatch(agent, patch);
   validateIdentity(contextRoot, next);
+  if (agent.implicit && patch.autonomy !== undefined && next.autonomy !== agent.autonomy) {
+    throw new AutomationError(`"${slug}" still lives in its old automation file, which cannot hold an autonomy level: run \`dreamcontext update\` (it splits old files into an agent and its routine), then try again.`);
+  }
 
   if (agent.implicit) {
     const fields: Record<string, unknown> = {};
@@ -449,7 +569,7 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
     assertRegularFile(agent.path);
     const { data, content } = parseManifestFrontmatter(readFileSync(agent.path, 'utf-8'));
     const nextData: Record<string, unknown> = { ...data, title: next.title };
-    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard']) delete nextData[key];
+    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard', 'autonomy']) delete nextData[key];
     rewriteManifestText(agent.path, matter.stringify(content, { ...nextData, ...identityFrontmatter(next) }));
   }
   if (patch.prompt !== undefined) {
@@ -463,6 +583,7 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
       next.soul ? upsertSectionAfter(raw, SOUL_HEADING, next.soul, 'Prompt') : removeSection(raw, SOUL_HEADING),
     );
   }
+  stampOwnerWrite(agent.path);
   const updated = getAgent(contextRoot, slug);
   if (!updated) throw new AutomationError(`Agent "${slug}" could not be read back after the edit.`);
   return updated;
@@ -497,10 +618,12 @@ export type RemoveAgentResult = { removed: true } | { removed: false; usedBy: st
 export function removeAgent(contextRoot: string, slug: string, opts: { home?: string } = {}): RemoveAgentResult {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
   const usedBy = readSlotFiles(contextRoot)
     .filter((f) => boundJobOf(f, slug) !== null)
     .map((f) => f.slug);
   if (usedBy.length > 0) return { removed: false, usedBy };
+  if (agent.scope === 'global') return removeGlobalAgent(slug, opts);
 
   if (agent.implicit) {
     removeAutomation(contextRoot, slug);
@@ -517,8 +640,55 @@ export function removeAgent(contextRoot: string, slug: string, opts: { home?: st
     }
   }
   revokeAgent(dirname(contextRoot), slug, automationFileTarget(contextRoot, slug), opts.home);
+  // Its machine-local entries die with it (the stage's home session).
+  forgetAgentLocal(dirname(contextRoot), slug, opts.home);
+  // Its task jobs: queued steps stop ("agent gone"), its sessions are forgotten (C1-5).
+  stopAgentTaskJobs(contextRoot, slug, opts.home);
   reparentReports(contextRoot, slug, agent.reportsTo);
   return { removed: true };
+}
+
+/**
+ * Delete a GLOBAL agent everywhere: its file, its folder (memory, every project's threads and
+ * outputs), its `global` grant, and in every registered project where it was the agent of that
+ * name, its machine-local entries and its task jobs (each key's death, D1).
+ */
+export function removeGlobalAgent(slug: string, opts: { home?: string } = {}): RemoveAgentResult {
+  const path = globalAgentPath(slug);
+  assertRegularFile(path);
+  const projects = listRegisteredProjects(opts.home).filter((root) => isGlobalAgentHere(join(root, '_dream_context'), slug));
+  // A routine in ANY project still runs as it: refused, as a project agent's delete is.
+  const usedBy = projects.flatMap((root) => readSlotFiles(join(root, '_dream_context'))
+    .filter((f) => boundJobOf(f, slug) !== null)
+    .map((f) => `${basename(root)}/${f.slug}`));
+  if (usedBy.length > 0) return { removed: false, usedBy };
+  // A run of it in any project still holds its lock (in its folder, which the delete removes).
+  for (const root of projects) {
+    const pid = lockHolderPid(lockPathFor(join(root, '_dream_context'), slug));
+    if (pid !== null && pidAlive(pid)) throw new AutomationError(`"${slug}" is running in ${basename(root)}: delete it once that run ends.`);
+  }
+  // Every key's death BEFORE the file goes, while its paths still resolve to its own folder.
+  for (const root of projects) {
+    try {
+      stopAgentTaskJobs(join(root, '_dream_context'), slug, opts.home);
+      forgetAgentLocal(root, slug, opts.home);
+    } catch {
+      // that project's reconciler closes what is left
+    }
+  }
+  unlinkSync(path);
+  try { rmSync(globalAgentHome(slug), { recursive: true, force: true }); } catch { /* left for a later delete */ }
+  revokeAgent(GLOBAL_REGISTRY_KEY, slug, null, opts.home);
+  return { removed: true };
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 /**
@@ -532,9 +702,11 @@ export function removeAgent(contextRoot: string, slug: string, opts: { home?: st
 export function setAgentPlacement(contextRoot: string, slug: string, patch: AgentPlacementPatch): AgentManifest {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
   if (agent.implicit) {
     throw new AutomationError(`"${slug}" still lives in its old automation file, which cannot hold a place in the team: run \`dreamcontext update\` (it splits old files into an agent and its routine), then try again.`);
   }
+  if (agent.scope === 'global') throw new AutomationError(`"${slug}" is a global agent: it reports to you in every project.`);
   const fields: Record<string, unknown> = {};
   if (patch.reportsTo !== undefined) {
     const manager = patch.reportsTo === null ? null : patch.reportsTo.trim();
@@ -594,6 +766,8 @@ function reparentReports(contextRoot: string, slug: string, manager: string | nu
 export function setAgentShared(contextRoot: string, slug: string, shared: boolean): AgentManifest {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
+  if (agent.scope === 'global') throw new AutomationError(`"${slug}" is a global agent: it stays on this machine and is never shared.`);
   patchManifestFrontmatter(agent.path, { shared });
   return getAgent(contextRoot, slug) as AgentManifest;
 }
@@ -603,8 +777,18 @@ export function setAgentShared(contextRoot: string, slug: string, shared: boolea
 export function recordAgentLesson(contextRoot: string, slug: string, input: RecordLessonInput): AgentManifest {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
-  writeLessonToFile(agent.path, agent.pattern, input);
-  return getAgent(contextRoot, slug) as AgentManifest;
+  assertOwned({ owner: agent.owner }, agent.title || slug);
+  if (agent.scope === 'global') {
+    // Its own journal file, then a fold: runs in other projects never lose this lesson (D1).
+    appendGlobalJournal(slug, dirname(contextRoot), input, { runId: process.env.DREAMCONTEXT_RUN_ID });
+    consolidateGlobalMemory(slug);
+    return readGlobalAgent(slug) as AgentManifest;
+  }
+  // The lesson lands on the pattern as THIS machine adopted it (B1-6), and the result is adopted.
+  writeLessonToFile(agent.path, effectivePattern(contextRoot, slug, agent.pattern), input);
+  const after = getAgent(contextRoot, slug) as AgentManifest;
+  adoptIfSyncing(contextRoot, slug, after.pattern);
+  return after;
 }
 
 export interface AgentUsage {
@@ -721,5 +905,13 @@ function withIdentity(target: AutomationManifest, agent: AgentManifest): Automat
     effort: agent.effort,
     learning: agent.learning,
     whiteboard: agent.whiteboard,
+    autonomy: agent.autonomy,
   };
+}
+
+/** After a local pattern write: adopt the new text, so this machine's own lessons never read as a
+ *  change from elsewhere. A no-op while the agent-sync switch is off. */
+export function adoptIfSyncing(contextRoot: string, slug: string, pattern: string): void {
+  if (!agentSyncSwitchOn(contextRoot)) return;
+  try { adoptPattern(contextRoot, slug, pattern); } catch { /* adopted at the next run */ }
 }

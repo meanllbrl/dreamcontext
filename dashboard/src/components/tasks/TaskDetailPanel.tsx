@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useUpdateTask, useDeleteTask, useFeatureOptions, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
+import { useUpdateTask, useDeleteTask, useFeatureOptions, useStatusModel, useTask, isOpenChildrenRefusal, type AgentJobDetail } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
 import { openChildrenMessage } from '../../lib/taskObjection';
 import { confirmAction } from '../../lib/desktop';
@@ -11,6 +11,10 @@ import { BodySections } from './detail/BodySections';
 import { SubtasksSection } from './detail/SubtasksSection';
 import { CriteriaSection } from './detail/CriteriaSection';
 import { MediaSection } from './detail/MediaSection';
+import { AgentJobRow } from './detail/AgentJobRow';
+import { DeliveriesSection } from './detail/DeliveriesSection';
+import { ReviewRoundsSection } from './detail/ReviewRoundsSection';
+import { HistorySection } from './detail/HistorySection';
 import { toggleCriterion, type SectionKey } from './detail/sectionModel';
 import { subtaskProgress } from './boardModel';
 import './TaskDetailPanel.css';
@@ -45,6 +49,11 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [parentError, setParentError] = useState<string | null>(null);
   const [fullScreen, setFullScreen] = useState(false);
+  // The single-task read: the agent job's deliveries and this machine's rows about it, and who
+  // moved the status. The board's list carries neither (AI Team v2 C2).
+  const { data: detail } = useTask(task.slug);
+  const job = detail?.agent_job && 'deliveries' in detail.agent_job ? (detail.agent_job as AgentJobDetail) : null;
+  const history = detail?.status_history ?? [];
 
   // A status change refused because sub-tasks are still open names them in the owner's
   // language (the status select snaps back on its own: it shows the server's status).
@@ -166,6 +175,7 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
         <div className="detail-grid">
           <div className="detail-main">
             {mutationError && <div className="error-state detail-error">{mutationError}</div>}
+            {job && (task.agent || job.state) && <AgentJobRow task={detail ?? task} detail={job} allTasks={allTasks} />}
             <BodySections
               task={task}
               body={shownBody}
@@ -176,6 +186,8 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
                 subtasks: parent ? null : subtasksSlot,
                 criteria: <CriteriaSection body={shownBody} onToggle={(i, c) => onToggle('acceptance_criteria', i, c)} />,
                 media: <MediaSection task={task} />,
+                work: job ? <><DeliveriesSection deliveries={job.deliveries} /><ReviewRoundsSection job={job} history={history} /></> : null,
+                history: <HistorySection history={history} />,
               }}
             />
           </div>

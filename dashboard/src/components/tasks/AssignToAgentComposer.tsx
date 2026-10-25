@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
 import { useAssignTaskToAgent } from '../../hooks/useTasks';
 import { findAgent, useAgent, useAgents, useApproveAgent } from '../../hooks/useAgents';
+import { useLinkedRepos } from '../../hooks/useLinkedRepos';
+import { useAutomationDispatcher, useInstallDispatcher } from '../../hooks/useAutomations';
+import { guessWorkspace, instantToLocalInput, localInputToInstant, shortWhen } from '../../lib/taskAgentJob';
 import { useI18n } from '../../context/I18nContext';
 import { requestOpenAgents } from '../../lib/openAgents';
 import {
@@ -66,6 +69,23 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
   const name = agent?.title ?? slug ?? '';
 
   const [note, setNote] = useState('');
+  // When (now, or a picked local time stored as an instant), where (code in a repo's worktree, or
+  // the brain), and who reviews the delivery (the owner, or one of the owner's agents).
+  const [later, setLater] = useState(false);
+  const [when, setWhen] = useState(() => instantToLocalInput(new Date(Date.now() + 60 * 60_000).toISOString()));
+  const { data: repos } = useLinkedRepos();
+  const presentRepos = useMemo(() => (repos ?? []).filter((r) => r.present), [repos]);
+  const [workspace, setWorkspace] = useState<'code' | 'doc' | null>(null);
+  const ws = workspace ?? guessWorkspace(task, repos);
+  const [repo, setRepo] = useState<string | null>(null);
+  const repoName = repo ?? presentRepos[0]?.name ?? null;
+  const [reviewer, setReviewer] = useState('');
+  const reviewers = offered.filter((a) => a.approvedToRun && a.slug !== slug);
+  const startAt = later ? localInputToInstant(when) : null;
+  const badWhen = later && (!startAt || Date.parse(startAt) <= Date.now());
+  const dispatcher = useAutomationDispatcher();
+  const install = useInstallDispatcher();
+  const schedulerOff = !!dispatcher.data?.supported && !dispatcher.data.installed;
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [done, setDone] = useState<string | null>(null);
@@ -73,6 +93,12 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
   const approve = useApproveAgent();
   const detail = useAgent(reviewing ? slug : null, { fresh: true });
   const busy = assign.isPending || approve.isPending;
+  const options = {
+    ...(startAt ? { startAt } : {}),
+    workspace: ws,
+    ...(ws === 'code' && repoName ? { repo: repoName } : {}),
+    ...(reviewer && reviewer !== slug ? { reviewer } : {}),
+  };
   const tooLong = noteTooLong(note);
 
   useEffect(() => {
@@ -84,14 +110,16 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
   const pick = (next: string) => { setPicked(next); setError(null); setReviewing(false); };
 
   const finish = (message: string) => { setDone(message); onAssigned?.(message); };
+  const assigned = (result: Parameters<typeof assignedMessage>[0]) =>
+    finish(assignedMessage(result, name, t, startAt ? shortWhen(startAt) : ''));
 
   const submit = () => {
-    if (!slug || busy || tooLong) return;
+    if (!slug || busy || tooLong || badWhen) return;
     setError(null);
     assign.mutate(
-      { slug: task.slug, agent: slug, note },
+      { slug: task.slug, agent: slug, note, ...options },
       {
-        onSuccess: (result) => finish(assignedMessage(result, name, t)),
+        onSuccess: (result) => assigned(result),
         onError: (err) => {
           const view = refusalView(err, name, t);
           if (view.kind === 'review') setReviewing(true);
@@ -106,9 +134,9 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
     setError(null);
     const outcome = await approveThenAssign({
       approve: () => approve.mutateAsync(slug),
-      assign: () => assign.mutateAsync({ slug: task.slug, agent: slug, note }),
+      assign: () => assign.mutateAsync({ slug: task.slug, agent: slug, note, ...options }),
     });
-    if (outcome.ok) { setReviewing(false); finish(assignedMessage(outcome.result, name, t)); return; }
+    if (outcome.ok) { setReviewing(false); assigned(outcome.result); return; }
     if (outcome.stage === 'approve') {
       setError(tr(t, 'agents.approval.failed', "Couldn't approve {name}. {reason}", {
         name, reason: tr(t, 'tasks.assignTryAgain', 'Try again in a moment.'),
@@ -221,10 +249,77 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
                 </label>
               )}
 
+              {!reviewing && (
+                <>
+                  <div className="field">
+                    <span className="field-label" id="ata-when">{tr(t, 'tasks.assignWhen', 'When')}</span>
+                    <div className="ata-seg" role="radiogroup" aria-labelledby="ata-when">
+                      <button type="button" role="radio" aria-checked={!later} className={`ata-seg-opt${!later ? ' ata-seg-opt--on' : ''}`} onClick={() => setLater(false)} disabled={busy}>
+                        {tr(t, 'tasks.assignNow', 'Now')}
+                      </button>
+                      <button type="button" role="radio" aria-checked={later} className={`ata-seg-opt${later ? ' ata-seg-opt--on' : ''}`} onClick={() => setLater(true)} disabled={busy}>
+                        {tr(t, 'tasks.assignLater', 'At a time')}
+                      </button>
+                    </div>
+                    {later && (
+                      <input
+                        type="datetime-local"
+                        className="field-input ata-when-input"
+                        value={when}
+                        min={instantToLocalInput(new Date().toISOString())}
+                        onChange={(e) => setWhen(e.target.value)}
+                        aria-label={tr(t, 'tasks.assignWhenAt', 'Start at (your local time)')}
+                        aria-invalid={badWhen}
+                        disabled={busy}
+                      />
+                    )}
+                    {badWhen && <span className="ata-error">{tr(t, 'tasks.assignWhenPast', 'Pick a time in the future.')}</span>}
+                    {later && schedulerOff && (
+                      <div className="ata-warn" role="status">
+                        <span>{tr(t, 'tasks.assignSchedulerOff', 'The scheduler is off on this Mac, so a later start happens only while the app is open.')}</span>
+                        <button type="button" className="ata-link" onClick={() => install.mutate({})} disabled={install.isPending}>
+                          {install.isPending ? tr(t, 'tasks.assignSchedulerTurningOn', 'Turning on…') : tr(t, 'tasks.assignSchedulerOn', 'Turn on the scheduler')}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="field">
+                    <span className="field-label" id="ata-where">{tr(t, 'tasks.assignWhere', 'Where it works')}</span>
+                    <div className="ata-seg" role="radiogroup" aria-labelledby="ata-where">
+                      <button type="button" role="radio" aria-checked={ws === 'code'} className={`ata-seg-opt${ws === 'code' ? ' ata-seg-opt--on' : ''}`} onClick={() => setWorkspace('code')} disabled={busy || presentRepos.length === 0}>
+                        {tr(t, 'tasks.assignCode', 'Code')}
+                      </button>
+                      <button type="button" role="radio" aria-checked={ws === 'doc'} className={`ata-seg-opt${ws === 'doc' ? ' ata-seg-opt--on' : ''}`} onClick={() => setWorkspace('doc')} disabled={busy}>
+                        {tr(t, 'tasks.assignDoc', 'Docs')}
+                      </button>
+                    </div>
+                    {ws === 'code' && presentRepos.length > 1 && (
+                      <select className="field-select" value={repoName ?? ''} onChange={(e) => setRepo(e.target.value)} aria-label={tr(t, 'tasks.assignRepo', 'Repository')} disabled={busy}>
+                        {presentRepos.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
+                      </select>
+                    )}
+                    <span className="ata-muted">{ws === 'code'
+                      ? tr(t, 'tasks.assignCodeHint', 'Its own branch and worktree in {repo}. It never merges.', { repo: repoName ?? '' })
+                      : tr(t, 'tasks.assignDocHint', 'It works in the brain and delivers documents.')}</span>
+                  </div>
+
+                  <label className="field">
+                    <span className="field-label">{tr(t, 'tasks.assignReviewer', 'Reviewer')}</span>
+                    <select className="field-select" value={reviewer} onChange={(e) => setReviewer(e.target.value)} disabled={busy}>
+                      <option value="">{tr(t, 'tasks.assignReviewerYou', 'You review it')}</option>
+                      {reviewers.map((a) => <option key={a.slug} value={a.slug}>{a.title}</option>)}
+                    </select>
+                  </label>
+                </>
+              )}
+
               <div className="ata-disclosure">
-                <p>{tr(t, 'tasks.assignWhatHappens',
-                  '{name} starts on this task now. A task that has not started moves to In progress. The result is logged on the task.',
-                  { name: name || tr(t, 'tasks.agent', 'Agent') })}</p>
+                <p>{startAt
+                  ? tr(t, 'tasks.assignWhatHappensLater', '{name} starts on this task at {when}. If it is busy then, the task waits its turn.',
+                    { name: name || tr(t, 'tasks.agent', 'Agent'), when: shortWhen(startAt) })
+                  : tr(t, 'tasks.assignWhatHappensNow', '{name} starts on this task now, or after its current work. A task that has not started moves to In progress; the delivery lands on the task and moves it to In Review.',
+                    { name: name || tr(t, 'tasks.agent', 'Agent') })}</p>
                 <p>{t('tasks.assignDisclosure')}</p>
               </div>
 
@@ -243,12 +338,12 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
                     type="button"
                     className="btn btn--primary"
                     onClick={approveAndAssign}
-                    disabled={busy || !detail.data}
+                    disabled={busy || !detail.data || badWhen}
                   >
                     {busy ? t('tasks.assigning') : t('tasks.approveAndAssign')}
                   </button>
                 ) : (
-                  <button type="button" className="btn btn--primary" onClick={submit} disabled={!slug || busy || tooLong}>
+                  <button type="button" className="btn btn--primary" onClick={submit} disabled={!slug || busy || tooLong || badWhen}>
                     {busy ? t('tasks.assigning') : t('tasks.assignSubmit')}
                   </button>
                 ))}

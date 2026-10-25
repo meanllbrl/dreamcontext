@@ -58,8 +58,8 @@ Lives under tests/unit
 
 
 
-### 2026-06-11 - Status → todo
-### 2026-06-11 - Status → in_review
+### 2026-06-11 - Status → todo (by owner)
+### 2026-06-11 - Status → in_review (by owner)
 - Ready for review
 ### 2026-06-11 - Session Update
 - Session progress note

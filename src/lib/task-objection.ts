@@ -4,6 +4,7 @@ import { customAlphabet } from 'nanoid';
 import { acquireFileLockWithin, releaseFileLock } from './file-lock.js';
 import { slugify, today } from './id.js';
 import { loadStatuses } from './overrides.js';
+import { recordStatusChange } from './task-history.js';
 import { isSleepCycleLive } from './task-filing-bar.js';
 import { DECLINED_REL_PATH, MAX_DECLINED, type DeclinedIdea } from './task-declined.js';
 import { readRules, ruleFor, type RulesDoc } from './task-filing-rules.js';
@@ -417,7 +418,10 @@ async function runLocked(
         const cur = await backend.get(rec.task);
         const key = cancelledStatus(defs);
         if (!key) throw new Error('this project declares no cancelled-kind status');
-        if (cur && !isCancelled(defs, cur.status)) await backend.updateFields(rec.task, { status: key, updated_at: today() });
+        if (cur && !isCancelled(defs, cur.status)) {
+          await backend.updateFields(rec.task, { status: key, updated_at: today() });
+          await recordStatusChange(backend, rec.task, { to: key, who: { kind: 'owner' }, defs, reason: `Objection ${rec.id}.` });
+        }
       });
     }
     rec.applied = { action: rec.as, at: new Date().toISOString() };

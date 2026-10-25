@@ -68,6 +68,20 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 export const REVIEW_MODES = ['off', 'agent', 'output'] as const;
 export type ReviewMode = (typeof REVIEW_MODES)[number];
 
+/**
+ * How much an agent decides on its own (owner, 2026-10-24): `ask` asks before acting,
+ * `balanced` (the default) acts and asks when unsure, `free` decides. It maps to the claude
+ * permission mode of every session the agent runs in (`agents/permission.ts`).
+ */
+export const AGENT_AUTONOMY_LEVELS = ['ask', 'balanced', 'free'] as const;
+export type AgentAutonomy = (typeof AGENT_AUTONOMY_LEVELS)[number];
+export const DEFAULT_AGENT_AUTONOMY: AgentAutonomy = 'balanced';
+
+/** A stored `autonomy:` value, or the default for anything that is not one of the levels. */
+export function parseAutonomy(v: unknown): AgentAutonomy {
+  return (AGENT_AUTONOMY_LEVELS as readonly unknown[]).includes(v) ? (v as AgentAutonomy) : DEFAULT_AGENT_AUTONOMY;
+}
+
 /** Lowercase 3-letter weekday keys, `Date.getDay()`-ordered (0=Sun..6=Sat). */
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];
@@ -461,6 +475,21 @@ export interface AutomationManifest {
    * so its approved hash stays exactly what it was.
    */
   soul: string;
+  /**
+   * The agent's autonomy level (identity, from the agent through `composeRun`). Optional so a
+   * hand-built manifest reads as the default. IS approval-hashed, OMITTED when `balanced` and
+   * LAST (after `soul`), so every manifest that exists today keeps its exact hash: only a move
+   * to `ask` or `free` costs a re-approval, and a synced edit to it must block.
+   */
+  autonomy?: AgentAutonomy;
+  /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
+   *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
+  owner?: string;
+  /** A routine's own owner, only when it differs from its agent's: a target answers to both. */
+  jobOwner?: string;
+  /** `'global'` on a GLOBAL agent's call target (D1, `agents/scope.ts`): its approval lives in the
+   *  machine registry's `global` bucket, not the project's. Unhashed; absent for a project member. */
+  agentScope?: 'global';
   /** For an agent's call target only: every automation bound to the agent, as
    *  its current composed hash. `[]` for an automation. Rule (c) of
    *  `checkApproval` reads it, for an `'identity'` use only. */
@@ -502,6 +531,10 @@ export interface AutomationJob {
   /** The `## Job` section, `''` when absent. */
   job: string;
   flow: FlowGraph | null;
+  /** Its creator's login (`owner:`), unhashed; null before the migration stamps it. */
+  owner: string | null;
+  /** When its owner last wrote it (`updated:`), unhashed. */
+  updated: string | null;
   path: string;
   body: string;
 }
@@ -1007,6 +1040,9 @@ export interface ApprovalPayloadFields {
    *  beside its prompt in every run and conversation. Present as `''` when
    *  absent, for the same display reason as `flow`. */
   soul: string;
+  /** Hashed because it decides the permission mode every session of the agent runs in.
+   *  Always present here (as `balanced` when unset), for the same display reason as `flow`. */
+  autonomy: AgentAutonomy;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1015,6 +1051,16 @@ export const AGENT_BOARD_ENV = 'DREAMCONTEXT_AGENT_BOARD';
 /** Env var naming the running agent's own slug; `automations post|learn|propose`
  *  refuse any other slug while it is set. */
 export const AGENT_SELF_ENV = 'DREAMCONTEXT_AGENT_SELF';
+/** Env var marking a CONVERSATION with an agent (a Chat tab, its stage, a board card): set on
+ *  every such child, so a CLI verb the owner alone may run refuses it as it refuses a run. */
+export const AGENT_CHAT_ENV = 'DREAMCONTEXT_AGENT_CHAT';
+
+/** True inside anything an agent drives: a run (scheduled, called, a task job) or a conversation
+ *  with it. The ONE predicate every owner-only CLI verb asks (autonomy, filing approval, assign). */
+export function insideAgentRun(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined || env[AGENT_CHAT_ENV] !== undefined;
+}
+
 /** Env var naming the per-spawn scratch folder a home-board agent may write. */
 export const AGENT_SCRATCH_ENV = 'DREAMCONTEXT_AGENT_SCRATCH';
 
@@ -1086,6 +1132,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'whiteboard',
   'job',
   'soul',
+  'autonomy',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

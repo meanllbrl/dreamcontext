@@ -107,3 +107,40 @@ export async function acquireFileLockWithin(
 export function releaseFileLock(lockPath: string): void {
   try { rmSync(lockPath, { force: true }); } catch { /* already gone */ }
 }
+
+/**
+ * Reclaim a lock whose recorded holder pid is DEAD (ESRCH), whatever its age (AI Team v2 C1-4).
+ * Today's staleness is age-first, so a task host killed mid-run would otherwise hold its agent's
+ * run lock for the run's whole budget. A live holder (no throw, EPERM), or a lock with no
+ * readable pid, is never touched. Returns true when the lock is gone now.
+ */
+export function reclaimDeadHolderLock(lockPath: string, probe: (pid: number) => void = (pid) => { process.kill(pid, 0); }): boolean {
+  let pid: number | null = null;
+  try {
+    const info = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    if (typeof info.pid === 'number' && Number.isFinite(info.pid)) pid = info.pid;
+  } catch {
+    // missing (already gone) or unreadable (left to the age rule)
+    try { statSync(lockPath); } catch { return true; }
+    return false;
+  }
+  if (pid === null) return false;
+  try {
+    probe(pid);
+    return false;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH') return false;
+  }
+  try { rmSync(lockPath, { force: true }); } catch { /* raced */ }
+  return true;
+}
+
+/** The pid recorded in a lock file, or null (missing, unreadable, no pid). */
+export function lockHolderPid(lockPath: string): number | null {
+  try {
+    const info = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    return typeof info.pid === 'number' && Number.isFinite(info.pid) ? info.pid : null;
+  } catch {
+    return null;
+  }
+}

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TeamRoster } from '../components/aiteam/TeamRoster';
+import { TeamSyncStrip } from '../components/aiteam/TeamSyncStrip';
 import { TeamConversation } from '../components/aiteam/TeamConversation';
+import { AgentStage } from '../components/aiteam/AgentStage';
+import { dropStageSessions } from '../components/aiteam/stageSession';
 import { TeamPanel, type PanelTab } from '../components/aiteam/TeamPanel';
 import { NewTeammate, TEAM_STARTERS, type TeamStarter } from '../components/aiteam/NewTeammate';
 import { buildRoster, messagesOf, type TeamAgent } from '../components/aiteam/teamModel';
@@ -11,19 +14,12 @@ import { OrgView } from '../components/aiteam/OrgChart';
 import { chainOf } from '../../../src/lib/agents/tree.js';
 import { AgentIdentityDialog } from '../components/agents/AgentIdentityDialog';
 import { dropThreadScratch } from '../components/agents/agentsChannelHost';
-import { agentFileKind } from '../components/agents/AgentMessage';
 import { BrandMark } from '../components/brand/BrandMark';
-import { SlideOver } from '../components/sleepy/chat/SlideOver';
-import { Lightbox } from '../components/sleepy/chat/Lightbox';
-import { PdfViewer } from '../components/sleepy/chat/PdfViewer';
-import { BoardFullscreen } from '../components/sleepy/chat/BoardEmbed';
-import { classifyReference } from '../components/sleepy/chat/chatEntities';
-import { agentFileUrl, graphContentUrl } from '../api/client';
+import { BrainFileViewer } from '../components/agents/BrainFileViewer';
 import { useVault } from '../context/VaultContext';
 import { useI18n } from '../context/I18nContext';
 import { useAgents } from '../hooks/useAgents';
 import { useAgentFeed, useAutomationDispatcher, useAutomations } from '../hooks/useAutomations';
-import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
 import { nextFireWords } from '../lib/agentDraft';
 import type { AgentsFocus } from '../lib/openAgents';
 import '../components/sleepy/chat/overlays.css';
@@ -64,7 +60,6 @@ export function AiTeamPage({
 } = {}) {
   const { t } = useI18n();
   const { vault } = useVault();
-  const desktop = useAgentCapabilities().data?.desktop === true;
   const agentsQ = useAgents();
   const automationsQ = useAutomations();
   const { data: feed } = useAgentFeed();
@@ -94,6 +89,9 @@ export function AiTeamPage({
   const [openFile, setOpenFile] = useState<string | null>(null);
   /** A notification or link landed: which routine's newest message to bring into view. */
   const [landing, setLanding] = useState<{ slug: string; nonce: number } | null>(null);
+  /** A teammate opens on its conversation (the real Chat pane); its activity (the routines' runs
+   *  and posts) is one step away. */
+  const [teamView, setTeamView] = useState<'stage' | 'activity'>('stage');
   /** Phone width: which of the two halves is on screen. */
   const [mobileShow, setMobileShow] = useState<'list' | 'convo'>('list');
 
@@ -136,6 +134,7 @@ export function AiTeamPage({
     const a = automations.find((x) => x.slug === automationFocus.slug);
     setSelected(a?.agent ?? automationFocus.slug);
     setLanding({ slug: automationFocus.slug, nonce: automationFocus.nonce });
+    setTeamView('activity');
     setCreating(null);
     setMobileShow('convo');
     onAutomationFocusDone?.();
@@ -143,6 +142,9 @@ export function AiTeamPage({
 
   // The composer drafts and staged chips die with the PAGE, not with one conversation.
   useEffect(() => () => dropThreadScratch(), []);
+  // So do the stages' live sessions: each stage resumes its home conversation when the page
+  // opens again (its child adopted while it still runs detached).
+  useEffect(() => () => dropStageSessions(vault ?? ''), [vault]);
 
   useEffect(() => {
     if (!toast) return;
@@ -160,7 +162,13 @@ export function AiTeamPage({
     setSelected(slug);
     setLanding(null);
     setCreating(null);
+    setTeamView('stage');
     setMobileShow('convo');
+  }, []);
+  /** From the stage: its activity, at a routine's newest message when one is named. */
+  const openActivity = useCallback((slug: string | null) => {
+    setTeamView('activity');
+    setLanding(slug ? { slug, nonce: Date.now() } : null);
   }, []);
   /** Org chart: a click opens the teammate's Team tab beside the chart. */
   const selectInOrg = useCallback((slug: string) => {
@@ -272,6 +280,7 @@ export function AiTeamPage({
           view={rosterView}
           onView={pickRosterView}
           onOrgChart={() => { pickPageView('org'); setPanel((p) => (p ? 'team' : p)); }}
+          top={<TeamSyncStrip onToast={setToast} />}
         />
       )}
 
@@ -310,6 +319,19 @@ export function AiTeamPage({
               </div>
             </div>
           </section>
+        ) : current && agent && teamView === 'stage' && agentsQ.data?.find((a) => a.slug === current.slug) ? (
+          <AgentStage
+            key={current.slug}
+            row={current}
+            agent={agentsQ.data.find((a) => a.slug === current.slug)!}
+            panelOpen={panelShown}
+            onBack={narrow ? () => setMobileShow('list') : undefined}
+            onPanel={(tab) => setPanel((p) => (p === tab ? null : tab))}
+            onTogglePanel={() => setPanel((p) => (p ? null : 'profile'))}
+            onEdit={setEditing}
+            onActivity={() => openActivity(null)}
+            onToast={setToast}
+          />
         ) : current && agent ? (
           <TeamConversation
             key={current.slug}
@@ -326,6 +348,7 @@ export function AiTeamPage({
             onBack={narrow ? () => setMobileShow('list') : undefined}
             managers={managers}
             onSelectAgent={select}
+            onStage={() => { setTeamView('stage'); setLanding(null); }}
           />
         ) : (
           <section className="aiteam-convo">
@@ -346,32 +369,7 @@ export function AiTeamPage({
         />
       )}
 
-      {openFile && (() => {
-        // Routed by type, exactly as Chat routes a file it opens; paths arrive brain-relative.
-        const projectPath = `_dream_context/${openFile}`;
-        const close = () => setOpenFile(null);
-        const kind = agentFileKind(openFile);
-        if (kind === 'board') return <BoardFullscreen path={projectPath} onClose={close} />;
-        if (openFile.toLowerCase().endsWith('.svg') && desktop) {
-          return <Lightbox src={agentFileUrl(vault, projectPath, { raw: true })} caption={openFile.split('/').pop()} path={projectPath} onClose={close} />;
-        }
-        if (kind === 'image') {
-          return <Lightbox src={graphContentUrl(vault, openFile, { raw: true })} caption={openFile.split('/').pop()} path={projectPath} onClose={close} />;
-        }
-        if (kind === 'pdf') {
-          return <PdfViewer path={projectPath} src={graphContentUrl(vault, openFile, { raw: true })} label={openFile.split('/').pop()} onClose={close} />;
-        }
-        return (
-          <SlideOver
-            mode="file"
-            path={projectPath}
-            reference={classifyReference(projectPath)}
-            onClose={close}
-            onNavApp={close}
-            onOpenPath={(p) => setOpenFile(p.replace(/^_dream_context\//, ''))}
-          />
-        );
-      })()}
+      {openFile && <BrainFileViewer path={openFile} onClose={() => setOpenFile(null)} onOpenPath={setOpenFile} />}
 
       {toast && <div className="aiteam-toast" role="status" onClick={() => setToast(null)}>{toast}</div>}
     </div>

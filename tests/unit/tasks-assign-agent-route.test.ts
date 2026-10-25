@@ -1,7 +1,8 @@
 /**
- * POST /api/tasks/:slug/assign-agent (src/server/routes/tasks.ts). The run itself is doubled:
- * the route must start the EXISTING ask run on the agent's call target with the task as data,
- * and never spawn anything for a refusal.
+ * POST /api/tasks/:slug/assign-agent (src/server/routes/tasks.ts). Since AI Team v2 C1 the route
+ * runs nothing in-process: it commits the assignment and drains once, and a due step is handed to
+ * a detached task host (doubled here: `spawnHost` records it). A busy agent queues the task
+ * instead of answering 409, and a refusal writes and starts nothing.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -16,8 +17,19 @@ vi.mock('../../src/lib/automations/runner.js', async (importOriginal) => ({
   runAutomation,
 }));
 
+const hosts = vi.hoisted(() => [] as Array<{ slug: string; runId: string }>);
+vi.mock('../../src/lib/agents/task-starter.js', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../src/lib/agents/task-starter.js')>();
+  return {
+    ...orig,
+    startDueTaskJobs: (root: string, deps: Parameters<typeof orig.startDueTaskJobs>[1] = {}) =>
+      orig.startDueTaskJobs(root, { ...deps, spawnHost: (_r, slug, runId) => { hosts.push({ slug, runId }); return 4_600_000 + hosts.length; } }),
+  };
+});
+
 const { handleTasksAssignAgent, handleTasksUpdate } = await import('../../src/server/routes/tasks.js');
-const { currentAutomationJob } = await import('../../src/server/automation-job.js');
+const { readTaskJobs } = await import('../../src/lib/agents/task-jobs.js');
+const { parseStatusHistory } = await import('../../src/lib/task-history.js');
 const { createAgent } = await import('../../src/lib/agents/store.js');
 const { createAutomation } = await import('../../src/lib/automations/store.js');
 
@@ -52,15 +64,8 @@ function writeTask(slug: string, status = 'todo'): void {
   writeFileSync(taskPath(slug), ['---', 'id: task_t1', 'name: Fix login', `status: ${status}`, 'created_at: "2026-10-01"', 'updated_at: "2026-10-01"', '---', '', '## Changelog', ''].join('\n'));
 }
 
-async function settled(slug: string): Promise<void> {
-  for (let i = 0; i < 50; i++) {
-    const job = currentAutomationJob(contextRoot, slug);
-    if (job && job.status !== 'running') return;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-}
-
 beforeEach(() => {
+  hosts.length = 0;
   runAutomation.mockReset();
   runAutomation.mockResolvedValue({
     slug: 'scout', status: 'ok', outputPath: null, error: null, durationMs: 1, event: null, cache: null,
@@ -81,27 +86,57 @@ afterEach(() => {
 });
 
 describe('POST /api/tasks/:slug/assign-agent', () => {
-  it('202: sets agent:, moves an open task, and runs the call target with the task and the owner note', async () => {
+  it('202: sets agent:, moves an open task, and hands the due step to a detached host with the owner note', async () => {
     createAgent(contextRoot, { slug: 'scout', title: 'Scout', prompt: 'Scout.' }, { approve: { now: NOW } });
     writeTask('fix-login');
     const { res, status, body } = makeRes();
     await handleTasksAssignAgent(req('POST', { agent: 'scout', note: 'Start with the tests.' }), res, { slug: 'fix-login' }, contextRoot);
     expect(status()).toBe(202);
-    expect(body()).toMatchObject({ jobId: expect.any(String), runId: expect.any(String), statusMoved: true });
-    await settled('scout');
-
-    expect(runAutomation).toHaveBeenCalledTimes(1);
-    const [, slug, opts] = runAutomation.mock.calls[0];
-    expect(slug).toBe('scout');
-    expect(opts).toMatchObject({
-      target: 'agent', ask: 'Start with the tests.', task: { slug: 'fix-login', name: 'Fix login' },
-    });
-    expect(opts.fireAt.toISOString()).toBe(body().runId);
+    expect(body()).toMatchObject({ runId: expect.stringMatching(/^tr_/), statusMoved: true, state: 'starting', step: 'work', started: true });
+    expect(hosts).toEqual([{ slug: 'fix-login', runId: body().runId }]);
+    expect(runAutomation).not.toHaveBeenCalled();
+    // The owner's note waits for the step's brief in the machine-local store, never in the task file.
+    expect(readTaskJobs(projectRoot).notes).toEqual([expect.objectContaining({ kind: 'assign', text: 'Start with the tests.' })]);
 
     const text = readFileSync(taskPath('fix-login'), 'utf-8');
     expect(text).toMatch(/^agent: scout$/m);
     expect(text).toMatch(/^status: in_progress$/m);
-    expect(text).toContain('- Run ');
+    expect(text).toMatch(/^agent_state: starting$/m);
+    expect(text).not.toContain('Start with the tests.');
+  });
+
+  it('a busy agent queues the task (no more 409 agent_busy); a future start is scheduled', async () => {
+    createAgent(contextRoot, { slug: 'scout', title: 'Scout', prompt: 'Scout.' }, { approve: { now: NOW } });
+    writeTask('fix-login');
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    writeFileSync(taskPath('second'), ['---', 'id: task_t2', 'name: Second', 'status: todo', '---', '', '## Changelog', ''].join('\n'));
+    writeFileSync(taskPath('later'), ['---', 'id: task_t3', 'name: Later', 'status: todo', '---', '', '## Changelog', ''].join('\n'));
+    await handleTasksAssignAgent(req('POST', { agent: 'scout' }), makeRes().res, { slug: 'fix-login' }, contextRoot);
+    const busy = makeRes();
+    await handleTasksAssignAgent(req('POST', { agent: 'scout' }), busy.res, { slug: 'second' }, contextRoot);
+    expect(busy.status()).toBe(202);
+    expect(busy.body()).toMatchObject({ state: 'queued', started: false });
+    const later = makeRes();
+    await handleTasksAssignAgent(req('POST', { agent: 'scout', startAt: '2099-01-01T09:00:00+03:00' }), later.res, { slug: 'later' }, contextRoot);
+    expect(later.body()).toMatchObject({ state: 'scheduled', started: false });
+    expect(hosts).toHaveLength(1);
+  });
+
+  it('400 for a naive start or the agent as its own reviewer; 404 for an unknown reviewer', async () => {
+    createAgent(contextRoot, { slug: 'scout', title: 'Scout', prompt: 'Scout.' }, { approve: { now: NOW } });
+    writeTask('fix-login');
+    const cases: [unknown, number, string][] = [
+      [{ agent: 'scout', startAt: '2026-10-26 09:00' }, 400, 'invalid_start'],
+      [{ agent: 'scout', reviewer: 'scout' }, 400, 'reviewer_is_agent'],
+      [{ agent: 'scout', reviewer: 'ghost' }, 404, 'unknown_reviewer'],
+      [{ agent: 'scout', workspace: 'disk' }, 400, 'invalid_workspace'],
+    ];
+    for (const [b, code, error] of cases) {
+      const r = makeRes();
+      await handleTasksAssignAgent(req('POST', b), r.res, { slug: 'fix-login' }, contextRoot);
+      expect([r.status(), r.body().error]).toEqual([code, error]);
+    }
+    expect(hosts).toEqual([]);
   });
 
   it('409 for an agent approved only through its job, naming the AI Team page; nothing written or run', async () => {
@@ -152,5 +187,24 @@ describe('PATCH agent', () => {
     expect(ok.status()).toBe(200);
     expect(readFileSync(taskPath('fix-login'), 'utf-8')).toMatch(/^agent: scout$/m);
     expect(runAutomation).not.toHaveBeenCalled();
+    expect(hosts).toEqual([]);
+  });
+
+  it('a status moved from the dashboard is the owner\'s (provenance); clearing the agent ends its job', async () => {
+    createAgent(contextRoot, { slug: 'scout', title: 'Scout', prompt: 'Scout.' }, { approve: { now: NOW } });
+    writeTask('fix-login');
+    await handleTasksAssignAgent(req('POST', { agent: 'scout' }), makeRes().res, { slug: 'fix-login' }, contextRoot);
+    const moved = makeRes();
+    await handleTasksUpdate(req('PATCH', { status: 'in_review' }), moved.res, { slug: 'fix-login' }, contextRoot);
+    expect(moved.status()).toBe(200);
+    expect(parseStatusHistory(readFileSync(taskPath('fix-login'), 'utf-8'))[0]).toMatchObject({ to: 'in_review', by: 'owner' });
+    const cleared = makeRes();
+    await handleTasksUpdate(req('PATCH', { agent: null }), cleared.res, { slug: 'fix-login' }, contextRoot);
+    expect(cleared.status()).toBe(200);
+    const text = readFileSync(taskPath('fix-login'), 'utf-8');
+    expect(text).toMatch(/^agent: null$/m);
+    expect(text).toMatch(/^agent_state: (stopped|null)$/m);
+    expect(readTaskJobs(projectRoot).claims).toEqual([]);
+    expect(readTaskJobs(projectRoot).meta).toEqual([]);
   });
 });

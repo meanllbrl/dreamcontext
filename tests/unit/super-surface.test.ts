@@ -453,7 +453,7 @@ describe('the window rules (D10, AC12)', () => {
     expect(surface).toMatch(/readOnly=\{marked\.has\(cs\.claudeId\)\}/);
     const pane = read(`${SLEEPY}/ChatPane.tsx`);
     expect(pane).toMatch(/\) : readOnly \? \(\s*<SuperReadOnlyLine \/>/);
-    expect(pane).toMatch(/onModeChange=\{bare \|\| mode === 'super' \? undefined : onModeChange\}/);
+    expect(pane).toMatch(/onModeChange=\{bare \|\| agentBound \|\| mode === 'super' \? undefined : onModeChange\}/);
     const host = read(`${SLEEPY}/ChatPaneHost.tsx`);
     expect(host).toMatch(/readOnly=\{readOnly\}/);
   });

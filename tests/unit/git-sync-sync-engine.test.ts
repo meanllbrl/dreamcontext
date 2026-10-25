@@ -153,6 +153,8 @@ describe('git-sync/sync-engine — runBrainSync', () => {
       withGitCredentials: (async (_token: string, fn: (env: NodeJS.ProcessEnv) => unknown) => fn({} as NodeJS.ProcessEnv)) as SyncEngineDeps['withGitCredentials'],
       acquireBrainLock: () => true,
       releaseBrainLock: () => {},
+      // The pull guard reads the real git (it fails closed), and these repos are fakes.
+      guardPullCollisions: () => ({ ok: true, parked: [] }),
     };
   }
 
@@ -877,6 +879,8 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
       withGitCredentials: withCreds,
       acquireBrainLock: () => true,
       releaseBrainLock: () => {},
+      // The pull guard reads the real git (it fails closed), and these repos are fakes.
+      guardPullCollisions: () => ({ ok: true, parked: [] }),
     };
   }
 

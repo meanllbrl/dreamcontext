@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { TeamTree, TreeLine } from '../../../../src/lib/agents/tree.js';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { AutomationsDispatcherBar } from '../automations/AutomationsDispatcherBar';
@@ -32,6 +32,7 @@ export function TeamRoster({
   view = 'list',
   onView,
   onOrgChart,
+  top,
 }: {
   rows: TeamRow[];
   selected: string | null;
@@ -48,6 +49,8 @@ export function TeamRoster({
   onView?: (view: RosterView) => void;
   /** Switch the page to the Org chart. */
   onOrgChart?: () => void;
+  /** Drawn under the head: agent sync's notice and the owner inbox. */
+  top?: ReactNode;
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
@@ -67,6 +70,9 @@ export function TeamRoster({
   });
   const needs = shown.filter((r) => r.section === 'needs');
   const team = shown.filter((r) => r.section === 'team');
+  // Teammates' agents, one read-only part per owner (B1-4), after your own.
+  const readonly = shown.filter((r) => r.section === 'readonly');
+  const owners = [...new Set(readonly.map((r) => r.ownerLabel ?? ''))];
   const empty = rows.length === 0 && !draft;
   const now = new Date(useNow(rows.some((r) => r.status === 'working')));
 
@@ -96,6 +102,7 @@ export function TeamRoster({
           <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
         </button>
       </div>
+      {top}
       {!empty && (
         <label className="aiteam-search">
           <TeamIcon name="search" size={14} />
@@ -151,6 +158,14 @@ export function TeamRoster({
             {team.length > 0 && <div className="aiteam-section">{t('aiteam.section.team')}</div>}
             {team.map((r) => (
               <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
+            ))}
+            {owners.map((owner) => (
+              <div key={`ro:${owner}`} data-readonly-section={owner}>
+                <div className="aiteam-section">{t('aiteam.section.readonly').replace('{owner}', owner)}</div>
+                {readonly.filter((r) => (r.ownerLabel ?? '') === owner).map((r) => (
+                  <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
+                ))}
+              </div>
             ))}
           </>
         )}
@@ -326,8 +341,17 @@ function Row({
           </span>
         )}
         {note && <span className="aiteam-rollup">{note}</span>}
-        {(row.status === 'needs' || row.status === 'paused' || row.status === 'approval') && (
+        {(row.status === 'needs' || row.status === 'paused' || row.status === 'approval' || row.elsewhere || row.readOnly || row.global) && (
           <span className="aiteam-row-tags">
+            {row.global && (
+              <span className="aiteam-tag aiteam-tag--accent" data-global-chip title={t('aiteam.tag.globalHint')}>{t('aiteam.tag.global')}</span>
+            )}
+            {row.readOnly && (
+              <span className="aiteam-tag aiteam-tag--muted" data-owner-chip><TeamIcon name="lock" size={10} />{t('aiteam.owner.of').replace('{owner}', row.ownerLabel ?? '')}</span>
+            )}
+            {row.elsewhere && (
+              <span className="aiteam-tag aiteam-tag--muted" data-elsewhere-chip>{t('aiteam.elsewhere.tag').replace('{machine}', row.elsewhere)}</span>
+            )}
             {row.status === 'needs' && <span className="aiteam-tag aiteam-tag--warn">{t('aiteam.tag.needs')}</span>}
             {row.status === 'paused' && (
               <span className="aiteam-tag aiteam-tag--muted"><TeamIcon name="pause" size={10} />{t('aiteam.tag.paused')}</span>

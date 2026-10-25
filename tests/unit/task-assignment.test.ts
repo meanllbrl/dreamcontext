@@ -209,7 +209,8 @@ describe('the status rule', () => {
     expect(result).toEqual({ moved: moves, from: status ?? null });
     expect(frontmatterStatus('fix-login')).toBe(moves ? 'in_progress' : status ?? null);
     const text = readFileSync(taskPath('fix-login'), 'utf-8');
-    if (moves) expect(text).toContain('- Assigned to the agent Scout (`scout`).');
+    // The move carries its author (C1-13): the owner assigned it.
+    if (moves) expect(text).toContain('Status → in_progress (by owner)\n- Assigned to the agent Scout (scout).');
     else expect(text).not.toContain('Assigned to the agent');
   });
 });
@@ -266,7 +267,7 @@ describe('prepareAssignment and commitAssignment', () => {
     if (!prep.ok) throw new Error(prep.message);
     expect(prep.target).toEqual(getRunTarget(contextRoot, 'scout', 'agent'));
     const fireAt = new Date();
-    expect(commitAssignment(contextRoot, prep, fireAt)).toEqual({ statusMoved: true, from: 'todo' });
+    expect(commitAssignment(contextRoot, prep, fireAt, { home })).toEqual({ statusMoved: true, from: 'todo', state: 'queued', step: 'work' });
     const text = readFileSync(taskPath('fix-login'), 'utf-8');
     expect(text).toMatch(/^agent: scout$/m);
     expect(frontmatterStatus('fix-login')).toBe('in_progress');
@@ -281,7 +282,7 @@ describe('prepareAssignment and commitAssignment', () => {
     writeTask('fix-login', 'Fix login', 'in_review');
     const prep = prepareAssignment(contextRoot, 'fix-login', 'scout', { source: 'cli', home });
     if (!prep.ok) throw new Error(prep.message);
-    expect(commitAssignment(contextRoot, prep, new Date(), { source: 'cli' })).toEqual({ statusMoved: false, from: 'in_review' });
+    expect(commitAssignment(contextRoot, prep, new Date(), { source: 'cli', home })).toEqual({ statusMoved: false, from: 'in_review', state: 'queued', step: 'work' });
     expect(frontmatterStatus('fix-login')).toBe('in_review');
   });
 });

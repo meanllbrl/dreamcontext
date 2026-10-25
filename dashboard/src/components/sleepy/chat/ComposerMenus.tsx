@@ -74,7 +74,9 @@ function AgentList({ agent, onPick, close }: {
 }) {
   const { t } = useI18n();
   const tx = (k: string, fallback: string) => { const v = t(k); return v === k ? fallback : v; };
-  const { data: agents = [] } = useAgents();
+  const { data: roster = [] } = useAgents();
+  // A teammate's agent is read-only here (B1-4): nobody but its owner talks to it.
+  const agents = roster.filter((a) => !a.readOnly);
   if (agents.length === 0 && !agent) return null;
   const pick = (next: ChatAgentPick | null) => { onPick(next); close(); };
   const openOnAgentsPage = (slug: string) => { requestOpenAgents({ slug }); close(); };

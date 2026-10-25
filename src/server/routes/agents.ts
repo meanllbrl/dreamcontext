@@ -2,10 +2,19 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
 import { lstatSync } from 'node:fs';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
+import { ownerLabel } from '../../lib/agents/owner.js';
+import { placement } from '../../lib/agents/active.js';
+import { GLOBAL_REGISTRY_KEY, hasProjectMember } from '../../lib/agents/scope.js';
+import { composeRun } from '../../lib/agents/compose.js';
+import { agentSyncSwitchOn, createdLocally, loginFromEmail } from '../../lib/agents/agent-sync.js';
+import { lastAuthorEmail as gitLastAuthorEmail } from '../../lib/git-sync/git.js';
 import {
   agentUsage,
   createAgent,
+  createGlobalAgent,
   getAgent,
+  listGlobalAgents,
   listAgents,
   listAgentTargets,
   removeAgent,
@@ -19,8 +28,17 @@ import {
   type AgentManifest,
   type AgentPlacementPatch,
 } from '../../lib/agents/types.js';
-import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
-import { getRunTarget, parsePattern, resolveAutomationPhoto } from '../../lib/automations/store.js';
+import { isSafeAutomationSlug, readManifestFrontmatter } from '../../lib/agents/slot.js';
+import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutomationPhoto } from '../../lib/automations/store.js';
+import { readThread } from '../../lib/automations/threads.js';
+import { listInboxRows, type InboxRow } from '../../lib/owner-inbox.js';
+import { findTaskHead, readTaskJobs } from '../../lib/agents/task-jobs.js';
+import { readStageHomeSession } from '../../lib/local-store.js';
+import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
+import { agentActivity } from '../automation-job.js';
+import { isAgentRequest } from '../desktop.js';
+import { isPhoneSocket } from '../phone-origin.js';
+import { findLiveChat } from './agent-chat-live.js';
 import { roleLineOf, soulExcerpt } from '../../lib/agents/soul.js';
 import {
   approvalFields,
@@ -34,8 +52,11 @@ import { loadStatuses } from '../../lib/overrides.js';
 import { isSafeTaskSlug, readTaskFile } from '../../lib/task-backend/local.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import {
+  AGENT_AUTONOMY_LEVELS,
   AutomationError,
+  DEFAULT_AGENT_AUTONOMY,
   EFFORT_LEVELS,
+  type AgentAutonomy,
   type AutomationManifest,
   type EffortLevel,
 } from '../../lib/automations/types.js';
@@ -81,10 +102,30 @@ export interface AgentSummary {
   reportsTo: string | null;
   /** `team` as written; drawn only on a lead. Unhashed. */
   team: string | null;
+  /** How much it decides alone; decides the permission mode of its sessions. */
+  autonomy: AgentAutonomy;
+  /** Its figure: the stamped face, else the bare hash of its slug. */
+  face: AgentFace;
   approvedForChat: boolean;
   approvedToRun: boolean;
   /** Why it may not run, when it may not (`approvedToRun` false). */
   approvalReason: string | null;
+  /** Its creator's login (`machine:<id>`, `unowned`), null on an unstamped file (B1-3). */
+  owner: string | null;
+  /** How the owner reads in a sentence ("nobody (unowned)" …), null when it has none. */
+  ownerLabel: string | null;
+  /** Someone else's agent: read-only here, never "needs approval" (B1-4). The approval fields
+   *  above are then all false and say nothing about this machine. */
+  readOnly: boolean;
+  /** `global`: this machine's agent, listed in every project and kept out of every brain (D1). */
+  scope: 'project' | 'global';
+  /** Same login, several machines (B1-7): where it runs, when that is not this machine. */
+  runsElsewhere: { machine: string; name: string } | null;
+  /** It arrived by sync and was not created on this machine (the approval view marks it). */
+  arrivedBySync: boolean;
+  /** When it needs a re-approval after a synced change: who authored that change (login, or the
+   *  commit email), so the approval prompt names them beside the diff. */
+  syncedChangeBy: string | null;
   /** Synthesised from a not-yet-split legacy automation file. */
   implicit: boolean;
   /** Its call settings differ from the defaults (a migrated on-call agent). */
@@ -116,6 +157,12 @@ function taskSummary(contextRoot: string, slug: string): { slug: string; name: s
   }
 }
 
+/** Who authored the newest synced change to an agent's file (login when the email says so). */
+function syncedChangeAuthor(contextRoot: string, slug: string): string | null {
+  const email = gitLastAuthorEmail(dirname(contextRoot), join('_dream_context', 'agents', `${slug}.md`));
+  return email ? loginFromEmail(contextRoot, email) ?? email : null;
+}
+
 /** One agent's summary, from its call target as the store composed it. */
 export function summarizeAgent(
   contextRoot: string,
@@ -124,8 +171,12 @@ export function summarizeAgent(
   home?: string,
 ): AgentSummary {
   const projectRoot = dirname(contextRoot);
+  const global = target.agentScope === 'global';
   const forChat = checkApproval(projectRoot, target, home, 'identity');
   const toRun = checkApproval(projectRoot, target, home, 'run');
+  const readOnly = !toRun.approved && toRun.reason === 'not_owner';
+  const where = readOnly ? { here: true as const } : placement(contextRoot, target.slug, target.owner ?? null, home);
+  const owner = agent?.owner ?? target.owner ?? null;
   const usage = agentUsage(contextRoot, target.slug);
   const now = new Date();
   return {
@@ -141,9 +192,20 @@ export function summarizeAgent(
     shared: agent?.shared ?? false,
     reportsTo: agent?.reportsTo ?? null,
     team: agent?.team ?? null,
+    autonomy: target.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    face: faceOf(target.slug, agent?.face ?? null),
     approvedForChat: forChat.approved,
     approvedToRun: toRun.approved,
-    approvalReason: toRun.approved ? null : toRun.reason,
+    approvalReason: toRun.approved || readOnly ? null : toRun.reason,
+    owner,
+    ownerLabel: owner ? ownerLabel(owner) : null,
+    readOnly,
+    scope: global ? 'global' : 'project',
+    runsElsewhere: where.here ? null : { machine: where.machine, name: where.name },
+    // A global agent never arrives by sync: it is this machine's (D1).
+    arrivedBySync: !global && !!agent && !agent.implicit && agentSyncSwitchOn(contextRoot)
+      && !createdLocally(contextRoot, `agents/${target.slug}.md`, home),
+    syncedChangeBy: !global && !toRun.approved && !readOnly && agentSyncSwitchOn(contextRoot) ? syncedChangeAuthor(contextRoot, target.slug) : null,
     implicit: agent?.implicit ?? false,
     hasCallSettings: agent ? hasCallSettings(agent) : false,
     usedBy: {
@@ -189,6 +251,18 @@ function readSoul(v: unknown): string | undefined {
   return v;
 }
 
+/** An autonomy level from a request body: absent passes through, anything else must be a level.
+ *  The agent-run refusal lives on the CLI verb (`insideAgentRun`): this server cannot see the
+ *  environment of whoever sent the request, so a run that reaches the local API directly is the
+ *  named residual of plan-r9 (an agent can raise its own autonomy by escaping the check). */
+function readAutonomy(v: unknown): AgentAutonomy | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string' || !(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
+    throw new AutomationError(`Invalid autonomy: expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);
+  }
+  return v as AgentAutonomy;
+}
+
 function readWhiteboard(v: unknown): string | null | undefined {
   if (v === undefined) return undefined;
   if (v === null || v === '') return null;
@@ -221,7 +295,24 @@ function sendSummary(res: ServerResponse, contextRoot: string, slug: string, sta
   sendJson(res, status, { agent: summarizeAgent(contextRoot, target, getAgent(contextRoot, slug)) });
 }
 
+/**
+ * A global agent is this machine's for every project (D1): nothing on the phone or the tunnel
+ * creates, edits, approves or deletes one, as the launcher's own routes are denied there. Sends
+ * 403 and returns true when refused.
+ */
+function refuseGlobalOnPhone(req: IncomingMessage, res: ServerResponse, global: boolean): boolean {
+  if (!global || !isPhoneSocket(req)) return false;
+  sendError(res, 403, 'phone_unavailable', 'Global agents are changed on the Mac itself.');
+  return true;
+}
+
+function isGlobalHere(contextRoot: string, slug: string): boolean {
+  return isSafeAutomationSlug(slug) && getAgent(contextRoot, slug)?.scope === 'global';
+}
+
 function sendWriteError(res: ServerResponse, err: unknown, code: string, message: string): void {
+  // Someone else's agent: read-only here, 403 with the owner named (B1-4).
+  if (sendIfNotOwner(res, err)) return;
   if (err instanceof AutomationError) {
     sendError(res, 400, 'invalid', err.message);
     return;
@@ -286,6 +377,7 @@ export async function handleAgentsCreate(
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
     return;
   }
+  if (refuseGlobalOnPhone(req, res, body.scope === 'global')) return;
   try {
     const title = (str(body.title) ?? '').trim();
     if (!title) throw new AutomationError('Give the agent a name.');
@@ -297,7 +389,7 @@ export async function handleAgentsCreate(
     }
     const projectRoot = dirname(contextRoot);
     registerProject(projectRoot);
-    createAgent(contextRoot, {
+    const input = {
       slug,
       title,
       prompt,
@@ -306,10 +398,93 @@ export async function handleAgentsCreate(
       effort: readEffort(body.effort) ?? null,
       whiteboard: readWhiteboard(body.whiteboard) ?? null,
       ...(typeof body.learning === 'boolean' ? { learning: body.learning } : {}),
-    }, { approve: { now: new Date() } });
+    };
+    if (body.scope === 'global') {
+      // Listed in every project; here too, so no member of this project may already hold the name.
+      if (hasProjectMember(contextRoot, slug)) throw new AutomationError(`"${slug}" is already the name of an agent or an automation in this project.`);
+      createGlobalAgent(input, { approve: { now: new Date() } });
+    } else {
+      createAgent(contextRoot, input, { approve: { now: new Date() } });
+    }
     sendSummary(res, contextRoot, slug);
   } catch (err) {
     sendWriteError(res, err, 'create_failed', 'Failed to create the agent.');
+  }
+}
+
+/** A global agent as the launcher lists it: no project, so no usage and no project approval (D1). */
+export interface GlobalAgentRow {
+  slug: string;
+  title: string;
+  roleLine: string;
+  description: string;
+  face: AgentFace;
+  autonomy: string;
+  model: string | null;
+  approvedToRun: boolean;
+}
+
+function globalAgentRow(agent: AgentManifest): GlobalAgentRow {
+  const target = composeRun(agent, null, [], false);
+  return {
+    slug: agent.slug,
+    title: agent.title,
+    roleLine: roleLineOf(agent.prompt),
+    description: agent.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
+    face: faceOf(agent.slug, agent.face),
+    autonomy: agent.autonomy,
+    model: agent.model,
+    approvedToRun: checkApproval(GLOBAL_REGISTRY_KEY, target, undefined, 'run').approved,
+  };
+}
+
+/** GET /api/launcher/global-agents — this machine's global agents (vault-agnostic, D1). */
+export async function handleLauncherGlobalAgents(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  try {
+    sendJson(res, 200, { agents: listGlobalAgents().map(globalAgentRow) });
+  } catch (err) {
+    console.error('[agents] global list failed', err);
+    sendError(res, 500, 'list_failed', 'Failed to list the global agents.');
+  }
+}
+
+/** POST /api/launcher/global-agents {title, prompt, slug?, soul?, model?, effort?, learning?} —
+ *  create a global agent from the launcher, granted on this machine (vault-agnostic, D1). */
+export async function handleLauncherGlobalAgentsCreate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'bad_body', 'Expected a JSON body.');
+    return;
+  }
+  try {
+    const title = (str(body.title) ?? '').trim();
+    if (!title) throw new AutomationError('Give the agent a name.');
+    const prompt = (str(body.prompt) ?? '').trim();
+    if (!prompt) throw new AutomationError('Describe who the agent is — that description is its prompt.');
+    const slug = (str(body.slug) ?? '').trim() || slugifyTitle(title);
+    if (!isSafeAutomationSlug(slug)) throw new AutomationError(`"${title}" does not make a usable name — try plain letters and numbers.`);
+    const agent = createGlobalAgent({
+      slug,
+      title,
+      prompt,
+      soul: readSoul(body.soul) ?? '',
+      model: str(body.model) ?? null,
+      effort: readEffort(body.effort) ?? null,
+      ...(typeof body.learning === 'boolean' ? { learning: body.learning } : {}),
+    }, { approve: { now: new Date() } });
+    sendJson(res, 201, { agent: globalAgentRow(agent) });
+  } catch (err) {
+    sendWriteError(res, err, 'create_failed', 'Failed to create the global agent.');
   }
 }
 
@@ -325,6 +500,7 @@ export async function handleAgentsUpdate(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -357,6 +533,8 @@ export async function handleAgentsUpdate(
     // GET detail, and the summary's excerpt is never a form source. '' clears.
     const soul = readSoul(body.soul);
     if (soul !== undefined) patch.soul = soul;
+    const autonomy = readAutonomy(body.autonomy);
+    if (autonomy !== undefined) patch.autonomy = autonomy;
     if (Object.keys(patch).length > 0) withRestamp(contextRoot, dirname(contextRoot), params.slug, patch);
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
@@ -384,6 +562,7 @@ export async function handleAgentsPlace(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -409,11 +588,12 @@ export async function handleAgentsPlace(
 /** POST /api/agents/:slug/delete — refused (409 `agent_in_use`) while an
  *  automation runs as it; otherwise removed under the registry's revoke rule. */
 export async function handleAgentsDelete(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   if (!isSafeAutomationSlug(params.slug) || !getAgent(contextRoot, params.slug)) {
     sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
     return;
@@ -437,11 +617,12 @@ export async function handleAgentsDelete(
 /** POST /api/agents/:slug/approve — grant the agent's CALL target as it stands
  *  right now, on this machine (the owner reviewed it on the AI Team page). */
 export async function handleAgentsApprove(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const target = agentTarget(contextRoot, params.slug);
   if (!target) {
     sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
@@ -480,11 +661,14 @@ export async function handleAgentsPhotoUpload(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const slug = params.slug;
-  if (!isSafeAutomationSlug(slug) || !getAgent(contextRoot, slug)) {
+  const agent = isSafeAutomationSlug(slug) ? getAgent(contextRoot, slug) : null;
+  if (!agent) {
     sendError(res, 404, 'not_found', `Agent not found: ${slug}`);
     return;
   }
+  if (refuseNotOwner(res, { slug, owner: agent.owner, title: agent.title })) return;
   const image = await receivePhoto(req, res);
   if (!image) return;
   try {
@@ -493,5 +677,144 @@ export async function handleAgentsPhotoUpload(
     sendSummary(res, contextRoot, slug);
   } catch (err) {
     sendWriteError(res, err, 'photo_failed', 'Failed to save the photo.');
+  }
+}
+
+// ─── The agent's STAGE (AI Team v2) ─────────────────────────────────────────────────────────
+
+const STAGE_REPORTS = 5;
+const STAGE_FILES = 8;
+/** How many day files of each thread a stage read looks at: a bound, not a filter. */
+const STAGE_THREAD_DAYS = 14;
+
+export type StageFileKind = 'doc' | 'board' | 'image' | 'data' | 'other';
+
+/** A posted file's kind, from its brain-relative path. */
+export function stageFileKind(path: string): StageFileKind {
+  const p = path.toLowerCase();
+  if (p.endsWith('.excalidraw.md') || p.startsWith('whiteboards/')) return 'board';
+  if (/\.(md|markdown|txt|pdf|html?)$/.test(p)) return 'doc';
+  if (/\.(png|jpe?g|gif|webp|svg)$/.test(p)) return 'image';
+  if (/\.(json|csv|tsv|ya?ml)$/.test(p)) return 'data';
+  return 'other';
+}
+
+export interface StageView {
+  slug: string;
+  title: string;
+  face: AgentFace;
+  autonomy: AgentAutonomy;
+  /** The conversation the stage's chat resumes; null before its first one. Machine-local. */
+  homeSessionId: string | null;
+  /** A live, ATTACHED process holds the home session right now (a stage, or a Chat tab). */
+  homeLive: boolean;
+  /** Whose agent it is (arrives with the brain sync); null on this build. */
+  owner: string | null;
+  /** What it is doing right now: one row per target of it holding its run lock. */
+  liveJobs: { slug: string; title: string; since: number; runId: string | null; lastLine: string | null }[];
+  /** Its latest posts, newest first. */
+  reports: { slug: string; id: string; runId: string; at: string; text: string; files: string[] }[];
+  /** The latest files it posted, newest first, de-duplicated. */
+  files: { path: string; kind: StageFileKind; at: string; slug: string }[];
+  /** Its routines (scheduled automations that run as it). */
+  routines: { slug: string; title: string; enabled: boolean; nextFireAt: string | null; cadence: string; face: AgentFace }[];
+  /** Rows waiting on the owner about this agent (M1). */
+  inbox: InboxRow[];
+  /** Its task-job steps on this machine (M0 claims): task steps run in detached hosts, not as
+   *  server jobs, so the stage reads them here. A task session is shown read-only, never chatted. */
+  taskJobs: { taskId: string; taskSlug: string; taskName: string; step: string; role: string; round: number; phase: string; sessionId: string | null; claimedAt: string }[];
+}
+
+/** The stage view of `slug`, or null when there is no such agent. Read-only. */
+export function buildStageView(contextRoot: string, slug: string, now: Date = new Date()): StageView | null {
+  const target = agentTarget(contextRoot, slug);
+  if (!target) return null;
+  const agent = getAgent(contextRoot, slug);
+  const routines = listAutomations(contextRoot).filter((m) => m.runKind !== 'agent' && m.mode === 'sched' && (m.agent ?? m.slug) === slug);
+  // Its own call target and every routine that runs as it: the slugs its work happens under.
+  const slugs = [slug, ...routines.map((m) => m.slug).filter((s) => s !== slug)];
+  const titleOf = (s: string): string => (s === slug ? target.agentTitle || target.title : routines.find((m) => m.slug === s)?.title ?? s);
+
+  const liveJobs: StageView['liveJobs'] = [];
+  for (const s of slugs) {
+    const a = agentActivity(contextRoot, s, now.getTime());
+    if (a) liveJobs.push({ slug: s, title: titleOf(s), since: a.since, runId: a.runId, lastLine: null });
+  }
+
+  const posts = slugs.flatMap((s) => readThread(contextRoot, s, { days: STAGE_THREAD_DAYS })
+    .filter((e) => e.kind === 'agent')
+    .map((e) => ({ slug: s, e })));
+  posts.sort((a, b) => (a.e.id < b.e.id ? 1 : a.e.id > b.e.id ? -1 : 0));
+  const reports = posts.slice(0, STAGE_REPORTS).map(({ slug: s, e }) => ({
+    slug: s, id: e.id, runId: e.runId, at: e.at, text: e.text, files: e.files ?? [],
+  }));
+  const seen = new Set<string>();
+  const files: StageView['files'] = [];
+  for (const { slug: s, e } of posts) {
+    for (const path of e.files ?? []) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      files.push({ path, kind: stageFileKind(path), at: e.at, slug: s });
+      if (files.length >= STAGE_FILES) break;
+    }
+    if (files.length >= STAGE_FILES) break;
+  }
+
+  const home = readStageHomeSession(dirname(contextRoot), slug);
+  return {
+    slug,
+    title: target.agentTitle || target.title,
+    face: faceOf(slug, agent?.face ?? null),
+    autonomy: target.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    homeSessionId: home,
+    // Held = a live child with a socket bound to it right now. A detached one (its pane closed a
+    // moment ago) is not held: the stage adopts it.
+    homeLive: !!home && !!findLiveChat(home)?.holder?.(),
+    owner: null,
+    liveJobs,
+    reports,
+    files,
+    routines: routines.map((m) => ({
+      slug: m.slug,
+      title: m.title,
+      enabled: m.enabled,
+      nextFireAt: !m.enabled || m.schedule === null ? null : (nextFire(m.schedule, now)?.toISOString() ?? null),
+      cadence: cadenceLabel(m),
+      face: faceOf(m.slug, parseFace(readManifestFrontmatter(m.path)?.data.face)),
+    })),
+    inbox: listInboxRows(dirname(contextRoot)).filter((r) => r.agent === slug),
+    taskJobs: readTaskJobs(dirname(contextRoot)).claims
+      .filter((c) => c.agent === slug && c.phase !== 'claiming')
+      .map((c) => ({
+        taskId: c.taskId,
+        taskSlug: c.taskSlug,
+        taskName: findTaskHead(contextRoot, c.taskId)?.name ?? c.taskSlug,
+        step: c.step, role: c.role, round: c.round, phase: c.phase, sessionId: c.sessionId, claimedAt: c.claimedAt,
+      })),
+  };
+}
+
+/** GET /api/agents/:slug/stage — the stage's data, read-only. The desktop app only: the stage
+ *  opens a live conversation, which only the desktop hosts. */
+export async function handleAgentsStage(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!isAgentRequest(req)) {
+    sendError(res, 403, 'forbidden', 'An agent\'s stage is available in the desktop app only.');
+    return;
+  }
+  try {
+    const view = buildStageView(contextRoot, params.slug);
+    if (!view) {
+      sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+      return;
+    }
+    sendJson(res, 200, { stage: view });
+  } catch (err) {
+    console.error('[agents] stage failed', err);
+    sendError(res, 500, 'stage_failed', 'Failed to read the agent\'s stage.');
   }
 }

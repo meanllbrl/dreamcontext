@@ -8,6 +8,9 @@ import { nanoid } from 'nanoid';
 import { automationsDir, getAutomation, isSafeAutomationSlug, listAutomations } from './store.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK } from './notifier.js';
 import { appLinkForContextRoot } from '../app-link.js';
+import { readMachineIdentity } from '../machine-id.js';
+import { memberSidePath, safeMemberWrite } from '../agents/scope.js';
+import { recordThreadEntryHere } from '../agents/agent-sync.js';
 import {
   AutomationError,
   NOTIFY_BODY_MAX_CHARS,
@@ -77,7 +80,8 @@ export function threadsDir(contextRoot: string): string {
  *  and the same reason as `automationSessionsPath`. */
 export function threadSlugDir(contextRoot: string, slug: string): string {
   if (!isSafeAutomationSlug(slug)) throw new AutomationError(`Invalid automation slug "${slug}".`);
-  return join(threadsDir(contextRoot), slug);
+  // A global agent's thread stays on this machine, in its folder for this project (D1).
+  return memberSidePath(contextRoot, slug, join('threads', slug));
 }
 
 /** `YYYY-MM-DD` in LOCAL time — schedules are machine-local wall-clock, so a
@@ -90,12 +94,21 @@ export function threadDateStamp(d: Date = new Date()): string {
   return `${y}-${mo}-${day}`;
 }
 
-/** The date is DERIVED, never taken as a raw caller string — it is a filename. */
-export function threadDayPath(contextRoot: string, slug: string, date: Date | string = new Date()): string {
+/**
+ * The date is DERIVED, never taken as a raw caller string — it is a filename.
+ *
+ * One file per slug per day PER MACHINE (`<day>-<machineId>.md`, AI Team v2 B1-7): agents ride the
+ * brain sync, and two machines appending to one day file would conflict on every sync. Readers take
+ * every machine's file for a day (and the legacy `<day>.md`) and merge them by entry id.
+ */
+export function threadDayPath(contextRoot: string, slug: string, date: Date | string = new Date(), home?: string): string {
   const stamp = typeof date === 'string' ? date : threadDateStamp(date);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(stamp)) throw new AutomationError(`Invalid thread date "${stamp}".`);
-  return join(threadSlugDir(contextRoot, slug), `${stamp}.md`);
+  return join(threadSlugDir(contextRoot, slug), `${stamp}-${readMachineIdentity(home).id}.md`);
 }
+
+/** A thread day file name: `<day>.md` (legacy, one machine) or `<day>-<machineId>.md`. */
+const THREAD_DAY_FILE = /^(\d{4}-\d{2}-\d{2})(?:-[0-9a-f]{12})?\.md$/;
 
 // ─── Entry ids ───────────────────────────────────────────────────────────────
 
@@ -282,13 +295,18 @@ export function readThread(contextRoot: string, slug: string, opts: ReadThreadOp
   try { dir = threadSlugDir(contextRoot, slug); } catch { return []; }
   let files: string[];
   try {
-    files = readdirSync(dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).sort();
+    files = readdirSync(dir).filter((f) => THREAD_DAY_FILE.test(f)).sort();
   } catch { return []; }
-  // Names are ISO dates, so lexical order IS chronological order and the
-  // newest N are simply the last N. Sliced BEFORE any file is opened — the
-  // whole point is to not read them.
-  if (opts.days !== undefined && opts.days >= 0 && files.length > opts.days) {
-    files = files.slice(files.length - opts.days);
+  // Names start with ISO dates, so lexical order IS chronological order and the
+  // newest N DAYS are simply the last N distinct days. Sliced BEFORE any file is
+  // opened — the whole point is to not read them. Several machines' files of one
+  // day count as that one day.
+  if (opts.days !== undefined && opts.days >= 0) {
+    const days = [...new Set(files.map((f) => f.slice(0, 10)))];
+    if (days.length > opts.days) {
+      const keep = new Set(days.slice(days.length - opts.days));
+      files = files.filter((f) => keep.has(f.slice(0, 10)));
+    }
   }
   if (opts.fromDay && /^\d{4}-\d{2}-\d{2}$/.test(opts.fromDay)) files = files.filter((f) => f.slice(0, 10) >= opts.fromDay!);
 
@@ -531,6 +549,10 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
     throw new AutomationError('That entry is too large to append.');
   }
 
+  // A synced folder can hold a teammate's symlink: never write through one (B1, M2).
+  if (!safeMemberWrite(contextRoot, dayPath)) {
+    throw new AutomationError(`Refusing to write ${slug}'s thread through a symlink.`);
+  }
   mkdirSync(dir, { recursive: true });
   if (!existsSync(dayPath)) {
     // Frontmatter first, so a human reading the synced brain sees what this
@@ -540,6 +562,8 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
     try { writeFileSync(dayPath, header, { encoding: 'utf-8', flag: 'wx' }); } catch { /* raced: another process created it first */ }
   }
   appendFileSync(dayPath, block, 'utf-8');
+  // The thread-entry ledger (M0): history injects only what THIS machine wrote (B1-6).
+  recordThreadEntryHere(contextRoot, slug, entry.id, entry.at);
   return entry;
 }
 
@@ -553,7 +577,7 @@ export function pruneThreads(contextRoot: string, slug: string, keepDays: number
   const cutoff = Date.now() - keepDays * 24 * 60 * 60 * 1000;
   let removed = 0;
   for (const name of names) {
-    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})\.md$/);
+    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})(?:-[0-9a-f]{12})?\.md$/);
     if (!m) continue;
     const when = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
     if (!Number.isFinite(when) || when >= cutoff) continue;

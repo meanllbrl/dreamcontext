@@ -1,0 +1,45 @@
+/* A task job's chip: board card, drawer, stage strip. Tone is meaning, the label says it in words. */
+.job-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full, 999px);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.job-chip-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.job-chip--accent { background: var(--color-accent-soft); color: var(--color-accent-ink); }
+.job-chip--good { background: var(--color-success-subtle); color: var(--color-success-ink); }
+.job-chip--warn { background: var(--color-warning-subtle); color: var(--color-warning-ink); }
+.job-chip--bad { background: var(--color-error-subtle); color: var(--color-error-ink); }
+
+/* Working: the dot breathes, so a live job reads as live without a word. */
+.job-chip[data-job='running'] .job-chip-dot,
+.job-chip[data-job='reviewing'] .job-chip-dot {
+  animation: job-chip-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes job-chip-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .job-chip-dot { animation: none !important; }
+}

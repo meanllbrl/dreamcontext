@@ -27,6 +27,8 @@ import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
 import { useTasks } from '../../../hooks/useTasks';
+import { useOwnerInbox } from '../../../hooks/useAgents';
+import { emitInstance, useVault } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
@@ -572,6 +574,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onWriteAbout(row);
     }
     : undefined;
+  // Task jobs waiting on the owner (M1, AI Team v2 C2): listed in Waiting on you, no session needed.
+  const taskRows = (useOwnerInbox().data ?? []).filter((r) => r.kind.startsWith('task-'));
+  const { bus } = useVault();
   const renderAgenda = (variant: 'tile' | 'full', wide: boolean) => (
     <SuperAgenda
       state={state}
@@ -582,6 +587,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onShowChild={showChild}
       onShowQuestion={showQuestion}
       onWriteAbout={writeAbout}
+      taskRows={taskRows}
+      onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
     />
   );
   const othersItems: OthersItem[] = plan.others.map((id) => {

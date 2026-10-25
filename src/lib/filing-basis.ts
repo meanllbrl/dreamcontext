@@ -418,3 +418,10 @@ export function decideFiling(input: FilingInput): FilingDecision {
 export function filingFields(d: Extract<FilingDecision, { ok: true }>): Record<string, unknown> {
   return d.basis ? { filed_by: d.filedBy, filing_basis: d.basis } : { filed_by: d.filedBy };
 }
+
+/** A stored `filing_approved` value (task-filing-approval.ts), or null unless it carries an `at` string. */
+export function readFilingApproved(raw: unknown): { at: string } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const at = (raw as Record<string, unknown>).at;
+  return typeof at === 'string' && at.trim() ? { at: at.trim() } : null;
+}

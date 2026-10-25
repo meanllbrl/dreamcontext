@@ -41,6 +41,11 @@ beforeEach(() => {
   projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'dc-learn-cli-')));
   contextRoot = join(projectRoot, '_dream_context');
   mkdirSync(contextRoot, { recursive: true });
+  // Nothing here should touch the home directory, but a CLI run must never be able to. Switched
+  // BEFORE the manifests exist: the home is this machine, and its identity owns what it creates.
+  realHome = process.env.HOME;
+  fakeHome = mkdtempSync(join(tmpdir(), 'dc-learn-cli-home-'));
+  process.env.HOME = fakeHome;
   createAutomation(contextRoot, {
     slug: 'digest', title: 'Daily digest', days: 'daily', at: '18:00', prompt: 'Say hello.', learning: true,
   });
@@ -48,10 +53,6 @@ beforeEach(() => {
     slug: 'no-learn', title: 'No learning', days: 'daily', at: '18:00', prompt: 'Say hello.', learning: false,
   });
   process.chdir(projectRoot);
-  // Nothing here should touch the home directory, but a CLI run must never be able to.
-  realHome = process.env.HOME;
-  fakeHome = mkdtempSync(join(tmpdir(), 'dc-learn-cli-home-'));
-  process.env.HOME = fakeHome;
 });
 
 afterEach(() => {
