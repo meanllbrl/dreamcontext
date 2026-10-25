@@ -189,5 +189,29 @@
       "insights"
     ],
     "story": "v0-32-0.json"
+  },
+  {
+    "id": "v0-35-0",
+    "date": "2026-10-25",
+    "version": "0.35.0",
+    "title": "Hand the work to one Claude and follow it from anywhere",
+    "summary": "Everything since 0.32.0 in one release. The Super Agent runs a project's chats on one stage with an agenda, opens PDFs and videos as cards, asks with pictures and follows you to every page. AI Team agents can be global and take tasks with a reviewer, your phone lists every project's chats and shows the agenda, and dreamcontext installs on Windows for the first time.",
+    "tags": [
+      "super-agent",
+      "agents",
+      "hands-free",
+      "desktop"
+    ],
+    "story": "v0-35-0.json",
+    "covers": [
+      "0.33.0",
+      "0.34.0",
+      "0.34.1",
+      "0.34.2",
+      "0.34.3",
+      "0.34.4",
+      "0.34.5",
+      "0.34.6"
+    ]
   }
 ]

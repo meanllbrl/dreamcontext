@@ -1,0 +1,103 @@
+{
+  "hero": {
+    "eyebrow": "v0.35.0  ·  25 October 2026",
+    "headline": "Hand the work to one Claude and follow it from anywhere",
+    "sub": "Everything since 0.32.0 ships in this one release. The Super Agent runs your chats on one stage, your AI Team takes on tasks, your phone shows the agenda, and dreamcontext runs on Windows for the first time.",
+    "shot": {
+      "src": "shots/v0-35-0/super-stage.png",
+      "alt": "The Super Agent's stage in a demo project called orbit. On the left, the Agenda card: Waiting on you 1 (Your pick of the day-1 prompt designs), Now 2 (Splitting the drop by data sources, Designing a day-1 prompt for single-source trials), Done 1 (Took over the trial-to-paid chat). In the centre, the dreamcontext Super Agent chat with the finished jobs Cohort split and Day-1 prompt. Around it, cards for the chats Trial-to-paid drop, Day-1 prompt and Cohort split, a PDF card Trial interviews, September, and a video card Day-1 walkthrough.",
+      "caption": "Press Hand over: one Claude takes the project's chats, starts new ones and keeps your agenda. What waits on you, what runs now, what is done."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "PDFs and videos on the stage",
+      "body": "The Super Agent can open a report or a clip as a card. Click it and it reads side by side with the chat. A clip never plays until you press play.",
+      "shot": {
+        "src": "shots/v0-35-0/pdf-side.png",
+        "alt": "The Super Agent chat on the left and, beside it, the PDF Trial interviews, September open in the card: page one with three quotes from trial interviews and a bar chart, trial-to-paid 31% for two sources and 11% for one source; page two with recommendations below it."
+      }
+    },
+    {
+      "kind": "note",
+      "text": "New session hands the whole stage to a fresh Claude, with a written handoff of what was running. Nothing on the stage is lost."
+    },
+    {
+      "kind": "shot",
+      "title": "Questions with pictures",
+      "body": "When the Super Agent asks you to choose between designs, the pictures come onto the stage by themselves, large and side by side. Answer in the card and they go back where they were.",
+      "shot": {
+        "src": "shots/v0-35-0/picture-question.png",
+        "alt": "A question from the Super Agent, 'Which day-1 prompt goes on the investigation task?', with three picture options, A Banner, B Modal and C Checklist, in the chat's question card. The stage shows the same three designs as large cards in a grid, with Grid, Filmstrip and Back to the stage buttons at the top."
+      }
+    },
+    {
+      "kind": "split",
+      "side": "left",
+      "title": "The Super Agent on every page",
+      "body": "With the Super Agent on, every page has its pill in the corner. It opens the same chat as a column beside the page, and it knows where you are: a Tasks · All Tasks chip goes with your message.",
+      "shot": {
+        "src": "shots/v0-35-0/super-dock.png",
+        "alt": "The Tasks board of the orbit demo project with the Super Agent open as a right-hand column. The owner asked 'What is still open here?' with a Page: Tasks · All Tasks strip above it, and the Super Agent answered 'Four tasks wait in To Do, and Stripe checkout is the critical one. Of the two in progress, the trial-to-paid investigation is mine.' The composer carries a Tasks · All Tasks chip."
+      }
+    },
+    {
+      "kind": "shot",
+      "title": "AI Team: one agent for every project",
+      "body": "Make an agent global and it lives on this Mac, in every project's AI Team, never in a brain. The team list is wider now, and you can drag it to the width you like.",
+      "shot": {
+        "src": "shots/v0-35-0/team-global.png",
+        "alt": "The AI Team page of the orbit demo project. The team list on the left shows Analyst, Critic with a Global chip, Monday metrics digest and Nightly churn check. Critic is open on the right, marked Yours and Global with Autonomy: Balanced; the owner asked 'What do you look for in a change?' and Critic answered 'What breaks for a customer, what has no test, and what the next person will not understand. I say each in one line, worst first.'"
+      }
+    },
+    {
+      "kind": "split",
+      "side": "right",
+      "title": "Give a task to an agent, with a reviewer",
+      "body": "Give to agent on a task picks who does it, when, and whether it works on code or docs. Pick a reviewer too: another agent, or you. The work lands on the task and moves it to In Review.",
+      "shot": {
+        "src": "shots/v0-35-0/give-to-agent.png",
+        "alt": "The Give to agent dialog over the task Churn exit survey: Analyst picked from the agents Analyst, Critic, Monday metrics digest and Nightly churn check; a note 'Group the exit answers by reason and tell me which one we can fix this month.'; When: Now; Where it works: Docs; Reviewer: Critic; and an Assign button."
+      }
+    },
+    {
+      "kind": "shot",
+      "title": "Hands-free: every project in one list, the agenda in your pocket",
+      "body": "Your phone lists the chats of every project you chose in one list. A project the Super Agent runs is one row; open it and its agenda sits under the header, a tap away.",
+      "shot": {
+        "src": "shots/v0-35-0/handsfree-phone.png",
+        "alt": "Three phone screens side by side. Left: the Chats list across projects, with a Super Agent row for orbit and three closed chats of atlas-mobile, a Search every project box and All 4, Open 1, Closed 3 and Project filters. Middle: the Super Agent chat on the phone with the agenda strip under the header (1 waiting on you, Now 2, Done 1) and the three designs from the Mac's stage. Right: the agenda opened as a sheet from the bottom, with the same Waiting on you, Now and Done lines as on the Mac.",
+        "caption": "The phone talks to the Super Agent running on your Mac.",
+        "frame": "plain"
+      }
+    },
+    {
+      "kind": "points",
+      "title": "Also in 0.35.0",
+      "items": [
+        {
+          "title": "Windows, for the first time",
+          "text": "A Windows installer ships with this release. It is not signed yet, so Windows asks once: More info, then Run anyway. Hands-free stays Mac-only for now."
+        },
+        {
+          "title": "Voice that checks itself",
+          "text": "Hands-free checks a voice message before it sends it. A take heard in the wrong language is transcribed again; one it still cannot read is not sent, and you are asked to say it again."
+        },
+        {
+          "title": "Back on npm",
+          "text": "0.32.0 was meant to be the last npm version. That changed: 0.35.0 ships on npm, as the signed Mac app and as the Windows installer."
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "0.33.0 and 0.34.0 to 0.34.6 were built and tested on our own Macs and never published. Everything in them is in 0.35.0, so this page covers all of it."
+    }
+  ],
+  "closer": {
+    "title": "Get 0.35.0",
+    "body": "The Mac app updates itself. New here? Download the DMG or the Windows installer from the latest GitHub release, or run npm i -g dreamcontext."
+  }
+}
