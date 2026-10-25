@@ -19,7 +19,11 @@ import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
 import { useSpokenHighlight } from './useSpokenHighlight';
 import { splitAbout, splitAboutParts, type MessagePart } from '../super/superHandover';
-import { AgendaAboutStrip, RefChip, ReplySectionHead, ReplyStrip } from './AgendaAboutStrip';
+import { AgendaAboutStrip, PageStrip, RefChip, ReplySectionHead, ReplyStrip } from './AgendaAboutStrip';
+import { splitPageContext } from '../../../lib/superTypes';
+import { pageChipName } from '../../../lib/pageContext';
+import { PAGE_LABEL_KEY } from '../../../lib/pageLabels';
+import type { Page } from '../../layout/Sidebar';
 import { useI18n } from '../../../context/I18nContext';
 import type { AgentRoleId } from '../../../lib/agentRoles';
 import type {
@@ -129,7 +133,7 @@ function UserMessage({
   const superView = !!session && (session.mode === 'super' || session.superMirror);
   // What was attached is drawn; what was typed stays in the bubble. Copy/quote/rewind all
   // keep `item.text` — the real message, paths and all, is what was sent.
-  const { text, media, refs, about, parts } = useMemo(() => {
+  const { text, media, refs, about, parts, page } = useMemo(() => {
     // Several references in one message (owner 2026-10-24, the Super view only): his words
     // with each part's chip inline where he put it; the files at the top are the preamble's.
     const multi = superView ? splitAboutParts(item.text) : null;
@@ -139,7 +143,9 @@ function UserMessage({
     }
     // A message written about an agenda line, or replying to one message (owner 2026-10-23),
     // opens with its block: drawn as a strip above the bubble, the bubble keeps only his words.
-    const split = splitAbout(item.text);
+    // One sent from the Super dock ends with the page it was written from (2026-10-25).
+    const paged = splitPageContext(item.text);
+    const split = splitAbout(paged.text);
     const board = splitUserBoardRefs(split.text);
     return { ...splitUserMedia(board.text), refs: board.refs, about: split.about, parts: null };
   }, [item.text, superView]);
@@ -154,6 +160,7 @@ function UserMessage({
           />
         )
         : about && <AgendaAboutStrip about={about} superSid={session && (session.mode === 'super' || session.superMirror) ? session.claudeId : null} />}
+      {page && <PageStrip label={t('super.page.label')} text={pageChipName(page, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p))} />}
       {media.length > 0 && (
         <div className="chat-msg-user-media">
           {media.map((p) => <UserMediaItem key={p} path={p} onOpenFile={onOpenFile} />)}

@@ -7,6 +7,7 @@ import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { PhoneBar } from './PhoneBar';
+import { publishPage } from '../../lib/pageContext';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
@@ -132,6 +133,11 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     const instanceEl = shellRef.current?.closest('.project-instance');
     if (instanceEl instanceof HTMLElement) instanceEl.dataset.page = activePage;
   }, [activePage]);
+  // The same page for the Super dock's page chip (lib/pageContext.ts), on this instance's bus.
+  useEffect(() => {
+    publishPage(bus, activePage);
+    return () => publishPage(bus, null);
+  }, [bus, activePage]);
 
   // The rail's motion — see useRailGlide.ts. Declared after the attribute above, so the
   // slab measures the rail with the overlay's edge already moved.

@@ -11,6 +11,7 @@ import {
   PRIO_ORDER, SORT_LABEL, URG_ORDER,
   BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
   dimGet, levelLabel, prioColor, taskAgentKey, taskAssignees, taskFeature, taskVersion, urgColor,
+  activeFilterCount,
 } from './boardModel';
 import { type BarFit, fitOnLayout, fitOnResize, fitRetest, initialFit, menusToClose } from './toolbarCollapse';
 
@@ -159,9 +160,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
     );
   };
 
-  const activeCount =
-    FIELD_DEFS.reduce((n, fd) => { const fld = f[fd.key] as { inc: string[]; exc: string[] }; return n + fld.inc.length + fld.exc.length; }, 0)
-    + (f.due !== 'all' ? 1 : 0) + (f.minRice > 0 ? 1 : 0);
+  const activeCount = activeFilterCount(f);
 
   const activeSection = filterPane;
   const sectionDef = activeSection && activeSection !== 'sort' ? FIELD_DEFS.find((d) => d.key === activeSection) : null;

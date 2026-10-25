@@ -213,9 +213,10 @@ describe('the cape goes on inside the choreography (D18, AC13)', () => {
     expect(planFlights(handOverInputs, { direction: 'in', reduced: false, light: false }).total).toBeGreaterThanOrEqual(HANDOVER.capeDuration);
   });
 
-  it('the face mounts with the surface, not when the centre lands', () => {
+  it('the head mounts with the surface, not when the centre lands; it shows the dreamcontext logo (owner 2026-10-25)', () => {
     const centreHead = src.slice(src.indexOf('className="super-centre-head"'), src.indexOf('className="super-centre-name"'));
-    expect(centreHead).toMatch(/<SleepyMascot [^>]*mode="super" capeOn=\{capeOn\} \/>/);
+    expect(centreHead).toMatch(/<BrandMark size=\{28\} \/>/);
+    expect(centreHead).not.toMatch(/SleepyMascot/);
     expect(centreHead).not.toMatch(/pending\.has\('centre'\)/);
   });
 

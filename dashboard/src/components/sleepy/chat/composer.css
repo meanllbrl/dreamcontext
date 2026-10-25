@@ -251,6 +251,11 @@
 }
 .chat-cmp-attachment-image { padding-left: 0; }
 .chat-cmp-attachment-about { padding-left: 8px; }
+/* The page chip (the Super dock's page): the page name stays whole, only the item clips. */
+.chat-cmp-attachment-page { padding-left: 8px; max-width: 100%; min-width: 0; }
+.chat-cmp-page-row { display: flex; min-width: 0; }
+.chat-cmp-page-label { flex: 0 0 auto; }
+.chat-cmp-page-item { flex: 0 1 auto; min-width: 0; margin-left: 0.3em; overflow: hidden; text-overflow: ellipsis; }
 .chat-cmp-thumb {
   width: 44px;
   height: 44px;

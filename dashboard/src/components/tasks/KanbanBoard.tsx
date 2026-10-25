@@ -2,6 +2,8 @@ import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'r
 import type { Task } from '../../hooks/useTasks';
 import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
+import { useVault } from '../../context/VaultContext';
+import { publishPageDetail } from '../../lib/pageContext';
 import { openChildrenMessage } from '../../lib/taskObjection';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
@@ -10,7 +12,7 @@ import { confirmAction } from '../../lib/desktop';
 import {
   type SaveScope,
   PRIO_ORDER,
-  dimGroups, dueInfo, filterTasks, levelLabel, nestChildren, prioColor, sortTasks, taskAssignees,
+  activeFilterCount, dimGroups, dueInfo, filterTasks, levelLabel, nestChildren, prioColor, sortTasks, taskAssignees,
 } from './boardModel';
 import { BoardViewTabs } from './BoardViewTabs';
 import { BoardToolbar, type MenuKey } from './BoardToolbar';
@@ -33,6 +35,14 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const { t } = useI18n();
   const sm = useStatusModel();
   const s = useBoardState();
+  // The open view and its filter count, for the Super dock's page chip (lib/pageContext.ts).
+  const { bus } = useVault();
+  const viewName = s.activeView?.name;
+  const filterCount = activeFilterCount(s.filters);
+  useEffect(() => {
+    publishPageDetail(bus, 'tasks', { page: 'tasks', view: viewName, filters: filterCount });
+    return () => publishPageDetail(bus, 'tasks', null);
+  }, [bus, viewName, filterCount]);
   const { data: tasks = [], isLoading } = useTasks();
   const { data: members = [] } = useTaskMembers();
   const { data: realVersions = [] } = useVersions();

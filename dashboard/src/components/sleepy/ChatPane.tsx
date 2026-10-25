@@ -67,7 +67,7 @@ import { Composer } from './chat/Composer';
 import { insertRef, nextAttachmentId, readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
 import { messagePart, replyGroups, replyHeadsById as headsById, type ReplyHead } from './chat/replyLinks';
 import { PartStrip, ReplyStrip } from './chat/AgendaAboutStrip';
-import { msgRef } from '../../lib/superTypes';
+import { msgRef, splitPageContext } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
@@ -1778,10 +1778,10 @@ export function ChatPane({
   const handleQuote = useCallback((item: ChatUserItem | ChatTextItem) => {
     if (!superView) { setQuote(convId, item.text); return; }
     const from = item.kind === 'user' ? 'owner' : 'super';
-    const multi = item.kind === 'user' ? splitAboutParts(item.text) : null;
+    const multi = item.kind === 'user' ? splitAboutParts(splitPageContext(item.text).text) : null;
     const words = !multi ? item.text
       : multi.parts.length >= 2 ? [multi.preamble, ...multi.parts.map((p) => p.words)].filter((w) => w.trim()).join(' · ')
-        : splitAbout(item.text).text;
+        : splitAbout(splitPageContext(item.text).text).text;
     const quote = replyAboutBlock(item.text, from, words);
     const name = `${t(from === 'super' ? 'super.ref.super' : 'super.ref.own')} ${JSON.parse(quote.split('\nquote: ')[1]) as string}`;
     insertRef(session.scratchId || convId, { id: nextAttachmentId(), kind: 'about', name, text: quote });

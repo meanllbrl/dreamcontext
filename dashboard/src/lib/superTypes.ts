@@ -525,6 +525,39 @@ export function partRefs(text: string): string[] {
   if (n < 2) return [];
   const base = msgRef(text);
   return Array.from({ length: n }, (_, i) => msgRef(`${base}#${i + 1}`));
+/**
+ * The page the owner wrote from (super dock, owner 2026-10-25): a message sent from the dock
+ * ends with this block as its WHOLE last paragraph (`\n\n` + the block, end of text), so the
+ * About/Reply heads at the start still match. A reference to what he looked at, never an
+ * instruction. MIRRORED from the server, src/lib/super/types.ts (super-types-mirror.test.ts).
+ */
+export const PAGE_CONTEXT_RE = /\n\n\[On page ([a-z][a-z-]{0,31})(?: view="([^"\]\n]{1,60})")?(?: filters=([0-9]{1,3}))?(?: board=([a-z0-9][a-z0-9-]{0,63}))?(?: insight=([a-z0-9][a-z0-9-]{0,63}))?\]$/;
+export const MAX_PAGE_VIEW = 60;
+export interface PageContextRef { page: string; view?: string; filters?: number; board?: string; insight?: string }
+const PAGE_ID_RE = /^[a-z][a-z-]{0,31}$/;
+const PAGE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** The block for a page, or '' when the page is not a page id. A field that is not clean is left out. */
+export function pageContextBlock(ctx: PageContextRef | null | undefined): string {
+  if (!ctx || !PAGE_ID_RE.test(ctx.page)) return '';
+  let out = `[On page ${ctx.page}`;
+  const view = typeof ctx.view === 'string' ? ctx.view.replace(/[\u0000-\u001f\u007f"\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_PAGE_VIEW).trim() : '';
+  if (view) out += ` view="${view}"`;
+  if (typeof ctx.filters === 'number' && Number.isInteger(ctx.filters) && ctx.filters > 0 && ctx.filters < 1000) out += ` filters=${ctx.filters}`;
+  if (typeof ctx.board === 'string' && PAGE_SLUG_RE.test(ctx.board)) out += ` board=${ctx.board}`;
+  if (typeof ctx.insight === 'string' && PAGE_SLUG_RE.test(ctx.insight)) out += ` insight=${ctx.insight}`;
+  return `${out}]`;
+}
+/** A message's words and the page block it ends with (null: none, the text is unchanged). */
+export function splitPageContext(text: string): { text: string; page: PageContextRef | null } {
+  const raw = text ?? '';
+  const m = PAGE_CONTEXT_RE.exec(raw);
+  if (!m) return { text: raw, page: null };
+  const page: PageContextRef = { page: m[1] };
+  if (m[2]) page.view = m[2];
+  if (m[3]) page.filters = Number(m[3]);
+  if (m[4]) page.board = m[4];
+  if (m[5]) page.insight = m[5];
+  return { text: raw.slice(0, m.index), page };
 }
 /** The super's mark on an answer's first line, `<!-- re:<ref> -->` (lib/replyMark.ts parses it). */
 export const REPLY_MARK_RE = /^\s*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/;

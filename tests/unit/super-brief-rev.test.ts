@@ -84,10 +84,14 @@ describe('the briefing carries the jarvis sections and its revision', () => {
   });
 
   it('rev 11 (2026-10-24): a dictated message that reads as nonsense is retried once, then asked about', () => {
-        for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('A dictated `<voice-take ref=…>` message is nonsense: `dreamcontext voice retry <ref>`');
       expect(t).toContain('once (`--language <code>`), act only on sensible text, else ask him to say it again.');
     }
+  });
+
+  it('rev 11 (2026-10-25): the dock\'s page block is named, in the briefing and in the update', () => {
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) expect(t).toContain('A message ending `[On page <page> …]` was written from the dock');
   });
 
   it('rev 10 (2026-10-23): which answer is to which message, in the briefing and in the update', () => {

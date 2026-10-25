@@ -214,7 +214,7 @@ describe('the bar answers no question itself (owner 2026-10-22: one way to ask)'
   it('a question row is its words and ONE Answer button that shows the chat\'s card; no option buttons, no style for them', () => {
     const bar = read(`${SUPER}/JobBar.tsx`);
     expect(bar).not.toMatch(/askAnswerText|super-ask-option|super-job-option/);
-    expect(bar).toMatch(/\? <QuestionHead item=\{head\} text=\{head\.ownerText \?\? ''\} onReplyToSuper=\{onReplyToSuper\} \/>/);
+    expect(bar).toMatch(/\? <QuestionHead item=\{head\} text=\{head\.ownerText \?\? ''\} root=\{superSession\?\.container\} onReplyToSuper=\{onReplyToSuper\} \/>/);
     expect(read(`${SUPER}/JobBar.css`)).not.toMatch(/super-job-option/);
   });
 });

@@ -13,6 +13,7 @@ import {
 import { useInstanceEvent, useVault } from '../context/VaultContext';
 import type { FocusTarget } from '../hooks/useFocusTarget';
 import { useLabPrefs } from '../hooks/useLabPrefs';
+import { publishPageDetail } from '../lib/pageContext';
 import './LabPage.css';
 
 interface LabPageProps {
@@ -53,6 +54,13 @@ export function LabPage({ focus }: LabPageProps = {}) {
   // Declared BEFORE the address-bar effect on purpose: React runs a component's cleanups in
   // declaration order, so on unmount this one still runs while we hold the address bar.
   useEffect(() => () => clearLabPath(bus), [bus]);
+
+  // The routed insight, for the Super dock's page chip (lib/pageContext.ts).
+  useEffect(() => {
+    if (!route.slug) return undefined;
+    publishPageDetail(bus, 'lab-route', { page: 'lab', insight: route.slug });
+    return () => publishPageDetail(bus, 'lab-route', null);
+  }, [bus, route.slug]);
 
   // This page is the only surface that routes, so it is also the one that claims the
   // window's single address bar for its project — held while this chip is the one you're

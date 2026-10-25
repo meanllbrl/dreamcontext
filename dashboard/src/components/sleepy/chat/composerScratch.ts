@@ -43,8 +43,10 @@ export interface Attachment {
    *  message is written about (owner 2026-10-23, the Super Agent's agenda): `text` is the block
    *  its part opens with (`agendaAboutBlock`), `name` what the chip reads. Up to MAX_MESSAGE_REFS
    *  per conversation, each a token in the draft (`insertRef`, composerRefs.ts); it never makes a
-   *  message on its own (`countsAsContent`). */
-  kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about';
+   *  message on its own (`countsAsContent`). `page` is the page the Super dock is open on (owner
+   *  2026-10-25): `text` is the `[On page …]` block the message ENDS with, `name` what the chip
+   *  reads. One per conversation (`setPageContext`), never content, and it stays after a send. */
+  kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about' | 'page';
   name: string;
   /** Image attachments only — an object URL for the pasted `File` blob, so the chip shows
    *  the picture itself while its bytes are still on their way to disk. Revoked when the entry
@@ -227,7 +229,8 @@ export function dropSentAttachments(convId: string, opts: { keepAbout?: boolean 
   const cur = readScratch(convId);
   if (!cur.attachments.length && cur.quote === null && !cur.recent && !cur.refused) return;
   // A slash command never carries the About block, so its chip stays for the next message.
-  const gone = (a: Attachment) => wasSent(a) && !(opts.keepAbout && a.kind === 'about');
+  // The page chip stays always: the next message is still written from that page.
+  const gone = (a: Attachment) => a.kind !== 'page' && wasSent(a) && !(opts.keepAbout && a.kind === 'about');
   cur.attachments.forEach((a) => { if (gone(a)) revoke(a); });
   // A send ends what `recent` remembers: a chip cut before it is not pasted back after it.
   commit(convId, { attachments: cur.attachments.filter((a) => !gone(a)), quote: null });
@@ -242,7 +245,7 @@ export function wasSent(a: Attachment): boolean {
 /** A chip that is something to send by itself. An About line is not: it says what the message
  *  is about, and the message is still his to write. */
 export function countsAsContent(a: Attachment): boolean {
-  return a.kind !== 'about' && wasSent(a);
+  return a.kind !== 'about' && a.kind !== 'page' && wasSent(a);
 }
 
 /** Stage (or clear, with null) the agenda line the next message is written about. One per
@@ -333,6 +336,17 @@ function withRecent(cur: ComposerScratch, recent: Attachment[]): ComposerScratch
   return recent.length ? { ...rest, recent } : rest;
 }
 
+/** Stage (or clear, with null) the page the next message is written from (the Super dock's page
+ *  chip). One per conversation, placed last when staged. Only the dock's one effect calls it. */
+export function setPageContext(convId: string, page: Attachment | null): void {
+  const cur = readScratch(convId);
+  const rest = cur.attachments.filter((a) => a.kind !== 'page');
+  const was = cur.attachments.find((a) => a.kind === 'page');
+  if (!page && !was) return;
+  if (page && was && was.text === page.text && was.name === page.name) return;
+  commit(convId, { ...cur, attachments: page ? [...rest, { ...page, kind: 'page' }] : rest });
+}
+
 /**
  * The message a send writes, from what is in the box. The About block opens it, then the reply
  * quote, then the typed text with its chips (`foldAttachments`). A slash command is sent as
@@ -345,8 +359,18 @@ function withRecent(cur: ComposerScratch, recent: Attachment[]): ComposerScratch
  * words; one chip is today's exact bytes (block, blank line, all his words); with two or more,
  * file paths and picked elements open the message, for all of it. In the Super view a line he
  * TYPED that would read as a header gets a leading U+200B: only chips make headers.
+ * The Super dock's page block, when a `page` chip is staged, is the whole last paragraph.
  */
 export function composeOutgoing(
+  text: string, attachments: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
+  opts: { superView?: boolean } = {},
+): { message: string; quoted: string; slash: boolean } {
+  const out = composeBody(text, attachments, quote, quotePath, opts);
+  const page = out.slash ? undefined : attachments.find((a) => a.kind === 'page' && !!a.text);
+  return page?.text && out.quoted.trim() ? { ...out, message: `${out.message.trimEnd()}\n\n${page.text}` } : out;
+}
+
+function composeBody(
   text: string, attachments: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
   opts: { superView?: boolean } = {},
 ): { message: string; quoted: string; slash: boolean } {
@@ -411,7 +435,7 @@ export function neutraliseHeaders(words: string): string {
  * picture's path last. `quote` quotes a path the way the composer always has (agentComposer).
  */
 export function foldAttachments(text: string, attachments: readonly Attachment[], quote: (p: string) => string): string {
-  const paths = attachments.filter((a) => a.kind !== 'element' && a.kind !== 'about' && !!a.path)
+  const paths = attachments.filter((a) => a.kind !== 'element' && a.kind !== 'about' && a.kind !== 'page' && !!a.path)
     .map((a) => (a.kind === 'ref' ? a.path ?? '' : quote(a.path ?? ''))).join(' ');
   const body = paths ? (text.trim() ? `${text.trim()} ${paths}` : paths) : text.trim();
   const blocks = attachments.filter((a) => a.kind === 'element' && !!a.text)

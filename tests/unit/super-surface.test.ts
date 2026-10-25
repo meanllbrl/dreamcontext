@@ -114,9 +114,9 @@ describe('hand over / take back (D5, D9, D17)', () => {
     // The shown child: the half card, else the first presented chat (plan-r8 F11).
     expect(place).toMatch(/const cid = shownChild\(superState\);/);
     expect(place).toMatch(/homedSessions\(\{ handedOver, superSid, shownSid: superShownSid/);
-    expect(place).toMatch(/place\(superSid, 'centre'\)/);
+    expect(place).toMatch(/\} else place\(superSid, 'centre'\);/);
     expect(place).toMatch(/place\(superShownSid, 'shown'\)/);
-    expect(place).toMatch(/\[panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch\]/);
+    expect(place).toMatch(/\[panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch, dockOpen, dockSlotEpoch\]/);
   });
 
   it('no chord opens, splits or closes a hidden pane while handed over; a dropped file goes to the Super Agent', () => {

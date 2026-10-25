@@ -223,14 +223,14 @@ describe('the strip above a sent message', () => {
 
     const transcript = read('dashboard/src/components/sleepy/chat/TranscriptItem.tsx');
     // splitAbout (2026-10-23) reads the agenda block exactly as splitAgendaAbout did, and a reply.
-    expect(transcript).toMatch(/const split = splitAbout\(item\.text\);/);
+    expect(transcript).toMatch(/const paged = splitPageContext\(item\.text\);\s*const split = splitAbout\(paged\.text\);/);
     expect(transcript).toMatch(/: about && <AgendaAboutStrip about=\{about\}/);
     expect(transcript).toMatch(/copyText\(item\.text\)/);
     // ↩ hands over the item; ChatPane quotes its text outside a Super view, as before.
     expect(transcript).toMatch(/onQuote\(item\)/);
     const queued = read('dashboard/src/components/sleepy/chat/QueuedMessages.tsx');
-    expect(queued).toMatch(/const split = splitAbout\(text\);/);
-    expect(queued).toMatch(/\{about \? split\.text : text\}/);
+    expect(queued).toMatch(/const split = splitAbout\(splitPageContext\(text\)\.text\);/);
+    expect(queued).toMatch(/\{split\.text\}/);
   });
 
   it('every new word exists in EN and TR', () => {

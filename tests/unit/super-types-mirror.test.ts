@@ -69,6 +69,12 @@ describe('super types — server record <-> window mirror', () => {
       expect(client.aboutHeads(t)).toEqual(server.aboutHeads(t));
       expect(client.partRefs(t)).toEqual(server.partRefs(t));
     }
+    expect(String(client.PAGE_CONTEXT_RE)).toBe(String(server.PAGE_CONTEXT_RE));
+    expect(client.MAX_PAGE_VIEW).toBe(server.MAX_PAGE_VIEW);
+    for (const r of [{ page: 'tasks', view: 'Sprint "2"', filters: 2 }, { page: 'whiteboards', board: 'q3-plan' }, { page: 'lab', insight: 'mrr' }]) {
+      expect(client.pageContextBlock(r)).toBe(server.pageContextBlock(r));
+      expect(client.splitPageContext(`hi\n\n${client.pageContextBlock(r)}`)).toEqual(server.splitPageContext(`hi\n\n${server.pageContextBlock(r)}`));
+    }
   });
 
   it('the group rules are one code on both sides (the window applies the owner\'s drop before the server echoes it)', () => {

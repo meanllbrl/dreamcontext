@@ -3,6 +3,7 @@ import type { ChatSession } from '../chatSession';
 import { useI18n } from '../../../context/I18nContext';
 import { agendaAboutStrip, splitAbout, splitAboutParts } from '../super/superHandover';
 import { RefChip } from './AgendaAboutStrip';
+import { splitPageContext } from '../../../lib/superTypes';
 import { queueAutoDrainable, visibleQueued } from './chatQueue';
 
 /**
@@ -50,8 +51,8 @@ function QueuedRow({
   const [value, setValue] = useState(text);
   // A message about an agenda line, or a reply to one message, shows that line or the quote,
   // never the raw block (the edit box keeps it).
-  const split = splitAbout(text);
-  const multi = superSid ? splitAboutParts(text) : null;
+  const split = splitAbout(splitPageContext(text).text);
+  const multi = superSid ? splitAboutParts(splitPageContext(text).text) : null;
   const parts = multi && multi.parts.length >= 2 ? multi : null;
   const about = !split.about ? null
     : split.about.kind === 'reply'
@@ -132,7 +133,8 @@ function QueuedRow({
         ) : (
           <>
             {about && <span className="chat-queue-about" data-testid="chat-queue-about">{'reply' in about ? <span aria-hidden>↩</span> : <span className="chat-msg-about-dot" aria-hidden />} {about.label}: {about.text} · </span>}
-            {about ? split.text : text}
+            {/* His words: without an About/Reply head and without the dock's page block. */}
+            {split.text}
           </>
         )}
       </button>

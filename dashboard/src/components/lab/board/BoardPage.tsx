@@ -24,6 +24,7 @@ import { isRoutedRender } from '../chartRegistry';
 import { InsightDetailPanel } from '../InsightDetailPanel';
 import { LabCredentialsBanner } from '../LabCredentialsBanner';
 import { pushLabPath, useLabSearchParams } from '../funnel/labRoute';
+import { publishPageDetail } from '../../../lib/pageContext';
 import { BoardGrid } from './BoardGrid';
 import { BoardCard } from './BoardCard';
 import { BoardMenu } from './BoardMenu';
@@ -217,7 +218,7 @@ export function BoardPage({
 }: BoardPageProps) {
   const { t, locale } = useI18n();
   const api = useApi();
-  const { isActive } = useVault();
+  const { isActive, bus } = useVault();
   const queryClient = useQueryClient();
   const list = useBoards();
   const boards = useMemo(() => list.data?.boards ?? [], [list.data]);
@@ -244,6 +245,12 @@ export function BoardPage({
   const [adding, setAdding] = useState(false);
   const [openError, setOpenError] = useState(false);
   const [openSlug, setOpenSlug] = useState<string | null>(null);
+  // The insight open over the board, for the Super dock's page chip (lib/pageContext.ts).
+  useEffect(() => {
+    if (!openSlug) return undefined;
+    publishPageDetail(bus, 'lab-board', { page: 'lab', insight: openSlug });
+    return () => publishPageDetail(bus, 'lab-board', null);
+  }, [bus, openSlug]);
   const [toast, setToast] = useState<Toast | null>(null);
   // Pointer or keyboard focus on the toast holds it; leaving starts a fresh TOAST_MS.
   const [toastHeld, setToastHeld] = useState(false);

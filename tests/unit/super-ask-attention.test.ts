@@ -88,6 +88,6 @@ describe('the wiring', () => {
     expect(src).toMatch(/rows=\{dockShown\}/);
     expect(src).toMatch(/if \(id === SUPER_ASK_ROW\) \{ setSuperView\('super'\); setExpanded\(true\); return; \}/);
     expect(src).toMatch(/onClose=\{\(id\) => \{ if \(id !== SUPER_ASK_ROW\) closeSessionById\(id\); \}\}/);
-    expect(read('AgentDock.tsx')).toMatch(/\{!row\.pinned && <button/);
+    expect(read('AgentDock.tsx')).toMatch(/\{onClose && !row\.pinned && <button/);
   });
 });

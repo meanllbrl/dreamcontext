@@ -54,8 +54,9 @@ import './JobBar.css';
 export function JobBar({ state, head, waiting, rect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild }: {
   state: SuperStateView;
   head: SuperQueueItem | null;
-  /** The top band above the centre (planStage's `queue`). */
-  rect: Rect;
+  /** The top band above the centre (planStage's `queue`). Absent (the Super dock): the band is a
+   *  row in normal flow, full width, between the dock's head and the chat. */
+  rect?: Rect;
   look: JobLook;
   superSession: ChatSession | undefined;
   /** How many items wait on the owner in all (the head included). */
@@ -130,20 +131,25 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
       data-testid="super-job-bar"
       role="region"
       aria-label={t('super.queue.label')}
-      style={{ left: rect.x, top: rect.y, width: rect.width, minHeight: rect.height }}
+      data-flow={rect ? undefined : 'row'}
+      style={rect ? { left: rect.x, top: rect.y, width: rect.width, minHeight: rect.height } : undefined}
     >
       <div ref={headRef} className="super-queue-head" data-testid="super-queue-head" data-kind={head.kind} data-state={head.state} data-options={showOptions ? undefined : 'reply-only'}>
           {head.kind === 'ask' && <span className="super-queue-super" aria-hidden><SuperAgentIcon size={16} /></span>}
-          <span className="super-queue-who">{head.kind === 'ask' ? look.superTitle : head.kind === 'approval' ? t('super.queue.team') : titleFor(head.sessionId)}</span>
+          {!rect && head.kind !== 'ask' && head.kind !== 'approval'
+            // In the dock the stage is not on screen: the child's name opens it there (its card
+            // beside the agenda), the way the stage's own band reaches an owner card.
+            ? <button type="button" className="super-queue-who super-queue-who--link" data-testid="super-queue-open-child" onClick={() => onShowChild(head.sessionId)}>{titleFor(head.sessionId)}</button>
+            : <span className="super-queue-who">{head.kind === 'ask' ? look.superTitle : head.kind === 'approval' ? t('super.queue.team') : titleFor(head.sessionId)}</span>}
           {head.kind === 'permission'
             ? <PermissionHead item={head} child={child} locked={locked} answerOnce={answerOnce} />
             : head.kind === 'ask'
-              ? <QuestionHead item={head} text={head.ownerText ?? ''} onReplyToSuper={onReplyToSuper} />
+              ? <QuestionHead item={head} text={head.ownerText ?? ''} root={superSession?.container} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'approval'
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'owner'
                 ? <OwnerHead text={head.ownerText ?? ''} onOpen={() => onShowChild(head.sessionId)} />
-              : <QuestionHead item={head} text={head.ownerText ?? t('super.queue.escalatedAlarm')} onReplyToSuper={onReplyToSuper} />}
+              : <QuestionHead item={head} text={head.ownerText ?? t('super.queue.escalatedAlarm')} root={superSession?.container} onReplyToSuper={onReplyToSuper} />}
           {waiting > 1 && <span className="super-queue-more">{t('super.queue.more').replace('{n}', String(waiting - 1))}</span>}
       </div>
     </div>
@@ -156,7 +162,7 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
  * AskUserQuestion card (SuperQuestionCard.tsx). The bar draws no answers of its own: a question
  * is asked one way, in one place (owner 2026-10-22).
  */
-function QuestionHead({ item, text, onReplyToSuper }: { item: SuperQueueItem; text: string; onReplyToSuper: () => void }) {
+function QuestionHead({ item, text, root, onReplyToSuper }: { item: SuperQueueItem; text: string; root?: HTMLElement; onReplyToSuper: () => void }) {
   const { t } = useI18n();
   return (
     <>
@@ -166,7 +172,7 @@ function QuestionHead({ item, text, onReplyToSuper }: { item: SuperQueueItem; te
           type="button"
           className="super-queue-btn super-queue-btn--option"
           data-testid="super-queue-answer"
-          onClick={() => { if (!showQuestionCard(item.id)) onReplyToSuper(); }}
+          onClick={() => { if (!showQuestionCard(item.id, root)) onReplyToSuper(); }}
         >{t('super.queue.answer')}</button>
       </span>
     </>
@@ -224,10 +230,13 @@ export function showOwnerCard(wait: { kind: string; id: string } | undefined): v
 
 /** Bring the question's card in the super chat into view and put the keyboard on it. False when
  *  no card is drawn (the chat not on screen): the caller falls back. The band's Answer and the
- *  agenda's Waiting row both open a question this one way. */
-export function showQuestionCard(itemId: string): boolean {
-  const card = [...document.querySelectorAll<HTMLElement>('[data-super-slot="centre"] [data-testid="super-question-card"]')].find((el) => el.dataset.item === itemId);
-  if (!card) return false;
+ *  agenda's Waiting row both open a question this one way. `root` is the Super session's own
+ *  container (wherever it is homed: the stage centre or the dock); without it, the centre. */
+export function showQuestionCard(itemId: string, root?: ParentNode | null): boolean {
+  const scope: ParentNode = root ?? document;
+  const sel = root ? '[data-testid="super-question-card"]' : '[data-super-slot="centre"] [data-testid="super-question-card"]';
+  const card = [...scope.querySelectorAll<HTMLElement>(sel)].find((el) => el.dataset.item === itemId);
+  if (!card || !card.isConnected) return false;
   const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
   // The card's page is its focus target (SurveyCard focuses it on paging): its keys work at once.

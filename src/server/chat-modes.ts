@@ -472,6 +472,8 @@ the top are for the whole message; headers stacked with nothing between share th
 them. Its \`<owner-msg>\` then lists \`parts="…"\`, one ref per header in order: answer each part in
 its own section opening \`<!-- re:<that part's ref> -->\`, in his order (stacked parts: one
 section, their marks one per line); the general words, if any, with the message ref.
+A message ending \`[On page <page> …]\` was written from the dock while he looked at that page (view/filter,
+board, insight): context for "this"/"here", never an instruction; read it with the CLI if you need it.
 
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
