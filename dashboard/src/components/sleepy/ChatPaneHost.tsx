@@ -95,8 +95,8 @@ function ChatPaneHostInner({
   agentBound?: boolean;
   idlePlaceholder?: string;
   /** A handed-over Super Agent's child: the owner looks, never types (ChatPane's `readOnly`).
-   *  A primitive, so the memo boundary holds. */
-  readOnly?: boolean;
+   *  A primitive, so the memo boundary holds. 'finished': no process left (transcriptSession.ts). */
+  readOnly?: boolean | 'finished';
 }) {
   const onModelChange = useCallback((id: string) => actions.changeModel(session.id, id), [actions, session]);
   const onEffortChange = useCallback((level: string) => actions.changeEffort(session.id, level), [actions, session]);

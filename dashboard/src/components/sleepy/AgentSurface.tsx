@@ -16,6 +16,7 @@ import { publishSuperEventContext, publishSuperQuestions } from './super/superJo
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
+import { ChildTranscript } from './super/ChildTranscript';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
@@ -3289,6 +3290,9 @@ export function AgentSurface() {
   // The hands-free phone has no super record and no child socket: its mirror of the Super's
   // chat draws the same cards from the server's view (usePhoneSuperQuestions.ts).
   usePhoneSuperQuestions({ enabled: isMacPhoneSurface() && !!vault, api: scopedApi, sessionFor: chatByClaudeId });
+  /** A shown child with no live chat here (it finished; a relaunch keeps it dormant): its saved
+   *  transcript, read only, in the same chat pane. Nothing is spawned for it. */
+  const renderChildTranscript = useCallback((claudeId: string) => <ChildTranscript key={claudeId} claudeId={claudeId} />, []);
   // The super chat draws the Super Agent's questions to the owner as cards (superQuestions.ts,
   // owner 2026-10-21 "soruyu hep chatta sorsun"). They read the record's open questions from
   // here, where the record lives whether or not the stage is up; no live record = static cards.
@@ -5049,6 +5053,7 @@ export function AgentSurface() {
             superSession={superChatSession}
             vault={vault ?? ''}
             sessionFor={chatByClaudeId}
+            childTranscript={renderChildTranscript}
             titleFor={superTitleFor}
             nameFor={superNameFor}
             terminals={superTerminals}

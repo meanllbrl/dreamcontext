@@ -587,11 +587,11 @@ function ReconnectingChipWhenDue({ connecting, claudeId }: { connecting: boolean
   return shown ? <ReconnectingChip /> : null;
 }
 
-function SuperReadOnlyLine() {
+function SuperReadOnlyLine({ finished }: { finished: boolean }) {
   const { t } = useI18n();
   return (
     <div className="chat-hitlcard-lock super-readonly-line" role="status" data-testid="super-readonly">
-      {t('super.child.readOnly')}
+      {t(finished ? 'super.child.finished' : 'super.child.readOnly')}
     </div>
   );
 }
@@ -724,8 +724,9 @@ export function ChatPane({
   /** The composer's idle placeholder, when the host names who is listening. */
   idlePlaceholder?: string;
   /** A child of the handed-over Super Agent (plan-r7 D10, owner decision 3): the owner looks,
-   *  and writes only to the Super Agent, so the composer is replaced by one line saying so. */
-  readOnly?: boolean;
+   *  and writes only to the Super Agent, so the composer is replaced by one line saying so.
+   *  'finished': a child with no process left, drawn from its transcript (transcriptSession.ts). */
+  readOnly?: boolean | 'finished';
 }) {
   const [, force] = useReducer((n: number) => n + 1, 0);
   // A hidden pane (garaged, its overlay folded, a handed-over Super Agent's child) follows its
@@ -2598,7 +2599,7 @@ export function ChatPane({
         // only fires while the resumed run is actually live.
         <AutomationQuestionComposerLock />
       ) : readOnly ? (
-        <SuperReadOnlyLine />
+        <SuperReadOnlyLine finished={readOnly === 'finished'} />
       ) : (
         <Composer
           session={session}

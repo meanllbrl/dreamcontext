@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { isLightMode } from '../../../lib/lightMode';
@@ -58,6 +58,8 @@ export interface SuperSurfaceProps {
   superSession: ChatSession | undefined;
   vault: string;
   sessionFor: (claudeId: string) => ChatSession | undefined;
+  /** A shown child with no live chat: its transcript, read only (SuperContainer's `childTranscript`). */
+  childTranscript?: (claudeId: string) => ReactNode;
   titleFor: (claudeId: string) => string;
   /** A child's job NAME for the agenda: its tab title (the brief is its second line). */
   nameFor?: (claudeId: string) => string;
@@ -709,6 +711,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               viewReady={viewsReady}
               asksOwner={c.kind === 'chat' ? asking.get(c.ref) ?? false : false}
               shownSlot={shownCard?.id === c.id}
+              childTranscript={c.kind === 'chat' ? props.childTranscript : undefined}
               onPress={onPressCard}
               dropTarget={target === c.id}
               endPending={c.kind === 'chat' && props.endPending.has(c.ref)}
