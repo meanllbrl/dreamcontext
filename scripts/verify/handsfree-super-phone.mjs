@@ -15,7 +15,8 @@
  *
  *   1. Super OFF: the Sohbetler list as before (search, chips, the Mac's running chat as a row).
  *   2. Super ON (POST /api/super/enable, the window's super socket live): ONE Super Agent row,
- *      no search, no chips, no other chat; the wire says the same.
+ *      no other chat of the project (the one list over every chosen project keeps its search and
+ *      chips, hands-free sekmeler W3); the wire says the same.
  *   3. A tap opens it as a MIRROR: the window's socket is not closed, the phone's message reaches
  *      the Super Agent and its answer comes back; the owner's words show on the other surface.
  *   4. Super OFF again (take-back): the old list returns.
@@ -214,10 +215,12 @@ try {
   report.check('the hand-over records a super session', en.status === 200 && typeof SUPER === 'string', JSON.stringify(en.json).slice(0, 200));
   const win = await laptop(`mode=super&sessionId=${SUPER}`);
   report.check('the window\'s Super Agent socket is open', win.closed === null);
-  report.check('super on: ONE row, the Super Agent; no search, no chips, no New chat, no other chat', await until(async () => {
+  // The list is the ONE list over every chosen project (hands-free sekmeler W3): its search and
+  // chips stay; the handed-over project contributes its one Super row and nothing else.
+  report.check('super on: ONE row, the Super Agent; no New chat, no other chat (the one list keeps its search)', await until(async () => {
     shape = await listShape();
     return shape.super && shape.rows.length === 1 && shape.rows[0].kind === 'super' && shape.rows[0].id === SUPER
-      && /Super Agent/.test(shape.rows[0].text) && !shape.search && !shape.chips && !shape.newChat && !shape.overflowX;
+      && /Super Agent/.test(shape.rows[0].text) && shape.search && !shape.newChat && !shape.overflowX;
   }, 20000), JSON.stringify(shape));
   const w1 = await wire();
   report.check('super on: the wire lists no chat of the project and one live super row', Array.isArray(w1.chats) && w1.chats.length === 0

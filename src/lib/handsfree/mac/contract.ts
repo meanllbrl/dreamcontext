@@ -18,6 +18,10 @@
 export const MAC_CLOSE_SIGNED_OUT = 4401;
 /** "Another screen took this chat": the loser stops its reconnect loop and offers "Buraya al". */
 export const MAC_CLOSE_TAKEN_OVER = 4409;
+/** "This chat is a Super Agent child now" (its project is handed over): a remote screen only
+ *  watches it. The client stops its reconnect loop and shows the tab watch-only, with no
+ *  composer and no "Buraya al" (that would only reopen into another 4403). */
+export const MAC_CLOSE_HANDED_OVER = 4403;
 
 // ─── Reattach values (the chat upgrade's `reattach=` query value) ───────────
 
@@ -238,3 +242,61 @@ export const MAC_ROUTES = {
   fixedRemove: 'DELETE /api/handsfree/mac/tunnel/fixed',
   uninstall: 'POST /api/handsfree/mac/uninstall',
 } as const;
+
+// ─── The remote Super stage (hands-free sekmeler W1) ─────────────────────────
+
+/** The `_meta` frame subtype that carries a {@link SuperRemoteView} to a Super Agent mirror. */
+export const SUPER_STAGE_FRAME = 'super_stage';
+
+/** Why a card is drawn as a placeholder on a remote screen: it shows something only the Mac can
+ *  reach (a loopback, private or link-local web address, the live browser, the terminals). */
+export type RemoteBlocked = 'mac_only';
+
+/** One card of the remote stage. Built from an ALLOWLIST (src/lib/super/remote-view.ts): `ref`
+ *  is a child session id, a project-relative path, a slug or an https URL, never an absolute
+ *  path; a blocked card carries no address at all. */
+export interface RemoteContainer {
+  id: string;
+  kind: string;
+  ref?: string;
+  shape: string;
+  size?: string;
+  sizeBy?: 'owner';
+  place: 'float' | 'others';
+  pos?: { x: number; y: number };
+  title?: string;
+  min?: true;
+  heldAt?: number;
+  blocked?: RemoteBlocked;
+}
+
+export interface RemoteGroup { id: string; name: string; cards: string[]; place: 'float' | 'others'; pos?: { x: number; y: number } }
+
+export interface RemoteView { mode: string; card?: string; cards?: string[]; layout?: string; layoutBy?: 'owner'; chat?: 'bar' }
+
+/** A child as the remote stage draws it: its row and its clocks, never its brief, branch,
+ *  worktree, prompt, MCP servers or settings. */
+export interface RemoteChild { sessionId: string; row?: string; startedAt: number; finishedAt?: number; seenAt?: number; endedAt?: number }
+
+/** What waits on the owner (the agenda's "waiting" rows and the question bar). `text` is the
+ *  question as the owner reads it ('' on a permission). */
+export interface RemoteWaiting { id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }
+
+/** GET /api/agent/super-stage, the `super_stage` frame, and the body of every remote stage write. */
+export interface SuperRemoteView {
+  vault: string;
+  session: string | null;
+  enabled: boolean;
+  containers: RemoteContainer[];
+  groups: RemoteGroup[];
+  view: RemoteView;
+  children: Record<string, RemoteChild>;
+  pad: Array<{ id: string; section: string; text: string; at: number }>;
+  waiting: RemoteWaiting[];
+  ownerBatches: string[];
+  /** Child names for the agenda (the Mac's card titles). */
+  names: Record<string, string>;
+  /** The queue head the job bar shows, or null. */
+  head: { item: string; kind: string; text: string } | null;
+  rotating?: true;
+}

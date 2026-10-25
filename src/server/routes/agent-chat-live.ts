@@ -105,6 +105,12 @@ export interface LiveChatEntry {
   mirrorFrame?: (serialised: string) => void;
   /** How many phone mirrors are joined now (0 = no agenda digest is worth computing). */
   mirrorCount?: () => number;
+  /** A Super child (any chat but the Super and the Assistant): join a remote socket BESIDE the
+   *  holder as a WATCH-ONLY mirror (hands-free sekmeler D6). Its set is made on the first watch
+   *  and dies with the child. False when the child can no longer take one, or is no child. */
+  watch?: (ws: import('ws').WebSocket, device: { store: 'mac'; idHash: string }) => boolean;
+  /** Is there room for this device's watch (its own earlier one is replaced)? */
+  watchRoom?: (device: { store: 'mac'; idHash: string }) => boolean;
 }
 
 /** How long a cut child gets between SIGTERM and SIGKILL. */

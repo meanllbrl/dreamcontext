@@ -200,7 +200,8 @@ describe('the list is the Mac phone\'s home (AC21)', () => {
       return src.slice(at, src.indexOf('}', at));
     };
     // The head row: [mark] [title] [badge] [＋].
-    expect(list).toMatch(/<div className="mlist-head">\s*<HandsfreeMark [^>]*className="mlist-mark" \/>\s*<h1 className="mlist-h"[^>]*>[^<]*<\/h1>\s*<PhoneChip \/>\s*<button className="mchat-head-btn" onClick=\{onNewChat\}/);
+    // (A handed-over project's list has no ＋: its chats are the Super's.)
+    expect(list).toMatch(/<div className="mlist-head">\s*<HandsfreeMark [^>]*className="mlist-mark" \/>\s*<h1 className="mlist-h"[^>]*>[^<]*<\/h1>\s*<PhoneChip \/>\s*\{!superHere && \(\s*<button className="mchat-head-btn" onClick=\{onNewChat\}/);
     const title = rule(css, '.mlist-h');
     for (const decl of [/flex: 1 1 auto;/, /min-width: 0;/, /white-space: nowrap;/, /overflow: hidden;/, /text-overflow: ellipsis;/]) expect(title).toMatch(decl);
     // Everything else in the row keeps its size.
@@ -217,13 +218,25 @@ describe('the list is the Mac phone\'s home (AC21)', () => {
   it('the drawer stays off the Mac phone; the list carries its duties', () => {
     expect(surface).toMatch(/\{isMobile && !macPhone && \(\s*<MobileSessionDrawer/);
     expect(list).toContain('<PushOptIn />');
-    expect(list).toMatch(/chrome\.addTab\(p\.name\)/);
+    // One list over every chosen project (W3): a row of another project opens there.
+    expect(list).toMatch(/void chrome\.addTab\(r\.vault\);/);
     expect(list).toMatch(/onClick=\{onExitToDashboard\}/);
   });
 
   it('closed chats are searched on the Mac; a closed tap re-asks the Mac and adopts a chat that turned live', () => {
-    expect(list).toMatch(/\/agent\/chat-sessions\?limit=\$\{PAST_LIMIT\}&q=\$\{encodeURIComponent\(dq\)\}/);
+    // Every chosen project's closed chats, each searched on the Mac (usePhoneHome.ts, W3).
+    expect(code('dashboard/src/components/sleepy/usePhoneHome.ts')).toMatch(/new ApiClient\(p\)\.get<ChatSessionsResponse>\(`\/agent\/chat-sessions\?limit=\$\{PAST_LIMIT\}&q=\$\{encodeURIComponent\(q\)\}`\)/);
+    expect(list).toMatch(/usePhoneHome\(\{ vault, tabs, active, q: dq \}\)/);
     expect(list).toMatch(/const r = pastTap\(d\.resume\.id, fresh\.chats\);\s*if \('adopt' in r\) \{ onAdopt\(r\.adopt\); return; \}/);
     expect(server).toMatch(/tokens\.length \? \{ \.\.\.rest, match: matchSnippet\(lines, tokens\[0\]\) \} : rest/);
+  });
+});
+
+describe('a chat closed on the phone', () => {
+  it('is never hidden from Kapalı by the close window: only its Mac row is (a search finds it at once)', () => {
+    const list = code('dashboard/src/components/sleepy/PhoneChatList.tsx');
+    expect(list).toMatch(/if \(r\.kind === 'closed' \|\| r\.kind === 'super'\) return true;/);
+    expect(list).toMatch(/if \(r\.row\.kind === 'mac' && justClosed\.has\(r\.row\.id\)\) return false;/);
+    expect(list).not.toMatch(/kind === 'closed'\) return !justClosed/);
   });
 });

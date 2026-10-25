@@ -225,6 +225,7 @@ import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
 import { handleAppMachine } from './routes/machine.js';
 import { handleSuperPhoneAnswer, handleSuperPhoneQuestions } from './routes/super-phone-questions.js';
+import { handleSuperStageGet, handleSuperStageLayout, handleSuperStageSeen } from './routes/super-remote.js';
 import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentPhoneGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
@@ -609,6 +610,10 @@ export function buildRouter(): Router {
   router.get('/api/agent/live-chats', handleAgentLiveChats);
   router.get('/api/agent/super-questions', handleSuperPhoneQuestions);
   router.post('/api/agent/super-answer', handleSuperPhoneAnswer);
+  // The remote screen's Super stage (read and arrange only; the Mac window stays the bridge).
+  router.get('/api/agent/super-stage', handleSuperStageGet);
+  router.post('/api/agent/super-stage/layout', handleSuperStageLayout);
+  router.post('/api/agent/super-stage/seen', handleSuperStageSeen);
   // The project's cached `/` list, for composers with no chat process (the #agents channel).
   router.get('/api/agent/slash-commands', handleAgentSlashCommands);
   // Every past conversation of THIS project, for the surface's "Past chats" picker —

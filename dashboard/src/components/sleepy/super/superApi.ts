@@ -22,10 +22,26 @@ export async function fetchSuperState(api: ApiClient): Promise<SuperStateView | 
 
 /** `POST /api/super/enable` — hand over: adopt these chats. Answers the session to resume or
  *  the one just minted, and the state after the write. */
-export async function enableSuper(api: ApiClient, body: { adopt: string[]; titles: Record<string, string> }): Promise<{ session: string; state: SuperStateView | null }> {
-  const r = await api.post<{ session?: unknown; state?: unknown }>('/super/enable', body);
+export async function enableSuper(api: ApiClient, body: { adopt: string[]; titles: Record<string, string> }): Promise<{ session: string; state: SuperStateView | null; skipped: SkippedChat[] }> {
+  const r = await api.post<{ session?: unknown; state?: unknown; skipped?: unknown }>('/super/enable', body);
   if (typeof r?.session !== 'string' || !r.session) throw new Error('the server named no Super Agent session');
-  return { session: r.session, state: readSuperStateView(r.state) };
+  return { session: r.session, state: readSuperStateView(r.state), skipped: readSkipped(r.skipped) };
+}
+
+/** A chat the hand-over did not adopt (src/lib/super/handover.ts `SkippedChat`): a remote screen
+ *  holds or is opening it, it closed, or it runs in another project. */
+export interface SkippedChat { id: string; title: string; reason: 'phone_held' | 'gone' | 'other_vault' }
+
+function readSkipped(raw: unknown): SkippedChat[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x): x is SkippedChat => !!x && typeof x === 'object'
+    && typeof (x as SkippedChat).id === 'string' && typeof (x as SkippedChat).title === 'string'
+    && ['phone_held', 'gone', 'other_vault'].includes((x as SkippedChat).reason));
+}
+
+/** The titles the Mac names in its notice: the chats a remote screen holds. Empty: no notice. */
+export function remoteSkippedTitles(skipped: readonly SkippedChat[]): string[] {
+  return skipped.filter((x) => x.reason === 'phone_held').map((x) => x.title);
 }
 
 /** `POST /api/super/disable` — take it back. */

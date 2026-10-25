@@ -118,6 +118,12 @@ export function cardZIndex(z: number, agenda = false): number {
 
 /** Below this stage width every card is drawn in Others and side by side opens as a sheet (§0 C2). */
 export const NARROW_STAGE_PX = 1040;
+/** The same line on a remote touch screen (hands-free sekmeler W2): a 1024×768 landscape tablet
+ *  with the rail folded has a 968 px stage, which floats its cards like the Mac (owner's 7a). */
+export const TOUCH_REMOTE_NARROW_STAGE_PX = 940;
+/** …and its centre's floor: 560 px would leave a 968 px stage 156 px a side, under one tile, and
+ *  every card would still land in Others; 480 leaves each side room for a column of tiles. */
+export const TOUCH_REMOTE_CENTRE_MIN = 480;
 
 /** Where a card is drawn this time (its record may say otherwise: overflow is drawn, not written). */
 export type CardWhere = 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab';
@@ -277,6 +283,10 @@ export interface PlanOptions {
   layoutChoices?: number;
   /** The queue pill is showing in the top band: the float centre keeps its place under it. */
   queueUp?: boolean;
+  /** The narrow line for this screen; absent = {@link NARROW_STAGE_PX}. */
+  narrowPx?: number;
+  /** The centre's floor for this screen; absent = `STAGE.CENTRE_MIN`. */
+  centreMin?: number;
 }
 
 const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -287,8 +297,8 @@ export function heightOf(_shape: ContainerShape, u: number): number {
 }
 
 /** The centre's width on this stage: its share, between its floor and its ceiling. */
-export function preferredCentre(width: number): number {
-  return Math.min(STAGE.CENTRE_MAX, Math.max(STAGE.CENTRE_MIN, STAGE.CENTRE_FRAC * width));
+export function preferredCentre(width: number, min: number = STAGE.CENTRE_MIN): number {
+  return Math.min(STAGE.CENTRE_MAX, Math.max(min, STAGE.CENTRE_FRAC * width));
 }
 
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -332,7 +342,7 @@ function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): Fl
   const { GAP, MARGIN, TILE: T, MAX_COLS, ORBIT_DEPTH } = STAGE;
   const W = f.width;
   const span = f.content.height;
-  const centre = centreAt(f, preferredCentre(W));
+  const centre = centreAt(f, preferredCentre(W, f.centreMin));
   const room = (W - centre.width) / 2 - GAP - MARGIN;
   const cols = Math.max(0, Math.min(MAX_COLS, Math.floor((room + GAP) / (T + GAP) + 1e-9)));
   const perCol = capacity(span);
@@ -421,7 +431,7 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
   const { GAP, MARGIN, TILE: T, ORBIT_DEPTH } = STAGE;
   const W = f.width;
   const span = f.content.height;
-  const preferred = preferredCentre(W);
+  const preferred = preferredCentre(W, f.centreMin);
   const drawn = new Map<string, ContainerSize>();
   for (const s of [...left, ...right]) drawn.set(s.id, s.size);
   const overflow = new Set<string>();
@@ -435,7 +445,7 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
     for (const s of live(side)) drawn.set(s.id, shrinkToWidth(drawn.get(s.id)!, cap));
   };
   // Width: narrow the wider side until the centre keeps its floor.
-  while (avail() < STAGE.CENTRE_MIN && (cols.left > 1 || cols.right > 1)) {
+  while (avail() < f.centreMin && (cols.left > 1 || cols.right > 1)) {
     const lastWide = (side: 'left' | 'right') => Math.max(-1, ...live(side).filter((s) => SIZE_UNITS[drawn.get(s.id)!].w === cols[side]).map((s) => s.z));
     const side = cols.left !== cols.right ? (cols.left > cols.right ? 'left' : 'right') : (lastWide('left') > lastWide('right') ? 'left' : 'right');
     capSide(side, cols[side] - 1);
@@ -463,7 +473,7 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
       const items = live(side);
       const smalls = items.filter((s) => drawn.get(s.id) === 'small').length;
       // 1. Widen, when the centre can spare a tile and there are small cards to pair up.
-      if (cols[side] < STAGE.MAX_COLS + 1 && smalls >= 2 && avail() - T - GAP >= STAGE.CENTRE_MIN && cols[side] >= 1) {
+      if (cols[side] < STAGE.MAX_COLS + 1 && smalls >= 2 && avail() - T - GAP >= f.centreMin && cols[side] >= 1) {
         cols[side] += 1;
         continue;
       }
@@ -610,18 +620,18 @@ function pushOut(rect: Rect, centre: Rect, free: Rect): Rect {
 
 // ─── The plan ───────────────────────────────────────────────────────────────────
 
-interface Frame { width: number; height: number; content: Rect; free: Rect; othersRect: Rect; othersZone: Rect; agendaPill: Rect; bandTop: number; bandBottom: number }
+interface Frame { width: number; height: number; content: Rect; free: Rect; othersRect: Rect; othersZone: Rect; agendaPill: Rect; bandTop: number; bandBottom: number; centreMin: number }
 
 /** The stage's frame. `bottomBand`: the bottom band is reserved (the content stops above it);
  *  without it the content runs down to the bottom margin. */
-function frameOf(width: number, height: number, bottomBand = true): Frame {
+function frameOf(width: number, height: number, bottomBand = true, centreMin: number = STAGE.CENTRE_MIN): Frame {
   const { MARGIN, BAND } = STAGE;
   const below = bottomBand ? MARGIN + BAND : MARGIN;
   const content: Rect = { x: MARGIN, y: MARGIN + BAND, width: Math.max(0, width - 2 * MARGIN), height: Math.max(0, height - (MARGIN + BAND) - below) };
   const bandTop = MARGIN / 2;
   const bandBottom = height - MARGIN / 2 - BAND;
   return {
-    width, height, content, free: content, bandTop, bandBottom,
+    width, height, content, free: content, bandTop, bandBottom, centreMin,
     othersRect: { x: width - MARGIN - STAGE.OTHERS_W, y: bandBottom, width: STAGE.OTHERS_W, height: BAND },
     othersZone: { x: width - STAGE.OTHERS_ZONE_W, y: height - STAGE.OTHERS_ZONE_H, width: STAGE.OTHERS_ZONE_W, height: STAGE.OTHERS_ZONE_H },
     agendaPill: { x: MARGIN, y: bandBottom, width: STAGE.AGENDA_PILL_W, height: BAND },
@@ -764,7 +774,7 @@ export function planStage(
   // to the margin first; a dock with terminals, a narrow stage, or a plan that draws a card in
   // Others reserves the band and plans again (the same inputs always give the same screen).
   // An empty stage keeps the band: its first-run hint is drawn there (review Major).
-  const narrow = Math.max(0, stage.width) < NARROW_STAGE_PX;
+  const narrow = Math.max(0, stage.width) < (opts.narrowPx ?? NARROW_STAGE_PX);
   if (!narrow && !(opts.terminals ?? 0) && !opts.agendaPill && containers.length > 0) {
     const tall = planWith(containers, view, stage, opts, false);
     if (tall.others.length === 0) return tall;
@@ -781,8 +791,8 @@ function planWith(
 ): StagePlan {
   // Items: at most the record's MAX_CONTAINERS cards, plus a grouped card the view presents beside its group.
   const list = containers.slice(0, MAX_CONTAINERS + MAX_FILMSTRIP);
-  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand);
-  const narrow = f.width < NARROW_STAGE_PX;
+  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin);
+  const narrow = f.width < (opts.narrowPx ?? NARROW_STAGE_PX);
   const ids = new Set(list.map((c) => c.id));
   // An item's place in the RECORD (a group stands at its first card's), not in this list: a
   // grouping removes cards from the list and must not move any other card to the other side.

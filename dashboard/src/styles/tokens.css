@@ -46,6 +46,10 @@
 
   /* ClickUp type scale: 12 / 14 / 16 / 26 / 34 / 40 / 52 / 76 */
   --font-size-2xs: calc(11px * var(--zoom)); /* chrome — title-bar / strip controls only */
+  /* The smallest tap target a finger gets (WCAG 2.5.5), and the title bar that holds one
+     (a touch screen on Mac mode's tunnel, hands-free sekmeler W2). */
+  --touch-target: 44px;
+  --titlebar-height-touch: calc(var(--touch-target) + var(--space-3));
   --font-size-xs: calc(12px * var(--zoom));   /* caption */
   --font-size-sm: calc(14px * var(--zoom));   /* body-sm — UI labels */
   --font-size-base: calc(16px * var(--zoom)); /* body */

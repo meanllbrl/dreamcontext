@@ -631,16 +631,39 @@ export function SignInBanner({ canSignInInApp, command, accountId, onSignIn, onR
  * Nothing ended — the same process keeps running there — so this is not "Session ended": it
  * offers "Buraya al", the one explicit open that takes the chat back.
  */
-export function TakenOverBanner({ onPhone, onTakeBack }: { onPhone: boolean; onTakeBack: () => void }) {
+export function TakenOverBanner({ onPhone, onTakeBack, writeTakes = false }: {
+  onPhone: boolean;
+  onTakeBack: () => void;
+  /** A remote screen's tab with its composer kept (hands-free sekmeler W2): writing takes it. */
+  writeTakes?: boolean;
+}) {
   const { t } = useI18n();
   return (
     <Notice
       slim
-      className="is-dock chat-banner-taken"
+      className={`chat-banner-taken${writeTakes ? ' chat-banner-taken--write' : ' is-dock'}`}
       icon={<Glyph.moon />}
-      title={<span className="chat-banner-taken-title">{t(onPhone ? 'handsfree.mac.takenPhone' : 'handsfree.mac.takenDesktop')}</span>}
+      title={<span className="chat-banner-taken-title">{t(writeTakes ? 'handsfree.mac.takenWrite' : onPhone ? 'handsfree.mac.takenPhone' : 'handsfree.mac.takenDesktop')}</span>}
       detail={t('handsfree.mac.takenDetail')}
       actions={<NoticeButton primary onClick={onTakeBack}>{t('handsfree.mac.takeBack')}</NoticeButton>}
+    />
+  );
+}
+
+/**
+ * Hands-free: this chat is a Super Agent child of a handed-over project (the server closed this
+ * socket 4403, or joined it as a watch-only mirror). A remote screen only watches it; writing to
+ * it and answering it go through the Super Agent. No "Buraya al": that would reopen into 4403.
+ */
+export function HandedOverBanner() {
+  const { t } = useI18n();
+  return (
+    <Notice
+      slim
+      className="is-dock chat-banner-taken chat-banner-handed-over"
+      icon={<Glyph.moon />}
+      title={<span className="chat-banner-taken-title">{t('handsfree.mac.handedOver')}</span>}
+      detail={t('handsfree.mac.handedOverDetail')}
     />
   );
 }

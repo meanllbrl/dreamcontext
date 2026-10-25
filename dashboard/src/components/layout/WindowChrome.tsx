@@ -28,6 +28,9 @@ import { ProjectInstance, type PendingAppLink, type PendingStartIntent } from '.
 import { ProjectSwitcher } from '../search/ProjectSwitcher';
 import { UpgradeRelaunchBanner } from './UpgradeRelaunchBanner';
 import { HandsfreeButton } from '../handsfree/HandsfreeButton';
+import { PhoneChip } from '../handsfree/phone/PhoneChip';
+import { isMacPhoneSurface } from '../../lib/phoneSurface';
+import { COARSE_POINTER_QUERY, useRemoteDesktop } from '../../hooks/useIsMobile';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
 import './ProjectTabs.css';
@@ -949,10 +952,17 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true, bubbles: true }));
   }, []);
 
+  // A computer or landscape tablet on Mac mode's tunnel (hands-free sekmeler W2): this bar, with
+  // no hands-free button (Mac mode is the Mac's), no detach (no second window to open) and the
+  // Mac's chip on the right. A finger gets 44 px targets (`data-touch`).
+  const tunnel = isMacPhoneSurface();
+  const remote = useRemoteDesktop();
+  const touch = remote && typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(COARSE_POINTER_QUERY).matches;
+
   return (
     <ChromeContext.Provider value={chrome}>
       <ChromeSlotsProvider value={chromeSlots}>
-      <div className="window-chrome">
+      <div className="window-chrome" data-remote={remote ? 'true' : undefined} data-touch={touch ? 'true' : undefined}>
         <div className="window-chrome-banners" ref={bannersRef}>
           <UpgradeRelaunchBanner />
           <StaleServerBanner />
@@ -986,7 +996,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
             onActivate={activate}
             onClose={closeTab}
             onAdd={openSwitcher}
-            onDetach={(vault) => void detachToWindow(vault)}
+            onDetach={tunnel ? undefined : (vault) => void detachToWindow(vault)}
           />
 
           {notice && <div className="window-chrome-notice" role="status">{notice}</div>}
@@ -994,7 +1004,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
           <div className="window-chrome-right">
             {/* The active project's sleep tracker + update badge land here. */}
             <div className="chrome-slot" ref={setRightSlot} />
-            <HandsfreeButton vault={activeVault} />
+            {tunnel ? <PhoneChip remote /> : <HandsfreeButton vault={activeVault} />}
             <div className="zoom-controls">
               <button className="zoom-btn" onClick={() => changeZoom(-1)} disabled={zoomIndex <= 0} title="Zoom out">-</button>
               <span className="zoom-label">{Math.round(zoom * 100)}%</span>

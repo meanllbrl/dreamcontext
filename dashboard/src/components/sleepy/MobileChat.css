@@ -851,7 +851,7 @@ body[data-phone] .agent-dock { display: none; }
 .mlist-super-icon svg { display: block; }
 .mlist-mac {
   flex: 0 0 auto;
-  padding: 1px var(--space-1);
+  padding: 0 var(--space-1);
   border-radius: var(--radius-sm);
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
@@ -906,7 +906,7 @@ body[data-phone] .agent-dock { display: none; }
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  min-height: 44px;
+  min-height: var(--touch-target);
   padding: var(--space-1) 0;
   border: 0;
   background: none;
@@ -934,3 +934,95 @@ body[data-phone] .agent-dock { display: none; }
 
 /* The reply groups' line (cards.css) sits inside the phone's narrower gutter. */
 .agent-surface[data-mobile] .chat-reply-line { left: calc(-1 * var(--space-2)); }
+
+/* ── The one list over every chosen project (hands-free sekmeler W3) ────────────────────── */
+/* A row's project: the same quiet tag the Mac chip uses, never a colour of its own. */
+.mlist-tag {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: 500;
+}
+/* "Proje ▾": a chip holding the platform's own picker (no new menu to build or to trap focus in);
+   the picker fills the chip, so the whole chip is the target. */
+.mlist-project-pick { position: relative; padding: 0; }
+.mlist-project-pick select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0 var(--space-3);
+  min-height: var(--touch-target);
+  cursor: pointer;
+}
+/* The waiting section leads in the attention tone: the INK of it, readable as text (AA). */
+.mlist-sec[data-section='waiting'] { color: var(--color-warning-ink); }
+
+/* ── The chat screen across projects: the back badge and the one-line waiting toast ─────── */
+.mchat-head-btn { position: relative; }
+.mchat-back-badge {
+  position: absolute;
+  top: var(--space-1);
+  right: 0;
+  min-width: var(--space-4);
+  height: var(--space-4);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  /* The ink, not the fill: white on it is 5.39:1 in light mode; the dark theme's ink is bright. */
+  background: var(--color-warning-ink);
+  color: var(--color-bg);
+  font-size: var(--font-size-2xs);
+  font-weight: 700;
+  line-height: var(--space-4);
+  text-align: center;
+}
+/* Empty, the live region stays in the accessibility tree (only collapsed out of sight): a region
+   that appears together with its first words is often not announced (VoiceOver on iOS). */
+.mchat-toast-region:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.mchat-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  min-height: var(--touch-target);
+  width: calc(100% - 2 * var(--space-3));
+  border: 1px solid color-mix(in oklab, var(--color-warning) 50%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: left;
+}
+.mchat-toast-dot { width: var(--space-2); height: var(--space-2); border-radius: var(--radius-full); background: var(--color-warning); flex: 0 0 auto; }
+.mchat-toast-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mchat-toast-go { flex: 0 0 auto; color: var(--color-accent-ink); font-weight: 600; }
+@keyframes mchat-swipe-next { from { transform: translateX(var(--space-6)); opacity: 0.6; } to { transform: none; opacity: 1; } }
+@keyframes mchat-swipe-prev { from { transform: translateX(calc(-1 * var(--space-6))); opacity: 0.6; } to { transform: none; opacity: 1; } }
+/* A swipe slides the next chat in from its side (motion only for those who have not asked for less). */
+@media (prefers-reduced-motion: no-preference) {
+  .agent-surface[data-swipe='next'] .agent-pane-slot { animation: mchat-swipe-next 180ms ease-out; }
+  .agent-surface[data-swipe='prev'] .agent-pane-slot { animation: mchat-swipe-prev 180ms ease-out; }
+}
+
+/* The phone shows ONE chat (hands-free sekmeler W3): a roster a remote computer split into panes
+   (the remote screens share one roster) comes back here as its active pane alone, full width. */
+.agent-surface[data-mobile] .agent-pane:not(.active) { display: none; }
+.agent-surface[data-mobile] .agent-pane.active { flex: 1 1 auto; width: 100%; max-width: none; }

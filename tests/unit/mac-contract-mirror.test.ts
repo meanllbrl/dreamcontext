@@ -7,6 +7,8 @@ describe('mac contract mirror', () => {
   it('close codes, reattach values, the probe budget and the routes agree', () => {
     expect(dash.MAC_CLOSE_SIGNED_OUT).toBe(server.MAC_CLOSE_SIGNED_OUT);
     expect(dash.MAC_CLOSE_TAKEN_OVER).toBe(server.MAC_CLOSE_TAKEN_OVER);
+    expect(dash.MAC_CLOSE_HANDED_OVER).toBe(server.MAC_CLOSE_HANDED_OVER);
+    expect(dash.SUPER_STAGE_FRAME).toBe(server.SUPER_STAGE_FRAME);
     expect(dash.REATTACH_EVICT).toBe(server.REATTACH_EVICT);
     expect(dash.REATTACH_PASSIVE).toBe(server.REATTACH_PASSIVE);
     expect(dash.HOLDER_PROBE_MS).toBe(server.HOLDER_PROBE_MS);

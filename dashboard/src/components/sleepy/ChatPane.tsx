@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
+import { useRemoteDesktop } from '../../hooks/useIsMobile';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';
@@ -58,7 +59,7 @@ import type { ChatAction } from './chat/chatActions';
 import { openExternalUrl } from '../../lib/desktop';
 import {
   AccountSwitchBanner, HandoffCard,
-  BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, TakenOverBanner,
+  BranchStartBanner, EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, HandedOverBanner, TakenOverBanner,
   SignInBanner, WorkingIndicator, RECONNECT_CHIP_DELAY_MS, reconnectChipDue,
 } from './chat/Banners';
 import { surveyDraftKey } from './chat/surveyDrafts';
@@ -643,7 +644,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false,
+  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false, aboveComposer,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -727,7 +728,11 @@ export function ChatPane({
    *  and writes only to the Super Agent, so the composer is replaced by one line saying so.
    *  'finished': a child with no process left, drawn from its transcript (transcriptSession.ts). */
   readOnly?: boolean | 'finished';
+  /** One line right above the composer, never over it (the phone's waiting toast, W3). */
+  aboveComposer?: React.ReactNode;
 }) {
+  // A computer or landscape tablet on Mac mode's tunnel (hands-free sekmeler W2).
+  const remoteDesktop = useRemoteDesktop();
   const [, force] = useReducer((n: number) => n + 1, 0);
   // A hidden pane (garaged, its overlay folded, a handed-over Super Agent's child) follows its
   // session at most once a second and catches up the moment it is shown (hiddenRenderGate.ts).
@@ -2248,7 +2253,9 @@ export function ChatPane({
   // A real process exit (`meta-exit`) OR the WS having dropped — either way the composer
   // is replaced by the Session-ended banner (state 12); `status==='connecting'` never
   // reaches here (that's the ReconnectingChip's own condition, below).
-  const ended = session.status === 'closed' || !!conv.exited;
+  // A remote screen's tab the Mac's window holds is not ended: it keeps its composer, and the
+  // first send takes the chat (hands-free sekmeler W2).
+  const ended = (session.status === 'closed' && !(remoteDesktop && session.takenOver)) || !!conv.exited;
 
   // Not signed in (chatProtocol's `auth-required`) — takes precedence over `ended`, because
   // when the CLI exits on a failed-auth turn "Session ended · Resume" would send the user
@@ -2569,6 +2576,7 @@ export function ChatPane({
       {/* Nearest the composer, and OUTSIDE the needsSignIn/ended branch below on purpose: these
           rows are the only copy of text the user has already committed to sending, so they must
           survive the composer being replaced by a banner (see QueuedMessages.tsx). */}
+      {aboveComposer}
       <QueuedMessages session={session} />
       {/* The pinned shelf, docked to the composer's TOP EDGE — and, like the two rows above
           it, OUTSIDE `.chat-transcript`. That placement is the whole mechanism behind its
@@ -2589,8 +2597,10 @@ export function ChatPane({
           onSignIn={onSignIn}
           onRetry={onResume}
         />
-      ) : session.takenOver ? (
-        <TakenOverBanner onPhone={isMacPhoneSurface()} onTakeBack={() => session.takeBack()} />
+      ) : session.handedOver ? (
+        <HandedOverBanner />
+      ) : session.takenOver && !remoteDesktop ? (
+        <TakenOverBanner onPhone={isMacPhoneSurface()} onTakeBack={() => void session.takeBack()} />
       ) : ended ? (
         <SessionEndedBanner onResume={onResume} />
       ) : hitlPending ? (
@@ -2601,6 +2611,10 @@ export function ChatPane({
       ) : readOnly ? (
         <SuperReadOnlyLine finished={readOnly === 'finished'} />
       ) : (
+        <>
+        {/* A remote screen keeps its composer on a tab the Mac's window holds (hands-free
+            sekmeler W2, D3): the first send takes the chat (Composer), the banner says so. */}
+        {session.takenOver && <TakenOverBanner onPhone writeTakes onTakeBack={() => void session.takeBack()} />}
         <Composer
           session={session}
           model={model}
@@ -2613,7 +2627,7 @@ export function ChatPane({
           contextHandoff={conv.contextHandoff}
           onContextHandoffChange={session.setContextHandoff}
           busy={session.busy}
-          connected={session.status === 'open'}
+          connected={session.status === 'open' || (remoteDesktop && session.takenOver)}
           quote={replyQuote}
           onClearQuote={() => setQuote(convId, null)}
           // THIS SESSION's permission mode, not the project's remembered default (the
@@ -2669,6 +2683,7 @@ export function ChatPane({
           // omit it) but is inert until one is built.
           onOpenTaskPicker={() => {}}
         />
+        </>
       )}
       {slideOver?.mode === 'mcp' && (
         <SlideOver

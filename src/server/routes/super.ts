@@ -7,7 +7,7 @@ import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop
 import {
   WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, type WindowIdentity,
 } from '../../lib/window-control.js';
-import { SuperStoreRefused, isReservedId, okMember, readSuperState, superRootOfChild } from '../../lib/super/store.js';
+import { PhoneHeldError, SuperStoreRefused, isReservedId, okMember, phoneHeld, readSuperState, superRootOfChild } from '../../lib/super/store.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
@@ -68,6 +68,7 @@ import { readMachineFacts } from './machine.js';
 import { tmpdir } from 'node:os';
 import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
 import { ensureTidy, keepOwnerLooked, touchCards, viewShows, type TidyIo } from '../../lib/super/tidy.js';
+import { titleFromBrief } from '../../lib/super/remote-view.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -117,6 +118,7 @@ export function superStateView(contextRoot: string, state: SuperState): SuperSta
 
 /** Why a store read failed, as the route's answer. */
 function storeRefusal(res: ServerResponse, err: unknown): void {
+  if (err instanceof PhoneHeldError) { refusePhoneHeld(res); return; }
   if (err instanceof SuperStoreRefused) { sendError(res, 409, 'super_state_refused', err.message); return; }
   if (err instanceof WorktreeRefused) { sendJson(res, 409, { ok: false, error: err.code, message: err.message, ...err.details }); return; }
   sendError(res, 500, 'super_state_unreadable', 'The Super Agent state could not be read.');
@@ -125,6 +127,13 @@ function storeRefusal(res: ServerResponse, err: unknown): void {
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 const refuse = (res: ServerResponse, status: number, error: string, message: string, extra: Record<string, unknown> = {}) =>
   sendJson(res, status, { ok: false, error, message, ...extra });
+
+/** 409 phone_held: a remote screen (the hands-free phone or a remote computer) holds this chat or
+ *  is opening it. The Mac window must hold every child, so it is not touched until the owner
+ *  takes it back to the Mac ("Buraya al"). */
+function refusePhoneHeld(res: ServerResponse): void {
+  refuse(res, 409, 'phone_held', 'Uzaktaki ekranda açık: Mac\'te Buraya al, sonra devret (a remote screen holds this chat; the owner takes it back to the Mac first)');
+}
 
 /** The live children's chat cards among these cards and these groups' cards (live.ts). */
 function liveCards(s: SuperState, ids: readonly string[]): string[] {
@@ -1222,8 +1231,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     await writeSuper(c.who.contextRoot, (s) => {
       const ch = s.children[child];
       if (!ch) return;
+      const was = ch.brief;
       ch.brief = line;
       if (task) ch.task = task;
+      // A card titled from the old brief follows the new one (as a resume would re-title it): an
+      // old brief never lingers as a title, where the remote stage could no longer tell it apart.
+      for (const k of s.containers) if (k.kind === 'chat' && k.ref === child && titleFromBrief(k.title, was)) k.title = line.slice(0, MAX_TITLE);
     });
     ok(res, { child, brief: line, ...(task ? { task } : {}) });
   },
@@ -1267,6 +1280,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!child) return;
     const requestId = str(b.requestId);
     if (!requestId || requestId.length > 200) { refuse(res, 400, 'invalid_args', 'name the question id'); return; }
+    if (phoneHeld(child)) { refusePhoneHeld(res); return; }
     const pq = getChat(child)?.pendingQuestion ?? null;
     const asking = getChat(child)?.status === 'asking';
     // FAIL CLOSED (D7): only the plain question the registry names right now. A permission is
@@ -1303,6 +1317,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const text = typeof b.text === 'string' ? b.text : '';
     if (!text.trim()) { refuse(res, 400, 'invalid_args', 'text is required'); return; }
     if (text.length > MAX_TEXT) { refuse(res, 400, 'invalid_args', 'text is too long'); return; }
+    if (phoneHeld(child)) { refusePhoneHeld(res); return; }
     // A parked child has no process: one command wakes it (`resume`), then the message goes in.
     // The Super Agent never resumes by hand (field 2026-10-21: send, resume, sleep, send again).
     let woke = false;
@@ -1706,6 +1721,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 409, 'adopted', 'that is the owner\'s own chat; reopen it only when he asks, with --force');
       return;
     }
+    if (phoneHeld(child)) { refusePhoneHeld(res); return; }
     if (isLiveChat(child)) {
       // Ended yet running: the owner reopened it, and on his word it is a child again (his).
       // Its card: brought back for an ended one, made for one that somehow has none.
@@ -1713,6 +1729,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const after = await writeSuper(root, (s) => {
         const x = s.children[child];
         if (!x) return;
+        if (phoneHeld(child)) throw new PhoneHeldError(child);
         // A new run only when it was ended: a resume of a child that runs on keeps the owner's hold.
         const wasEnded = x.endedAt !== undefined;
         if (wasEnded) { delete x.endedAt; x.adopted = true; }
@@ -1748,6 +1765,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const after = await writeSuper(root, (s) => {
         const x = s.children[child];
         if (!x) return;
+        if (phoneHeld(child)) throw new PhoneHeldError(child);
         delete x.endedAt;
         if (used.mode === 'basic') delete x.mode; else x.mode = used.mode;
         if (used.model) x.model = used.model; else if (used.reported) delete x.model;
@@ -1846,9 +1864,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 409, 'owners_chat', 'that is the owner\'s own chat; adopt it only when he asks, with --force');
       return;
     }
+    // A chat a remote screen holds (or is opening) is never adopted: nothing is written.
+    if (phoneHeld(sid)) { refusePhoneHeld(res); return; }
     const brief = oneLine(str(b.brief) ?? '').slice(0, MAX_BRIEF);
     let container: string | null = null;
-    const after = await writeSuper(root, (s) => { container = adoptChat(s, sid, brief); });
+    const after = await writeSuper(root, (s) => {
+      if (phoneHeld(sid)) throw new PhoneHeldError(sid);
+      container = adoptChat(s, sid, brief);
+    });
     void pumpSuper(root);
     ok(res, { child: sid, adopted: true, ...cardOutcome(container, sid, after) });
   },
@@ -2301,6 +2324,121 @@ function cueIds(body: Record<string, unknown>, result: unknown): string[] {
 
 // ─── The owner's door ────────────────────────────────────────────────────────
 
+/**
+ * The owner's layout gestures applied to a draft of the record (the inline body of the owner's
+ * `layout` door, shared with the remote stage's door, super-remote.ts): a drop (`pos`), a card
+ * stacked or brought back (`place`), a size, a close, groups, the agenda, and — only from a
+ * gesture that changes it — the view. Mutates and returns `s`; never writes a response.
+ * The caller has checked that `cards` and `closed` are lists of at most MAX_CONTAINERS.
+ */
+export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): SuperState {
+  const cards = body.cards === undefined ? [] : body.cards as unknown[];
+  const closed = body.closed === undefined ? [] : body.closed as unknown[];
+  const touch = Array.isArray(body.touch) ? (body.touch as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS + 1) : [];
+  const view = body.view;
+  const ownerView = readOwnerViewFields(body);
+  // Groups (2026-10-20): `leave` takes cards out of their group, `group` puts cards in one (a
+  // new id makes it, standing where its first card stands), `ungroup` dissolves. A `cards`
+  // entry may name a group: a drop, Others or back, the same as a card.
+  const leave = Array.isArray(body.leave) ? (body.leave as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
+  const ungroup = Array.isArray(body.ungroup) ? (body.ungroup as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
+  const g = body.group && typeof body.group === 'object' && !Array.isArray(body.group) ? body.group as Record<string, unknown> : null;
+  const groupOp = g && typeof g.id === 'string' && Array.isArray(g.cards)
+    ? { id: g.id, cards: (g.cards as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS), name: typeof g.name === 'string' ? g.name : undefined }
+    : null;
+  // Cards that leave what the view shows: to Others (a group's cards with it), closed,
+  // grouped or resized (owner 2026-10-22: a presented card moved to Others stayed presented).
+  const unshown = new Set<string>();
+  // What he arranges here (a card taken out of a group: that group, which he had open) and
+  // what a view he sets shows, he looked at: a picture whose job moved on is his now
+  // (tidy.ts), decided before a regroup or a dissolve can hide the group it was in. A view
+  // he only ends is not a look (the super's own side by side is not his).
+  const cardIds = (cards as unknown[]).map((x) => (x && typeof x === 'object' ? (x as Record<string, unknown>).id : undefined)).filter((x): x is string => typeof x === 'string');
+  const leftFrom = s.groups.filter((g) => g.cards.some((id) => leave.includes(id))).map((g) => g.id);
+  keepOwnerLooked(s, [...touch, ...cardIds, ...(groupOp ? [groupOp.id, ...groupOp.cards] : []), ...leave, ...leftFrom, ...ungroup, ...viewShows(view).slice(0, MAX_CONTAINERS)]);
+  // A live job's card the OWNER puts away (Others, a group) stays there until that run is
+  // done; one he brings back is the stage's again (live.ts).
+  const now = Date.now();
+  const hold = (ids: readonly string[], on: boolean) => {
+    for (const id of ids) {
+      const k = s.containers.find((x) => x.id === id);
+      if (!k || k.kind !== 'chat') continue;
+      if (on && childIsLive(s, k.ref)) k.heldAt = now; else if (!on) delete k.heldAt;
+    }
+  };
+  if (leave.length) { leaveGroups(s, leave); hold(leave, false); }
+  for (const raw of cards as unknown[]) {
+    const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+    const k = p && typeof p.id === 'string' ? (s.containers.find((x) => x.id === p.id) ?? s.groups.find((x) => x.id === p.id)) : undefined;
+    if (!p || !k) continue;
+    if (p.place === 'others') for (const id of 'kind' in k ? [k.id] : k.cards) unshown.add(id);
+    // He brings a picture (or a group) back from Others: it is his now, whether or not its
+    // job moved on yet (tidy.ts): the idle clock is its rule.
+    if (p.place === 'float' && k.place === 'others') {
+      for (const id of 'kind' in k ? [k.id] : k.cards) {
+        const pic = s.containers.find((x) => x.id === id);
+        if (pic) { delete pic.forChild; delete pic.forAt; }
+      }
+    }
+    if ('kind' in k && p.size !== undefined) unshown.add(k.id);
+    if (p.place === 'float' || p.place === 'others') {
+      k.place = p.place;
+      // Floating his group back keeps it whole: its live cards stay his, in it.
+      if (p.place === 'others') hold('kind' in k ? [k.id] : k.cards, true);
+      else if ('kind' in k) hold([k.id], false);
+    }
+    if (p.pos === null) delete k.pos;
+    else if (p.pos && typeof p.pos === 'object') k.pos = p.pos as { x: number; y: number };
+    // The owner's size (a card only; a group is always one tile): his choice, which no agent
+    // verb overrides; `null` hands it back (small, and the agent may size it again).
+    if ('kind' in k && p.size === null) { delete k.size; delete k.sizeBy; }
+    else if ('kind' in k && typeof p.size === 'string' && (CONTAINER_SIZES as readonly string[]).includes(p.size)) {
+      if (p.size === 'small') delete k.size; else k.size = p.size as ContainerSize;
+      k.sizeBy = 'owner';
+    }
+    // The card the owner moved last is drawn on top: it goes to the end of the list.
+    if (p.order === 'last' && 'kind' in k) s.containers = [...s.containers.filter((x) => x !== k), k];
+  }
+  if (groupOp) { applyGroupOp(s, groupOp); hold(groupOp.cards, true); for (const id of groupOp.cards) unshown.add(id); }
+  // The one card the owner may (re)open here: the super's agenda (owner 2026-10-22), from
+  // the centre's head after he closed it, put it in Others or grouped it: out of its group,
+  // floating (his ask; MAX_FLOAT binds only what an agent opens).
+  if (body.agenda === 'open') ensureAgendaCard(s, { bring: true, owner: true });
+  if (ungroup.length) dissolveGroups(s, ungroup);
+  const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
+  // The agenda never leaves the stage (owner 2026-10-22 23:44): its close, or the owner's
+  // minimise, collapses it to the pill in the bottom-left corner.
+  const agendaId = s.containers.find((x) => x.kind === 'agenda')?.id;
+  if (body.agenda === 'min' || (agendaId && gone.has(agendaId))) {
+    const id = minimiseAgendaCard(s);
+    if (id) { gone.delete(id); unshown.add(id); }
+  }
+  for (const id of gone) unshown.add(id);
+  s.view = viewWithout(s.view, unshown);
+  if (gone.size) {
+    // The owner's "no" to an automatic card: not reopened automatically for a while (G5).
+    noteDismissed(s, s.containers.filter((x) => gone.has(x.id)), Date.now());
+    s.containers = s.containers.filter((x) => !gone.has(x.id));
+  }
+  // The store sanitizes what this produced: positions clamped, a view naming no card → float.
+  // The owner's view is his: it never carries the server's "put here on its own" mark.
+  if (view !== undefined) {
+    s.view = view as SuperState['view'];
+    // His marks on a presentation travel only as the set-guarded fields below; a question's
+    // presentation is no longer one once he sets the view himself.
+    if (s.view && typeof s.view === 'object') {
+      const raw = s.view as unknown as Record<string, unknown>;
+      for (const k of ['auto', 'layoutBy', 'chat', 'ask', 'by'] as const) delete raw[k];
+      // A side by side or a presentation he sets is his: a picture question never replaces it.
+      if (raw.mode === 'half' || raw.mode === 'present') raw.by = 'owner';
+    }
+  }
+  // The layout he picked, the chat bar, leaving: each only on the cards he saw (plan-r2 R2-E3).
+  s.view = applyOwnerViewFields(s.view, ownerView);
+  return s;
+}
+
+
 /** Desktop app, this machine, a loopback Host, and this very origin (port included, T0):
  *  not a cross-site request and not a page on another loopback port. Sends the 403. */
 export function requireSuperOwner(req: IncomingMessage, res: ServerResponse): boolean {
@@ -2310,6 +2448,37 @@ export function requireSuperOwner(req: IncomingMessage, res: ServerResponse): bo
     return false;
   }
   return true;
+}
+
+/**
+ * The owner looked at finished jobs in the agenda (task super-agent-ajandasi-…): each entry
+ * names a child and the finish key his window SHOWED (`at`), so a result that finished again
+ * after that frame stays new. Shared by the owner's `seen` door and the remote stage's.
+ */
+export function ownerSeenMarks(body: Record<string, unknown>): { marks: Array<{ id: string; at: number }> } | { error: string } {
+  const raw = body.children;
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_CONTAINERS) {
+    return { error: `children must be a list of 1 to ${MAX_CONTAINERS} { id, at }` };
+  }
+  const marks: Array<{ id: string; at: number }> = [];
+  for (const x of raw as unknown[]) {
+    const o = x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : null;
+    const at = o && typeof o.at === 'number' && Number.isFinite(o.at) && o.at >= 0 ? o.at : NaN;
+    if (!o || typeof o.id !== 'string' || !SESSION_ID_RE.test(o.id) || !Number.isFinite(at)) {
+      return { error: 'each entry is { id: <child session id>, at: <the finish time shown> }' };
+    }
+    marks.push({ id: o.id, at: Math.min(at, Date.now()) });
+  }
+  return { marks };
+}
+
+/** Only ever raises `seenAt` (stamping when, `seenMarkedAt`); unknown children are ignored. */
+export function applyOwnerSeen(s: SuperState, marks: ReadonlyArray<{ id: string; at: number }>): SuperState {
+  for (const m of marks) {
+    const ch = hasChild(s, m.id) ? s.children[m.id] : undefined;
+    if (ch && !(ch.seenAt !== undefined && ch.seenAt >= m.at)) { ch.seenAt = m.at; ch.seenMarkedAt = Date.now(); }
+  }
+  return s;
 }
 
 /** GET /api/super/state — the vault's record, for the window's first paint (pushed after). */
@@ -2336,14 +2505,17 @@ export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, cont
 /** The owner's verbs (D17 hand-over/take-back, D9 layout, D7 lease, D13 recap). */
 export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
   enable: async (_req, res, contextRoot, body) => {
-    const { session, state } = await enableSuper(contextRoot, body);
-    sendJson(res, 200, { session, state: superStateView(contextRoot, state) });
+    const { session, state, skipped } = await enableSuper(contextRoot, body);
+    sendJson(res, 200, { session, state: superStateView(contextRoot, state), skipped });
   },
   disable: async (_req, res, contextRoot) => {
     const state = await disableSuper(contextRoot);
     // The phone talked to the Super Agent only while it was handed over: its mirrors go now,
-    // whether or not the window keeps the parked child alive.
+    // whether or not the window keeps the parked child alive. A remote screen watched the
+    // children only while handed over too: their watch-only mirrors go, and a reconnect is
+    // decided as an ordinary open again.
     if (state.session) findLiveChat(state.session)?.closeMirrors?.();
+    for (const sid of Object.keys(state.children)) findLiveChat(sid)?.closeMirrors?.();
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
   layout: async (_req, res, contextRoot, body) => {
@@ -2372,108 +2544,7 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       sendJson(res, 200, { state: superStateView(contextRoot, state) });
       return;
     }
-    const view = body.view;
-    const ownerView = readOwnerViewFields(body);
-    // Groups (2026-10-20): `leave` takes cards out of their group, `group` puts cards in one (a
-    // new id makes it, standing where its first card stands), `ungroup` dissolves. A `cards`
-    // entry may name a group: a drop, Others or back, the same as a card.
-    const leave = Array.isArray(body.leave) ? (body.leave as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
-    const ungroup = Array.isArray(body.ungroup) ? (body.ungroup as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
-    const g = body.group && typeof body.group === 'object' && !Array.isArray(body.group) ? body.group as Record<string, unknown> : null;
-    const groupOp = g && typeof g.id === 'string' && Array.isArray(g.cards)
-      ? { id: g.id, cards: (g.cards as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS), name: typeof g.name === 'string' ? g.name : undefined }
-      : null;
-    const state = await writeSuper(contextRoot, (s) => {
-      // Cards that leave what the view shows: to Others (a group's cards with it), closed,
-      // grouped or resized (owner 2026-10-22: a presented card moved to Others stayed presented).
-      const unshown = new Set<string>();
-      // What he arranges here (a card taken out of a group: that group, which he had open) and
-      // what a view he sets shows, he looked at: a picture whose job moved on is his now
-      // (tidy.ts), decided before a regroup or a dissolve can hide the group it was in. A view
-      // he only ends is not a look (the super's own side by side is not his).
-      const cardIds = (cards as unknown[]).map((x) => (x && typeof x === 'object' ? (x as Record<string, unknown>).id : undefined)).filter((x): x is string => typeof x === 'string');
-      const leftFrom = s.groups.filter((g) => g.cards.some((id) => leave.includes(id))).map((g) => g.id);
-      keepOwnerLooked(s, [...touch, ...cardIds, ...(groupOp ? [groupOp.id, ...groupOp.cards] : []), ...leave, ...leftFrom, ...ungroup, ...viewShows(view).slice(0, MAX_CONTAINERS)]);
-      // A live job's card the OWNER puts away (Others, a group) stays there until that run is
-      // done; one he brings back is the stage's again (live.ts).
-      const now = Date.now();
-      const hold = (ids: readonly string[], on: boolean) => {
-        for (const id of ids) {
-          const k = s.containers.find((x) => x.id === id);
-          if (!k || k.kind !== 'chat') continue;
-          if (on && childIsLive(s, k.ref)) k.heldAt = now; else if (!on) delete k.heldAt;
-        }
-      };
-      if (leave.length) { leaveGroups(s, leave); hold(leave, false); }
-      for (const raw of cards as unknown[]) {
-        const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
-        const k = p && typeof p.id === 'string' ? (s.containers.find((x) => x.id === p.id) ?? s.groups.find((x) => x.id === p.id)) : undefined;
-        if (!p || !k) continue;
-        if (p.place === 'others') for (const id of 'kind' in k ? [k.id] : k.cards) unshown.add(id);
-        // He brings a picture (or a group) back from Others: it is his now, whether or not its
-        // job moved on yet (tidy.ts): the idle clock is its rule.
-        if (p.place === 'float' && k.place === 'others') {
-          for (const id of 'kind' in k ? [k.id] : k.cards) {
-            const pic = s.containers.find((x) => x.id === id);
-            if (pic) { delete pic.forChild; delete pic.forAt; }
-          }
-        }
-        if ('kind' in k && p.size !== undefined) unshown.add(k.id);
-        if (p.place === 'float' || p.place === 'others') {
-          k.place = p.place;
-          // Floating his group back keeps it whole: its live cards stay his, in it.
-          if (p.place === 'others') hold('kind' in k ? [k.id] : k.cards, true);
-          else if ('kind' in k) hold([k.id], false);
-        }
-        if (p.pos === null) delete k.pos;
-        else if (p.pos && typeof p.pos === 'object') k.pos = p.pos as { x: number; y: number };
-        // The owner's size (a card only; a group is always one tile): his choice, which no agent
-        // verb overrides; `null` hands it back (small, and the agent may size it again).
-        if ('kind' in k && p.size === null) { delete k.size; delete k.sizeBy; }
-        else if ('kind' in k && typeof p.size === 'string' && (CONTAINER_SIZES as readonly string[]).includes(p.size)) {
-          if (p.size === 'small') delete k.size; else k.size = p.size as ContainerSize;
-          k.sizeBy = 'owner';
-        }
-        // The card the owner moved last is drawn on top: it goes to the end of the list.
-        if (p.order === 'last' && 'kind' in k) s.containers = [...s.containers.filter((x) => x !== k), k];
-      }
-      if (groupOp) { applyGroupOp(s, groupOp); hold(groupOp.cards, true); for (const id of groupOp.cards) unshown.add(id); }
-      // The one card the owner may (re)open here: the super's agenda (owner 2026-10-22), from
-      // the centre's head after he closed it, put it in Others or grouped it: out of its group,
-      // floating (his ask; MAX_FLOAT binds only what an agent opens).
-      if (body.agenda === 'open') ensureAgendaCard(s, { bring: true, owner: true });
-      if (ungroup.length) dissolveGroups(s, ungroup);
-      const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
-      // The agenda never leaves the stage (owner 2026-10-22 23:44): its close, or the owner's
-      // minimise, collapses it to the pill in the bottom-left corner.
-      const agendaId = s.containers.find((x) => x.kind === 'agenda')?.id;
-      if (body.agenda === 'min' || (agendaId && gone.has(agendaId))) {
-        const id = minimiseAgendaCard(s);
-        if (id) { gone.delete(id); unshown.add(id); }
-      }
-      for (const id of gone) unshown.add(id);
-      s.view = viewWithout(s.view, unshown);
-      if (gone.size) {
-        // The owner's "no" to an automatic card: not reopened automatically for a while (G5).
-        noteDismissed(s, s.containers.filter((x) => gone.has(x.id)), Date.now());
-        s.containers = s.containers.filter((x) => !gone.has(x.id));
-      }
-      // The store sanitizes what this produced: positions clamped, a view naming no card → float.
-      // The owner's view is his: it never carries the server's "put here on its own" mark.
-      if (view !== undefined) {
-        s.view = view as SuperState['view'];
-        // His marks on a presentation travel only as the set-guarded fields below; a question's
-        // presentation is no longer one once he sets the view himself.
-        if (s.view && typeof s.view === 'object') {
-          const raw = s.view as unknown as Record<string, unknown>;
-          for (const k of ['auto', 'layoutBy', 'chat', 'ask', 'by'] as const) delete raw[k];
-          // A side by side or a presentation he sets is his: a picture question never replaces it.
-          if (raw.mode === 'half' || raw.mode === 'present') raw.by = 'owner';
-        }
-      }
-      // The layout he picked, the chat bar, leaving: each only on the cards he saw (plan-r2 R2-E3).
-      s.view = applyOwnerViewFields(s.view, ownerView);
-    });
+    const state = await writeSuper(contextRoot, (s) => { applyOwnerLayout(s, body); });
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
   activity: async (_req, res, contextRoot) => {
@@ -2494,31 +2565,9 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     sendJson(res, 200, { state: superStateView(contextRoot, await readSuperState(contextRoot, superSanitizeOpts())) });
   },
   seen: async (_req, res, contextRoot, body) => {
-    // The owner looked at finished jobs in the agenda (task super-agent-ajandasi-…): each entry
-    // names a child and the finish key his window SHOWED (`at`), so a result that finished again
-    // after that frame stays new. Only ever raises `seenAt` (stamping when, `seenMarkedAt`);
-    // unknown children are ignored.
-    const raw = body.children;
-    if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_CONTAINERS) {
-      sendError(res, 400, 'invalid_body', `children must be a list of 1 to ${MAX_CONTAINERS} { id, at }`);
-      return;
-    }
-    const marks: Array<{ id: string; at: number }> = [];
-    for (const x of raw as unknown[]) {
-      const o = x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : null;
-      const at = o && typeof o.at === 'number' && Number.isFinite(o.at) && o.at >= 0 ? o.at : NaN;
-      if (!o || typeof o.id !== 'string' || !SESSION_ID_RE.test(o.id) || !Number.isFinite(at)) {
-        sendError(res, 400, 'invalid_body', 'each entry is { id: <child session id>, at: <the finish time shown> }');
-        return;
-      }
-      marks.push({ id: o.id, at: Math.min(at, Date.now()) });
-    }
-    const state = await writeSuper(contextRoot, (s) => {
-      for (const m of marks) {
-        const ch = hasChild(s, m.id) ? s.children[m.id] : undefined;
-        if (ch && !(ch.seenAt !== undefined && ch.seenAt >= m.at)) { ch.seenAt = m.at; ch.seenMarkedAt = Date.now(); }
-      }
-    });
+    const marks = ownerSeenMarks(body);
+    if ('error' in marks) { sendError(res, 400, 'invalid_body', marks.error); return; }
+    const state = await writeSuper(contextRoot, (s) => { applyOwnerSeen(s, marks.marks); });
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
   recap: async (_req, res, contextRoot) => {

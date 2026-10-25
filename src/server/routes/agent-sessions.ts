@@ -578,9 +578,18 @@ export async function handleAgentSessionsGet(
     sendError(res, 403, 'desktop_only', 'Agent session roster is only available in the desktop app.');
     return;
   }
-  const saved = readSurface(contextRoot, isPhoneSocket(_req));
+  const phone = isPhoneSocket(_req);
   let superState = emptySuperState();
-  try { superState = await readSuperState(contextRoot, superSanitizeOpts()); } catch { /* no super record: nothing held */ }
+  let superUnread = false;
+  try { superState = await readSuperState(contextRoot, superSanitizeOpts()); } catch { superUnread = true; /* no super record: nothing held */ }
+  // A remote screen opening this project on the desktop layout seeds its tabs from the Mac
+  // window's (D3): read-only, narrowed, never written.
+  if (phone && new URL(_req.url ?? '/', 'http://x').searchParams.get('of') === 'desktop') {
+    // An unreadable record may be a handed-over project: the seed fails closed (nothing).
+    sendJson(res, 200, { sessions: superUnread ? [] : desktopSeed(readSurface(contextRoot, false), superState) });
+    return;
+  }
+  const saved = readSurface(contextRoot, phone);
   const body = surfaceBody(saved, (id) => isAutomationBoundSession(id, home) !== null);
   for (const m of body.sessions as SessionRosterEntry[]) {
     const hold = m.sessionId ? superRestoreHold(superState, m.sessionId, parkedSince(m.sessionId) !== null) : null;
@@ -590,6 +599,27 @@ export async function handleAgentSessionsGet(
     Object.assign(m, launch);
   }
   sendJson(res, 200, body);
+}
+
+/** One Mac window tab as a remote screen seeds it: never a path, a mode, an agent or an
+ *  automation. */
+export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true }
+
+/**
+ * The Mac window's tabs a remote screen may seed from (`GET /api/agent/sessions?of=desktop` on a
+ * phone socket): chat and agent tabs with a conversation, never a terminal or an automation run,
+ * never the Super Agent's own tab; a handed-over project seeds nothing (its stage is the view).
+ * Which of them is LIVE is the client's check (`phoneRestorable`), against the live list.
+ */
+export function desktopSeed(saved: Pick<SavedSurface, 'sessions'>, superState: { enabled: boolean; session: string | null }): DesktopSeedTab[] {
+  if (superState.enabled) return [];
+  const out: DesktopSeedTab[] = [];
+  for (const m of saved.sessions) {
+    const kind = m.kind ?? 'agent';
+    if ((kind !== 'agent' && kind !== 'chat') || !m.sessionId || m.sessionId === superState.session || m.mode === 'super') continue;
+    out.push({ title: m.title, sessionId: m.sessionId, pane: m.pane ?? 0, kind, bypass: m.bypass, ...(m.active ? { active: true as const } : {}) });
+  }
+  return out;
 }
 
 /** The GET body (also the 409 body): the surface, each entry with its `bound` flag, and the

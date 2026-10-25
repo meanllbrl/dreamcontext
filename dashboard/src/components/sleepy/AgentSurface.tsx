@@ -35,7 +35,7 @@ import { MobileSessionDrawer } from './MobileSessionDrawer';
 import { PhoneChatStack } from './PhoneChatStack';
 import { PhoneChatList } from './PhoneChatList';
 import type { StackTab } from './phoneStack';
-import { useIsMobile } from '../../hooks/useIsMobile';
+import { readRemoteDesktop, useIsMobile } from '../../hooks/useIsMobile';
 import { AgentDock } from './AgentDock';
 import { AgentFab } from './AgentFab';
 import {
@@ -75,6 +75,7 @@ import { addAttachments, dropScratch, nextAttachmentId, insertRef, setPageContex
 import { dataUrlBlob, pickBlock, pickChipName, type WebPick } from '../../lib/webPick';
 import { deliverToChat, postToSession } from './chat/postToSession';
 import { parseChatActions } from './chat/chatActions';
+import { Glyph, Notice } from './chat/Notice';
 import { cleanTabTitle } from '../../lib/chatViewSpec';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
@@ -85,10 +86,10 @@ import { useAssistantDoorbell } from '../assistant/useAssistantDoorbell';
 import { runWindowVerb, type WindowVerbDeps } from './windowVerbs';
 import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
-import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, withBaseGeneration } from '../handsfree/rosterRehydrate';
+import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, seededRoster, withBaseGeneration, type DesktopSeedTab } from '../handsfree/rosterRehydrate';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { PhoneBagNote } from '../handsfree/phone/PhoneBagNote';
-import { takePendingMacAdopt } from '../handsfree/macAdopt';
+import { takePendingMacAdopt, takePendingPhoneOpen } from '../handsfree/macAdopt';
 import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire } from '../handsfree/macContract';
 import { isSuperMirrorId, rememberSuperMirrorIds } from './superMirrorIds';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
@@ -118,7 +119,11 @@ import {
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap, remoteSkippedTitles } from './super/superApi';
+import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
+import { useRemoteStage } from './super/useRemoteStage';
+import { usePhoneChatNav } from './usePhoneChatNav';
+import { PhoneWaitingToast } from './PhoneWaitingToast';
 import { applyLayoutPatch, withPendingPatches, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
@@ -422,6 +427,18 @@ const START_INTENT_WAIT_MS = 10_000;
 
 // ── The persistent surface ─────────────────────────────────────────────────────
 
+/**
+ * Mac mode's tunnel (phone or remote computer): the Mac's terminals are the laptop's (the phone
+ * listener refuses the PTY socket), so the surface never offers Terminal mode, a terminal tab or
+ * "Open terminal" there, and its sessions are always Chat (hands-free sekmeler W2).
+ */
+function tunnelCaps(c: Capabilities): Capabilities {
+  return isMacPhoneSurface() ? { ...c, embeddedTerminal: false, openTerminal: false } : c;
+}
+function tunnelSettings(s: AgentSettings): AgentSettings {
+  return isMacPhoneSurface() && !s.chatView ? { ...s, chatView: true } : s;
+}
+
 export function AgentSurface() {
   // Which project this surface belongs to. Every session it spawns, every file it uploads and
   // the checklist bridge it registers are bound to THIS vault — one window holds several live
@@ -454,6 +471,10 @@ export function AgentSurface() {
   const [swapFlip, setSwapFlip] = useState<0 | 1 | 2>(0);
   // Mac mode's phone opens on the Sohbetler list (AC21); a chat opens over it and ‹ comes back.
   const macPhone = isMobile && isMacPhoneSurface();
+  // A computer or landscape tablet on the tunnel (hands-free sekmeler W2): the desktop layout with
+  // the tunnel's trust. Every branch below keyed on `isMobile` is LAYOUT, every one keyed on
+  // `isMacPhoneSurface()` TRUST; this names the new branch (the remote Super stage, seeding).
+  const remoteDesktop = !isMobile && isMacPhoneSurface();
   const [phoneView, setPhoneView] = useState<'list' | 'chat'>('list');
   // Two screens, so the move between them says which way it went: a chat comes in from the right,
   // the list comes back from the left. Set in the render that changes the view (React's
@@ -807,6 +828,17 @@ export function AgentSurface() {
   const resumeChatRef = useRef<
     ((cs: ChatSession, targetBypass?: boolean, targetAccountId?: string, heldTexts?: string[]) => ChatSession) | null
   >(null);
+  /** The chats the last hand-over skipped because a remote screen holds them (their titles). */
+  const [superSkipped, setSuperSkipped] = useState<string[]>([]);
+  /** Every chat a remote screen holds, by title: the ones the server skipped (opening there as the
+   *  hand-over ran) and this window's tabs a remote screen took (4409), which the hand-over never
+   *  sends, so the owner sees why they stayed out. */
+  const remoteHeldTitles = (skipped: Parameters<typeof remoteSkippedTitles>[0]): string[] => {
+    const taken = sessionListRef.current
+      .filter((m) => m.kind === 'chat' && (sessions.current.get(m.id) as ChatSession | undefined)?.takenOver)
+      .map((m) => m.title);
+    return [...new Set([...remoteSkippedTitles(skipped), ...taken])];
+  };
   const [authNotice, setAuthNotice] = useState<{
     identity: string; loggedIn: boolean | null; restarted: number;
   } | null>(null);
@@ -1047,7 +1079,7 @@ export function AgentSurface() {
   // ── Capabilities (fetched on mount; re-fetched after an in-app install so a
   //    freshly-installed prerequisite flips to ready without an app relaunch) ────
   const refreshCaps = useCallback(async (): Promise<Capabilities | null> => {
-    try { const c = await api.get<Capabilities>('/agent/capabilities'); setCaps(c); return c; }
+    try { const c = tunnelCaps(await api.get<Capabilities>('/agent/capabilities')); setCaps(c); return c; }
     catch { setCapsError(true); return null; }
   }, []);
   useEffect(() => { void refreshCaps(); }, [refreshCaps]);
@@ -1087,11 +1119,11 @@ export function AgentSurface() {
     let cancelled = false;
     void initAgentSettingsFromServer().then((s) => {
       if (cancelled) return;
-      setAgentSettings(s);
+      setAgentSettings(tunnelSettings(s));
       setSettingsReady(true);
     });
     // This window's own writes AND every other window's (see `onAgentSettings`).
-    const off = onAgentSettings(setAgentSettings);
+    const off = onAgentSettings((s) => setAgentSettings(tunnelSettings(s)));
     return () => { cancelled = true; off(); };
   }, []);
 
@@ -1155,6 +1187,13 @@ export function AgentSurface() {
           });
           saved = phoneRestorable(stored, live);
           if (!live) unrestored = stored;
+          // A computer or landscape tablet opening this project with no live tab of its own gets
+          // the Mac window's live tabs, in the same panes and order (D3): attached PASSIVELY
+          // below, so the Mac keeps every socket until this screen sends in one.
+          if (live && saved.length === 0 && readRemoteDesktop()) {
+            const seed = await scopedApi.get<{ sessions?: DesktopSeedTab[] }>('/agent/sessions?of=desktop').catch(() => null);
+            saved = phoneRestorable(seededRoster(seed?.sessions ?? []), live);
+          }
         }
         // Only the run still current writes it: a cancelled run landing late must not wipe the
         // newer run's carry (its next save would then delete the stored tabs after all).
@@ -2376,20 +2415,30 @@ export function AgentSurface() {
     // The product's name, the same in every language (`handsfree.super.title`).
     resumePastSession({ id: row.conversationId, title: 'Super Agent', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, 'passive');
   }, [resumePastSession]);
-  // A tap in another project's drawer parked the adoption for THIS project (macAdopt.ts):
-  // taken once the roster has hydrated, so a restored tab of the same chat is reused.
+  // A tap in another project's drawer, or in the phone's one list / a swipe (hands-free sekmeler
+  // W3), parked what to open for THIS project (macAdopt.ts): taken once the roster has hydrated,
+  // so a restored tab of the same chat is reused, when the project mounts AND whenever it becomes
+  // the one on screen again (an already open chip is only switched to, never remounted).
   useEffect(() => {
-    if (!vault || !isMacPhoneSurface()) return;
+    if (!vault || !isMacPhoneSurface() || !isActive) return;
     let tries = 0;
     const timer = setInterval(() => {
       tries++;
       if (!hydratedRef.current && tries < 25) return;
       clearInterval(timer);
       const pending = takePendingMacAdopt(vault);
-      if (pending) adoptLiveChat(pending);
+      if (pending) { adoptLiveChat(pending); setPhoneView('chat'); return; }
+      const open = takePendingPhoneOpen(vault);
+      if (!open) return;
+      if (open.kind === 'super') {
+        openSuperOnPhone({ conversationId: open.id, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: true });
+      } else {
+        resumePastSession({ id: open.id, title: open.title, preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' } as PastSession);
+      }
+      setPhoneView('chat');
     }, 200);
     return () => clearInterval(timer);
-  }, [vault, adoptLiveChat]);
+  }, [vault, isActive, adoptLiveChat, openSuperOnPhone, resumePastSession]);
 
   // ── Run sleep agent (from the header's Sleep-debt tracker) ────────────────────────
   // Spawn a dedicated "Sleep" agent that auto-runs the project's consolidation flow, and
@@ -3406,8 +3455,30 @@ export function AgentSurface() {
     const st = superStateRef.current;
     const brief = st && hasOwnKey(st.children, claudeId) ? st.children[claudeId].brief : '';
     if (brief) return brief;
-    return sessionListRef.current.find((m) => m.claudeId === claudeId)?.title ?? claudeId.slice(0, 8);
-  }, []);
+    // A remote stage carries no brief: its chat card's title names the job.
+    const card = st?.containers.find((c) => c.kind === 'chat' && c.ref === claudeId)?.title;
+    const own = sessionListRef.current.find((m) => m.claudeId === claudeId)?.title ?? card;
+    if (own) return own;
+    // A child whose only title was its brief (withheld from a remote screen) is named by its place
+    // among the children, never by a bare id.
+    const kids = st ? Object.entries(st.children).sort(([, a], [, b]) => a.startedAt - b.startedAt).map(([sid]) => sid) : [];
+    const at = kids.indexOf(claudeId);
+    return at >= 0 ? t('super.remote.child').replace('{n}', String(at + 1)) : claudeId.slice(0, 8);
+  }, [t]);
+  // A remote screen watches the child its stage shows large (D6): a read-only chat on the child,
+  // which the Mac makes a watch-only mirror (no composer, no Allow/Deny), opened once per child.
+  const remoteTouch = remoteDesktop && typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+  const watchOpenedRef = useRef<Set<string>>(new Set());
+  const shownCid = remoteDesktop && handedOver ? shownChild(superState) : null;
+  // Only a child that still runs: an ENDED child's card must not start a process from a remote look.
+  const remoteShownChild = shownCid && superState && hasOwnKey(superState.children, shownCid) && superState.children[shownCid].endedAt === undefined ? shownCid : null;
+  useEffect(() => {
+    const cid = remoteShownChild;
+    if (!cid || watchOpenedRef.current.has(cid)) return;
+    if (sessionListRef.current.some((m) => m.claudeId === cid && !m.dormant)) return;
+    watchOpenedRef.current.add(cid);
+    resumePastSession({ id: cid, title: superTitleFor(cid), named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, 'passive');
+  }, [remoteShownChild, resumePastSession, superTitleFor]);
   // The agenda names a job by its tab title (the brief, what it does now, is its second line).
   const superNameFor = useCallback((claudeId: string): string => (
     sessionListRef.current.find((m) => m.claudeId === claudeId)?.title ?? ''
@@ -3426,6 +3497,8 @@ export function AgentSurface() {
       sessions.current.forEach((s) => { if (s.kind === 'chat') (s as ChatSession).setSuperChild(marked.has(s.claudeId)); });
     };
     if (!capsLoaded) return undefined;
+    // A remote computer reads the stage from its own door once the live list says the project
+    // is handed over (below); the phone reads no record at all.
     if (!caps?.desktop || isMacPhoneSurface()) { settle(); return undefined; }
     let cancelled = false;
     void fetchSuperState(scopedApi).then((st) => {
@@ -3439,6 +3512,18 @@ export function AgentSurface() {
     });
     return () => { cancelled = true; };
   }, [capsLoaded, caps?.desktop, scopedApi]);
+
+  // ── The remote stage (hands-free sekmeler W2, D5): a computer on the tunnel (useRemoteStage.ts)
+  const dropRemoteStage = useCallback(() => {
+    if (!superStateRef.current?.enabled) return;
+    setSuperState((prev) => (prev ? { ...prev, enabled: false } : prev));
+    setSuperView('panes');
+  }, []);
+  const { superRow: remoteSuperRow } = useRemoteStage({
+    remoteDesktop, vault, api: scopedApi, shown: !!superState?.enabled,
+    onStage: (st) => { superKnownRef.current = true; setSuperState(withPendingEdits(st)); setSuperView('super'); },
+    onOff: dropRemoteStage,
+  });
 
   // ── The Super Agent's own chat: opened (or re-bound) whenever the mode is on ────────
   // Kind chat, mode `super`, pin = the recorded session. Resumed (`--resume`) unless the
@@ -3465,11 +3550,23 @@ export function AgentSurface() {
     return s;
   }, [canSpawn, spawn]);
   useEffect(() => {
+    // A remote computer joins the Super's chat as a mirror, only while the Mac runs it.
+    if (isMacPhoneSurface() && !(remoteDesktop && remoteSuperRow?.live)) return;
     if (superState?.enabled && superState.session && canSpawn) ensureSuperSession(superState.session);
-  }, [superState?.enabled, superState?.session, canSpawn, ensureSuperSession]);
+  }, [superState?.enabled, superState?.session, canSpawn, ensureSuperSession, remoteDesktop, remoteSuperRow?.live]);
 
   // ── What the server pushes down the Super Agent's socket ───────────────────────────
   superSignalRef.current = (signal) => {
+    if (signal.kind === 'stage') {
+      // The remote stage's frame: the server's allowlisted view (super/remoteStage.ts).
+      if (!remoteDesktop) return;
+      const st = remoteStageState(signal.state);
+      if (!st) return;
+      if (!st.enabled) { setSuperState((prev) => (prev ? { ...prev, enabled: false } : prev)); setSuperView('panes'); return; }
+      setSuperState(withPendingEdits(st));
+      setSuperView('super');
+      return;
+    }
     if (signal.kind !== 'state') return;
     const st = readSuperStateView(signal.state);
     if (st) setSuperState(withPendingEdits(st));
@@ -3513,7 +3610,8 @@ export function AgentSurface() {
   // ── The owner-activity lease: one POST per 5 s at most, and only while typing ─────────
   useEffect(() => {
     // Only while handed over; the pending trailing post dies with take-back or the unmount.
-    if (!superState?.enabled) return undefined;
+    // Never from the tunnel: the activity lease and the recap are the Mac window's.
+    if (!superState?.enabled || isMacPhoneSurface()) return undefined;
     const lease = createActivityLease(() => { void postSuperActivity(scopedApi).catch(() => undefined); });
     superLeaseRef.current = lease;
     return () => {
@@ -3524,7 +3622,7 @@ export function AgentSurface() {
 
   // ── The return recap (D13): back after ≥ 10 min away, while handed over ────────────
   useEffect(() => {
-    if (!superState?.enabled) return undefined;
+    if (!superState?.enabled || isMacPhoneSurface()) return undefined;
     return onWindowActivity((next, prev, change) => {
       if (shouldRecap(prev.focused, next.focused, change.unfocusedMs, !!superStateRef.current?.enabled)) {
         void postSuperRecap(scopedApi).catch(() => undefined);
@@ -3643,16 +3741,28 @@ export function AgentSurface() {
     const notSaved = (why: unknown) => {
       settle();
       console.warn('[super] the layout was not saved:', why);
+      // A remote screen: re-read the stage; a take-back meanwhile ('off') drops it at once.
+      if (isMacPhoneSurface()) { void fetchRemoteStage(scopedApi).then((st) => { if (st === 'off') dropRemoteStage(); else if (st) setSuperState(withPendingEdits(st)); }); return; }
       void fetchSuperState(scopedApi).then((st) => { if (st) setSuperState(withPendingEdits(st)); });
     };
     // A look changes nothing on the stage: its answer (read before the server's lock, every 30 s
     // while a panel is open) must never paint over a newer push.
     const lookOnly = Object.keys(patch).every((k) => k === 'touch');
+    // A remote computer arranges through its own door, which takes only the arranging keys; a
+    // gesture with nothing left for it (a look) is the screen's own and goes nowhere.
+    if (isMacPhoneSurface()) {
+      if (!remoteLayoutPatch(patch)) { settle(); return; }
+      void postRemoteLayout(scopedApi, patch).then(
+        (st) => { if (!st) { notSaved('no state in the answer'); return; } settle(); setSuperState(withPendingEdits(st)); },
+        notSaved,
+      );
+      return;
+    }
     void postSuperLayout(scopedApi, patch).then(
       (st) => { if (!st) { notSaved('no state in the answer'); return; } settle(); if (!lookOnly) setSuperState(withPendingEdits(st)); },
       notSaved,
     );
-  }, [scopedApi]);
+  }, [scopedApi, dropRemoteStage]);
 
   // O11: a card dropped on the centre (or its "Ask about this") becomes the subject of the
   // owner's next message: a reference appended to the Super Agent's draft once, focused.
@@ -3830,7 +3940,8 @@ export function AgentSurface() {
 
       // A late `disable` from an earlier take-back must not land on top of this hand-over.
       const gen = superGenRef.current.begin();
-      const { session, state } = await enableSuper(scopedApi, body);
+      const { session, state, skipped } = await enableSuper(scopedApi, body);
+      setSuperSkipped(remoteHeldTitles(skipped));
       // Minted by THIS hand-over (the record knew none, or another): start it under that id.
       if (before && before.session !== session) superFreshRef.current = session;
       ensureSuperSession(session);
@@ -3930,7 +4041,7 @@ export function AgentSurface() {
         id: m.id, claudeId: m.claudeId, title: m.title, kind: transportKind(m) === 'chat' ? 'chat' : m.kind, mode: m.mode, dormant: m.dormant,
       }));
       void enableSuper(scopedApi, adoptionBody(tabs, superStateRef.current?.session)).then(
-        ({ state }) => { if (state && current()) setSuperState(state); },
+        ({ state, skipped }) => { if (state && current()) setSuperState(state); setSuperSkipped(remoteHeldTitles(skipped)); },
         (err: unknown) => console.warn('[super] hand-over (after a reversed take-back) failed:', err),
       );
     }
@@ -4604,7 +4715,9 @@ export function AgentSurface() {
   // (and `Show full dashboard` in the drawer reveals it) — it is just never the landing
   // screen on a device where the only thing that fits is one conversation.
   useEffect(() => {
-    if (!isMobile) { autoExpanded.current = false; return; }
+    // A remote computer on the tunnel opens on the Chat too (hands-free sekmeler W2): the chats
+    // are why it came, as on the phone.
+    if (!isMobile && !remoteDesktop) { autoExpanded.current = false; return; }
     // ONCE per entry into the phone layout, never "whenever collapsed". A standing
     // re-expand would fight every collapse path there is — Esc, the escape hatch, a future
     // one nobody has written yet — and the fight shows up as a surface that flickers
@@ -4613,7 +4726,7 @@ export function AgentSurface() {
     if (autoExpanded.current || mobileEscaped || !agentSettings.enabled) return;
     autoExpanded.current = true;
     setExpanded(true);
-  }, [isMobile, mobileEscaped, agentSettings.enabled]);
+  }, [isMobile, remoteDesktop, mobileEscaped, agentSettings.enabled]);
 
   // Leaving the phone layout (rotation to a wide landscape, or emulation off) must not
   // strand the drawer open over a desktop surface that has a tab strip again.
@@ -4961,6 +5074,18 @@ export function AgentSurface() {
     const s = sessions.current.get(id);
     return s && s.kind === 'chat' ? (s as ChatSession) : undefined;
   }, []);
+
+  // ── The phone's chat screen across projects (hands-free sekmeler W3, owner D1): swipe, back
+  // badge, waiting toast (usePhoneChatNav.ts) ─────────────────────────────────────────────────
+  const phoneChatOn = macPhone && expanded && phoneView === 'chat' && !mobileEscaped && isActive;
+  const phoneChatNav = usePhoneChatNav({
+    vault: vault ?? '', tabs: stackTabs, active: phoneChatOn, enabled: macPhone,
+    activeTabId: mobileActive?.id ?? null,
+    activeClaude: mobileActive ? (sessions.current.get(mobileActive.id)?.claudeId || claudeIdOf.get(mobileActive.id)) : undefined,
+    hostRef, chrome: windowChrome,
+    open: { selectTab, openSuperOnPhone, resumePastSession, adoptLiveChat },
+  });
+  const phoneToastEl = phoneChatOn ? <PhoneWaitingToast row={phoneChatNav.toast} onOpen={phoneChatNav.openToast} /> : null;
   // Collapsed dock rows — one chip per session, in roster order. Never the Super Agent (it is
   // not a tab; its queue speaks through the hand-over button's dot and the queue head).
   const dockRows: SessionRow[] = sessionList.filter((meta) => !isSuperSession(meta, superState?.session)).map((meta) => {
@@ -5150,6 +5275,20 @@ export function AgentSurface() {
             exactly the layout the owner left (plus the delegated children as tabs), and the
             row's glide observer keeps its element. Never on a phone (`handedOver` needs a
             desktop layout). */}
+        {/* A chat a remote screen holds (or is opening) is never handed over: named here, with
+            what to do (take it back to the Mac, then hand over). */}
+        {handedOver && superSkipped.length > 0 && (
+          <div className="super-skipped-notice">
+            <Notice
+              slim
+              tone="warn"
+              icon={<Glyph.moon />}
+              testId="super-skipped-remote"
+              title={t('super.skippedRemote').replace('{titles}', superSkipped.join(', '))}
+              onDismiss={() => setSuperSkipped([])}
+            />
+          </div>
+        )}
         {handedOver && superState && (
           <SuperSurface
             state={superState}
@@ -5165,7 +5304,7 @@ export function AgentSurface() {
             childTranscript={renderChildTranscript}
             titleFor={superTitleFor}
             nameFor={superNameFor}
-            terminals={superTerminals}
+            terminals={remoteDesktop ? [] : superTerminals}
             onLayout={editSuperLayout}
             onTerminal={openTerminalFromSuper}
             onReplyToSuper={() => superChatSession?.focus()}
@@ -5182,7 +5321,15 @@ export function AgentSurface() {
             endFailed={endFailed}
             queueElsewhere={dockOpen}
             stageShowChild={stageShowChild}
+            remote={remoteDesktop ? { touch: remoteTouch } : undefined}
           />
+        )}
+        {/* A remote screen whose project is handed over while no Mac window runs the Super Agent:
+            the stage is drawn from the record, and the chat waits for the window. */}
+        {handedOver && remoteDesktop && remoteSuperRow && !remoteSuperRow.live && (
+          <div className="super-skipped-notice">
+            <Notice slim tone="warn" icon={<Glyph.moon />} testId="super-remote-no-window" title={t('super.remote.noWindow')} />
+          </div>
         )}
         {/* Mac mode's phone has two screens, the Sohbetler list and one chat (owner, 2026-10-17):
             the other open chats live on the list, not in a band above the chat. */}
@@ -5340,6 +5487,7 @@ export function AgentSurface() {
         /* The phone layer's switch — every rule in `MobileChat.css` hangs off this one
            attribute, so the desktop layout is untouched at any width. */
         data-mobile={isMobile ? 'true' : undefined}
+        data-swipe={phoneChatNav.swipe ?? undefined}
         data-phone-nav={macPhone && phoneNav ? phoneNav : undefined}
         /* The live pane count, for the focus-widening math in CSS — the focused pane's
            extra width is capped at what is left once every OTHER pane keeps `--pane-min`,
@@ -5366,12 +5514,19 @@ export function AgentSurface() {
                     if (phoneChatMark.current && window.history.state?.phoneChat === phoneChatMark.current) window.history.back();
                     else setPhoneView('list');
                   }}
-                  aria-label={t('handsfree.list.back')}
+                  // The waiting count is part of the button's name (a span's own label is never read).
+                  aria-label={phoneChatNav.waitingElsewhere > 0
+                    ? `${t('handsfree.list.back')}, ${t('handsfree.chat.waitingBadge').replace('{n}', String(phoneChatNav.waitingElsewhere))}`
+                    : t('handsfree.list.back')}
                   data-testid="chat-back"
                 >
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <path d="M12.5 4.5 7 10l5.5 5.5" />
                   </svg>
+                  {/* Chats waiting on the owner elsewhere, across projects (W3). */}
+                  {phoneChatNav.waitingElsewhere > 0 && (
+                    <span className="mchat-back-badge" data-testid="chat-back-badge" aria-hidden>{phoneChatNav.waitingElsewhere}</span>
+                  )}
                 </button>
               ) : (
               <button
@@ -5446,6 +5601,7 @@ export function AgentSurface() {
                 busy={superBusy || superMotion === 'running'}
                 queueDot={!handedOver && ownerQueueCount(superState) > 0}
                 onClick={onHandoverButton}
+                remote={remoteDesktop}
               />
             )}
             {started && !handedOver && (caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) && (
@@ -5711,6 +5867,7 @@ export function AgentSurface() {
           // Agent (owner decision 3). Back to a normal composer the moment it is taken back.
           readOnly={marked.has(cs.claudeId)}
           idlePlaceholder={cs.mode === 'super' ? t('super.centre.placeholder') : undefined}
+          aboveComposer={cs.id === mobileActive?.id ? phoneToastEl : undefined}
         />,
         cs.container,
         `chat-${cs.id}`,

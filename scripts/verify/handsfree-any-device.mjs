@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
- * Hands-free opens as hands-free on ANY device: a tablet and a second computer get the phone's
- * Sohbetler list, its chats and its projects, never the laptop's desktop chrome.
+ * Hands-free opens on ANY device, in the layout its screen calls for (updated for the layout rule
+ * of task hands-free-bilgisayar-ve-tablette…, owner 2026-10-25): a phone and a PORTRAIT tablet get
+ * the Sohbetler list, its chats and its projects; a computer (a mouse, any size) and a LANDSCAPE
+ * tablet get the desktop Chat (project chips, chat tabs, panes) with the tunnel's trust: no
+ * laptop-only route is called, no 403 lands. Neither ever opens empty.
  *
  *   npm run build && node scripts/verify/handsfree-any-device.mjs
  *
@@ -213,14 +216,40 @@ try {
   report.check('Mac mode starts for both projects (loopback stand-in tunnel)', started.status === 200 && !!started.json.url, JSON.stringify(started.json).slice(0, 200));
 
   const DEVICES = [
-    { name: 'ipad-portrait', label: 'iPad portrait 834x1194 (touch)', ctx: { ...devices['iPad Pro 11'] } },
-    { name: 'ipad-landscape', label: 'iPad landscape 1194x834 (touch)', ctx: { ...devices['iPad Pro 11 landscape'] } },
-    { name: 'computer-1440', label: 'computer 1440x900 (mouse)', ctx: { viewport: { width: 1440, height: 900 } } },
-    { name: 'computer-1280', label: 'computer 1280x800 (mouse)', ctx: { viewport: { width: 1280, height: 800 } } },
-    { name: 'iphone', label: 'iPhone 390x844 (control)', ctx: { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } } },
+    { name: 'ipad-portrait', label: 'iPad portrait 834x1194 (touch)', ctx: { ...devices['iPad Pro 11'] }, desktop: false },
+    { name: 'ipad-landscape', label: 'iPad landscape 1194x834 (touch)', ctx: { ...devices['iPad Pro 11 landscape'] }, desktop: true },
+    { name: 'computer-1440', label: 'computer 1440x900 (mouse)', ctx: { viewport: { width: 1440, height: 900 } }, desktop: true },
+    { name: 'computer-1280', label: 'computer 1280x800 (mouse)', ctx: { viewport: { width: 1280, height: 800 } }, desktop: true },
+    { name: 'iphone', label: 'iPhone 390x844 (control)', ctx: { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } }, desktop: false },
   ];
 
   for (const d of DEVICES) {
+    if (d.desktop) {
+      // A computer or a landscape tablet: the desktop Chat, on the tunnel's trust.
+      console.log(`\n· ${d.label} (desktop layout)`);
+      const qr = (await mac(port, 'POST', 'qr')).json.url;
+      const ctx = await browser.newContext(d.ctx);
+      const page = await ctx.newPage();
+      page.on('console', (m) => { if (m.type() === 'error') errors.push(`${d.name}: ${m.text().slice(0, 200)}`); });
+      page.on('pageerror', (e) => errors.push(`${d.name} pageerror: ${String(e).slice(0, 200)}`));
+      page.on('response', (r) => { if (r.status() === 403) refused.push(`${d.name}: ${r.request().method()} ${new URL(r.url()).pathname}`); });
+      await page.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      report.check(`${d.name}: signed in, landed in the project`, await until(async () => page.url().includes('vault=proj'), 25000), page.url());
+      report.check(`${d.name}: the desktop Chat, not the phone list`, await until(async () => { const x = await layout(page); return x.chrome && !x.list; }, 25000), JSON.stringify(await layout(page)));
+      await page.waitForTimeout(2000);
+      await dismiss(page);
+      report.check(`${d.name}: the chat surface is open (not an empty dashboard)`, await until(async () => (await page.locator('.agent-surface.expanded, .agent-surface[data-expanded="true"], .agent-pane-tabbar').count()) > 0, 15000));
+      await page.locator('.project-tabs-add').click();
+      await until(async () => (await page.locator('.psw-row').count()) > 0, 10000);
+      const rows = (await page.locator('.psw-row .psw-row-name').allTextContents()).map((x) => x.trim()).sort();
+      report.check(`${d.name}: + lists both chosen projects and nothing else`, JSON.stringify(rows) === JSON.stringify(['other', 'proj']), JSON.stringify(rows));
+      await page.keyboard.press('Escape');
+      const l = await layout(page);
+      report.check(`${d.name}: no horizontal overflow`, l.overflow <= 1, String(l.overflow));
+      await page.screenshot({ path: join(SHOTS, `${d.name}-desktop.png`) });
+      await ctx.close();
+      continue;
+    }
     console.log(`\n· ${d.label}`);
     const qr = (await mac(port, 'POST', 'qr')).json.url;
     const ctx = await browser.newContext(d.ctx);

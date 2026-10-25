@@ -70,6 +70,7 @@ const ONBOARDING = 'laptop-only: first-run setup of this Mac';
 const READ = 'read of this project\'s own data; side-effect free';
 const PROJECT_WRITE = 'a change to this project\'s own data, the same as the dashboard on the laptop';
 const CHAT = 'the chat surface the phone exists for';
+const STAGE = 'the remote stage, read and arrange only; the Mac window stays the Super\'s bridge';
 
 export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // Health and the phone's own sign-in
@@ -311,6 +312,9 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/agent/live-chats': allow(`${CHAT}: this project's running chats (names, never paths); side-effect free`),
   'GET /api/agent/super-questions': allow(`${CHAT}: a handed-over project's open Super Agent questions, each with its card (the child's question as it asks it); side-effect free`),
   'POST /api/agent/super-answer': allow(`${CHAT}: the owner answers a child's question the Super Agent escalated; the Mac window answers it through the child's own session`),
+  'GET /api/agent/super-stage': allow(`${STAGE}; side-effect free`),
+  'POST /api/agent/super-stage/layout': allow(`${STAGE}: an allowlist of arranging keys (no close, group or Others)`),
+  'POST /api/agent/super-stage/seen': allow(`${STAGE}: the agenda's seen marks`),
   'GET /api/agent/slash-commands': allow(`${CHAT}: the slash command list; side-effect free`),
   'GET /api/agent/chat-sessions': allow(`${CHAT}: this project's past chats; side-effect free`),
   'GET /api/agent/bg-output': allow(`${CHAT}: a background shell's output; side-effect free`),
@@ -362,7 +366,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/voice/dictation': deny(INSTALL),
   'PUT /api/agent/voice/config': deny(VOICE),
   'POST /api/agent/download': deny(DESKTOP),
-  'GET /api/agent/sessions': allow(`${CHAT}: the phone's own tab roster; side-effect free`),
+  'GET /api/agent/sessions': allow(`${CHAT}: the phone's own tab roster, or (\`?of=desktop\`) the Mac window's chat tabs narrowed to title, id, pane, kind and bypass for seeding; side-effect free`),
   'PUT /api/agent/sessions': allow(`${CHAT}: the phone's own tab roster`),
   'GET /api/vaults': filtered('read: only the chosen projects, by name (never a path, never another project); side-effect free'),
 

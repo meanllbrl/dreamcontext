@@ -45,7 +45,8 @@ export function createTranscriptSession(
     // nothing to resume from here (the Super Agent does that with `super resume`).
     status: 'open',
     takenOver: false,
-    takeBack: noop,
+    handedOver: false,
+    takeBack: () => Promise.resolve(false),
     setOnScreen: noop,
     opened: true,
     busy: false,

@@ -15,7 +15,7 @@ import {
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
-import { MAC_CLOSE_SIGNED_OUT, MAC_CLOSE_TAKEN_OVER, MAC_MODE_ENDED_EVENT, REATTACH_EVICT, REATTACH_PASSIVE } from '../handsfree/macContract';
+import { MAC_CLOSE_HANDED_OVER, MAC_CLOSE_SIGNED_OUT, MAC_CLOSE_TAKEN_OVER, MAC_MODE_ENDED_EVENT, REATTACH_EVICT, REATTACH_PASSIVE } from '../handsfree/macContract';
 import { runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } from './chat/chatEntities';
 import * as queue from './chat/chatQueue';
 import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
@@ -245,6 +245,8 @@ const spokenCarry = new Map<string, Set<string>>();
 
 export type SuperSignal =
   | { kind: 'state'; state: Record<string, unknown> }
+  /** A remote screen's stage (`super_stage`, the server's allowlisted view). */
+  | { kind: 'stage'; state: Record<string, unknown> }
   | { kind: 'event'; eventKind: string; child: string }
   | { kind: 'cue'; verb: string; ids: string[] };
 
@@ -469,8 +471,16 @@ export interface ChatSession {
   /** Another screen holds this live chat (the server closed this socket 4409, Mac mode): the
    *  reconnect loop stopped and the pane offers "Buraya al" ({@link ChatSession.takeBack}). */
   takenOver: boolean;
-  /** "Buraya al": take the chat back from the other screen (an explicit, evicting reattach). */
-  takeBack: () => void;
+  /** This chat is a Super Agent child of a handed-over project and this screen only WATCHES it
+   *  (the server closed this socket 4403, or joined it as a watch-only mirror): no composer and
+   *  no "Buraya al", which would only reopen into another 4403. Cleared by an ordinary reattach
+   *  (after the take-back). */
+  handedOver: boolean;
+  /** "Buraya al": take the chat back from the other screen (an explicit, evicting reattach).
+   *  Resolves true once the server bound this screen's new socket to the chat (its `reattached`
+   *  frame), false when that open was refused, closed or timed out (hands-free sekmeler W2: a
+   *  remote screen's first send in a tab the Mac holds takes it, then sends). */
+  takeBack: () => Promise<boolean>;
   /** Phone only: this chat is (or stops being) the one on the phone's screen. The server skips
    *  the push for a chat the phone shows right now, so it is told on every change, on every
    *  (re)attach and when the page itself hides or shows. A no-op off the phone. */
@@ -882,11 +892,12 @@ export const HUNG_ATTEMPT_MS = 3000;
 /** The server's `_meta/reattached` frame (agent-chat.ts), or null for anything else. Its
  *  `_meta/turn_state` frame reads the same way: the server's word that nothing is running,
  *  sent when a Stop was acked and no `result` followed (an idle CLI sends none). */
-export function readReattachedFrame(raw: string): { adopted: boolean; busy: boolean } | null {
+export function readReattachedFrame(raw: string): { adopted: boolean; busy: boolean; watchOnly?: boolean } | null {
   try {
-    const o = JSON.parse(raw) as { type?: unknown; subtype?: unknown; adopted?: unknown; busy?: unknown };
+    const o = JSON.parse(raw) as { type?: unknown; subtype?: unknown; adopted?: unknown; busy?: unknown; watchOnly?: unknown };
     if (o?.type !== '_meta' || (o.subtype !== 'reattached' && o.subtype !== 'turn_state')) return null;
-    return { adopted: o.adopted === true, busy: o.busy === true };
+    // `watchOnly` rides only on a reattach (a turn_state says nothing about who holds the chat).
+    return { adopted: o.adopted === true, busy: o.busy === true, ...(o.subtype === 'reattached' ? { watchOnly: o.watchOnly === true } : {}) };
   } catch { return null; }
 }
 
@@ -1274,6 +1285,7 @@ export function createChatSession(
     id, bypass, kind: 'chat', claudeId, container,
     status: 'connecting',
     takenOver: false,
+    handedOver: false,
     takeBack: () => takeBack(),
     setOnScreen: (v: boolean) => { onScreen = v; sendVisibility(); },
     opened: false,
@@ -2204,6 +2216,8 @@ export function createChatSession(
     // First: a drop before the open settled must not reset the backoff behind its back.
     clearStableTimer();
     clearConnectTimer();
+    // A take that never got its socket bound did not take the chat.
+    settleTake(false);
     recordPhoneEvent('close', claudeId, { code });
     // A spoken turn's end may be lost with the socket: the server re-announces it on reattach.
     voiceTurn = false;
@@ -2212,6 +2226,11 @@ export function createChatSession(
       // Another screen holds this chat. Reconnecting would only take it back and start a
       // ping-pong, so the loop stops here; "Buraya al" is the owner's explicit choice.
       applyAndNotify(() => { session.takenOver = true; session.status = 'closed'; clearResubmit(); });
+      return;
+    }
+    if (code === MAC_CLOSE_HANDED_OVER) {
+      // A Super Agent child now: this screen only watches it. Reconnecting would get 4403 again.
+      applyAndNotify(() => { session.handedOver = true; session.status = 'closed'; clearResubmit(); });
       return;
     }
     if (code === MAC_CLOSE_SIGNED_OUT && isMacPhoneSurface()) {
@@ -2251,12 +2270,32 @@ export function createChatSession(
   }
 
   /** "Buraya al": take the chat back — the one open that evicts the other screen (4409). */
-  function takeBack(): void {
-    if (disposed) return;
+  function takeBack(): Promise<boolean> {
+    if (disposed) return Promise.resolve(false);
+    // A take already on its way (a double press): its answer is this one's, and no second socket
+    // is opened behind the first (an orphaned attempt could bind on the server after it).
+    if (pendingTake) return pendingTake;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     reconnectAttempt = 0;
+    // An earlier take still waiting is answered by this one's outcome.
+    const earlier = takeWaiter;
+    const done = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => settleTake(false), CONNECT_TIMEOUT_MS);
+      takeWaiter = (ok) => { clearTimeout(timer); earlier?.(ok); resolve(ok); };
+    });
+    pendingTake = done;
+    void done.finally(() => { if (pendingTake === done) pendingTake = null; });
     applyAndNotify(() => { session.takenOver = false; session.status = 'connecting'; });
     reconnectNow(REATTACH_EVICT);
+    return done;
+  }
+  let pendingTake: Promise<boolean> | null = null;
+  /** The take in flight ({@link takeBack}), answered once. */
+  let takeWaiter: ((ok: boolean) => void) | null = null;
+  function settleTake(ok: boolean): void {
+    const w = takeWaiter;
+    takeWaiter = null;
+    w?.(ok);
   }
 
   /** Mac mode ended on this desktop (Return): the phone let go of every chat, so a pane that
@@ -2315,7 +2354,7 @@ export function createChatSession(
     // The server's answer to a reattach — not a protocol event, so it never reaches the parser.
     if (raw.includes('"reattached"') || raw.includes('"turn_state"')) {
       const frame = readReattachedFrame(raw);
-      if (frame) { applyReattached(frame.busy); return; }
+      if (frame) { applyReattached(frame.busy, frame.watchOnly); return; }
     }
     // A refusal before any spawn (an unknown account, a conversation held elsewhere) arrives as
     // `dc_meta`, which the parser does not read — but it, too, makes the close an end.
@@ -2334,6 +2373,7 @@ export function createChatSession(
     if (ev.kind === 'super-command') { void runSuperCommand(ev); return; }
     // The Super Agent's state is the surface's, never this conversation's.
     if (ev.kind === 'super-state') { emitSuper({ kind: 'state', state: ev.state }); return; }
+    if (ev.kind === 'super-stage') { emitSuper({ kind: 'stage', state: ev.state }); return; }
     // An inbox-opened turn: the server is about to write it; stand for it with a chip.
     if (ev.kind === 'super-event') {
       applyAndNotify(() => {
@@ -2415,10 +2455,13 @@ export function createChatSession(
    *  when the child had already exited, to a fresh resume (`busy` false). Idle means no card
    *  can still be waiting: the CLI only asks inside a turn, and a still-open ask is re-sent by
    *  the server right after this frame. */
-  function applyReattached(busy: boolean): void {
+  function applyReattached(busy: boolean, watchOnly?: boolean): void {
     recordPhoneEvent('reattached', claudeId, { busy });
+    // Bound: a take in flight took the chat (a watch-only join is no take).
+    if (watchOnly !== undefined) settleTake(watchOnly !== true);
     applyAndNotify(() => {
       session.busy = busy;
+      if (watchOnly !== undefined) session.handedOver = watchOnly;
       if (!busy) {
         session.asking = false;
         if (conv.pending.length) conv = { ...conv, pending: [] };

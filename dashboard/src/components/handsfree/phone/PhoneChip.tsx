@@ -22,11 +22,13 @@ export function phoneChipView(s: PhoneState): { mac: 'low' | 'warm' | 'ok'; key:
  * link, on only while the last poll reached the Mac; a dropped link is a hollow, still dot and
  * says so. `quiet`: never pulse (beside an open chat's title). Renders null off the phone surface.
  */
-export function PhoneChip({ quiet = false }: { quiet?: boolean }) {
+export function PhoneChip({ quiet = false, remote = false }: { quiet?: boolean; remote?: boolean }) {
   const { t } = useI18n();
   const { state: s, reachable } = usePhoneLink();
   if (!s) return null;
   const v = phoneChipView(s);
-  const label = !reachable ? t('handsfree.mac.chipReaching') : v.pct !== null ? fill(t(v.key), { pct: v.pct }) : t(v.key);
+  const base = !reachable ? t('handsfree.mac.chipReaching') : v.pct !== null ? fill(t(v.key), { pct: v.pct }) : t(v.key);
+  // In a remote computer's title bar: "Uzaktan · Mac %82" (hands-free sekmeler W2).
+  const label = remote ? fill(t('handsfree.mac.chipRemote'), { label: base }) : base;
   return <LiveBadge tone={v.mac} live={reachable} label={label} sr={reachable ? t('handsfree.mac.live') : undefined} quiet={quiet} testId="phone-live-badge" />;
 }

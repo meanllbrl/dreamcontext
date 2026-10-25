@@ -51,7 +51,7 @@ import './JobBar.css';
  * double-click (two clicks before React re-renders) sends one answer. A new head, or the same
  * request re-sent by the server (the answer never landed), reopens it.
  */
-export function JobBar({ state, head, waiting, rect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild }: {
+export function JobBar({ state, head, waiting, rect, look, superSession, sessionFor, titleFor, onReplyToSuper, onShowChild, remote = false }: {
   state: SuperStateView;
   head: SuperQueueItem | null;
   /** The top band above the centre (planStage's `queue`). Absent (the Super dock): the band is a
@@ -68,6 +68,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
   onReplyToSuper: () => void;
   /** Bring a child beside the centre (and its open owner card into view). */
   onShowChild: (sid: string) => void;
+  /** A remote screen (hands-free sekmeler W2, D6): a child's permission is answered on the Mac. */
+  remote?: boolean;
 }) {
   const { t } = useI18n();
   // An `ask` is the super agent's own question: there is no child behind it.
@@ -142,7 +144,7 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
             ? <button type="button" className="super-queue-who super-queue-who--link" data-testid="super-queue-open-child" onClick={() => onShowChild(head.sessionId)}>{titleFor(head.sessionId)}</button>
             : <span className="super-queue-who">{head.kind === 'ask' ? look.superTitle : head.kind === 'approval' ? t('super.queue.team') : titleFor(head.sessionId)}</span>}
           {head.kind === 'permission'
-            ? <PermissionHead item={head} child={child} locked={locked} answerOnce={answerOnce} />
+            ? <PermissionHead item={head} child={remote ? undefined : child} locked={locked} answerOnce={answerOnce} remote={remote} />
             : head.kind === 'ask'
               ? <QuestionHead item={head} text={head.ownerText ?? ''} root={superSession?.container} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'approval'
@@ -272,13 +274,16 @@ function QueueText({ full, children }: { full: string; children: ReactNode }) {
   );
 }
 
-function PermissionHead({ item, child, locked, answerOnce }: {
+function PermissionHead({ item, child, locked, answerOnce, remote = false }: {
   item: SuperQueueItem;
   child: ChatSession | undefined;
   locked: boolean;
   answerOnce: (send: () => boolean | void) => void;
+  remote?: boolean;
 }) {
   const { t } = useI18n();
+  // A remote screen never answers a child's permission (D6): the Mac does.
+  if (remote) return <span className="super-queue-text" data-testid="super-queue-permission-remote">{t('super.queue.permissionRemote')}</span>;
   const pending = child?.getModel().pending.find(
     (p): p is PendingPermission => p.kind === 'permission' && p.requestId === item.requestId,
   );
