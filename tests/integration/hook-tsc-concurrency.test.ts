@@ -111,9 +111,10 @@ describe.skipIf(!existsSync(CLI))('Stop writes the session ledger before it type
       execFileSync(process.execPath, [CLI, 'init', '--yes'], { cwd: p2, env: env2, stdio: 'ignore' });
       writeFileSync(join(p2, 'tsconfig.json'), '{}');
       writeFileSync(join(p2, 'src', 'a.ts'), 'export const a = 1;\n');
-      // A check that takes 3 s.
+      // A check that takes 3 s, and says when it has started.
+      const started = join(r2, 'tsc-started');
       const tsc = join(p2, 'node_modules', '.bin', 'tsc');
-      writeFileSync(tsc, '#!/usr/bin/env node\nAtomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);\nprocess.exit(0);\n');
+      writeFileSync(tsc, `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(started)}, '');\nAtomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);\nprocess.exit(0);\n`);
       chmodSync(tsc, 0o755);
 
       // The edit pends: another live process holds the project's lock right now.
@@ -122,17 +123,19 @@ describe.skipIf(!existsSync(CLI))('Stop writes the session ledger before it type
       mkdirSync(stateDir, { recursive: true });
       writeFileSync(join(stateDir, 'lock'), JSON.stringify({ pid: process.pid, at: Date.now() }));
       const sid = '11111111-2222-4333-8444-555555555555';
-      const run = (event: string, input: unknown, killAfterMs?: number) => new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+      const run = (event: string, input: unknown, killDuringCheck = false) => new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
         const child = spawn(process.execPath, [CLI, 'hook', event], { cwd: p2, env: env2, stdio: ['pipe', 'ignore', 'ignore'] });
-        if (killAfterMs) setTimeout(() => child.kill('SIGKILL'), killAfterMs);
-        child.on('close', (code, signal) => resolve({ code, signal }));
+        // Killed once the check is running, not after a fixed delay: on a loaded machine the
+        // CLI alone can take longer than any delay short enough to land inside the check.
+        const poll = killDuringCheck ? setInterval(() => { if (existsSync(started)) child.kill('SIGKILL'); }, 20) : undefined;
+        child.on('close', (code, signal) => { clearInterval(poll); resolve({ code, signal }); });
         child.stdin.end(JSON.stringify(input));
       });
       await run('post-tool-use', { session_id: sid, tool_name: 'Edit', tool_input: { file_path: join(p2, 'src', 'a.ts') } });
       rmSync(join(stateDir, 'lock'));
 
-      // Stop now has a 3 s check to run; Claude Code kills it after 1.5 s.
-      const stop = await run('stop', { session_id: sid, hook_event_name: 'Stop', stop_hook_active: false }, 1500);
+      // Stop now has a 3 s check to run; Claude Code kills it partway through.
+      const stop = await run('stop', { session_id: sid, hook_event_name: 'Stop', stop_hook_active: false }, true);
       expect(stop.signal).toBe('SIGKILL');
       const state = JSON.parse(readFileSync(join(p2, '_dream_context', 'state', '.sleep.json'), 'utf-8')) as { sessions: Array<{ session_id: string }> };
       expect(state.sessions.map((x) => x.session_id)).toContain(sid);

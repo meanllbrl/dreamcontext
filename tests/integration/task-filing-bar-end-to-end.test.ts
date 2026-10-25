@@ -64,6 +64,12 @@ const taskFile = (slug: string, atRoot = root) => join(atRoot, '_dream_context',
 const sleepPath = (atRoot = root) => join(atRoot, '_dream_context', 'state', '.sleep.json');
 const declinedPath = (atRoot = root) => join(atRoot, '_dream_context', 'state', '.task-declined.json');
 
+/** What the owner typed in the cycle's one session. A cycle opens a top-level task only on an
+ *  ask it can quote from a transcript (lib/filing-basis.ts), so every cycle here has one. */
+const OWNER_ASK = 'please keep a task for the draft that gets lost on reload';
+/** The basis a cycle passes; without it the basis rule refuses before the bar is reached. */
+const ASK_BASIS = `--basis ask --quote "${OWNER_ASK}"`;
+
 /** Stamp the epoch the way `sleep start` does. `.sleep.json` is written lazily
  *  (the hooks create it), so a fresh brain may not have one yet. */
 function startCycle(atRoot = root): void {
@@ -72,6 +78,9 @@ function startCycle(atRoot = root): void {
     sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [],
     compaction_log: [], pendingMigrationNotices: [],
   };
+  const transcript = join(atRoot, 'cycle-session.jsonl');
+  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: OWNER_ASK } }) + '\n');
+  base.sessions = [...(base.sessions ?? []), { session_id: 'cycle-session', transcript_path: transcript }];
   base.sleep_started_at = new Date().toISOString();
   base.cycle_tasks_filed = [];
   writeFileSync(sleepPath(atRoot), JSON.stringify(base, null, 2));
@@ -101,7 +110,7 @@ describe('tasks create under a live sleep cycle', () => {
 
   it('REFUSES an unjustified task during a cycle, and writes no file', () => {
     startCycle();
-    const r = cli(`tasks create "some vague chore" --why "${THIN_WHY}"`);
+    const r = cli(`tasks create "some vague chore" ${ASK_BASIS} --why "${THIN_WHY}"`);
     expect(r.code).toBe(1);
     expect(r.out).toContain('at least 40 characters');
     expect(existsSync(taskFile('some-vague-chore'))).toBe(false);
@@ -109,7 +118,7 @@ describe('tasks create under a live sleep cycle', () => {
 
   it('accepts the same task WITH a real justification', () => {
     startCycle();
-    const r = cli(`tasks create "a justified task" --by sleep --why "${WHY}"`);
+    const r = cli(`tasks create "a justified task" --by sleep ${ASK_BASIS} --why "${WHY}"`);
     expect(r.code).toBe(0);
     expect(existsSync(taskFile('a-justified-task'))).toBe(true);
   });
@@ -123,9 +132,9 @@ describe('tasks create under a live sleep cycle', () => {
   it('counts filed tasks against the cap and then refuses', () => {
     cli('sleep config set max-new-tasks 2');
     startCycle();
-    expect(cli(`tasks create "first one" --by sleep --why "${WHY}"`).code).toBe(0);
-    expect(cli(`tasks create "second one" --by sleep --why "${WHY}"`).code).toBe(0);
-    const third = cli(`tasks create "third one" --by sleep --why "${WHY}"`);
+    expect(cli(`tasks create "first one" --by sleep ${ASK_BASIS} --why "${WHY}"`).code).toBe(0);
+    expect(cli(`tasks create "second one" --by sleep ${ASK_BASIS} --why "${WHY}"`).code).toBe(0);
+    const third = cli(`tasks create "third one" --by sleep ${ASK_BASIS} --why "${WHY}"`);
     expect(third.code).toBe(1);
     expect(third.out).toContain('2/2');
     expect(existsSync(taskFile('third-one'))).toBe(false);
@@ -141,7 +150,7 @@ describe('tasks create under a live sleep cycle', () => {
 
   it('the counter is cleared when the cycle ends', () => {
     startCycle();
-    cli(`tasks create "counted" --by sleep --why "${WHY}"`);
+    cli(`tasks create "counted" --by sleep ${ASK_BASIS} --why "${WHY}"`);
     expect(JSON.parse(readFileSync(sleepPath(), 'utf8')).cycle_tasks_filed).toEqual(['counted']);
     cli('sleep done "wrapped up"');
     expect(JSON.parse(readFileSync(sleepPath(), 'utf8')).cycle_tasks_filed).toEqual([]);
@@ -188,7 +197,7 @@ describe('tombstones through the CLI', () => {
     cli('tasks delete "a duplicate chore" --yes --into "the real home"');
 
     startCycle();
-    const r = cli(`tasks create "a duplicate chore" --by sleep --why "${WHY}"`);
+    const r = cli(`tasks create "a duplicate chore" --by sleep ${ASK_BASIS} --why "${WHY}"`);
     expect(r.code).toBe(1);
     expect(r.out).toContain('the-real-home');
     expect(existsSync(taskFile('a-duplicate-chore'))).toBe(false);
@@ -215,7 +224,7 @@ describe('tombstones through the CLI', () => {
 describe('the bar says when the semantic gates did not run', () => {
   it('files the task and prints the skip notice — silence would read as a clean check', () => {
     startCycle();
-    const r = cli(`tasks create "a justified task" --by sleep --why "${WHY}"`);
+    const r = cli(`tasks create "a justified task" --by sleep ${ASK_BASIS} --why "${WHY}"`);
     expect(r.code).toBe(0);
     expect(existsSync(taskFile('a-justified-task'))).toBe(true);
     expect(r.out).toContain(SKIP_NOTICE);
@@ -303,7 +312,7 @@ describe('a declined idea cannot be re-filed by a cycle', () => {
   it('REFUSES the exact idea with the date, the topic and the way back', () => {
     decline();
     startCycle();
-    const r = cli(`tasks create "${DECLINE_TOPIC}" --by sleep --why "${WHY}"`);
+    const r = cli(`tasks create "${DECLINE_TOPIC}" --by sleep ${ASK_BASIS} --why "${WHY}"`);
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/Declined on \d{4}-\d{2}-\d{2}/);
     expect(r.out).toContain(DECLINE_TOPIC);
@@ -314,9 +323,9 @@ describe('a declined idea cannot be re-filed by a cycle', () => {
   it('lets the same task through once the decline is lifted awake', () => {
     decline();
     startCycle();
-    expect(cli(`tasks create "${DECLINE_TOPIC}" --by sleep --why "${WHY}"`).code).toBe(1);
+    expect(cli(`tasks create "${DECLINE_TOPIC}" --by sleep ${ASK_BASIS} --why "${WHY}"`).code).toBe(1);
     expect(cli(`tasks undecline ${DECLINE_KEY}`).code).toBe(0);
-    const r = cli(`tasks create "${DECLINE_TOPIC}" --by sleep --why "${WHY}"`);
+    const r = cli(`tasks create "${DECLINE_TOPIC}" --by sleep ${ASK_BASIS} --why "${WHY}"`);
     expect(r.code).toBe(0);
     expect(existsSync(taskFile(DECLINE_KEY))).toBe(true);
   });
@@ -401,7 +410,7 @@ describe.skipIf(!MODEL_READY)('the semantic gates through the real binary (model
 
   it('MERGE band: refuses a near-verbatim twin, names it, and writes no file', () => {
     const r = mcli(
-      `tasks create "${CANDIDATE_NAME}" --by sleep -d "${TWIN_DESC}" --why "${WHY}"`,
+      `tasks create "${CANDIDATE_NAME}" --by sleep ${ASK_BASIS} -d "${TWIN_DESC}" --why "${WHY}"`,
       MERGE_BAND,
     );
     expectGatesLive(r.out);
@@ -413,7 +422,7 @@ describe.skipIf(!MODEL_READY)('the semantic gates through the real binary (model
 
   it('MERGE band has no --neighbor-checked escape — only `--by human` gets past it', () => {
     const r = mcli(
-      `tasks create "${CANDIDATE_NAME}" --by sleep -d "${TWIN_DESC}" --why "${WHY}" --neighbor-checked ${TWIN_SLUG}`,
+      `tasks create "${CANDIDATE_NAME}" --by sleep ${ASK_BASIS} -d "${TWIN_DESC}" --why "${WHY}" --neighbor-checked ${TWIN_SLUG}`,
       MERGE_BAND,
     );
     expectGatesLive(r.out);
@@ -424,7 +433,7 @@ describe.skipIf(!MODEL_READY)('the semantic gates through the real binary (model
 
   it('REVIEW band: refuses and asks the specialist to name the neighbor', () => {
     const r = mcli(
-      `tasks create "${CANDIDATE_NAME}" --by sleep -d "${TWIN_DESC}" --why "${WHY}"`,
+      `tasks create "${CANDIDATE_NAME}" --by sleep ${ASK_BASIS} -d "${TWIN_DESC}" --why "${WHY}"`,
       REVIEW_BAND,
     );
     expectGatesLive(r.out);
@@ -436,7 +445,7 @@ describe.skipIf(!MODEL_READY)('the semantic gates through the real binary (model
 
   it('REVIEW band: naming the WRONG neighbor is not proof of having looked', () => {
     const r = mcli(
-      `tasks create "${CANDIDATE_NAME}" --by sleep -d "${TWIN_DESC}" --why "${WHY}" --neighbor-checked some-other-task`,
+      `tasks create "${CANDIDATE_NAME}" --by sleep ${ASK_BASIS} -d "${TWIN_DESC}" --why "${WHY}" --neighbor-checked some-other-task`,
       REVIEW_BAND,
     );
     expectGatesLive(r.out);
@@ -447,7 +456,7 @@ describe.skipIf(!MODEL_READY)('the semantic gates through the real binary (model
 
   it('REVIEW band: --neighbor-checked <the neighbor> files the task and logs the verdict', () => {
     const r = mcli(
-      `tasks create "${CANDIDATE_NAME}" --by sleep -d "${TWIN_DESC}" --why "${WHY}" --neighbor-checked ${TWIN_SLUG}`,
+      `tasks create "${CANDIDATE_NAME}" --by sleep ${ASK_BASIS} -d "${TWIN_DESC}" --why "${WHY}" --neighbor-checked ${TWIN_SLUG}`,
       REVIEW_BAND,
     );
     expectGatesLive(r.out);
@@ -475,7 +484,7 @@ describe.skipIf(!MODEL_READY)('the semantic gates through the real binary (model
     expect(mcli(`tasks decline "${DECLINE_TOPIC}" --reason "${DECLINE_REASON}"`).code).toBe(0);
 
     // CREATE_BAND puts gate 5 out of reach, so this refusal can only be gate 6.
-    const refused = mcli(`tasks create "${REWORD_NAME}" --by sleep --why "${REWORD_WHY}"`, CREATE_BAND);
+    const refused = mcli(`tasks create "${REWORD_NAME}" --by sleep ${ASK_BASIS} --why "${REWORD_WHY}"`, CREATE_BAND);
     expectGatesLive(refused.out);
     expect(refused.code).toBe(1);
     expect(refused.out).toContain('Looks like a declined idea');
@@ -484,7 +493,7 @@ describe.skipIf(!MODEL_READY)('the semantic gates through the real binary (model
     expect(existsSync(taskFile(REWORD_SLUG, mroot))).toBe(false);
 
     const lifted = mcli(
-      `tasks create "${REWORD_NAME}" --by sleep --why "${REWORD_WHY}" --declined-checked ${DECLINE_KEY}`,
+      `tasks create "${REWORD_NAME}" --by sleep ${ASK_BASIS} --why "${REWORD_WHY}" --declined-checked ${DECLINE_KEY}`,
       CREATE_BAND,
     );
     expectGatesLive(lifted.out);

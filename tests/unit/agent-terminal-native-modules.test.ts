@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { cliPackageRoot, ensureNativeModulesDir, nativeModulesDir } from '../../src/server/routes/agent-terminal.js';
 
@@ -65,8 +65,10 @@ describe('node-pty install target resolution', () => {
       expect(cliPackageRoot('')).toBeNull();
     });
 
-    it('defaults to the running entry module, which under test IS this repo', () => {
-      expect(cliPackageRoot()).toBe(process.cwd());
+    it('defaults to the running entry module, which under test IS the repo vitest runs from', () => {
+      // The entry is vitest's own module, resolved through the real path of node_modules: in a
+      // worktree whose node_modules is a symlink to the main checkout, that repo is the owner.
+      expect(cliPackageRoot()).toBe(dirname(realpathSync(join(process.cwd(), 'node_modules'))));
     });
   });
 
