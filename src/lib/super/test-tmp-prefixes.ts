@@ -332,6 +332,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-review-gate-',
   'dc-review-gate-home-',
   'dc-roadmap-',
+  'dc-roster-launch-',
+  'dc-roster-launch-home-',
   'dc-roster-mode-',
   'dc-roster-mode-home-',
   'dc-route-home-',

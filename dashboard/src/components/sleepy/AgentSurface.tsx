@@ -26,6 +26,7 @@ import { deriveSessionStatus, rollupProject, type ProjectRollup, type SessionRow
 import { PaneFragment, type PaneActions } from './PaneFragment';
 import { usePaneFocusGlide } from './usePaneFocusGlide';
 import { superRestorePlan, type SuperHold } from './superRestore';
+import { chatLaunch, dormantLaunch, launchFromSaved, resumePlan, savedChatLaunch, type ChatLaunch } from './chatLaunch';
 import { AgentTabs, type PaneVM } from './AgentTabs';
 import { createTabDragStore, type TabDropTarget } from './tabDrag';
 import { MobileSessionDrawer } from './MobileSessionDrawer';
@@ -186,6 +187,9 @@ interface SessionMeta {
    *  in the same kind with the model, effort and account it had. Never persisted: a relaunch
    *  resumes a saved chat anyway. */
   parked?: { at: number; transport: 'chat' | 'agent'; model?: string; effort?: string; account?: string };
+  /** A dormant restored CHAT tab's model, effort and account (from the roster): Resume reopens
+   *  it on them, and a save writes them back until it runs again (chatLaunch.ts). */
+  launch?: ChatLaunch;
 }
 
 /** A fresh Claude conversation UUID for a new tab. `crypto.randomUUID()` works on the
@@ -294,6 +298,11 @@ interface SavedMeta {
   titleByAgent?: boolean;
   /** GET-response-ONLY: a super child a relaunch must not resume, and why (superRestore.ts). */
   superHold?: SuperHold;
+  /** Chat only: what it ran on, so a relaunch resumes it on them. Mirrors the server's
+   *  `SavedMeta.model/effort/account`; GET fills a Super child's from its record. */
+  model?: string;
+  effort?: string;
+  account?: string;
 }
 
 /** The whole `GET /api/agent/sessions` body: the roster plus the two surface-level facts that
@@ -1199,11 +1208,15 @@ export function AgentSurface() {
             // A card-closed, parked or gone super child comes back DORMANT on its own
             // conversation: Resume reopens it, nothing runs until then (superRestore.ts).
             if ((kind === 'agent' || kind === 'chat') && m.sessionId && superRestorePlan(m.superHold) === 'dormant') {
+              // Whatever it restores as: a Super child dormant under the Terminal screen may be
+              // resumed as a chat later, and GET sends these only for chats and Super children.
+              const launch = launchFromSaved(m);
               return {
                 id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId, dormant: true,
                 ...(kind === 'chat' ? { mode: knownChatMode(m.mode) ?? DEFAULT_CHAT_MODE } : {}),
                 ...(m.agent ? { agent: m.agent } : {}),
-                // The roster keeps no model, effort or account: Resume uses the defaults for those.
+                // Resume reopens it on the model, effort and account it ran on (the roster's).
+                ...(Object.keys(launch).length ? { launch } : {}),
                 ...(m.superHold === 'parked' ? { parked: { at: Date.now(), transport: kind === 'chat' ? 'chat' as const : 'agent' as const } } : {}),
                 ...(m.titleByAgent ? { titleByAgent: true } : {}),
               };
@@ -1228,7 +1241,10 @@ export function AgentSurface() {
               // PASSIVE (hands-free Mac mode): a restore is an automatic open, so it adopts a
               // chat left detached by the reload but never takes one another screen holds — that
               // tab comes back showing "Buraya al" instead (4409).
-              const s = spawn(m.bypass, m.sessionId, true, kind, '', '', true, '', false, '', true, savedMode, '', '', 'passive');
+              // On the model, effort and account it ran on: without them a restored Super child
+              // reopened on the Chat default (often xhigh), whatever it was started with.
+              const launch = kind === 'chat' ? launchFromSaved(m) : {};
+              const s = spawn(m.bypass, m.sessionId, true, kind, '', launch.model ?? '', true, '', false, launch.effort ?? '', true, savedMode, launch.account ?? '', '', 'passive');
               return {
                 id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId,
                 ...(kind === 'chat' ? { mode: savedMode } : {}),
@@ -1315,6 +1331,12 @@ export function AgentSurface() {
   // Best-effort: a failed PUT just means this change isn't mirrored.
   useEffect(() => {
     if (!hydratedRef.current) return;
+    const liveChatLaunch = (id: string): ChatLaunch | null => {
+      const live = sessions.current.get(id);
+      if (!live || live.kind !== 'chat') return null;
+      const chat = live as ChatSession;
+      return chatLaunch(modelForSession(chat), effortForSession(chat), chat.accountId);
+    };
     const handle = setTimeout(() => {
       if (!hydratedRef.current) return; // a re-hydrate started: never send the stale payload
       // The layout, flattened to what survives a relaunch: which pane (by POSITION, since pane
@@ -1353,6 +1375,11 @@ export function AgentSurface() {
             // state on BOTH sides, so a plain chat tab's payload is unchanged.
             ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
             ...(m.kind === 'chat' && m.agent ? { agent: m.agent } : {}),
+            // The model, effort and account it runs on, so a relaunch resumes it on them: a
+            // running chat's own, else (dormant, parked) the ones its Resume will use.
+            // A relaunch-parked Super child has an empty `parked` beside its `launch`: each field
+            // falls back to the launch's, as its Resume does, so a save never erases them.
+            ...savedChatLaunch(m.kind, liveChatLaunch(m.id), dormantLaunch(m.parked, m.launch)),
           })),
           ...carriedUnrestored(unrestoredRef.current, new Set(sessionList.map((m) => m.claudeId)))],
       };
@@ -1371,7 +1398,9 @@ export function AgentSurface() {
     // `panes`/`activePaneId`/`chatPermissionMode` join the roster in the deps because they are
     // now part of what is persisted — a split, a tab drag or a permission change has to reach
     // disk, and the 400ms debounce is what keeps a drag from writing once per frame.
-  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi, rehydrateRoster]);
+    // `modelForSession`/`effortForSession` too: a model or effort picked on a running chat is
+    // part of what a relaunch resumes it on.
+  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi, rehydrateRoster, modelForSession, effortForSession]);
 
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
@@ -1601,19 +1630,22 @@ export function AgentSurface() {
     // Keyed on the TRANSPORT it ran as, so a parked automation tab (display kind) comes back too.
     // A super child the relaunch held dormant (superRestore.ts) carries its saved mode and
     // agent with no `parked`: it too comes back as the chat it was, under its own bypass.
-    const parked = meta.parked;
-    const asChat = parked ? parked.transport === 'chat' : meta.kind === 'chat' && !!meta.mode;
+    // How, and on what (parked first, else the roster's settings): `resumePlan` (chatLaunch.ts),
+    // which `super resume` reports from too.
+    const plan = resumePlan(meta, claudeKind);
+    const { asChat, launch } = plan;
     if (asChat) bindChatAgent(meta.claudeId, meta.agent ?? '');
     const s = meta.kind === 'shell'
       ? spawn(meta.bypass, undefined, false, 'shell')
       : asChat
-        ? spawn(meta.bypass, meta.claudeId, true, 'chat', '', parked?.model ?? '', true, '', false, parked?.effort ?? '', true, meta.mode ?? DEFAULT_CHAT_MODE, parked?.account ?? '')
-        : spawn(meta.bypass, meta.claudeId, true, parked ? parked.transport : claudeKind);
+        ? spawn(meta.bypass, meta.claudeId, true, 'chat', '', launch.model ?? '', true, '', false, launch.effort ?? '', true, meta.mode ?? DEFAULT_CHAT_MODE, launch.account ?? '')
+        // A dormant tab reopening as a chat in Basic (no mode) still has the roster's settings.
+        : spawn(meta.bypass, meta.claudeId, true, plan.spawnKind as SessionKind, '', launch.model ?? '', true, '', false, launch.effort ?? '', false, DEFAULT_CHAT_MODE, launch.account ?? '');
     // 'automation' is a DISPLAY kind decoupled from transport (see hydration above and
     // `openAutomationRunChat` below) — preserve it rather than letting the spawned session's
     // actual agent/chat kind overwrite it on a manual resume of a dormant automation tab.
     const kind: SessionKind = meta.kind === 'automation' ? 'automation' : s.kind;
-    setSessionList((prev) => prev.map((m) => (m.id === sid ? { ...m, id: s.id, kind, bypass: s.bypass, claudeId: s.claudeId, dormant: false, parked: undefined } : m)));
+    setSessionList((prev) => prev.map((m) => (m.id === sid ? { ...m, id: s.id, kind, bypass: s.bypass, claudeId: s.claudeId, dormant: false, parked: undefined, launch: undefined } : m)));
     setPanes((prev) => prev.map((p) => ({
       ...p,
       tabs: p.tabs.map((t) => (t === sid ? s.id : t)),
@@ -3494,9 +3526,13 @@ export function AgentSurface() {
       if (existing) {
         // A parked tab comes back exactly as it was parked (`resumeSession`): say so, so the
         // record holds what runs, not the request.
-        const p = existing.parked?.transport === 'chat' ? existing.parked : undefined;
+        // Report exactly what `resumeSession` reopens it on (`resumePlan`), so the record holds
+        // what runs: a tab the relaunch held dormant resumes on the roster's settings. Reopened as
+        // a terminal, nothing chat-shaped is reported and the record keeps its own.
+        const plan = resumePlan(existing, claudeKind);
         resumeSession(existing.id);
-        return { ok: true, result: { sessionId: child, mode: (p && existing.mode) || DEFAULT_CHAT_MODE, model: p?.model ?? '', effort: p?.effort ?? '' } };
+        if (plan.spawnKind !== 'chat') return { ok: true, result: { sessionId: child } };
+        return { ok: true, result: { sessionId: child, mode: (plan.asChat && existing.mode) || DEFAULT_CHAT_MODE, model: plan.launch.model ?? '', effort: plan.launch.effort ?? '' } };
       }
       const r = delegateArgs({ prompt: '-', mode: args.mode, model: args.model, effort: args.effort, title: args.title });
       if (!r.ok) return r;

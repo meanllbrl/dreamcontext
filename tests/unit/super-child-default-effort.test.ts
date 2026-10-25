@@ -1,7 +1,8 @@
 /**
  * A child delegated without `--effort` must not inherit the owner's global effort (often xhigh)
- * (owner, 2026-10-22): the server writes a default by mode (basic medium, plan/develop high) into
- * the spawn frame AND the child's record. xhigh and max only ever come from an explicit effort.
+ * (owner, 2026-10-22; develop medium since 2026-10-24): the server writes a default by mode (basic
+ * medium, plan high, develop medium) into the spawn frame AND the child's record. xhigh and max only
+ * ever come from an explicit effort.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -96,7 +97,7 @@ function fillCap(): void {
 const asked = () => commands()[0].args as Record<string, unknown>;
 
 describe('a child delegated without effort', () => {
-  for (const [mode, want] of [['basic', 'medium'], ['plan', 'high'], ['develop', 'high']] as const) {
+  for (const [mode, want] of [['basic', 'medium'], ['plan', 'high'], ['develop', 'medium']] as const) {
     it(`${mode} opens on ${want}, never xhigh, and the record says so`, async () => {
       write();
       const r = await verb('delegate', { prompt: 'Do the work.', brief: 'work', mode, ...(mode !== 'basic' ? {} : {}) });

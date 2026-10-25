@@ -29,8 +29,10 @@ const OBSERVED_CHECK = `- The observed check, when a criterion is about what the
  * `dreamcontext builder review-pick` (src/lib/review-route.ts) decides. The lead synthesizes
  * the team's reports, so it may dedupe but never drop or downgrade a blocking finding: in
  * plain multi-review the synthesizer is a neutral party; here it is the author.
+ * Every judge names its effort (owner, 2026-10-24): Opus `high` whatever the lead runs at (an
+ * unnamed one inherited it, so a medium lead had medium judges), the router Sonnet `low`.
  */
-const END_REVIEW_PICK = `Pick the end review first, in its own step: ONE \`review-router\` sub-agent (Agent tool) told
+const END_REVIEW_PICK = `Pick the end review first, in its own step: ONE \`review-router\` sub-agent (Agent tool, model sonnet, effort low) told
 to classify \`git diff <START> <NOW> -- <the review's paths, by name>\`. Write its reply to
 $ROOT/tmp/develop/$S/route.md, then:
 
@@ -45,7 +47,7 @@ any auth, secret, env or endpoint file. No \`review-*\` agents in this project? 
 general-purpose agents with the router's and each specialist's mandate.`;
 
 const END_REVIEW_TEAM = `- For \`multi-review\`, instead of that one reviewer: exactly the team the line names, one
-  sub-agent each (model opus, not in the background), each given its scope from the plan
+  sub-agent each (model opus, effort high, not in the background), each given its scope from the plan
   (every changed path when the plan names none for it), START, NOW and the task's criteria.
   \`review-edge-cases\` is always on it and also gets the REVIEWER brief's sentence on ticked
   criteria; a \`reviewer\` on it gets the whole REVIEWER brief. Merge their reports into ONE
@@ -236,7 +238,7 @@ The end review and the final check run at the same time, dispatched in ONE messa
   dreamcontext goal-live phase codereview || true
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer || true
 
-- ONE \`reviewer\` sub-agent (Agent tool, model opus, not in the background) with the reviewer
+- ONE \`reviewer\` sub-agent (Agent tool, model opus, effort high, not in the background) with the reviewer
   brief (section 4): every path you changed, enumerated by name, with START and NOW, never a
   bare \`git diff\` against a ref. It fetches its own changes; never paste a diff.
 ${END_REVIEW_TEAM}
@@ -273,7 +275,7 @@ When the owner asks:
   dreamcontext goal-live phase validate || true
   dreamcontext goal-live actor validator --kind fresh --role validator || true
 
-Dispatch ONE \`goal-validator\` (model opus) with the validator brief. Log every verdict:
+Dispatch ONE \`goal-validator\` (model opus, effort high) with the validator brief. Log every verdict:
 \`dreamcontext tasks log "$S" "validator PASS"\` or \`"validator FAIL: <what>"\`, and record it
 with \`goal-live state validator=PASS|FAIL || true\`. FAIL: the phase STAYS validate. Never
 call \`phase impl\` or \`phase codereview\` after \`phase validate\`. Fix the failure, check it,
@@ -517,7 +519,7 @@ owner. Each result is printed once.
   dreamcontext goal-live phase codereview --wave N || true
   dreamcontext goal-live actor wN-reviewer --kind fresh --role reviewer --wave N || true
 
-Dispatch ONE \`reviewer\` sub-agent (Agent tool, model opus, not in the background) with the
+Dispatch ONE \`reviewer\` sub-agent (Agent tool, model opus, effort high, not in the background) with the
 reviewer brief (section 5), in the same message as the wave's \`builder test\` call. It
 fetches its own changes; never paste a diff. Record the verdict BEFORE the next phase:
 
@@ -564,7 +566,7 @@ The end review and the final check run at the same time, dispatched in ONE messa
   dreamcontext goal-live phase codereview || true
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer || true
 
-- ONE \`reviewer\` (model opus, not in the background) over the union of every wave's scope
+- ONE \`reviewer\` (model opus, effort high, not in the background) over the union of every wave's scope
   no wave reviewer read, enumerated by name, with the wave-1 START tree: never a bare
   \`git diff\` against a ref. A run whose every wave was REVIEWED skips it, unless a criterion
   is about what the owner sees: then this reviewer still runs, over the task's ticks and their
@@ -599,7 +601,7 @@ When the owner asks:
   dreamcontext goal-live phase validate || true
   dreamcontext goal-live actor validator --kind fresh --role validator || true
 
-Dispatch ONE \`goal-validator\` (model opus) with the validator brief. Log every verdict:
+Dispatch ONE \`goal-validator\` (model opus, effort high) with the validator brief. Log every verdict:
 \`dreamcontext tasks log "$S" "validator PASS"\` or \`"validator FAIL -> wM-L"\`, and record it
 with \`goal-live state validator=PASS|FAIL || true\`. FAIL: the phase STAYS validate. Never
 call \`phase impl\` or \`phase codereview\` after \`phase validate\`. Resume the owning

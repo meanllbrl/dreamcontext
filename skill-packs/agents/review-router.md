@@ -18,6 +18,7 @@ description: >
   </commentary>
   </example>
 model: sonnet
+effort: low
 color: cyan
 tools:
   - Bash

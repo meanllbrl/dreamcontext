@@ -90,11 +90,14 @@ export const SUPER_AGENT_DEFAULT: Readonly<{ model: ModelFamilyKey; effort: Mode
 /**
  * The effort a Super Agent child opens on when the delegate names none (owner, 2026-10-22: xhigh
  * is for the few jobs that earn it). Without this the child inherits the owner's own global
- * setting, often xhigh. By mode: a Plan or Develop child reasons at `high`, a basic one at
- * `medium`. `xhigh` and `max` are only ever an explicit `--effort`.
+ * setting, often xhigh. By mode: a Plan child reasons at `high`; a Develop child builds a
+ * reviewed plan at `medium` (owner, 2026-10-24: measured, xhigh and high bought no fewer review
+ * FAILs, the judges are pinned to high on their own); a basic one at `medium`. `high` for a
+ * security, money or data-migration develop, and `xhigh` (a critical plan) or `max`, are only
+ * ever an explicit `--effort`.
  */
 export const CHILD_DEFAULT_EFFORT: Readonly<Record<'basic' | 'plan' | 'develop', ModelEffort>> =
-  Object.freeze({ basic: 'medium', plan: 'high', develop: 'high' });
+  Object.freeze({ basic: 'medium', plan: 'high', develop: 'medium' });
 
 export function childDefaultEffort(mode: string): ModelEffort {
   return CHILD_DEFAULT_EFFORT[mode as keyof typeof CHILD_DEFAULT_EFFORT] ?? 'medium';

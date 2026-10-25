@@ -60,7 +60,8 @@ If there are no changes, say so and stop.
 
 ### 1. Dispatch the router
 
-Dispatch **one** `review-router` sub-agent with the diff in its prompt. It returns
+Dispatch **one** `review-router` sub-agent (model sonnet, effort low: it only
+classifies) with the diff in its prompt. It returns
 a dispatch plan (JSON) with:
 
 ```json
@@ -92,9 +93,9 @@ in the specialist set regardless of tier.
 
 ### 2. Dispatch specialists in parallel
 
-In a single message, fire one `Agent` call per named specialist:
-`review-security`, `review-cloud-functions`, `review-frontend`,
-`review-edge-cases`. Pass each one only the files in *its* scope from the
+In a single message, fire one `Agent` call per named specialist (model opus,
+effort high, whatever your own effort): `review-security`,
+`review-cloud-functions`, `review-frontend`, `review-edge-cases`. Pass each one only the files in *its* scope from the
 dispatch plan (do not give every specialist every file — niche is the point).
 
 Each specialist returns a full report (bounded, greptile-style markdown ≤1000

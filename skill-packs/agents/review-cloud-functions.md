@@ -20,6 +20,7 @@ description: >
   </commentary>
   </example>
 model: opus
+effort: high
 color: blue
 tools:
   - Read

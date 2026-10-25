@@ -16,8 +16,11 @@ import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { superSanitizeOpts } from '../../lib/super/inbox.js';
 import { superRestoreHold, type SuperRestoreHold } from '../../lib/super/restore.js';
-import { emptySuperState } from '../../lib/super/types.js';
+import { emptySuperState, type SuperState } from '../../lib/super/types.js';
 import { parkedSince } from '../chat-park.js';
+import { sanitizeModel } from '../../lib/claude-args.js';
+import { getClaudeAccount, isSafeAccountId } from '../../lib/claude-accounts.js';
+import { childDefaultEffort } from '../../lib/model-facts.js';
 
 /**
  * Per-vault persistence of the embedded-agent session ROSTER (titles + layout) so a
@@ -117,7 +120,20 @@ export interface SavedMeta {
   /** The current title was set by the tab's own agent (a chat `title` block), so the agent may
    *  rename it again when the work moves on; a user rename drops it. Only `true` survives. */
   titleByAgent?: boolean;
+  /**
+   * Present only alongside `kind: 'chat'`: the model, effort and account this conversation was
+   * running on, so a relaunch resumes it on them. Without these a restored chat fell back to
+   * the owner's Chat default (often xhigh): a Super child started at medium came back at xhigh
+   * after every app restart (owner, 2026-10-24). Each is gated like its spawn parameter
+   * (`sanitizeModel`, {@link EFFORT_LEVELS}, `isSafeAccountId`); the spawn gates them again.
+   */
+  model?: string;
+  effort?: string;
+  account?: string;
 }
+
+/** `claude --effort`'s documented set, the same list `agent-spawn-shared.ts` gates a spawn by. */
+const EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /** Hard ceiling on rostered sessions (extras are dropped, not rejected). */
 export const MAX_SESSIONS = 20;
@@ -214,6 +230,10 @@ function coerceMeta(raw: unknown): SavedMeta {
     ? (o.mode as ChatMode)
     : undefined;
   const agent = kind === 'chat' && typeof o.agent === 'string' && isSafeAutomationSlug(o.agent) ? o.agent : undefined;
+  // What the chat was running on: chat only, like `mode`, and each through its spawn gate.
+  const model = kind === 'chat' && typeof o.model === 'string' ? sanitizeModel(o.model) : '';
+  const effort = kind === 'chat' && typeof o.effort === 'string' && EFFORT_LEVELS.includes(o.effort) ? o.effort : '';
+  const account = kind === 'chat' && typeof o.account === 'string' && o.account.length <= 64 && isSafeAccountId(o.account) ? o.account : '';
   // A pane index is clamped into range rather than dropped: it is a layout hint, and the
   // worst a clamped value can do is put a tab in the nearest real pane. MAX_SESSIONS is the
   // ceiling because a roster of N tabs can never need more than N panes.
@@ -233,7 +253,30 @@ function coerceMeta(raw: unknown): SavedMeta {
     ...(pane !== undefined ? { pane } : {}),
     ...(o.active === true ? { active: true } : {}),
     ...(o.titleByAgent === true ? { titleByAgent: true } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+    ...(account ? { account } : {}),
   };
+}
+
+/**
+ * The launch settings a restored chat entry resumes with, as GET returns them. A Super child
+ * whose saved entry names no model or effort (a roster written before they were kept) takes
+ * them from its record, and with no effort there either, the child default for its mode: a
+ * restored child never falls back to the owner's Chat default. An account no longer registered
+ * on this machine is dropped (the default account is used), never handed to a spawn that would
+ * refuse it. Exported for unit testing.
+ */
+export function restoredLaunch(m: SavedMeta, superState: SuperState, hasAccount: (id: string) => boolean): Pick<SavedMeta, 'model' | 'effort' | 'account'> {
+  if (m.kind === 'shell') return {};
+  const child = m.sessionId && Object.prototype.hasOwnProperty.call(superState.children, m.sessionId) ? superState.children[m.sessionId] : undefined;
+  // A Super child saved as a terminal agent (the Agent screen was Terminal) keeps nothing of its
+  // own, but may come back as a chat: its record still answers. Any other non-chat tab: nothing.
+  if (m.kind !== 'chat' && !child) return {};
+  const model = m.model || (child?.model ? sanitizeModel(child.model) : '');
+  const effort = m.effort || (child ? (child.effort && EFFORT_LEVELS.includes(child.effort) ? child.effort : childDefaultEffort(child.mode ?? 'basic')) : '');
+  const account = m.account && hasAccount(m.account) ? m.account : '';
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(account ? { account } : {}) };
 }
 
 /**
@@ -542,6 +585,9 @@ export async function handleAgentSessionsGet(
   for (const m of body.sessions as SessionRosterEntry[]) {
     const hold = m.sessionId ? superRestoreHold(superState, m.sessionId, parkedSince(m.sessionId) !== null) : null;
     if (hold) m.superHold = hold;
+    const launch = restoredLaunch(m, superState, (id) => getClaudeAccount(id, home) !== null);
+    delete m.model; delete m.effort; delete m.account;
+    Object.assign(m, launch);
   }
   sendJson(res, 200, body);
 }

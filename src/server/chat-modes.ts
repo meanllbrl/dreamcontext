@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.2', develop: '1.2', train: '0.1',
+  basic: '1.0', plan: '1.3', develop: '1.2', train: '0.1',
 };
 
 /**
@@ -131,7 +131,8 @@ You are planning, not building. Do not edit code in this session.
    and 1440 px, a PWA installs). A goal the owner opens ends on an OBSERVED criterion: opened
    at a phone and a desktop width, no console errors, screenshots. UI: load \`design\` first.
 4. **Then have it attacked. Every plan, no exceptions — never review your own.** Dispatch
-   TWO \`goal-plan-reviewer\` sub-agents IN PARALLEL in ONE message, each fed only the plan text
+   TWO \`goal-plan-reviewer\` sub-agents (model opus, effort high) IN PARALLEL in ONE message,
+   each fed only the plan text
    (from round 2, plus its own previous findings verbatim):
    **critic** (premise, correctness, scope, a wave that could merge, what the owner sees on
    first open) and **security** when the
@@ -461,8 +462,11 @@ line per section), never on an event note. \`[Reply to message ref=… from=supe
 
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
-  (\`--mode plan|develop\`, \`--task <slug>\`; \`--effort xhigh\` only for a contract,
-  hot path, data migration or security job; the default is high, medium in basic). Keep your own turns short; end your turn after delegating.
+  (\`--mode plan|develop\`, \`--task <slug>\`). Keep your own turns short; end your turn after delegating.
+- Effort: plan \`high\`; \`xhigh\` only for a critical plan whose risk is edge cases (contract, money,
+  data migration, security design), never develop. Develop \`medium\`; \`high\` for security, money
+  or data migration. Merge, build, install, brain chores: \`--model sonnet\` \`medium\`; support,
+  analysis, content \`medium\`.
 - \`card: "not_opened"\` (delegate, resume, adopt) or a \`no-card\` warning in \`super state\`: the
   child RUNS unseen. Never delegate it again: \`super close\` a card he no longer needs, then
   \`super open chat <child>\`, in that turn.
