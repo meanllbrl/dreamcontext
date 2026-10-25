@@ -13,21 +13,21 @@ import { splitNotchCue } from '../../dashboard/src/lib/notchCue.js';
 
 describe('splitReplyMark', () => {
   it('one ref, then the body', () => {
-    expect(splitReplyMark('<!-- re:k3f9q0 -->\nThe login page is fixed.')).toEqual({ refs: ['k3f9q0'], body: 'The login page is fixed.', pending: false });
-    expect(splitReplyMark('  <!--re:k3f9q0-->Done.')).toEqual({ refs: ['k3f9q0'], body: 'Done.', pending: false });
+    expect(splitReplyMark('<!-- re:k3f9q0 -->\nThe login page is fixed.')).toEqual({ refs: ['k3f9q0'], body: 'The login page is fixed.', pending: false, sections: [{ at: 0, refs: ['k3f9q0'] }] });
+    expect(splitReplyMark('  <!--re:k3f9q0-->Done.')).toEqual({ refs: ['k3f9q0'], body: 'Done.', pending: false, sections: [{ at: 0, refs: ['k3f9q0'] }] });
   });
 
   it('one to three refs; a mark naming more still counts (never shown), its refs all read', () => {
     expect(splitReplyMark('<!-- re:k3f9q0 a1b2c3 -->\nBoth done.').refs).toEqual(['k3f9q0', 'a1b2c3']);
     expect(splitReplyMark('<!-- re: k3f9q0  a1b2c3 zz00zz -->\nAll three.').refs).toEqual(['k3f9q0', 'a1b2c3', 'zz00zz']);
     // The owner's "5 messages in a row": the model may name them all in one mark.
-    expect(splitReplyMark('<!-- re:k3f9q0 a1b2c3 zz00zz 999999 aaaaaa -->\nFive.')).toEqual({ refs: ['k3f9q0', 'a1b2c3', 'zz00zz', '999999', 'aaaaaa'], body: 'Five.', pending: false });
+    expect(splitReplyMark('<!-- re:k3f9q0 a1b2c3 zz00zz 999999 aaaaaa -->\nFive.')).toMatchObject({ refs: ['k3f9q0', 'a1b2c3', 'zz00zz', '999999', 'aaaaaa'], body: 'Five.', pending: false });
   });
 
   it('a mark written loosely is still ours: never shown, only well-formed refs counted', () => {
-    expect(splitReplyMark('<!-- re:K3F9Q0, A1B2C3 -->\nx')).toEqual({ refs: ['k3f9q0', 'a1b2c3'], body: 'x', pending: false });
+    expect(splitReplyMark('<!-- re:K3F9Q0, A1B2C3 -->\nx')).toEqual({ refs: ['k3f9q0', 'a1b2c3'], body: 'x', pending: false, sections: [{ at: 0, refs: ['k3f9q0', 'a1b2c3'] }] });
     for (const t of ['<!-- re:k3f9 -->\nx', '<!-- re: -->\nx', '<!-- re:k3f9q0x -->\nx']) {
-      expect(splitReplyMark(t)).toEqual({ refs: [], body: 'x', pending: false });
+      expect(splitReplyMark(t)).toEqual({ refs: [], body: 'x', pending: false, sections: [{ at: 0, refs: [] }] });
     }
     // Not a mark at all: another comment, or one that never closes on its line.
     for (const t of ['<!-- note: k3f9q0 -->\nx', '<!-- re:k3f9q0\nx']) expect(splitReplyMark(t).body).toBe(t);
@@ -35,7 +35,7 @@ describe('splitReplyMark', () => {
 
   it('streaming: pending while the head may still become a mark, nothing drawn', () => {
     for (const head of ['', ' ', '<', '<!', '<!-', '<!--', '<!-- ', '<!-- r', '<!-- re', '<!-- re:', '<!-- re:k3', '<!-- re:k3f9q0', '<!-- re:k3f9q0 ', '<!-- re:k3f9q0 -', '<!-- re:k3f9q0 --']) {
-      expect(splitReplyMark(head)).toEqual({ refs: [], body: '', pending: true });
+      expect(splitReplyMark(head)).toEqual({ refs: [], body: '', pending: true, sections: [] });
     }
   });
 
@@ -51,12 +51,12 @@ describe('splitReplyMark', () => {
   });
 
   it('plain text as soon as it cannot be a mark, and past the head limit', () => {
-    expect(splitReplyMark('Hello')).toEqual({ refs: [], body: 'Hello', pending: false });
+    expect(splitReplyMark('Hello')).toEqual({ refs: [], body: 'Hello', pending: false, sections: [] });
     expect(splitReplyMark('<b>bold</b>').pending).toBe(false);
     expect(splitReplyMark('<!-- note to self').pending).toBe(false);
     const long = `<!-- re:${'k3f9q0 '.repeat(20)}`;
     expect(long.length).toBeGreaterThan(client.REPLY_MARK_HEAD_MAX);
-    expect(splitReplyMark(long)).toEqual({ refs: [], body: long, pending: false });
+    expect(splitReplyMark(long)).toEqual({ refs: [], body: long, pending: false, sections: [] });
   });
 
   // Measured with the real model (2026-10-23): one block answering three messages opens a
@@ -84,7 +84,7 @@ describe('splitReplyMark', () => {
 
   it('a notch cue is never a mark, and a mark never a notch cue', () => {
     const cue = '<!-- notch:present -->\nThe answer.';
-    expect(splitReplyMark(cue)).toEqual({ refs: [], body: cue, pending: false });
+    expect(splitReplyMark(cue)).toEqual({ refs: [], body: cue, pending: false, sections: [] });
     expect(splitReplyMark('<!-- no').pending).toBe(false);
     const mark = '<!-- re:k3f9q0 -->\nThe answer.';
     expect(splitNotchCue(mark)).toEqual({ cue: null, body: mark, pending: false });
@@ -95,6 +95,64 @@ describe('splitReplyMark', () => {
     expect(stripReplyMark('<!-- re:k3f9q0 -->\nHi')).toBe('Hi');
     expect(stripReplyMark('Hi <!-- re:k3f9q0 -->')).toBe('Hi <!-- re:k3f9q0 -->');
     expect(stripReplyMark('<!-- notch:present -->\nHi')).toBe('<!-- notch:present -->\nHi');
+  });
+});
+
+// Owner 2026-10-24 (pick A): inside one reply each part opens with the chip of the message it
+// answers, so every line-start mark is also a SECTION at its offset in the body (D1a-e).
+describe('splitReplyMark sections', () => {
+  const MEASURED = '<!-- re:aaaaaa -->\nThe Orbit checkout form still runs its tests.\n\n<!-- re:bbbbbb -->\nThe pricing card is renamed.\n\n<!-- re:cccccc -->\nThe deploy is green.';
+  const at = (body: string, word: string) => body.indexOf(word);
+
+  it('the measured three-section text: one section per mark at its words, body and refs as before', () => {
+    const split = splitReplyMark(MEASURED);
+    expect(split.body).toBe(stripReplyMark(MEASURED));
+    expect(split.refs).toEqual(['aaaaaa', 'bbbbbb', 'cccccc']);
+    expect(split.sections).toEqual([
+      { at: 0, refs: ['aaaaaa'] },
+      { at: at(split.body, 'The pricing'), refs: ['bbbbbb'] },
+      { at: at(split.body, 'The deploy'), refs: ['cccccc'] },
+    ]);
+  });
+
+  it('a preamble is no section; stacked marks with only blank lines between merge', () => {
+    const pre = splitReplyMark('Looking at all three.\n\n<!-- re:aaaaaa -->\nOne.\n\n<!-- re:bbbbbb -->\nTwo.');
+    expect(pre.sections).toEqual([{ at: at(pre.body, 'One.'), refs: ['aaaaaa'] }, { at: at(pre.body, 'Two.'), refs: ['bbbbbb'] }]);
+    const stacked = splitReplyMark('<!-- re:aaaaaa -->\n\n<!-- re:bbbbbb -->\nBoth of these.\n\n<!-- re:cccccc -->\nThird.');
+    expect(stacked.sections).toEqual([{ at: at(stacked.body, 'Both'), refs: ['aaaaaa', 'bbbbbb'] }, { at: at(stacked.body, 'Third.'), refs: ['cccccc'] }]);
+  });
+
+  it('a fenced mark (~~~, an indented ```, a fence still open at the end) is no section; its ref stays', () => {
+    for (const fence of ['~~~\n<!-- re:bbbbbb -->\nx\n~~~', '  ```md\n<!-- re:bbbbbb -->\nx\n  ```']) {
+      const s = splitReplyMark(`<!-- re:aaaaaa -->\nOne.\n\n${fence}\n\nMore.`);
+      expect(s.sections).toEqual([{ at: 0, refs: ['aaaaaa'] }]);
+      expect(s.refs).toEqual(['aaaaaa', 'bbbbbb']);
+    }
+    const open = splitReplyMark('<!-- re:aaaaaa -->\nOne.\n\n```\n<!-- re:bbbbbb -->\nstill writing');
+    expect(open.sections).toEqual([{ at: 0, refs: ['aaaaaa'] }]);
+  });
+
+  it('a 0-ref mark with words is a section; a first mark naming two refs plus a later mark gives two', () => {
+    const zero = splitReplyMark('<!-- re:aaaaaa -->\nOne.\n\n<!-- re: -->\nNobody\'s.');
+    expect(zero.sections).toEqual([{ at: 0, refs: ['aaaaaa'] }, { at: at(zero.body, 'Nobody'), refs: [] }]);
+    const mixed = splitReplyMark('<!-- re:aaaaaa bbbbbb -->\nBoth.\n\n<!-- re:cccccc -->\nThird.');
+    expect(mixed.sections.map((s) => s.refs)).toEqual([['aaaaaa', 'bbbbbb'], ['cccccc']]);
+  });
+
+  it('streamed in deltas (a mark split across them, a prefix ending right at a closed mark): no section before its words, offsets as one-shot', () => {
+    const deltas = ['<!-- re:aa', 'aaaa -->\nThe Orbit', ' checkout form still runs its tests.\n\n<!-', '- re:bbbbbb -->', '\n', 'The pricing card is renamed.\n\n<!-- re:cccccc -->\n', 'The deploy', ' is green.'];
+    let raw = '';
+    const counts: number[] = [];
+    for (const d of deltas) {
+      raw += d;
+      const s = splitReplyMark(raw);
+      counts.push(s.sections.length);
+      // Never a section whose words have not come.
+      for (const sec of s.sections) expect(s.body.slice(sec.at).trim()).not.toBe('');
+    }
+    expect(raw).toBe(MEASURED);
+    expect(counts).toEqual([0, 1, 1, 1, 1, 2, 3, 3]);
+    expect(splitReplyMark(raw)).toEqual(splitReplyMark(MEASURED));
   });
 });
 

@@ -84,7 +84,10 @@ export type ChatSegment =
   | { kind: 'html'; html: string }
   /** A fence that hasn't closed yet. `partial` is the source written so far — empty for a
    *  `view`, whose payload is JSON and has nothing legible to show mid-stream. */
-  | { kind: 'pending'; fence: 'html' | 'view'; partial: string };
+  | { kind: 'pending'; fence: 'html' | 'view'; partial: string }
+  /** Where section `index` of a sectioned Super reply starts (`parseChatActions`' `sectionAt`):
+   *  everything up to the next marker is that section. Only ever emitted when asked for. */
+  | { kind: 'section'; index: number };
 
 export interface ParsedAnswer {
   /**
@@ -148,6 +151,18 @@ const blockSlot = (index: number) => `\n\u0000dcblock${index}\u0000\n`;
 const BLOCK_SLOT_RE = /\u0000dcblock(\d+)\u0000/;
 /** Global and captureless, for flattening the markers back out of `body`. */
 const BLOCK_SLOT_RE_G = /\u0000dcblock\d+\u0000/g;
+/**
+ * A sectioned Super reply's section starts (owner 2026-10-24: every part of one reply opens with
+ * the chip of the message it answers) ride the same way: planted at their offsets before any
+ * fence is lifted, split back out as `section` segments, and flattened out of `body`, so every
+ * per-message cap and `body` itself stay whole-message.
+ */
+const sectionSlot = (index: number) => `\n\u0000dcsec${index}\u0000\n`;
+const SECTION_SLOT_RE_G = /\u0000dcsec\d+\u0000/g;
+/** Either marker, captured as [kind, index], for the one split. */
+const ANY_SLOT_RE = /\u0000dc(block|sec)(\d+)\u0000/;
+/** A link reference definition's whole line (the `LINK_DEF_RE` shape). */
+const LINK_DEF_LINE_RE = /^ {0,3}\[[^\]\n]+\]:\s.*$/gm;
 
 /** Closed ```dream-actions fence. Tolerates ~~~ and a trailing language-line space. */
 const ACTION_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-actions[ \t]*\r?\n([\s\S]*?)\r?\n?\1\2[ \t]*$/gim;
@@ -278,7 +293,7 @@ export function parseActionBlock(json: string, onDrop?: () => void): ChatAction[
  * the message — it is dropped and reported via `notices`, and the surrounding prose survives
  * untouched.
  */
-export function parseChatActions(raw: string): ParsedAnswer {
+export function parseChatActions(raw: string, opts?: { sectionAt?: readonly number[] }): ParsedAnswer {
   if (!raw) {
     return { segments: [], body: '', actions: [], boards: [], blocks: [], views: [], notices: [], pendingView: false };
   }
@@ -286,7 +301,9 @@ export function parseChatActions(raw: string): ParsedAnswer {
   // NUL goes first, before any marker can be planted: block positions ride through the
   // pipeline as NUL-delimited slot markers (`blockSlot`), so a NUL arriving in the answer
   // itself is the one way to forge one. Nothing legitimate in a message contains it.
-  const text = raw.replace(/\u0000/g, '');
+  let text = raw.replace(/\u0000/g, '');
+  const sectioned = !!opts?.sectionAt?.length;
+  if (sectioned) text = plantSections(raw, text, opts!.sectionAt!);
 
   const actions: ChatAction[] = [];
   const blocks: ChatBlock[] = [];
@@ -363,11 +380,11 @@ export function parseChatActions(raw: string): ParsedAnswer {
   // where a fence used to be. Applied to the slotted string and the flattened one alike:
   // a slot marker is not whitespace, so it survives both untouched.
   const slotted = tidyProse(body);
-  const flatBody = tidyProse(body.replace(BLOCK_SLOT_RE_G, ''));
+  const flatBody = tidyProse(body.replace(BLOCK_SLOT_RE_G, '').replace(SECTION_SLOT_RE_G, ''));
 
   const views = blocks.flatMap((b) => (b.kind === 'view' ? [b.view] : []));
   return {
-    segments: buildSegments(slotted, flatBody, blocks, pendingFence, pendingPartial),
+    segments: buildSegments(slotted, flatBody, blocks, pendingFence, pendingPartial, sectioned),
     body: flatBody,
     actions: actions.slice(0, MAX_ACTIONS),
     boards,
@@ -376,6 +393,15 @@ export function parseChatActions(raw: string): ParsedAnswer {
     notices,
     pendingView: pendingFence !== null,
   };
+}
+
+/** Section slots planted into the NUL-free `text` at offsets into `raw`: each offset loses the
+ *  NULs before it, so a NUL in the answer neither forges nor shifts a section. */
+function plantSections(raw: string, text: string, sectionAt: readonly number[]): string {
+  const at = sectionAt.map((o) => Math.max(0, Math.min(text.length, o - (raw.slice(0, o).match(/\u0000/g)?.length ?? 0))));
+  let out = text;
+  for (let i = at.length - 1; i >= 0; i -= 1) out = out.slice(0, at[i]) + sectionSlot(i) + out.slice(at[i]);
+  return out;
 }
 
 /** One prose run, with the holes the lifted fences left in it closed up. */
@@ -401,13 +427,25 @@ function buildSegments(
   blocks: ChatBlock[],
   pendingFence: 'html' | 'view' | null,
   pendingPartial: string,
+  sectioned = false,
 ): ChatSegment[] {
   const segments: ChatSegment[] = [];
 
   if (LINK_DEF_RE.test(flatBody)) {
-    if (flatBody) segments.push({ kind: 'prose', text: flatBody });
+    if (!sectioned) {
+      if (flatBody) segments.push({ kind: 'prose', text: flatBody });
+    } else {
+      // Sections survive the fallback: each part's prose carries every definition line of the
+      // message, so a reference resolves in any part (a definition renders nothing).
+      const defs = (flatBody.match(LINK_DEF_LINE_RE) ?? []).join('\n');
+      tidyProse(slotted.replace(BLOCK_SLOT_RE_G, '')).split(/\u0000dcsec(\d+)\u0000/).forEach((part, i) => {
+        if (i % 2 === 1) { segments.push({ kind: 'section', index: Number(part) }); return; }
+        const prose = tidyProse(part);
+        if (prose) segments.push({ kind: 'prose', text: prose.includes(defs) ? prose : `${prose}\n\n${defs}` });
+      });
+    }
     segments.push(...blocks);
-  } else {
+  } else if (!sectioned) {
     // `split` with a capture group yields [prose, index, prose, index, …] — the odd
     // positions are a slot's block index, the even ones the prose around it.
     slotted.split(BLOCK_SLOT_RE).forEach((part, i) => {
@@ -419,6 +457,18 @@ function buildSegments(
       const prose = tidyProse(part);
       if (prose) segments.push({ kind: 'prose', text: prose });
     });
+  } else {
+    // Two captures: [prose, kind, index, prose, kind, index, …].
+    const parts = slotted.split(ANY_SLOT_RE);
+    for (let i = 0; i < parts.length; i += 3) {
+      const prose = tidyProse(parts[i]);
+      if (prose) segments.push({ kind: 'prose', text: prose });
+      if (i + 2 >= parts.length) break;
+      const index = Number(parts[i + 2]);
+      if (parts[i + 1] === 'sec') { segments.push({ kind: 'section', index }); continue; }
+      const block = blocks[index];
+      if (block) segments.push(block);
+    }
   }
 
   // Always last, because an open fence is by definition the last thing in the text.

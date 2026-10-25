@@ -146,10 +146,17 @@ describe('superBriefing', () => {
   // for a critical plan whose risk is edge cases, develop medium, sonnet for chores); it replaces
   // the old xhigh clause. Measured: +199 characters.
   const EFFORT_POLICY_2026_10_24 = 200;
+  // The owner, 2026-10-24 (task super-in-tek-cevabi…): one section per message, each with its own
+  // `re:` line, never several refs on one line, never his message repeated as a heading
+  // (measured with the next rule: +313 characters together).
+  const REPLY_SECTIONS_2026_10_24 = 170;
+  // The owner, 2026-10-24: "questions that need an action must not be asked inside text": a
+  // choice he must make lives in a `super ask` card; the text says in one line that one waits.
+  const ASK_IN_CARD_2026_10_24 = 150;
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + EFFORT_POLICY_2026_10_24);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + REPLY_SECTIONS_2026_10_24 + ASK_IN_CARD_2026_10_24 + EFFORT_POLICY_2026_10_24);
       expect(b).toContain('small|medium|large|wide');
       expect(b).toContain('409 owner_sized');
       expect(b).toContain('`card: "not_opened"` (delegate, resume, adopt) or a `no-card` warning');
@@ -167,9 +174,25 @@ describe('how the super agent talks to the owner', () => {
     expect(brief).toContain('Write in his language, for someone juggling many things who must not lose the thread');
     for (const rule of [
       'one\nsubject per message', 'the result or what you need from him first', '2-4 short sentences',
-      'ids,\nhashes, paths and commands only when he asks', 'never switch subject mid-message', 'at most one\nquestion, at the end',
+      'ids,\nhashes, paths and commands only when he asks', 'never switch subject mid-message',
       'Name any irreversible or outward action (push, merge, delete, a message sent) in plain words',
     ]) expect(brief).toContain(rule);
+  });
+
+  it('a choice he must make lives in the question card, never only in the text (owner 2026-10-24)', () => {
+    // "Questions that need an action must not be asked inside text; ask them with the ask
+    // action, otherwise they slip by unseen." The old "at most one question, at the end" went.
+    expect(brief).toContain('a choice you\nneed from him goes in a `super ask` card, never only as a question in your text');
+    expect(brief).toContain('the text says in one line that a question waits');
+    expect(brief).toContain('Say\n  in that turn\'s text, in one line, that a question waits, and end it');
+    expect(brief).not.toContain('at most one\nquestion, at the end');
+    expect(brief).not.toContain('Write\n  the question in that turn too');
+  });
+
+  it('one section per message, each with its own re: line (owner 2026-10-24, pick A)', () => {
+    expect(brief).toContain('one section per\nmessage in the order he wrote them');
+    expect(brief).toContain('never\nseveral refs on one line');
+    expect(brief).toContain('never repeat his message as a heading');
   });
 
   it('the owner\'s field rules of 2026-10-21: his language, no jargon, no time estimates (2026-10-22), rows from the first turn, no reply to a repeat', () => {
@@ -188,7 +211,7 @@ describe('how the super agent talks to the owner', () => {
   });
 
   it('every event last line, the handover and the recap carry the same rules', () => {
-    for (const rule of ['one subject', 'the result or what you need from him first', '2-4 short sentences', 'no ids, hashes, paths, commands or inside jargon unless he asks', 'at most one question and only at the end', 'in plain words']) {
+    for (const rule of ['one subject', 'the result or what you need from him first', '2-4 short sentences', 'no ids, hashes, paths, commands or inside jargon unless he asks', 'a choice he must make asked in a `super ask` card and never only as a question in your text', 'in plain words']) {
       expect(OWNER_VOICE).toContain(rule);
     }
     const s = { ...emptySuperState(), session: 'sup', enabled: true };

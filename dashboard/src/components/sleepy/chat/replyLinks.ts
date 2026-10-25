@@ -16,6 +16,14 @@
  *    message directly above it (nothing but this turn's rows between), so a plain
  *    one-message-one-answer exchange stays as it was.
  *
+ * SECTIONED (owner 2026-10-24, pick A): a text with two or more sections (`replySections`, one per
+ * line-start mark) answers several messages part by part. It always opens its own group, never
+ * draws a strip, and carries each section's targets so the transcript heads every part with the
+ * chip of the message it answers. A strip is drawn only once its group's first text is done: a
+ * streaming text could still gain a second section, and a strip shown then would have to vanish.
+ * Everything else is as before. While a text streams, its refs are read from its sections, so a
+ * closed mark with no words under it yet moves nothing.
+ *
  * Two owner messages with the same words share a ref; "nearest preceding" may then point an
  * out-of-order answer at the later copy. Accepted: same words, same strip.
  *
@@ -24,7 +32,7 @@
  */
 import { msgRef } from '../../../lib/superTypes';
 import type { ChatItem, ChatUserItem } from '../chatSession';
-import { superEventOf } from '../super/superHandover';
+import { splitAbout, superEventOf, type AgendaAbout } from '../super/superHandover';
 
 /** An owner message: a user item that is not an injected super event turn, live (`superEvent`)
  *  or replayed (its `[super …]` prefix). A question card's answer is his words too. */
@@ -39,11 +47,18 @@ export interface ReplyGroup {
   first: boolean;
   /** The owner messages it answers, as user item ids, in the order the mark named them. */
   targets: string[];
-  /** Draw the strip: there are targets and they are not just the message right above. */
+  /** Draw the strip: there are targets, they are not just the message right above, and the
+   *  group's first text is done. Never on a SECTIONED group. */
   strip: boolean;
+  /** On a SECTIONED text's own entry: each section's start in its text and the owner messages
+   *  it answers ([] when its refs resolve to nothing). */
+  sections?: Array<{ at: number; targets: string[] }>;
 }
 
-interface Building { groupId: string; members: string[]; targets: string[]; strip: boolean }
+interface Building {
+  groupId: string; members: string[]; targets: string[]; strip: boolean;
+  sections?: { id: string; list: Array<{ at: number; targets: string[] }> };
+}
 
 const isStep = (it: ChatItem) => it.kind === 'tool' || it.kind === 'thinking';
 const sameTargets = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -63,6 +78,19 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
   let textSinceUser = false;
   /** The turn was opened by an injected event, not by him. */
   let eventTurn = false;
+
+  /** Refs to owner message ids: the nearest preceding message with that ref; unresolved drop. */
+  const resolve = (refs: readonly string[]): string[] => {
+    const targets: string[] = [];
+    for (const ref of refs) {
+      for (let i = owners.length - 1; i >= 0; i -= 1) {
+        if (owners[i].ref !== ref) continue;
+        if (!targets.includes(owners[i].id)) targets.push(owners[i].id);
+        break;
+      }
+    }
+    return targets;
+  };
 
   const closeTurn = () => {
     if (last && pending.length) last.members.push(...pending);
@@ -85,16 +113,29 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
     if (isStep(it)) { pending.push(it.id); continue; }
     if (it.kind !== 'text' || !it.text.trim()) continue;
     // A Super text: who it answers.
+    const sections = it.replySections ?? [];
+    if (sections.length >= 2) {
+      // SECTIONED: its own group, no strip. Rows before it stay in the group it was continuing
+      // while it had one section, so that group's line never shrinks back.
+      const was: Building | null = last;
+      const continuing = !!was && waiting.length === 0 && sameTargets(resolve(sections[0].refs), was.targets);
+      if (was && continuing) was.members.push(...pending);
+      const members: string[] = continuing ? [it.id] : [...pending, it.id];
+      last = {
+        groupId: `rg-${it.id}`, members, targets: resolve(it.replyTo ?? []), strip: false,
+        sections: { id: it.id, list: sections.map((s) => ({ at: s.at, targets: resolve(s.refs) })) },
+      };
+      groups.push(last);
+      pending = [];
+      if (!eventTurn) waiting = [];
+      textSinceUser = true;
+      continue;
+    }
+    // Streaming: only the refs of sections that have words (a closed mark alone moves nothing).
+    const refs = !it.done && sections.length ? sections.flatMap((s) => s.refs) : it.replyTo;
     let targets: string[];
-    if (it.replyTo?.length) {
-      targets = [];
-      for (const ref of it.replyTo) {
-        for (let i = owners.length - 1; i >= 0; i -= 1) {
-          if (owners[i].ref !== ref) continue;
-          if (!targets.includes(owners[i].id)) targets.push(owners[i].id);
-          break;
-        }
-      }
+    if (refs?.length) {
+      targets = resolve(refs);
     } else if (eventTurn) {
       targets = last ? last.targets : [];
     } else if (waiting.length === 1) {
@@ -108,7 +149,7 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
       last.members.push(...pending, it.id);
     } else {
       const adjacent = targets.length === 1 && targets[0] === lastUser && !textSinceUser;
-      last = { groupId: `rg-${it.id}`, members: [...pending, it.id], targets, strip: targets.length > 0 && !adjacent };
+      last = { groupId: `rg-${it.id}`, members: [...pending, it.id], targets, strip: it.done && targets.length > 0 && !adjacent };
       groups.push(last);
     }
     pending = [];
@@ -119,7 +160,74 @@ export function replyGroups(entries: readonly ChatItem[]): Map<string, ReplyGrou
 
   const out = new Map<string, ReplyGroup>();
   for (const g of groups) {
-    g.members.forEach((id, i) => out.set(id, { groupId: g.groupId, first: i === 0, targets: g.targets, strip: g.strip }));
+    g.members.forEach((id, i) => out.set(id, {
+      groupId: g.groupId, first: i === 0, targets: g.targets, strip: g.strip,
+      ...(g.sections?.id === id ? { sections: g.sections.list } : {}),
+    }));
   }
   return out;
 }
+
+/**
+ * What one section's head shows (owner 2026-10-24, pick A), as plain data: the chip of the
+ * message it answers. `about` when that message was written about an agenda line (the pink dot
+ * and the line), `reply` otherwise (↩ "To your message" or "To N messages"). No translated text:
+ * the head translates itself, so a language switch redraws it.
+ */
+export interface ReplyHead {
+  /** Where its section starts in the text (`replySections[i].at`). */
+  at: number;
+  kind: 'about' | 'reply';
+  about?: AgendaAbout;
+  count: number;
+  /** His words, at most three, clipped. */
+  quotes: string[];
+  /** The message a click lands on. */
+  targetId: string;
+}
+
+/** A SECTIONED text's heads: one per section whose refs resolved (an unresolved one keeps only
+ *  its divider). `quoteOf(id, max)` reads his words for a message. */
+export function sectionHeads(
+  sections: ReadonlyArray<{ at: number; targets: string[] }>,
+  items: ReadonlyMap<string, ChatItem>,
+  quoteOf: (id: string, max: number) => string,
+): ReplyHead[] {
+  return sections.flatMap((s) => {
+    if (!s.targets.length) return [];
+    const first = items.get(s.targets[0]);
+    const about = s.targets.length === 1 && first?.kind === 'user' ? splitAbout(first.text).about : null;
+    const agenda = about && (about.kind === 'note' || about.kind === 'item') ? about : null;
+    const many = s.targets.length > 1;
+    return [{
+      at: s.at, kind: agenda ? 'about' as const : 'reply' as const, ...(agenda ? { about: agenda } : {}),
+      count: s.targets.length, quotes: s.targets.slice(0, 3).map((id) => quoteOf(id, many ? 40 : 80)), targetId: s.targets[0],
+    }];
+  });
+}
+
+const headsKey = (heads: readonly ReplyHead[]) => heads.map((h) => (
+  `${h.at}:${h.kind}:${h.count}:${h.targetId}:${h.quotes.join('\u0001')}:${h.about ? `${h.about.kind}/${h.about.id}/${h.about.line ?? ''}` : ''}`
+)).join('|');
+
+/**
+ * Every SECTIONED text's heads, by text id. An array keeps its identity while its content is
+ * unchanged (`cache` is the previous call's result), so the memoized row of a sectioned answer
+ * is not re-rendered by anything but its own text or heads.
+ */
+export function replyHeadsById(
+  replyMap: ReadonlyMap<string, ReplyGroup>,
+  items: ReadonlyMap<string, ChatItem>,
+  quoteOf: (id: string, max: number) => string,
+  cache: ReadonlyMap<string, ReplyHead[]> = new Map(),
+): Map<string, ReplyHead[]> {
+  const out = new Map<string, ReplyHead[]>();
+  for (const [id, g] of replyMap) {
+    if (!g.sections) continue;
+    const heads = sectionHeads(g.sections, items, quoteOf);
+    const prev = cache.get(id);
+    out.set(id, prev && headsKey(prev) === headsKey(heads) ? prev : heads);
+  }
+  return out;
+}
+

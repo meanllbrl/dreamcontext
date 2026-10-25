@@ -3,7 +3,7 @@ import { SpeechQueue, type SpokenChunk, type StopReason } from '../../lib/voice/
 import { turnTrace } from '../../lib/voice/turnTrace';
 import { readAloudEnabled } from '../../lib/voice/readAloud';
 import { splitNotchCue, stripNotchCue, presentationOf, type NotchCue } from '../../lib/notchCue';
-import { splitReplyMark } from '../../lib/replyMark';
+import { splitReplyMark, type ReplySection } from '../../lib/replyMark';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { chatAgentFor } from '../../lib/chatAgentBinding';
@@ -96,11 +96,21 @@ export interface ChatTextItem {
   /** In a Super view: the owner messages this block answers, by reference (its
    *  `<!-- re:<ref> -->` head, which `text` never holds). Absent: no mark. */
   replyTo?: string[];
+  /** In a Super view: where each line-start mark's section starts in `text`, with the refs it
+   *  named (`splitReplyMark`'s sections). Absent: no section. */
+  replySections?: ReplySection[];
+  /** Closed by the turn's end (`result`, exit, error) rather than its own block-stop: the
+   *  stream was cut. Its late full echo replaces it in place. */
+  cut?: true;
 }
 /** One Assistant text block as the notch should show it (`ChatSession.onPresent`). A block with
  *  no cue is an answer: `present`, not staying. */
 export interface NotchPresentation { itemId: string; kind: NotchCue['kind']; stay: boolean; text: string }
-export interface ChatThinkingItem { kind: 'thinking'; id: string; index: number; text: string; done: boolean; ts: number }
+export interface ChatThinkingItem {
+  kind: 'thinking'; id: string; index: number; text: string; done: boolean; ts: number;
+  /** Closed by the turn's end, not its own block-stop (see `ChatTextItem.cut`). */
+  cut?: true;
+}
 /** A tool call THIS conversation's agent made. There is deliberately no `parentToolUseId`
  *  field: a sub-agent's tool calls never become items at all (the reducer drops every frame
  *  carrying one), so the transcript is main-agent-only by construction. The field used to
@@ -1097,13 +1107,14 @@ export function createChatSession(
   // hands-free phone the Super's conversation is a `superMirror` session, not mode `super`.
   const superView = mode === 'super' || superMirror;
   const replyRefs = new Map<string, string[]>();
-  /** A text item with its reply refs as the head parsed so far (absent: none). */
+  const replySecs = new Map<string, ReplySection[]>();
+  /** A text item with its reply refs and sections as the text parsed so far (absent: none). */
   function withReplyTo(it: ChatTextItem): ChatTextItem {
     const refs = superView ? replyRefs.get(it.id) : undefined;
-    if (refs) return { ...it, replyTo: refs };
-    if (!it.replyTo) return it;
-    const { replyTo: _gone, ...rest } = it;
-    return rest;
+    const secs = superView ? replySecs.get(it.id) : undefined;
+    const { replyTo: _r, replySections: _s, ...rest } = it;
+    if (!refs && !secs) return it.replyTo || it.replySections ? rest : it;
+    return { ...rest, ...(refs ? { replyTo: refs } : {}), ...(secs ? { replySections: secs } : {}) };
   }
   /** The body to store for item `itemId` given its full raw text (identity outside assistant
    *  mode and a Super view). */
@@ -1112,6 +1123,7 @@ export function createChatSession(
       cueRaw.set(itemId, raw);
       const split = splitReplyMark(raw);
       if (split.refs.length) replyRefs.set(itemId, split.refs); else replyRefs.delete(itemId);
+      if (split.sections.length) replySecs.set(itemId, split.sections); else replySecs.delete(itemId);
       return split.body;
     }
     if (mode !== 'assistant') return raw;
@@ -1120,6 +1132,19 @@ export function createChatSession(
     if (split.pending) { cues.delete(itemId); return ''; }
     cues.set(itemId, split.cue);
     return split.body;
+  }
+  /** The turn ended (`result`, exit, error) with text or thinking still open: a stream cut
+   *  without its block-stop (Stop, a relay error, an exit). Close them, so a caret stops and a
+   *  reply's strip or heads show as they would on replay; a delta arriving later finds no open
+   *  block and drops. Speech is not touched: the turn's own end already settled it. */
+  function closeOpenBlocks(): void {
+    openBlocksByIndex.clear();
+    if (!conv.items.some((it) => (it.kind === 'text' || it.kind === 'thinking') && !it.done)) return;
+    const items = conv.items.map((it) => (
+      it.kind === 'text' && !it.done ? { ...it, done: true, cut: true as const }
+        : it.kind === 'thinking' && !it.done ? { ...it, done: true, cut: true as const } : it
+    ));
+    conv = { ...conv, items };
   }
   /** The raw text an item has received so far (its body, outside assistant mode and a Super view). */
   function rawOf(itemId: string, body: string): string {
@@ -1607,6 +1632,18 @@ export function createChatSession(
           const echoed = kind !== 'text' ? ev.text
             : superView ? splitReplyMark(ev.text).body : mode === 'assistant' ? stripNotchCue(ev.text) : ev.text;
           if (last && (last as ChatTextItem | ChatThinkingItem).text === echoed) return;
+          // The full echo of a block the turn's end cut short: it replaces that block in place,
+          // never a second copy. Only the cut block itself (written, and nothing of his after
+          // it), so a later turn's echo never lands on an old one. Not spoken: its turn is over.
+          const at = last ? conv.items.lastIndexOf(last) : -1;
+          if (last && (last as ChatTextItem | ChatThinkingItem).cut && last.kind === kind
+            && (last as ChatTextItem | ChatThinkingItem).text && echoed.startsWith((last as ChatTextItem | ChatThinkingItem).text)
+            && !conv.items.slice(at + 1).some((it) => it.kind === 'user')) {
+            const items = conv.items.slice();
+            items[at] = last.kind === 'text' ? withReplyTo({ ...last, text: cueBody(last.id, ev.text) }) : { ...(last as ChatThinkingItem), text: ev.text };
+            conv = { ...conv, items };
+            return;
+          }
           const id = nextItemId();
           const made: ChatTextItem | ChatThinkingItem = {
             kind, id, index: -1, text: kind === 'text' ? cueBody(id, ev.text) : ev.text, done: true, ts: Date.now(),
@@ -1932,6 +1969,7 @@ export function createChatSession(
           lastResult: { success: ev.success, text: ev.text, costUsd: ev.costUsd, usage: ev.usage, numTurns: ev.numTurns, permissionDenials: ev.permissionDenials },
         };
         session.busy = false;
+        closeOpenBlocks();
         // The turn is over, so a trailing partial chunk will never be closed by more text.
         speech?.flushTurn();
         // Finished while minimized (not looking at it) -> flag the dock's attention badge,
@@ -1959,6 +1997,7 @@ export function createChatSession(
         session.busy = false;
         // The process is gone: a spoken turn it was answering ends with it.
         voiceTurn = false;
+        closeOpenBlocks();
         // Distinguishes a real process exit from a network drop (ws.onclose/onerror never
         // set this) so the Session-ended banner shows only for the former.
         conv = { ...conv, exited: { code: ev.code } };
@@ -1990,6 +2029,7 @@ export function createChatSession(
         // Also clears busy (beyond the literal "result/meta-exit" wording) — leaving busy
         // stuck true on a spawn/relay error would strand the composer disabled forever.
         session.busy = false;
+        closeOpenBlocks();
         conv = { ...conv, lastError: ev.message, lastErrorAt: conv.items.length };
         return;
       }
@@ -2937,7 +2977,11 @@ export function createChatSession(
     if (superView) {
       const split = splitReplyMark(it.text);
       if (split.pending) return it;
-      return split.refs.length ? { ...it, text: split.body, replyTo: split.refs } : { ...it, text: split.body };
+      return {
+        ...it, text: split.body,
+        ...(split.refs.length ? { replyTo: split.refs } : {}),
+        ...(split.sections.length ? { replySections: split.sections } : {}),
+      };
     }
     // A replayed Assistant block keeps its words, never its notch cue (lib/notchCue.ts).
     return mode === 'assistant' ? { ...it, text: stripNotchCue(it.text) } : it;

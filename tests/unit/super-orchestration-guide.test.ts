@@ -82,8 +82,10 @@ describe('super-orchestration guide: shape', () => {
   // +1,500 (2026-10-23): §7 Presentation layouts, the when-which table.
   // +1200 (2026-10-23): §2's message about one agenda line (~770, super-ajanda-madde-not) and
   // which answer is to which message (`<owner-msg ref>`, `<!-- re: -->`, the ↩ reply, ~360).
-  it('is at most 17,350 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(17_350);
+  // +380 (2026-10-24, measured +377): one section per message with its own `re:` line, and a
+  // choice the owner must make lives in the `super ask` card, never only in the text.
+  it('is at most 17,730 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(17_730);
   });
 
   it('has the seven sections in order', () => {

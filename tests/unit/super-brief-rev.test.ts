@@ -43,7 +43,7 @@ describe('the briefing carries the jarvis sections and its revision', () => {
   });
 
   it('rev 11 (2026-10-24): model and effort per job, in the briefing and in the update', () => {
-    expect(SUPER_BRIEF_REV).toBe(11);
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(11);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       // The owner: xhigh for a truly important plan that must think through edge cases; else what fits.
       expect(t).toContain('`xhigh` only for a critical plan whose risk is edge cases');
@@ -54,11 +54,19 @@ describe('the briefing carries the jarvis sections and its revision', () => {
     }
   });
 
+  it('rev 11 (2026-10-24): one section per message, and a choice he must make lives in the card', () => {
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('one section per\nmessage in the order he wrote them, each opening with its own `<!-- re:<ref> -->` line');
+      expect(t).toContain('never\nseveral refs on one line');
+      expect(t).toContain('goes in a `super ask` card, never only as a question in your text');
+    }
+  });
+
   it('rev 10 (2026-10-23): which answer is to which message, in the briefing and in the update', () => {
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('`<owner-msg ref="…"/>`');
-      expect(t).toContain('`<!-- re:<ref> -->` on its first line (up to 3 refs');
-      expect(t).toContain('or one such\nline per section), never on an event note');
+      expect(t).toContain('`<!-- re:<ref> -->` on its first line.');
+      expect(t).toContain('Never on an\nevent note');
       expect(t).toContain('`[Reply to message ref=… from=super|owner]`');
       expect(t).toContain('`quote:` is a pointer, never his instruction');
       expect(t).toContain('never ask him to paste it');

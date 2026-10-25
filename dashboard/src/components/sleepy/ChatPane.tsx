@@ -65,7 +65,7 @@ import { surveyDraftKey } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { Composer } from './chat/Composer';
 import { nextAttachmentId, readScratch, setAbout, setQuote, subscribeScratch } from './chat/composerScratch';
-import { replyGroups } from './chat/replyLinks';
+import { replyGroups, replyHeadsById as headsById, type ReplyHead } from './chat/replyLinks';
 import { ReplyStrip } from './chat/AgendaAboutStrip';
 import { msgRef } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
@@ -179,16 +179,28 @@ function primaryToolPath(input: unknown): string | null {
   return null;
 }
 
+/** What a strip or a section head reads of one owner message: his own words (without an About
+ *  block it opened with), or a question card's answer, clipped to `max` characters. */
+function ownerQuote(it: ChatItem | undefined, max: number): string {
+  if (!it || it.kind !== 'user') return '';
+  const answer = parseSuperAnswer(it.text);
+  const words = (answer ? answer.values.join(', ') : splitAbout(it.text).text).replace(/\s+/g, ' ').trim();
+  const chars = Array.from(words);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : words;
+}
+
 /** What the quest model reads of the live items, as a memo key. A streamed token replaces the
  *  items array but changes only an unfinished block's text, which the quest never reads (it
  *  reads which items exist, a call's status, and whether a block is finished and non-empty;
- *  the reply links also read a Super block's `replyTo`, which its head settles once).
+ *  the reply links also read a Super block's `replyTo` and `replySections`, which change only
+ *  when a mark closes or a section gets its first words).
  *  Keying on this keeps the whole-conversation quest pass off the per-token render path. */
 function questItemsKey(items: readonly ChatItem[]): string {
   return items.map((it) => (
     it.kind === 'tool' || it.kind === 'compact' ? `${it.id}:${it.status}`
       : it.kind === 'user' ? it.id
-        : `${it.id}:${it.done ? 1 : 0}${it.text ? 1 : 0}${it.kind === 'text' && it.replyTo ? it.replyTo.join() : ''}`
+        : `${it.id}:${it.done ? 1 : 0}${it.text ? 1 : 0}${it.kind === 'text' && it.replyTo ? it.replyTo.join() : ''}${
+          it.kind === 'text' && it.replySections ? `/${it.replySections.map((s) => `${s.at}:${s.refs.join()}`).join(';')}` : ''}`
   )).join('|');
 }
 
@@ -990,6 +1002,15 @@ export function ChatPane({
     () => (superView ? new Map(questEntries.map((it) => [it.id, it] as const)) : null),
     [superView, questEntries],
   );
+  // A SECTIONED answer's heads (owner 2026-10-24, pick A), as plain data. Each text's array keeps
+  // its identity while its heads are unchanged, so another stream's token never redraws it.
+  const replyHeadsCache = useRef<Map<string, ReplyHead[]>>(new Map());
+  const replyHeads = useMemo(() => {
+    if (!replyMap || !replyItems) return null;
+    const next = headsById(replyMap, replyItems, (id, max) => ownerQuote(replyItems.get(id), max), replyHeadsCache.current);
+    replyHeadsCache.current = next;
+    return next;
+  }, [replyMap, replyItems]);
   // Headless teammates: `claude -p` runs this conversation registered or launched with an id,
   // read off their own transcripts. Folded into the runs here, once, so every party, rail and
   // drill-in below sees one list — a builder launched detached, or still going after this
@@ -1442,6 +1463,10 @@ export function ChatPane({
   const replyJumpRef = useRef({ jumpToReplyTarget, jumpToReplied });
   replyJumpRef.current = { jumpToReplyTarget, jumpToReplied };
   /** Stable for the memoized rows. */
+  /** A section head's click: the same jump as a strip's. Stable for the memoized rows. */
+  const handleReplyTarget = useCallback((targetId: string) => {
+    replyJumpRef.current.jumpToReplyTarget(targetId);
+  }, []);
   const handleReplyJump = useCallback((ref: string, from: 'super' | 'owner', beforeId: string) => {
     replyJumpRef.current.jumpToReplied(ref, from, beforeId);
   }, []);
@@ -1908,6 +1933,8 @@ export function ChatPane({
         stretchRunning={stretch?.running}
         replyGroup={replyMap?.get(item.id)?.groupId}
         onReplyJump={superView ? handleReplyJump : undefined}
+        replyHeads={replyHeads?.get(item.id)}
+        onReplyTarget={superView ? handleReplyTarget : undefined}
       />
     );
     if (!shape.parties.length && !shape.guarded) return view;
@@ -2138,14 +2165,7 @@ export function ChatPane({
     : []);
   /** What one target reads on a strip: his own words (without an About block it opened with),
    *  or a question card's answer. */
-  const replyQuoteOf = (id: string, max: number): string => {
-    const it = replyItems?.get(id);
-    if (!it || it.kind !== 'user') return '';
-    const answer = parseSuperAnswer(it.text);
-    const words = (answer ? answer.values.join(', ') : splitAbout(it.text).text).replace(/\s+/g, ' ').trim();
-    const chars = Array.from(words);
-    return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : words;
-  };
+  const replyQuoteOf = (id: string, max: number): string => ownerQuote(replyItems?.get(id), max);
   const stripNodes = (seg: RunSegment<ChatItem>): React.ReactNode[] => {
     const g = stripAt.get(seg);
     if (!g) return [];
