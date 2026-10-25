@@ -15,9 +15,12 @@
  *
  * The name: the folder the pictures share (`mockups` for `tmp/mockups/a.png`), else "Images";
  * a name another group already has gets a number ("Images 2"). Pure: the route keeps the chain.
+ *
+ * PDFs and clips (`super open pdf|video`) follow the same rules, each kind its own set: the chain
+ * joins a card of the same kind only, and the fallback name is "PDFs" or "Videos".
  */
-import type { SuperContainer, SuperGroup, SuperState, SuperView } from './types.js';
-import { MIN_GROUP_CARDS, cleanGroupName } from './types.js';
+import type { ContainerKind, SuperContainer, SuperGroup, SuperState, SuperView } from './types.js';
+import { MIN_GROUP_CARDS, cleanGroupName, isMediaKind } from './types.js';
 import { jobMovedOn } from './tidy.js';
 
 /** What the plan reads of the record (the children: whose job moved on). */
@@ -32,13 +35,17 @@ export interface ImageChain { at: number; card: string; group: string | null }
 /** Folders that say nothing about the pictures in them. */
 const GENERIC_DIRS = new Set(['', '.', 'tmp', 'temp', 'agent-drops', 'images', 'img', 'screenshots', 'assets']);
 
-/** The group's name from the pictures' shared folder, else "Images". */
-export function imageGroupBase(refs: readonly string[]): string {
+/** A set's name when its folder says nothing, per media kind. */
+const FALLBACK_NAME: Partial<Record<ContainerKind, string>> = { pdf: 'PDFs', video: 'Videos' };
+
+/** The group's name from the files' shared folder, else "Images" ("PDFs", "Videos"). */
+export function imageGroupBase(refs: readonly string[], kind: ContainerKind = 'image'): string {
+  const fallback = FALLBACK_NAME[kind] ?? 'Images';
   const dirs = new Set(refs.map((r) => r.replace(/\\/g, '/').split('/').slice(0, -1).join('/')));
-  if (dirs.size !== 1) return 'Images';
+  if (dirs.size !== 1) return fallback;
   const dir = [...dirs][0];
   const base = dir.split('/').pop() ?? '';
-  return GENERIC_DIRS.has(base.toLowerCase()) ? 'Images' : (cleanGroupName(base) || 'Images');
+  return GENERIC_DIRS.has(base.toLowerCase()) ? fallback : (cleanGroupName(base) || fallback);
 }
 
 /** `base`, or `base N` with the smallest N no group is named. */
@@ -67,6 +74,7 @@ export type ImageGroupPlan =
 export function planImageGroup(
   s: Stage,
   ids: readonly string[], refs: readonly string[], prev: ImageChain | undefined, now: number, forChild?: string,
+  kind: ContainerKind = 'image',
 ): ImageGroupPlan {
   const groupOf = (id: string) => s.groups.find((g) => g.cards.includes(id));
   const free = ids.filter((id) => !groupOf(id));
@@ -78,21 +86,21 @@ export function planImageGroup(
     if (home && joinable(s, home, ids, forChild)) return { join: home.id, cards: free };
     // A home of another job: the new pictures are a set of their own (pictures of one job only).
     const oneJob = free.every((id) => linkAfter(s, ids, forChild, id) === linkAfter(s, ids, forChild, free[0]));
-    if ((homes.size === 0 || home) && free.length >= 2 && oneJob) return { make: { cards: free, name: freshGroupName(standing(s), imageGroupBase(freeRefs)) } };
+    if ((homes.size === 0 || home) && free.length >= 2 && oneJob) return { make: { cards: free, name: freshGroupName(standing(s), imageGroupBase(freeRefs, kind)) } };
     return null;
   }
   // The job the picture will be linked to: the one named now, else the one a re-opened card has.
   const link = forChild ?? s.containers.find((k) => k.id === ids[0])?.forChild;
-  const chained = prev && now - prev.at >= 0 && now - prev.at <= IMAGE_CHAIN_MS ? chainTarget(s, prev, ids, link) : null;
+  const chained = prev && now - prev.at >= 0 && now - prev.at <= IMAGE_CHAIN_MS ? chainTarget(s, prev, ids, link, kind) : null;
   if (!chained) return null;
   if ('join' in chained) return { join: chained.join, cards: free };
   if (free.includes(chained.card)) return null;
   const card = s.containers.find((k) => k.id === chained.card);
-  return { make: { cards: [chained.card, ...free], name: freshGroupName(standing(s), imageGroupBase([card?.ref ?? '', ...freeRefs].filter(Boolean))) } };
+  return { make: { cards: [chained.card, ...free], name: freshGroupName(standing(s), imageGroupBase([card?.ref ?? '', ...freeRefs].filter(Boolean), kind)) } };
 }
 
 /** A picture shown for a job that has moved on since. */
-const movedOn = (s: Stage, k: SuperContainer | undefined) => k?.kind === 'image' && jobMovedOn(k, s.children ?? {}) !== undefined;
+const movedOn = (s: Stage, k: SuperContainer | undefined) => !!k && isMediaKind(k.kind) && jobMovedOn(k, s.children ?? {}) !== undefined;
 
 const cardOf = (s: Stage, id: string) => s.containers.find((k) => k.id === id);
 
@@ -135,9 +143,10 @@ function joinable(s: Stage, g: SuperGroup, ids: readonly string[], forChild: str
 }
 
 /** The previous image's group to join, or its lone card to group with; null: the chain broke. */
-function chainTarget(s: Stage, prev: ImageChain, ids: readonly string[], forChild: string | undefined): { join: string } | { card: string } | null {
+function chainTarget(s: Stage, prev: ImageChain, ids: readonly string[], forChild: string | undefined, kind: ContainerKind): { join: string } | { card: string } | null {
   const card = s.containers.find((k) => k.id === prev.card);
-  if (!card || card.kind !== 'image') return null;
+  // A chain joins a card of its own kind only: a clip never lands in a set of pictures.
+  if (!card || card.kind !== kind) return null;
   // Another job's picture (or one linked where this is not), or the same child's from before
   // its job moved on (a design it was sent to replace): never one group, they leave apart.
   if ((card.forChild ?? '') !== (forChild ?? '') || movedOn(s, card)) return null;

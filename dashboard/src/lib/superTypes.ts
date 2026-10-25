@@ -11,7 +11,7 @@
 
 export const SUPER_STATE_VERSION = 1 as const;
 
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'browser', 'team', 'agenda'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
 
 /** The agenda card's one ref (one agenda per stage) and the size it opens at. */
@@ -180,9 +180,11 @@ export function layoutFits(layout: PresentLayout, cards: readonly LayoutCard[]):
 }
 
 /** The layout the cards pick when none is given: 1 spotlight, a child's page with its chat
- *  review, 2 compare, 3-4 grid, 5-8 filmstrip. */
+ *  review, 2 compare, 3-4 grid, 5-8 filmstrip; 2+ clips (all video) a filmstrip. */
 export function defaultLayout(cards: readonly LayoutCard[]): PresentLayout {
   if (cards.length <= 1) return 'spotlight';
+  // Clips: one big player over a strip of the rest.
+  if (cards.length <= MAX_FILMSTRIP && cards.every((c) => c.kind === 'video')) return 'filmstrip';
   if (isReviewSet(cards)) return 'review';
   if (cards.length === 2) return 'compare';
   return cards.length <= MAX_PRESENT ? 'grid' : 'filmstrip';

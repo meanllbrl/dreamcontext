@@ -165,12 +165,13 @@ block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn,
 
 **Field rules (owner, 2026-10-21).**
 - Never open a screenshot or a video yourself: hand its path to the child it concerns (a super that
-  read 8 images and 2 videos filled its context in 73 minutes).
+  read 8 images and 2 videos filled its context in 73 minutes). Showing one to the owner reads nothing:
+  `super open image|pdf|video <path…>`.
 - One owner per job: the same job once ran in two sessions and had to be rolled back. A job moving
   to a new child goes through `delegate --succeeds <old child>` (card, brief and task pass on, the old
   child is ended); any other new child for it waits until `super state` shows its old owner ended.
-- A set of pictures is ONE group: `super open image <a> <b> …`, one call. A child's pictures carry
-  `--for <child>`: they go to Others once its job moves on (new work sent, ended, a later result seen).
+- A set of pictures (or PDFs, or clips) is ONE group: `super open image|pdf|video <a> <b> …`, one call. A
+  child's carry `--for <child>`: they go to Others once its job moves on (new work sent, ended, a later result seen).
 - `super read` gives the child's last reply whole; for the state of a long job, read its task and
   its git log as well.
 - Only one integrator updates the test app (the build the owner tries); no other child installs
@@ -205,7 +206,7 @@ merges them. Reply: "Started 6 (one messages Ayla), 2 wait for the invites API. 
 
 ## 7. Presentation layouts
 `super present <card…> [--layout <name>]` takes 1-8 cards. Leave `--layout` off and the cards pick it:
-1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip, and a page with its own child's chat (and browser) is
+1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip (2+ clips: filmstrip), and a page with its own child's chat (and browser) is
 review. A wrong count for a named layout answers 400 naming the range. The owner can switch the layout
 from the stage's top band; an answer with `kept: owner_layout` means he chose it: leave it.
 
@@ -216,7 +217,7 @@ from the stage's top band; an answer with `kept: owner_layout` means he chose it
 | mockup A/B choice | compare + ask | `present <a> <b>` → `super ask --json` (previews) |
 | before / after | compare | `present <before> <after>` |
 | 3-4 options or metrics together | grid | `present <c1…c4>` |
-| picture set, deck, 5+ screenshots | filmstrip | `present <c1…c8>` |
+| picture set, deck, 5+ screenshots, 2+ clips | filmstrip | `present <c1…c8>` (clips pick it) |
 | long document, PDF, a whiteboard | spotlight | `present <card>` |
 | one metric / insight | none | `open insight <slug> --size large` |
 | talking, a card only for reference | half | `half <card>` |

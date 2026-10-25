@@ -290,6 +290,8 @@
 /* A floating card is one grab handle: its body is inert except the web Load button (FE1). */
 .super-card-frame[data-where='float'] .super-card-body { pointer-events: none; user-select: none; }
 .super-card-frame[data-where='float'] .super-web-load { pointer-events: auto; }
+/* A floating clip sent full screen (its card's full-screen button) is the player again: its controls work. */
+.super-card-frame[data-where='float'] video:fullscreen { pointer-events: auto; }
 /* While a card is dragged, no frame or board preview on the stage can swallow the pointer. */
 .super-surface[data-dragging] iframe,
 .super-surface[data-dragging] .super-card-view--board,
@@ -1357,6 +1359,13 @@
    it points (at the card's top it left the card's lower half empty, and zooming there showed nothing). */
 .super-zoom-content > .super-card-view > .doc-reader:has(> img.viewer-media) { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .super-zoom-content img.viewer-media { max-width: 100%; max-height: 100%; margin: 0; }
+/* A PDF or a clip (SuperContainer viewFor): the shared reader fills the card; a clip is fitted
+   whole, letterboxed, never cropped. */
+.super-card-view--pdf, .super-card-view--video { height: 100%; }
+.super-card-view--pdf > .doc-reader,
+.super-card-view--video > .doc-reader { flex: 1 1 auto; min-height: 0; }
+.super-card-view--video > .doc-reader { display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.super-card-view--video video.viewer-media { width: 100%; height: 100%; max-height: 100%; margin: 0; object-fit: contain; }
 
 /* The agenda's list is live on a floating card (owner 2026-10-22: the agenda is a card): its
    rows are buttons and it scrolls; the card around it is still the grab handle. */
