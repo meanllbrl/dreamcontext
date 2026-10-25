@@ -52,6 +52,13 @@ export default defineConfig({
     // is safe to revisit.
     pool: 'forks',
     teardownTimeout: 60_000,
+    // Many tests drive the real binary (`node dist/index.js`) several times. One spawn costs
+    // ~0.25 s of CPU but 1.5-2 s of wall time on a box that also runs the suite's own forks and
+    // parallel agent sessions (measured: load average 76 on 8 cores), so vitest's 5 s default
+    // timed out ~60 tests that pass alone. A timeout here only guards against a hang; no test
+    // asserts speed through it.
+    testTimeout: 60_000,
+    hookTimeout: 120_000,
     ...(isCI ? { poolOptions: { forks: { minForks: 1, maxForks: 2 } } } : {}),
   },
 });

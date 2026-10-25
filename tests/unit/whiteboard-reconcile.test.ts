@@ -101,7 +101,8 @@ beforeAll(async () => {
   } catch (err) {
     loadError = err;
   }
-}, 60_000);
+  // Bundling all of Excalidraw with esbuild: seconds alone, over a minute under full-suite load.
+}, 180_000);
 
 afterAll(() => {
   restoreGlobals();
