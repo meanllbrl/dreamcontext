@@ -124,6 +124,35 @@ export function writePageView(storage: Pick<Storage, 'setItem'> | null, view: Pa
   try { storage?.setItem(PAGE_VIEW_KEY, view); } catch { /* private mode: not remembered */ }
 }
 
+/** The roster's width in px: dragged by its right edge, kept on this machine. The default holds a
+ *  name plus one line of the last message; the floor keeps a row readable, the ceiling keeps
+ *  the conversation beside it. */
+export const ROSTER_WIDTH_KEY = 'dreamcontext.aiteam.rosterWidth';
+export const ROSTER_MIN_WIDTH = 264;
+export const ROSTER_MAX_WIDTH = 480;
+export const ROSTER_DEFAULT_WIDTH = 340;
+/** One arrow-key press, in px. */
+export const ROSTER_WIDTH_STEP = 16;
+
+/** Within the floor and ceiling, and never past half the page it shares with the conversation. */
+export function clampRosterWidth(px: number, pageWidth = 0): number {
+  const max = pageWidth > 0 ? Math.min(ROSTER_MAX_WIDTH, pageWidth / 2) : ROSTER_MAX_WIDTH;
+  return Math.round(Math.max(ROSTER_MIN_WIDTH, Math.min(px, Math.max(ROSTER_MIN_WIDTH, max))));
+}
+
+export function readRosterWidth(storage: Pick<Storage, 'getItem'> | null): number {
+  try {
+    const n = Number.parseFloat(storage?.getItem(ROSTER_WIDTH_KEY) ?? '');
+    return Number.isFinite(n) && n > 0 ? clampRosterWidth(n) : ROSTER_DEFAULT_WIDTH;
+  } catch {
+    return ROSTER_DEFAULT_WIDTH;
+  }
+}
+
+export function writeRosterWidth(storage: Pick<Storage, 'setItem'> | null, px: number): void {
+  try { storage?.setItem(ROSTER_WIDTH_KEY, String(Math.round(px))); } catch { /* private mode: not remembered */ }
+}
+
 /** How many teams the tree holds: leads that carry a team name. */
 export function teamCount(tree: TeamTree): number {
   let n = 0;

@@ -1,11 +1,16 @@
 /* AI Team — the page's own pieces. Every value is an app token (from the approved board,
    ai-team-ekranlari: mockups/src/ai-team.css), plus the tab switch and toast the retired
    Automations page owned. */
-.aiteam { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; min-height: 0; background: var(--color-bg); }
-.aiteam--panel { grid-template-columns: 264px minmax(0, 1fr) 416px; }
+.aiteam { display: grid; grid-template-columns: var(--aiteam-roster-w, 340px) minmax(0, 1fr); height: 100%; min-height: 0; background: var(--color-bg); }
+.aiteam--panel { grid-template-columns: var(--aiteam-roster-w, 340px) minmax(0, 1fr) 416px; }
 
 /* ── roster ── */
-.aiteam-roster { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--color-border); }
+.aiteam-roster { position: relative; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--color-border); }
+/* The right edge is a handle (the thread panel's pattern): drag it, or focus it and use the
+   arrow keys. Wider than the 1px rule it sits on, so it can be grabbed without aiming. */
+.aiteam-resize { position: absolute; top: 0; bottom: 0; right: -4px; z-index: 2; width: 8px; cursor: col-resize; touch-action: none; }
+.aiteam-resize:hover, .aiteam-resize:focus-visible { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+.aiteam-resize:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
 .aiteam-roster-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-5) var(--space-4) var(--space-3) var(--space-5); }
 .aiteam-roster-title { margin: 0; font-family: var(--font-family-display); font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); letter-spacing: -0.4px; color: var(--color-text); }
 .aiteam-roster-count { font-size: var(--font-size-xs); color: var(--color-text-tertiary); padding-top: 2px; }

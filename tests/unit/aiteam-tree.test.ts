@@ -10,7 +10,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  readRosterView, rollupOf, teamTreeOf, treeSections, visibleTreeLines, writeRosterView, type TeamPlacement,
+  clampRosterWidth, readRosterView, readRosterWidth, ROSTER_DEFAULT_WIDTH, ROSTER_MAX_WIDTH, ROSTER_MIN_WIDTH,
+  ROSTER_WIDTH_KEY, writeRosterWidth, rollupOf, teamTreeOf, treeSections, visibleTreeLines, writeRosterView, type TeamPlacement,
 } from '../../dashboard/src/components/aiteam/teamTree';
 import type { TeamRow, TeamStatus } from '../../dashboard/src/components/aiteam/teamModel';
 import { fileURLToPath } from 'node:url';
@@ -121,5 +122,28 @@ describe('the page wiring', () => {
     expect(src('dashboard/src/components/aiteam/TeamPanel.tsx')).toContain('<PlaceInTeam');
     expect(src('dashboard/src/hooks/useAgents.ts')).toContain('/place`');
     expect(src('src/server/index.ts')).toContain("router.post('/api/agents/:slug/place', handleAgentsPlace)");
+  });
+});
+
+describe('the roster width (drag its right edge, kept on this machine)', () => {
+  it('defaults wider than the old 264px, clamps to floor/ceiling and to half the page', () => {
+    expect(ROSTER_DEFAULT_WIDTH).toBeGreaterThan(264);
+    expect(clampRosterWidth(10)).toBe(ROSTER_MIN_WIDTH);
+    expect(clampRosterWidth(9999)).toBe(ROSTER_MAX_WIDTH);
+    expect(clampRosterWidth(400, 700)).toBe(350);
+    expect(clampRosterWidth(100, 400)).toBe(ROSTER_MIN_WIDTH);
+  });
+
+  it('is read back from storage, ignoring junk and clamping a stale value', () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    expect(readRosterWidth(storage)).toBe(ROSTER_DEFAULT_WIDTH);
+    writeRosterWidth(storage, 412.4);
+    expect(readRosterWidth(storage)).toBe(412);
+    store.set(ROSTER_WIDTH_KEY, 'abc');
+    expect(readRosterWidth(storage)).toBe(ROSTER_DEFAULT_WIDTH);
+    store.set(ROSTER_WIDTH_KEY, '5000');
+    expect(readRosterWidth(storage)).toBe(ROSTER_MAX_WIDTH);
+    expect(readRosterWidth(null)).toBe(ROSTER_DEFAULT_WIDTH);
   });
 });
