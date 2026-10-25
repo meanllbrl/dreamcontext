@@ -14,12 +14,13 @@ import {
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, AGENDA_SIZE, MAX_PAD, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, dissolveGroups, floatCount, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  type ContainerKind, type ContainerShape, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
+  type ContainerKind, type ContainerShape, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
-import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamAskWatcher, setTeamLiveSource, settleTeamJob, teamJobEvent, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
+import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobEnding, teamJobOwed, teamJobStatus, type LiveSayJob } from '../../lib/super/team.js';
 import { sayToAgent } from './automations.js';
-import { currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
-import { getAutomation } from '../../lib/automations/store.js';
+import { agentActivity, currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
+import { automationPath, getAutomation } from '../../lib/automations/store.js';
+import { agentPath } from '../../lib/agents/store.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
   agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
@@ -1712,6 +1713,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       startedAt: Date.now(),
       // Asked for in the owner's own turn: he waits on its result.
       ...(ownersTurn(c) ? { awaited: true as const } : {}),
+      // Its ending is owed to the super until its done or stuck is told (watched until then).
+      open: true,
     };
     await writeSuper(root, (s) => recordTeamJob(s, job));
     if (job.jobKind === 'reply' && job.jobId) recordReplyEnding(root, job.id, job.jobId);
@@ -1722,9 +1725,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 };
 
+/** The say path's own job for a team job is still in flight (running, or a reply waiting). */
+function sayJobRuns(live: LiveSayJob | null): boolean {
+  return !!live && live.status === 'running';
+}
+
 /** A team job as the agent reads it: its live status and last line (the member's text, fenced). */
 function teamJobRow(root: string, vault: string, j: SuperTeamJob): Record<string, unknown> {
-  const live = teamJobLive(root, j, liveSayJob(root, j));
+  const live = teamJobStatus(root, j, liveSayJob(root, j));
   return {
     ...j,
     brief: j.brief ? wrapUntrusted(vault, j.brief) : '',
@@ -1750,64 +1758,78 @@ function recordReplyEnding(root: string, teamJobId: string, replyJobId: string):
 
 /** A team job's say job settled: its ending becomes ONE event for the super (`noteTeamJobEnd`),
  *  delivered by the pump like a child's, and the write repaints its card. */
-async function teamJobSettled(root: string, teamJobId: string, record?: (s: SuperState) => void): Promise<void> {
+async function teamJobSettled(root: string, teamJobId: string, record?: (s: SuperState) => void, concluded?: TeamJobConclusion): Promise<void> {
   let added = false;
-  const after = await writeSuper(root, (s) => {
+  await writeSuper(root, (s) => {
     record?.(s);
     const j = s.team.find((x) => x.id === teamJobId);
-    if (j) added = noteTeamJobEnd(root, s, teamJobId, liveSayJob(root, j));
+    if (j) added = noteTeamJobEnd(root, s, teamJobId, liveSayJob(root, j), Date.now(), concluded);
   });
   if (added) void pumpSuper(root);
-  // Still waiting on his answer, or settled with no ending to read yet (asked and answered before
-  // this write, or its last thread entry not written yet): the watch reads it on.
-  const j = after.team.find((x) => x.id === teamJobId);
-  if (j && (j.told === 'question' || j.told === undefined)) watchTeamAsk(root, teamJobId);
 }
 
-/** How often a team job waiting on the owner's answer is re-read, and for how long one watch runs
- *  (the record arms it again on the next read: boot, attach, any write). */
-export const TEAM_ASK_WATCH_MS = 15_000;
-export const TEAM_ASK_WATCH_MAX_MS = 24 * 60 * 60_000;
-/** One watch per (vault, job) whose run stopped to ask the owner. */
-const askWatches = new Map<string, ReturnType<typeof setInterval>>();
+/** How often a team job whose ending is still owed is re-read. */
+export const TEAM_JOB_WATCH_MS = 15_000;
+/** One watch per (vault, job) whose ending is still owed to the super. */
+const jobWatches = new Map<string, ReturnType<typeof setInterval>>();
+/** What one tick saw that only a second tick in a row may conclude (a file mid-rewrite, a lock
+ *  between its release and the resume's last write): per (vault, job). */
+const suspect = new Map<string, 'gone' | 'lost'>();
 
 /**
- * A team job whose run asked the owner: he answers it in AI Team, the CLI or Telegram, and that
- * resumes the run on a path the super never starts, so its ending is watched for here. Each tick
- * asks the subject (the member's thread and question) and writes only when something moved: the
- * answer closes the question item, the resumed turn's end queues its one done or stuck. The watch
- * dies when the job's event moved past `question`, the job left the record, the super is off,
- * or after TEAM_ASK_WATCH_MAX_MS; a job still waiting is armed again from the record
- * (`armTeamAskWatches`), so neither the cap nor a restart loses its ending.
+ * A team job whose ending (done or stuck) is still owed to the super (`open`). The say path's
+ * settle is the fast path; this watch catches everything it cannot: a question the run asked, a
+ * SECOND question its resumed turn asks, the owner answering in AI Team, the CLI or Telegram (a
+ * resume the super never starts), a last thread entry written late, a restart. Each tick asks the
+ * subject (the member's question store and thread) and writes only when something moved. Armed
+ * from the record (`armTeamJobWatches`: boot, attach, every write), with no time limit: it dies
+ * when the job's done or stuck is told, the job leaves the record, or the super is off.
  */
-function watchTeamAsk(root: string, teamJobId: string): void {
+function watchTeamJob(root: string, teamJobId: string): void {
   const key = `${root}\u0000${teamJobId}`;
-  if (askWatches.has(key)) return;
-  const until = Date.now() + TEAM_ASK_WATCH_MAX_MS;
+  if (jobWatches.has(key)) return;
   const t = setInterval(() => {
-    void checkTeamAsk(root, teamJobId)
-      .then((keep) => { if (!keep || Date.now() > until) stop(); }, (err) => {
-        console.warn(`[super] team job ${teamJobId}: its answer could not be checked: ${(err as Error).message}`);
-        if (Date.now() > until) stop();
+    void checkTeamJob(root, teamJobId)
+      .then((keep) => { if (!keep) stop(); }, (err) => {
+        console.warn(`[super] team job ${teamJobId}: its ending could not be checked: ${(err as Error).message}`);
       });
-  }, TEAM_ASK_WATCH_MS);
+  }, TEAM_JOB_WATCH_MS);
   t.unref?.();
-  const stop = () => { clearInterval(t); askWatches.delete(key); };
-  askWatches.set(key, t);
+  // Only this watch's own key: a newer watch for the job is never dropped by an older tick.
+  const stop = () => { clearInterval(t); if (jobWatches.get(key) === t) { jobWatches.delete(key); suspect.delete(key); } };
+  jobWatches.set(key, t);
 }
 
-/** One watch tick: settle the job when its question moved; false once there is nothing to watch.
+/** One watch tick: settle the job when its ending moved; false once nothing is owed any more.
  *  Exported for tests. */
-export async function checkTeamAsk(root: string, teamJobId: string): Promise<boolean> {
+export async function checkTeamJob(root: string, teamJobId: string): Promise<boolean> {
   const s = await readSuperState(root, superSanitizeOpts());
   const j = s.team.find((x) => x.id === teamJobId);
-  if (!j || (j.told !== undefined && j.told !== 'question') || !s.enabled || !s.session) return false;
-  const kind = teamJobEvent(root, j, liveSayJob(root, j));
-  if (kind === 'question') return true;
-  // Answered, its resumed turn still running (or no ending written yet): write only to close a question item.
-  if (kind === null && !s.queue.some((q) => q.team === teamJobId && q.kind === 'question' && q.state === 'pending')) return true;
+  if (!j || !teamJobOwed(j) || !s.enabled || !s.session) return false;
+  const key = `${root}\u0000${teamJobId}`;
+  const live = liveSayJob(root, j);
+  const end = teamJobEnding(root, j, live);
+  // Two endings only the watch can see, each on a second tick in a row: the member's file is gone
+  // (absent, never merely unreadable), or nothing runs the job and none of its endings was written
+  // (its turn lost with the server: no lock held, no say job in memory).
+  const seen = !existsSync(automationPath(root, j.member)) && !existsSync(agentPath(root, j.member)) ? 'gone'
+    : end.kind === null && !agentActivity(root, j.member) && !sayJobRuns(live) ? 'lost'
+    : null;
+  if (seen && suspect.get(key) === seen) {
+    suspect.delete(key);
+    await teamJobSettled(root, teamJobId, undefined, seen);
+    // A lost turn is read once more inside the write, and an ending that landed (a question asked
+    // again) keeps the job owed: the next tick asks the record, never this one's guess.
+    return seen === 'lost';
+  }
+  if (seen) suspect.set(key, seen); else suspect.delete(key);
+  const standing = s.queue.some((q) => q.team === teamJobId && q.kind === 'question' && q.state === 'pending');
+  const moved = end.kind === null ? standing
+    : end.kind === 'question' ? j.told !== 'question' || j.toldQuestion !== end.question?.id
+    : true;
+  if (!moved) return true;
   await teamJobSettled(root, teamJobId);
-  return kind === null;
+  return end.kind === null || end.kind === 'question';
 }
 
 /** Close the open approval questions about one member (it is gone or turned off). */
@@ -1843,7 +1865,7 @@ async function settleApprovals(root: string, state: SuperState): Promise<SuperSt
 // The window's view reads each team card's status through the same live jobs (team.ts imports no
 // server code).
 setTeamLiveSource(liveSayJob);
-setTeamAskWatcher(watchTeamAsk);
+setTeamJobWatcher(watchTeamJob);
 
 /** The say path's own job for a team job, while it is in memory. */
 function liveSayJob(root: string, j: SuperTeamJob): LiveSayJob | null {

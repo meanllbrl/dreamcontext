@@ -4,7 +4,7 @@ import { listVaults } from '../vaults.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
-import { armTeamAskWatches, awaitedTeamItem, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
+import { armTeamJobWatches, awaitedTeamItem, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
 import { superRestoreHold } from './restore.js';
 import { makeRoom } from './room.js';
 import { bringLiveCard, floatLiveChildren } from './live.js';
@@ -259,8 +259,8 @@ const lastStates = new Map<string, SuperState>();
 
 function noteHead(root: string, state: SuperState): void {
   lastStates.set(keyOf(root), state);
-  // Read at boot, on attach and after every write: a team job's question is watched again from it.
-  armTeamAskWatches(root, state);
+  // Read at boot, on attach and after every write: a team job whose ending is owed is watched from it.
+  armTeamJobWatches(root, state);
   heads.set(keyOf(root), {
     root: keyOf(root),
     vault: superVaultName(root),

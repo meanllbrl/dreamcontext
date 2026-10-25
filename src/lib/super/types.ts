@@ -507,13 +507,23 @@ export interface SuperTeamJob {
   awaited?: true;
   /** The last event its ending already put on the queue: the same one is never queued twice. */
   told?: TeamJobEvent;
+  /** With `told: 'question'`: which of its run's questions that was (each one is its own event). */
+  toldQuestion?: string;
+  /** Its ending (done or stuck) is still owed to the super: watched until it comes, from the
+   *  record after a restart. Set when the job is given, cleared by its done or stuck. */
+  open?: true;
+  /** A stuck its watch concluded itself: the member left the AI Team, or its turn was lost with
+   *  the server (no record of an ending, nothing running it). */
+  concluded?: TeamJobConclusion;
 }
 
 /** What a team job's ending tells the super: it finished, failed, or its run stopped to ask the owner. */
 export type TeamJobEvent = 'done' | 'stuck' | 'question';
+/** Why a team job's watch concluded it stuck (`SuperTeamJob.concluded`). */
+export type TeamJobConclusion = 'gone' | 'lost';
 
 /** What a team job's card and `super state` say, read from the member's thread. */
-export const TEAM_JOB_STATUSES = ['queued', 'running', 'done', 'failed'] as const;
+export const TEAM_JOB_STATUSES = ['queued', 'running', 'asking', 'done', 'failed'] as const;
 export type TeamJobStatus = typeof TEAM_JOB_STATUSES[number];
 
 /** Team jobs the record keeps (newest first). */

@@ -382,6 +382,51 @@ describe('resumeWithAnswer — the binding is the authority', () => {
   });
 });
 
+describe('resumeWithAnswer — a resumed turn that asks again', () => {
+  it('its second question gets the resumed session, so the owner can answer it too', async () => {
+    // A resumed turn asks with `automations propose`, which writes `sessionId: null` (a run cannot
+    // know its own id): the runner fills a fresh run's after it exits, so the resume must too.
+    makeAutomation();
+    const q = makeQuestion();
+    const calls: string[][] = [];
+    const impl = vi.fn((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const { child, stdout } = makeFakeChild(999);
+      setImmediate(() => {
+        // The resumed turn proposes again, on the same run, before it exits.
+        if (calls.length === 1) {
+          createQuestion(contextRoot, {
+            slug: 'digest', runFiredAt: NOW.toISOString(), kind: 'flow-hitl', sessionId: null,
+            channel: 'chat', question: 'And the weekly one too?', nowISO: NOW.toISOString(),
+          });
+        }
+        stdout.emit('data', Buffer.from(claudeJson(calls.length === 1 ? 'proposed the weekly one' : 'sent both'), 'utf-8'));
+        child.emit('close', 0);
+      });
+      return child;
+    }) as unknown as SpawnImpl;
+    const first = await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW });
+    expect(first.status).toBe('ok');
+    const second = listQuestions(contextRoot, 'digest').find((x) => x.state === 'pending');
+    expect(second?.sessionId).toBe(SESSION);
+    const answered = await resumeWithAnswer(contextRoot, second!, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW });
+    expect(answered.status).toBe('ok');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('fills only what the resume asked: a null-session question from before the answer stays as it was', async () => {
+    makeAutomation();
+    const stray = createQuestion(contextRoot, {
+      slug: 'digest', runFiredAt: NOW.toISOString(), kind: 'flow-hitl', sessionId: null,
+      channel: 'chat', question: 'Left by another turn', nowISO: new Date(NOW.getTime() - 60_000).toISOString(),
+    });
+    const q = makeQuestion();
+    const { impl } = fakeSpawn(claudeJson('done'));
+    expect((await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW })).status).toBe('ok');
+    expect(listQuestions(contextRoot, 'digest').find((x) => x.id === stray.id)?.sessionId).toBeNull();
+  });
+});
+
 describe('resumeWithAnswer — ordering and double-answer', () => {
   it('a second surface holding a stale copy is refused, never a second resume', async () => {
     makeAutomation();

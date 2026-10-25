@@ -38,6 +38,7 @@ import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAc
 import { appendThreadEntry } from './threads.js';
 import { latestBoundSession, readAutomationSession, retireAutomationSession } from './session-registry.js';
 import {
+  backfillQuestionSession,
   canResume as canResumeQuestion,
   claimQuestion,
   createQuestion,
@@ -707,6 +708,12 @@ export async function resumeWithAnswer(
         result: null,
       };
     }
+    // The resumed turn may have asked again (`automations propose` writes `sessionId: null`): that
+    // question belongs to the session just resumed, the one this machine has bound, so it is
+    // filled here exactly as the runner fills a fresh run's, and only what was asked since this
+    // answer was claimed. Without it the second question can never be answered. Best-effort: a
+    // write that fails must not change what answering reports.
+    try { backfillQuestionSession(contextRoot, question.slug, question.runFiredAt, sessionId, claimed.answeredAt ?? undefined); } catch { /* left unanswerable, as before */ }
     if (execution.timedOut) {
       return {
         question: noteQuestionResolution(contextRoot, claimed, {

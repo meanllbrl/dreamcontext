@@ -16,11 +16,16 @@
  *       line fenced. Nothing more for it after that.
  *   E2  the same for a job whose run fails: ONE item, event=stuck, awaited=owner.
  *   E3  every team item on the record is settled (done), none left pending.
+ *   E4  a member with `review: agent` asks the owner from inside its run (`automations propose`);
+ *       he answers with `automations answer` (not through the super) and the RESUMED turn asks a
+ *       second question the same way; he answers that too and the turn finishes. The store holds
+ *       both questions on the one run, and the super gets exactly three items for the job, in
+ *       order: question (the first), question (the second), done awaited=owner.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, createWriteStream, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +39,7 @@ const REPORTS = join(SCRATCH, 'reports.ndjson');
 const RECORD = join(PROJ, '_dream_context', 'state', '.super-agent.json');
 const MEMBER = 'scout';
 const MEMBER_ANSWER = 'Signups fell 4% on Tuesday; the drop is all on the pricing step.';
+const ASKER = 'clerk';
 const ENGINES = (process.env.ENGINES || 'chromium').split(',').map((s) => s.trim()).filter(Boolean);
 
 const STANDIN = `#!${process.execPath}
@@ -47,8 +53,17 @@ if (!argv.includes('stream-json')) {
   if (argv.includes('-p')) {
     const prompt = argv[argv.indexOf('-p') + 1] || '';
     const fail = prompt.includes('FAILME');
-    report({ kind: 'member-run', fail });
-    process.stdout.write(JSON.stringify({ type: 'result', subtype: fail ? 'error_during_execution' : 'success', is_error: fail, result: fail ? 'Could not reach the funnel data.' : ${JSON.stringify(MEMBER_ANSWER)}, session_id: 'member-' + process.pid, num_turns: 1, total_cost_usd: 0, duration_ms: 5 }) + '\\n');
+    let said = fail ? 'Could not reach the funnel data.' : ${JSON.stringify(MEMBER_ANSWER)};
+    // A run that asks the owner from inside itself, as an agent does: \`automations propose\`.
+    const propose = (n) => {
+      const r = spawnSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(CLI)}, 'automations', 'propose', process.env.DREAMCONTEXT_AUTOMATION_SLUG || '', '--title', 'Question ' + n, '--body', 'Publish part ' + n + '?'], { env: process.env, encoding: 'utf-8', timeout: 60000 });
+      report({ kind: 'propose', n, status: r.status, out: ((r.stdout || '') + (r.stderr || '')).slice(0, 600) });
+    };
+    if (prompt.includes('ASK-TWICE')) { propose(1); said = 'I proposed part 1.'; }
+    else if (prompt.includes('GO-ANSWER-1')) { propose(2); said = 'I proposed part 2.'; }
+    else if (prompt.includes('GO-ANSWER-2')) said = 'Published both parts.';
+    report({ kind: 'member-run', fail, resumed: argv.includes('--resume') });
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: fail ? 'error_during_execution' : 'success', is_error: fail, result: said, session_id: 'member-' + process.pid, num_turns: 1, total_cost_usd: 0, duration_ms: 5 }) + '\\n');
     process.exit(fail ? 1 : 0);
   }
   process.stdout.write('{}\\n');
@@ -69,8 +84,9 @@ async function superTurn(text) {
   if (text.startsWith('[super events]')) { report({ kind: 'events', text }); return 'noted'; }
   if (text.startsWith('[super')) return 'noted';
   if (text.includes('GO-TEAM')) {
-    const job = text.includes('GO-TEAM-FAIL') ? 'FAILME: look at the funnel.' : 'Look at this week\\'s signup funnel and name the step that dropped.';
-    const step = cli('super', 'team', 'ask', ${JSON.stringify(MEMBER)}, job, '--brief', 'Funnel check');
+    const asker = text.includes('GO-TEAM-ASK');
+    const job = asker ? 'ASK-TWICE: publish the two parts, asking before each.' : text.includes('GO-TEAM-FAIL') ? 'FAILME: look at the funnel.' : 'Look at this week\\'s signup funnel and name the step that dropped.';
+    const step = cli('super', 'team', 'ask', asker ? ${JSON.stringify(ASKER)} : ${JSON.stringify(MEMBER)}, job, '--brief', asker ? 'Publish parts' : 'Funnel check');
     report({ kind: 'team', step });
     return 'asked the team';
   }
@@ -133,7 +149,13 @@ function setupScratch() {
   for (const [what, r] of [
     ['vaults add', spawnSync(process.execPath, [CLI, 'vaults', 'add', 'acme-app', PROJ], { env: env(), encoding: 'utf-8' })],
     ['agent', dc('agents', 'create', MEMBER, '--title', 'Scout', '--prompt', 'Reads the product funnel and names what moved.')],
+    ['asker', dc('agents', 'create', ASKER, '--title', 'Clerk', '--prompt', 'Publishes parts, asking the owner before each.')],
   ]) if (r.status !== 0) throw new Error(`${what} failed: ${r.stderr || r.stdout}`);
+  // The asker reviews its work with the owner (`review: agent`): a hashed field, approved again.
+  const file = join(PROJ, '_dream_context', 'agents', `${ASKER}.md`);
+  writeFileSync(file, readFileSync(file, 'utf-8').replace(/^---\n/, '---\ncall:\n  review: agent\n'));
+  const ap = dc('agents', 'approve', ASKER, '--yes');
+  if (ap.status !== 0) throw new Error(`approve failed: ${ap.stderr || ap.stdout}`);
 }
 
 async function startServer(port) {
@@ -153,6 +175,13 @@ async function startServer(port) {
 
 const readNd = (path) => { try { return readFileSync(path, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
 const reports = () => readNd(REPORTS);
+/** The asker's questions on disk, oldest first. */
+const questions = () => {
+  const dir = join(PROJ, '_dream_context', 'automations', 'hitl', ASKER);
+  let names = [];
+  try { names = readdirSync(dir).filter((n) => n.endsWith('.json')); } catch { return []; }
+  return names.map((n) => JSON.parse(readFileSync(join(dir, n), 'utf-8'))).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+};
 const record = () => { try { return JSON.parse(readFileSync(RECORD, 'utf-8')); } catch { return { queue: [], team: [] }; } };
 
 const result = { pass: 0, fails: [] };
@@ -239,6 +268,29 @@ async function run(engineName, base) {
   console.log(`── ${engineName}: E3 the record`);
   const items = (record().queue ?? []).filter((q) => q.team);
   ok(tag('E3 two team items on the record, both settled'), items.length === 2 && items.every((q) => q.state === 'done'), JSON.stringify(items));
+
+  console.log(`── ${engineName}: E4 a member asks, and its resumed turn asks again`);
+  const j4 = await teamJob(page, 'GO-TEAM-ASK', tag);
+  const kinds = () => teamLines(j4).map((x) => /event=(\w+)/.exec(x.line)?.[1]);
+  ok(tag('E4 the run asked the owner from inside itself (one pending question)'), await until(page, async () => questions().filter((q) => q.state === 'pending').length === 1, 30000),
+    JSON.stringify(reports().filter((r) => r.kind === 'propose')));
+  ok(tag('E4 the super gets event=question for it'), await until(page, async () => kinds().join() === 'question', 60000), JSON.stringify(kinds()));
+  const q1 = questions()[0];
+  const a1 = dc('automations', 'answer', q1.id, 'GO-ANSWER-1 yes, publish part 1');
+  ok(tag('E4 the owner answers it outside the super (automations answer)'), a1.status === 0, a1.stderr || a1.stdout);
+  const qs = questions();
+  ok(tag('E4 PROOF: the resumed turn asked a second question on the same run'), qs.length === 2 && qs[0].state === 'answered' && qs[1].state === 'pending' && qs[1].runFiredAt === q1.runFiredAt && qs[1].id !== q1.id,
+    JSON.stringify(qs.map((q) => ({ id: q.id, state: q.state, run: q.runFiredAt, session: q.sessionId }))) + ' ' + JSON.stringify(reports().filter((r) => r.kind === 'propose')));
+  ok(tag('E4 the super gets event=question for the second one'), await until(page, async () => kinds().join() === 'question,question', 60000), JSON.stringify(kinds()));
+  const second = teamLines(j4)[1]?.text ?? '';
+  ok(tag('E4 …with the second question\'s own words, fenced'), /<untrusted-project-output[^>]*>\s*Question: Question 2/.test(second), second);
+  const a2 = dc('automations', 'answer', qs[1]?.id ?? 'none', 'GO-ANSWER-2 yes, publish part 2');
+  ok(tag('E4 the owner answers the second'), a2.status === 0, a2.stderr || a2.stdout);
+  ok(tag('E4 the super gets the one done after it'), await until(page, async () => kinds().join() === 'question,question,done', 60000), JSON.stringify(kinds()));
+  await page.waitForTimeout(20000);
+  const l4 = teamLines(j4);
+  ok(tag('E4 exactly three items, in order; the done is awaited=owner with the last line'), kinds().join() === 'question,question,done'
+    && /awaited=owner/.test(l4[2]?.line ?? '') && /Last line: Published both parts\./.test(l4[2]?.text ?? ''), l4.map((x) => x.line).join('\n'));
   await browser.close();
 }
 

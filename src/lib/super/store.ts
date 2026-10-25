@@ -339,6 +339,9 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(finite(j.endedAt) !== undefined ? { endedAt: finite(j.endedAt) } : {}),
       ...(j.awaited === true ? { awaited: true as const } : {}),
       ...(j.told === 'done' || j.told === 'stuck' || j.told === 'question' ? { told: j.told } : {}),
+      ...(j.told === 'question' && typeof j.toldQuestion === 'string' && ENTRY_ID_RE.test(j.toldQuestion) ? { toldQuestion: j.toldQuestion } : {}),
+      ...(j.open === true ? { open: true as const } : {}),
+      ...(j.concluded === 'gone' || j.concluded === 'lost' ? { concluded: j.concluded } : {}),
     });
   }
   return out.sort((a, b) => b.startedAt - a.startedAt).slice(0, MAX_TEAM_JOBS);
