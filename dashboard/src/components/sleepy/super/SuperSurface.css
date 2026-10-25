@@ -1544,3 +1544,24 @@
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
 }
+
+/* The hand-over's notice naming the chats a remote screen held (hands-free sekmeler W1): a slim
+   row above the stage, in the surface's column; the Notice draws itself. */
+.super-skipped-notice {
+  flex: 0 0 auto;
+  width: min(640px, calc(100% - 2 * var(--space-4, 16px)));
+  margin: var(--space-2, 8px) auto 0;
+}
+
+/* A card a remote screen cannot show (hands-free sekmeler W2): its head and one quiet line. */
+.super-card-maconly {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+.super-card-maconly-note {
+  margin: 0;
+  padding: 0 var(--space-3, 12px);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm, 13px);
+}

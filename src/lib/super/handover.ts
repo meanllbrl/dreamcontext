@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { chatTopic, getChat } from '../assistant/chat-registry.js';
-import { isReservedId, peekSuperNote, superIndex } from './store.js';
+import { isReservedId, peekSuperNote, phoneHeld, superIndex } from './store.js';
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
@@ -56,15 +56,37 @@ function titleFor(sid: string, titles: Record<string, unknown>): string {
   return (c ? chatTopic(c, MAX_BRIEF) : '') || 'chat';
 }
 
-export async function enableSuper(contextRoot: string, body: Record<string, unknown>): Promise<{ session: string; state: SuperState }> {
+/** A chat the hand-over did not adopt, and why: a remote screen holds it (or is opening it), it
+ *  is closed, or it runs in another project. */
+export interface SkippedChat { id: string; title: string; reason: 'phone_held' | 'gone' | 'other_vault' }
+
+export async function enableSuper(
+  contextRoot: string,
+  body: Record<string, unknown>,
+  isPhoneHeld: (sid: string) => boolean = phoneHeld,
+): Promise<{ session: string; state: SuperState; skipped: SkippedChat[] }> {
   const vault = superVaultName(contextRoot);
   const titles = body.titles && typeof body.titles === 'object' && !Array.isArray(body.titles) ? body.titles as Record<string, unknown> : {};
-  const candidates = adoptableChats(cleanIds(body.adopt), vault);
+  const asked = cleanIds(body.adopt);
+  const candidates = adoptableChats(asked, vault);
+  const skipped: SkippedChat[] = [];
+  const skip = (id: string, reason: SkippedChat['reason']) => {
+    if (!skipped.some((x) => x.id === id)) skipped.push({ id, title: titleFor(id, titles), reason });
+  };
+  for (const sid of asked) {
+    if (candidates.includes(sid)) continue;
+    const c = getChat(sid);
+    // Another mode's chat (the super's own tab, an Assistant delegation) is left out silently.
+    if (!c || c.status === 'gone') skip(sid, 'gone');
+    else if (c.vault !== vault) skip(sid, 'other_vault');
+  }
   const now = Date.now();
   const state = await writeSuper(contextRoot, (s) => {
     if (!s.session) s.session = randomUUID();
     const session = s.session;
-    const adopt = candidates.filter((sid) => sid !== session);
+    // A chat a remote screen holds or is opening is never adopted (the Mac window must hold
+    // every child: only its own tab socket carries the Super's answer and send).
+    const adopt = candidates.filter((sid) => sid !== session && !(isPhoneHeld(sid) && (skip(sid, 'phone_held'), true)));
     // A child kept from an earlier hand-over: still open, still running, or holding a worktree
     // the super agent may still merge.
     const kept: Record<string, SuperChild> = {};
@@ -75,11 +97,17 @@ export async function enableSuper(contextRoot: string, body: Record<string, unkn
     for (const sid of adopt) {
       if (!Object.prototype.hasOwnProperty.call(kept, sid)) kept[sid] = { sessionId: sid, brief: titleFor(sid, titles), adopted: true, startedAt: now };
     }
+    // A kept child a remote screen holds now is ended, not dropped: its worktree and branch stay
+    // for a merge, and the phone keeps the chat.
+    const phoneEnded = new Set<string>();
+    for (const [sid, c] of Object.entries(kept)) {
+      if (c.endedAt === undefined && !adopt.includes(sid) && isPhoneHeld(sid)) { c.endedAt = now; phoneEnded.add(sid); skip(sid, 'phone_held'); }
+    }
     s.children = kept;
-    // Items about a child that is not kept are old news.
-    for (const q of s.queue) if (q.sessionId !== session && !Object.prototype.hasOwnProperty.call(kept, q.sessionId)) q.state = 'done';
+    // Items about a child that is not kept, or that a remote screen holds, are old news.
+    for (const q of s.queue) if (q.sessionId !== session && (!Object.prototype.hasOwnProperty.call(kept, q.sessionId) || phoneEnded.has(q.sessionId))) q.state = 'done';
     s.containers = s.containers.filter((c) => c.kind !== 'chat' || !!kept[c.ref]);
-    for (const sid of Object.keys(kept)) ensureChatContainer(s, sid, kept[sid].brief.slice(0, 120));
+    for (const sid of Object.keys(kept)) if (!phoneEnded.has(sid)) ensureChatContainer(s, sid, kept[sid].brief.slice(0, 120));
     // The agenda opens with every hand-over (a new super session): made if the record has none,
     // back from its pill or from Others; the owner's drop, size and group stay (owner 23:44).
     showAgendaCard(s);
@@ -89,10 +117,10 @@ export async function enableSuper(contextRoot: string, body: Record<string, unkn
     s.queue = s.queue.filter((q) => !(q.kind === 'handover' && q.state === 'pending'));
     s.queue.push({ id: newQueueId(), sessionId: session, kind: 'handover', state: 'pending', createdAt: now });
     for (const sid of adopt) queueWhatItAsks(s, sid, now);
-  });
+  }, { onDemoted: (ids) => { for (const id of ids) skip(id, 'phone_held'); } });
   await reconcileRows(contextRoot);
   void pumpSuper(contextRoot);
-  return { session: state.session as string, state };
+  return { session: state.session as string, state, skipped };
 }
 
 /**

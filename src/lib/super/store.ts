@@ -6,7 +6,7 @@ import {
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, MAX_HELD,
-  SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent,
+  SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, viewWithout,
   type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
@@ -562,21 +562,110 @@ function withVaultLock<T>(contextRoot: string, fn: () => Promise<T>): Promise<T>
   return run;
 }
 
+// ─── A phone never holds a Super child (hands-free sekmeler plan r8) ─────────
+
+/** Thrown inside a write's callback by a caller that names a chat a phone holds (`adopt`,
+ *  `resume`): nothing is written; the route answers `409 phone_held`. */
+export class PhoneHeldError extends Error {
+  constructor(readonly sessionId: string) { super('a remote screen holds this chat'); this.name = 'PhoneHeldError'; }
+}
+
+/** Is a chat held (or being opened) by a phone socket right now? agent-chat.ts registers it at
+ *  load (a lib module never imports a route). Absent = nothing is phone-held. */
+let phoneHoldsProbe: ((sessionId: string) => boolean) | null = null;
+export function setPhoneHoldsProbe(fn: ((sessionId: string) => boolean) | null): void { phoneHoldsProbe = fn; }
+
+/** The probe's answer; one that throws counts as held (fail closed). */
+export function phoneHeld(sessionId: string): boolean {
+  if (!phoneHoldsProbe) return false;
+  try { return phoneHoldsProbe(sessionId); } catch { return true; }
+}
+
+/** The children a record ARMS: not ended, of an enabled record (the socket gate's reading). */
+function armedChildren(s: SuperState): Set<string> {
+  return s.enabled ? new Set(Object.keys(s.children).filter((k) => s.children[k].endedAt === undefined)) : new Set();
+}
+
+interface WriteBefore { armed: Set<string>; containers: Set<string>; notes: Record<string, SuperNote>; open: Set<string> }
+
+function beforeWrite(s: SuperState): WriteBefore {
+  return {
+    armed: armedChildren(s),
+    containers: new Set(s.containers.map((c) => c.id)),
+    notes: { ...s.notes },
+    open: new Set(s.queue.filter((q) => q.state !== 'done').map((q) => q.id)),
+  };
+}
+
+/**
+ * The record-side invariant: no child is ARMED by this write while a phone holds it. Every child
+ * armed in `next` and not in `before` (an `endedAt` cleared, or `enabled` false→true over kept
+ * children) that the probe calls phone-held is set back to ended, and what this write added for
+ * it goes: its new cards, its new note, every open queue item about it. A card or note the
+ * record already had stays. Mutates `next`; returns the demoted ids.
+ */
+function demotePhoneHeld(before: WriteBefore, next: SuperState): string[] {
+  const demoted = [...armedChildren(next)].filter((id) => !before.armed.has(id) && phoneHeld(id));
+  if (!demoted.length) return demoted;
+  const now = Date.now();
+  const gone = new Set<string>();
+  for (const id of demoted) {
+    next.children[id].endedAt = now;
+    for (const c of next.containers) {
+      if (before.containers.has(c.id)) continue;
+      if ((c.kind === 'chat' && c.ref === id) || c.forChild === id) gone.add(c.id);
+    }
+    if (Object.prototype.hasOwnProperty.call(before.notes, id)) next.notes[id] = before.notes[id];
+    else delete next.notes[id];
+  }
+  const ids = new Set(demoted);
+  for (const q of next.queue) if (ids.has(q.sessionId) && q.state !== 'done') q.state = 'done';
+  if (next.held) next.held = next.held.filter((h) => !ids.has(h.child));
+  if (gone.size) {
+    next.containers = next.containers.filter((c) => !gone.has(c.id));
+    next.groups = next.groups.map((g) => ({ ...g, cards: g.cards.filter((c) => !gone.has(c)) }));
+    next.view = viewWithout(next.view, gone);
+  }
+  return demoted;
+}
+
+/** Per vault, what the write in flight is about to make true: the socket gate reads it beside
+ *  the index, so a phone open racing a hand-over write is judged by the record being written. */
+const pendingArm = new Map<string, { enabled: boolean; children: Set<string> }>();
+
+export interface UpdateOpts extends SanitizeOpts {
+  /** Told which children the phone-held invariant ended in this write (none: not called). */
+  onDemoted?: (ids: string[]) => void;
+}
+
 /**
  * Read, change, sanitize and write the vault's record as one step. `fn` mutates the draft (or
  * returns a replacement); what it produces is sanitized again before it is written, so no
  * caller can persist a field a read would drop. Returns what was written.
+ *
+ * Every write keeps the phone-held invariant ({@link demotePhoneHeld}), whoever the caller is.
  */
 export function updateSuperState(
   contextRoot: string,
   fn: (draft: SuperState) => SuperState | void,
-  opts: SanitizeOpts = {},
+  opts: UpdateOpts = {},
 ): Promise<SuperState> {
+  const key = resolve(contextRoot);
   return withVaultLock(contextRoot, async () => {
     const draft = await loadSuperState(contextRoot, opts);
-    const next = sanitizeSuperState(fn(draft) ?? draft, opts);
-    await writeSuperState(contextRoot, next);
-    noteSuperState(contextRoot, next);
+    const before = beforeWrite(draft);
+    const out = fn(draft) ?? draft;
+    const demoted = demotePhoneHeld(before, out);
+    const next = sanitizeSuperState(out, opts);
+    const mine = { enabled: next.enabled, children: new Set([...armedChildren(next)].map((id) => id.toLowerCase())) };
+    pendingArm.set(key, mine);
+    try {
+      await writeSuperState(contextRoot, next);
+      noteSuperState(contextRoot, next);
+    } finally {
+      if (pendingArm.get(key) === mine) pendingArm.delete(key);
+    }
+    if (demoted.length) opts.onDemoted?.(demoted);
     return next;
   });
 }
@@ -673,6 +762,28 @@ export function isSuperChild(sessionId: string): boolean {
 }
 
 /**
+ * THE gate for "a child while handed over" (any vault, ids compared case-blind): the index (not
+ * ended children of an enabled record) OR the write in flight's pending entry. A take-back flips
+ * the index only after its commit, so a stale "on" fails closed.
+ */
+export function isHandedOverChild(sessionId: string): boolean {
+  return handedOverChildRoot(sessionId) !== null;
+}
+
+/** The context root (resolved) whose handed-over record names `sessionId` a child — the index or
+ *  the write in flight — or null. Case-blind. */
+export function handedOverChildRoot(sessionId: string): string | null {
+  const id = sessionId.toLowerCase();
+  if (!id) return null;
+  for (const [root, e] of index) {
+    if (!e.enabled) continue;
+    for (const c of e.children) if (c.toLowerCase() === id) return root;
+  }
+  for (const [root, p] of pendingArm) if (p.enabled && p.children.has(id)) return root;
+  return null;
+}
+
+/**
  * The MCP servers a child `super delegate` started runs with (orchestration plan r5 D14), from
  * its record: [] = none. Null = not such a child (the owner's adopted chats, the super, any
  * other chat). Handed over or not, live or ended: a delegated child is lean for its whole life,
@@ -744,4 +855,5 @@ export function resetSuperIndex(): void {
   generation.clear();
   clearing.clear();
   locks.clear();
+  pendingArm.clear();
 }

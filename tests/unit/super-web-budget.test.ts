@@ -87,7 +87,8 @@ describe('webBudget', () => {
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
     // A web card is ONE tree in every state (tile, float, large, parked): a page from a server
     // and, since 2026-10-23, a project page (it reloaded on its way to side by side).
-    expect(container).toMatch(/\{c\.kind === 'web'\s*\n(\s*\/\/[^\n]*\n)+\s*\? <WebCardBody/);
+    // (A remote screen's Mac-only placeholder comes first; a web card it can show is the same tree.)
+    expect(container).toMatch(/: c\.kind === 'web'\s*\n(\s*\/\/[^\n]*\n)+\s*\? <WebCardBody/);
     expect(container).toMatch(/data-stage-key=\{props\.parked \? undefined : c\.id\}/);
   });
 });

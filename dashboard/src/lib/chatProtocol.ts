@@ -373,6 +373,10 @@ export type ChatEvent =
   /** The vault's Super Agent state, pushed by the server on every change (never polled). The
    *  payload is read with `readSuperStateView` (lib/superTypes.ts) where it is used. */
   | { kind: 'super-state'; state: Record<string, unknown> }
+  /** The Super Agent's stage as a REMOTE screen may see it (hands-free sekmeler W2), pushed to the
+   *  Super's mirrors on every change: the server's allowlisted view, read with
+   *  `remoteStageState` (super/remoteStage.ts) where it is used. */
+  | { kind: 'super-stage'; state: Record<string, unknown> }
   /** The turn that just opened was injected by the super inbox: render it as an event chip. */
   | { kind: 'super-event'; eventKind: string; child: string; batch?: { batch: string; items: Array<{ item: string; child: string; kind: string }> } }
   /** A Super Agent verb landed (AC16): the stage shows it, `ids` are the cards it touched. */
@@ -1210,6 +1214,9 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   }
   if (subtype === 'super_state') {
     return isRecord(obj.state) ? { kind: 'super-state', state: obj.state } : ignored('_meta:super_state');
+  }
+  if (subtype === 'super_stage') {
+    return isRecord(obj.state) ? { kind: 'super-stage', state: obj.state } : ignored('_meta:super_stage');
   }
   if (subtype === 'super_cue') {
     const verb = str(obj.verb);

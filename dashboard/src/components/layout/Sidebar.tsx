@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
 import { MaturityTag } from '../common/MaturityTag';
@@ -175,6 +176,9 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   // On a phone every pick also closes the drawer, and the rail is never collapsed to icons.
   const onNavigate = (page: Page, id?: string) => { navigateTo(page, id); phone?.onClose(); };
   const collapsed = phone ? false : collapsedProp;
+  // Mac mode's tunnel, phone OR remote computer (hands-free sekmeler W2): Settings and the brain's
+  // GitHub sync are the laptop's administration, never drawn there.
+  const tunnel = !!phone || isMacPhoneSurface();
   const { t } = useI18n();
   // Which project this rail belongs to. Read from the instance, NOT from `?vault=`: the
   // window's URL names the first chip, and several projects render their own rail here.
@@ -330,7 +334,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                 );
               }
               const { page, labelKey, maturity, hero } = item as NavItem;
-              if (phone && PHONE_HIDDEN_PAGES.includes(page)) return null;
+              if (tunnel && PHONE_HIDDEN_PAGES.includes(page)) return null;
               staggerIndex += 1;
               const label = t(labelKey);
               // An off layer replaces its maturity tag rather than adding a second
@@ -390,7 +394,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
           {unread.length > 0 && <span className="sidebar-badge">{unread.length}</span>}
         </button>
 
-        {phone ? null : signedIn && hasRemote ? (
+        {tunnel ? null : signedIn && hasRemote ? (
           <BrainSyncControl onOpenSettings={openGithubSync} />
         ) : (
           <button

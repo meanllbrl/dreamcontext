@@ -1728,20 +1728,32 @@ export function Composer({
     // A spoken take is armed with the message as SENT (block and quote included), so the
     // server's match on its text arms the read-aloud.
     if (spoken) session.armSpoken?.(message);
+    const sent = () => {
+      setDraft('');
+      session.syncDraft('');
+      setNavBoth(NO_HISTORY_NAV);
+      setSlashQuery(null);
+      // Sent chips go (their previews with them); anything that could NOT be attached stays, so
+      // the row keeps saying "not sent" instead of implying it went with the message. The rule is
+      // "had a path" rather than "was not failed" — see `dropSentAttachments`, which also clears
+      // the quote, so this conversation's staged state settles in one write. A slash command
+      // carried no About block, so the About chip stays for the next message.
+      dropSentAttachments(convId, { keepAbout: slash });
+      onClearQuote();
+    };
+    // A remote screen's tab whose chat the Mac's window holds (hands-free sekmeler W2, D3): the
+    // first send takes the chat, then sends, once. A take that fails leaves the text here.
+    if (session.takenOver && session.takeBack) {
+      void session.takeBack().then((ok: boolean) => {
+        if (!ok || session.send(message) === false) return;
+        sent();
+      });
+      return;
+    }
     if (mode === 'queue') session.enqueue(message);
     else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
     else if (session.send(message) === false) return;
-    setDraft('');
-    session.syncDraft('');
-    setNavBoth(NO_HISTORY_NAV);
-    setSlashQuery(null);
-    // Sent chips go (their previews with them); anything that could NOT be attached stays, so
-    // the row keeps saying "not sent" instead of implying it went with the message. The rule is
-    // "had a path" rather than "was not failed" — see `dropSentAttachments`, which also clears
-    // the quote, so this conversation's staged state settles in one write. A slash command
-    // carried no About block, so the About chip stays for the next message.
-    dropSentAttachments(convId, { keepAbout: slash });
-    onClearQuote();
+    sent();
   };
 
   const submit = (mode: SubmitMode = 'auto') => {

@@ -75,7 +75,9 @@ interface ProjectTabsProps {
   onActivate(vault: string): void;
   onClose(vault: string): void;
   onAdd(): void;
-  onDetach(vault: string): void;
+  /** "Open in New Window". Absent (a remote screen on the tunnel: there is no second window to
+   *  open): the chip has no context menu. */
+  onDetach?(vault: string): void;
 }
 
 /**
@@ -380,7 +382,7 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
               // Animation events bubble, so name-check it: any finite animation added to a
               // descendant later would otherwise cut the bounce short.
               onAnimationEnd={(e) => { if (e.animationName === 'projectTabBounce') endBounce(vault); }}
-              onContextMenu={(e) => openMenu(e, vault)}
+              onContextMenu={onDetach ? (e) => openMenu(e, vault) : undefined}
             >
               <button
                 type="button"
@@ -490,7 +492,7 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
             onClick={() => {
               const { vault } = menu;
               setMenu(null);
-              onDetach(vault);
+              onDetach?.(vault);
             }}
           >
             Open in New Window

@@ -382,7 +382,9 @@ describe('chat replay merge (client)', () => {
   });
 
   it('reads only the server\'s reattached frame', () => {
-    expect(readReattachedFrame('{"type":"_meta","subtype":"reattached","adopted":true,"busy":true}')).toEqual({ adopted: true, busy: true });
+    expect(readReattachedFrame('{"type":"_meta","subtype":"reattached","adopted":true,"busy":true}')).toEqual({ adopted: true, busy: true, watchOnly: false });
+    // A remote screen joined a Super child as a watch-only mirror (hands-free sekmeler W1).
+    expect(readReattachedFrame('{"type":"_meta","subtype":"reattached","adopted":true,"busy":false,"watchOnly":true}')).toEqual({ adopted: true, busy: false, watchOnly: true });
     expect(readReattachedFrame('{"type":"assistant","text":"reattached"}')).toBeNull();
     expect(readReattachedFrame('not json "reattached"')).toBeNull();
   });

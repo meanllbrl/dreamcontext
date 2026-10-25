@@ -25,6 +25,10 @@ import type { ContextUsage } from '../../../lib/agentComposer';
  * cards, not to the composer, and a host that cannot do them must still be able to compose.
  */
 export interface ComposerHost {
+  /** Hands-free (a remote screen, sekmeler W2): another screen holds this chat; the composer's
+   *  first send takes it ({@link takeBack}) and then sends. Absent: never taken over. */
+  readonly takenOver?: boolean;
+  takeBack?: () => Promise<boolean>;
   /**
    * Stable id for everything keyed by CONVERSATION rather than by component: the attachment
    * chips and reply quote in `composerScratch`, and the session-stats poll.

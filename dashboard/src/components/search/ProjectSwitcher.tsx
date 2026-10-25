@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useLauncherStatus, type VaultStatus } from '../../hooks/useLauncher';
+import { api } from '../../api/client';
+import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { goToProject, openLauncherHome, openVaultWindow } from '../../lib/desktop';
 import { useChrome } from '../layout/WindowChrome';
 import { CommandModal, useListKeyboardNav } from './CommandModal';
@@ -56,8 +59,19 @@ export function ProjectSwitcher() {
   // refetch interval and would poll `/api/launcher/status` in every vault window
   // forever, since this component is always mounted. react-query keeps the last
   // result cached, so a reopen within the cache window renders instantly.
-  const { data } = useLauncherStatus(open);
-  const vaults = useMemo(() => data?.vaults ?? [], [data]);
+  // Mac mode's tunnel (a remote computer, hands-free sekmeler W2): the projects chosen at start,
+  // by name (`/api/vaults` narrows them), never the launcher's laptop-only list, no Launcher home
+  // row and no second OS window.
+  const tunnel = isMacPhoneSurface();
+  const { data } = useLauncherStatus(open && !tunnel);
+  const { data: chosen } = useQuery({
+    queryKey: ['remote-vaults'],
+    queryFn: () => api.get<{ vaults: Array<{ name: string; exists: boolean }> }>('/vaults'),
+    enabled: open && tunnel,
+  });
+  const vaults = useMemo<VaultStatus[]>(() => (tunnel
+    ? (chosen?.vaults ?? []).map((v) => ({ name: v.name, path: '', exists: v.exists, setupVersion: '', latestVersion: '', needsUpdate: false, logo: false, logoStamp: null } as VaultStatus))
+    : data?.vaults ?? []), [tunnel, chosen, data]);
 
   // Existing projects, in listed order — the launcher's ⌘1-9 target set (a gone
   // folder can't be opened).
@@ -84,7 +98,7 @@ export function ProjectSwitcher() {
     if (!v.exists) return; // gone folder — nothing to open
 
     // The escape hatch: a real second OS window, regardless of chip state or window.
-    if (opts?.newWindow) {
+    if (opts?.newWindow && !tunnel) {
       setOpen(false);
       setBlockedReason(null);
       void openVaultWindow(v.name);
@@ -111,7 +125,7 @@ export function ProjectSwitcher() {
       setBlockedReason(null);
       setOpen(false);
     });
-  }, [inLauncher, chrome]);
+  }, [inLauncher, tunnel, chrome]);
 
   const goHome = useCallback(() => {
     setOpen(false);
@@ -130,10 +144,10 @@ export function ProjectSwitcher() {
     | { kind: 'vault'; vault: VaultStatus; quickIdx: number };
   const rows = useMemo<Row[]>(() => {
     const list: Row[] = [];
-    if (!inLauncher) list.push({ kind: 'home' });
+    if (!inLauncher && !tunnel) list.push({ kind: 'home' });
     for (const v of filtered) list.push({ kind: 'vault', vault: v, quickIdx: quickTargets.indexOf(v.name) });
     return list;
-  }, [inLauncher, filtered, quickTargets]);
+  }, [inLauncher, tunnel, filtered, quickTargets]);
 
   const activate = useCallback((i: number, opts?: { newWindow?: boolean }) => {
     const row = rows[i];

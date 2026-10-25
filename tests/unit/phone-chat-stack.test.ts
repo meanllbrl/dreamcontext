@@ -130,7 +130,9 @@ describe('the stack is wired on the phone (AC19-AC20)', () => {
 
   // Review r1 (edge-cases): the pure filter alone left the restore's wiring untested.
   it('Mac mode\'s phone restores through phoneRestorable over live-chats, and keeps what it could not judge', () => {
-    expect(surface).toMatch(/if \(isMacPhoneSurface\(\)\) \{\s*const ask = \(\) => scopedApi\.get<LiveChatsWire>\('\/agent\/live-chats'\);[\s\S]{0,300}?saved = phoneRestorable\(stored, live\);\s*if \(!live\) unrestored = stored;\s*\}\s*if \(!cancelled\) unrestoredRef\.current = unrestored;/);
+    expect(surface).toMatch(/if \(isMacPhoneSurface\(\)\) \{\s*const ask = \(\) => scopedApi\.get<LiveChatsWire>\('\/agent\/live-chats'\);[\s\S]{0,300}?saved = phoneRestorable\(stored, live\);\s*if \(!live\) unrestored = stored;[\s\S]{0,900}?\}\s*if \(!cancelled\) unrestoredRef\.current = unrestored;/);
+    // A remote computer with no live tab of its own seeds from the Mac window's, by the same live rule (D3).
+    expect(surface).toMatch(/if \(live && saved\.length === 0 && readRemoteDesktop\(\)\) \{[\s\S]{0,300}?\/agent\/sessions\?of=desktop[\s\S]{0,200}?saved = phoneRestorable\(seededRoster\(/);
     // An explicit close drops the conversation from the carry.
     expect(surface).toMatch(/const closeSessionById = useCallback[\s\S]{0,2500}?if \(claudeId\) unrestoredRef\.current = unrestoredRef\.current\.filter\(\(m\) => m\.sessionId !== claudeId\);/);
     expect(surface).toMatch(/\.\.\.carriedUnrestored\(unrestoredRef\.current, new Set\(sessionList\.map\(\(m\) => m\.claudeId\)\)\)\]/);

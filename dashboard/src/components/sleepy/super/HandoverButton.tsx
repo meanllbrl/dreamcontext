@@ -13,13 +13,24 @@ import { SuperAgentIcon } from '../../layout/NavIcons';
  * The small dot: after take-back the Super Agent is parked, and its queue may still hold
  * items waiting on the owner.
  */
-export function HandoverButton({ handedOver, busy, queueDot, onClick }: {
+export function HandoverButton({ handedOver, busy, queueDot, onClick, remote = false }: {
   handedOver: boolean;
   busy: boolean;
   queueDot: boolean;
   onClick: () => void;
+  /** A remote screen on Mac mode's tunnel (hands-free sekmeler W2, D7): hand-over and take-back
+   *  are the Mac's, so this is a label, "Super Agent devrede · Mac'te yönetilir", not a button. */
+  remote?: boolean;
 }) {
   const { t } = useI18n();
+  if (remote) {
+    return (
+      <span className="super-handover-btn super-handover-remote" data-testid="super-handover-remote" data-state="handed-over" role="status">
+        <span className="super-handover-btn-icon"><SuperAgentIcon size={16} /></span>
+        <span className="super-handover-btn-label">{t('super.remote.managed')}</span>
+      </span>
+    );
+  }
   const label = handedOver ? t('super.button.takeBack') : t('super.button.handOver');
   const short = handedOver ? t('super.button.takeBackShort') : t('super.button.handOverShort');
   const dot = !handedOver && queueDot;

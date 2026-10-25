@@ -15,6 +15,7 @@ import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
 import { OrbitPath, PanelChatTile, SheetTabs, StageControls } from './StageParts';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
+import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
 import { AgendaButton, AgendaPill } from './AgendaButton';
@@ -22,7 +23,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, isLivePage, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan } from './superLayout';
+import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
@@ -85,6 +86,11 @@ export interface SuperSurfaceProps {
   endPending: ReadonlySet<string>;
   /** Children whose end the server did not record (still running; the card says so). */
   endFailed: ReadonlySet<string>;
+  /** A REMOTE screen on Mac mode's tunnel (hands-free sekmeler W2, D5-D7): it reads and arranges
+   *  only. No close (the agenda only folds to its pill), no Others, no group, no end-child, no new
+   *  session, no terminals, no Allow/Deny; a card it cannot show draws "on the Mac". `touch`: a
+   *  finger, whose stage floats cards down to {@link TOUCH_REMOTE_NARROW_STAGE_PX}. */
+  remote?: { touch: boolean };
 }
 
 /**
@@ -98,7 +104,18 @@ export interface SuperSurfaceProps {
  * children's live sessions. The owner's gestures go up through `onLayout` as patches.
  */
 export function SuperSurface(props: SuperSurfaceProps) {
-  const { state, pending, motion, superSession, onLayout, onSlotsChanged } = props;
+  const { state, pending, motion, superSession, onSlotsChanged } = props;
+  const remote = props.remote ?? null;
+  // A remote screen's gestures pass the server's allowlist first (super/remoteStage.ts): what it
+  // may not do (close, Others, group, a look) is not done here either, never applied for show.
+  const ownerLayout = props.onLayout;
+  const onLayout = useCallback((patch: LayoutPatch) => {
+    if (!remote) { ownerLayout(patch); return; }
+    const allowed = remoteLayoutPatch(patch);
+    if (allowed) ownerLayout(allowed as LayoutPatch);
+  }, [remote, ownerLayout]);
+  const narrowPx = remote?.touch ? TOUCH_REMOTE_NARROW_STAGE_PX : undefined;
+  const centreMin = remote?.touch ? TOUCH_REMOTE_CENTRE_MIN : undefined;
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
@@ -194,8 +211,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, asking: ownerAsk, layoutChoices: layoutChoices.length }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, ownerAsk, layoutChoices.length],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, asking: ownerAsk, layoutChoices: layoutChoices.length, narrowPx, centreMin }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, ownerAsk, layoutChoices.length, narrowPx, centreMin],
   );
   cuesPlanRef.current = plan;
   const planRef = useRef(plan);
@@ -350,7 +367,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (c.kind === 'web') setLru((prev) => touchLru(prev, id));
       onLayout(c.place === 'others' ? { cards: [{ id, place: 'float' }], view: { mode: 'half', card: id } } : { view: { mode: 'half', card: id } });
     },
-    onToOthers: (id: string) => { onLayout({ cards: [{ id, place: 'others' }] }); focusAfter(id); },
+    onToOthers: (id: string) => { if (remote) return; onLayout({ cards: [{ id, place: 'others' }] }); focusAfter(id); },
     onAskAbout: (id: string) => {
       const c = byId.get(id);
       const g = groupsById.get(id);
@@ -364,17 +381,18 @@ export function SuperSurface(props: SuperSurfaceProps) {
         requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>('[data-testid="super-agenda-pill-btn"]')?.focus());
         return;
       }
+      if (remote) return;
       setLru((prev) => dropFromLru(prev, id)); onLayout({ closed: [id] }); focusAfter(id);
     },
     onEndSession: (id: string, whenDone: boolean) => {
       const c = byId.get(id);
-      if (c?.kind !== 'chat') return;
+      if (c?.kind !== 'chat' || remote) return;
       props.onEndChild(c.ref, whenDone);
       if (!whenDone) focusAfter(id);
     },
     onKeepRunning: (id: string) => {
       const c = byId.get(id);
-      if (c?.kind === 'chat') props.onKeepChild(c.ref);
+      if (c?.kind === 'chat' && !remote) props.onKeepChild(c.ref);
     },
     onMinimize: (id: string) => {
       // Presenting: the set-guarded exit, so a minimize never floats the agent's newer presentation.
@@ -397,7 +415,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     },
     onFullscreen: (id: string, subject: CardFullscreen) => setFull({ id, subject }),
   };
-  const canFit = (id: string, next: ContainerSize) => fitsNow(items, view, size, id, next, { terminals: props.terminals.length });
+  const canFit = (id: string, next: ContainerSize) => fitsNow(items, view, size, id, next, { terminals: props.terminals.length, narrowPx, centreMin });
   // A card closed meanwhile takes its full-screen view with it.
   useEffect(() => { if (full && !byId.has(full.id)) setFull(null); }, [byId, full]);
 
@@ -568,7 +586,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const onWriteAbout = props.onWriteAbout;
   const writeAbout = onWriteAbout && superSession && superSession.status !== 'closed'
     ? (row: AgendaRow) => {
-      if (plan.narrow && viewMode !== 'float') onLayout({ view: { mode: 'float' } });
+      // Never from a remote screen: that automatic write would move the Mac's stage under him.
+      if (plan.narrow && viewMode !== 'float' && !remote) onLayout({ view: { mode: 'float' } });
       onWriteAbout(row);
     }
     : undefined;
@@ -627,7 +646,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               <span className="super-centre-name">{t('super.centre.name')}</span>
               {plan.chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
               {plan.chat === 'column' && !agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
-              {plan.chat === 'column' && <NewSessionButton pending={freshPending(state)} onPress={props.onNewSession} />}
+              {plan.chat === 'column' && !remote && <NewSessionButton pending={freshPending(state)} onPress={props.onNewSession} />}
               {plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' && (
                 <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
               )}
@@ -683,6 +702,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               side={cp.rect.x + cp.rect.width / 2 < plan.centre.x + plan.centre.width / 2 ? 'left' : 'right'}
               canFit={(next) => canFit(c.id, next)}
               onPressResize={ghost ? undefined : onPressResize}
+              remote={!!remote}
               agenda={c.kind === 'agenda' ? renderAgenda : undefined}
               // One big page (spotlight, review's site, a filmstrip's big card): at a desktop width.
               desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present'}
@@ -735,6 +755,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         titleFor={props.titleFor}
         onReplyToSuper={props.onReplyToSuper}
         onShowChild={showChild}
+        remote={!!remote}
       />
       {plan.chat === 'bar' && !plan.narrow && (
         // Folded, the centre is the composer alone: its unfold sits just right of it.
@@ -755,8 +776,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
           {t('super.stage.empty')}
         </div>
       )}
-      <TerminalsRow terminals={props.terminals} rect={plan.dock} onOpen={props.onTerminal} />
-      {drag && (
+      {!remote && <TerminalsRow terminals={props.terminals} rect={plan.dock} onOpen={props.onTerminal} />}
+      {drag && !remote && (
         <div
           className="super-others-zone"
           data-testid="super-others-zone"

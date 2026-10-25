@@ -175,6 +175,7 @@ const MAC_LOGIN_STRINGS = {
     network: 'Could not reach your Mac. Check your connection and try again.',
     refused: 'This sign-in was refused. Open the link your Mac gave you and try again.',
     revoked: 'This device was signed out. Sign in again with the current password.',
+    shared: 'On a shared computer, press Return on your Mac when you are done; until then this browser stays connected to your Mac.',
     qr: 'That QR code was already used or has expired. Show a new one on your Mac, or type the password.',
   },
   tr: {
@@ -194,6 +195,7 @@ const MAC_LOGIN_STRINGS = {
     network: 'Mac\'ine ulaşılamadı. Bağlantını kontrol edip tekrar dene.',
     refused: 'Bu giriş reddedildi. Mac\'inin verdiği bağlantıyı açıp tekrar dene.',
     revoked: 'Bu cihazın oturumu kapatıldı. Güncel şifreyle tekrar giriş yap.',
+    shared: 'Ortak bir bilgisayardaysan işin bitince Mac\'te Dönüş\'e bas; bu tarayıcı o zamana kadar Mac\'ine bağlı kalır.',
     qr: 'Bu QR kod kullanılmış ya da süresi dolmuş. Mac\'inde yenisini göster ya da şifreyi yaz.',
   },
 } as const;
@@ -251,7 +253,8 @@ ${HANDSFREE_MARK_SVG}
 </div>
 <button id="go" type="submit">${esc(s.submit)}</button>
 <div class="msg" id="m" role="status" aria-live="polite"></div>
-</form>`;
+</form>
+<p class="small" id="shared">${esc(s.shared)}</p>`;
   return page(lang, s.title, body, MAC_LOGIN_JS, jsonData({ s, qr: opts.qrFailed }));
 }
 

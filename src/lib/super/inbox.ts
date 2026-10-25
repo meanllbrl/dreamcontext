@@ -329,13 +329,17 @@ export function noteHeld(s: SuperState): boolean {
  *  Every write also notes what a question open with the owner holds back (`noteHeld`), and
  *  floats every live child's card (live.ts: a live job is never in Others or a group unless the
  *  owner put it there himself). */
-export async function writeSuper(contextRoot: string, fn: (draft: SuperState) => SuperState | void): Promise<SuperState> {
+export async function writeSuper(
+  contextRoot: string,
+  fn: (draft: SuperState) => SuperState | void,
+  opts: { onDemoted?: (ids: string[]) => void } = {},
+): Promise<SuperState> {
   const next = await updateSuperState(contextRoot, (draft) => {
     const out = fn(draft) ?? draft;
     floatLiveChildren(out);
     noteHeld(out);
     return out;
-  }, superSanitizeOpts());
+  }, { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}) });
   afterSuperWrite(contextRoot, next);
   return next;
 }
@@ -1583,6 +1587,8 @@ async function startedAgain(root: string, sid: string): Promise<void> {
 }
 
 async function reopenedByOwner(root: string, sid: string): Promise<void> {
+  // A phone reopened it while handed over: the store ends it again in the same write and takes
+  // back the card and note this write gave it (store.ts demotePhoneHeld). The phone keeps it.
   await writeSuper(root, (s) => {
     const x = s.children[sid];
     if (!x || x.endedAt === undefined) return;
@@ -1591,7 +1597,7 @@ async function reopenedByOwner(root: string, sid: string): Promise<void> {
     if (!s.enabled) return;
     ensureChatContainer(s, sid, x.brief.slice(0, 120), true);
     s.notes[sid] = 'handover';
-  });
+  }, { onDemoted: (ids) => console.log(`[super] ${root}: ${ids.join(', ')} reopened on a remote screen; not a child while it holds it`) });
 }
 
 function onChange({ entry, from }: ChatChange): void {

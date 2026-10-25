@@ -22,7 +22,7 @@ import { phoneMediaRoots, phoneMediaVerdict } from '../../lib/handsfree/mac/phon
 import { addPhoneFileGrant, hasPhoneFileGrant } from '../phone-file-grants.js';
 import { sniffImageType } from '../../lib/image-sniff.js';
 import { listVaults } from '../../lib/vaults.js';
-import { HOLDER_PROBE_MS, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
+import { HOLDER_PROBE_MS, MAC_CLOSE_HANDED_OVER, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, SUPER_STAGE_FRAME, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
@@ -83,7 +83,8 @@ import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '..
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
-import { clearSuperNote, delegatedChildMcp, peekSuperNote, readSuperState, superIndex, superRootOfChild } from '../../lib/super/store.js';
+import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, peekSuperNote, readSuperState, setPhoneHoldsProbe, superIndex, superRootOfChild } from '../../lib/super/store.js';
+import { remoteViewOf } from './super-remote.js';
 import { ABOUT_AGENDA_RE, OWNER_VOICE_TEXT, REPLY_TO_RE, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, ownerMsgBlock } from '../../lib/super/types.js';
 import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
@@ -758,8 +759,9 @@ export function phoneDeviceShowing(sessionId: string): string | null {
 /** Every live chat session in this process — desktop-spawned ones included, because a phone
  *  may adopt any of them. */
 const deviceSessions = new Set<{ device: () => DeviceTag | null; revoke: () => void; releasePhone: () => boolean }>();
-/** The phone mirrors of every live Super Agent (lib/super/phone-mirror.ts): closed by the same
- *  revocation and return as the sessions above. */
+/** The remote mirrors of every live chat that has them (lib/super/phone-mirror.ts): a Super
+ *  Agent's (read and chat) and a Super child's (watch-only, made on its first watch). Closed by
+ *  the same revocation and return as the sessions above, and by the chat's own end. */
 const superMirrorSets = new Set<MirrorSet<DeviceTag>>();
 /** Owner frames that came from a phone mirror (written at once like every owner frame, or
  *  re-fed to a successor; the mark rides on the frame itself). */
@@ -780,7 +782,14 @@ setSuperDigestSink((contextRoot, state) => {
   const entry = sid ? findLiveChat(sid) : null;
   if (!sid || !entry?.mirrorFrame || !entry.mirrorCount) return;
   if (resolve(join(entry.projectRoot, '_dream_context')) !== resolve(contextRoot)) return;
-  if (entry.mirrorCount() === 0) { digestKeys.delete(sid); return; }
+  if (entry.mirrorCount() === 0) { digestKeys.delete(sid); stageKeys.delete(sid); return; }
+  // The remote stage (a computer or tablet on the tunnel draws it), allowlisted: sent when it
+  // changed, before the digest so an agenda never names a card the stage has not drawn yet.
+  const stage = JSON.stringify({ type: '_meta', subtype: SUPER_STAGE_FRAME, state: remoteViewOf(contextRoot, state) });
+  if (stageKeys.get(sid) !== stage) {
+    entry.mirrorFrame(stage);
+    stageKeys.set(sid, stage);
+  }
   const d = superDigest(state);
   if (digestKeys.get(sid) === d.key) return;
   digestSeq.set(sid, ++digestClock);
@@ -788,6 +797,54 @@ setSuperDigestSink((contextRoot, state) => {
   // Marked sent only once it went: a send that threw is tried again by the next push.
   digestKeys.set(sid, d.key);
 });
+/** The remote stage frame each Super Agent's mirrors were last sent, by session. */
+const stageKeys = new Map<string, string>();
+
+// ─── Phone-held (hands-free sekmeler W1): a phone never holds a Super child ──────
+
+/** Phone opens in flight, by conversation id (lowercased): counted from the open's decision
+ *  until it binds, is refused or its socket closes. */
+const phoneOpening = new Map<string, number>();
+
+/** Count a phone open of these ids as in flight. Returns its release (idempotent). */
+export function notePhoneOpening(ids: readonly string[]): () => void {
+  const keys = [...new Set(ids.filter(Boolean).map((id) => id.toLowerCase()))];
+  for (const k of keys) phoneOpening.set(k, (phoneOpening.get(k) ?? 0) + 1);
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    for (const k of keys) {
+      const n = (phoneOpening.get(k) ?? 0) - 1;
+      if (n > 0) phoneOpening.set(k, n); else phoneOpening.delete(k);
+    }
+  };
+}
+
+/** Tests only: phone opens still counted. */
+export function phoneOpeningCountForTests(): number {
+  let n = 0;
+  for (const v of phoneOpening.values()) n += v;
+  return n;
+}
+
+/**
+ * THE definition of "phone-held": the live chat's holder socket is a phone socket (tagged in
+ * `socketDevice`; not `phoneDeviceShowing`, which also asks for a visible screen), or a phone open
+ * naming it is in flight. Ids compared case-blind. The store asks it on every record write.
+ */
+export function phoneHolds(sessionId: string): boolean {
+  const id = sessionId.toLowerCase();
+  if (!id) return false;
+  if ((phoneOpening.get(id) ?? 0) > 0) return true;
+  for (const cand of new Set([sessionId, id])) {
+    const holder = findLiveChat(cand)?.holder?.() ?? null;
+    if (holder && socketDevice.get(holder)) return true;
+  }
+  return false;
+}
+setPhoneHoldsProbe(phoneHolds);
+
 let deviceRevocationArmed = false;
 
 export function tagDeviceSocket(ws: object, tag: DeviceTag): void {
@@ -977,7 +1034,14 @@ export function probeHolder(holder: import('ws').WebSocket, ms: number = HOLDER_
  * adopting, the probed socket must still be the holder; else the new holder is probed. Returns
  * false when the child could not be adopted (exiting) — the caller then resumes it fresh.
  */
-export async function passiveAdopt(entry: LiveChatEntry, ws: import('ws').WebSocket): Promise<'adopted' | 'taken' | 'aborted' | 'unadoptable'> {
+export async function passiveAdopt(
+  entry: LiveChatEntry,
+  ws: import('ws').WebSocket,
+  /** Re-checked at the moment of binding: true = the chat became a Super child meanwhile, so a
+   *  phone must not bind it (the caller makes the socket a watch-only mirror or closes it 4403);
+   *  the frames held for the bind are dropped, never replayed into a read-only mirror. */
+  handedOver?: () => boolean,
+): Promise<'adopted' | 'taken' | 'aborted' | 'unadoptable' | 'handed_over'> {
   // The client sees its socket OPEN the moment the upgrade completes, but the chat binds it only
   // once the probe has decided (up to HOLDER_PROBE_MS). A frame sent in that window (the owner
   // typing right after a reconnect) is held here and replayed into the chat after the adopt —
@@ -989,8 +1053,9 @@ export async function passiveAdopt(entry: LiveChatEntry, ws: import('ws').WebSoc
   const held: Array<Buffer | string> = [];
   const hold = (d: Buffer | string): void => { if (held.length < 64) held.push(d); };
   ws.on('message', hold);
-  const adoptNow = (): 'adopted' | 'unadoptable' => {
+  const adoptNow = (): 'adopted' | 'unadoptable' | 'handed_over' => {
     ws.off('message', hold);
+    if (handedOver?.()) { held.length = 0; return 'handed_over'; }
     if (!entry.adopt(ws)) return 'unadoptable';
     for (const d of held.splice(0)) ws.emit('message', d);
     return 'adopted';
@@ -1135,6 +1200,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       })();
       return;
     }
+    // A Super Agent child while its project is handed over (hands-free sekmeler D6): a remote
+    // screen WATCHES it, beside the Mac window that holds it, and never adopts, supersedes,
+    // evicts or respawns it — whatever the mode, reattach value or id case. Not live: refused.
+    if (phone) {
+      const child = [resumeId, sessionId].find((id) => !!id && isHandedOverChild(id));
+      if (child) { watchChild(req, socket, head, child, superCtx); return; }
+    }
     const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: superCtx, resumeId, sessionId });
     if (superRefused) { rejectUpgrade(socket, superRefused); return; }
     // Which Claude ACCOUNT this session runs on. '' = none requested, which resolves to the
@@ -1192,10 +1264,14 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     const reattach = (reattachValue === REATTACH_EVICT || reattachValue === REATTACH_PASSIVE) && !!resumeId && !assistant;
     const passive = reattach && reattachValue === REATTACH_PASSIVE;
 
+    // A phone open is in flight from here until it binds, is refused or its socket closes: a
+    // hand-over or `super adopt` meanwhile skips this chat (phoneHolds).
+    const releaseOpening = phone ? notePhoneOpening([resumeId, sessionId]) : () => { /* not a phone */ };
+    socket.once('close', releaseOpening);
     void (async () => {
       let WebSocketServer: typeof import('ws').WebSocketServer;
       try { ({ WebSocketServer } = await import('ws')); }
-      catch { rejectUpgrade(socket, 501); return; }
+      catch { releaseOpening(); rejectUpgrade(socket, 501); return; }
 
       // A live child for this conversation (see agent-chat-live.ts). A reattach adopts it; any
       // OTHER connection naming it is a respawn (account, mode, Resume) and the child must give
@@ -1206,7 +1282,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         phone, live, projectRoot, reattach,
         foreignTranscript: phone && [resumeId, sessionId].some((cid) => !!cid && phoneTranscriptRefused(req, ctx, liveTranscriptPath(ctx, cid))),
       });
-      if (open.refuse) { rejectUpgrade(socket, 403); return; }
+      if (open.refuse) { releaseOpening(); rejectUpgrade(socket, 403); return; }
       const adoptable = open.adopt;
       // PROVISIONAL: a second tab opening the same conversation is refused below while the
       // first one still holds it, and a refused open must not cost the first pane its detach.
@@ -1231,21 +1307,41 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       // opens or adopts.
       const deviceHash = phone && authFor(req) ? deviceIdHash(req) : null;
       const deviceTag: DeviceTag | null = deviceHash ? { store: 'mac', idHash: deviceHash } : null;
+      // The child gate again, synchronously, at every bind point of a phone open: a hand-over
+      // or `super adopt` that committed while this open waited makes the socket a watch-only
+      // mirror or closes it 4403 — never a bind, never a supersede of the Mac holder.
+      const childNow = (): string | null => (phone ? [resumeId, sessionId].find((id) => !!id && isHandedOverChild(id)) ?? null : null);
+      const toWatch = (ws: import('ws').WebSocket, child: string | null): void => {
+        settleSupersede(false);
+        releaseOpening();
+        // Taken back meanwhile: the client reconnects and is decided again, as today.
+        if (!child) { try { ws.close(MIRROR_CLOSE_ENDED, 'decide again'); } catch { /* gone */ } return; }
+        const lc = findLiveChat(child) ?? findLiveChat(child.toLowerCase());
+        if (deviceTag && lc?.watch && lc.watch(ws, deviceTag)) return;
+        try { ws.close(MAC_CLOSE_HANDED_OVER, 'handed_over'); } catch { /* gone */ }
+      };
       wss.handleUpgrade(req, socket, head, (ws) => {
         if (deviceTag) tagDeviceSocket(ws, deviceTag);
         if (adoptable && passive) {
-          void passiveAdopt(adoptable, ws).then((outcome) => {
-            if (outcome === 'aborted') { settleSupersede(false); return; }
-            if (outcome !== 'unadoptable') return;
+          void passiveAdopt(adoptable, ws, () => childNow() !== null).then((outcome) => {
+            if (outcome === 'handed_over') { toWatch(ws, childNow()); return; }
+            if (outcome === 'aborted') { settleSupersede(false); releaseOpening(); return; }
+            if (outcome !== 'unadoptable') { releaseOpening(); return; }
+            const child = childNow();
+            if (child) { toWatch(ws, child); return; }
             startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+            releaseOpening();
           });
           return;
         }
-        if (adoptable && adoptable.adopt(ws, 'takeover')) return;
+        const child = childNow();
+        if (child) { toWatch(ws, child); return; }
+        if (adoptable && adoptable.adopt(ws, 'takeover')) { releaseOpening(); return; }
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
           startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+          releaseOpening();
           return;
         }
         // The Assistant's CLI reaches `/api/assistant/*` with these two — injected into THIS
@@ -1261,9 +1357,42 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         let accepted = false;
         startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted: () => { accepted = true; }, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
         settleSupersede(accepted);
+        releaseOpening();
       });
     })();
   });
+}
+
+/**
+ * A remote screen's open of a Super child while its project is handed over: a WATCH-ONLY mirror
+ * beside the Mac window that holds it (its transcript, live; nothing it sends reaches the
+ * child), or 403 — a child not live here, or not of this project's record. Full of other
+ * devices: 503 before the handshake, so the client backs off.
+ */
+function watchChild(req: IncomingMessage, socket: Duplex, head: Buffer, child: string, superCtx: string): void {
+  const hash = authFor(req) ? deviceIdHash(req) : null;
+  const tag: DeviceTag | null = hash ? { store: 'mac', idHash: hash } : null;
+  const lc = findLiveChat(child) ?? findLiveChat(child.toLowerCase());
+  const ownRecord = !!lc && handedOverChildRoot(lc.conversationId) === resolve(superCtx);
+  if (!tag || !lc?.watch || !ownRecord) { rejectUpgrade(socket, 403); return; }
+  if (!lc.watchRoom?.(tag)) { rejectUpgrade(socket, 503); return; }
+  void (async () => {
+    let WebSocketServer: typeof import('ws').WebSocketServer;
+    try { ({ WebSocketServer } = await import('ws')); }
+    catch { rejectUpgrade(socket, 501); return; }
+    new WebSocketServer({ noServer: true }).handleUpgrade(req, socket, head, (ws) => {
+      // FIRST: a protocol error on a socket nobody listens to would exit the server.
+      ws.on('error', () => { /* the close that follows is what counts */ });
+      tagDeviceSocket(ws, tag);
+      // The child ended meanwhile, or the take-back already ran: the client reconnects and is
+      // decided again (a watch, a 403, or — after a take-back — an ordinary open).
+      if (!lc.watch?.(ws, tag)) {
+        try { ws.close(MIRROR_CLOSE_ENDED, 'decide again'); } catch { /* gone */ }
+        const t = setTimeout(() => { try { ws.terminate(); } catch { /* gone */ } }, 1000);
+        t.unref?.();
+      }
+    });
+  })();
 }
 
 /**
@@ -1955,7 +2084,7 @@ export function startChatSession(
   const chatRegistryId = pinId || randomUUID();
   /** The phone's mirrors of this Super Agent (lib/super/phone-mirror.ts); null for any other
    *  chat. The owner's text from one joins the desktop's own path (`onWsMessage`). */
-  const mirrors = isSuper
+  let mirrors: MirrorSet<DeviceTag> | null = isSuper
     ? new MirrorSet<DeviceTag>({
       valid: deviceStillValid,
       onOwnerFrame: (raw) => {
@@ -2212,36 +2341,62 @@ export function startChatSession(
     supersede: () => supersedeLive(),
     cut: () => cutChild(),
     pid: child.pid,
-    ...(mirrors ? {
+    ...(isSuper ? {
       mirror: (sock: import('ws').WebSocket, device: DeviceTag) => addMirror(sock, device),
-      mirrorRoom: (device: DeviceTag) => mirrors.room(device),
-      closeMirrors: () => { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super taken back'); },
-      mirrorFrame: (serialised: string) => { mirrors.frame(serialised); },
-      mirrorCount: () => mirrors.size,
-    } : {}),
+      mirrorRoom: (device: DeviceTag) => mirrors?.room(device) ?? false,
+      mirrorFrame: (serialised: string) => { mirrors?.frame(serialised); },
+      mirrorCount: () => mirrors?.size ?? 0,
+    } : {
+      watch: (sock: import('ws').WebSocket, device: DeviceTag) => addWatch(sock, device),
+      watchRoom: (device: DeviceTag) => mirrors?.room(device) ?? true,
+    }),
+    closeMirrors: () => { mirrors?.closeAll(MIRROR_CLOSE_ENDED, isSuper ? 'super taken back' : 'child taken back'); },
   } : null;
   if (live) registerLiveChat(live);
   /** A phone joins this Super Agent beside its holder. It reads the turn state like a reattach
    *  (and replays what it missed from chat-history); the window's prompts are not its own. */
   function addMirror(sock: import('ws').WebSocket, device: DeviceTag): boolean {
     if (!mirrors || !alive || handedOff || lingerTimer || lingerKillTimer) return false;
-    if (!mirrors.add(sock, device)) return false;
+    const set = mirrors;
+    if (!set.add(sock, device)) return false;
     try { sock.send(JSON.stringify({ type: '_meta', subtype: 'reattached', adopted: true, busy: turnsInFlight > 0 })); } catch { /* gone */ }
     // The next push tells every mirror in full (this one included), and a digest sent from here
     // on makes the snapshot below stale.
     digestKeys.delete(pinId);
+    stageKeys.delete(pinId);
     const joinedAt = ++digestClock;
     // The pictures on the Mac's stage right now, once: the phone has no stage, and an image card
     // opened before it joined would otherwise never reach it (D2). And the agenda as it stands.
     // Best-effort and async — a missing or unreadable super record just means neither.
     void readSuperState(contextRoot, superSanitizeOpts())
       .then((st) => {
-        if (!mirrors.has(sock) || sock.readyState !== sock.OPEN) return;
+        if (!set.has(sock) || sock.readyState !== sock.OPEN) return;
         const frame = stageMediaFrame(stageImageItems(st), true);
         if (frame) sock.send(frame);
         if ((digestSeq.get(pinId) ?? 0) < joinedAt) sock.send(superDigestFrame(superDigest(st)));
       })
       .catch(() => { /* no record, no strip */ });
+    return true;
+  }
+  /**
+   * A remote screen WATCHES this chat, a Super child while its project is handed over: a
+   * read-only mirror (no inbound handler at all), made on the first watch and joined to the
+   * registry Return and revocation walk. It reads the turn state like a reattach and is told it
+   * only watches; no stage pictures, no agenda (those are the Super's).
+   */
+  function addWatch(sock: import('ws').WebSocket, device: DeviceTag): boolean {
+    if (isSuper || !alive || handedOff || lingerTimer || lingerKillTimer || !pinId || !isHandedOverChild(pinId)) return false;
+    if (!mirrors) {
+      mirrors = new MirrorSet<DeviceTag>({
+        valid: deviceStillValid,
+        readOnly: true,
+        holder: () => (alive && !detached && ws.readyState === ws.OPEN ? ws : null),
+        key: (d) => d.idHash,
+      });
+      superMirrorSets.add(mirrors);
+    }
+    if (!mirrors.add(sock, device)) return false;
+    try { sock.send(JSON.stringify({ type: '_meta', subtype: 'reattached', adopted: true, busy: turnsInFlight > 0, watchOnly: true })); } catch { /* gone */ }
     return true;
   }
   /** No socket right now; the reap timers below decide how long that may last. */
@@ -2580,7 +2735,7 @@ export function startChatSession(
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
     stopPing();
     if (live) unregisterLiveChat(live);
-    if (mirrors) { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super ended'); superMirrorSets.delete(mirrors); digestKeys.delete(pinId); digestSeq.delete(pinId); }
+    if (mirrors) { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super ended'); superMirrorSets.delete(mirrors); digestKeys.delete(pinId); digestSeq.delete(pinId); stageKeys.delete(pinId); }
     unregisterPark();
     parkAsk?.settle('already');
     untrack();

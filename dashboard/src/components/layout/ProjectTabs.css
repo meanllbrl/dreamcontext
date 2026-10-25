@@ -937,3 +937,27 @@
     transform: none;
   }
 }
+
+/* ───────────── A finger on Mac mode's tunnel (hands-free sekmeler W2) ─────────────
+   A landscape tablet or a touch computer reaching the Mac gets the desktop chrome with 44 px
+   tall targets (WCAG 2.5.5): the project chips, the `+`, and every chat tab below. The bar grows
+   to hold them; `data-touch` is set by WindowChrome only on a remote screen with a coarse pointer. */
+.window-chrome[data-touch='true'] {
+  --titlebar-height: 56px;
+}
+.window-chrome[data-touch='true'] .project-tab,
+.window-chrome[data-touch='true'] .project-tab-ghost,
+.window-chrome[data-touch='true'] .project-tab-main {
+  height: 44px;
+}
+.window-chrome[data-touch='true'] .project-tab-close,
+.window-chrome[data-touch='true'] .project-tabs-add {
+  width: 44px;
+  height: 44px;
+}
+.window-chrome[data-touch='true'] .agent-pane-tabbar {
+  height: 52px;
+}
+.window-chrome[data-touch='true'] .agent-tab {
+  min-height: 44px;
+}

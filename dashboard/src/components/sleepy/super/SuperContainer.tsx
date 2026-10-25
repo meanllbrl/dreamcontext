@@ -111,6 +111,10 @@ export interface SuperCardActions {
 
 export interface SuperContainerProps extends SuperCardActions {
   container: Container;
+  /** A remote screen on Mac mode's tunnel (hands-free sekmeler W2): no Others and no close (the
+   *  agenda still folds to its pill); a card whose address the server held back (`ref` empty: a
+   *  page only the Mac reaches, the live browser) draws the "on the Mac" placeholder. */
+  remote?: boolean;
   plan: CardPlan;
   /** The child behind a `chat` card (its ref is the child's session id). */
   child?: SuperChild;
@@ -209,7 +213,9 @@ export function SuperContainer(props: SuperContainerProps) {
   // The agenda is never closed: its close collapses it to its pill in the bottom-left corner.
   const closeBtn = c.kind === 'agenda'
     ? <IconButton icon="corner" label={t('super.agenda.minimize')} onClick={onCloseClick} testId="super-agenda-minimize" />
-    : <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />;
+    : props.remote ? null : <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />;
+  // What only the Mac can show: drawn as a placeholder, never loaded from here.
+  const macOnly = !!props.remote && (c.kind === 'browser' || ((c.kind === 'web' || c.kind === 'image') && !c.ref));
   // A floating card's one action, for a click and for Enter/Space alike: a team card opens its
   // member in AI Team (where the job is), any other card shows side by side.
   const openCard = () => {
@@ -256,7 +262,9 @@ export function SuperContainer(props: SuperContainerProps) {
     >
       <div className="super-card-lift" aria-hidden />
       <div className="super-card-clip">
-        {c.kind === 'web'
+        {macOnly
+          ? <MacOnlyBody kind={c.kind} title={props.title} />
+          : c.kind === 'web'
           // A web card keeps ONE tree whatever the card does, so its frame never remounts: a
           // page from a server keeps what the owner did in it (owner 2026-10-22: "every reload
           // loses what I did"), a project page loads once (owner 2026-10-23: it reloaded on
@@ -272,7 +280,7 @@ export function SuperContainer(props: SuperContainerProps) {
         {floating ? (
           <>
             <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} />
-            <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />
+            {!props.remote && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />}
             <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} testId="super-card-ask" />
             {small ? (
               // A 160 px tile has room for five buttons: size and full screen share one menu.
@@ -399,6 +407,18 @@ const widgetSize = (p: CardPlan): WidgetSize => {
  * card's own view inside the tile (owner 2026-10-22: "like Apple widgets"), a web page live only
  * within the frame budget.
  */
+/** A card a remote screen cannot show: a page only the Mac reaches, the live browser. Its title
+ *  and where it is, nothing loaded (hands-free sekmeler W2, AC13). */
+function MacOnlyBody({ kind, title }: { kind: Container['kind']; title: string }): ReactNode {
+  const { t } = useI18n();
+  return (
+    <div className="super-card-body super-card-maconly" data-testid="super-card-mac-only">
+      <CardHead kind={kind} title={title} />
+      <p className="super-card-maconly-note">{t(kind === 'browser' ? 'super.remote.browserMacOnly' : 'super.remote.pageMacOnly')}</p>
+    </div>
+  );
+}
+
 function FloatBody(p: BodyProps): ReactNode {
   const c = p.container;
   const size = p.plan.size ?? 'small';

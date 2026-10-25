@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useSyncExternalStore } from 'react';
+import { COARSE_POINTER_QUERY, readRemoteDesktop } from './useIsMobile';
 
 const COLLAPSE_STORAGE_KEY = 'dreamcontext.dashboard.sidebarCollapsed';
 
@@ -8,6 +9,14 @@ const NARROW_QUERY =
   typeof window !== 'undefined' && window.matchMedia
     ? window.matchMedia('(max-width: 1024px)')
     : null;
+
+/** A finger on a remote screen (a tablet on Mac mode's tunnel, hands-free sekmeler W2): the rail
+ *  starts folded to its 56 px icons, so the panes get the width. A first-load default only, never
+ *  written over the owner's own choice. */
+function readTouchRemote(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return readRemoteDesktop() && window.matchMedia(COARSE_POINTER_QUERY).matches;
+}
 
 function readUserPref(): boolean {
   if (typeof window === 'undefined') return false;
@@ -66,6 +75,7 @@ export function useSidebarCollapse(activeInstanceId?: string | null) {
   const [userPref, setUserPref] = useState<boolean>(readUserPref);
   const held = useSidebarHeld(activeInstanceId);
   const [forced, setForced] = useState<boolean>(NARROW_QUERY?.matches ?? false);
+  const [touchStart, setTouchStart] = useState<boolean>(readTouchRemote);
 
   useEffect(() => {
     if (!NARROW_QUERY) return;
@@ -77,6 +87,12 @@ export function useSidebarCollapse(activeInstanceId?: string | null) {
   const toggle = useCallback(() => {
     // Held by a handed-over project: the toggle is a no-op, and the preference stays as it was.
     if (isSidebarHeld(activeInstanceId)) return;
+    // The first-load fold on a remote touch screen: the owner's first toggle opens the rail.
+    if (touchStart) {
+      setTouchStart(false);
+      setUserPref(false);
+      return;
+    }
     setUserPref((prev) => {
       const next = !prev;
       try {
@@ -86,7 +102,7 @@ export function useSidebarCollapse(activeInstanceId?: string | null) {
       }
       return next;
     });
-  }, [activeInstanceId]);
+  }, [activeInstanceId, touchStart]);
 
-  return { collapsed: forced || userPref || held, held, toggle };
+  return { collapsed: forced || userPref || held || touchStart, held, toggle };
 }

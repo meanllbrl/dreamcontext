@@ -134,3 +134,28 @@ describe('carriedUnrestored', () => {
     expect(carriedUnrestored([], new Set())).toEqual([]);
   });
 });
+
+describe('D3 seeding: a remote computer opens a project with the Mac window\'s live tabs (hands-free sekmeler W2)', () => {
+  it('the Mac tabs become chat roster entries in the same panes, with the Mac tab\'s own bypass', async () => {
+    const { seededRoster } = await import('../../dashboard/src/components/handsfree/rosterRehydrate.js');
+    expect(seededRoster([
+      { title: 'Plan', sessionId: 'a', pane: 0, kind: 'chat', bypass: false, active: true },
+      { title: 'Build', sessionId: 'b', pane: 1, kind: 'agent', bypass: true },
+    ])).toEqual([
+      { title: 'Plan', bypass: false, minimized: false, size: 1, sessionId: 'a', kind: 'chat', pane: 0, active: true },
+      { title: 'Build', bypass: true, minimized: false, size: 1, sessionId: 'b', kind: 'chat', pane: 1 },
+    ]);
+  });
+
+  it('only the tabs the Mac runs now are opened (the same rule a phone restore uses)', async () => {
+    const { seededRoster, phoneRestorable } = await import('../../dashboard/src/components/handsfree/rosterRehydrate.js');
+    const seed = seededRoster([
+      { title: 'Live', sessionId: 'live', pane: 0, kind: 'chat', bypass: false },
+      { title: 'Closed', sessionId: 'gone', pane: 0, kind: 'chat', bypass: false },
+      { title: 'Finishing', sessionId: 'drain', pane: 1, kind: 'chat', bypass: false },
+    ]);
+    const live = { chats: [{ conversationId: 'live' }, { conversationId: 'drain' }], draining: ['drain'] };
+    expect(phoneRestorable(seed, live).map((m) => m.sessionId)).toEqual(['live']);
+    expect(phoneRestorable(seed, null)).toEqual([]);
+  });
+});

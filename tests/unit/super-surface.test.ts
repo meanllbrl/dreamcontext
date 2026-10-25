@@ -378,7 +378,7 @@ describe('the window rules (D10, AC12)', () => {
     const hold = hook.slice(hook.indexOf('export function holdSidebarCollapsed'), hook.indexOf('export function isSidebarHeld'));
     expect(hold).not.toMatch(/localStorage|setUserPref/);
     // The toggle is a no-op while held.
-    expect(hook).toMatch(/if \(isSidebarHeld\(activeInstanceId\)\) return;\n\s*setUserPref/);
+    expect(hook).toMatch(/if \(isSidebarHeld\(activeInstanceId\)\) return;\n[\s\S]{0,300}?setUserPref\(\(prev\)/);
     expect(hook).toMatch(/collapsed: forced \|\| userPref \|\| held/);
     // Flipped in the SAME commit as the switch, released on take-back and on unmount (FE4).
     const hand = surface.slice(surface.indexOf('const handOver = useCallback'), surface.indexOf('const takeBack = useCallback'));
@@ -539,7 +539,8 @@ describe('the window rules (D10, AC12)', () => {
     expect(f.posts).toEqual([0]);
     f.lease.typed();
     expect(f.posts).toEqual([0]);
-    expect(surface).toMatch(/if \(!superState\?\.enabled\) return undefined;\s*const lease = createActivityLease\(/);
+    // Never from Mac mode's tunnel: the lease is the Mac window's (W2).
+    expect(surface).toMatch(/if \(!superState\?\.enabled \|\| isMacPhoneSurface\(\)\) return undefined;\s*const lease = createActivityLease\(/);
     expect(surface).toMatch(/return \(\) => \{\s*lease\.dispose\(\);/);
     // Wired to the Super Agent's composer only, and only while handed over.
     expect(surface).toMatch(/cs\.setDraftListener\(\(\) => \{ if \(superStateRef\.current\?\.enabled\) superLeaseRef\.current\?\.typed\(\); \}\)/);
@@ -555,7 +556,7 @@ describe('the window rules (D10, AC12)', () => {
     // The one timer is the activity lease's trailing post (a keystroke happened), never a poll.
     expect((api.match(/setTimeout\(/g) ?? []).length).toBe(1);
     expect(api).toMatch(/schedule: \(fn, ms\) => setTimeout\(fn, ms\)/);
-    expect(surface).toMatch(/superSignalRef\.current = \(signal\) => \{\s*if \(signal\.kind !== 'state'\) return;\s*const st = readSuperStateView\(signal\.state\);/);
+    expect(surface).toMatch(/superSignalRef\.current = \(signal\) => \{[\s\S]{0,700}?if \(signal\.kind !== 'state'\) return;\s*const st = readSuperStateView\(signal\.state\);/);
   });
 });
 

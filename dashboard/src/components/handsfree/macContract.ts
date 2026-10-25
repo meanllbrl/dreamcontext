@@ -8,6 +8,8 @@
 export const MAC_CLOSE_SIGNED_OUT = 4401;
 /** Another screen took this chat: stop reconnecting, offer "Buraya al". */
 export const MAC_CLOSE_TAKEN_OVER = 4409;
+/** A Super Agent child now (its project is handed over): stop reconnecting, show it watch-only. */
+export const MAC_CLOSE_HANDED_OVER = 4403;
 
 /** An explicit tap: take the chat from whichever screen holds it. */
 export const REATTACH_EVICT = '1';
@@ -85,3 +87,39 @@ export const MAC_ROUTES = {
   fixedRemove: 'DELETE /api/handsfree/mac/tunnel/fixed',
   uninstall: 'POST /api/handsfree/mac/uninstall',
 } as const;
+
+// ─── The remote Super stage (src/lib/handsfree/mac/contract.ts) ─────────────
+
+export const SUPER_STAGE_FRAME = 'super_stage';
+
+export type RemoteBlocked = 'mac_only';
+
+export interface RemoteContainer {
+  id: string; kind: string; ref?: string; shape: string; size?: string; sizeBy?: 'owner';
+  place: 'float' | 'others'; pos?: { x: number; y: number }; title?: string; min?: true; heldAt?: number;
+  blocked?: RemoteBlocked;
+}
+
+export interface RemoteGroup { id: string; name: string; cards: string[]; place: 'float' | 'others'; pos?: { x: number; y: number } }
+
+export interface RemoteView { mode: string; card?: string; cards?: string[]; layout?: string; layoutBy?: 'owner'; chat?: 'bar' }
+
+export interface RemoteChild { sessionId: string; row?: string; startedAt: number; finishedAt?: number; seenAt?: number; endedAt?: number }
+
+export interface RemoteWaiting { id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }
+
+export interface SuperRemoteView {
+  vault: string;
+  session: string | null;
+  enabled: boolean;
+  containers: RemoteContainer[];
+  groups: RemoteGroup[];
+  view: RemoteView;
+  children: Record<string, RemoteChild>;
+  pad: Array<{ id: string; section: string; text: string; at: number }>;
+  waiting: RemoteWaiting[];
+  ownerBatches: string[];
+  names: Record<string, string>;
+  head: { item: string; kind: string; text: string } | null;
+  rotating?: true;
+}

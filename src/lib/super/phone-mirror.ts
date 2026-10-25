@@ -54,8 +54,13 @@ export const MIRROR_PING_MS = 25_000;
 export interface MirrorOpts<D> {
   /** Is this device still signed in? Asked on every frame the mirror sends up. */
   valid: (device: D) => boolean;
-  /** The owner's text from the phone, handed to the chat's own owner path (a raw `user` frame). */
-  onOwnerFrame: (raw: string) => void;
+  /** The owner's text from the phone, handed to the chat's own owner path (a raw `user` frame).
+   *  Unused by a read-only set. */
+  onOwnerFrame?: (raw: string) => void;
+  /** WATCH-ONLY (a Super Agent child on a remote screen, hands-free sekmeler D6): no inbound
+   *  handler is attached at all, so no text, answer or permission response from the socket
+   *  reaches the child. Its questions reach the owner through the Super's escalation. */
+  readOnly?: boolean;
   /** The socket holding the child right now (the desktop window), or null while detached. */
   holder: () => MirrorSocket | null;
   /** Which device a mirror belongs to (one mirror per device). */
@@ -160,6 +165,7 @@ export class MirrorSet<D> {
     ws.on('error', gone);
     ws.on('pong', () => { m.waiting = false; });
     this.arm();
+    if (this.opts.readOnly) return true;
     ws.on('message', (raw) => {
       if (!this.mirrors.has(m)) return;
       if (!this.opts.valid(device)) { this.drop(m, MIRROR_CLOSE_REVOKED, 'device signed out'); return; }
@@ -168,7 +174,7 @@ export class MirrorSet<D> {
       // Echoed to the holder and the other mirrors BEFORE the chat sees it, so every surface
       // shows the owner's words in the order they were typed.
       this.echo(text, ws);
-      this.opts.onOwnerFrame(JSON.stringify({ type: 'user', text }));
+      this.opts.onOwnerFrame?.(JSON.stringify({ type: 'user', text }));
     });
     return true;
   }
