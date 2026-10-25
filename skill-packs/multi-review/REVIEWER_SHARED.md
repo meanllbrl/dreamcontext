@@ -150,11 +150,11 @@ writing too much per issue. Pick the top findings by severity and ship those.
 
 ---
 
-## 10. Turn budget: return PARTIAL, never run out silently
+## 10. No turn limit: return PARTIAL, never nothing
 
-Your frontmatter `maxTurns` is a hard stop: the run ends mid-read and the caller
-gets no verdict at all. Count your tool calls. When you have 2 turns left, stop
-reading and emit the §4 report now, with what you have:
+You have no `maxTurns`: read every scoped file in full. A run that ends with no verdict leaves
+the caller waiting on nothing, so if you truly cannot finish (a file you cannot open, the
+context running out), stop reading and emit the §4 report now, with what you have:
 
 - `## Verdict` is `PARTIAL` (or `FAIL` if you already hold a Critical).
 - Findings so far, at their real severity.

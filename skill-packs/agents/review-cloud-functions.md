@@ -27,7 +27,6 @@ tools:
   - Glob
   - Grep
   - Bash
-maxTurns: 24
 skills:
   - engineering
   - dreamcontext-agent-core
@@ -139,9 +138,9 @@ verify a finding, but do not read the entire repository.
 7. **Emit your report** in the format from `REVIEWER_SHARED.md` §4.
 
 
-**Turn budget (24):** with 2 turns left, stop reading and emit the report with
-verdict `PARTIAL` and a `Not reviewed:` list (`REVIEWER_SHARED.md` §10). Running
-out with no report leaves the caller waiting on nothing.
+**No turn limit.** Read every scoped file in full. Only if you truly cannot finish
+(a file you cannot open, the context running out), emit the report with verdict `PARTIAL`
+and a `Not reviewed:` list (`REVIEWER_SHARED.md` §10), never no report.
 
 ## Output
 

@@ -116,6 +116,10 @@ rules below still bind you. They are the same rules as the brief you were forked
 - **Not yours either: the full unit suite, `build` / `build:cli`, integration tests that need a
   compiled `dist/`, and any `gen:*` script.** The orchestrator runs them once, at the final
   gate. If your criteria seem to need one, say so in the report instead of running it.
+- **A browser verify script is not a debugging loop.** Prove the behaviour with unit tests first.
+  If your lane owns a verify script, run it once when your wave is done, and once more after a fix
+  for a red it found; a red re-runs only the failing step, never the whole chain. The same script
+  red 3 times in a row → stop and report instead of looping.
 - **Something broken or missing outside your files is reported, never fixed.**
 
 In an `EXECUTION: lead` run you are the only implementer: you build wave 1 from your brief,

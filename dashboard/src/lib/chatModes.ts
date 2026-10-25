@@ -71,7 +71,7 @@ export const CHAT_MODE_ROWS: readonly ChatModeRow[] = [
   // promises the capability only once it exists.
   { id: 'basic', name: 'Basic', version: '1.0', insight: 'Plain Claude. No mode enabled.' },
   { id: 'plan', name: 'Planner', version: '1.3', insight: 'Asks, drafts, gets reviewed, ends with a task.' },
-  { id: 'develop', name: 'Developer', version: '1.2', insight: 'Builds in waves, checks each one, then a clean review.' },
+  { id: 'develop', name: 'Developer', version: '1.3', insight: 'Builds in waves, checks each one, then a clean review.' },
   { id: 'train', name: 'Train Me', version: '0.1', insight: 'Learns your taste from swipes and picks, then writes a pattern.', maturity: 'ALPHA' },
 ];
 

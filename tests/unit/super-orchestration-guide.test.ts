@@ -86,8 +86,9 @@ describe('super-orchestration guide: shape', () => {
   // choice the owner must make lives in the `super ask` card, never only in the text.
   // +770 (2026-10-24, measured +768): several references in one message, one section per part.
   // +100 (2026-10-24): heat limits heavy STEPS, never children; verify scripts take the heavy lock.
-  it('is at most 18,600 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(18_600);
+  // +400 (2026-10-25): a child's browser verify script runs once at a wave's end (ajan-sure rapor).
+  it('is at most 19,000 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(19_000);
   });
 
   it('has the seven sections in order', () => {
