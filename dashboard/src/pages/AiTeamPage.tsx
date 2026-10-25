@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { TeamRoster } from '../components/aiteam/TeamRoster';
 import { TeamSyncStrip } from '../components/aiteam/TeamSyncStrip';
 import { TeamConversation } from '../components/aiteam/TeamConversation';
@@ -8,7 +8,7 @@ import { TeamPanel, type PanelTab } from '../components/aiteam/TeamPanel';
 import { NewTeammate, TEAM_STARTERS, type TeamStarter } from '../components/aiteam/NewTeammate';
 import { buildRoster, messagesOf, type TeamAgent } from '../components/aiteam/teamModel';
 import {
-  pageStorage, readPageView, readRosterView, teamTreeOf, writePageView, writeRosterView, type PageView, type RosterView,
+  clampRosterWidth, pageStorage, readPageView, readRosterWidth, writeRosterWidth, readRosterView, teamTreeOf, writePageView, writeRosterView, type PageView, type RosterView,
 } from '../components/aiteam/teamTree';
 import { OrgView } from '../components/aiteam/OrgChart';
 import { chainOf } from '../../../src/lib/agents/tree.js';
@@ -106,6 +106,10 @@ export function AiTeamPage({
     return () => ro.disconnect();
   }, [pageEl]);
   const narrow = width < NARROW_BELOW;
+  /** The list's width, dragged by its right edge and kept across reloads. */
+  const [rosterWidth, setRosterWidth] = useState(() => readRosterWidth(pageStorage()));
+  const shownRosterWidth = clampRosterWidth(rosterWidth, width);
+  const commitRosterWidth = useCallback((px: number) => writeRosterWidth(pageStorage(), px), []);
   const panelOverlay = width < PANEL_OVERLAY_BELOW;
 
   // The first teammate is open when nothing else is asked for, so the page never opens blank.
@@ -253,6 +257,7 @@ export function AiTeamPage({
       ref={setPageEl}
       className={`aiteam${panelShown && !panelOverlay ? ' aiteam--panel' : ''}${narrow ? ' aiteam--narrow' : ''}${org ? ' aiteam--org' : ''}`}
       data-aiteam-view={org ? 'org' : narrow ? mobileShow : 'split'}
+      style={{ '--aiteam-roster-w': `${shownRosterWidth}px` } as CSSProperties}
     >
       {org && (
         <OrgView
@@ -280,6 +285,10 @@ export function AiTeamPage({
           view={rosterView}
           onView={pickRosterView}
           onOrgChart={() => { pickPageView('org'); setPanel((p) => (p ? 'team' : p)); }}
+          width={narrow ? undefined : shownRosterWidth}
+          pageWidth={width}
+          onWidth={setRosterWidth}
+          onWidthCommit={commitRosterWidth}
           top={<TeamSyncStrip onToast={setToast} />}
         />
       )}

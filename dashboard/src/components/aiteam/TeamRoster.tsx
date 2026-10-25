@@ -1,11 +1,11 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { TeamTree, TreeLine } from '../../../../src/lib/agents/tree.js';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { AutomationsDispatcherBar } from '../automations/AutomationsDispatcherBar';
 import { runDuration, useNow } from '../agents/agentRunState';
 import { useI18n } from '../../context/I18nContext';
 import { filterRoster, rosterTime, type TeamRow } from './teamModel';
-import { rollupOf, teamTreeOf, treeSections, visibleTreeLines, type RosterView, type TeamRollup } from './teamTree';
+import { clampRosterWidth, ROSTER_MAX_WIDTH, ROSTER_MIN_WIDTH, ROSTER_WIDTH_STEP, rollupOf, teamTreeOf, treeSections, visibleTreeLines, type RosterView, type TeamRollup } from './teamTree';
 import { TeamIcon } from './TeamIcons';
 
 /**
@@ -33,6 +33,10 @@ export function TeamRoster({
   onView,
   onOrgChart,
   top,
+  width,
+  pageWidth = 0,
+  onWidth,
+  onWidthCommit,
 }: {
   rows: TeamRow[];
   selected: string | null;
@@ -51,6 +55,13 @@ export function TeamRoster({
   onOrgChart?: () => void;
   /** Drawn under the head: agent sync's notice and the owner inbox. */
   top?: ReactNode;
+  /** The list's width in px when its edge can be dragged (absent on a phone). */
+  width?: number;
+  /** The page the list shares with the conversation: its half is the ceiling. */
+  pageWidth?: number;
+  onWidth?: (px: number) => void;
+  /** The drag ended or a key moved it: keep this width. */
+  onWidthCommit?: (px: number) => void;
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
@@ -62,6 +73,32 @@ export function TeamRoster({
     () => treeSections(tree, (slug) => rowBySlug.get(slug)?.title ?? slug),
     [tree, rowBySlug],
   );
+  const drag = useRef<{ x: number; w: number } | null>(null);
+  const onHandleDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || width === undefined) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, w: width };
+  };
+  const onHandleMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    // The handle is the RIGHT edge: moving it right widens the list, one pixel for one.
+    onWidth?.(clampRosterWidth(drag.current.w + (e.clientX - drag.current.x), pageWidth));
+  };
+  const onHandleUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    const start = drag.current;
+    drag.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    onWidthCommit?.(clampRosterWidth(start.w + (e.clientX - start.x), pageWidth));
+  };
+  const onHandleKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (width === undefined || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    e.preventDefault();
+    const next = clampRosterWidth(width + (e.key === 'ArrowRight' ? ROSTER_WIDTH_STEP : -ROSTER_WIDTH_STEP), pageWidth);
+    onWidth?.(next);
+    onWidthCommit?.(next);
+  };
   const toggle = (slug: string) => setCollapsed((cur) => {
     const next = new Set(cur);
     if (next.has(slug)) next.delete(slug);
@@ -78,6 +115,23 @@ export function TeamRoster({
 
   return (
     <aside className="aiteam-roster" aria-label={t('aiteam.title')}>
+      {width !== undefined && (
+        <div
+          className="aiteam-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t('aiteam.roster.resize')}
+          aria-valuemin={ROSTER_MIN_WIDTH}
+          aria-valuemax={clampRosterWidth(ROSTER_MAX_WIDTH, pageWidth)}
+          aria-valuenow={width}
+          tabIndex={0}
+          onPointerDown={onHandleDown}
+          onPointerMove={onHandleMove}
+          onPointerUp={onHandleUp}
+          onPointerCancel={onHandleUp}
+          onKeyDown={onHandleKey}
+        />
+      )}
       <div className="aiteam-roster-head">
         <h1 className="aiteam-roster-title">{t('aiteam.title')}</h1>
         {!empty && (
