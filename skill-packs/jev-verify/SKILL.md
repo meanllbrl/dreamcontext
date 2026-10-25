@@ -137,6 +137,12 @@ state hit its size cap — add a `scope` so the judged region is fully in view.
   dense page truncates, and Jev then answers about a page it did not fully see.
 - **Judge after the mutation lands**: `waitForResponse` on the PATCH, not a fixed sleep.
 
+### How often to run it
+
+Prove behaviour with unit tests first; run `assert` once at the END of a wave (plus once after a
+fix for a red it found), never after every small edit. A red re-runs only the failing step, not
+the whole chain. The same spec red 3 times in a row → stop and report instead of looping.
+
 ## Tool 2 — `walk`: Jev navigates a flow on its own
 
 ```bash

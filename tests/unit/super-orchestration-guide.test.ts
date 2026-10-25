@@ -82,8 +82,9 @@ describe('super-orchestration guide: shape', () => {
   // +1,500 (2026-10-23): §7 Presentation layouts, the when-which table.
   // +1200 (2026-10-23): §2's message about one agenda line (~770, super-ajanda-madde-not) and
   // which answer is to which message (`<owner-msg ref>`, `<!-- re: -->`, the ↩ reply, ~360).
-  it('is at most 17,350 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(17_350);
+  // +400 (2026-10-25): a child's browser verify script runs once at a wave's end (ajan-sure rapor).
+  it('is at most 17,750 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(17_750);
   });
 
   it('has the seven sections in order', () => {

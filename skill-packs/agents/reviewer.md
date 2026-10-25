@@ -31,7 +31,6 @@ tools:
   - Glob
   - Grep
   - Bash
-maxTurns: 30
 color: red
 skills:
   - engineering
@@ -134,8 +133,8 @@ These will cause significant problems but may not crash immediately:
 One sentence: what's the overall health of this change.
 ```
 
-**If the turn budget runs out (PARTIAL):** you have 30 turns. With 2 left, stop
-reading and return what you have instead of nothing:
+**If you truly cannot finish (PARTIAL):** there is no turn limit, so this is only for a file you
+cannot open or a context that is running out. Return what you have instead of nothing:
 ```markdown
 ## Review: PARTIAL
 

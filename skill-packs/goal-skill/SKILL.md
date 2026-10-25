@@ -477,6 +477,11 @@ Wave execution rules (mirrors the dependency map exactly):
   the one implementer) with exactly its FAIL lines — not a broader re-implement — then
   `builder test <slug> --wave N --failed --related <files the fix changed>`. A key marked
   `FAILED 2x` after a second fix → escalate.
+- **Browser verify scripts run at the END of a wave.** Prove behaviour with unit tests first;
+  run the verify script once when the wave is done (plus once after a fix for a red it found),
+  never after every small edit. A red re-runs only the failing step, not the whole chain. The
+  same script red 3 times in a row → stop and report to the user; do not loop on it (measured
+  2026-10-25: 15-71 runs per job, ~31% red, mostly the script's own bugs).
 - **Heavy steps run once, at the final gate**, after the last wave and before Phase 5:
   the full unit suite, `build` / `build:cli`, the integration suite, `gen:*` scripts
   (e.g. `gen:cli-manifest`), browser verification, and the **observed check** whenever a

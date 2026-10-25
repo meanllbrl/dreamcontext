@@ -22,7 +22,6 @@ tools:
   - Glob
   - Grep
   - Bash
-maxTurns: 25
 color: yellow
 skills:
   - engineering

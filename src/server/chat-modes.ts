@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.2', develop: '1.2', train: '0.1',
+  basic: '1.0', plan: '1.2', develop: '1.3', train: '0.1',
 };
 
 /**
@@ -261,6 +261,10 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
 - **Close every wave with evidence:** one \`dreamcontext builder test\` run, the type-checks +
   that wave's tests, SHOWING the command and its real output (builds and generators run once,
   at the end). Fix a failure, then re-run only what failed.
+- **Browser verify scripts run at the END of a wave, not while building.** Prove behaviour with
+  unit tests first; run the verify script once at the wave's end (plus once after a fix for a red
+  it found). A red re-runs only the failing step, never the whole chain. The SAME script red 3 times
+  in a row → STOP and report; never loop on it.
 - **Never stop between waves to ask whether to go on, and never end your turn while a judge
   you started runs.** The owner is not your scheduler.
 - **Judges you do not control:** after the last wave, the end review the diff picks

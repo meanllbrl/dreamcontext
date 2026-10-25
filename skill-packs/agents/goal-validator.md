@@ -58,6 +58,9 @@ Execute the **validation method recorded in the task** and return a verdict with
 
 - **Run the real validation. Do not reason about whether it "would" pass.**
 - **A flaky, skipped, or unrun check is a FAIL.** No exceptions.
+- **A browser verify script is run once, at the end.** Behaviour is proven by unit tests first.
+  After a fix for a red it found, run it once more; a red re-runs only the failing step, not the
+  whole chain. The same script red 3 times in a row → report FAIL with the three outputs and stop.
 - **Never mark PASS without evidence** — the exact command and its output must be in your report.
 - **You do not fix code.** On FAIL, report precisely what failed and where, so the
   orchestrator can route it back to the implementer.
