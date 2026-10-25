@@ -161,6 +161,6 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // About and reply links, +380 on 2026-10-24 for one section per message and a choice asked in
     // the card, never only in the text (measured +377), +770 on 2026-10-24 for several references in
     // one message, a section per part (measured +768), +100 on 2026-10-24 for heat limiting heavy steps, +400 on 2026-10-25 for a verify script run once per wave.
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(19_000);
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(19_400);
   });
 });

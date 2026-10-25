@@ -5068,7 +5068,7 @@ export async function handleAgentReveal(
   // Reaching a file outside the project is this route's whole purpose (that is the escape
   // hatch for what `/agent/file` may never serve), so `outside` is not a refusal here — the
   // open-vs-reveal split below is, and it is unchanged.
-  const wt = await sessionWorktreeRoot(contextRoot, projectRootOf(contextRoot), revealSession || null);
+  const wt = contextRoot ? await sessionWorktreeRoot(contextRoot, projectRootOf(contextRoot), revealSession || null) : null;
   const inWt = wt ? resolveChatReference(wt, contextRoot, target) : null;
   const ref = inWt && !inWt.missing && !inWt.outside
     ? inWt

@@ -111,7 +111,12 @@ describe('AC3f — a take in flight cannot be raced', () => {
     // on the voice path, so it is enough to prove it is unreachable when `untouched` is false.
     const onTranscript = composer.slice(composer.indexOf('const onTranscript'), composer.indexOf('const startTake'));
     const notUntouched = onTranscript.indexOf('if (!untouched)');
-    const tick = onTranscript.indexOf('setVoiceSubmitTick');
+    // The Super view's chip branch has its own guard (`untouchedWords`) before its tick; the plain
+    // path's tick is the last one.
+    const chipGuard = onTranscript.indexOf('if (!untouchedWords)');
+    expect(onTranscript.indexOf('setVoiceSubmitTick')).toBeGreaterThan(chipGuard);
+    expect(chipGuard).toBeGreaterThan(-1);
+    const tick = onTranscript.lastIndexOf('setVoiceSubmitTick');
     expect(notUntouched).toBeGreaterThan(-1);
     expect(tick).toBeGreaterThan(notUntouched); // the early return for edited text comes first
     expect(onTranscript.slice(notUntouched, tick)).toContain('return;');

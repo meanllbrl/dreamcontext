@@ -383,6 +383,8 @@ const TIDY_IO: TidyIo = { read: (root) => readSuperState(root, superSanitizeOpts
 /** The super's last `open image|pdf|video`, per vault and kind (image-group.ts): the next one of
  *  that kind within the window joins its group. In memory: a restart only ends a chain. */
 const imageChains = new Map<string, ImageChain>();
+/** One chain per vault and media kind (`open` below); a question's pictures follow the picture one. */
+const imageChainKey = (root: string): string => `${root}\0image`;
 
 /** The file seam the picture-question check reads through (tests swap it). */
 let askShowFs: SrcFs = NODE_SRC_FS;
@@ -423,7 +425,7 @@ async function prepareAskShow(
   const { found, skipped } = show.length ? { found: [], skipped: [] } : await resolvePreviewImages(project, base, images, askShowFs);
   // Every picture the question might show, its shape read now (image-aspect.ts).
   const now = Date.now();
-  const recent = show.length || found.length ? [] : recentAskCards(c.state, child ? { child } : { chain: imageChains.get(c.who.contextRoot) }, now);
+  const recent = show.length || found.length ? [] : recentAskCards(c.state, child ? { child } : { chain: imageChains.get(imageChainKey(c.who.contextRoot)) }, now);
   const refs = [
     ...found.map((f) => f.ref),
     ...c.state.containers.filter((k) => k.kind === 'image' && (show.includes(k.id) || recent.includes(k.id))).map((k) => k.ref),
@@ -445,7 +447,7 @@ function applyAskShow(
   };
   // Pictures the Super (or this child's job) opened in the last minutes are the question's own:
   // they go back with it (D2a, the recent rule), whichever source named them.
-  const recent = recentAskCards(s, child ? { child } : { chain: imageChains.get(root) }, now);
+  const recent = recentAskCards(s, child ? { child } : { chain: imageChains.get(imageChainKey(root)) }, now);
   let ids: string[];
   let via: AskShow['via'];
   let opened: string[] = [];
@@ -458,7 +460,7 @@ function applyAskShow(
   } else if (prep.previews.length) {
     via = 'preview';
     const r = openImageCards(s, prep.previews.map((p) => ({ ref: p.ref, ...(p.label ? { title: p.label } : {}), aspect: prep.aspects.get(p.ref) })),
-      { ...(child ? { forChild: child } : {}), now, chain: imageChains.get(root) });
+      { ...(child ? { forChild: child } : {}), now, chain: imageChains.get(imageChainKey(root)) });
     ids = r.ids; opened = r.made; cut = r.cut; chain = r.chain;
   } else {
     via = 'recent';
@@ -480,7 +482,7 @@ function finishAskShow(
 ): Record<string, unknown> {
   // A repeat `queue ask --no-show` leaves an earlier entry of the item as it was: say its state.
   if (prep.off) return askShowState(state, item) === 'none' ? { cards: [], state: 'none', reason: 'no_show' } : { cards: state.askShows?.find((e) => e.item === item)?.cards ?? [], state: askShowState(state, item) };
-  if (r?.chain) imageChains.set(c.who.contextRoot, r.chain);
+  if (r?.chain) imageChains.set(imageChainKey(c.who.contextRoot), r.chain);
   // New pictures reach a phone watching this Super Agent once, as `open` sends them (D7).
   const fresh = (r?.fresh ?? []).map((id) => state.containers.find((k) => k.id === id)).filter((k): k is SuperState['containers'][number] => !!k && k.kind === 'image');
   if (fresh.length && state.session) {
@@ -872,7 +874,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const root = c.who.contextRoot;
     const now = Date.now();
     // One chain per vault and media kind: a PDF opened between two pictures leaves their chain be.
-    const chainKey = `${root}\0${kind}`;
+    const chainKey = kind === 'image' ? imageChainKey(root) : `${root}\0${kind}`;
     // Pictures opened together are one group (image-group.ts): 2+ in one call, or one call after
     // another within IMAGE_CHAIN_MS. Decided against the record inside the locked write.
     const auto = (s: SuperState): ImageGroupPlan =>

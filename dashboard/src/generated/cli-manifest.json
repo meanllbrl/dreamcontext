@@ -35,7 +35,8 @@
         "--soul-template",
         "--model",
         "--effort",
-        "--whiteboard"
+        "--whiteboard",
+        "--scope"
       ]
     },
     {
@@ -3442,6 +3443,15 @@
       "group": true
     },
     {
+      "path": "tasks agent-action",
+      "desc": "Answer a task job: stop it, continue it, approve its plan, give it one more review round…",
+      "args": [
+        "<task>",
+        "<action>",
+        "[text...]"
+      ]
+    },
+    {
       "path": "tasks approve-filing",
       "desc": "Approve a task an agent opened: keep it as it is (the counterpart of `tasks object`); the status does not change",
       "args": [
@@ -3450,13 +3460,18 @@
     },
     {
       "path": "tasks assign-agent",
-      "desc": "Assign a task to an agent: sets agent:, moves an open task to in_progress, and runs the agent on it now",
+      "desc": "Assign a task to an agent: sets agent:, moves an open task to in_progress, and starts it now or at --at",
       "args": [
         "<task>",
         "[agent]"
       ],
       "valueFlags": [
-        "--note"
+        "--note",
+        "--at",
+        "--workspace",
+        "--repo",
+        "--reviewer",
+        "--review-cap"
       ]
     },
     {
@@ -3548,6 +3563,19 @@
       "valueFlags": [
         "--into",
         "--reason"
+      ]
+    },
+    {
+      "path": "tasks deliver",
+      "desc": "Hand in a task job's work (only the run the task was assigned to)",
+      "args": [
+        "<task>"
+      ],
+      "valueFlags": [
+        "--note",
+        "--doc",
+        "--board",
+        "--file"
       ]
     },
     {
@@ -3708,6 +3736,17 @@
       ]
     },
     {
+      "path": "tasks review",
+      "desc": "Record a review verdict on a delivery (only the reviewer run of that round)",
+      "args": [
+        "<task>"
+      ],
+      "valueFlags": [
+        "--verdict",
+        "--finding"
+      ]
+    },
+    {
       "path": "tasks rice",
       "desc": "Print or update RICE values (reach × impact × confidence ÷ effort)",
       "args": [
@@ -3755,6 +3794,16 @@
         "--dont",
         "--do",
         "--rests-on"
+      ]
+    },
+    {
+      "path": "tasks run-job",
+      "desc": "Run one claimed step of a task job (started by the scheduler; not for direct use)",
+      "args": [
+        "<task>"
+      ],
+      "valueFlags": [
+        "--run"
       ]
     },
     {

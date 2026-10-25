@@ -497,7 +497,8 @@ describe('the identity dialog: the soul (T8)', () => {
     expect(src).toMatch(/data-soul-undo/);
     expect(src).not.toMatch(/aria-pressed|aid-chip--on|selectedTemplate/);
     // Create sends the soul text and nothing naming a template.
-    const create = src.slice(src.indexOf('create.mutate({'), src.indexOf('}, { onSuccess: finish, onError: fail });', src.indexOf('create.mutate({')));
+    // (the draft both the project and the global create send)
+    const create = src.slice(src.indexOf('const draft = {'), src.indexOf('create.mutate({ ...draft'));
     expect(create).toMatch(/soul: form\.soul\.trim\(\)/);
     expect(create).not.toMatch(/template/i);
     // Placeholder copy (r2).

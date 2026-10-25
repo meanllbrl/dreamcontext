@@ -84,8 +84,11 @@ describe('the page block', () => {
     const reply = '[Reply to message ref=k3f9q0 from=super]\nquote: "Shall I merge?"';
     expect(server.REPLY_TO_RE.exec(`${reply}\n\nnot yet\n\n[On page lab]`)?.[1]).toBe('k3f9q0');
     const chat = read('src/server/routes/agent-chat.ts');
-    expect(chat).toMatch(/const aboutHead = isSuper \? ABOUT_AGENDA_RE\.exec\(text\) : null;/);
-    // The briefing names the block (rev 11).
+    // The server reads every head with `aboutHeads` (several references per message); the page
+    // block, a last paragraph of its own, never hides one.
+    expect(chat).toMatch(/aboutHeads\(text\)/);
+    expect(server.aboutHeads(msg).map((h) => h.id)).toEqual(['q-12']);
+    // The briefing names the block (rev 13).
     expect(server.SUPER_BRIEF_REV).toBe(13);
     expect(read('src/server/chat-modes.ts')).toContain('A message ending \\`[On page <page> …]\\` was written from the dock');
   });
@@ -129,7 +132,7 @@ describe('the composer', () => {
 
   it('a queued and a steered message carry the block baked at commit; an @peer message carries none', () => {
     const composer = read('dashboard/src/components/sleepy/chat/Composer.tsx');
-    expect(composer).toMatch(/const \{ message, quoted, slash \} = composeOutgoing\(text, readScratch\(convId\)\.attachments, liveQuote, quotePath\);/);
+    expect(composer).toMatch(/const \{ message, quoted, slash \} = composeOutgoing\(text, readScratch\(convId\)\.attachments, liveQuote, quotePath, \{ superView \}\);/);
     expect(composer).toMatch(/if \(mode === 'queue'\) session\.enqueue\(message\);/);
     expect(composer).toMatch(/if \(!session\.steer\(message\)\) session\.enqueue\(message, \{ steerWhenPossible: true \}\);/);
     expect(composer).toMatch(/const addressed = onPeerMessage \? addressedPeer\(quoted, peers\) : null;/);

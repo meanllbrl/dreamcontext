@@ -87,8 +87,9 @@ describe('super-orchestration guide: shape', () => {
   // +770 (2026-10-24, measured +768): several references in one message, one section per part.
   // +100 (2026-10-24): heat limits heavy STEPS, never children; verify scripts take the heavy lock.
   // +400 (2026-10-25): a child's browser verify script runs once at a wave's end (ajan-sure rapor).
-  it('is at most 19,000 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(19_000);
+  // +360 (2026-10-25, integration): page/pdf/video lines of the merged branches (measured 19,362).
+  it('is at most 19,400 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(19_400);
   });
 
   it('has the seven sections in order', () => {

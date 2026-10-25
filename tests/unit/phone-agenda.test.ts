@@ -139,13 +139,13 @@ describe('the wiring', () => {
   it('the strip mounts only on the phone\'s Super mirror chat, under the header', () => {
     expect(surface).toMatch(/if \(!macPhone \|\| !expanded \|\| phoneView !== 'chat' \|\| !mobileActive\) return undefined;/);
     expect(surface).toMatch(/\(s as ChatSession\)\.superMirror \? s as ChatSession : undefined/);
-    expect(surface).toMatch(/<\/div>\n\s*\{phoneSuperChat && <PhoneAgenda digest=\{phoneDigest\} onWriteAbout=\{writePhoneAboutRow\} \/>\}\n\s*\{body\}/);
+    expect(surface).toMatch(/<\/div>\n\s*\{phoneSuperChat && <PhoneAgenda digest=\{phoneDigest\} onWriteAbout=\{writePhoneAboutRow\} \/>\}\n\s*(?:\{macPhone && isMobile[^\n]*\n\s*)?\{body\}/);
   });
 
   it('a ↩ on the phone writes the About chip into the phone\'s own composer, the desktop\'s into its Super chat', () => {
     expect(surface).toMatch(/const writePhoneAboutRow = useCallback\(\(row: AgendaRow\) => writeAboutInto\(phoneSuperChat, row\)/);
     expect(surface).toMatch(/const writeAboutRow = useCallback\(\(row: AgendaRow\) => writeAboutInto\(superChatRef\.current, row\)/);
-    expect(surface).toMatch(/const convId = cs\.scratchId \|\| cs\.claudeId;[\s\S]{0,400}setAbout\(convId, \{ id: nextAttachmentId\(\), kind: 'about'/);
+    expect(surface).toMatch(/const convId = cs\.scratchId \|\| cs\.claudeId;[\s\S]{0,400}insertRef\(convId, \{ id: nextAttachmentId\(\), kind: 'about'/);
   });
 
   it('every mirror session publishes its event context keyed by the digest', () => {

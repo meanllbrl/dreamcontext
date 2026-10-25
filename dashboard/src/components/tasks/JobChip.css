@@ -32,7 +32,8 @@
 /* Working: the dot breathes, so a live job reads as live without a word. */
 .job-chip[data-job='running'] .job-chip-dot,
 .job-chip[data-job='reviewing'] .job-chip-dot {
-  animation: job-chip-pulse 1.6s ease-in-out infinite;
+  animation: var(--dc-motion-status-name, job-chip-pulse) 1.6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes job-chip-pulse {
