@@ -176,6 +176,8 @@ irm https://cdn.jsdelivr.net/npm/dreamcontext/install.ps1 | iex
 ```
 
 > The same steps: with no usable Node.js it downloads a pinned, checksum-verified official Node.js into `%USERPROFILE%\.dreamcontext\node` and adds it to your user PATH, installs the CLI from npm, installs the [desktop app](#desktop-app) (a per-user installer, not code-signed yet, so SmartScreen may ask the first time), then runs setup. The same switches, as environment variables: `$env:DREAMCONTEXT_INSTALL_NO_NODE=1`, `$env:DREAMCONTEXT_INSTALL_NO_APP=1`, `$env:DREAMCONTEXT_INSTALL_NO_SETUP=1`.
+>
+> **Installing the Windows app by hand?** [`dreamcontext-beta_x64-setup.exe`](https://github.com/meanllbrl/dreamcontext/releases/latest/download/dreamcontext-beta_x64-setup.exe) is not code-signed yet, so the first time you run it Windows SmartScreen says "Windows protected your PC": click **More info → Run anyway**. It installs for your user only (no admin), and from then on the app updates itself.
 
 **Manual install (npm):**
 
@@ -378,7 +380,7 @@ Here the agent also knows it isn't in a terminal, so it can hand you the thing i
 
 **Always current, no notarization wait.** Delivery is CLI/curl-driven, so Gatekeeper's notarization check never fires (ad-hoc signing satisfies Apple Silicon). The app prefers your globally-installed, auto-upgrading CLI over its bundled copy, so ~95% of changes ride the normal CLI upgrade with no app rebuild. Downloaded artifacts require a matching `.sha256` or the install refuses.
 
-> A working local beta — not yet Apple-signed/notarized, so first launch may need a right-click → Open. **On Windows** the app is a per-user installer (`dreamcontext-beta_x64-setup.exe` on the release, checksum-verified, run silently by `dreamcontext app install`), not code-signed yet, and it has no in-app updater: `dreamcontext app update` updates it, and while the app is open a newer version is offered once a day instead of closing it under you. Linux is for later.
+> A working local beta — not yet Apple-signed/notarized, so first launch may need a right-click → Open. **On Windows** the app is a per-user installer (`dreamcontext-beta_x64-setup.exe` on the release, checksum-verified, run silently by `dreamcontext app install`), not code-signed yet, so a copy you download in a browser meets SmartScreen once: **More info → Run anyway**. It updates itself from the same release feed as the Mac app: a new version is downloaded and its signature checked in the background, then installed when you quit the app, never under you. `dreamcontext app update` installs it from the CLI while the app is closed; while it is open, the CLI offers the newer version once a day instead. Linux is for later.
 
 ## Hands-free Mode
 

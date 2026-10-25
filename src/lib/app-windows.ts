@@ -16,7 +16,8 @@ import { compareVersions } from './version-check.js';
  * injectable, so the tests drive it on any OS.
  */
 
-/** The release asset `build-windows` publishes, version-less so /releases/latest/download works. */
+/** The release asset `build-windows` publishes, version-less so /releases/latest/download works.
+ *  The same file is the in-app updater's Windows payload (latest.json `windows-x86_64`, + `.sig`). */
 export const WIN_SETUP_ASSET = 'dreamcontext-beta_x64-setup.exe';
 /** Tauri's productName: the NSIS install folder and the uninstall key are named after it. */
 export const WIN_PRODUCT_NAME = 'dreamcontext-beta';
@@ -201,9 +202,10 @@ export function isWindowsAppRunning(exePath: string, run: RunSync = defaultRunSy
 
 // ─── The update offer ────────────────────────────────────────────────────────────
 //
-// Windows has no in-app updater yet (that needs a signed Windows feed in latest.json). The
-// background `app update` the SessionStart hook fires installs a newer release when the app is
-// closed; when it is open, running the installer could end it mid-chat, so the newer version is
+// The app updates itself on Windows too (desktop/src-tauri/src/updater.rs: downloaded in the
+// background, installed when the user quits). The CLI is the second path: the background
+// `app update` the SessionStart hook fires installs a newer release when the app is closed;
+// when it is open, running the installer could end it mid-chat, so the newer version is
 // recorded instead and offered on the next session and in `app status`.
 
 export function appUpdateAvailablePath(home: string = homedir()): string {

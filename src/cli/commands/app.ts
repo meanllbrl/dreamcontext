@@ -746,8 +746,9 @@ export function maybeTriggerAppUpdate(
     if (!appAutoUpdateEnabled(env, deps.home)) return false;
     const installed = deps.manifest !== undefined ? deps.manifest : readAppManifest();
     if (!installed) return false;
-    // Windows has no in-app updater (no signed Windows feed yet): the CLI is the only updater,
-    // for an app that is still there.
+    // Windows keeps the CLI as a second updater, for an app that is still there: the in-app one
+    // runs only while the app is open and installs on quit, and the CLI installs only while it
+    // is closed (src/lib/app-windows.ts), so an app nobody opens still gets updates.
     if (os === 'win32') {
       if (!desktopAppPresent(installed, 'win32', deps.exists)) return false;
       (deps.spawner ?? defaultAppUpdateSpawner)();

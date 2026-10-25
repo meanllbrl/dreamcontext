@@ -4,6 +4,11 @@
 //! replaces the bundle on disk. The running app is never restarted under the user; the new
 //! version starts the next time they open it, and a banner says so.
 //!
+//! Windows cannot replace a running exe: tauri's install starts the NSIS installer and ends
+//! the process on the spot. So on Windows the update is only downloaded and verified in the
+//! background, then parked, and the installer runs when the user quits the app
+//! (`install_parked_on_exit`, from lib.rs on `RunEvent::Exit`). It does not reopen the app.
+//!
 //! Identity is why this is safe for macOS permissions: every release carries the same
 //! Developer ID requirement (`anchor apple generic` + the team), so an update is the same
 //! app to TCC and keeps its file, microphone and automation grants.
@@ -28,6 +33,10 @@ fn compiled_in() -> bool {
 }
 
 fn home_dir() -> Option<PathBuf> {
+    // Windows names the home folder USERPROFILE; HOME is only set by shells like Git Bash.
+    #[cfg(windows)]
+    return crate::node_runtime::home_dir();
+    #[cfg(not(windows))]
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
@@ -140,18 +149,64 @@ async fn check_and_install<R: Runtime>(app: &AppHandle<R>) -> bool {
         }
     };
     let version = update.version.clone();
-    if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
-        eprintln!("[updater] {version} failed to install: {e}");
-        return false;
+    #[cfg(not(windows))]
+    {
+        if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
+            eprintln!("[updater] {version} failed to install: {e}");
+            return false;
+        }
+        eprintln!("[updater] {version} installed; it starts on the next launch");
+        let _ = app
+            .notification()
+            .builder()
+            .title(format!("dreamcontext-beta {version} is ready"))
+            .body("Quit and reopen the app to start the new version.")
+            .show();
     }
-    eprintln!("[updater] {version} installed; it starts on the next launch");
-    let _ = app
-        .notification()
-        .builder()
-        .title(format!("dreamcontext-beta {version} is ready"))
-        .body("Quit and reopen the app to start the new version.")
-        .show();
+    #[cfg(windows)]
+    {
+        // `download` verifies the minisign signature; only a verified installer is parked.
+        let bytes = match update.download(|_, _| {}, || {}).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("[updater] {version} failed to download: {e}");
+                return false;
+            }
+        };
+        match PARKED.lock() {
+            Ok(mut parked) => *parked = Some((update, bytes)),
+            Err(_) => return false,
+        }
+        eprintln!("[updater] {version} downloaded; it installs when the app quits");
+        let _ = app
+            .notification()
+            .builder()
+            .title(format!("dreamcontext-beta {version} is ready"))
+            .body("It installs when you quit the app; reopen it to start the new version.")
+            .show();
+    }
     true
+}
+
+/// Windows: the verified installer `check_and_install` downloaded, waiting for the user to quit.
+#[cfg(windows)]
+static PARKED: std::sync::Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>> = std::sync::Mutex::new(None);
+
+/// Windows: run the parked installer now that the app is quitting. tauri starts it (passive:
+/// a progress bar, no wizard; per-user, so no UAC) and ends this process; with
+/// `restart_after_install(false)` the installer does not reopen the app the user just quit.
+/// Called after the dashboard server is reaped. A no-op when nothing is parked, and off Windows.
+pub fn install_parked_on_exit() {
+    #[cfg(windows)]
+    {
+        let parked = PARKED.lock().ok().and_then(|mut parked| parked.take());
+        if let Some((update, bytes)) = parked {
+            let version = update.version.clone();
+            if let Err(e) = update.restart_after_install(false).install(bytes) {
+                eprintln!("[updater] {version} failed to start its installer: {e}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

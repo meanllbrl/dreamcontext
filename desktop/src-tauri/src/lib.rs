@@ -194,6 +194,11 @@ pub fn run() {
                 reap_server(handle.inner());
             }
         }
+        // Windows: a downloaded update installs as the app quits (src/updater.rs), once the
+        // server is down. No-op elsewhere and when nothing is waiting.
+        if matches!(event, RunEvent::Exit) {
+            updater::install_parked_on_exit();
+        }
         // A clicked `dreamcontext://` link (banner, hook, browser). macOS delivers it
         // here whether this click launched the app or it was already running.
         // A window coming forward gives its keyboard to its page (src/page_focus.rs). Not the
