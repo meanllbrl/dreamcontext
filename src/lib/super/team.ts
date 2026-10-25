@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { readRunAnswer } from '../automations/feed.js';
+import { listQuestions } from '../automations/hitl.js';
 import { readAutomationCache } from '../automations/store.js';
 import { plainPostText, readThread } from '../automations/threads.js';
 import type { ThreadEntry } from '../automations/types.js';
-import { MAX_CONTAINERS, MAX_FLOAT, MAX_TEAM_JOBS, floatCount, type SuperState, type SuperTeamJob, type TeamJobStatus } from './types.js';
-import { containerIdFor, newQueueId } from './inbox.js';
+import { wrapUntrusted } from '../assistant/autonomy.js';
+import { MAX_CONTAINERS, MAX_FLOAT, MAX_TEAM_JOBS, floatCount, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobEvent, type TeamJobStatus } from './types.js';
+import { containerIdFor, countEvent, newQueueId } from './inbox.js';
 import { makeRoom } from './room.js';
 
 /**
@@ -47,6 +49,18 @@ export function ensureTeamContainer(s: SuperState, jobId: string): string | null
  *  server code), so the window's view can say what each team card is doing now. */
 let liveSource: ((contextRoot: string, job: SuperTeamJob) => LiveSayJob | null) | null = null;
 export function setTeamLiveSource(fn: typeof liveSource): void { liveSource = fn; }
+
+/** Where a team job waiting on the owner's answer is watched: the server injects it (this module
+ *  imports no server code). */
+let askWatcher: ((contextRoot: string, jobId: string) => void) | null = null;
+export function setTeamAskWatcher(fn: typeof askWatcher): void { askWatcher = fn; }
+
+/** Arm the watch of every team job whose question waits on the owner, from the record: a watch
+ *  lives in memory and has an end, the record survives both (a restart, an answer days later). */
+export function armTeamAskWatches(contextRoot: string, s: Pick<SuperState, 'team' | 'enabled' | 'session'>): void {
+  if (!askWatcher || !s.enabled || !s.session) return;
+  for (const j of s.team) if (j.told === 'question') askWatcher(contextRoot, j.id);
+}
 
 /** A finished job's row never changes: read once per process, not on every push. Keyed by
  *  vault and job; pruned to the jobs still shown on each read. */
@@ -130,15 +144,7 @@ export function teamJobLive(
   job: SuperTeamJob,
   live: LiveSayJob | null,
 ): { status: TeamJobStatus; lastLine: string } {
-  let entries: ThreadEntry[] = [];
-  // Only the day files a run can be in: from the day before its fire day (a day file is named by
-  // the writer's local date, the run id is UTC), never the member's whole history.
-  const fired = Date.parse(job.runId);
-  const fromDay = Number.isFinite(fired) ? new Date(fired - 86_400_000).toISOString().slice(0, 10) : undefined;
-  try { entries = readThread(contextRoot, job.member, { runId: job.runId, ...(fromDay ? { fromDay } : {}) }); } catch { entries = []; }
-  const ordered = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const at = job.entryId ? ordered.findIndex((e) => e.id === job.entryId) : ordered.findIndex((e) => e.kind === 'user');
-  const after = at >= 0 ? ordered.slice(at + 1) : [];
+  const { ordered, after } = jobThread(contextRoot, job);
   const liveReply = live?.kind === 'reply' ? live : null;
 
   if (job.jobKind === 'reply') {
@@ -182,6 +188,93 @@ export function teamJobLive(
   const cached = cachedRunStatus(contextRoot, job);
   if (cached) return { status: cached, lastLine };
   return { status: 'running', lastLine };
+}
+
+/** The job's run in its member's thread, in id order, and what came after the job's own ask. */
+function jobThread(contextRoot: string, job: SuperTeamJob): { ordered: ThreadEntry[]; after: ThreadEntry[] } {
+  let entries: ThreadEntry[] = [];
+  // Only the day files a run can be in: from the day before its fire day (a day file is named by
+  // the writer's local date, the run id is UTC), never the member's whole history.
+  const fired = Date.parse(job.runId);
+  const fromDay = Number.isFinite(fired) ? new Date(fired - 86_400_000).toISOString().slice(0, 10) : undefined;
+  try { entries = readThread(contextRoot, job.member, { runId: job.runId, ...(fromDay ? { fromDay } : {}) }); } catch { entries = []; }
+  const ordered = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const at = job.entryId ? ordered.findIndex((e) => e.id === job.entryId) : ordered.findIndex((e) => e.kind === 'user');
+  return { ordered, after: at >= 0 ? ordered.slice(at + 1) : [] };
+}
+
+/** The run's question to the owner (`asked`) after the job's ask, while nothing ended the run
+ *  after it: the run stopped to ask and waits on his answer in AI Team. */
+function openAsk(after: ThreadEntry[]): ThreadEntry | null {
+  let asked: ThreadEntry | null = null;
+  for (const e of after) {
+    if (e.kind !== 'system' || !e.event) continue;
+    if (e.event === 'asked') asked = e;
+    else if (DONE.has(e.event) || FAILED.has(e.event) || e.id.endsWith('~r')) asked = null;
+  }
+  return asked;
+}
+
+/** The run's question record is still unanswered (asked of the subject: the owner answers it in
+ *  AI Team, the CLI or Telegram, none of which the super sees). No record of it (pruned once
+ *  answered, or an unreadable folder) reads as answered: the run's own ending is waited for then. */
+function questionWaits(contextRoot: string, job: SuperTeamJob): boolean {
+  try { return listQuestions(contextRoot, job.member).some((q) => q.runFiredAt === job.runId && q.state === 'pending'); } catch { return true; }
+}
+
+/** What a team job's ending tells the super now: `question` while its run waits on the owner,
+ *  `done` or `stuck` (failed) once it ended, null while it is queued or runs (an answered
+ *  question's resumed turn too: its own ending comes after it). */
+export function teamJobEvent(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): TeamJobEvent | null {
+  if (openAsk(jobThread(contextRoot, job).after)) return questionWaits(contextRoot, job) ? 'question' : null;
+  const { status } = teamJobLive(contextRoot, job, live);
+  return status === 'done' ? 'done' : status === 'failed' ? 'stuck' : null;
+}
+
+/**
+ * A team job's ending becomes ONE event for the super, batched like a child's: a pending
+ * `done`/`stuck`/`question` item naming the job (`team`). `told` keeps the same event from being
+ * queued twice, whoever calls. Called inside the record write once the say path's job settled.
+ * Returns whether an item was added.
+ */
+export function noteTeamJobEnd(contextRoot: string, s: SuperState, jobId: string, live: LiveSayJob | null, now = Date.now()): boolean {
+  const job = s.team.find((j) => j.id === jobId);
+  if (!job || !s.session) return false;
+  const kind = teamJobEvent(contextRoot, job, live);
+  // A question it asked is answered or ended now: its item no longer stands.
+  if (kind !== 'question') for (const q of s.queue) if (q.team === jobId && q.kind === 'question' && q.state === 'pending') q.state = 'done';
+  if (!kind || job.told === kind) return false;
+  job.told = kind;
+  for (const q of s.queue) if (q.team === jobId && q.state === 'pending') q.state = 'done';
+  s.queue.push({ id: newQueueId(), sessionId: s.session, kind, state: 'pending', createdAt: now, team: jobId });
+  countEvent(s);
+  return true;
+}
+
+/** A team item is no longer true: its job left the record, a later ending replaced it, or (read
+ *  from `contextRoot` when given) its question no longer waits on the owner. */
+export function staleTeamItem(s: Pick<SuperState, 'team'>, q: SuperQueueItem, contextRoot?: string): boolean {
+  const job = s.team.find((j) => j.id === q.team);
+  if (!job || job.told !== q.kind) return true;
+  return q.kind === 'question' && contextRoot !== undefined && !(openAsk(jobThread(contextRoot, job).after) && questionWaits(contextRoot, job));
+}
+
+/** A team item's result goes to the owner: he asked for the job through the super. */
+export function awaitedTeamItem(s: Pick<SuperState, 'team'>, q: SuperQueueItem): boolean {
+  return (q.kind === 'done' || q.kind === 'stuck') && s.team.find((j) => j.id === q.team)?.awaited === true;
+}
+
+/** One team item inside a `[super events]` batch: the server's line, then the member's text fenced. */
+export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperState, 'team'>, q: SuperQueueItem): string[] {
+  const job = s.team.find((j) => j.id === q.team);
+  if (!job) return [`- item=${q.id} team=${q.team} event=${q.kind} moved-on`];
+  const live = teamJobLive(contextRoot, job, liveSource ? liveSource(contextRoot, job) : null);
+  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.kind}${awaitedTeamItem(s, q) ? ' awaited=owner' : ''} status=${live.status}`];
+  if (job.brief) lines.push(wrapUntrusted(vault, `Brief: ${job.brief}`));
+  const asked = q.kind === 'question' ? openAsk(jobThread(contextRoot, job).after) : null;
+  if (asked) lines.push(wrapUntrusted(vault, `Question: ${firstLine(asked.text.replace(/^Asked:\s*/, ''), 300)}`));
+  if (live.lastLine) lines.push(wrapUntrusted(vault, `Last line: ${live.lastLine}`));
+  return lines;
 }
 
 /** Record a reply job's own ending once the say path's job settled. */

@@ -348,6 +348,8 @@ export interface SuperQueueItem {
   member?: string;
   /** An `owner` item's wait: the child's card he must act on. */
   wait?: { kind: OwnerWaitKind; id: string };
+  /** A team job's ending item: the job's id (its `sessionId` is the super's own). */
+  team?: string;
 }
 
 /** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`). */
@@ -378,6 +380,10 @@ export interface SuperTeamJob {
   outcome?: 'done' | 'failed';
   deliveredAt?: number;
   endedAt?: number;
+  /** The owner asked for it through the super: its result goes to him. */
+  awaited?: true;
+  /** The last ending event already queued for the super. */
+  told?: 'done' | 'stuck' | 'question';
 }
 
 export const TEAM_JOB_STATUSES = ['queued', 'running', 'done', 'failed'] as const;

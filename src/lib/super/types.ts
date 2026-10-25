@@ -467,6 +467,9 @@ export interface SuperQueueItem {
   /** An `owner` item's wait: which card of the child he must act on. Its `ownerText`
    *  is the server's plain line of what he is asked to do (from the child's card: untrusted). */
   wait?: { kind: OwnerWaitKind; id: string; key?: string };
+  /** A team job's `done`/`stuck`/`question` item: the job's id (`SuperTeamJob.id`). Its
+   *  `sessionId` is the super's own: a team member is not a child. */
+  team?: string;
 }
 
 /**
@@ -500,7 +503,14 @@ export interface SuperTeamJob {
    *  member's posts between the two. */
   deliveredAt?: number;
   endedAt?: number;
+  /** The owner asked for it through the super, in his own turn: its result goes to him. */
+  awaited?: true;
+  /** The last event its ending already put on the queue: the same one is never queued twice. */
+  told?: TeamJobEvent;
 }
+
+/** What a team job's ending tells the super: it finished, failed, or its run stopped to ask the owner. */
+export type TeamJobEvent = 'done' | 'stuck' | 'question';
 
 /** What a team job's card and `super state` say, read from the member's thread. */
 export const TEAM_JOB_STATUSES = ['queued', 'running', 'done', 'failed'] as const;

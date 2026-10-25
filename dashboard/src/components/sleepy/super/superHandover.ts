@@ -549,7 +549,8 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
     });
   }
   if (isQuestionOpen(state)) {
-    for (const q of state.queue.filter((x) => x.kind === 'question' && x.state === 'pending').sort((a, b) => a.createdAt - b.createdAt)) {
+    // A team job's question is the member's, asked of him in AI Team: no child here to name.
+    for (const q of state.queue.filter((x) => x.kind === 'question' && x.state === 'pending' && !x.team).sort((a, b) => a.createdAt - b.createdAt)) {
       out.waiting.push({ key: `q:${q.id}`, section: 'waiting', item: q.id, sid: q.sessionId, text: nameOf(q.sessionId), line: '', chip: 'queued', at: q.createdAt });
     }
   }
