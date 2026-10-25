@@ -54,7 +54,7 @@ describe('read and write', () => {
     });
     expect(written.children['c-1'].brief).toBe('Fix login');
     expect(readdirSync(join(root, 'state')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
-    expect(statSync(join(root, SUPER_STATE_REL)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(join(root, SUPER_STATE_REL)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(await readSuperState(root)).toEqual(written);
   });
 

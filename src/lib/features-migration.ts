@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, unlinkSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { readFrontmatter, writeFrontmatter } from './frontmatter.js';
 import { today } from './id.js';
 import { FEATURES_TYPE, featuresDir } from './features-path.js';

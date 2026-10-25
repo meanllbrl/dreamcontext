@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { readFrontmatter } from './frontmatter.js';
 import { readJsonArray } from './json-file.js';
 import { capAtWordBoundary } from './snapshot-compress.js';

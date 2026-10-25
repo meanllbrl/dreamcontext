@@ -5,7 +5,7 @@ import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile, type Stats } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
@@ -25,7 +25,7 @@ import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
 import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOutcome } from '../chat-park.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
-import { claudeAwarePath, findClaudeBin } from '../../lib/claude-path.js';
+import { claudeAwarePath, claudeDirectCommand, findClaudeBin, whichOnPathWin32 } from '../../lib/claude-path.js';
 import type { FixOutcome } from '../../lib/onboarding/fixes.js';
 import { detectLinuxPackageManager, manualCommand } from '../../lib/onboarding/platform.js';
 import type { FixId } from '../../lib/onboarding/types.js';
@@ -200,6 +200,10 @@ function detectOnPath(cmd: 'claude' | 'npm', timeoutMs = 8000): Promise<boolean>
 }
 
 function detectOnPathUncached(cmd: 'claude' | 'npm', timeoutMs: number): Promise<boolean> {
+  // Windows has no login shell to ask: look for the binary directly (claude.exe / npm.cmd).
+  if (process.platform === 'win32') {
+    return Promise.resolve(cmd === 'claude' ? findClaudeBin() !== null : whichOnPathWin32(['npm.cmd', 'npm.exe']) !== null);
+  }
   return new Promise((resolve) => {
     const shell = process.env.SHELL || '/bin/zsh';
     let out = '';
@@ -519,7 +523,7 @@ function resolveContainedDir(projectRoot: string, relDir: string): string | null
   try {
     const root = realpathSync(projectRoot);
     const target = realpathSync(join(root, relDir));
-    if (target !== root && !target.startsWith(root + '/')) return null;
+    if (target !== root && !target.startsWith(root + sep)) return null;
     return lstatSync(target).isDirectory() ? target : null;
   } catch {
     return null; // missing, unreadable, or not a directory
@@ -772,7 +776,10 @@ function parseEffortsFromCli(): Promise<string[]> {
     let out = '';
     let settled = false;
     const done = (v: string[]) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
-    const child = spawn(shell, ['-ilc', 'claude --help'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const direct = process.platform === 'win32' ? claudeDirectCommand(['--help']) : null;
+    const child = direct
+      ? spawn(direct.file, direct.args, { stdio: ['ignore', 'pipe', 'ignore'] })
+      : spawn(shell, ['-ilc', 'claude --help'], { stdio: ['ignore', 'pipe', 'ignore'] });
     const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } done([...EFFORT_LEVELS]); }, 8000);
     child.stdout?.on('data', (c: Buffer) => { out += c.toString('utf-8'); });
     child.on('error', () => done([...EFFORT_LEVELS]));
@@ -1437,17 +1444,21 @@ const GOAL_LIVE_NAMED_RE = /^\.goal-skill-live\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f
 // minute at most, so the tmp listing is kept per directory mtime and each file's parse per
 // (inode, size, mtime); the 3 h age check still runs on every call.
 const LIVE_CACHE_MAX = 256;
-const liveDirNames = new Map<string, { mtimeMs: number; names: string[] }>();
+const liveDirNames = new Map<string, { mtimeMs: number; names: string[]; listedAt: number }>();
 const liveFiles = new Map<string, { ino: number; size: number; mtimeMs: number; value: unknown; bad: boolean }>();
 
 /** The goal-live file names in `dir` (throws when there is no dir). */
 function goalLiveNames(dir: string): string[] {
   const st = statSync(dir);
   const hit = liveDirNames.get(dir);
-  if (hit && hit.mtimeMs === st.mtimeMs) return hit.names;
+  // Windows' clock is coarse: a file created in the same tick as the listing leaves the folder's
+  // mtime where it was, so there a listing is trusted only once it is clearly newer than the
+  // folder's last change. Elsewhere the mtime alone decides, as before.
+  const settled = process.platform !== 'win32' || (hit !== undefined && hit.listedAt - st.mtimeMs > 100);
+  if (hit && hit.mtimeMs === st.mtimeMs && settled) return hit.names;
   const names = readdirSync(dir).filter((n) => GOAL_LIVE_FILE_RE.test(n));
   if (liveDirNames.size >= LIVE_CACHE_MAX) liveDirNames.clear();
-  liveDirNames.set(dir, { mtimeMs: st.mtimeMs, names });
+  liveDirNames.set(dir, { mtimeMs: st.mtimeMs, names, listedAt: Date.now() });
   return names;
 }
 

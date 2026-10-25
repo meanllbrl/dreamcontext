@@ -78,6 +78,14 @@ npm run tauri build
 Then **code-sign + Apple-notarize** the `.dmg` (Apple Developer cert + `notarytool`)
 — that is its own runbook and requires your Developer account.
 
+**Windows** is built by the same release workflow (`.github/workflows/desktop-release.yml`,
+job `build-windows`): a per-user NSIS installer, `dreamcontext-beta_x64-setup.exe`, whose
+`.sig` comes from the same updater key, so `latest.json` carries `windows-x86_64` next to
+`darwin-aarch64`. It is not Authenticode-signed yet: a browser-downloaded installer shows
+SmartScreen once ("More info → Run anyway"). To try the pipeline without publishing, run the
+workflow by hand with `dry_run: true`: both platforms build with a throwaway updater key and
+`latest.json` lands in the `release-assets` artifact.
+
 ## Security notes
 
 - The Tauri **shell capability is scoped to `node` only** (`src-tauri/capabilities/default.json`).

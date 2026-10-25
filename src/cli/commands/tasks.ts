@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { join, basename, dirname } from 'node:path';
 import chalk from 'chalk';
-import fg from 'fast-glob';
+import fg from '../../lib/glob.js';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { readSection, extractMermaidNodes, nodeStatus, countCheckboxes } from '../../lib/markdown.js';
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';

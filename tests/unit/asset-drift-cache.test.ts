@@ -48,7 +48,7 @@ describe('asset-drift cache round-trip', () => {
 
   it('writes under state/.asset-drift.json and reads back identically', () => {
     writeAssetDriftCache(contextRoot, SAMPLE);
-    expect(assetDriftCachePath(contextRoot).endsWith('/state/.asset-drift.json')).toBe(true);
+    expect(assetDriftCachePath(contextRoot).endsWith(join('state', '.asset-drift.json'))).toBe(true);
     expect(readAssetDriftCache(contextRoot)).toEqual(SAMPLE);
   });
 

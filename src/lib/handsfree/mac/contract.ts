@@ -52,6 +52,9 @@ export interface MacBattery {
 /** GET /api/handsfree/mac/status. Never carries a secret (no passphrase, no token, no
  *  tunnel credentials); `url` is the public tunnel address, which is not a credential. */
 export interface MacStatus {
+  /** Mac mode can run on this machine (macOS). False elsewhere: the panel hides the hands-free
+   *  button and settings card, and setup, start and the fixed address refuse. */
+  supported: boolean;
   phase: MacPhase;
   /** Setup done: the sudoers drop-in is installed and a passphrase verifier exists. */
   setup: { sudoers: boolean; passphrase: boolean };

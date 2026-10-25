@@ -111,7 +111,16 @@ export interface SessionDeps {
   printErr: (line: string) => void;
 }
 
+/** Why a builder cannot be launched here, or null. Windows has no `ps` for the liveness checks. */
+export function builderLaunchRefusal(platform: NodeJS.Platform = process.platform): string | null {
+  return platform === 'win32'
+    ? 'builder sessions are not supported on Windows yet (they track liveness with ps); run the builders yourself or use Chat'
+    : null;
+}
+
 function launchDetached(argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv; logFile: string }): number {
+  const refusal = builderLaunchRefusal();
+  if (refusal) throw new BuilderInputError(refusal);
   const fd = openSync(o.logFile, 'a');
   try {
     const env = { ...o.env, PATH: claudeAwarePath(o.env.PATH ?? '') };

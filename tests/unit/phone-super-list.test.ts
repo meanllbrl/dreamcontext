@@ -11,8 +11,9 @@ import { parseChatLine } from '../../dashboard/src/lib/chatProtocol.js';
 import type { StackTab } from '../../dashboard/src/components/sleepy/phoneStack.js';
 import type { SuperChatWire } from '../../dashboard/src/components/handsfree/macContract.js';
 import { ownerEchoFrame } from '../../src/lib/super/phone-mirror.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const code = (p: string) => readFileSync(join(ROOT, p), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 
 const SUPER = '11111111-2222-4333-8444-555555555555';

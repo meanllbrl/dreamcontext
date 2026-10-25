@@ -124,7 +124,7 @@ describe('claude-install', () => {
       return { ok: false, stdout: '', stderr: 'boom' };
     }, { download: downloadWriting('#!/bin/bash\n') });
     await runFix('claude-install', ctxFor(), recordingSink().sink, signal(), {}, deps);
-    expect(mode).toBe(0o700);
+    if (process.platform !== 'win32') expect(mode).toBe(0o700); // Windows has no POSIX mode bits
   });
 
   it('refuses a script with no #! line and never runs it', async () => {

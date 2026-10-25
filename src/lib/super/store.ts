@@ -14,6 +14,7 @@ import { capAskShows } from './ask-show.js';
 import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
 import { parseMcpNames } from './lean-mcp.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
+import { renameWithRetry } from '../fs-retry.js';
 
 /**
  * The Super Agent's state file — `state/.super-agent.json`, one per vault (plan-r7 D2).
@@ -567,7 +568,7 @@ async function writeSuperState(contextRoot: string, state: SuperState): Promise<
   const tmp = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   await fsp.writeFile(tmp, text, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
   try {
-    await fsp.rename(tmp, path);
+    await renameWithRetry(tmp, path);
   } catch (err) {
     await fsp.rm(tmp, { force: true }).catch(() => { /* already gone */ });
     throw err;

@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import type { Frame } from '../../dashboard/src/generated/frameOps.js';
+import { fileURLToPath } from 'node:url';
 
 const SIZE = { width: 560, height: 260 };
 const hoverState: { index: number | null } = { index: null };
@@ -393,7 +394,7 @@ describe('legacy call sites keep working', () => {
 
 describe('lab-bar-pie-heat.css speaks only in tokens', () => {
   it('no hex, no literal colour function, 12/14 type ladder, 400/600 weights, token durations', () => {
-    const src = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/lab-bar-pie-heat.css'), 'utf8')
+    const src = readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/lab-bar-pie-heat.css'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '');
     const bad: string[] = [];
     const re = /(^|[;{\s])(-?[a-z-]+)\s*:\s*([^;{}]+)(?=[;}])/g;

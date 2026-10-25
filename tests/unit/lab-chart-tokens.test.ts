@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * THE CHART FOUNDATION SPEAKS ONLY IN TOKENS, on the lab-board-tokens.test.ts precedent:
@@ -16,7 +17,7 @@ import { join } from 'node:path';
  * points the scan at another `dashboard/src` (a mutation proof).
  */
 
-const ROOT = process.env.LAB_CHART_CSS_ROOT ?? join(new URL('../../', import.meta.url).pathname, 'dashboard/src');
+const ROOT = process.env.LAB_CHART_CSS_ROOT ?? join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src');
 const DIR = 'components/lab/chart';
 
 interface Decl { file: string; line: number; prop: string; value: string }

@@ -186,6 +186,25 @@ export function setAttachmentPreview(convId: string, id: string, url: string): v
   commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a.id === id ? { ...a, url } : a)) });
 }
 
+const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+
+/**
+ * Stage a `File` whose bytes still have to reach disk: an `uploading` chip now (a thumbnail
+ * for an image), settled with the path `upload` resolves. One door for a pasted screenshot
+ * AND a dropped file, so a drop on a chat pane becomes a chip like a paste does instead of
+ * raw path text in the draft (owner report 10-16, Windows). The job is registered with
+ * {@link trackUpload}, so a send waits for it through {@link pendingUploads}.
+ */
+export function stageUpload(convId: string, file: File, upload: (f: File) => Promise<string | null>): void {
+  const id = nextAttachmentId();
+  const isImage = file.type.startsWith('image/') || IMAGE_NAME_RE.test(file.name);
+  const name = file.name || (isImage ? 'Pasted image' : 'Pasted file');
+  let url: string | undefined;
+  if (isImage) { try { url = URL.createObjectURL(file); } catch { /* no DOM */ } }
+  addAttachments(convId, [{ id, kind: isImage ? 'image' : 'file', name, url, uploading: true }]);
+  trackUpload(convId, upload(file).catch(() => null).then((path) => { settleAttachment(convId, id, path); }));
+}
+
 /** Drop one chip (its ✕), revoking its preview. */
 export function removeAttachment(convId: string, id: string): void {
   const cur = readScratch(convId);

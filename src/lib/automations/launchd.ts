@@ -13,6 +13,7 @@ import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { AutomationError, DISPATCHER_LABEL, LOG_ROTATE_BYTES, TICK_INTERVAL_SECONDS } from './types.js';
+import { inspectWindowsDispatcher, installWindowsDispatcher, uninstallWindowsDispatcher } from './schtasks.js';
 
 /**
  * The launchd dispatcher — install/uninstall lifecycle for the ONE global
@@ -298,6 +299,11 @@ export async function inspectDispatcher(
   const home = opts.home ?? homedir();
   const runner = opts.runner ?? defaultExecRunner;
 
+  // Windows: the Task Scheduler twin in schtasks.ts (same InstallCheck shape).
+  if (process.platform === 'win32') {
+    return inspectWindowsDispatcher({ home, runner, logPath: automationsLogPath(home), runningBin: runningCliBin() });
+  }
+
   const resolved = await resolveDispatcherTarget({ runner });
   const runningBin = runningCliBin();
   const mismatch =
@@ -366,7 +372,7 @@ export interface InstallResult {
   wroteWrapper: boolean;
   wrotePlist: boolean;
   bootstrapped: boolean;
-  method: 'bootstrap' | 'load' | 'none';
+  method: 'bootstrap' | 'load' | 'schtasks' | 'none';
   warnings: string[];
 }
 
@@ -382,6 +388,16 @@ export interface InstallResult {
 export async function installDispatcher(
   opts: { home?: string; runner?: ExecRunner; uid?: number; force?: boolean } = {},
 ): Promise<InstallResult> {
+  if (process.platform === 'win32') {
+    const home = opts.home ?? homedir();
+    return installWindowsDispatcher({
+      home,
+      runner: opts.runner ?? defaultExecRunner,
+      logPath: automationsLogPath(home),
+      runningBin: runningCliBin(),
+      force: opts.force,
+    });
+  }
   if (process.platform !== 'darwin') {
     throw new AutomationError(
       'The launchd dispatcher is macOS-only; Linux cron is a later backend behind this same seam.',
@@ -460,6 +476,9 @@ export async function installDispatcher(
 export async function uninstallDispatcher(
   opts: { home?: string; runner?: ExecRunner; uid?: number } = {},
 ): Promise<{ bootedOut: boolean; removedPlist: boolean; removedWrapper: boolean }> {
+  if (process.platform === 'win32') {
+    return uninstallWindowsDispatcher({ home: opts.home ?? homedir(), runner: opts.runner ?? defaultExecRunner });
+  }
   if (process.platform !== 'darwin') {
     throw new AutomationError(
       'The launchd dispatcher is macOS-only; Linux cron is a later backend behind this same seam.',

@@ -44,6 +44,8 @@
 
 /** A move the caller should apply. `null` means "this frame said nothing about a checkout",
  *  which is the answer for the overwhelming majority of frames. */
+import { isAbsolute } from 'node:path';
+
 export type CheckoutMove =
   | { kind: 'enter'; dir: string }
   | { kind: 'exit' };
@@ -130,7 +132,7 @@ export function createWorktreeWatcher(): (frame: Record<string, unknown>) => Che
       const fromSidecar = sidecar && typeof sidecar === 'object'
         ? (sidecar as { worktreePath?: unknown }).worktreePath
         : undefined;
-      if (typeof fromSidecar === 'string' && fromSidecar.startsWith('/')) {
+      if (typeof fromSidecar === 'string' && isAbsolute(fromSidecar)) {
         move = { kind: 'enter', dir: fromSidecar };
         continue;
       }

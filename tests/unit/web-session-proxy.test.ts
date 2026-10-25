@@ -38,7 +38,7 @@ describe('the per-origin store', () => {
     expect(s.localStorage).toEqual({ token: 'abc', n: '1' });
     expect(s.cookies).toEqual([{ name: 'js', path: '/' }, { name: 'sid', path: '/' }]);
     expect(readWebSession(webSessionKey('/v/beta/_dream_context', 5173), home)).toEqual({ localStorage: {}, cookies: [] });
-    expect(lstatSync(join(webSessionsDir(home), `${K}.json`)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(lstatSync(join(webSessionsDir(home), `${K}.json`)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     // A later save replaces the storage but keeps every cookie name already known.
     saveWebSession(K, { localStorage: { n: '2' } }, home);
     expect(readWebSession(K, home)).toEqual({ localStorage: { n: '2' }, cookies: [{ name: 'js', path: '/' }, { name: 'sid', path: '/' }] });

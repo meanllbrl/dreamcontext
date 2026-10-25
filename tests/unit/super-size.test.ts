@@ -33,6 +33,7 @@ import * as client from '../../dashboard/src/lib/superTypes.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { handleSuperLayout, handleSuperVerb } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
+import { fileURLToPath } from 'node:url';
 
 let dir: string;
 let root: string;
@@ -348,7 +349,7 @@ describe('the window reads the server\'s auto mark, and holds that view while th
   });
 
   it('the surface plans a held page or a held automatic half as float (source pin)', () => {
-    const ROOT = new URL('../../', import.meta.url).pathname;
+    const ROOT = fileURLToPath(new URL('../../', import.meta.url));
     const surface = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
     const cues = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/useStageCues.ts'), 'utf-8');
     expect(surface).toMatch(/const autoHalf = state\.view\.mode === 'half' && state\.view\.auto && state\.view\.card \? state\.view\.card : null;/);

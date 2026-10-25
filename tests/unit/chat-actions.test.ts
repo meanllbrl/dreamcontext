@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import {
   parseChatActions, parseActionBlock, toAction,
 } from '../../dashboard/src/components/sleepy/chat/chatActions.js';
+import { fileURLToPath } from 'node:url';
 
 const fence = (json: string) => '```dream-actions\n' + json + '\n```';
 
@@ -371,7 +372,7 @@ describe('BoardCanvas — fully removed (Capability 3, criterion 10)', () => {
   }
 
   it('dashboard/src contains no reference to BoardCanvas', () => {
-    const root = new URL('../../dashboard/src', import.meta.url).pathname;
+    const root = fileURLToPath(new URL('../../dashboard/src', import.meta.url));
     const offenders = collectFiles(root).filter((f) => readFileSync(f, 'utf-8').includes('BoardCanvas'));
     expect(offenders).toEqual([]);
   });

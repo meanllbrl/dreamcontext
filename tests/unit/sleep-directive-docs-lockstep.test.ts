@@ -12,8 +12,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MUST_SLEEP_TIER_HEADERS } from '../../src/cli/commands/hook.js';
 import { DEFAULT_SLEEP_THRESHOLDS } from '../../src/lib/sleep-consolidation.js';
+import { fileURLToPath } from 'node:url';
 
-const repo = new URL('../../', import.meta.url).pathname;
+const repo = fileURLToPath(new URL('../../', import.meta.url));
 const read = (p: string): string => readFileSync(join(repo, p), 'utf-8');
 
 const DOCS = ['skill/SKILL.md', 'skill/references/sleep.md'] as const;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * TEXT ON AN ACCENT FILL takes the strong accent — app-wide, and this file is what keeps it so.
@@ -23,7 +24,7 @@ import { join, relative } from 'node:path';
  * TEXT with the gradient (`background-clip: text`) is not a fill and is skipped.
  */
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const SRC = join(ROOT, 'dashboard/src');
 
 function walk(dir: string, exts: string[], out: string[] = []): string[] {
@@ -126,7 +127,7 @@ interface Rule { file: string; selector: string; body: string }
 function cssRules(): Rule[] {
   const rules: Rule[] = [];
   for (const abs of walk(SRC, ['.css'])) {
-    const file = relative(SRC, abs);
+    const file = relative(SRC, abs).replace(/\\/g, '/');
     const src = readFileSync(abs, 'utf-8').replace(/\/\*[\s\S]*?\*\//g, ' ');
     for (const chunk of src.split('}')) {
       const i = chunk.lastIndexOf('{');
@@ -204,7 +205,7 @@ describe('text on an accent fill uses --color-accent-strong, app-wide', () => {
   it('every inline accent fill carrying text is converted too', () => {
     const offenders: string[] = [];
     for (const abs of walk(SRC, ['.tsx'])) {
-      const file = relative(SRC, abs);
+      const file = relative(SRC, abs).replace(/\\/g, '/');
       const src = readFileSync(abs, 'utf-8');
       const re = /background:\s*'([^']*)'/g;
       let m: RegExpExecArray | null;

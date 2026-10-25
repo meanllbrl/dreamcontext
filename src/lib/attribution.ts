@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { slugify } from './id.js';
 import { readFrontmatter } from './frontmatter.js';
 

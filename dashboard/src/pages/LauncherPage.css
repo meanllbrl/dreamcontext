@@ -36,6 +36,11 @@
   cursor: grab;
 }
 
+/* Native title bar (Windows/Linux): no traffic lights to clear. */
+.tauri-native-frame .launcher-bar {
+  padding-left: var(--space-4);
+}
+
 .launcher-bar:active {
   cursor: grabbing;
 }

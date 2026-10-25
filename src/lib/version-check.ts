@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import { execFileSync, spawn } from 'node:child_process';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -337,12 +338,55 @@ export function shouldSuppressCliNudge(
   return now - marker.at < AUTO_UPGRADE_INFLIGHT_MS;
 }
 
+/**
+ * Windows only: a tiny node program that runs `process.argv[1]` through cmd, hidden, and waits.
+ * `spawnSync` with ignored stdio + `windowsHide` gives cmd a console that is itself hidden, and
+ * npm (and its install scripts) inherit THAT one.
+ */
+export const WIN_HIDDEN_RUNNER =
+  "require('child_process').spawnSync(process.argv[1], { stdio: 'ignore', windowsHide: true, shell: true })";
+
+export interface AutoUpgradeLaunch {
+  file: string;
+  args: string[];
+  options: { detached: true; stdio: 'ignore'; shell: boolean; windowsHide?: true; cwd?: string };
+}
+
+/**
+ * How the background `npm install -g` is started.
+ *
+ * Off Windows: the command itself, detached, exactly as before.
+ *
+ * Windows: npm is npm.cmd, and since the CVE-2024-27980 hardening Node throws EINVAL on
+ * spawning .cmd files without a shell — so it needs cmd. But a DETACHED child is created with
+ * DETACHED_PROCESS (no console), and the cmd it started would allocate a NEW visible console on
+ * every SessionStart that triggers an upgrade. So the detached child is our own node running
+ * {@link WIN_HIDDEN_RUNNER}, which starts cmd/npm hidden. Args are fixed literals, so
+ * `shell: true` inside the runner is safe. It runs in the home folder: cmd looks for `npm` in the
+ * working folder before PATH, and the hook that triggers this runs inside a project, where a
+ * committed `npm.cmd` would otherwise run in place of npm.
+ */
+export function autoUpgradeLaunch(
+  cmd: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+  execPath: string = process.execPath,
+  home: string = homedir(),
+): AutoUpgradeLaunch {
+  if (platform !== 'win32') {
+    return { file: cmd, args, options: { detached: true, stdio: 'ignore', shell: false } };
+  }
+  return {
+    file: execPath,
+    args: ['-e', WIN_HIDDEN_RUNNER, [cmd, ...args].join(' ')],
+    options: { detached: true, stdio: 'ignore', shell: false, windowsHide: true, cwd: home },
+  };
+}
+
 /** Default detached spawner: `npm install -g dreamcontext@latest`, fire-and-forget. */
 function defaultSpawner(cmd: string, args: string[]): void {
-  // Windows: npm is npm.cmd, and since the CVE-2024-27980 hardening Node
-  // throws EINVAL on spawning .cmd files without a shell — auto-upgrade
-  // silently never ran there. Args are fixed literals, so shell:true is safe.
-  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', shell: process.platform === 'win32' });
+  const launch = autoUpgradeLaunch(cmd, args);
+  const child = spawn(launch.file, launch.args, launch.options);
   child.unref();
 }
 

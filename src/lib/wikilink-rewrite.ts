@@ -7,7 +7,7 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import fg from 'fast-glob';
+import fg from './glob.js';
 
 // Wikilink pattern — mirrors recall.ts:202 (do NOT refactor recall.ts).
 // Matches [[target]], [[target|alias]], [[target#anchor]].

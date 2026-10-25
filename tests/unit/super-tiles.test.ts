@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import { criteriaProgress, insightTile, plainCriterion } from '../../dashboard/src/components/sleepy/super/tileModel.js';
+import { fileURLToPath } from 'node:url';
 
 const { StatusRing, ChatTile } = await import('../../dashboard/src/components/sleepy/super/AgentCard.js');
 const { GroupTile, groupStatus } = await import('../../dashboard/src/components/sleepy/super/SuperTiles.js');
@@ -26,7 +27,7 @@ const { panelRect } = await import('../../dashboard/src/components/sleepy/super/
 const { I18nProvider } = await import('../../dashboard/src/context/I18nContext.js');
 const inI18n = (el: ReturnType<typeof createElement>) => renderToStaticMarkup(createElement(I18nProvider, null, el));
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const SUPER = 'dashboard/src/components/sleepy/super';
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 

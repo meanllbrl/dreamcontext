@@ -372,7 +372,7 @@ Two rules carry it. Measure the movement of an anchor ROW, never `scrollHeight`:
 
 ---
 
-## Desktop App (macOS beta)
+## Desktop App (macOS beta, Windows beta)
 
 A native **Tauri 2** app that wraps the same dashboard server so you manage every project from one window. Ships via the desktop release + macOS one-line installer (not the npm package). On a first launch it sets the machine up itself (below). On macOS, `dreamcontext setup` offers to install it, and `dreamcontext upgrade` updates it automatically when installed — so you rarely run these by hand.
 
@@ -381,9 +381,11 @@ dreamcontext app install     # install to ~/Applications (no admin, no quarantin
 dreamcontext app update      # update to the latest release
 dreamcontext app status      # show installed version and state
 dreamcontext app auto-update off   # stop automatic app updates (remembered; the app's own updater honours it); `on` resumes
-#   --from <path>  : install/update from a local .app/.tar.gz/.zip instead of GitHub Releases
-#   --dir <dir>    : install directory (default ~/Applications)
+#   --from <path>  : install/update from a local .app/.tar.gz/.zip (Windows: a setup .exe) instead of GitHub Releases
+#   --dir <dir>    : install directory (default ~/Applications; macOS only)
 ```
+
+**Windows** (`src/lib/app-windows.ts`): the release's per-user NSIS installer `dreamcontext-beta_x64-setup.exe`, verified against its `.sha256` (refused when missing or different; the asset URL must be `github.com/<repo>/releases/download/`), run silently with `/S` (no admin), then the version and exe are read from `HKCU\…\Uninstall\dreamcontext-beta` into `~/.dreamcontext/app.json`. Not Authenticode-signed (a browser-downloaded installer meets SmartScreen once: More info → Run anyway), but its update payload is minisign-signed: the release's `latest.json` carries a `windows-x86_64` entry next to `darwin-aarch64`, and the in-app updater downloads and verifies it in the background, then installs it when the user quits the app (never under them). The CLI is the second path: the once-a-day hook runs `app update --background`, which installs when the app is closed and, while it is open, records the newer version (`~/.dreamcontext/app-update-available.json`) that the next day's prompt hook and `app status` offer. The one-command install is `irm https://cdn.jsdelivr.net/npm/dreamcontext/install.ps1 | iex` (Node.js, CLI, app, setup; the same `DREAMCONTEXT_INSTALL_NO_NODE/NO_APP/NO_SETUP` switches as `install.sh`).
 
 - **Multi-vault launcher** — lists every registered vault; opens each project in its own window (pinned via a request header); per-project status dot (green up-to-date / yellow needs-update / red folder-gone) with an in-UI `update`.
 - **Federation board** — projects rendered as Excalidraw-style cards; click source→target to wire a live "reads" relationship (violet wire = one project reads another's canonical memory live during recall; never a copy), gated by the target being shareable.

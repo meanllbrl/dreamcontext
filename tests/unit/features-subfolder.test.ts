@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   featureSlug,
@@ -35,7 +35,7 @@ function writeFeature(
   fm: Record<string, string> = {},
 ): string {
   const full = join(featuresDir(root), `${relSlug}.md`);
-  mkdirSync(full.replace(/\/[^/]+$/, ''), { recursive: true });
+  mkdirSync(dirname(full), { recursive: true });
   const front = Object.entries({
     id: `feat_${relSlug.replace(/[^a-z0-9]/gi, '')}`,
     type: 'feature',

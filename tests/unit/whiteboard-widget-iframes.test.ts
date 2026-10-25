@@ -19,8 +19,9 @@ import {
   HEIGHT_BRIDGE, REACH_BRIDGE, KIT_BEHAVIOUR, HEIGHT_MESSAGE_KEY, PRESS_MESSAGE_KEY, CHORD_MESSAGE_KEY,
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
 import { SANDBOX_CSP, SANDBOX_ALLOW } from '../../dashboard/src/lib/sandboxHtml.js';
+import { fileURLToPath } from 'node:url';
 
-const WB_DIR = join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/whiteboard');
+const WB_DIR = join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/whiteboard');
 const read = (rel: string) => readFileSync(join(WB_DIR, rel), 'utf-8');
 
 /** Every `<iframe …>` JSX opening tag in a source file. */

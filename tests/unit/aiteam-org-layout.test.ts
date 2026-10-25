@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { readPageView, teamCount, writePageView } from '../../dashboard/src/components/aiteam/teamTree';
 import { buildTree, type TreeMember } from '../../src/lib/agents/tree.js';
 import { edgePath, isTeamFrame, layoutOrgChart, ORG } from '../../dashboard/src/components/aiteam/orgLayout';
+import { fileURLToPath } from 'node:url';
 
 const m = (slug: string, reportsTo: string | null = null, team: string | null = null): TreeMember => ({ slug, reportsTo, team });
 
@@ -94,7 +95,7 @@ describe('layoutOrgChart', () => {
 });
 
 describe('the Org chart in the page', () => {
-  const src = (p: string) => readFileSync(join(new URL('../../', import.meta.url).pathname, p), 'utf8');
+  const src = (p: string) => readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), p), 'utf8');
   it('Conversations | Org chart switches the page, remembered on this machine', () => {
     const mem = new Map<string, string>();
     const storage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };

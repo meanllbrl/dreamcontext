@@ -22,8 +22,9 @@ import {
 } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import { parseSuperAnswer } from '../../dashboard/src/components/sleepy/super/superQuestions.js';
 import { composeOutgoing, type Attachment } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (f: string) => readFileSync(join(ROOT, f), 'utf-8');
 const chip = (text: string): Attachment => ({ id: 'att-1', kind: 'about', name: 'Reply to Super: x', text });
 const q = (p: string) => `"${p}"`;

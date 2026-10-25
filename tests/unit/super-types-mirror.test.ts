@@ -11,8 +11,9 @@ import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
 import * as ownerWait from '../../src/lib/super/owner-wait.js';
 import * as phoneMirror from '../../src/lib/super/phone-mirror.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 describe('super types — server record <-> window mirror', () => {
   it('every list and limit matches, in order', () => {

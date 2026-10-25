@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
+import { runCliWithStdin } from '../helpers/cli-stdin.js';
 
 /**
  * Workstream C through the REAL binary. The Stop hook fires at the end of every
@@ -23,7 +24,7 @@ function cli(args: string, env: NodeJS.ProcessEnv = {}): string {
   try {
     return execSync(`node ${CLI} ${args} 2>&1`, {
       cwd: root, encoding: 'utf-8', timeout: 30000,
-      env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, ...env },
+      env: { ...process.env, PATH: `${binDir}${delimiter}${process.env.PATH}`, ...env },
     });
   } catch (e: any) {
     return (e.stdout ?? '') + (e.stderr ?? '');
@@ -36,14 +37,10 @@ function stopHook(env: NodeJS.ProcessEnv = {}): string {
     transcript_path: '/nonexistent.jsonl',
     last_assistant_message: 'done',
   });
-  try {
-    return execSync(`printf '%s' '${input}' | node ${CLI} hook stop 2>&1`, {
-      cwd: root, encoding: 'utf-8', timeout: 30000, shell: '/bin/bash',
-      env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, ...env },
-    });
-  } catch (e: any) {
-    return (e.stdout ?? '') + (e.stderr ?? '');
-  }
+  return runCliWithStdin(CLI, ['hook', 'stop'], input, {
+    cwd: root, timeout: 30000, withStderr: true,
+    env: { ...process.env, PATH: `${binDir}${delimiter}${process.env.PATH}`, ...env },
+  });
 }
 
 function setDebt(debt: number, over: Record<string, unknown> = {}): void {
@@ -200,11 +197,7 @@ describe('the Stop hook trigger', () => {
 describe('the nag silence, through the real hook', () => {
   const promptHook = () => {
     const input = JSON.stringify({ session_id: '11111111-1111-1111-1111-111111111111', prompt: 'hi' });
-    try {
-      return execSync(`printf '%s' '${input}' | node ${CLI} hook user-prompt-submit 2>/dev/null`, {
-        cwd: root, encoding: 'utf-8', timeout: 30000, shell: '/bin/bash',
-      });
-    } catch (e: any) { return (e.stdout ?? '') + (e.stderr ?? ''); }
+    return runCliWithStdin(CLI, ['hook', 'user-prompt-submit'], input, { cwd: root, timeout: 30000 });
   };
 
   it('normally demands a consolidation at high debt', () => {

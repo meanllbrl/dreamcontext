@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename } from 'node:path';
+import { resolveWin32ClaudeBin, whichOnPathWin32 } from '../claude-path.js';
 import type { ProbeRunner, ShellFacts, ShellResult } from './types.js';
 
 /** The PATH a Finder-launched app starts with: what "a fresh Terminal" builds on. */
@@ -117,9 +120,41 @@ function runChild(
   });
 }
 
+/**
+ * Windows has no login shell to ask (`$SHELL -ilc` is `/bin/zsh`, which does not exist), so
+ * the same `__DC__` answers come straight from PATH — the PATH a new terminal inherits. An
+ * `.exe` is preferred over an npm `.cmd` shim wherever both exist, since a caller may run it
+ * with no shell. git and node are reported only when `--version` actually runs.
+ */
+export async function win32ShellFacts(
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (p: string) => boolean = existsSync,
+  run: typeof runChild = runChild,
+): Promise<ShellResult> {
+  const lines: string[] = [];
+  const p = (k: string, v: string | null | undefined) => lines.push(`__DC__${k}=${v ?? ''}`);
+  const node = whichOnPathWin32(['node.exe'], env, exists);
+  p('node', node);
+  if (node) {
+    const v = await run(node, ['--version'], { timeoutMs: 10_000 });
+    if (v.ok) p('nodeVersion', v.stdout.trim());
+  }
+  p('npm', whichOnPathWin32(['npm.cmd', 'npm.exe'], env, exists));
+  p('dreamcontext', whichOnPathWin32(['dreamcontext.exe', 'dreamcontext.cmd'], env, exists));
+  const listDir = (d: string) => { try { return readdirSync(d); } catch { return []; } };
+  p('claude', resolveWin32ClaudeBin({ env, home: env.USERPROFILE || homedir(), exists, listDir })
+    ?? whichOnPathWin32(['claude.cmd'], env, exists));
+  p('gh', whichOnPathWin32(['gh.exe'], env, exists));
+  p('clt', '0');
+  const git = whichOnPathWin32(['git.exe'], env, exists);
+  if (git && (await run(git, ['--version'], { timeoutMs: 10_000 })).ok) p('git', git);
+  return { ok: true, stdout: `${lines.join('\n')}\n`, stderr: '', code: 0 };
+}
+
 /** The real runner: spawns processes and fetches. Tests inject their own. */
 export const defaultProbeRunner: ProbeRunner = {
   loginShell(script, timeoutMs) {
+    if (process.platform === 'win32') return win32ShellFacts();
     const shell = process.env.SHELL || '/bin/zsh';
     return runChild(shell, loginShellArgs(shell, script), {
       timeoutMs,

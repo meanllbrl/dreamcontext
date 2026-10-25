@@ -45,7 +45,7 @@ describe('cliAwarePath', () => {
   it('writes an executable shim that execs THIS node on THIS entry, quoting survived', () => {
     cliAwarePath('/usr/bin:/bin', { execPath: fakeNode, entry, home });
     const shim = join(cliShimDir(home), 'dreamcontext');
-    expect(statSync(shim).mode & 0o111).not.toBe(0);
+    if (process.platform !== 'win32') expect(statSync(shim).mode & 0o111).not.toBe(0); // Windows has no POSIX mode bits
     expect(readFileSync(shim, 'utf-8')).toBe(renderCliShim(fakeNode, entry));
     const out = execFileSync(shim, ['automations', 'post', 'x y'], { encoding: 'utf-8' }).trim();
     expect(out).toBe(`ran:${entry} automations post x y`);

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { killPortable, recordedChildIsOurs } from './proc.js';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import { executeClaudeDetached, sanitizeAutomationPrompt } from './automations/runner.js';
 import { notifyViaBundle } from './automations/notifier.js';
@@ -159,6 +160,7 @@ export async function runAutoSleep(
           writeAutoSleepSidecar(contextRoot, {
             pid: child.pid as number,
             pgid: child.pid as number,   // detached ⇒ the child leads its own group
+            runnerPid: process.pid,
             startedAt: at.toISOString(),
             status: 'running',
             epoch: epochAtSpawn,
@@ -191,7 +193,7 @@ export async function runAutoSleep(
               const stillOurs = mine?.pid === child.pid && readEpoch(contextRoot) === ownedEpoch;
               if (!stillOurs) {
                 patchAutoSleepSidecar(contextRoot, { status: 'aborted', finishedAt: new Date(tick).toISOString(), error: 'ownership lost across a machine suspend' });
-                try { process.kill(-(child.pid as number), 'SIGKILL'); } catch { /* already gone */ }
+                try { killPortable(-(child.pid as number), 'SIGKILL'); } catch { /* already gone */ }
                 return;
               }
             }
@@ -270,9 +272,13 @@ export interface CancelAutoSleepResult {
 
 export function cancelAutoSleep(
   contextRoot: string,
-  opts: { killImpl?: (pid: number, sig: NodeJS.Signals | number) => void } = {},
+  opts: {
+    killImpl?: (pid: number, sig: NodeJS.Signals | number) => void;
+    /** Test seam for the win32 pid-reuse guard ({@link recordedChildIsOurs}). */
+    isOurs?: (childPid: number, runnerPid: number) => boolean;
+  } = {},
 ): CancelAutoSleepResult {
-  const kill = opts.killImpl ?? ((pid: number, sig: NodeJS.Signals | number) => { process.kill(pid, sig); });
+  const kill = opts.killImpl ?? ((pid: number, sig: NodeJS.Signals | number) => { killPortable(pid, sig as NodeJS.Signals | 0); });
   const sidecar = readAutoSleepSidecar(contextRoot);
   if (!sidecar) return { found: false, killed: false, pgid: null, refusedReason: null };
   if (sidecar.status !== 'running') {
@@ -287,6 +293,13 @@ export function cancelAutoSleep(
   if (!isPidAlive(sidecar.pid)) {
     patchAutoSleepSidecar(contextRoot, { status: 'failed', finishedAt: new Date().toISOString(), error: 'process was already gone when cancel ran' });
     return { found: true, killed: false, pgid: sidecar.pgid, refusedReason: 'that process is already gone — the sidecar has been closed out' };
+  }
+
+  // Windows: the kill below is `taskkill /T` on whatever process owns that pid now, so it runs
+  // only while the cycle is still the recorded runner's child. Identity elsewhere.
+  const isOurs = opts.isOurs ?? recordedChildIsOurs;
+  if (!isOurs(sidecar.pgid, sidecar.runnerPid ?? 0)) {
+    return { found: true, killed: false, pgid: sidecar.pgid, refusedReason: 'could not confirm that process id still belongs to the recorded run (Windows reuses ids; the check found another parent, or could not run) — refusing to kill' };
   }
 
   try { kill(-sidecar.pgid, 'SIGTERM'); } catch { /* already gone */ }

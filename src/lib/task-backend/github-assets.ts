@@ -97,6 +97,8 @@ export function rewriteImageRefs(body: string, map: (dest: string) => string | n
 export function isLocalImageRef(dest: string): boolean {
   const d = dest.trim();
   if (!d) return false;
+  // Windows: `D:\…` / `D:/…` is a drive, not a one-letter URL scheme.
+  if (process.platform === 'win32' && /^[A-Za-z]:[\\/]/.test(d)) return true;
   if (/^[a-z][a-z0-9+.-]*:/i.test(d)) return false; // http:, https:, data:, mailto:, file:, …
   if (d.startsWith('//')) return false;             // protocol-relative
   if (d.startsWith('#')) return false;              // in-page anchor

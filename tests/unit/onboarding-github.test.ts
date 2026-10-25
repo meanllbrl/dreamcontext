@@ -93,7 +93,7 @@ describe('importGhToken', () => {
     expect(await importGhToken(gh, home)).toEqual({ login: 'octo-user' });
     expect(readGlobalGitHubToken(home)?.token).toBe(GH_TOKEN_VALUE);
     expect(readGlobalGitHubLogin(home)).toBe('octo-user');
-    expect(statSync(globalSecretsPath(home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(globalSecretsPath(home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('a token with an extra scope is not stored and its value is never read', async () => {

@@ -10,7 +10,26 @@ name: desktop-release
 #   dreamcontext-beta_<ver>_aarch64.app.tar.gz     the update payload, shared by both updaters:
 #     + .sha256                                    the CLI's `app update` (checksum mandatory)
 #     + .sig                                       the in-app updater (minisign, pubkey in tauri.conf.json)
-#   latest.json                                    what the in-app updater polls
+#   dreamcontext-beta_x64-setup.exe                the Windows per-user NSIS installer, also the
+#     + .sha256                                    Windows update payload: the CLI's `app update`
+#     + .sig                                       (checksum) and the in-app updater (minisign).
+#                                                  NOT Authenticode-signed yet: SmartScreen warns
+#                                                  on first install ("More info → Run anyway").
+#   latest.json                                    what the in-app updater polls: darwin-aarch64
+#                                                  and windows-x86_64, written ONCE by `assemble`
+#                                                  after both builds, so no platform races another.
+#
+# Jobs: build-macos and build-windows build in parallel and only hand their assets over as
+# artifacts; `assemble` verifies every updater signature against the pubkey in
+# tauri.conf.json and writes latest.json; `publish` (the only job with a write token) creates
+# the release. A failed Windows build does not hold the Mac release: assemble ships the Mac
+# entry alone and warns; "Re-run failed jobs" later adds Windows to the same release.
+#
+# DRY RUN (workflow_dispatch, dry_run: true, from any branch): both platforms build without
+# the `release` environment, so no secret is readable. The Mac app is not Developer ID signed
+# or notarized, each build signs its updater payload with a throwaway key, and `assemble`
+# checks each entry against that key. latest.json and every asset end up in the
+# `release-assets` artifact; `publish` never runs, so no release, tag or upload happens.
 #
 # Why Developer ID and not the earlier self-signed certificate: the designated requirement
 # becomes `anchor apple generic` + the team, which macOS evaluates the same way on every
@@ -35,9 +54,13 @@ on:
       tag:
         description: 'Release tag to build/publish (e.g. v0.8.0)'
         required: true
+      dry_run:
+        description: 'Dry run: build both platforms, keep latest.json as an artifact, publish nothing'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write # required to create/upload GitHub Releases
+  contents: read # only `publish` gets a write token
 
 jobs:
   build-macos:
@@ -47,9 +70,14 @@ jobs:
     # The signing secrets live in this environment, which only `v*` TAGS may deploy to:
     # a workflow pushed on any branch cannot read them. Dispatch from a tag ref, not main.
     # Every action is pinned to a commit: a moved tag cannot run code next to the key.
-    environment: release
+    # A dry run takes no environment at all: it reads no secret, so it runs from a branch.
+    environment: ${{ !inputs.dry_run && 'release' || '' }}
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
     env:
       ARCH: aarch64
+      DRY_RUN: ${{ inputs.dry_run == true }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -125,6 +153,7 @@ jobs:
         run: npm ci
 
       - name: Import the Developer ID certificate into a temporary keychain
+        if: ${{ !inputs.dry_run }}
         # One keychain for the whole job: tauri signs the .app from it, and the DMG is signed
         # from it afterwards. Fails rather than falls back: an unsigned or ad-hoc release would
         # cost every user their permissions and meet Gatekeeper on download.
@@ -154,6 +183,7 @@ jobs:
             || { echo "::error::$APPLE_SIGNING_IDENTITY is not a valid identity in the imported .p12"; exit 1; }
 
       - name: Build, sign, notarize and staple the Tauri .app (+ updater payload + DMG)
+        if: ${{ !inputs.dry_run }}
         # tauri signs with --options runtime and entitlements.plist, submits the .app to
         # notarytool, staples the ticket, then builds the DMG and the signed .app.tar.gz from
         # that stapled bundle. createUpdaterArtifacts is switched on HERE only, so a local
@@ -174,7 +204,23 @@ jobs:
           done
           npm run tauri build -- --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'
 
+      - name: Dry run — build the .app + DMG unsigned, updater payload signed with a throwaway key
+        if: ${{ inputs.dry_run }}
+        # The same build without Apple's identity or notarization (no secret is readable here).
+        # The throwaway pubkey travels in the platform entry so `assemble` can check the .sig.
+        working-directory: desktop
+        env:
+          DREAMCONTEXT_UPDATER: '1'
+        run: |
+          npm run tauri signer generate -- --ci -f -w "$RUNNER_TEMP/dry-run-updater.key"
+          TAURI_SIGNING_PRIVATE_KEY="$(cat "$RUNNER_TEMP/dry-run-updater.key")"
+          export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+          npm run tauri build -- --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          echo "dmg=$(ls "$PWD"/src-tauri/target/release/bundle/dmg/*.dmg | head -1)" >> "$GITHUB_ENV"
+          echo "dry_run_pubkey=$(cat "$RUNNER_TEMP/dry-run-updater.key.pub")" >> "$GITHUB_ENV"
+
       - name: Verify the app is Developer ID signed, notarized and stapled
+        if: ${{ !inputs.dry_run }}
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
@@ -191,6 +237,7 @@ jobs:
           echo "✓ Developer ID, hardened runtime, notarized, stapled"
 
       - name: Sign, notarize and staple the DMG
+        if: ${{ !inputs.dry_run }}
         env:
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -225,10 +272,12 @@ jobs:
           cp "$dmg" "$OUT/$DMG_ASSET"
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
           SIG="$(cat "$OUT/$ASSET.sig")"
-          jq -n --arg v "$VERSION" --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg s "$SIG" --arg u "$URL" \
-            '{version: $v, notes: "", pub_date: $d, platforms: {"darwin-aarch64": {signature: $s, url: $u}}}' \
-            > "$OUT/latest.json"
-          cat "$OUT/latest.json"
+          # This platform's latest.json entry; `assemble` merges it with Windows' and writes
+          # the one latest.json. Only a dry run carries a pubkey (its throwaway key's).
+          jq -n --arg s "$SIG" --arg u "$URL" --arg p "${dry_run_pubkey:-}" \
+            '{key: "darwin-aarch64", signature: $s, url: $u} + (if $p == "" then {} else {pubkey: $p} end)' \
+            > "$OUT/platform-darwin-aarch64.json"
+          cat "$OUT/platform-darwin-aarch64.json"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
           echo "dmg=$DMG_ASSET" >> "$GITHUB_OUTPUT"
           echo "out=$OUT" >> "$GITHUB_OUTPUT"
@@ -244,6 +293,7 @@ jobs:
           TMP="$(mktemp -d)"
           tar -xzf "$OUT/$ASSET" -C "$TMP"
           test -x "$TMP/dreamcontext-beta.app/Contents/MacOS/dreamcontext-desktop"
+          if [ "$DRY_RUN" = true ]; then echo "✓ dry run: the update payload extracts (not Developer ID signed)"; exit 0; fi
           codesign --verify --deep --strict "$TMP/dreamcontext-beta.app"
           codesign -d --verbose=2 "$TMP/dreamcontext-beta.app" 2>&1 | grep -q "^TeamIdentifier=$APPLE_TEAM_ID$"
           xcrun stapler validate "$TMP/dreamcontext-beta.app"
@@ -255,19 +305,261 @@ jobs:
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/release-signing.keychain-db" || true
 
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-release
+          path: ${{ steps.pkg.outputs.out }}/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true # "Re-run failed jobs" uploads the same name again in this run
+
+  build-windows:
+    # The Windows desktop app: a per-user NSIS installer, NOT Authenticode-signed (no
+    # certificate yet: SmartScreen warns on first run), but its update payload IS signed with
+    # the updater's minisign key, so this job takes the `release` environment for that one
+    # secret. It reads no Apple secret, has no write token, and hands the installer to
+    # `assemble` as an artifact. Builds in parallel with build-macos.
+    runs-on: windows-latest
+    environment: ${{ !inputs.dry_run && 'release' || '' }}
+    permissions:
+      contents: read
+    env:
+      DRY_RUN: ${{ inputs.dry_run == true }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Resolve version + tag
+        id: ver
+        # Same rule as build-macos: the dispatch input reaches the shell through env only, and
+        # only a plain vX.Y.Z passes.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The release tag must be a plain vX.Y.Z (e.g. v0.32.0)."
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$TAG version=$VERSION"
+
+      - name: Refuse a tag the sources do not carry
+        # The installer's file name, About box and bundled CLI must agree with the tag (the
+        # macOS job runs the full five-surface check; tauri.conf.json is what names the .exe).
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          TAURI="$(jq -r .version desktop/src-tauri/tauri.conf.json)"
+          PKG="$(jq -r .version package.json)"
+          if [ "$TAURI" != "$VERSION" ] || [ "$PKG" != "$VERSION" ]; then
+            echo "::error::Version mismatch: tag $VERSION, package.json $PKG, tauri.conf.json $TAURI."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '20'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+
+      - name: Cache cargo build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install deps + build CLI/dashboard (bundled into the installer's resources)
+        run: |
+          npm ci
+          npm ci --prefix dashboard
+          npm run build
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build the NSIS installer (Authenticode-unsigned, updater-signed)
+        # tauri.windows.conf.json selects `nsis` (installMode currentUser). createUpdaterArtifacts
+        # writes <installer>.sig next to the installer: on Windows the installer IS the update
+        # payload. DREAMCONTEXT_UPDATER=1 compiles the in-app updater in (src/updater.rs), which
+        # reads latest.json's windows-x86_64 entry. The merge config goes in as a file: npm runs
+        # the script through cmd.exe, which would eat an inline JSON's quotes.
+        working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          DREAMCONTEXT_UPDATER: '1'
+        run: |
+          # bash reads POSIX paths, the native tools get Windows ones (cygpath -w).
+          TMPU="$(cygpath -u "$RUNNER_TEMP")"
+          if [ "$DRY_RUN" = true ]; then
+            # No secret is readable in a dry run: sign with a throwaway key whose pubkey travels
+            # in the platform entry for `assemble` to check against.
+            npm run tauri signer generate -- --ci -f -w "$(cygpath -w "$TMPU/dry-run-updater.key")"
+            TAURI_SIGNING_PRIVATE_KEY="$(cat "$TMPU/dry-run-updater.key")"
+            export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+            echo "dry_run_pubkey=$(cat "$TMPU/dry-run-updater.key.pub")" >> "$GITHUB_ENV"
+          elif [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is missing"; exit 1
+          fi
+          echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$TMPU/updater-artifacts.json"
+          npm run tauri build -- --bundles nsis --config "$(cygpath -w "$TMPU/updater-artifacts.json")"
+
+      - name: Package the installer + its latest.json entry
+        # Version-less name, like the DMG, so /releases/latest/download/<name> is a fixed link;
+        # the same file is the update payload, so its .sig is renamed with it (minisign signs
+        # the bytes, not the name).
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          shopt -s nullglob
+          found=(desktop/src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if [ "${#found[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one NSIS installer, found ${#found[@]}: ${found[*]}"
+            exit 1
+          fi
+          case "${found[0]}" in
+            *"_${VERSION}_"*) ;;
+            *) echo "::error::${found[0]} does not carry version $VERSION"; exit 1 ;;
+          esac
+          test -s "${found[0]}.sig" || { echo "::error::${found[0]}.sig is missing: the updater cannot install it"; exit 1; }
+          ASSET=dreamcontext-beta_x64-setup.exe
+          mkdir -p dist-release
+          cp "${found[0]}" "dist-release/$ASSET"
+          cp "${found[0]}.sig" "dist-release/$ASSET.sig"
+          ( cd dist-release && sha256sum "$ASSET" > "$ASSET.sha256" )
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+          SIG="$(cat "dist-release/$ASSET.sig")"
+          node -e 'const [s, u, p] = process.argv.slice(1); process.stdout.write(JSON.stringify({ key: "windows-x86_64", signature: s, url: u, ...(p ? { pubkey: p } : {}) }) + "\n")' \
+            "$SIG" "$URL" "${dry_run_pubkey:-}" > dist-release/platform-windows-x86_64.json
+          cat dist-release/platform-windows-x86_64.json
+          ls -la dist-release
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-release
+          path: dist-release/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true # "Re-run failed jobs" uploads the same name again in this run
+
+  assemble:
+    # The ONE writer of latest.json, after both builds: no platform can overwrite another's
+    # entry. Every signature is checked against the pubkey installed apps trust (a dry run:
+    # against its throwaway key) before anything is written. No write token.
+    needs: [build-macos, build-windows]
+    if: ${{ !cancelled() && needs.build-macos.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      windows: ${{ steps.merge.outputs.windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-release
+          path: dist-release
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ needs.build-windows.result == 'success' }}
+        with:
+          name: windows-release
+          path: dist-release
+
+      - name: Verify checksums, check signatures, write latest.json
+        id: merge
+        env:
+          VERSION: ${{ needs.build-macos.outputs.version }}
+          WINDOWS_RESULT: ${{ needs.build-windows.result }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
+        run: |
+          cd dist-release
+          for f in *.sha256; do sha256sum -c "$f"; done
+          if [ "$WINDOWS_RESULT" = success ]; then
+            echo "windows=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "windows=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::build-windows did not succeed ($WINDOWS_RESULT): latest.json carries the Mac entry only. Re-run the failed jobs to add Windows to this release."
+          fi
+          if [ "$DRY_RUN" = true ]; then MODE=--dry-run; else MODE=; fi
+          node ../scripts/release-latest-json.mjs "$VERSION" . $MODE > latest.json
+          rm platform-*.json
+          cat latest.json
+          { echo '### latest.json'; echo '```json'; cat latest.json; echo '```'; echo; ls -la; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist-release/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true # "Re-run failed jobs" uploads the same name again in this run
+
+  publish:
+    # The only job with a write token, and the only one that creates the release. Never in a
+    # dry run; a tag-only environment, so a dispatch from a branch cannot reach it either.
+    needs: [build-macos, assemble]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist-release
+
+      - name: List the files to publish
+        id: files
+        env:
+          VERSION: ${{ needs.build-macos.outputs.version }}
+          WINDOWS: ${{ needs.assemble.outputs.windows }}
+        run: |
+          OUT="$PWD/dist-release"
+          ASSET="dreamcontext-beta_${VERSION}_aarch64.app.tar.gz"
+          {
+            echo 'list<<EOF'
+            echo "$OUT/$ASSET"
+            echo "$OUT/$ASSET.sha256"
+            echo "$OUT/$ASSET.sig"
+            echo "$OUT/latest.json"
+            echo "$OUT/dreamcontext-beta_aarch64.dmg"
+            if [ "$WINDOWS" = true ]; then
+              echo "$OUT/dreamcontext-beta_x64-setup.exe"
+              echo "$OUT/dreamcontext-beta_x64-setup.exe.sha256"
+              echo "$OUT/dreamcontext-beta_x64-setup.exe.sig"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          name: dreamcontext-beta ${{ steps.ver.outputs.version }}
+          tag_name: ${{ needs.build-macos.outputs.tag }}
+          name: dreamcontext-beta ${{ needs.build-macos.outputs.version }}
           # Must be a non-draft, non-prerelease so /releases/latest (the CLI's
           # downloadLatestArtifact, the in-app updater's latest.json, the DMG link) finds it.
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
-          files: |
-            ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.asset }}
-            ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.asset }}.sha256
-            ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.asset }}.sig
-            ${{ steps.pkg.outputs.out }}/latest.json
-            ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.dmg }}
+          files: ${{ steps.files.outputs.list }}

@@ -169,6 +169,16 @@ curl -fsSL https://cdn.jsdelivr.net/npm/dreamcontext/install.sh | sh
 
 > Served from the published npm package via CDN — works with a private repo, no GitHub access needed. **No Node.js? No problem.** With Homebrew the installer runs `brew install node`; without it, it downloads a pinned, checksum-verified official Node.js just for dreamcontext into `~/.dreamcontext/node` (no admin password, your other apps untouched) and adds it to your shell profile so `dreamcontext` stays on PATH in your next terminal (skip the automatic install with `DREAMCONTEXT_INSTALL_NO_NODE=1`). On macOS it also installs the optional [desktop app](#desktop-app) into `~/Applications` (skip with `DREAMCONTEXT_INSTALL_NO_APP=1`).
 
+**Windows** (PowerShell, no admin):
+
+```powershell
+irm https://cdn.jsdelivr.net/npm/dreamcontext/install.ps1 | iex
+```
+
+> The same steps: with no usable Node.js it downloads a pinned, checksum-verified official Node.js into `%USERPROFILE%\.dreamcontext\node` and adds it to your user PATH, installs the CLI from npm, installs the [desktop app](#desktop-app) (a per-user installer, not code-signed yet, so SmartScreen may ask the first time), then runs setup. The same switches, as environment variables: `$env:DREAMCONTEXT_INSTALL_NO_NODE=1`, `$env:DREAMCONTEXT_INSTALL_NO_APP=1`, `$env:DREAMCONTEXT_INSTALL_NO_SETUP=1`.
+>
+> **Installing the Windows app by hand?** [`dreamcontext-beta_x64-setup.exe`](https://github.com/meanllbrl/dreamcontext/releases/latest/download/dreamcontext-beta_x64-setup.exe) is not code-signed yet, so the first time you run it Windows SmartScreen says "Windows protected your PC": click **More info → Run anyway**. It installs for your user only (no admin), and from then on the app updates itself.
+
 **Manual install (npm):**
 
 ```bash
@@ -334,10 +344,10 @@ Light and dark mode with system detection; violet brand anchored by the dream-ge
 
 ## Desktop App
 
-> **macOS beta.** A native **Tauri 2** app that wraps the same dashboard server — one window for *every* project instead of a localhost tab per repo. Ships via the desktop release and the macOS one-line installer, not the npm package.
+> **macOS beta, Windows beta.** A native **Tauri 2** app that wraps the same dashboard server — one window for *every* project instead of a localhost tab per repo. Ships via the desktop release and the one-line installers, not the npm package.
 
 ```bash
-dreamcontext app install      # Install to ~/Applications (no admin, no quarantine prompt)
+dreamcontext app install      # Install to ~/Applications (no admin, no quarantine prompt); on Windows, the per-user installer
 dreamcontext app update       # Update the installed app to the latest release
 dreamcontext app status       # Show installed app version and state
 ```
@@ -370,7 +380,7 @@ Here the agent also knows it isn't in a terminal, so it can hand you the thing i
 
 **Always current, no notarization wait.** Delivery is CLI/curl-driven, so Gatekeeper's notarization check never fires (ad-hoc signing satisfies Apple Silicon). The app prefers your globally-installed, auto-upgrading CLI over its bundled copy, so ~95% of changes ride the normal CLI upgrade with no app rebuild. Downloaded artifacts require a matching `.sha256` or the install refuses.
 
-> A working local beta — not yet Apple-signed/notarized, so first launch may need a right-click → Open. Windows/Linux are nice-to-have for later.
+> A working local beta — not yet Apple-signed/notarized, so first launch may need a right-click → Open. **On Windows** the app is a per-user installer (`dreamcontext-beta_x64-setup.exe` on the release, checksum-verified, run silently by `dreamcontext app install`), not code-signed yet, so a copy you download in a browser meets SmartScreen once: **More info → Run anyway**. It updates itself from the same release feed as the Mac app: a new version is downloaded and its signature checked in the background, then installed when you quit the app, never under you. `dreamcontext app update` installs it from the CLI while the app is closed; while it is open, the CLI offers the newer version once a day instead. Linux is for later.
 
 ## Hands-free Mode
 

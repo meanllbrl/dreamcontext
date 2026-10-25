@@ -35,9 +35,9 @@ describe('MediaEmbed is the only inline player', () => {
 
   it('no surface writes its own <video> or <audio> element', () => {
     const players = files
-      .filter((f) => !f.endsWith(ATOM))
+      .filter((f) => !f.replace(/\\/g, '/').endsWith(ATOM))
       .filter((f) => /^\s*<(video|audio)(\s|$)/m.test(readFileSync(f, 'utf8')))
-      .map((f) => f.slice(ROOT.length + 1));
+      .map((f) => f.slice(ROOT.length + 1).replace(/\\/g, '/'));
     const offenders = players.filter((rel) => !(rel in SHOWCASE_CLIPS));
     expect(offenders).toEqual([]);
     const stale = Object.keys(SHOWCASE_CLIPS).filter((rel) => !players.includes(rel));

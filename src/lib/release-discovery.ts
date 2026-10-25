@@ -1,6 +1,6 @@
 import { join, basename } from 'node:path';
 import { existsSync } from 'node:fs';
-import fg from 'fast-glob';
+import fg from './glob.js';
 import { readFrontmatter } from './frontmatter.js';
 import { readJsonArray } from './json-file.js';
 import { featuresDir, featureSlug } from './features-path.js';

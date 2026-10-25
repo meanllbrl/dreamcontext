@@ -93,9 +93,9 @@ describe('setup (AC2)', () => {
     expect(install).toHaveBeenCalledTimes(1);
     expect(r.passphrase).toMatch(/^[a-z-]+( [a-z-]+){5}$/);
     const dir = join(home, '.dreamcontext', 'handsfree-mac');
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(dir).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
     const file = join(dir, 'auth.json');
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(readFileSync(file, 'utf8')).not.toContain(r.passphrase!);
     // A second setup keeps the passphrase (null = not shown again) and prompts no more.
     expect((await s.setup()).passphrase).toBeNull();
@@ -123,7 +123,7 @@ describe('start (AC3) and Return (AC10)', () => {
     expect(events).toContain('/usr/bin/sudo -n /usr/bin/pmset -c lowpowermode 1');
     const state = readMacState(home)!;
     expect(state).toMatchObject({ on: true, serverPid: 777, tunnelPid: 4242, priorLpm: { battery: 0, ac: 1 }, sleepDisabledByUs: true, mode: 'quick' });
-    expect(statSync(statePathOf(home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(statePathOf(home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(s.mintQr()).toMatch(/^https:\/\/quiet-lake-1234\.trycloudflare\.com\/login\?t=[A-Za-z0-9_-]{43}$/);
     await s.stop();
   });
@@ -339,7 +339,7 @@ describe('the thermal governor in the session (AC6, AC7)', () => {
     const stillSlow = burners.filter((p) => world.procs.get(p)!.pri === BG_PRI);
     expect(stillSlow.length).toBeGreaterThan(0);
     expect(pending.map((e) => e.pid).sort()).toEqual(stillSlow.sort());
-    expect(statSync(pendingPath()).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(pendingPath()).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(existsSync(statePathOf(home))).toBe(false);
   });
 
@@ -479,7 +479,7 @@ describe('bag mode', () => {
     await s.start({ vaults: ['proj'], bagMode: false });
     await s.stop();
     expect(readMacPrefs(home).bagMode).toBe(false);
-    expect(statSync(macPrefsPathOf(home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(macPrefsPathOf(home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(existsSync(statePathOf(home))).toBe(false);
     expect(s.status()).toMatchObject({ phase: 'off', bagMode: false });
 
@@ -709,7 +709,7 @@ describe('an end that could not restore power or sign the phones out says so, an
     expect(events).toContain('restore:refused');
     expect(existsSync(statePathOf(home))).toBe(false);
     expect(JSON.parse(readFileSync(powerPendingPathOf(home), 'utf8')).priorLpm).toEqual({ battery: 0, ac: 1 });
-    expect(statSync(powerPendingPathOf(home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(powerPendingPathOf(home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(s.status().lastError).toBe('mac_sudo_missing');
 
     o.refuse = false;

@@ -15,8 +15,9 @@ import type { StackTab } from '../../dashboard/src/components/sleepy/phoneStack.
 import { CLOSED_TTL_MS, markClosed, recentlyClosed } from '../../dashboard/src/components/sleepy/phoneClosed.js';
 import type { LiveChatWire } from '../../dashboard/src/components/handsfree/macContract.js';
 import type { PastSession } from '../../dashboard/src/components/sleepy/ChatHistoryPicker.js';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const code = (p: string) => readFileSync(join(ROOT, p), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 
 const tab = (id: string, kind: string, claudeId?: string): StackTab => ({ id, paneId: 'p1', title: `T ${id}`, info: { kind, label: kind } as unknown as StackTab['info'], claudeId, attention: false });

@@ -11,6 +11,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mainLaptopGate } from '../../src/server/index.js';
 import { isCrossSiteWrite, handleCors } from '../../src/server/middleware.js';
 import { isCrossSiteRequest, isSameOriginStrict, requireLocalRead } from '../../src/server/routes/agent-spawn-shared.js';
+import { fileURLToPath } from 'node:url';
 
 const SELF = '127.0.0.1:4173';
 const saved = process.env.DREAMCONTEXT_REMOTE;
@@ -113,7 +114,7 @@ describe('the window never calls the API across ports (so port-strict breaks not
       else if (/\.(ts|tsx)$/.test(n) && !/\.test\./.test(n)) files.push(p);
     }
   };
-  walk(new URL('../../dashboard/src', import.meta.url).pathname);
+  walk(fileURLToPath(new URL('../../dashboard/src', import.meta.url)));
 
   it('no absolute loopback fetch, WebSocket or EventSource in dashboard/src', () => {
     const bad: string[] = [];

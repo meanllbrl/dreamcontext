@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { relPosix } from '../../lib/paths.js';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { success, error, header } from '../../lib/format.js';
@@ -202,7 +203,7 @@ export function registerRoadmapCommand(program: Command): void {
       printBoard(model);
       const path = writeRoadmapBoard(root, model);
       console.log();
-      success(`Board written: ${path.replace(dirname(root) + '/', '')}`);
+      success(`Board written: ${relPosix(dirname(root), path)}`);
     });
 
   const objective = roadmap

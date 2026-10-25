@@ -21,8 +21,9 @@ import {
 } from '../../src/lib/voice/config.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 describe('a chord is accepted only when it can actually be held', () => {
   it('takes a modifier plus a physical key', () => {

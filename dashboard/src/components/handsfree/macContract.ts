@@ -38,7 +38,16 @@ export interface MacThermal { state: MacThermalState | null; slowed: number }
 /** Bag mode never chosen: on (the governor may slow heavy processes while hot). */
 export const MAC_BAG_MODE_DEFAULT = true;
 
+/** Offer Mac mode (the chrome's hands-free button, the settings card) unless the server said
+ *  this machine cannot run it (`supported: false`, every OS but macOS). No reading yet, or an
+ *  older server without the field, keeps the offer exactly as it always was on the Mac. */
+export function macModeOffered(s: MacStatus | null): boolean {
+  return s?.supported !== false;
+}
+
 export interface MacStatus {
+  /** Mac mode can run on this machine (macOS); the server decides. Absent from an older server. */
+  supported?: boolean;
   phase: MacPhase;
   setup: { sudoers: boolean; passphrase: boolean };
   mode: MacTunnelMode;

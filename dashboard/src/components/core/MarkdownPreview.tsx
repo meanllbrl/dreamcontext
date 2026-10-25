@@ -24,6 +24,17 @@ marked.setOptions({ gfm: true, breaks: true });
  *  a long document is worth a few dozen entries, not an unbounded map per open message. */
 const HTML_CACHE_MAX = 64;
 
+/**
+ * DOMPurify's own default URI rule plus one alternative: a Windows drive path (`C:/…`,
+ * `C:\…`). Without it `C:` reads as an unknown scheme and the href/src of every absolute
+ * Windows path is dropped, so `[clip](C:/Users/me/out.webm)` lands as dead text that the
+ * chat's media and path passes never see. A drive letter can't name a script scheme.
+ */
+const SANITIZE_CONFIG = {
+  // eslint-disable-next-line no-useless-escape
+  ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|[a-z]:[\\/]|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+};
+
 interface Props {
   content: string;
   frontmatter?: Record<string, unknown>;
@@ -52,7 +63,7 @@ export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
     const cache = htmlCache.current;
     const hit = cache.get(block);
     if (hit !== undefined) return hit;
-    const html = DOMPurify.sanitize(renderMarkdownBlock(block));
+    const html = DOMPurify.sanitize(renderMarkdownBlock(block), SANITIZE_CONFIG);
     if (cache.size >= HTML_CACHE_MAX) cache.delete(cache.keys().next().value as string);
     cache.set(block, html);
     return html;

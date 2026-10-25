@@ -20,9 +20,10 @@ import {
 import { isSafeInsightSlug } from '../../src/lib/lab/store';
 import { validateLibraryBlock } from '../../src/lib/lab/block-library';
 import { boardSpecToFile, validateBoardSpec } from '../../src/lib/lab/boards';
+import { fileURLToPath } from 'node:url';
 
 const catalog = catalogJson as unknown as BlockCatalog;
-const SRC = join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/lab/board');
+const SRC = join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/lab/board');
 
 const inline: Block = { type: 'html', options: { html: '<div id="g"></div>', inputs: { cohorts: 'daily-signups/by-week', extra: 'mrr' } } };
 const draft = (patch: Partial<LibraryDraft> = {}): LibraryDraft => ({

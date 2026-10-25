@@ -61,7 +61,7 @@ describe('VAPID (AC6) and the key file (AC7)', () => {
 
   it('vapid.json is 0600, and the same pair comes back on the next load', () => {
     const a = loadOrCreateVapid(dir);
-    expect(statSync(join(dir, 'vapid.json')).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(join(dir, 'vapid.json')).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(loadOrCreateVapid(dir)).toEqual(a);
   });
 });
@@ -104,7 +104,7 @@ describe('the subscription store (AC7)', () => {
     const s = new PushStore({ dir });
     s.put(HASH, GOOD);
     s.put(HASH, { ...GOOD, endpoint: 'https://fcm.googleapis.com/fcm/send/y' });
-    expect(statSync(join(dir, 'push.json')).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(join(dir, 'push.json')).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(s.entries()).toHaveLength(1);
     expect(new PushStore({ dir }).get(HASH)?.endpoint).toBe('https://fcm.googleapis.com/fcm/send/y');
     s.put('b'.repeat(64), GOOD);

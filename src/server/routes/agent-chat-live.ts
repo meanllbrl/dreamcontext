@@ -25,6 +25,8 @@
  * tab left open, can never look like the owner doing something.
  */
 
+import { treeKillRealChild } from '../../lib/proc.js';
+
 /** How long an IDLE child may stay detached before it is ended (stdin EOF → linger → kill). */
 export const DETACH_IDLE_MS = 15 * 60_000;
 /** How long a BUSY child may stay detached before it is ended anyway — the backstop for a turn
@@ -173,6 +175,8 @@ export function liveChatsSnapshot(): readonly LiveChatSnapshotEntry[] {
 
 /** Signal a child's process group (it is spawned as a group leader); falls back to the child. */
 export function signalGroup(child: { pid?: number; kill: (s?: NodeJS.Signals) => boolean }, signal: NodeJS.Signals): void {
+  // win32 has no process groups: tree-kill a real child, else fall through to the old path.
+  if (treeKillRealChild(child, signal)) return;
   try {
     if (child.pid) { process.kill(-child.pid, signal); return; }
   } catch { /* not a group leader (or gone): signal the child itself */ }

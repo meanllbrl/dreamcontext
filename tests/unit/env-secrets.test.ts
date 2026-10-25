@@ -159,7 +159,7 @@ describe('writeEnvSecrets', () => {
 
     expect(readFileSync(join(root, '.env'), 'utf-8')).toBe('FIREBASE_TOKEN="abc def"\n');
     expect(readFileSync(join(root, '.gitignore'), 'utf-8')).toContain('.env');
-    expect(statSync(join(root, '.env')).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(join(root, '.env')).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(res.written[0]).toMatchObject({ key: 'FIREBASE_TOKEN', action: 'added', chars: 7 });
     expect(res.gitignoreAdded).toBe('.env');
   });
@@ -168,7 +168,7 @@ describe('writeEnvSecrets', () => {
     writeFileSync(join(root, '.env'), 'A=1\n');
     chmodSync(join(root, '.env'), 0o644);
     writeEnvSecrets(root, '.env', [{ key: 'B', value: '2' }], { gitTracked: nothingTracked });
-    expect(statSync(join(root, '.env')).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(join(root, '.env')).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
   });
 
   it('writes into a subdirectory that exists', () => {

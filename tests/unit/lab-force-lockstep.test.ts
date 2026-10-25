@@ -49,7 +49,7 @@ describe('dashboard source', () => {
     const offenders: string[] = [];
     const seen: Record<string, number> = {};
     for (const f of files) {
-      const rel = relative(ROOT, f);
+      const rel = relative(ROOT, f).replace(/\\/g, '/');
       const n = (readFileSync(f, 'utf-8').match(/\bforce\s*:\s*true\b/g) ?? []).length;
       seen[rel] = n;
       if (n > (NOT_LAB_FORCE[rel] ?? 0)) offenders.push(rel);

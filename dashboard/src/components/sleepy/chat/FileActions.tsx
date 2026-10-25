@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useApi } from '../../../context/VaultContext';
 import { revealPath } from './chatEntities';
+import { revealLabel } from '../../../lib/reveal';
 
 /**
  * What a surface showing ONE file owes the user besides the file itself: the two ways out to
@@ -69,7 +70,7 @@ export function FileActions({
           <span aria-hidden>↗</span> {busy === 'open' ? 'Opening…' : 'Open on computer'}
         </button>
         <button type="button" className="chat-btn" onClick={() => handoff('reveal')} disabled={busy !== null}>
-          <span aria-hidden>📁</span> {busy === 'reveal' ? 'Showing…' : 'Reveal in Finder'}
+          <span aria-hidden>📁</span> {busy === 'reveal' ? 'Showing…' : revealLabel()}
         </button>
         <button type="button" className="chat-btn" onClick={copyPath}>
           <span aria-hidden>⧉</span> Copy path

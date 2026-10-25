@@ -97,6 +97,9 @@ export type AutoSleepStatus = 'running' | 'ok' | 'failed' | 'timeout' | 'cancell
 export interface AutoSleepSidecar {
   pid: number;
   pgid: number;
+  /** The runner that spawned the cycle. Windows' cancel checks the cycle is still its child
+   *  (pids are reused there, and the kill is a tree kill); absent on older records. */
+  runnerPid?: number;
   startedAt: string;
   status: AutoSleepStatus;
   /** The `.sleep.json` epoch this run owns — how the changelog entry stays idempotent. */

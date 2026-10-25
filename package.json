@@ -22,6 +22,7 @@
     "LICENSE",
     "NOTICE",
     "install.sh",
+    "install.ps1",
     "npm-shrinkwrap.json"
   ],
   "scripts": {

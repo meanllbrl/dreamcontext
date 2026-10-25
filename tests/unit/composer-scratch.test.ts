@@ -19,10 +19,11 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import {
   __resetScratchForTests, addAttachments, countsAsContent, dropScratch, dropSentAttachments, foldAttachments, nextAttachmentId,
-  readScratch, removeAttachment, setAbout, settleAttachment, setQuote, subscribeScratch, wasSent,
+  pendingUploads, readScratch, removeAttachment, setAbout, settleAttachment, setQuote, stageUpload, subscribeScratch, wasSent,
   type Attachment,
 } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
 
@@ -194,7 +195,7 @@ describe('composerScratch — lifetimes', () => {
 
 // ─── Source guards: the properties that live in code that ISN'T there ──────────────────
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 const code = (src: string) => src
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
@@ -245,10 +246,10 @@ describe('composerScratch — the About chip', () => {
 describe('composerScratch — the wiring nobody can see at the call site', () => {
   it('the composer no longer revokes an object URL on unmount', () => {
     // This single line was the bug: an unmount is not evidence that the user is done with a
-    // chip, because a respawn unmounts a pane whose chips are still wanted. Creating the URL
-    // stays here (the paste handler has the File); releasing it belongs to the store.
+    // chip, because a respawn unmounts a pane whose chips are still wanted. The paste handler
+    // hands its File to `stageUpload`, which creates the URL; releasing it belongs to the store.
     const src = code(read(COMPOSER));
-    expect(src).toContain('URL.createObjectURL');
+    expect(src).toContain('stageUpload(convId');
     expect(src, 'releasing a preview is composerScratch\'s job now').not.toContain('revokeObjectURL');
   });
 
@@ -287,5 +288,35 @@ describe('composerScratch — the wiring nobody can see at the call site', () =>
     const window = src.slice(Math.max(0, at - 900), at);
     expect(window).toContain('clearPins(');
     expect(window).toContain('closeSessionById');
+  });
+});
+
+describe('stageUpload — one door for a paste and a drop', () => {
+  beforeEach(() => __resetScratchForTests());
+
+  it('stages an uploading chip, then settles it with the uploaded path', async () => {
+    let resolve!: (p: string | null) => void;
+    const file = new File(['x'], 'shot.png', { type: '' });
+    stageUpload('conv-u', file, () => new Promise((r) => { resolve = r; }));
+    const [chip] = readScratch('conv-u').attachments;
+    expect(chip).toMatchObject({ kind: 'image', name: 'shot.png', uploading: true });
+    expect(pendingUploads('conv-u')).toHaveLength(1);
+    resolve('C:\vault\_dream_context\tmp\agent-drops\1-shot.png');
+    await Promise.allSettled(pendingUploads('conv-u'));
+    expect(readScratch('conv-u').attachments[0]).toMatchObject({
+      path: 'C:\vault\_dream_context\tmp\agent-drops\1-shot.png', uploading: false, failed: false,
+    });
+    expect(pendingUploads('conv-u')).toHaveLength(0);
+  });
+
+  it('a nameless non-image paste is labelled a file, not an image', () => {
+    stageUpload('conv-n', new File(['x'], '', { type: 'application/pdf' }), () => new Promise(() => {}));
+    expect(readScratch('conv-n').attachments[0]).toMatchObject({ kind: 'file', name: 'Pasted file' });
+  });
+
+  it('a non-image file is a file chip, and a rejected upload is marked failed', async () => {
+    stageUpload('conv-f', new File(['%PDF'], 'brief.pdf', { type: 'application/pdf' }), () => Promise.reject(new Error('x')));
+    await Promise.allSettled(pendingUploads('conv-f'));
+    expect(readScratch('conv-f').attachments[0]).toMatchObject({ kind: 'file', name: 'brief.pdf', failed: true });
   });
 });

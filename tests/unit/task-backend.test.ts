@@ -229,7 +229,7 @@ describe('task backend', () => {
         // 0600 on POSIX
         if (process.platform !== 'win32') {
           const mode = statSync(secrets).mode & 0o777;
-          expect(mode).toBe(0o600);
+          if (process.platform !== 'win32') expect(mode).toBe(0o600); // Windows has no POSIX mode bits
         }
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });

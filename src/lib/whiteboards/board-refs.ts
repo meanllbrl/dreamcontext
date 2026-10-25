@@ -1,4 +1,4 @@
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import { readWhiteboard } from './store.js';
 import { boardFileRelPath } from './files.js';
 import { describeElement, liveElements, type ElementView } from './ops.js';
@@ -124,7 +124,8 @@ function readLive(root: string, board: string, cache: Map<string, WhiteboardElem
 function pictureHint(root: string, board: string, view: ElementView): string | null {
   if (view.type !== 'image' || !view.fileId) return null;
   const rel = boardFileRelPath(root, board, view.fileId);
-  return rel ? `Read ${join(basename(root), rel)}` : null;
+  // A path the agent reads in prose: the same `_dream_context/…` spelling on every OS.
+  return rel ? `Read ${basename(root)}/${rel}` : null;
 }
 
 function renderBlock(root: string, refs: readonly ResolvedRef[], nonce: string): string {

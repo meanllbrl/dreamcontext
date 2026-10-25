@@ -24,6 +24,13 @@ import { RequestError, type ApiClient } from '../api/client';
  * agnostic list), and this is a plain function called from event handlers, not a hook — it
  * can't read `useVault()` itself, so every caller passes the client bound to ITS OWN project.
  */
+/** What the "show me where this is" button is called on THIS machine's file manager. */
+export function revealLabel(): string {
+  return typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent)
+    ? 'Show in Explorer'
+    : 'Reveal in Finder';
+}
+
 export function revealPath(api: ApiClient, path: string, mode: 'auto' | 'reveal' = 'auto'): Promise<string | null> {
   return api.post('/agent/reveal', { path, mode }).then(
     () => null,

@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../glob.js';
 import matter from 'gray-matter';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { generateId } from '../id.js';

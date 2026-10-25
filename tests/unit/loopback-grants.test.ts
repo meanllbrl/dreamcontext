@@ -25,7 +25,7 @@ describe('loopback grants', () => {
 
   it('the file is 0600 under ~/.dreamcontext, and another home is never touched', () => {
     setLoopbackGrant('/v/acme', 3000, 'grant', NONE, home);
-    expect(lstatSync(loopbackGrantsPath(home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(lstatSync(loopbackGrantsPath(home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(readLoopbackGrants('/v/acme', NONE, other)).toEqual([]);
     expect(() => lstatSync(loopbackGrantsPath(other))).toThrow();
   });

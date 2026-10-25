@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * THE INSIGHTS BOARD SPEAKS ONLY IN TOKENS, on the Automations Elevated precedent
@@ -14,7 +15,7 @@ import { join } from 'node:path';
  * `dashboard/src` (a mutation proof).
  */
 
-const ROOT = process.env.LAB_BOARD_CSS_ROOT ?? join(new URL('../../', import.meta.url).pathname, 'dashboard/src');
+const ROOT = process.env.LAB_BOARD_CSS_ROOT ?? join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src');
 
 const FILES = [
   'components/lab/board/board.css',

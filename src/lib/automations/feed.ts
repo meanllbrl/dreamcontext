@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename, relative, isAbsolute, sep } from 'node:path';
+import { basename, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { listAutomations, readAutomationCache, resolveAutomationPhoto } from './store.js';
 import { extractNotificationSummary } from './runner.js';
@@ -8,6 +8,7 @@ import { readThread, threadReadWatermark } from './threads.js';
 import type {
   AutomationManifest, AutomationQuestion, RunEvent, ThreadEntry, ThreadSummaryRow,
 } from './types.js';
+import { relPosix } from '../paths.js';
 
 /**
  * The FEED — what `#agents` actually shows.
@@ -195,7 +196,7 @@ const FEED_DAY_WINDOW = 14;
  *  `files[]` path does. A path already relative is returned untouched. */
 function toBrainRelative(contextRoot: string, path: string): string {
   if (!isAbsolute(path)) return path;
-  const rel = relative(contextRoot, path);
+  const rel = relPosix(contextRoot, path);
   return rel.startsWith('..') ? path : rel;
 }
 

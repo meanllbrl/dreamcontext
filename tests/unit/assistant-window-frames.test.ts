@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 type Win = {
   label: string;
@@ -236,7 +237,7 @@ describe('tileWindows', () => {
 });
 
 describe('Notch seats (source scan)', () => {
-  const src = readFileSync(join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/assistant/Notch.tsx'), 'utf-8');
+  const src = readFileSync(join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/assistant/Notch.tsx'), 'utf-8');
   const body = (name: string) => {
     const start = src.indexOf(name);
     expect(start, `${name} not found`).toBeGreaterThan(-1);

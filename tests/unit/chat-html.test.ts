@@ -31,8 +31,9 @@ import {
 } from '../../dashboard/src/components/sleepy/chat/chatHtmlKit.js';
 import { handleChatHtmlKitGet } from '../../src/server/routes/chat-html-kit.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { fileURLToPath } from 'node:url';
 
-const CHAT_DIR = join(new URL('../../', import.meta.url).pathname, 'dashboard/src/components/sleepy/chat');
+const CHAT_DIR = join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/components/sleepy/chat');
 
 const fence = (html: string) => '```dream-html\n' + html + '\n```';
 
@@ -156,7 +157,7 @@ describe('the sandbox is the boundary', () => {
     // Same drift lock as the kit CSS mirror (knowledge/patterns/mirror-with-drift-test.md):
     // the bytes live in a generated TS constant because these modules must stay importable
     // by root vitest, which has no Vite asset pipeline.
-    const fonts = join(new URL('../../', import.meta.url).pathname, 'dashboard/src/assets/fonts');
+    const fonts = join(fileURLToPath(new URL('../../', import.meta.url)), 'dashboard/src/assets/fonts');
     const files = ['inter', 'jakarta', 'jetbrains']
       .flatMap((stem) => [`${stem}-latin.woff2`, `${stem}-latin-ext.woff2`]);
     for (const f of files) {

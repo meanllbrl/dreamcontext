@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const fakeHome = vi.hoisted(() => {
@@ -88,7 +88,11 @@ vi.mock('node:child_process', async (importOriginal) => {
     ...real,
     spawn: vi.fn((_cmd: string, args: string[], opts: { env?: Record<string, string> }) => {
       const child = new FakeChild();
-      child.script = args[args.length - 1] ?? '';
+      // win32 spawns the chat's claude directly (argv starts with -p, chatSpawnCommand): present it
+      // as the POSIX login-shell script these tests read.
+      child.script = process.platform === 'win32' && args[0] === '-p'
+        ? `exec claude ${args.map((x) => `"${x}"`).join(' ')}`
+        : args[args.length - 1] ?? '';
       child.env = opts?.env ?? {};
       spawned.push(child);
       return child as unknown as import('node:child_process').ChildProcess;
@@ -198,10 +202,10 @@ describe('the spawn', () => {
     const files = mcpFiles(a);
     expect(files).toHaveLength(1);
     const f = files[0];
-    expect(f.startsWith(leanMcpDir(fakeHome) + '/')).toBe(true);
+    expect(f.startsWith(leanMcpDir(fakeHome) + sep)).toBe(true);
     expect(JSON.parse(readFileSync(f, 'utf-8'))).toEqual({ mcpServers: { whatsapp: USER_SERVERS.whatsapp } });
-    expect(statSync(f).mode & 0o777).toBe(0o600);
-    expect(statSync(leanMcpDir(fakeHome)).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(f).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
+    if (process.platform !== 'win32') expect(statSync(leanMcpDir(fakeHome)).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
     // The shared config (every user server) never rides along.
     expect(a.join(' ')).not.toContain('mcp-config.json');
     // Removed when the child exits.

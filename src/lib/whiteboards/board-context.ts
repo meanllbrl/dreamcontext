@@ -228,7 +228,8 @@ export function renderBoardContext(root: string, slug: string, nonce: string): s
     // A picture is shown as the file the agent can Read (project-relative), never its bytes.
     const fileOf = (fileId: string) => {
       const rel = boardFileRelPath(root, slug, fileId);
-      return rel ? join(basename(root), rel) : null;
+      // The `_dream_context/…` spelling an agent reads, the same on every OS.
+      return rel ? `${basename(root)}/${rel}` : null;
     };
     const json = JSON.stringify(boundBoardSnapshot(board, slug, BOARD_CONTEXT_MAX_CHARS - frame, fileOf));
     return [...head, json, ...tail].join('\n');

@@ -48,7 +48,7 @@ import {
 } from './chatEntities';
 import {
   addAttachments, composeOutgoing, countsAsContent, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, pendingUploads,
-  readScratch, removeAttachment, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, subscribeScratch, type Attachment,
+  readScratch, removeAttachment, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, type Attachment,
 } from './composerScratch';
 import {
   deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, parseRefTokens, reconcileRefs, refLabel, refToken, refTokenId, sanitizePaste,
@@ -1054,9 +1054,12 @@ export function Composer({
   // comes back. This is the same channel a dropped file uses (`POST /api/agent/drop`); the
   // beta shipped without it, which is what made a pasted screenshot a picture the user could
   // see and the agent never received (owner report 07-27).
-  /** Upload jobs still running. `submit` awaits these so ⌘V then ⏎ sends the picture. */
-  const uploadsRef = useRef<Set<Promise<void>>>(new Set());
-
+  // Staged in the store (`stageUpload`), which is both what `submit` reads (so there is no
+  // flush-ordering question — a settle that lands in the same microtask batch as a send is
+  // already visible) and what survives a respawn. The upload's resolution is addressed by
+  // CONVERSATION id, so a mode switch mid-upload still lands the path on the right chip in
+  // the pane that replaced this one. Any clipboard FILE is taken, not only an image MIME: a file
+  // copied in Explorer/Finder pastes as one, and its bytes are what the agent needs.
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -1083,28 +1086,16 @@ export function Composer({
       if (r.max) setMaxNotice((n) => n + 1);
       return;
     }
-    let addedImage = false;
+    let addedFile = false;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+      if (item.kind !== 'file') continue;
       const file = item.getAsFile();
       if (!file) continue;
-      const id = nextAttachmentId();
-      const name = file.name || 'Pasted image';
-      const url = URL.createObjectURL(file);
-      // Staged in the store, which is both what `submit` reads (so there is no flush-ordering
-      // question — a settle that lands in the same microtask batch as a send is already
-      // visible) and what survives a respawn. The upload's resolution is addressed by
-      // CONVERSATION id, so a mode switch mid-upload still lands the path on the right chip
-      // in the pane that replaced this one.
-      addAttachments(convId, [{ id, kind: 'image', url, name, uploading: true }]);
-      const job = uploadAgentFile(vault, file, name)
-        .then((path) => { settleAttachment(convId, id, path); });
-      uploadsRef.current.add(job);
-      void job.finally(() => uploadsRef.current.delete(job));
-      addedImage = true;
+      stageUpload(convId, file, (f) => uploadAgentFile(vault, f, f.name || 'Pasted image'));
+      addedFile = true;
     }
-    if (addedImage) e.preventDefault(); // don't also paste raw image bytes as garbage text
+    if (addedFile) e.preventDefault(); // don't also paste raw image bytes as garbage text
   };
 
   // ── The hands-free phone's photos (task hands-free-phone-shows-every-picture…) ──────────
@@ -1128,8 +1119,7 @@ export function Composer({
         setAttachmentPreview(convId, id, URL.createObjectURL(jpeg));
         return withPhotoUploadSlot(() => uploadAgentFile(vault, jpeg, name, photoUploadSignal())).then((path) => { settleAttachment(convId, id, path); });
       });
-      uploadsRef.current.add(job);
-      void job.finally(() => uploadsRef.current.delete(job));
+      trackUpload(convId, job);
     }
   };
 
@@ -2021,9 +2011,10 @@ export function Composer({
     // A submit refused while an earlier one waits on its upload leaves that one's spoken take armed.
     if (sendingRef.current) return;
     if (!canCompose || !hasSendableContent) { spokenRef.current = false; return; }
-    // Nothing in flight — the common case, and it stays synchronous. A picked element's picture
-    // is uploaded outside this pane (composerScratch `trackUpload`) and is waited for the same way.
-    const jobs = [...uploadsRef.current, ...pendingUploads(convId)];
+    // Nothing in flight — the common case, and it stays synchronous. Every upload (a paste, a
+    // drop, a phone photo, a picked element's picture) is tracked per conversation in
+    // composerScratch (`trackUpload`), so a respawned pane still waits for it.
+    const jobs = pendingUploads(convId);
     if (jobs.length === 0) { commit(mode); return; }
     // A screenshot pasted and sent in the same breath: the message can only name the file
     // once the path exists, so hold the submit for the upload rather than sending a message

@@ -11,6 +11,7 @@ import {
   NEVER_FLUSHED_FLOOR_SCORE,
   RHYTHM_SESSIONS,
 } from '../../src/lib/sleep-consolidation.js';
+import { runCliWithStdin } from '../helpers/cli-stdin.js';
 
 /** What the shipped scorer gives this transcript — derived, never hardcoded, so
  *  a deliberate retune updates the expectation instead of failing the wiring. */
@@ -57,24 +58,10 @@ function scaffold(root: string): string {
   return ctx;
 }
 
-/**
- * Run a CLI command with piped stdin via shell.
- * Uses printf to handle JSON with special chars better than echo.
- */
+/** Run a CLI command with `stdin` piped in (tests/helpers/cli-stdin.ts); stderr folded in, as `2>&1` did. */
 function runWithStdin(cmd: string, stdin: string, cwd: string, env?: NodeJS.ProcessEnv): string {
-  try {
-    // Use printf and pipe through shell
-    const escaped = stdin.replace(/'/g, "'\\''");
-    return execSync(`printf '%s' '${escaped}' | node ${CLI} ${cmd} 2>&1`, {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 10000,
-      shell: '/bin/bash',
-      env: env ?? process.env,
-    });
-  } catch (e: any) {
-    return (e.stdout ?? '') + (e.stderr ?? '');
-  }
+  // No shell: the old `printf … | node …` through /bin/bash read an empty stdin on Windows.
+  return runCliWithStdin(CLI, cmd.split(' '), stdin, { cwd, env: env ?? process.env, timeout: 10000, withStderr: true });
 }
 
 function run(cmd: string, cwd: string): string {

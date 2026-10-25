@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import fg from 'fast-glob';
+import fg from '../glob.js';
 import matter from 'gray-matter';
 import { loadStatuses, loadTaskOverride } from '../overrides.js';
 import { DEFAULT_STATUSES, normalizeStatusKey, statusKeys, type StatusDef } from '../task-status.js';
@@ -29,6 +29,7 @@ import {
   type UpdateFieldsOptions,
 } from './types.js';
 import type { LocalTaskDescriptor } from './sync-state.js';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Pure path-safety check for task slugs (no fs). Mirrors the semantics of
@@ -94,8 +95,8 @@ export function normalizeBacklogFields(
  */
 function getTaskTemplate(): string {
   const candidates = [
-    join(new URL('.', import.meta.url).pathname, '..', '..', 'templates', 'task.md'),
-    join(new URL('.', import.meta.url).pathname, '..', 'templates', 'task.md'),
+    join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'templates', 'task.md'),
+    join(fileURLToPath(new URL('.', import.meta.url)), '..', 'templates', 'task.md'),
   ];
 
   for (const path of candidates) {
