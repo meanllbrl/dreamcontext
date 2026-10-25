@@ -437,6 +437,33 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }, [presenting, view.cards]);
 
   const onUngroup = (id: string) => { setOpenGroup(null); onLayout({ ungroup: [id] }); };
+  // Closing groups (owner 2026-10-25): every card of the group goes the way its own close does,
+  // except a live job's card (the server's rule, mirrored): that one stays. A plain card is
+  // closed in one patch; a finished chat is ended (its tab closes, the transcript stays).
+  const closableIn = (groupIds: readonly string[]): Container[] => {
+    const seen = new Set<string>();
+    const out: Container[] = [];
+    for (const gid of groupIds) {
+      for (const id of groupsById.get(gid)?.cards ?? []) {
+        const c = byId.get(id);
+        if (!c || seen.has(id) || c.kind === 'agenda') continue;
+        seen.add(id);
+        const live = c.kind === 'chat' && childIsLive(state, c.ref, props.sessionFor(c.ref) ? chatStatus(props.sessionFor(c.ref)).kind : null);
+        if (!live) out.push(c);
+      }
+    }
+    return out;
+  };
+  const closeGroups = (groupIds: readonly string[]) => {
+    const cards = closableIn(groupIds);
+    if (!cards.length) return;
+    setOpenGroup(null);
+    const plain = cards.filter((c) => c.kind !== 'chat').map((c) => c.id);
+    if (plain.length) { setLru((prev) => plain.reduce(dropFromLru, prev)); onLayout({ closed: plain }); }
+    for (const c of cards) if (c.kind === 'chat') props.onEndChild(c.ref, false);
+    requestAnimationFrame(() => stackRef.current?.focus());
+  };
+  const othersGroupIds = plan.others.filter(isGroupId);
   dragDeps.current = {
     rootRef, layerRef, planRef, stateRef, byId, groupsById, titleOf, onLayout, actions, liftOnTop, setOpenGroup,
     groupWord: t('super.group.word'), onSize: actions.onSize, canFit,
@@ -709,6 +736,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               plan={topped.includes(g.id) ? { ...cp, z: cp.z + 2 * MAX_CONTAINERS + topped.indexOf(g.id) } : cp}
               members={members}
               sessions={members.map((m) => { const c = byId.get(m.id); return c?.kind === 'chat' ? props.sessionFor(c.ref) : undefined; })}
+              closable={closableIn([g.id]).length}
               pending={pending.has(g.id)}
               dropTarget={target === g.id}
               onPress={onPressCard}
@@ -716,6 +744,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               onToOthers={actions.onToOthers}
               onAskAbout={actions.onAskAbout}
               onUngroup={onUngroup}
+              onCloseCards={(id) => closeGroups([id])}
             />
           );
         })}
@@ -790,6 +819,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
             system={system}
             onClose={closePanel}
             onUngroup={g ? () => onUngroup(g.id) : undefined}
+            closableCards={system ? closableIn(othersGroupIds).length : undefined}
+            onCloseGroups={system ? () => closeGroups(othersGroupIds) : undefined}
             onOpenItem={openFromPanel}
             onPressItem={(e, id) => onPressPanelItem(e, id, openGroup)}
             renderItem={renderPanelItem}

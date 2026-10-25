@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { isLightMode } from '../../../lib/lightMode';
 import { IconButton } from './SuperContainer';
@@ -32,7 +32,7 @@ export function panelRect(anchor: Rect, n: number, stage: { width: number; heigh
  * group (the surface arms that drag). Escape, the close button or a press on the scrim closes it
  * and focus goes back to the tile.
  */
-export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngroup, onOpenItem, onPressItem, renderItem, itemTestId, returnFocus, hidden = false }: {
+export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngroup, closableCards, onCloseGroups, onOpenItem, onPressItem, renderItem, itemTestId, returnFocus, hidden = false }: {
   title: string;
   ids: readonly string[];
   anchor: Rect;
@@ -41,6 +41,9 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
   system: boolean;
   onClose: () => void;
   onUngroup?: () => void;
+  /** Others only: how many cards its groups would close (the live jobs' cards stay), and the close. */
+  closableCards?: number;
+  onCloseGroups?: () => void;
   onOpenItem: (id: string) => void;
   onPressItem: (e: PointerEvent<HTMLDivElement>, id: string) => void;
   renderItem: (id: string) => ReactNode;
@@ -53,6 +56,9 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
   const panelRef = useRef<HTMLDivElement>(null);
   const scrimRef = useRef<HTMLDivElement>(null);
   const rect = panelRect(anchor, ids.length, stage, system);
+  const [closeAsk, setCloseAsk] = useState(false);
+  const askRef = useRef(false);
+  askRef.current = closeAsk;
 
   // Grow out of the tile: the one entrance animation (transform + opacity, one shot).
   useLayoutEffect(() => {
@@ -81,6 +87,8 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.stopPropagation();
+      // The close question first: Escape cancels it, the next one closes the panel.
+      if (askRef.current) { setCloseAsk(false); return; }
       onClose();
       returnFocus();
     };
@@ -116,8 +124,22 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
               {t('super.group.ungroup')}
             </button>
           )}
+          {system && onCloseGroups && (closableCards ?? 0) > 0 && (
+            <button type="button" className="super-group-panel-btn" data-testid="super-others-close-groups" onClick={() => setCloseAsk((v) => !v)}>
+              {t('super.group.closeOthers')}
+            </button>
+          )}
           <IconButton icon="close" label={t('super.group.close')} onClick={() => { onClose(); returnFocus(); }} testId="super-group-panel-close" />
         </div>
+        {closeAsk && system && onCloseGroups && (
+          <div className="super-close-choice" role="group" aria-label={t('super.group.closeOthersAsk')} data-testid="super-others-close-choice">
+            <span className="super-close-choice-q">{t('super.group.closeOthersAsk')}</span>
+            <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-others-close-end"
+              onClick={() => { setCloseAsk(false); onCloseGroups(); }}>
+              {t('super.group.closeEnd').replace('{n}', String(closableCards ?? 0))}
+            </button>
+          </div>
+        )}
         <div className="super-group-panel-grid" style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(ids.length, 4))}, ${STAGE.TILE}px)` }}>
           {ids.map((id) => (
             <div

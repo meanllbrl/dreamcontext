@@ -3122,9 +3122,12 @@
     },
     {
       "path": "super close",
-      "desc": "Close a card (a child chat keeps running; `super end` ends it)",
+      "desc": "Close a card (a child chat keeps running; `super end` ends it). --group closes every card of a group, --all-groups of every group: a live job's card is skipped and stays",
       "args": [
-        "<card>"
+        "[card]"
+      ],
+      "valueFlags": [
+        "--group"
       ]
     },
     {

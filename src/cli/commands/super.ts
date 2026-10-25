@@ -159,9 +159,19 @@ export function registerSuperCommand(program: Command): void {
     .description('Bring a card or a group from Others back to the stage (placed for you); a grouped card leaves its group')
     .action((container: string) => run('float', { container }));
 
-  s.command('close <card>')
-    .description('Close a card (a child chat keeps running; `super end` ends it)')
-    .action((container: string) => run('close', { container }));
+  s.command('close [card]')
+    .description('Close a card (a child chat keeps running; `super end` ends it). --group closes every card of a group, --all-groups of every group: a live job\'s card is skipped and stays')
+    .option('--group <id>', 'Close all the cards of this group')
+    .option('--all-groups', 'Close the cards of every group')
+    .option('--others', 'With --all-groups: only the groups in Others')
+    .action((container: string | undefined, o: { group?: string; allGroups?: boolean; others?: boolean }) => {
+      if (o.group || o.allGroups) {
+        if (container) return usage('name a card, or --group / --all-groups, not both');
+        return run('close', { ...(o.group ? { group: o.group } : {}), ...(o.allGroups ? { allGroups: true } : {}), ...(o.others ? { others: true } : {}) });
+      }
+      if (o.others) return usage('--others goes with --all-groups');
+      return container ? run('close', { container }) : usage('name a card, or --group <id>, or --all-groups');
+    });
 
   s.command('group <cards...>')
     .description('Put cards together as one tile on the stage; a group id among them adds the rest to that group')

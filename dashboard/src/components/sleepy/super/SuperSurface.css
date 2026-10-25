@@ -829,7 +829,7 @@
 .super-group-panel-head { height: 48px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; min-width: 0; }
 .super-group-panel-head .super-tile-count { margin-left: 0; }
 .super-group-panel-title { font-family: var(--font-family-display); font-size: var(--font-size-base); font-weight: 700; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.super-group-panel-hint { flex: 1 1 auto; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.super-group-panel-hint { flex: 1 1 0; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .super-group-panel-btn {
   flex: none;
   height: 28px;

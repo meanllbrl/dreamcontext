@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import type { SuperGroup } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
@@ -13,12 +13,14 @@ import { cardZIndex, type CardPlan } from './superLayout';
  * (asking, else working). A click or Enter opens it (GroupPanel); its hover buttons put it in
  * Others, ask the Super Agent about it, or dissolve it.
  */
-export function SuperGroupCard({ group, plan, members, sessions, pending, dropTarget, onPress, onOpen, onToOthers, onAskAbout, onUngroup }: {
+export function SuperGroupCard({ group, plan, members, sessions, closable, pending, dropTarget, onPress, onOpen, onToOthers, onAskAbout, onUngroup, onCloseCards }: {
   group: SuperGroup;
   plan: CardPlan;
   members: readonly GroupMember[];
   /** Each member's live chat session, in `members` order (undefined for a card that is no chat). */
   sessions: readonly (ChatSession | undefined)[];
+  /** How many of its cards a close takes (the live jobs' cards stay); none: no close button. */
+  closable: number;
   pending: boolean;
   /** A card held over the group: releasing adds it. */
   dropTarget: boolean;
@@ -27,8 +29,18 @@ export function SuperGroupCard({ group, plan, members, sessions, pending, dropTa
   onToOthers: (id: string) => void;
   onAskAbout: (id: string) => void;
   onUngroup: (id: string) => void;
+  onCloseCards: (id: string) => void;
 }) {
   const { t } = useI18n();
+  // The close asks first, as a child chat's close does (SuperContainer): close the cards, or put
+  // the group in Others. Escape cancels.
+  const [closeAsk, setCloseAsk] = useState(false);
+  useEffect(() => {
+    if (!closeAsk) return undefined;
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setCloseAsk(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [closeAsk]);
   // Re-rendered when a member chat's state changes, not on its every token (liveSession.ts).
   useLiveSessions(sessions, () => sessions.map((s) => (s ? chatStatus(s).kind : '')).join('|'));
   // Each member chat's state read NOW from its session, not as the stage last drew it: this card
@@ -73,7 +85,22 @@ export function SuperGroupCard({ group, plan, members, sessions, pending, dropTa
         <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => onToOthers(group.id)} />
         <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => onAskAbout(group.id)} />
         <IconButton icon="ungroup" label={t('super.group.ungroup')} onClick={() => onUngroup(group.id)} testId="super-group-ungroup" />
+        {closable > 0 && <IconButton icon="close" label={t('super.group.closeCards')} onClick={() => setCloseAsk((v) => !v)} testId="super-group-close" />}
       </div>
+      {closeAsk && closable > 0 && (
+        <div className="super-close-choice" role="group" aria-label={t('super.group.closeAsk')} data-testid="super-group-close-choice"
+          onPointerDown={(e) => e.stopPropagation()}>
+          <span className="super-close-choice-q">{t('super.group.closeAsk')}</span>
+          <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-group-close-end"
+            onClick={() => { setCloseAsk(false); onCloseCards(group.id); }}>
+            {t('super.group.closeEnd').replace('{n}', String(closable))}
+          </button>
+          <button type="button" className="super-close-choice-btn" data-testid="super-group-close-others"
+            onClick={() => { setCloseAsk(false); onToOthers(group.id); }}>
+            {t('super.close.toOthers')}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
