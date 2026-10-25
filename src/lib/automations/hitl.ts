@@ -647,12 +647,16 @@ export function backfillQuestionSession(
   slug: string,
   runFiredAt: string,
   sessionId: string | null,
+  /** Only questions created at or after this ISO moment: an answer's resume fills only what IT
+   *  asked, never a null-session question another turn left on the same run. */
+  since?: string,
 ): AutomationQuestion[] {
   if (!isSafeSessionId(sessionId)) return [];
   const updated: AutomationQuestion[] = [];
   for (const q of listQuestions(contextRoot, slug)) {
     if (q.kind === 'approval') continue;
     if (q.sessionId !== null || q.runFiredAt !== runFiredAt) continue;
+    if (since !== undefined && q.createdAt < since) continue;
     const next: AutomationQuestion = { ...q, sessionId };
     writeQuestion(contextRoot, next);
     updated.push(next);

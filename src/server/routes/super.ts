@@ -13,13 +13,14 @@ import {
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, AGENDA_SIZE, MAX_PAD, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, dissolveGroups, floatCount, isPageKind, leaveGroups, minSizeFor, viewWithout,
-  MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, type PresentLayout,
-  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb,
+  MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
-import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, recordTeamJob, setTeamLiveSource, settleTeamJob, teamJobLive, type LiveSayJob } from '../../lib/super/team.js';
+import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobEnding, teamJobOwed, teamJobStatus, type LiveSayJob } from '../../lib/super/team.js';
 import { sayToAgent } from './automations.js';
-import { currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
-import { getAutomation } from '../../lib/automations/store.js';
+import { agentActivity, currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
+import { automationPath, getAutomation } from '../../lib/automations/store.js';
+import { agentPath } from '../../lib/agents/store.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
   agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
@@ -1313,6 +1314,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!item) { refuse(res, 404, 'unknown_item', 'no such queue item (`dreamcontext super queue list`)'); return; }
     if (item.kind === 'permission') { refuse(res, 403, 'permission_item', 'a permission is shown to the owner from the child\'s own request; you cannot caption or close it'); return; }
     if (item.kind !== 'question') { refuse(res, 400, 'not_a_question', 'only a child\'s question can be escalated'); return; }
+    if (item.team) { refuse(res, 400, 'team_question', 'an AI Team member\'s question is the owner\'s to answer in AI Team; tell him in your reply which member asks what'); return; }
     if (item.state === 'done') { refuse(res, 409, 'stale_request', 'that question is already answered'); return; }
     const text = oneLine(typeof b.text === 'string' ? b.text : '').slice(0, MAX_OWNER_TEXT);
     if (!text) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
@@ -1850,19 +1852,28 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       queued: out.queued === true,
       brief: oneLine(str(b.brief) ?? firstLine(text, MAX_BRIEF)).slice(0, MAX_BRIEF),
       startedAt: Date.now(),
+      // Asked for in the owner's own turn: he waits on its result.
+      ...(ownersTurn(c) ? { awaited: true as const } : {}),
+      // Its ending is owed to the super until its done or stuck is told (watched until then).
+      open: true,
     };
     await writeSuper(root, (s) => recordTeamJob(s, job));
     if (job.jobKind === 'reply' && job.jobId) recordReplyEnding(root, job.id, job.jobId);
-    // A run's ending is in its thread and run cache already: the write only pushes the window,
-    // so the job's card turns done or failed without a poll.
-    if (job.jobKind === 'run' && job.jobId) void whenRunSettles(job.jobId)?.then(() => writeSuper(root, () => {})).catch(() => { /* best-effort */ });
+    // A run's ending is in its thread and run cache already: the write queues its event for the
+    // super and pushes the window, so the job's card turns done or failed without a poll.
+    if (job.jobKind === 'run' && job.jobId) void whenRunSettles(job.jobId)?.then(() => teamJobSettled(root, job.id)).catch(() => { /* best-effort */ });
     ok(res, { job: job.id, member, runId, queued: job.queued, status: job.queued ? 'queued' : 'running' });
   },
 };
 
+/** The say path's own job for a team job is still in flight (running, or a reply waiting). */
+function sayJobRuns(live: LiveSayJob | null): boolean {
+  return !!live && live.status === 'running';
+}
+
 /** A team job as the agent reads it: its live status and last line (the member's text, fenced). */
 function teamJobRow(root: string, vault: string, j: SuperTeamJob): Record<string, unknown> {
-  const live = teamJobLive(root, j, liveSayJob(root, j));
+  const live = teamJobStatus(root, j, liveSayJob(root, j));
   return {
     ...j,
     brief: j.brief ? wrapUntrusted(vault, j.brief) : '',
@@ -1881,9 +1892,85 @@ function replyTimes(r: { deliveredAt?: string; finishedAt: string | null }): { d
 /** When a reply job settles, its ending goes into the team job: the say path forgets it an hour
  *  later (or with a restart), and the member's thread cannot tell it from the busy turn's. */
 function recordReplyEnding(root: string, teamJobId: string, replyJobId: string): void {
-  void whenReplySettles(replyJobId)?.then((r) => writeSuper(root, (s) => settleTeamJob(s, teamJobId, {
+  void whenReplySettles(replyJobId)?.then((r) => teamJobSettled(root, teamJobId, (s) => settleTeamJob(s, teamJobId, {
     outcome: r.status === 'ok' ? 'done' : 'failed', ...replyTimes(r),
   }))).catch(() => { /* the record is best-effort; a settled job without it reads failed */ });
+}
+
+/** A team job's say job settled: its ending becomes ONE event for the super (`noteTeamJobEnd`),
+ *  delivered by the pump like a child's, and the write repaints its card. */
+async function teamJobSettled(root: string, teamJobId: string, record?: (s: SuperState) => void, concluded?: TeamJobConclusion): Promise<void> {
+  let added = false;
+  await writeSuper(root, (s) => {
+    record?.(s);
+    const j = s.team.find((x) => x.id === teamJobId);
+    if (j) added = noteTeamJobEnd(root, s, teamJobId, liveSayJob(root, j), Date.now(), concluded);
+  });
+  if (added) void pumpSuper(root);
+}
+
+/** How often a team job whose ending is still owed is re-read. */
+export const TEAM_JOB_WATCH_MS = 15_000;
+/** One watch per (vault, job) whose ending is still owed to the super. */
+const jobWatches = new Map<string, ReturnType<typeof setInterval>>();
+/** What one tick saw that only a second tick in a row may conclude (a file mid-rewrite, a lock
+ *  between its release and the resume's last write): per (vault, job). */
+const suspect = new Map<string, 'gone' | 'lost'>();
+
+/**
+ * A team job whose ending (done or stuck) is still owed to the super (`open`). The say path's
+ * settle is the fast path; this watch catches everything it cannot: a question the run asked, a
+ * SECOND question its resumed turn asks, the owner answering in AI Team, the CLI or Telegram (a
+ * resume the super never starts), a last thread entry written late, a restart. Each tick asks the
+ * subject (the member's question store and thread) and writes only when something moved. Armed
+ * from the record (`armTeamJobWatches`: boot, attach, every write), with no time limit: it dies
+ * when the job's done or stuck is told, the job leaves the record, or the super is off.
+ */
+function watchTeamJob(root: string, teamJobId: string): void {
+  const key = `${root}\u0000${teamJobId}`;
+  if (jobWatches.has(key)) return;
+  const t = setInterval(() => {
+    void checkTeamJob(root, teamJobId)
+      .then((keep) => { if (!keep) stop(); }, (err) => {
+        console.warn(`[super] team job ${teamJobId}: its ending could not be checked: ${(err as Error).message}`);
+      });
+  }, TEAM_JOB_WATCH_MS);
+  t.unref?.();
+  // Only this watch's own key: a newer watch for the job is never dropped by an older tick.
+  const stop = () => { clearInterval(t); if (jobWatches.get(key) === t) { jobWatches.delete(key); suspect.delete(key); } };
+  jobWatches.set(key, t);
+}
+
+/** One watch tick: settle the job when its ending moved; false once nothing is owed any more.
+ *  Exported for tests. */
+export async function checkTeamJob(root: string, teamJobId: string): Promise<boolean> {
+  const s = await readSuperState(root, superSanitizeOpts());
+  const j = s.team.find((x) => x.id === teamJobId);
+  if (!j || !teamJobOwed(j) || !s.enabled || !s.session) return false;
+  const key = `${root}\u0000${teamJobId}`;
+  const live = liveSayJob(root, j);
+  const end = teamJobEnding(root, j, live);
+  // Two endings only the watch can see, each on a second tick in a row: the member's file is gone
+  // (absent, never merely unreadable), or nothing runs the job and none of its endings was written
+  // (its turn lost with the server: no lock held, no say job in memory).
+  const seen = !existsSync(automationPath(root, j.member)) && !existsSync(agentPath(root, j.member)) ? 'gone'
+    : end.kind === null && !agentActivity(root, j.member) && !sayJobRuns(live) ? 'lost'
+    : null;
+  if (seen && suspect.get(key) === seen) {
+    suspect.delete(key);
+    await teamJobSettled(root, teamJobId, undefined, seen);
+    // A lost turn is read once more inside the write, and an ending that landed (a question asked
+    // again) keeps the job owed: the next tick asks the record, never this one's guess.
+    return seen === 'lost';
+  }
+  if (seen) suspect.set(key, seen); else suspect.delete(key);
+  const standing = s.queue.some((q) => q.team === teamJobId && q.kind === 'question' && q.state === 'pending');
+  const moved = end.kind === null ? standing
+    : end.kind === 'question' ? j.told !== 'question' || j.toldQuestion !== end.question?.id
+    : true;
+  if (!moved) return true;
+  await teamJobSettled(root, teamJobId);
+  return end.kind === null || end.kind === 'question';
 }
 
 /** Close the open approval questions about one member (it is gone or turned off). */
@@ -1919,6 +2006,7 @@ async function settleApprovals(root: string, state: SuperState): Promise<SuperSt
 // The window's view reads each team card's status through the same live jobs (team.ts imports no
 // server code).
 setTeamLiveSource(liveSayJob);
+setTeamJobWatcher(watchTeamJob);
 
 /** The say path's own job for a team job, while it is in memory. */
 function liveSayJob(root: string, j: SuperTeamJob): LiveSayJob | null {

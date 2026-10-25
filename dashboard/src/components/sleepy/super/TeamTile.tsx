@@ -12,9 +12,11 @@ import { useSpinSlot } from './spinSlots';
 export interface TeamCard { job: SuperTeamJob; status: TeamJobStatus | null; lastLine: string }
 
 /** A team job's status in the ONE status language every card speaks (superTone.css): waiting in
- *  the member's queue reads as starting, running as working, done as idle, failed as ended. */
+ *  the member's queue reads as starting, running as working, a question to the owner as asking,
+ *  done as idle, failed as ended. */
 export function teamRingKind(status: TeamJobStatus): SessionStatusKind {
   if (status === 'running') return 'working';
+  if (status === 'asking') return 'asking';
   if (status === 'queued') return 'starting';
   if (status === 'failed') return 'ended';
   return 'ready';

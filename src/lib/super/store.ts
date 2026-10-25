@@ -293,6 +293,8 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // nothing draws a closed one, and its previews (up to 32 KB) would ride every write and push.
     const askSpec = isAsk && q.ask !== undefined && q.state !== 'done' ? cleanAskSpec(q.ask) : null;
     const batch = typeof q.batch === 'string' && QUEUE_ID_RE.test(q.batch) ? q.batch : undefined;
+    // A team job's ending names its job; only an ending kind does.
+    const team = (q.kind === 'done' || q.kind === 'stuck' || q.kind === 'question') && typeof q.team === 'string' && TEAM_JOB_ID_RE.test(q.team) ? q.team : undefined;
     const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? Math.min(v, 9) : 0);
     ids.add(q.id);
     out.push({
@@ -307,6 +309,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(count(q.attempts) ? { attempts: count(q.attempts) } : {}),
       ...(count(q.exits) ? { exits: count(q.exits) } : {}),
       ...(batch ? { batch } : {}),
+      ...(team ? { team } : {}),
       ...(options.length ? { options } : {}),
       ...(askSpec && askSpec.ok ? { ask: askSpec.spec } : {}),
     });
@@ -358,6 +361,11 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(j.outcome === 'done' || j.outcome === 'failed' ? { outcome: j.outcome } : {}),
       ...(finite(j.deliveredAt) !== undefined ? { deliveredAt: finite(j.deliveredAt) } : {}),
       ...(finite(j.endedAt) !== undefined ? { endedAt: finite(j.endedAt) } : {}),
+      ...(j.awaited === true ? { awaited: true as const } : {}),
+      ...(j.told === 'done' || j.told === 'stuck' || j.told === 'question' ? { told: j.told } : {}),
+      ...(j.told === 'question' && typeof j.toldQuestion === 'string' && ENTRY_ID_RE.test(j.toldQuestion) ? { toldQuestion: j.toldQuestion } : {}),
+      ...(j.open === true ? { open: true as const } : {}),
+      ...(j.concluded === 'gone' || j.concluded === 'lost' ? { concluded: j.concluded } : {}),
     });
   }
   return out.sort((a, b) => b.startedAt - a.startedAt).slice(0, MAX_TEAM_JOBS);
