@@ -3,12 +3,13 @@ import { useI18n } from '../../context/I18nContext';
 import { isDesktop } from '../../lib/desktop';
 import { HandsfreeMark } from '../brand/HandsfreeMark';
 import { HandsfreeSheet } from './HandsfreeSheet';
+import { macModeOffered } from './macContract';
 import { useMacStatus } from './macStore';
 import './handsfree.css';
 
 /**
  * The window chrome's hands-free button (desktop app only, for the project on screen): opens the
- * Mac mode sheet. Its icon is the hands-free mark (the gem with two sound waves), never the retired
+ * Mac mode sheet, on a machine the server says can run it (macOS). Its icon is the hands-free mark (the gem with two sound waves), never the retired
  * cloud mode's cloud. While Mac mode is on it says so, with a dot on the mark.
  */
 export function HandsfreeButton({ vault }: { vault: string }) {
@@ -18,7 +19,8 @@ export function HandsfreeButton({ vault }: { vault: string }) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
 
-  if (!isDesktop() || !vault) return null;
+  // Mac mode runs on macOS only; the server says whether this machine is one.
+  if (!isDesktop() || !vault || !macModeOffered(mac)) return null;
   const label = macOn ? t('handsfree.mac.onPhone') : t('handsfree.button');
 
   return (

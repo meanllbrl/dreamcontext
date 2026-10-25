@@ -228,6 +228,14 @@ export class MacSession {
   get macDir(): string { return macDirOf(this.home); }
   isOn(): boolean { return this.phase !== 'off'; }
 
+  /** Mac mode runs on macOS only: `status().supported` tells the panel, and setup, start and
+   *  the fixed address refuse anywhere else before they touch sudo, a tunnel or cloudflared. */
+  get supported(): boolean { return (this.d.platform ?? process.platform) === 'darwin'; }
+
+  private assertMacOs(): void {
+    if (!this.supported) throw new MacModeError('mac_unsupported_platform', 'Mac mode runs on macOS only.');
+  }
+
   private sudoersInstalled(): boolean {
     return this.d.sudoersInstalled ? this.d.sudoersInstalled() : existsSync(power.SUDOERS_PATH);
   }
@@ -236,6 +244,7 @@ export class MacSession {
     const fixed = tunnel.readFixedRecord(this.macDir);
     const b = this.battery?.last ?? { percent: null, charging: true };
     return {
+      supported: this.supported,
       phase: this.phase,
       setup: { sudoers: this.sudoersInstalled(), passphrase: !!this.d.auth().store.passphraseVerifier },
       mode: this.state?.mode ?? (fixed ? 'fixed' : 'quick'),
@@ -323,7 +332,7 @@ export class MacSession {
    * verifier is stored), or null when an existing one was kept.
    */
   async setup(o: { newPassphrase?: boolean } = {}): Promise<{ passphrase: string | null }> {
-    if ((this.d.platform ?? process.platform) !== 'darwin') throw new MacModeError('mac_unsupported_platform', 'Mac mode runs on macOS only.');
+    this.assertMacOs();
     if (!this.sudoersInstalled()) {
       const user = userInfo().username;
       const r = await (this.d.installSudoers ?? ((u: string) => power.installSudoers(u, this.d.powerRun)))(user);
@@ -366,7 +375,7 @@ export class MacSession {
     this.gaveUpWhileStarting = false;
     const vaults = [...new Set((opts?.vaults ?? []).filter((v) => typeof v === 'string' && v))];
     if (!vaults.length) throw new MacModeError('mac_no_project', 'Choose at least one project.');
-    if ((this.d.platform ?? process.platform) !== 'darwin') throw new MacModeError('mac_unsupported_platform', 'Mac mode runs on macOS only.');
+    this.assertMacOs();
     if (!this.d.auth().store.passphraseVerifier || !this.sudoersInstalled()) throw new MacModeError('mac_not_setup', 'Set Mac mode up first.');
     const run = this.d.powerRun;
     if (!(await power.sudoWorks(run))) throw new MacModeError('mac_sudo_missing', 'The sleep permission is missing; run setup again.');
@@ -554,6 +563,8 @@ export class MacSession {
 
   /** `overwriteDns` only after the owner confirmed replacing a record the hostname already has. */
   async setupFixed(hostname: string, onLoginUrl?: (url: string) => void, opts: { overwriteDns?: boolean } = {}): Promise<tunnel.FixedTunnelRecord> {
+    // Before the download: the pinned cloudflared is a macOS binary.
+    this.assertMacOs();
     if (this.phase !== 'off') throw new MacModeError('mac_already_on', 'Press Return before changing the address.');
     const bin = await (this.d.ensureBinary ?? (() => tunnel.ensureCloudflared({ home: this.home })))();
     try {

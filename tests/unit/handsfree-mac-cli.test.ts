@@ -77,7 +77,7 @@ describe('handsfree mac CLI', () => {
       try {
         for (const flags of [['--no-bag'], ['--bag'], []]) {
           const hf = new Command('handsfree');
-          registerHandsfreeMacCommand(hf, () => io);
+          registerHandsfreeMacCommand(hf, () => io, 'darwin'); // Mac mode is macOS only; this drives the Mac path on any CI
           await hf.parseAsync(['mac', 'start', '--project', 'alpha', ...flags], { from: 'user' });
         }
         expect(log.mock.calls.flat().join('\n')).toContain('Mac mode is on (normal mode)');

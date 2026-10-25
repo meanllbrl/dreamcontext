@@ -133,8 +133,19 @@ function failCli(err: unknown): never {
   process.exit(1);
 }
 
-export function registerHandsfreeMacCommand(hf: Command, io: () => MacCliIo = realIo): void {
+/** Mac mode runs on macOS only: the line every subcommand prints elsewhere, or null on a Mac. */
+export function macOnlyMessage(platform: NodeJS.Platform = process.platform): string | null {
+  return platform === 'darwin' ? null : 'Hands-free (Mac mode) runs on macOS only for now.';
+}
+
+export function registerHandsfreeMacCommand(hf: Command, io: () => MacCliIo = realIo, platform: NodeJS.Platform = process.platform): void {
   const mac = hf.command('mac').description('Mac mode: drive this laptop from your phone through a tunnel link');
+  // Before any subcommand reaches for the app: off macOS the answer is the platform, not
+  // "open the app first" (the server hint is only ever written on a Mac).
+  mac.hook('preAction', () => {
+    const refused = macOnlyMessage(platform);
+    if (refused) failCli(new MacCliError('mac_unsupported_platform', refused));
+  });
 
   mac.command('setup')
     .description('Install the sleep permission (one admin prompt) and create the phone passphrase')
