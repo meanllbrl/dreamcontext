@@ -31,8 +31,8 @@ export function revealLabel(): string {
     : 'Reveal in Finder';
 }
 
-export function revealPath(api: ApiClient, path: string, mode: 'auto' | 'reveal' = 'auto'): Promise<string | null> {
-  return api.post('/agent/reveal', { path, mode }).then(
+export function revealPath(api: ApiClient, path: string, mode: 'auto' | 'reveal' = 'auto', session?: string | null): Promise<string | null> {
+  return api.post('/agent/reveal', { path, mode, ...(session ? { session } : {}) }).then(
     () => null,
     (err: unknown) => {
       const code = err instanceof RequestError ? err.code : '';

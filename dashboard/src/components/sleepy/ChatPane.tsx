@@ -1747,7 +1747,7 @@ export function ChatPane({
     // routing decision in one place rather than relying on that being true forever.
     if (ref.kind === 'board') { setBoardFull(path); return; }
     if (ref.isImage) {
-      setLightbox({ src: agentFileUrl(vault, path, { raw: true }), caption: ref.label, path });
+      setLightbox({ src: agentFileUrl(vault, path, { raw: true, session: session.claudeId }), caption: ref.label, path });
       return;
     }
     // A PDF is a document the window can DISPLAY, so it gets the image's treatment rather

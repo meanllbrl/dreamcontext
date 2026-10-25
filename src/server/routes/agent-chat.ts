@@ -33,6 +33,7 @@ import { clearFresh, isRotating, markFreshDelivered, stopRotating } from '../../
 import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
 import { advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRun } from '../../lib/handoff-progress.js';
 import { safeChildPath } from '../safe-path.js';
+import { sessionWorktreeRoot } from '../session-worktree.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
 import { recordStageHomeSession } from '../../lib/local-store.js';
@@ -4514,9 +4515,17 @@ function resolveServablePath(
   contextRoot: string,
   rawPath: string,
   /** A phone socket passes false: project root only, grants refused. */
-  opts: { grants: boolean } = { grants: true },
+  opts: { grants: boolean; /** The session's own registered worktree (session-worktree.ts), or null. */ worktree?: string | null } = { grants: true },
 ): { abs: string } | { deny: 'invalid' | 'needs_grant' | 'outside'; abs?: string } {
-  const ref = resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, rawPath);
+  // A session working in its own worktree names files relative to THAT tree, so a reference
+  // is tried there first; only a hit that really is inside it counts (an absolute path or a
+  // tail match elsewhere falls through to the project-root reading below).
+  let ref: ReturnType<typeof resolveChatReference> = null;
+  if (opts.worktree) {
+    const w = resolveChatReference(opts.worktree, contextRoot, rawPath);
+    if (w && !w.missing && !w.outside) ref = w;
+  }
+  ref ??= resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, rawPath);
   if (!ref) return { deny: 'invalid' };
 
   // `ref.outside` is LEXICAL — it compares resolved strings, so a symlink that lives
@@ -4534,10 +4543,12 @@ function resolveServablePath(
   //
   // Any OTHER realpath failure (a permission error, a race, a loop) still fails CLOSED to
   // `needs_grant`: an answer we could not verify must ask rather than serve.
-  let outside = ref.outside;
+  let outside = ref.outside && !(opts.worktree && isInside(resolve(opts.worktree), ref.abs));
   if (contextRoot) {
     try {
-      outside = !isInside(realpathSync.native(projectRootOf(contextRoot)), realpathSync.native(ref.abs));
+      const realAbs = realpathSync.native(ref.abs);
+      outside = !isInside(realpathSync.native(projectRootOf(contextRoot)), realAbs)
+        && !(opts.worktree && isInside(realpathSync.native(opts.worktree), realAbs));
     } catch (err) {
       if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') outside = true;
     }
@@ -4583,7 +4594,10 @@ export async function handleAgentFile(
   // (`phoneOutsideMedia`): its own linked repos and worktrees without asking, anything else after
   // a one-tap phone grant, a project not chosen at start never.
   const phone = isPhoneSocket(req);
-  const resolved = phone ? resolveServablePath(contextRoot, rawPath, { grants: false }) : resolveServablePath(contextRoot, rawPath);
+  // Desktop only: the phone keeps project-root rules, and reaches a worktree solely through
+  // `phoneOutsideMedia` (media only, bytes sniffed) — never the text/folder/SVG paths below.
+  const worktree = phone ? null : await sessionWorktreeRoot(contextRoot, projectRootOf(contextRoot), sanitizeUuid(url.searchParams.get('session')) || null);
+  const resolved = resolveServablePath(contextRoot, rawPath, { grants: !phone, worktree });
   let phoneMedia: { abs: string; type: string } | null = null;
   if ('deny' in resolved && phone && resolved.deny === 'outside' && resolved.abs) {
     const v = await phoneOutsideMedia(req, contextRoot, resolved.abs, { granted: true });
@@ -5032,11 +5046,13 @@ export async function handleAgentReveal(
 
   let target = '';
   let forceReveal = false;
+  let revealSession = '';
   try {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { path?: unknown; mode?: unknown };
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { path?: unknown; mode?: unknown; session?: unknown };
     if (typeof body.path === 'string') target = body.path;
+    if (typeof body.session === 'string') revealSession = sanitizeUuid(body.session);
     // Anything other than the one recognised narrowing word means "decide for me" — an
     // unknown mode must not be able to widen this route, and defaulting to `open` is the
     // behaviour every existing caller already has.
@@ -5052,7 +5068,11 @@ export async function handleAgentReveal(
   // Reaching a file outside the project is this route's whole purpose (that is the escape
   // hatch for what `/agent/file` may never serve), so `outside` is not a refusal here — the
   // open-vs-reveal split below is, and it is unchanged.
-  const ref = resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, target);
+  const wt = await sessionWorktreeRoot(contextRoot, projectRootOf(contextRoot), revealSession || null);
+  const inWt = wt ? resolveChatReference(wt, contextRoot, target) : null;
+  const ref = inWt && !inWt.missing && !inWt.outside
+    ? inWt
+    : resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, target);
   if (!ref || ref.missing) {
     sendError(res, 404, 'not_found', `Not found: ${ref?.abs ?? target}`);
     return;
