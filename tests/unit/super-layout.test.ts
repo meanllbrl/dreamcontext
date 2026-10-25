@@ -41,13 +41,14 @@ const sideOf = (p: StagePlan, r: Rect) => (r.x + r.width / 2 < p.width / 2 ? 'L'
 
 /** Centred across; down the stage it starts under the job bar's band and runs to the bottom
  *  margin, or stops above the bottom band when that band holds something (owner 2026-10-21). */
-function expectCentred(p: StagePlan, banded = p.narrow || p.others.length > 0 || p.order.length === 0) {
+function expectCentred(p: StagePlan, banded = p.narrow || p.order.length === 0) {
   const left = p.centre.x;
   const right = p.width - (p.centre.x + p.centre.width);
   const top = p.centre.y;
   const bottom = p.height - (p.centre.y + p.centre.height);
   expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
-  expect(top).toBeCloseTo(STAGE.MARGIN + STAGE.BAND, 6);
+  // Float (owner 2026-10-25): the centre runs margin to margin; a narrow or empty stage keeps its bands.
+  expect(top).toBeCloseTo(banded ? STAGE.MARGIN + STAGE.BAND : STAGE.MARGIN, 6);
   expect(bottom).toBeCloseTo(banded ? STAGE.MARGIN + STAGE.BAND : STAGE.MARGIN, 6);
 }
 
@@ -93,7 +94,7 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
         if (col.length < 2) continue;
         // One gap between the tiles of a column; the column centred on the centre's midline.
         for (let i = 1; i < col.length; i++) expect(Math.abs(col[i].y - (col[i - 1].y + T) - STAGE.GAP), label).toBeLessThanOrEqual(EPS);
-        expect(Math.abs((col[0].y + col[col.length - 1].y + T) / 2 - mid), label).toBeLessThanOrEqual(1);
+        expect(Math.abs((col[0].y + col[col.length - 1].y + T) / 2 - mid), label).toBeLessThanOrEqual(STAGE.BAND / 2 + 1); // the centre may run past the tiles' content to the top margin
         // The ends tuck in, one gap from the centre.
         for (const end of [col[0], col[col.length - 1]]) expect(Math.abs(end.x - inner), label).toBeLessThanOrEqual(EPS);
         // Nearer the midline, farther out (never into the centre's gap).
@@ -127,7 +128,7 @@ describe('floating tiles (O1, 2026-10-20: small 1:1 cards)', () => {
         expect(Math.abs(c.rect.x - inner)).toBeLessThanOrEqual(EPS);
       }
       const left = floats(p).filter((c) => c.rect.x < p.centre.x).map((c) => c.rect);
-      expect(Math.abs((Math.min(...left.map((r) => r.y)) + Math.max(...left.map((r) => r.y + T))) / 2 - mid)).toBeLessThanOrEqual(1);
+      expect(Math.abs((Math.min(...left.map((r) => r.y)) + Math.max(...left.map((r) => r.y + T))) / 2 - mid)).toBeLessThanOrEqual(STAGE.BAND / 2 + 1); // the tiles keep the old content, the centre runs to the top margin
     }
   });
 
@@ -501,11 +502,13 @@ describe('bands and hit tests (F7, F12, FE1)', () => {
       const tall = planStage([card('a'), card('b')], FLOAT, s);
       const banded = planStage([card('a'), card('b')], FLOAT, s, { terminals: 1 });
       expectCentred(tall, false);
-      expect(tall.centre.height - banded.centre.height).toBeCloseTo(STAGE.BAND, 6);
+      expect(tall.centre.height - banded.centre.height).toBeCloseTo(2 * STAGE.BAND, 6);
       expect(tall.centre.width).toBeCloseTo(banded.centre.width, 6);
       expect(tall.centre.x).toBeCloseTo(banded.centre.x, 6);
-      // The job bar never meets the centre; the tiles stay inside the centre's height.
-      expect(tall.queue.y + tall.queue.height).toBeLessThanOrEqual(tall.centre.y);
+      // With the queue pill up the centre keeps its place under it; the tiles stay inside the centre's height.
+      const queued = planStage([card('a'), card('b')], FLOAT, s, { queueUp: true });
+      expect(queued.queue.y + queued.queue.height).toBeLessThanOrEqual(queued.centre.y);
+      expect(tall.centre.y).toBeCloseTo(STAGE.MARGIN, 6);
       for (const c of floats(tall)) expect(c.rect.y + c.rect.height).toBeLessThanOrEqual(tall.centre.y + tall.centre.height + EPS);
     }
   });
@@ -520,8 +523,9 @@ describe('bands and hit tests (F7, F12, FE1)', () => {
     const many = Array.from({ length: 12 }, (_, i) => card(`c${i}`));
     const p = planStage(many, FLOAT, STAGES[0]);
     expect(p.others.length).toBeGreaterThan(0);
-    expectCentred(p, true);
-    expect(p.othersRect.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
+    // The centre alone runs down to the margin (owner 2026-10-25) while it clears the stack on the right.
+    expectCentred(p, false);
+    expect(p.centre.x + p.centre.width + STAGE.GAP).toBeLessThanOrEqual(p.othersRect.x);
     for (const c of floats(p)) expect(c.rect.y + c.rect.height).toBeLessThanOrEqual(p.othersRect.y - STAGE.GAP / 2 + EPS);
   });
 

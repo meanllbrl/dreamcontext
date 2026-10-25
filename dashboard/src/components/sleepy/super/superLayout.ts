@@ -275,6 +275,8 @@ export interface PlanOptions {
   /** How many layouts the switcher offers (the window knows the cards' kinds); absent = those
    *  whose count fits. */
   layoutChoices?: number;
+  /** The queue pill is showing in the top band: the float centre keeps its place under it. */
+  queueUp?: boolean;
 }
 
 const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -992,7 +994,15 @@ function planWith(
     ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize))
     : { ...solveFloat(f, slotsOn('left'), slotsOn('right')), drawn: new Map<string, ContainerSize>(), uRight: undefined };
   const drawnOf = (id: string): ContainerSize => sol.drawn.get(id) ?? 'small';
-  const centre = sol.centre;
+  // The float centre takes the stage's height (owner 2026-10-25): from the top margin to the
+  // bottom margin, its width unchanged, the side cards where they were. It keeps the bands only
+  // while something sits over them: the queue pill above, a dock or the agenda pill below, the
+  // Others stack or its drop corner when the centre reaches that far right, an empty stage's hint.
+  const tallCentre = !narrow && list.length > 0 && !opts.queueUp && !(opts.terminals ?? 0) && !opts.agendaPill
+    && sol.centre.x + sol.centre.width + STAGE.GAP <= Math.min(f.othersRect.x, f.othersZone.x);
+  const centre: Rect = tallCentre
+    ? { ...sol.centre, y: STAGE.MARGIN, height: f.height - 2 * STAGE.MARGIN }
+    : sol.centre;
   const ownerRects = new Map<string, Rect>();
   for (const c of owned) {
     if (c.id === drag?.id) { ownerRects.set(c.id, drag.rect); continue; }

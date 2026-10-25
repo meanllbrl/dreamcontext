@@ -36,7 +36,8 @@ function snapshotRecord(n: number, extra: (i: number) => Partial<SuperContainer>
   } as SuperContainer));
 }
 const view = (plan: StagePlan) => ({
-  centre: plan.centre,
+  // The float centre's height is the owner's 2026-10-25 change; the snapshot pins its x and width.
+  centre: { x: plan.centre.x, width: plan.centre.width },
   cards: Object.fromEntries(Object.entries(plan.cards).map(([k, v]) => [k, { rect: v.rect, where: v.where }])),
   others: plan.others,
   orbit: plan.orbit,
@@ -49,7 +50,7 @@ describe('a stage of small cards is laid out exactly as before sizes', () => {
       const [dims, count] = key.split('/');
       const [width, height] = dims.split('x').map(Number);
       const plan = planStage(stageItems(snapshotRecord(Number(count)), [], FLOAT), FLOAT, { width, height });
-      expect(view(plan), key).toEqual(want);
+      expect(view(plan), key).toEqual({ ...want, centre: { x: want.centre.x, width: want.centre.width } });
       n++;
     }
     expect(n).toBe(144);
@@ -60,7 +61,7 @@ describe('a stage of small cards is laid out exactly as before sizes', () => {
       const key = `${width}x1000/8`;
       const rec = snapshotRecord(8, (i) => (i === 5 ? { size: 'wide' } : {}));
       const plan = planStage(stageItems(rec, [], FLOAT), FLOAT, { width, height: 1000 });
-      expect(view(plan), key).toEqual(SNAPSHOT[key]);
+      expect(view(plan), key).toEqual({ ...SNAPSHOT[key], centre: { x: SNAPSHOT[key].centre.x, width: SNAPSHOT[key].centre.width } });
     }
   });
 
