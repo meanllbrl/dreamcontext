@@ -74,6 +74,15 @@ describe('the briefing carries the jarvis sections and its revision', () => {
     }
   });
 
+  it('rev 11 (2026-10-24): a picture question\'s pictures are presented and put back by the server', () => {
+        for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('The server presents those pictures beside you while he decides and puts');
+      expect(t).toContain('never `super present` or `--off` around a question');
+      expect(t).toContain('copy them under `_dream_context/tmp/…` and `--show` them');
+      expect(t).not.toContain('after his\n  answer, `super present --off`');
+    }
+  });
+
   it('rev 10 (2026-10-23): which answer is to which message, in the briefing and in the update', () => {
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('`<owner-msg ref="…"/>`');

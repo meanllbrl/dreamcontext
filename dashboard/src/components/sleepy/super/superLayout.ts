@@ -92,6 +92,13 @@ export const STAGE = {
    *  the switcher offers (none for a single choice). */
   EXIT_W: 132,
   SWITCH_SEG_W: 96,
+  /** A card's own chrome around what it shows: the 1 px border on each side and the 36 px header
+   *  (SuperSurface.css `.super-card-clip`, `.super-card-head`; drift-tested). A picture card in
+   *  compare/grid is shrunk to its picture plus this (owner 2026-10-24). */
+  CARD_CHROME: { w: 2, h: 38 },
+  /** A fitted picture card's smallest: the header's buttons and the title still fit. An
+   *  arrangement whose slots are under it is not offered (today's always is). */
+  FIT_MIN: { w: 200, h: 140 },
 } as const;
 
 /**
@@ -190,6 +197,8 @@ export interface StageItem {
   /** A live child's chat card, or a group holding one (task super-canli-kart-sahnede): the last
    *  to be drawn in Others, and kept beside a side-by-side page or a presentation. */
   live?: boolean;
+  /** A picture's width/height, server-read from its file header (images only; absent = unknown). */
+  aspect?: number;
 }
 
 /** A card's size from its record: a preset, or small. */
@@ -240,7 +249,8 @@ export function stageItems(
     // A minimised agenda is its pill in the corner, not a card on the stage (unless the view shows it).
     if (c.min && !shown.has(c.id)) return;
     const live = c.kind === 'chat' && isLive(c);
-    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(live ? { live } : {}) });
+    const aspect = c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect > 0 ? c.aspect : undefined;
+    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(live ? { live } : {}), ...(aspect ? { aspect } : {}) });
     if (g && !placed.has(g.id) && g.cards[0] !== undefined && index.has(g.cards[0])) {
       placed.add(g.id);
       const gLive = g.cards.some((id) => { const k = containers[index.get(id) ?? -1]; return !!k && k.kind === 'chat' && isLive(k); });
@@ -653,6 +663,91 @@ function grid(region: Rect, n: number): Rect[] {
   }));
 }
 
+/** A picture of this aspect, contained in a box (0 x 0 for an empty box). */
+function containIn(width: number, height: number, aspect: number): { width: number; height: number } {
+  const w = Math.max(0, width);
+  const h = Math.max(0, height);
+  if (!w || !h) return { width: 0, height: 0 };
+  return w / h > aspect ? { width: h * aspect, height: h } : { width: w, height: w / aspect };
+}
+
+/** One way to lay out 2-4 cards; `today` is the one `grid()` draws (columns, 2 x 2). */
+interface Arrangement { name: string; today: boolean; slots: Rect[] }
+
+function arrangements(region: Rect, n: number): Arrangement[] {
+  const { GAP } = STAGE;
+  const { x, y, width: W, height: H } = region;
+  const cols = (k: number): Rect[] => Array.from({ length: k }, (_, i) => {
+    const w = (W - (k - 1) * GAP) / k;
+    return { x: x + i * (w + GAP), y, width: w, height: H };
+  });
+  const rows = (k: number): Rect[] => Array.from({ length: k }, (_, i) => {
+    const h = (H - (k - 1) * GAP) / k;
+    return { x, y: y + i * (h + GAP), width: W, height: h };
+  });
+  if (n === 2) return [{ name: 'columns', today: true, slots: cols(2) }, { name: 'rows', today: false, slots: rows(2) }];
+  // 2 x 2; with 3 cards its last row is centred (an all-picture set only; a mixed set keeps grid()).
+  const w = (W - GAP) / 2;
+  const h = (H - GAP) / 2;
+  const square = Array.from({ length: n }, (_, i) => ({
+    x: n === 3 && i === 2 ? x + (W - w) / 2 : x + (i % 2) * (w + GAP),
+    y: y + Math.floor(i / 2) * (h + GAP),
+    width: w,
+    height: h,
+  }));
+  return [{ name: '2x2', today: true, slots: square }, { name: `1x${n}`, today: false, slots: cols(n) }, { name: `${n}x1`, today: false, slots: rows(n) }];
+}
+
+/** The picture area a set shows in these slots (contain-fit inside each slot minus the chrome). */
+function pictureArea(slots: readonly Rect[], aspects: readonly number[]): number {
+  return slots.reduce((sum, r, i) => {
+    const p = containIn(r.width - STAGE.CARD_CHROME.w, r.height - STAGE.CARD_CHROME.h, aspects[i]);
+    return sum + p.width * p.height;
+  }, 0);
+}
+
+/** A picture card shrunk to its picture plus chrome, centred in its slot: per axis
+ *  min(slot, max(FIT_MIN, fit)); a slot under FIT_MIN on either axis is the whole slot. */
+export function fitCard(slot: Rect, aspect: number): Rect {
+  const { CARD_CHROME: C, FIT_MIN: M } = STAGE;
+  if (slot.width < M.w || slot.height < M.h) return slot;
+  const p = containIn(slot.width - C.w, slot.height - C.h, aspect);
+  const width = Math.min(slot.width, Math.max(M.w, p.width + C.w));
+  const height = Math.min(slot.height, Math.max(M.h, p.height + C.h));
+  return { x: slot.x + (slot.width - width) / 2, y: slot.y + (slot.height - height) / 2, width, height };
+}
+
+/**
+ * Compare and grid by the pictures' shape (owner 2026-10-24): a set whose EVERY card is a
+ * picture with a known aspect takes the arrangement that shows the most picture (two wide
+ * pictures stack, two tall ones stand side by side, three take a 2 x 2 with the last row
+ * centred); an arrangement with a slot under FIT_MIN is not offered, today's always is, and
+ * today's wins any tie within 1 %. A set with any other card keeps exactly today's `grid()`.
+ * Either way a picture card hugs its picture. Returns the card rects and the slots they sit in.
+ */
+export function fitArrange(region: Rect, items: readonly Pick<StageItem, 'aspect'>[]): { name: string; slots: Rect[]; rects: Rect[] } {
+  const n = items.length;
+  const known = (a: number | undefined): a is number => typeof a === 'number' && Number.isFinite(a) && a > 0;
+  let chosen: { name: string; slots: Rect[] } = { name: n <= 2 ? 'columns' : '2x2', slots: grid(region, n) };
+  if (n >= 2 && n <= 4 && items.every((it) => known(it.aspect))) {
+    const aspects = items.map((it) => it.aspect as number);
+    const all = arrangements(region, n);
+    const today = all.find((a) => a.today)!;
+    const fits = (a: Arrangement) => a.slots.every((r) => r.width >= STAGE.FIT_MIN.w && r.height >= STAGE.FIT_MIN.h);
+    const todayScore = pictureArea(today.slots, aspects);
+    let best = today;
+    let bestScore = todayScore;
+    for (const a of all) {
+      if (a.today || !fits(a)) continue;
+      const score = pictureArea(a.slots, aspects);
+      if (score > bestScore) { best = a; bestScore = score; }
+    }
+    chosen = bestScore > todayScore * 1.01 ? best : today;
+  }
+  const rects = chosen.slots.map((slot, i) => (known(items[i]?.aspect) ? fitCard(slot, items[i].aspect as number) : slot));
+  return { name: chosen.name, slots: chosen.slots, rects };
+}
+
 /**
  * The stage for these cards and this view at this size. Pure: the same input always draws the
  * same screen. A card that does not fit is DRAWN in Others; the record is never touched.
@@ -811,7 +906,7 @@ function planWith(
       const w = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
       const centre: Rect = { x: content.x, y: content.y, width: w, height: content.height };
       const region: Rect = { x: content.x + w + STAGE.GAP, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
-      const rects = grid(region, ordered.length);
+      const { rects } = fitArrange(region, ordered.map((id) => ({ aspect: list.find((x) => x.id === id)?.aspect })));
       ordered.forEach((id, k) => place(id, rects[k], 'present'));
       for (const c of list) if (!cards[c.id]) toOthers(c);
       return finish(centre, centre.width, 'present', undefined, undefined, { layout, chat: 'column', controls });

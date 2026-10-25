@@ -291,12 +291,12 @@ describe('the owner wins for his card set (D9, D10)', () => {
     }
   });
 
-  it('a whole owner view never carries his marks; malformed fields are ignored', async () => {
+  it('a whole owner view never carries his layout marks (only the server\'s `by: owner`); malformed fields are ignored', async () => {
     makeVault();
-    await owner({ view: { mode: 'present', cards: ids(2), layout: 'grid', layoutBy: 'owner', chat: 'bar' } });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(2), layout: 'grid' });
+    await owner({ view: { mode: 'present', cards: ids(2), layout: 'grid', layoutBy: 'owner', chat: 'bar', ask: 'q-1', by: 'nobody' } });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(2), layout: 'grid', by: 'owner' });
     expect((await owner({ presentLayout: { layout: 'grid', cards: 't0' }, chat: { value: 'side', cards: ids(2) }, exit: 'now' })).status).toBe(200);
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(2), layout: 'grid' });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(2), layout: 'grid', by: 'owner' });
   });
 });
 

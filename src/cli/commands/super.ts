@@ -7,7 +7,7 @@ import { error, info, success } from '../../lib/format.js';
 import { HANDOFF_FIELDS, contextHandoffGaps, formatGaps, type HandoffFields } from '../../lib/handoff-readiness.js';
 import { handoffKey, writeHandoffRecord, type HandoffRecord } from '../../lib/context-watch.js';
 import { superHandoffContext } from '../../lib/super/handoff-task.js';
-import { buildAskBody, collectOption, type AskCliOpts } from '../../lib/super/ask-cli.js';
+import { buildAskBody, collectOption, showBody, type AskCliOpts } from '../../lib/super/ask-cli.js';
 import { SUPER_HANDOFF_REL, SUPER_HANDOFF_TASK, renderSuperHandoffEntry, writeSuperHandoff } from '../../lib/super/handoff-file.js';
 import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
 
@@ -241,7 +241,9 @@ export function registerSuperCommand(program: Command): void {
     .action(() => run('queue-list', {}));
   q.command('ask <item> <text>')
     .description('Escalate a child\'s question to the owner in your words (never a permission): a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him')
-    .action((item: string, text: string) => run('queue-ask', { item, text }));
+    .option('--show <cards...>', 'The cards the stage presents with this question (default: the child\'s option-preview pictures, else the pictures shown for its job in the last 10 minutes); they go back after his answer')
+    .option('--no-show', 'Present no cards with this question')
+    .action((item: string, text: string, o: { show?: string[] | false }) => run('queue-ask', { item, text, ...showBody(o.show) }));
   q.command('done <item>')
     .description('Mark an item handled (never a permission)')
     .action((item: string) => run('queue-done', { item }));
@@ -282,6 +284,8 @@ export function registerSuperCommand(program: Command): void {
     .option('--multi', 'He may pick several options')
     .option('--option <label::description>', 'One option (repeatable), its description after ::', collectOption)
     .option('--options <a|b>', 'Short answers separated by | (the old form; each at most 24 characters)')
+    .option('--show <cards...>', 'The cards the stage presents with the question (default: the pictures its option previews\' <img src> point at, else your last picture set within 10 minutes); the server presents them and puts them back after his answer')
+    .option('--no-show', 'Present no cards with the question')
     .action((text: string | undefined, o: AskCliOpts) => {
       let body: Record<string, unknown>;
       try { body = buildAskBody(text, o); } catch (err) { usage((err as Error).message); return; }

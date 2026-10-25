@@ -3082,7 +3082,8 @@
         "--description",
         "--header",
         "--option",
-        "--options"
+        "--options",
+        "--show"
       ]
     },
     {
@@ -3292,6 +3293,9 @@
       "args": [
         "<item>",
         "<text>"
+      ],
+      "valueFlags": [
+        "--show"
       ]
     },
     {

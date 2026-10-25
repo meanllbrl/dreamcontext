@@ -6,10 +6,11 @@ import {
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, MAX_HELD,
-  SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent,
-  type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
+  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_FILMSTRIP, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent,
+  type AskShow, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
+import { capAskShows } from './ask-show.js';
 import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
 import { parseMcpNames } from './lean-mcp.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
@@ -142,6 +143,9 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
       // A picture shown for a child's job: only a picture, only a child the record holds.
       ...(c.kind === 'image' && typeof c.forChild === 'string' && Object.prototype.hasOwnProperty.call(children, c.forChild) && (finite(c.forAt) ?? -1) >= 0
         ? { forChild: c.forChild, forAt: finite(c.forAt) as number } : {}),
+      // A picture's shape (server-read): finite and in range, else dropped (drawn as today).
+      ...(c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect >= ASPECT_MIN && c.aspect <= ASPECT_MAX
+        ? { aspect: Math.round(c.aspect * 1000) / 1000 } : {}),
     });
   }
   return out;
@@ -170,12 +174,31 @@ export function sanitizeView(raw: unknown, containers: readonly SuperContainer[]
   const ids = new Set(containers.map((c) => c.id));
   if (raw.mode === 'half') {
     if (typeof raw.card !== 'string' || !ids.has(raw.card)) return { mode: 'float' };
-    return raw.auto === true ? { mode: 'half', card: raw.card, auto: true } : { mode: 'half', card: raw.card };
+    if (raw.auto === true) return { mode: 'half', card: raw.card, auto: true };
+    return raw.by === 'owner' ? { mode: 'half', card: raw.card, by: 'owner' } : { mode: 'half', card: raw.card };
   }
   // A presentation always carries its resolved layout, and so every path that removes a card
   // (close, end, Others, a hand-over) re-resolves it here (plan-r2 D4, R2-E1/E2).
   if (raw.mode === 'present') return resolvePresent(raw, containers) ?? { mode: 'float' };
   return { mode: 'float' };
+}
+
+/** Picture questions' cards (ask-show.ts): known item ids, cards the record holds, a few. */
+function sanitizeAskShows(raw: unknown, containers: readonly SuperContainer[]): AskShow[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = new Set(containers.map((c) => c.id));
+  const cardsOf = (x: unknown) => (Array.isArray(x) ? [...new Set(x.filter((id): id is string => typeof id === 'string' && ids.has(id)))].slice(0, MAX_FILMSTRIP) : []);
+  const out: AskShow[] = [];
+  for (const e of raw) {
+    if (!isRecord(e) || typeof e.item !== 'string' || !QUEUE_ID_RE.test(e.item) || !oneOf(ASK_SHOW_VIAS, e.via)) continue;
+    if (out.some((x) => x.item === e.item)) continue;
+    out.push({
+      item: e.item, cards: cardsOf(e.cards), opened: cardsOf(e.opened), via: e.via,
+      ...(e.presented === true ? { presented: true as const } : {}),
+      ...(e.skipped === 'owner_layout' ? { skipped: 'owner_layout' as const } : {}),
+    });
+  }
+  return capAskShows(out);
 }
 
 function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOpts): Record<string, SuperChild> {
@@ -450,6 +473,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
   const queue = sanitizeQueue(raw.queue, session);
   const held = sanitizeHeld(raw.held, queue);
   const pad = sanitizePad(raw.pad);
+  const askShows = sanitizeAskShows(raw.askShows, containers);
   const rawSeq = finite(raw.padSeq);
   const padSeq = rawSeq !== undefined && rawSeq > 0 && rawSeq < 1e6 ? Math.floor(rawSeq) : 0;
   const since = finite(away.since);
@@ -472,6 +496,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     ...(held.length ? { held } : {}),
     ...(pad.length ? { pad } : {}),
     ...(padSeq ? { padSeq } : {}),
+    ...(askShows.length ? { askShows } : {}),
   };
 }
 
