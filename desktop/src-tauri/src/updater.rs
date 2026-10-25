@@ -192,9 +192,20 @@ async fn check_and_install<R: Runtime>(app: &AppHandle<R>) -> bool {
 #[cfg(windows)]
 static PARKED: std::sync::Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>> = std::sync::Mutex::new(None);
 
+/// Windows: this exit is an `AppHandle::restart()` (lib.rs sees its ExitRequested first).
+#[cfg(windows)]
+static RESTARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Remember that the app is restarting, not quitting, so a parked install reopens it.
+pub fn note_restart() {
+    #[cfg(windows)]
+    RESTARTING.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Windows: run the parked installer now that the app is quitting. tauri starts it (passive:
-/// a progress bar, no wizard; per-user, so no UAC) and ends this process; with
-/// `restart_after_install(false)` the installer does not reopen the app the user just quit.
+/// a progress bar, no wizard; per-user, so no UAC) and ends this process before tauri's own
+/// restart step. A quit stays a quit (`restart_after_install(false)`: the installer does not
+/// reopen the app the user just closed); a restart is carried out by the installer instead.
 /// Called after the dashboard server is reaped. A no-op when nothing is parked, and off Windows.
 pub fn install_parked_on_exit() {
     #[cfg(windows)]
@@ -202,7 +213,8 @@ pub fn install_parked_on_exit() {
         let parked = PARKED.lock().ok().and_then(|mut parked| parked.take());
         if let Some((update, bytes)) = parked {
             let version = update.version.clone();
-            if let Err(e) = update.restart_after_install(false).install(bytes) {
+            let reopen = RESTARTING.load(std::sync::atomic::Ordering::Relaxed);
+            if let Err(e) = update.restart_after_install(reopen).install(bytes) {
                 eprintln!("[updater] {version} failed to start its installer: {e}");
             }
         }

@@ -311,6 +311,7 @@ jobs:
           path: ${{ steps.pkg.outputs.out }}/
           if-no-files-found: error
           retention-days: 7
+          overwrite: true # "Re-run failed jobs" uploads the same name again in this run
 
   build-windows:
     # The Windows desktop app: a per-user NSIS installer, NOT Authenticode-signed (no
@@ -455,6 +456,7 @@ jobs:
           path: dist-release/
           if-no-files-found: error
           retention-days: 7
+          overwrite: true # "Re-run failed jobs" uploads the same name again in this run
 
   assemble:
     # The ONE writer of latest.json, after both builds: no platform can overwrite another's
@@ -510,6 +512,7 @@ jobs:
           path: dist-release/
           if-no-files-found: error
           retention-days: 7
+          overwrite: true # "Re-run failed jobs" uploads the same name again in this run
 
   publish:
     # The only job with a write token, and the only one that creates the release. Never in a

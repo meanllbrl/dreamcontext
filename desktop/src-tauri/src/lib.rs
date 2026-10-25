@@ -195,7 +195,12 @@ pub fn run() {
             }
         }
         // Windows: a downloaded update installs as the app quits (src/updater.rs), once the
-        // server is down. No-op elsewhere and when nothing is waiting.
+        // server is down. The installer ends this process before tauri's own restart step, so
+        // an `AppHandle::restart()` is remembered here and handed to the installer to reopen
+        // the app. No-op elsewhere and when nothing is waiting.
+        if let RunEvent::ExitRequested { code: Some(tauri::RESTART_EXIT_CODE), .. } = &event {
+            updater::note_restart();
+        }
         if matches!(event, RunEvent::Exit) {
             updater::install_parked_on_exit();
         }
