@@ -193,7 +193,7 @@ export function selfCheck(engine: Engine, corpus: ReturnType<Engine['buildCorpus
 /**
  * A cloud-tier measurement is only valid if every query actually ran the tier it names. A query
  * that fell back (timeout, breaker, no index, ...) silently measured e5 or BM25 instead, so the
- * run is refused rather than recorded. `querySource: 'none'` with `fallback: 'none'` is the
+ * run is refused rather than recorded. `querySource: 'none'` with `fallback: 'bm25_confident'` is the
  * dense gate skipping a query BM25 was already sure of: not a fallback. With no rerank model
  * requested, `rerank_not_consented` is the intended state of a `cloud` run, not a failure.
  */
@@ -206,6 +206,7 @@ function newTierGuard(): TierGuard {
 function offenceOf(t: RecallTimingLike, tier: 'cloud' | 'cloud-index', rerankRequested: boolean): string | null {
   const wanted = tier === 'cloud' ? 'api' : 'nano';
   if (t.fallback === 'rerank_not_consented' && !rerankRequested && t.querySource === wanted) return null;
+  if (t.fallback === 'bm25_confident' && t.querySource === 'none') return null;
   if (t.fallback !== 'none') return `fallback=${t.fallback} source=${t.querySource}`;
   if (t.querySource !== wanted && t.querySource !== 'none') return `source=${t.querySource}`;
   return null;

@@ -7,6 +7,7 @@ import {
   readRecallCloudConfig,
   readVaultConsent,
   recallCloudKeyInfo,
+  recallCloudStatus,
   type RecallTier,
   type RerankModel,
 } from '../recall-cloud-config.js';
@@ -56,6 +57,31 @@ export function cloudTierReady(tier: RecallTier, root: string, evalConsent?: boo
   const eff = effectiveTier(root, tier, evalConsent, h);
   if (eff === 'local' || !cloudIndexReady(root, 'voyage-4')) return false;
   return eff === 'cloud' ? recallCloudKeyInfo(h).present : isNanoDownloaded(h);
+}
+
+/** Why `hybridReady` said no, as a short code: the header and the CLI note both name it, so BM25 is never silent. */
+export type HybridNotReadyReason =
+  | 'spawned_session' | 'daily_cap' | 're_consent_required' | 'no_key' | 'no_index' | 'no_local_model' | 'not_warmed';
+
+/**
+ * The prerequisite a selected hybrid mode is missing. `resolved` is `resolvePromptTier`'s answer. A cloud
+ * tier names its own gap (consent, key, index, the nano query model); otherwise the local e5 model or
+ * cache is not warm yet. Call it only after `hybridReady` returned false.
+ */
+export function hybridNotReadyReason(
+  root: string,
+  resolved: { tier: RecallTier; downgraded: null | 'spawned_session' | 'daily_cap' | 'env_override' },
+  home?: string,
+): HybridNotReadyReason {
+  if (resolved.downgraded === 'spawned_session' || resolved.downgraded === 'daily_cap') return resolved.downgraded;
+  // DREAMCONTEXT_RECALL_TIER=local: the cloud is out of the picture, so only the local warm-up can be missing.
+  if (resolved.downgraded === 'env_override') return 'not_warmed';
+  const status = recallCloudStatus(root, home);
+  if (status.consent === 're-consent-required') return 're_consent_required';
+  if (status.consent === 'valid' && !status.key) return 'no_key';
+  if (resolved.tier !== 'local' && !cloudIndexReady(root, 'voyage-4')) return 'no_index';
+  if (resolved.tier === 'cloud-index' && !isNanoDownloaded(home)) return 'no_local_model';
+  return 'not_warmed';
 }
 
 /**
@@ -367,7 +393,9 @@ function cloudBudget(evalMinted: boolean): CloudBudget {
 export type FallbackReason =
   | CloudFailureKind
   | 'none' | 'breaker_open' | 'withheld' | 'not_consented' | 'spawned_session'
-  | 'daily_cap' | 'no_index' | 'no_local_model' | 'rerank_not_consented';
+  | 'daily_cap' | 'no_index' | 'no_local_model' | 'rerank_not_consented'
+  // The dense gate: BM25 was already sure, so the dense channel (and any network call) was skipped.
+  | 'bm25_confident';
 
 export interface RecallTiming {
   /** The EFFECTIVE tier (never above what the vault consented to). */
@@ -546,7 +574,7 @@ async function cloudSearch(
   const params = opts.fusionParams ?? FUSION_BY_TIER[eff];
   const budget = cloudBudget(evalMinted);
   if (shouldSkipDense(bm25Hits, params.denseGate)) {
-    timing.fallback = 'none';
+    timing.fallback = 'bm25_confident';
     return bm25Hits.slice(0, topK);
   }
   if (eff === 'cloud' && !evalMinted && breakerOpen(home)) { timing.fallback = 'breaker_open'; return null; }
@@ -751,7 +779,11 @@ async function localSearch(
     // Adaptive (default): the shipped local-tier constants (FUSION_BY_TIER.local), unless the caller supplies parameters.
     const local = FUSION_BY_TIER.local;
     const params = opts.fusionParams ?? { ...local, pinMargin: opts.pinMargin ?? local.pinMargin };
-    if (shouldSkipDense(bm25Hits, params.denseGate)) return bm25Hits.slice(0, topK);
+    if (shouldSkipDense(bm25Hits, params.denseGate)) {
+      timing.querySource = 'none';
+      timing.fallback = cloudFallback === 'none' ? 'bm25_confident' : cloudFallback;
+      return bm25Hits.slice(0, topK);
+    }
     fused = fuseCandidates(bm25Hits, denseHits, params, { byKey, now: opts.now ?? new Date(), queryLang: opts.queryLang });
   }
   return buildHits(fused.map((e) => e.key), fused.map((e) => e.fused), bm25ByKey, byKey).slice(0, topK);

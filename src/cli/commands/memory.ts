@@ -10,22 +10,30 @@ import {
   buildCorpus,
   bm25Search,
   docLevel,
+  isFederated,
   CORPUS_TYPES,
   type CorpusType,
   type RecallHit,
 } from '../../lib/recall.js';
-import { hybridSearch, hybridReady, type RecallTiming } from '../../lib/embeddings/hybrid.js';
-import { recallCloudStatus, resolvePromptTier, type RecallTier } from '../../lib/recall-cloud-config.js';
-import { cloudIndexReady } from '../../lib/embeddings/vector-store.js';
-import { isNanoDownloaded } from '../../lib/embeddings/nano.js';
+import {
+  hybridSearch,
+  hybridReady,
+  hybridNotReadyReason,
+  type FallbackReason,
+  type HybridNotReadyReason,
+  type RecallTiming,
+} from '../../lib/embeddings/hybrid.js';
+import { resolvePromptTier, type RecallTier } from '../../lib/recall-cloud-config.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import { resolveRecallMode } from './sleep.js';
 import {
   crossVaultRecall,
   currentVaultTarget,
+  namespacedKey,
   resolveConnectedVaults,
   resolveAllShareableVaults,
   type CrossVaultTarget,
+  type FederatedHit,
 } from '../../lib/federation-recall.js';
 import { loadProjectVocabulary, aliasGroups } from '../../lib/taxonomy.js';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
@@ -94,6 +102,7 @@ function recallFederated(
   types: CorpusType[] | undefined,
   minLevel: number | undefined,
   opts: { json?: boolean; plain?: boolean; vault?: string[]; connected?: boolean; allVaults?: boolean },
+  localHits?: RecallHit[],
 ): void {
   const projectRoot = dirname(contextRoot);
   const { target: currentTarget } = currentVaultTarget(projectRoot);
@@ -110,12 +119,28 @@ function recallFederated(
   if (opts.allVaults) for (const t of resolveAllShareableVaults(currentTarget)) add(t);
   for (const name of opts.vault ?? []) add({ name });
 
-  const { hits, skipped } = crossVaultRecall(query, {
-    vaults: Array.from(byName.values()),
+  // `localHits`: the current vault was already searched by its own recall mode (hybrid, which can
+  // reach a doc BM25 never matched, e.g. across languages). Its hits lead in their own order; the
+  // peers are BM25 and follow. The two scores are not comparable, so the budget is explicit: peers get
+  // at most half of `topK`, the current vault fills the rest, and the total never exceeds `topK`.
+  // Without `localHits`, every vault (current included) is one BM25 merge.
+  const currentLabel = currentTarget.label ?? currentTarget.name;
+  const result = crossVaultRecall(query, {
+    vaults: Array.from(byName.values()).filter((t) => localHits === undefined || !t.current),
     topK,
     types,
     minLevel,
   });
+  const skipped = result.skipped;
+  const peerHits = localHits === undefined ? result.hits : result.hits.slice(0, Math.floor(topK / 2));
+  const hits: FederatedHit[] = localHits === undefined ? result.hits : [
+    ...localHits
+      // The same serving exclusion crossVaultRecall applies: ingested-from-peer copies stay home.
+      .filter((h) => !isFederated(h.doc))
+      .slice(0, topK - peerHits.length)
+      .map((h) => ({ ...h, vault: currentLabel, key: namespacedKey(currentLabel, h.doc.type, h.doc.slug) })),
+    ...peerHits,
+  ];
 
   if (opts.json) {
     const payload = hits.map((h) => ({
@@ -189,6 +214,16 @@ function recallFederated(
   if (staleNote) console.log(chalk.dim(staleNote));
 }
 
+const NOT_READY_TEXT: Record<HybridNotReadyReason, (tier: RecallTier) => string> = {
+  spawned_session: () => 'cloud recall is off inside a spawned session.',
+  daily_cap: () => 'the daily cloud query cap is reached.',
+  re_consent_required: () => 'cloud recall needs re-consent (the disclosure or eligible types changed): run `dreamcontext recall cloud status`.',
+  no_key: () => 'cloud recall is consented but no recall key is set: run `dreamcontext recall cloud key set`.',
+  no_index: (tier) => `${tier} recall is enabled but its index is not built yet: run \`dreamcontext recall cloud index\`.`,
+  no_local_model: () => 'cloud-index recall needs the voyage-4-nano query model on disk, which is not downloaded yet.',
+  not_warmed: () => '',
+};
+
 /**
  * Why a selected hybrid mode did not run hybrid, as one dim stderr line (never stdout, so `--json` /
  * `--plain` stay clean). A cloud tier says which prerequisite is missing; otherwise it is the local
@@ -200,30 +235,60 @@ export function hybridNotReadyNote(
   home?: string,
 ): string {
   const localHint = 'hybrid recall selected but not warmed — using BM25. Run `dreamcontext embed refresh` to enable it.';
-  const cloudReason = ((): string | null => {
-    if (resolved.downgraded === 'spawned_session') return 'cloud recall is off inside a spawned session.';
-    if (resolved.downgraded === 'daily_cap') return 'the daily cloud query cap is reached.';
-    const status = recallCloudStatus(root, home);
-    if (status.consent === 're-consent-required') {
-      return 'cloud recall needs re-consent (the disclosure or eligible types changed): run `dreamcontext recall cloud status`.';
-    }
-    if (status.consent === 'valid' && !status.key) return 'cloud recall is consented but no recall key is set: run `dreamcontext recall cloud key set`.';
-    if (resolved.tier !== 'local' && !cloudIndexReady(root, 'voyage-4')) {
-      return `${resolved.tier} recall is enabled but its index is not built yet: run \`dreamcontext recall cloud index\`.`;
-    }
-    if (resolved.tier === 'cloud-index' && !isNanoDownloaded(home)) {
-      return 'cloud-index recall needs the voyage-4-nano query model on disk, which is not downloaded yet.';
-    }
-    return null;
-  })();
+  const cloudReason = NOT_READY_TEXT[hybridNotReadyReason(root, resolved, home)](resolved.tier);
   return cloudReason ? `${cloudReason} ${localHint}` : localHint;
 }
 
-/** After a hybrid search: say so when a cloud tier could not answer and a fallback served the prompt. */
+const FALLBACK_TEXT: Partial<Record<FallbackReason, string>> = {
+  bm25_confident: 'BM25 was already confident, so the dense channel was skipped',
+};
+
+/**
+ * After a hybrid search: say so whenever a fallback served the query: a cloud tier that could not
+ * answer (or skipped dense), or the local tier landing on BM25. A recorded fallback is never silent.
+ */
 export function cloudFallbackNote(timing: RecallTiming): string | null {
-  if (timing.tier === 'local' || timing.fallback === 'none') return null;
+  if (timing.fallback === 'none') return null;
+  if (timing.tier === 'local' && timing.querySource !== 'none') return null;
   const served = timing.querySource === 'none' ? 'BM25' : timing.querySource === 'e5' ? 'local e5' : timing.querySource;
-  return `${timing.tier} recall: ${timing.fallback.replace(/_/g, ' ')} — served by ${served}.`;
+  const why = FALLBACK_TEXT[timing.fallback] ?? timing.fallback.replace(/_/g, ' ');
+  return `${timing.tier} recall: ${why} — served by ${served}.`;
+}
+
+/**
+ * The current vault's own recall, in the vault's recall mode (the SAME source of truth the hook and
+ * the dashboard read): hybrid BM25+dense fusion when it is selected AND already warm, else plain BM25.
+ * `hybridReady` guarantees `memory recall` never blocks on a first-time download or index build. Every
+ * hybrid shortfall (not ready, or a fallback inside the search) is one dim stderr line, so `--json` /
+ * `--plain` stdout stays clean and BM25 is never served silently.
+ */
+async function currentVaultRecall(
+  root: string,
+  query: string,
+  topK: number,
+  types: CorpusType[] | undefined,
+  minLevel: number | undefined,
+): Promise<{ hits: RecallHit[]; corpusSize: number }> {
+  const corpus = buildCorpusCached(root, {
+    ...(types ? { types } : {}),
+    ...(minLevel ? { minLevel } : {}),
+  });
+  const vocab = loadProjectVocabulary(root);
+  const mode = resolveRecallMode(root);
+  // The tier comes from the vault's own consent (spawned sessions and the daily cap downgrade it);
+  // hybridSearch re-derives it, so this can only ever ask for less than consent allows.
+  const resolved = resolvePromptTier(root);
+  const useHybrid = hybridReady(root, mode, resolved.tier);
+  if (mode === 'hybrid' && !useHybrid) {
+    console.error(chalk.dim(`  (${hybridNotReadyNote(root, resolved)})`));
+  }
+  if (!useHybrid) return { hits: bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(vocab) }), corpusSize: corpus.length };
+  const timing: RecallTiming = { tier: 'local', querySource: 'none', fallback: 'none' };
+  const hits = await hybridSearch(query, corpus, root, topK, { aliasGroups: aliasGroups(vocab), tier: resolved.tier, timing });
+  const note = cloudFallbackNote(timing);
+  if (note) console.error(chalk.dim(`  (${note})`));
+  if (process.env.DREAMCONTEXT_RECALL_TIMING === '1') console.error(JSON.stringify(timing));
+  return { hits, corpusSize: corpus.length };
 }
 
 export function registerMemoryCommand(program: Command): void {
@@ -268,8 +333,12 @@ export function registerMemoryCommand(program: Command): void {
         // ANY of --vault / --connected / --all-vaults routes through cross-vault
         // recall.
         const explicitVaults = opts.vault ?? [];
+        // A hybrid vault answers for itself first (see recallFederated's `localHits`); a BM25 vault
+        // stays inside the one BM25 merge, byte-identical to before.
+        const ownHits = async (): Promise<RecallHit[] | undefined> =>
+          resolveRecallMode(root) === 'hybrid' ? (await currentVaultRecall(root, query, topK, types, minLevel)).hits : undefined;
         if (explicitVaults.length > 0 || opts.connected || opts.allVaults) {
-          recallFederated(root, query, topK, types, minLevel, opts);
+          recallFederated(root, query, topK, types, minLevel, opts, await ownHits());
           return;
         }
 
@@ -290,38 +359,11 @@ export function registerMemoryCommand(program: Command): void {
         const { target: currentTarget } = currentVaultTarget(projectRoot);
         const connectedTargets = resolveConnectedVaults(currentTarget, root);
         if (connectedTargets.length > 1) {
-          recallFederated(root, query, topK, types, minLevel, { ...opts, connected: true });
+          recallFederated(root, query, topK, types, minLevel, { ...opts, connected: true }, await ownHits());
           return;
         }
 
-        const corpus = buildCorpusCached(root, {
-          ...(types ? { types } : {}),
-          ...(minLevel ? { minLevel } : {}),
-        });
-        const vocab = loadProjectVocabulary(root);
-        // Honour the vault's recall mode (the SAME source of truth the hook and
-        // the dashboard read): hybrid BM25+dense fusion when it's selected AND
-        // already warm, else plain BM25. `hybridReady` guarantees the explicit
-        // `memory recall` never blocks on a first-time download or index build.
-        const mode = resolveRecallMode(root);
-        // The tier comes from the vault's own consent (spawned sessions and the daily cap downgrade it);
-        // hybridSearch re-derives it, so this can only ever ask for less than consent allows.
-        const resolved = resolvePromptTier(root);
-        const useHybrid = hybridReady(root, mode, resolved.tier);
-        // Hybrid selected but not warm yet → we searched with BM25. Nudge (on
-        // stderr, so --json / --plain stdout stays clean) toward the missing prerequisite.
-        if (mode === 'hybrid' && !useHybrid) {
-          console.error(chalk.dim(`  (${hybridNotReadyNote(root, resolved)})`));
-        }
-        const timing: RecallTiming = { tier: 'local', querySource: 'none', fallback: 'none' };
-        const hits = useHybrid
-          ? await hybridSearch(query, corpus, root, topK, { aliasGroups: aliasGroups(vocab), tier: resolved.tier, timing })
-          : bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(vocab) });
-        if (useHybrid) {
-          const note = cloudFallbackNote(timing);
-          if (note) console.error(chalk.dim(`  (${note})`));
-          if (process.env.DREAMCONTEXT_RECALL_TIMING === '1') console.error(JSON.stringify(timing));
-        }
+        const { hits, corpusSize } = await currentVaultRecall(root, query, topK, types, minLevel);
 
         if (opts.json) {
           const payload = hits.map((h) => ({
@@ -338,12 +380,12 @@ export function registerMemoryCommand(program: Command): void {
             score: Number(h.score.toFixed(4)),
             snippet: h.snippet,
           }));
-          console.log(JSON.stringify({ query, corpusSize: corpus.length, hits: payload }, null, 2));
+          console.log(JSON.stringify({ query, corpusSize, hits: payload }, null, 2));
           return;
         }
 
         if (hits.length === 0) {
-          const msg = `No hits for "${query}" (searched ${corpus.length} docs).`;
+          const msg = `No hits for "${query}" (searched ${corpusSize} docs).`;
           if (opts.plain) console.log(msg);
           else info(msg);
           return;
@@ -363,7 +405,7 @@ export function registerMemoryCommand(program: Command): void {
         }
 
         const scope = minLevel ? chalk.dim(` · level >= ${minLevel}`) : '';
-        console.log(header(`Recall: "${query}"  ${chalk.dim(`(${corpus.length} docs scanned)`)}${scope}`));
+        console.log(header(`Recall: "${query}"  ${chalk.dim(`(${corpusSize} docs scanned)`)}${scope}`));
         for (const h of hits) {
           const typeBadge = chalk.cyan(`[${TYPE_LABELS[h.doc.type]}]`);
           const slug = chalk.magentaBright(h.doc.slug);
