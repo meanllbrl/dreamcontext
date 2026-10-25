@@ -377,9 +377,11 @@ async function runEngine(engineName) {
 
     console.log('── AI Team: lifted above its composer');
     await nav('AI Team');
-    // The only member opens by itself; otherwise pick it from the list.
-    if (!(await until(page, async () => (await page.locator('.aiteam-composer').count()) > 0, 5000))) await page.getByText('Scout', { exact: true }).first().click();
-    const teamComposer = page.locator('.aiteam-composer').first();
+    // The only member opens by itself; otherwise pick it from the list. AI Team v2 opens a member
+    // on its stage (AgentStage, teamView 'stage'): the live chat's Composer (.chat-cmp) inside
+    // section[data-stage]. `.aiteam-composer` is the Activity view's (TeamConversation) only.
+    const teamComposer = page.locator('[data-stage="scout"] .chat-cmp').first();
+    if (!(await until(page, async () => (await teamComposer.count()) > 0, 5000))) await page.getByText('Scout', { exact: true }).first().click();
     ok('AI Team: the member\'s conversation and its composer are on screen', await until(page, async () => (await teamComposer.count()) === 1 && (await teamComposer.isVisible()), 15000));
     await page.waitForTimeout(800);
     const cb = await teamComposer.boundingBox();
