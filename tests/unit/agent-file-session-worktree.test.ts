@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { handleAgentFile } from '../../src/server/routes/agent-chat.js';
+import { markPhoneSocket } from '../../src/server/phone-origin.js';
 import { sessionWorktreeRoot } from '../../src/server/session-worktree.js';
 
 const SESSION = '11111111-2222-4333-8444-555555555555';
@@ -182,5 +183,17 @@ describe('GET /api/agent/file — a session in its own worktree', () => {
     await handleAgentFile(req(join(scratch, 'home', '.claude-worktrees', '..', 'project2.png'), SESSION), res, {}, contextRoot);
     expect(status()).not.toBe(200);
     expect(['needs_grant', 'not_found', undefined]).toContain(body()?.error as string | undefined);
+  });
+
+  it('gives a PHONE socket no worktree reach: no text preview, no folder listing', async () => {
+    writeFileSync(join(worktree, 'out', 'notes.env'), 'SECRET=1\n');
+    for (const p of ['out/notes.env', 'out', join(worktree, 'out', 'notes.env')]) {
+      const r = { url: `/api/agent/file?path=${encodeURIComponent(p)}&session=${SESSION}`, headers: { host: 'localhost' }, socket: {} } as unknown as IncomingMessage;
+      markPhoneSocket(r.socket as object);
+      const { res, status, body } = makeRes();
+      await handleAgentFile(r, res, {}, contextRoot);
+      expect(status()).not.toBe(200);
+      expect(JSON.stringify(body() ?? '')).not.toContain('SECRET');
+    }
   });
 });

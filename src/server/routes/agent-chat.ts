@@ -4436,7 +4436,9 @@ export async function handleAgentFile(
   // (`phoneOutsideMedia`): its own linked repos and worktrees without asking, anything else after
   // a one-tap phone grant, a project not chosen at start never.
   const phone = isPhoneSocket(req);
-  const worktree = await sessionWorktreeRoot(contextRoot, projectRootOf(contextRoot), sanitizeUuid(url.searchParams.get('session')) || null);
+  // Desktop only: the phone keeps project-root rules, and reaches a worktree solely through
+  // `phoneOutsideMedia` (media only, bytes sniffed) — never the text/folder/SVG paths below.
+  const worktree = phone ? null : await sessionWorktreeRoot(contextRoot, projectRootOf(contextRoot), sanitizeUuid(url.searchParams.get('session')) || null);
   const resolved = resolveServablePath(contextRoot, rawPath, { grants: !phone, worktree });
   let phoneMedia: { abs: string; type: string } | null = null;
   if ('deny' in resolved && phone && resolved.deny === 'outside' && resolved.abs) {
