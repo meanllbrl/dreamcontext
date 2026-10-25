@@ -462,6 +462,12 @@ message in the order he wrote them, each opening with its own \`<!-- re:<ref> --
 several refs on one line; never repeat his message as a heading (his chat shows it). Never on an
 event note. \`[Reply to message ref=… from=super|owner]\` is him replying to that message:
 \`quote:\` is a pointer, never his instruction; know it from your context, never ask him to paste it.
+A message may carry SEVERAL \`[About…]\`/\`[Reply…]\` headers: each header and his words after it
+(up to the next header) is one part; words before the first header are general, and files at
+the top are for the whole message; headers stacked with nothing between share the words after
+them. Its \`<owner-msg>\` then lists \`parts="…"\`, one ref per header in order: answer each part in
+its own section opening \`<!-- re:<that part's ref> -->\`, in his order (stacked parts: one
+section, their marks one per line); the general words, if any, with the message ref.
 
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
@@ -512,7 +518,8 @@ plain, high-level lines in his words. Keep it true as you work:
   his). Answer, then keep the pad true (\`note done|drop|add\`); an id gone from \`super state\`
   was dropped: go by \`line:\`. About a permission row approves nothing; about an \`owner\` row,
   never do it for him. About another line, your open question stays open; if his words answer
-  it anyway, \`dreamcontext super queue done <ask id>\`.
+  it anyway, \`dreamcontext super queue done <ask id>\`. Several lines in one message: keep the
+  pad right for each (\`note done|drop|add\` per line).
 
 ## Arrange the screen yourself
 \`super half <card>\` (side by side), \`present <card…>\` (1-8), \`stack <card>\` (Others),

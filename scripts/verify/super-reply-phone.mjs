@@ -15,9 +15,17 @@
  * his bubble draws the ↩ strip; no `<!-- re:` in the DOM; no console error, no 403.
  *
  * Sections (owner 2026-10-24, pick A): three phone sends, the 2nd and 3rd steered into a busy
- * turn with a typed agenda About header, answered by ONE streamed block with a section per
+ * turn (plain words: a typed header is plain text since the multi-reference task), answered by ONE streamed block with a section per
  * message: three heads inside one answer body, each one line, no overflow, a head tap lands on
  * its message; the same heads after a reload.
+ *
+ * Several references (owner 2026-10-24, task super-e-tek-mesajda-birden-cok-referans-…): ↩ on a
+ * Super answer drops a chip INTO the text at the caret (one chip: the same message as 0.34.5);
+ * two ↩ give two chips inline, they fit the phone's field (the widest possible chip, a label of
+ * W, at most 60% of the field: the label limit is measured here) and never break; then a voice
+ * take (a real `say` WAV as the fake microphone; the Mac's whisper stood in at the HTTP edge:
+ * dictation reported on, POST /api/agent/voice/stt answered) goes in after the chip the caret is
+ * at and is sent: two parts, the spoken words in the second; the bubble draws both chips inline.
  *
  * Collect, don't fail fast; exit 0 iff every check passed. Screenshots: tmp/verify-super-reply-phone
  */
@@ -38,6 +46,8 @@ const PROJ = join(SCRATCH, 'proj');
 const POWER_LOG = join(SCRATCH, 'power.log');
 const SHOTS = join(REPO, 'tmp', 'verify-super-reply-phone');
 const CLI = join(REPO, 'dist', 'index.js');
+const TAKE = join(SCRATCH, 'take.wav');
+const SPOKEN = 'sesli yorumum ikinci cevaba';
 
 /** Stand-in `claude -p --input-format stream-json`: answers two messages out of order, each
  *  block opening with the reply mark built from the `<owner-msg ref>` it received. */
@@ -97,6 +107,7 @@ process.stdin.on('data', (c) => {
       }, 4000);
       continue;
     }
+    if (text.startsWith('GENIS')) { const w = 'W'.repeat(40); say(w); end(w); continue; }
     if (text.startsWith('BOLUMLER')) {
       running = true;
       say('Bakıyorum.');
@@ -207,7 +218,9 @@ try {
   await sleep(1000);
   plain.ws.send(JSON.stringify({ type: 'user', text: 'tidy the release notes' }));
 
-  browser = await chromium.launch();
+  // The microphone is a fake device playing a sentence macOS \`say\` spoke (the voice section).
+  spawnSync('say', ['-o', TAKE, '--data-format=LEI16@16000', 'Bu benim sesli yorumum, ikinci cevaba.']);
+  browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${TAKE}`] });
   const ctx = await browser.newContext({ ...devices['iPhone 13'], viewport: { width: 390, height: 844 } });
   // The What's New popup would cover the list a few seconds in: seen already, like a returning owner.
   await markAnnouncementsSeen(ctx, `http://127.0.0.1:${port}`);
@@ -305,10 +318,12 @@ try {
   report.check('a tap on the answer shows its ↩ (the bar is visible)', await until(async () => Number(await quote.evaluate((el) => getComputedStyle(el.closest('.chat-m-hoverbar')).opacity)) === 1, 4000));
   await phone.screenshot({ path: join(SHOTS, '390x844-tap-bar.png') });
   await quote.tap();
-  const chip = vis('.chat-cmp-attachment-about');
-  report.check('↩ stages ONE chip "Reply to Super: …"', await until(async () => (await chip.count()) === 1 && /Reply to Super: Birinci mesajına/.test(await chip.innerText()), 5000));
+  // Owner 2026-10-24: the chip is IN the text (a token the mirror tints), never a row above.
+  const chip = vis('.chat-cmp-hl mark.chat-cmp-hl-ref');
+  report.check('↩ drops ONE chip into the text: "↩ Super: …"', await until(async () => (await chip.count()) === 1 && /\u21a9\u00a0Super:\u00a0Birinci/.test(await box.inputValue()), 5000), JSON.stringify(await box.inputValue()));
+  report.check('…no chip row above the box', (await vis('.chat-cmp-attachment-about').count()) === 0);
   await box.click();
-  await box.fill('teşekkürler');
+  await phone.keyboard.type('teşekkürler');
   await phone.waitForTimeout(150);
   await phone.keyboard.press('Enter');
   report.check('the reply reaches the super with its reference header and the quote, through the mirror', await until(async () => received().some((x) =>
@@ -320,15 +335,17 @@ try {
   await phone.screenshot({ path: join(SHOTS, '390x844-reply-sent.png') });
 
   console.log('\n── 4b. One answer, a section per message: heads inside one body');
-  const SEC_B = '[About agenda line note=n4k2 section=waiting]\nline: "Fiyat kartının adı"\n\nFiyat kartı bitti mi?';
-  const SEC_C = '[About agenda line note=n7p1 section=waiting]\nline: "Orbit dağıtımı"\n\nDağıtım ne durumda?';
+  // Plain words: a typed `[About agenda line …]` is neutralised in the Super view (only a chip
+  // makes a header, owner 2026-10-24), and the phone has no agenda to press.
+  const SEC_B = 'Fiyat kartı bitti mi?';
+  const SEC_C = 'Dağıtım ne durumda?';
   await sendText('BOLUMLER: üç işi tek cevapta topla.');
   await phone.waitForTimeout(1500);
   await sendText(SEC_B);
   await phone.waitForTimeout(600);
   await sendText(SEC_C);
-  report.check('the three reached the super, the 2nd and 3rd folded into its turn with their About header', await until(async () => {
-    const r = received().filter((x) => /^(BOLUMLER|\[About agenda line)/.test(x.blocks[0]));
+  report.check('the three reached the super, the 2nd and 3rd folded into its turn', await until(async () => {
+    const r = received().filter((x) => /^(BOLUMLER|Fiyat kartı bitti|Dağıtım ne durumda)/.test(x.blocks[0]));
     return r.length === 3 && r[1].folded && r[2].folded && r[1].blocks[0] === SEC_B;
   }, 15000), JSON.stringify(received().slice(-3).map((x) => [x.blocks[0].slice(0, 40), x.folded])));
   const secRow = () => vis('.chat-msg-assistant-row').filter({ hasText: 'BOLUMLER mesajına' }).last();
@@ -342,8 +359,8 @@ try {
     };
   });
   const hi = await headInfo();
-  report.check('three heads inside ONE answer body; 2-3 the About dot + agenda line, 1 "To your message"', hi.oneBody && hi.heads.length === 3
-    && /To your message.*BOLUMLER/.test(hi.heads[0].text) && hi.heads[1].dot && /Fiyat kartının adı/.test(hi.heads[1].text) && hi.heads[2].dot && /Orbit dağıtımı/.test(hi.heads[2].text), JSON.stringify(hi));
+  report.check('three heads inside ONE answer body, each "To your message" with its words', hi.oneBody && hi.heads.length === 3
+    && /To your message.*BOLUMLER/.test(hi.heads[0].text) && /To your message.*Fiyat kartı bitti mi/.test(hi.heads[1].text) && /To your message.*Dağıtım ne durumda/.test(hi.heads[2].text), JSON.stringify(hi));
   report.check('each head one line inside the screen', hi.heads.every((h) => h.h <= 26 && h.right <= 390), JSON.stringify(hi.heads));
   report.check('no strip over it, no "To 3 messages"', !(await pane().innerText()).includes('To 3 messages')
     && await secRow().evaluate((row) => !document.querySelector(`[data-reply-strip="${row.getAttribute('data-reply-grp')}"]`)));
@@ -364,6 +381,96 @@ try {
     return r.bottom > v.top + 8 && r.top < v.bottom - 8;
   }, bId), 4000), bId);
   await phone.screenshot({ path: join(SHOTS, '390x844-head-tap.png') });
+
+  console.log('\n── 4c. Two references, the label measured, a voice take into the second');
+  // The Mac's whisper, stood in at the HTTP edge: dictation on, and the take's transcript.
+  const stt = [];
+  await phone.route('**/api/agent/capabilities*', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json().catch(() => ({}));
+    await route.fulfill({ response: res, json: { ...body, dictation: true } });
+  });
+  await phone.route('**/api/agent/voice/stt*', async (route) => {
+    stt.push({ bytes: (route.request().postDataBuffer() ?? Buffer.alloc(0)).length });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ text: SPOKEN }) });
+  });
+  await phone.reload({ waitUntil: 'domcontentloaded' });
+  await phone.waitForTimeout(2500);
+  if (await onList()) await vis('[data-testid="super-row"]').click().catch(() => {});
+  await until(async () => (await vis('.chat-cmp-input').count()) > 0, 15000);
+  await phone.waitForTimeout(1200);
+  const box2 = vis('.chat-cmp-input').first();
+  // An answer of forty W's to reply to, asked for before any chip is staged.
+  await box2.click();
+  await box2.fill('GENIS bir cevap ver');
+  await phone.waitForTimeout(150);
+  await phone.keyboard.press('Enter');
+  await until(async () => (await vis('.chat-msg-assistant-row').filter({ hasText: 'WWWWWWWWWW' }).count()) > 0, 15000);
+  for (const word of ['Birinci mesajına', 'İkinci mesajına']) {
+    // The tap that shows the bar is proven in section 4; here the ↩ is pressed directly.
+    const ans = vis('.chat-msg-assistant-row').filter({ hasText: word }).first();
+    await ans.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    await ans.locator('[aria-label="Quote-reply"]').evaluate((el) => el.click());
+    await phone.waitForTimeout(400);
+  }
+  const marks2 = vis('.chat-cmp-hl mark.chat-cmp-hl-ref');
+  report.check('two ↩: two chips in the text, slots 1 and 2', await until(async () => (await marks2.count()) === 2
+    && JSON.stringify(await marks2.evaluateAll((ms) => ms.map((m) => m.getAttribute('data-slot')))) === '["1","2"]', 5000));
+  // The widest possible chip: a reply to an answer of forty W's, clipped to fit this field.
+  const wAns = vis('.chat-msg-assistant-row').filter({ hasText: 'WWWWWWWWWW' }).last();
+  await wAns.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await wAns.locator('[aria-label="Quote-reply"]').evaluate((el) => el.click());
+  await phone.waitForTimeout(500);
+  const fit = await phone.evaluate(() => {
+    const ta = [...document.querySelectorAll('.chat-cmp-input')].find((e) => e.getBoundingClientRect().height > 0);
+    const field = ta.closest('.chat-cmp-field').getBoundingClientRect().width;
+    const real = [...document.querySelectorAll('.chat-cmp-hl mark.chat-cmp-hl-ref')].filter((m) => m.getBoundingClientRect().height > 0)
+      .map((m) => ({ w: Math.round(m.getBoundingClientRect().width), rects: m.getClientRects().length, label: (m.textContent || '').replace(/[\u2061-\u2069]/g, '') }));
+    return { field: Math.round(field), real };
+  });
+  console.log(`      measured: ${JSON.stringify(fit)}`);
+  const widest = Math.max(...fit.real.map((m) => m.w));
+  report.check(`three chips, the widest (forty W's, clipped) at most 60% of the ${fit.field}px field: ${widest}px`, fit.real.length === 3 && widest <= 0.6 * fit.field, JSON.stringify(fit));
+  report.check('…a chip of ordinary words keeps its 24 letters', fit.real.some((m) => Array.from(m.label).length >= 24), JSON.stringify(fit.real.map((m) => m.label)));
+  report.check('the chips in the box never break across lines', fit.real.every((m) => m.rects === 1), JSON.stringify(fit.real));
+  // The mirror draws the tint under the textarea's own text: the two must share one size.
+  const sizes = await phone.evaluate(() => {
+    const ta = [...document.querySelectorAll('.chat-cmp-input')].find((e) => e.getBoundingClientRect().height > 0);
+    const hl = ta.parentElement.querySelector('.chat-cmp-hl');
+    return [getComputedStyle(ta).fontSize, hl ? getComputedStyle(hl).fontSize : null];
+  });
+  report.check(`the chip tints sit under their words (mirror and box both ${sizes[0]})`, sizes[0] === sizes[1], JSON.stringify(sizes));
+  report.check('no horizontal overflow with two chips', await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await phone.screenshot({ path: join(SHOTS, '390x844-two-chips.png') });
+  // The voice take: the caret is after chip 2 (the last ↩); hold, speak, let go.
+  const mic = vis('.chat-cmp-mic').first();
+  report.check('the hold-to-talk mic is drawn (dictation on)', await until(async () => (await mic.count()) === 1, 10000));
+  const cdp2 = await ctx.newCDPSession(phone);
+  await phone.mouse.move(1, 1);
+  await phone.waitForTimeout(600);
+  const mb = await mic.boundingBox();
+  const pt = [{ x: mb.x + mb.width / 2, y: mb.y + mb.height / 2, id: 1 }];
+  const before = received().length;
+  await cdp2.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: pt });
+  report.check('holding it records', await until(async () => (await vis('.chat-cmp-mic.is-recording').count()) === 1, 5000));
+  await phone.waitForTimeout(2600);
+  await cdp2.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  report.check('the take went to the stood-in whisper', await until(async () => stt.length >= 1, 20000), JSON.stringify(stt));
+  report.check('the spoken message goes with all three blocks, the spoken words after the last chip', await until(async () => {
+    const f = received().slice(before).find((x) => /^\[Reply to message/.test(x.blocks[0]));
+    if (!f) return false;
+    const t = f.blocks[0];
+    const heads = [...t.matchAll(/(^|\n\n)\[Reply to message ref=/g)].length;
+    return heads === 3 && t.endsWith(SPOKEN) && t.indexOf(SPOKEN) > t.lastIndexOf('[Reply to message') && f.blocks.some((b) => / parts="[0-9a-z]{6} [0-9a-z]{6} [0-9a-z]{6}"\/>$/.test(b));
+  }, 20000), JSON.stringify(received().slice(before).map((x) => x.blocks)));
+  report.check('no chip was lost: the box is empty after the send', await until(async () => (await box2.inputValue()) === '', 8000), JSON.stringify(await box2.inputValue()));
+  const vb = vis('.chat-msg-user-row').last();
+  report.check('the bubble draws the three chips inline with the spoken words', await until(async () => (await vb.locator('[data-testid="chat-msg-parts"] .chat-ref-chip').count()) === 3
+    && (await vb.innerText()).includes(SPOKEN) && !(await vb.innerText()).includes('[Reply to message'), 8000));
+  report.check('still no horizontal overflow', await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await vb.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await phone.waitForTimeout(300);
+  await phone.screenshot({ path: join(SHOTS, '390x844-voice-two-parts.png') });
 
   console.log('\n── 5. A reload: the phone still knows the Super conversation');
   await phone.reload({ waitUntil: 'domcontentloaded' });

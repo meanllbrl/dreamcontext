@@ -535,7 +535,9 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
 
 /* 16px is not a taste call: iOS Safari ZOOMS the page when a focused input's font is under
    16px, and the layout never fully recovers from that zoom. */
-.agent-surface[data-mobile] .chat-cmp-input {
+/* The mirror behind it (mentions, reference chips) draws the same text, so it takes the same
+   size, or its tints end short of the words they sit under. */
+.agent-surface[data-mobile] :is(.chat-cmp-input, .chat-cmp-hl) {
   font-size: 16px;
 }
 

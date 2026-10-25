@@ -64,14 +64,14 @@ import {
 import { surveyDraftKey } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { Composer } from './chat/Composer';
-import { nextAttachmentId, readScratch, setAbout, setQuote, subscribeScratch } from './chat/composerScratch';
-import { replyGroups, replyHeadsById as headsById, type ReplyHead } from './chat/replyLinks';
-import { ReplyStrip } from './chat/AgendaAboutStrip';
+import { insertRef, nextAttachmentId, readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
+import { messagePart, replyGroups, replyHeadsById as headsById, type ReplyHead } from './chat/replyLinks';
+import { PartStrip, ReplyStrip } from './chat/AgendaAboutStrip';
 import { msgRef } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
-import { groupSuperEventTurns, replyAboutBlock, replyAboutChipName, splitAbout, superEventOf, type SuperEventGroup } from './super/superHandover';
+import { groupSuperEventTurns, replyAboutBlock, splitAbout, splitAboutParts, superEventOf, type SuperEventGroup } from './super/superHandover';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
@@ -184,7 +184,12 @@ function primaryToolPath(input: unknown): string | null {
 function ownerQuote(it: ChatItem | undefined, max: number): string {
   if (!it || it.kind !== 'user') return '';
   const answer = parseSuperAnswer(it.text);
-  const words = (answer ? answer.values.join(', ') : splitAbout(it.text).text).replace(/\s+/g, ' ').trim();
+  // A message with several references reads as its words, part by part, never its header text.
+  const multi = answer ? null : splitAboutParts(it.text);
+  const own = multi && multi.parts.length >= 2
+    ? [multi.preamble, ...multi.parts.map((p) => p.words)].filter((w) => w.trim()).join(' · ')
+    : splitAbout(it.text).text;
+  const words = (answer ? answer.values.join(', ') : own).replace(/\s+/g, ' ').trim();
   const chars = Array.from(words);
   return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : words;
 }
@@ -1404,8 +1409,10 @@ export function ChatPane({
   // "Show earlier"; the scroll runs in a layout effect AFTER that hold has settled.
   /** `n` makes a repeat click a new state value, so the flash replays; `reveal`: the target
    *  was above the window and is mounted by this same render. */
-  const [replyJump, setReplyJump] = useState<{ id: string; n: number; reveal: boolean } | null>(null);
-  const jumpToReplyTarget = (itemId: string) => {
+  const [replyJump, setReplyJump] = useState<{ id: string; n: number; reveal: boolean; part?: number } | null>(null);
+  /** `part`: a head naming one part of a message with several references lands on the message
+   *  and flashes that part's chip too. */
+  const jumpToReplyTarget = (itemId: string, part?: number) => {
     let idx = conv.history.findIndex((it) => it.id === itemId);
     if (idx < 0) {
       const live = conv.items.findIndex((it) => it.id === itemId);
@@ -1418,7 +1425,7 @@ export function ChatPane({
       captureAnchor(true);
       setFirstShownState(nextFirstShown(firstShown, { total: windowTotal, pinned: false, reveal: true, tailHead, revealHead: idx }));
     }
-    setReplyJump((prev) => ({ id: itemId, n: (prev?.n ?? 0) + 1, reveal }));
+    setReplyJump((prev) => ({ id: itemId, n: (prev?.n ?? 0) + 1, reveal, ...(part ? { part } : {}) }));
   };
   /** His reply's strip: the message it names is the nearest one before his reply whose words
    *  hash to its ref (his own message, or a Super block's body). */
@@ -1464,8 +1471,8 @@ export function ChatPane({
   replyJumpRef.current = { jumpToReplyTarget, jumpToReplied };
   /** Stable for the memoized rows. */
   /** A section head's click: the same jump as a strip's. Stable for the memoized rows. */
-  const handleReplyTarget = useCallback((targetId: string) => {
-    replyJumpRef.current.jumpToReplyTarget(targetId);
+  const handleReplyTarget = useCallback((targetId: string, part?: number) => {
+    replyJumpRef.current.jumpToReplyTarget(targetId, part);
   }, []);
   const handleReplyJump = useCallback((ref: string, from: 'super' | 'owner', beforeId: string) => {
     replyJumpRef.current.jumpToReplied(ref, from, beforeId);
@@ -1491,8 +1498,10 @@ export function ChatPane({
       settle = setTimeout(() => captureAnchor(), REPLY_GLIDE_MS);
     }
     row.setAttribute('data-reply-flash', '');
-    const timer = setTimeout(() => row.removeAttribute('data-reply-flash'), FLASH_MS);
-    return () => { clearTimeout(timer); clearTimeout(settle); row.removeAttribute('data-reply-flash'); };
+    const chip = replyJump.part ? row.querySelector<HTMLElement>(`[data-ref-part="${replyJump.part}"]`) : null;
+    chip?.setAttribute('data-reply-flash', '');
+    const timer = setTimeout(() => { row.removeAttribute('data-reply-flash'); chip?.removeAttribute('data-reply-flash'); }, FLASH_MS);
+    return () => { clearTimeout(timer); clearTimeout(settle); row.removeAttribute('data-reply-flash'); chip?.removeAttribute('data-reply-flash'); };
   }, [replyJump, captureAnchor]);
 
   // A LAYOUT effect, not a passive one, and that is the whole race: React has just mutated
@@ -1756,15 +1765,20 @@ export function ChatPane({
   ), []);
   const handleOpenShell = useCallback((run: SubAgentRun) => setSlideOver({ mode: 'shell', run }), []);
   const handleStopShell = useCallback((run: SubAgentRun) => session.stopTask(run.taskId), [session]);
-  /** ↩ on a message. In a Super view it is a reply: ONE About chip (the agenda's own, a second
-   *  press replaces it) whose block names the message and quotes its first words, never the
-   *  whole of it (owner 2026-10-23). Anywhere else, today's quote. */
+  /** ↩ on a message. In a Super view it is a reply: a chip AT THE CARET (owner 2026-10-24: a
+   *  second ↩ adds one, the same message again flashes the chip it has) whose block names the
+   *  message and quotes its first words, never the whole of it (owner 2026-10-23). Anywhere
+   *  else, today's quote. His own message's words are its parts' words, never header text. */
   const handleQuote = useCallback((item: ChatUserItem | ChatTextItem) => {
     if (!superView) { setQuote(convId, item.text); return; }
     const from = item.kind === 'user' ? 'owner' : 'super';
-    const words = item.kind === 'user' ? splitAbout(item.text).text : item.text;
-    const name = replyAboutChipName(words, from, { chipSuper: t('super.reply.chipSuper'), chipOwn: t('super.reply.chipOwn') });
-    setAbout(session.scratchId || convId, { id: nextAttachmentId(), kind: 'about', name, text: replyAboutBlock(item.text, from, words) });
+    const multi = item.kind === 'user' ? splitAboutParts(item.text) : null;
+    const words = !multi ? item.text
+      : multi.parts.length >= 2 ? [multi.preamble, ...multi.parts.map((p) => p.words)].filter((w) => w.trim()).join(' · ')
+        : splitAbout(item.text).text;
+    const quote = replyAboutBlock(item.text, from, words);
+    const name = `${t(from === 'super' ? 'super.ref.super' : 'super.ref.own')} ${JSON.parse(quote.split('\nquote: ')[1]) as string}`;
+    insertRef(session.scratchId || convId, { id: nextAttachmentId(), kind: 'about', name, text: quote });
     requestAnimationFrame(() => session.focus());
   }, [superView, convId, session, t]);
   const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => {
@@ -2149,7 +2163,7 @@ export function ChatPane({
   // before the first segment of the group this render SHOWS (a group cut by the window edge,
   // the history divider or a notice still gets exactly one). Decided once, in reading order,
   // so the stretch pass and the nodes agree.
-  const stripAt = new Map<RunSegment<ChatItem>, { groupId: string; targets: string[] }>();
+  const stripAt = new Map<RunSegment<ChatItem>, { groupId: string; targets: string[]; parts?: number[] }>();
   if (replyMap) {
     const seen = new Set<string>();
     for (const seg of [...historySegments, ...liveSegments]) {
@@ -2171,6 +2185,23 @@ export function ChatPane({
     if (!g) return [];
     const many = g.targets.length > 1;
     const label = many ? t('super.reply.nMessages').replace('{n}', String(g.targets.length)) : t('super.reply.yourMessage');
+    // A single-section answer whose mark names parts of one message: those parts' chips.
+    const named = g.parts?.map((j) => messagePart(replyItems?.get(g.targets[0]), j));
+    if (g.parts && named?.length && named.every(Boolean)) {
+      const ps = named as Array<NonNullable<ReturnType<typeof messagePart>>>;
+      const words = ps.map((p) => p.words).filter((w, i, all) => w && all.indexOf(w) === i).join(' · ');
+      return [(
+        <div key={`strip-${g.groupId}`} className="chat-reply-strip" data-reply-strip={g.groupId}>
+          <PartStrip
+            abouts={ps.map((p) => p.about)}
+            parts={g.parts}
+            words={words}
+            superSid={superView ? session.claudeId : null}
+            onJump={() => replyJumpRef.current.jumpToReplyTarget(g.targets[0], g.parts?.[0])}
+          />
+        </div>
+      )];
+    }
     return [(
       <div key={`strip-${g.groupId}`} className="chat-reply-strip" data-reply-strip={g.groupId}>
         <ReplyStrip
@@ -2610,6 +2641,10 @@ export function ChatPane({
           // One object, not two cards: whenever the shelf grows a bordered shell above the
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}
+          // The Super view: a ↩ drops a reference chip into the text (several per message); a
+          // reply chip's "Go to message" lands on the message it names.
+          superView={superView}
+          onRefJump={superView ? (ref, from) => replyJumpRef.current.jumpToReplied(ref, from, '') : undefined}
           onSignIn={fireSignIn}
           // `/mcp` opens the panel instead of being sent. The engine DOES answer that command
           // — with a sentence telling the user to go and use a terminal — so forwarding it

@@ -638,15 +638,70 @@ export function msgRef(text: string): string {
 /** 36^6: every reference is exactly six characters. */
 const MSG_REF_SPACE = 2_176_782_336;
 /** The block every owner message to the Super carries (agent-chat.ts writeOwnerTurn): his
- *  message's reference, starting with `<` so the replay drops it. */
+ *  message's reference, starting with `<` so the replay drops it. A message with two or more
+ *  parts (`aboutHeads`) also lists each part's reference, in order (`partRefs`); with one or
+ *  none the block is what it always was, byte for byte. */
 export function ownerMsgBlock(text: string): string {
-  return `<owner-msg ref="${msgRef(text)}"/>`;
+  const parts = partRefs(text);
+  return parts.length ? `<owner-msg ref="${msgRef(text)}" parts="${parts.join(' ')}"/>` : `<owner-msg ref="${msgRef(text)}"/>`;
 }
 /** The owner replies to one message (its ↩): his message opens with this header, then
  *  `quote: "<at most MAX_REPLY_QUOTE characters of it>"`, then his words. `ref=` is a scroll
  *  anchor for the window; the super knows its own words by the quote. Not `[super `. */
 export const REPLY_TO_RE = /^\[Reply to message ref=([0-9a-z]{6}) from=(super|owner)\]/;
 export const MAX_REPLY_QUOTE = 100;
+
+/** At most this many references (agenda lines, replied messages) in one owner message; a
+ *  header past the fifth is plain text. */
+export const MAX_MESSAGE_REFS = 5;
+/** One reference header in an owner message: what it names, where it starts, and where its
+ *  block (the header and its `line:`/`quote:` line) ends. */
+export interface AboutHead { kind: 'note' | 'item' | 'reply'; id: string; at: number; end: number }
+
+/**
+ * Every reference header in an owner message, in order (owner 2026-10-24: several references in
+ * one message). One rule on both sides of the wire: a header counts only at offset 0 or right
+ * after a blank line (`\n\n`); a note's header must be followed by its well-formed `line:` JSON
+ * line and a reply's by its `quote:` line; an item's header has no second line; and the block
+ * ends the text or a line. Anything else is plain text. At most MAX_MESSAGE_REFS. MIRRORED in
+ * dashboard/src/lib/superTypes.ts (super-types-mirror.test.ts).
+ */
+export function aboutHeads(text: string): AboutHead[] {
+  const out: AboutHead[] = [];
+  if (typeof text !== 'string') return out;
+  const starts = [0];
+  for (let i = text.indexOf('\n\n'); i >= 0; i = text.indexOf('\n\n', i + 1)) starts.push(i + 2);
+  for (const at of starts) {
+    if (out.length >= MAX_MESSAGE_REFS) break;
+    const s = text.slice(at);
+    const a = ABOUT_AGENDA_RE.exec(s);
+    const r = a ? null : REPLY_TO_RE.exec(s);
+    if (!a && !r) continue;
+    const kind = a ? (a[1] as 'note' | 'item') : 'reply';
+    let len = (a ?? r as RegExpExecArray)[0].length;
+    const second = /^\n(line|quote): ([^\n]*)/.exec(s.slice(len));
+    if (kind === 'item') {
+      if (second?.[1] === 'line') continue;
+    } else {
+      if (!second || second[1] !== (kind === 'note' ? 'line' : 'quote')) continue;
+      try { if (typeof JSON.parse(second[2]) !== 'string') continue; } catch { continue; }
+      len += second[0].length;
+    }
+    if (len < s.length && s[len] !== '\n') continue;
+    out.push({ kind, id: a ? a[2] : (r as RegExpExecArray)[1], at, end: at + len });
+  }
+  return out;
+}
+
+/** Each part's reference, in order, for a message with two or more parts (`aboutHeads`): the
+ *  message reference with `#<i>` hashed again. [] for a message with one part or none, whose
+ *  sections the super marks with the message reference as before. MIRRORED in the window. */
+export function partRefs(text: string): string[] {
+  const n = aboutHeads(text).length;
+  if (n < 2) return [];
+  const base = msgRef(text);
+  return Array.from({ length: n }, (_, i) => msgRef(`${base}#${i + 1}`));
+}
 /**
  * The super's mark on an answer: the FIRST line of a text block may name the owner messages it
  * answers, `<!-- re:k3f9q0 -->` (1-3 refs asked; any `<!-- re:… -->` line is ours and never
@@ -660,7 +715,10 @@ export const REPLY_MARK_RE = /^\s*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/;
 export const REPLY_MARK_HEAD_MAX = 120;
 /** A mark on its own line anywhere in a block: one block answering several messages opens a
  *  section per message (measured with the real model, 2026-10-23). */
-export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n)?/g;
+/** A mark line keeps its newline when the next line is another mark, so marks stacked one per
+ *  line (a section answering several parts, rev 12) are each read; one would otherwise eat the
+ *  newline the next one starts with. */
+export const REPLY_MARK_LINE_RE = /(^|\n)[ \t]*<!--\s*re:([^\n>]*?)-->[ \t]*(?:\r?\n(?![ \t]*<!--\s*re:))?/g;
 /** The text without its reply marks (the server's text readers: chat-registry). */
 export function stripReplyMark(raw: string): string {
   return (raw ?? '').replace(REPLY_MARK_LINE_RE, '$1');
@@ -1037,7 +1095,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 11;
+export const SUPER_BRIEF_REV = 12;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

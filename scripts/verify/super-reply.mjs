@@ -19,7 +19,8 @@
  * page errors.
  *
  * Check 5b (owner 2026-10-24, pick A): three new messages, the 2nd and 3rd steered into a busy
- * turn with a typed agenda About header, answered in ONE streamed block with a section per
+ * turn written about an agenda line (its ↩ chip: a typed header is plain text since the
+ * multi-reference task), answered in ONE streamed block with a section per
  * message after an unmarked "Bakıyorum.". Polled every 100 ms while it streams: no strip ever
  * mounts, no head shows before its words, a head once shown never goes. At the end: three heads
  * inside one answer body (About + agenda line on 2-3, "To your message" on 1), no "To 3
@@ -62,6 +63,8 @@ const LONG = `Uzun cevap: ${Array.from({ length: 40 }, (_, i) => `Bölüm ${i + 
 const STANDIN = `#!${process.execPath}
 import { appendFileSync, readFileSync, mkdirSync as mk } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+const cli = (...args) => spawnSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(CLI)}, ...args], { env: process.env, encoding: 'utf-8', timeout: 60000 });
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const argv = process.argv.slice(2);
 const at = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : ''; };
@@ -105,7 +108,12 @@ const refOf = (word) => { for (let i = owners.length - 1; i >= 0; i--) if (words
 const LONG = ${JSON.stringify(LONG)};
 
 async function superTurn(text) {
-  if (text.startsWith('[super handover]')) return 'Devraldım.';
+  if (text.startsWith('[super handover]')) {
+    // Two agenda lines, so check 5b can write about them with their ↩ (a chip, never typed).
+    cli('super', 'note', 'add', 'waiting', 'Fiyat kartının adı');
+    cli('super', 'note', 'add', 'waiting', 'Orbit dağıtımı');
+    return 'Devraldım.';
+  }
   if (text.startsWith('[super')) { report({ kind: 'event', text: text.slice(0, 200) }); return null; }
   if (/^Birinci/.test(text)) {
     toolCall('Bash', { command: 'npm test -- login', description: 'Run the login tests' }, '31 passing');
@@ -245,7 +253,8 @@ const ok = (name, pass, detail = '') => { if (!pass) failures += 1; log(`${pass 
 
 const centre = (page) => page.locator('[data-super-slot="centre"]');
 const centreInput = (page) => centre(page).locator('.chat-cmp-input').first();
-const chip = (page) => centre(page).locator('.chat-cmp-attachment-about');
+/** A reference chip in the box: the token's tint in the mirror. */
+const chip = (page) => centre(page).locator('.chat-cmp-hl mark.chat-cmp-hl-ref');
 const turnEnds = () => reports().filter((r) => r.role === 'super' && r.kind === 'turn-end').length;
 async function send(page, text) {
   await centreInput(page).click();
@@ -328,6 +337,10 @@ async function main() {
     await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
     await motionIdle(page);
     ok('the super took over', await until(page, async () => turnEnds() >= 1 && (await centreInput(page).count()) === 1, 90000));
+    // The agenda on the stage (its lines are written at the hand-over).
+    await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+    await until(page, async () => (await page.locator('[data-testid="super-agenda-about"]').count()) >= 2, 20000);
+    await motionIdle(page);
     await page.waitForTimeout(1000);
 
     // 1. Three messages, the 2nd and 3rd while the first turn runs.
@@ -381,19 +394,25 @@ async function main() {
     await page.waitForTimeout(300);
     await shot(page, '02-strip-jump-1440-dark.png');
 
-    // 3. ↩ on a Super answer: ONE chip; Enter sends a reference and at most 100 characters.
+    // 3. ↩ on a Super answer: ONE chip in the text; Enter sends a reference and at most 100
+    // characters. (Owner 2026-10-24: the chip is IN the text, a second ↩ ADDS one.)
     const aRow = centre(page).locator('.chat-msg-assistant-row').filter({ hasText: 'Birinci mesajına' }).first();
     const aBody = 'Birinci mesajına: giriş sayfası düzeldi, Safari\'de de açılıyor.';
     await aRow.hover();
     await aRow.locator('[aria-label="Quote-reply"]').click();
-    ok('↩ stages ONE chip: "Reply to Super: …"', await until(page, async () => (await chip(page).count()) === 1 && /Reply to Super: Birinci mesajına/.test(await chip(page).innerText()), 5000), await chip(page).innerText().catch(() => ''));
-    ok('…the chip alone: "Write your reply…"', (await centreInput(page).getAttribute('placeholder')) === 'Write your reply…');
+    ok('↩ drops ONE chip into the text: "↩ Super: …"', await until(page, async () => (await chip(page).count()) === 1 && /\u21a9\u00a0Super:\u00a0Birinci/.test(await centreInput(page).inputValue()), 5000), JSON.stringify(await centreInput(page).inputValue()));
+    ok('…the chip alone, the box focused: "Write your reply…" after it', await until(page, async () => (await centre(page).locator('.chat-cmp-hl-hint').innerText().catch(() => '')).includes('Write your reply…'), 3000));
     const tAnswer = centre(page).locator('.chat-msg-assistant-row').filter({ hasText: 'İkinci mesajına' }).first();
     await tAnswer.hover();
     await tAnswer.locator('[aria-label="Quote-reply"]').click();
-    ok('…a second ↩ replaces it (one chip)', await until(page, async () => (await chip(page).count()) === 1 && /İkinci mesajına/.test(await chip(page).innerText()), 5000));
-    await aRow.hover();
-    await aRow.locator('[aria-label="Quote-reply"]').click();
+    ok('…a second ↩ ADDS a chip (two in the text)', await until(page, async () => (await chip(page).count()) === 2, 5000));
+    // Back to one chip for the one-chip wire check: clear the box, ↩ the first answer again.
+    // (The hover that shows ↩ is proven by the two presses above; this one is a DOM click, so a
+    // hover bar still fading in after the fill cannot make the step flaky.)
+    await centreInput(page).fill('');
+    await aRow.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    await aRow.locator('[aria-label="Quote-reply"]').evaluate((el) => el.click());
+    await until(page, async () => (await chip(page).count()) === 1, 5000);
     await shot(page, '03-reply-chip-1440-dark.png');
     let n = superFrames().length;
     await send(page, 'teşekkürler, yayına al');
@@ -434,11 +453,12 @@ async function main() {
     ok('…it is linked (a group) but draws no strip: its message is right above', !!tD?.grp && !shape.some((x) => x.strip === tD.grp), JSON.stringify(tD));
 
     // 5b. One block, a section per message (owner 2026-10-24, pick A): one container, a head per
-    // section, no strip. The 2nd and 3rd message are steered in with a typed About header (iv).
+    // section, no strip. The 2nd and 3rd message are steered in, each written about an agenda
+    // line with its ↩ (iv).
     const SEC = {
       A: 'BOLUMLER: üç işi tek cevapta topla.',
-      B: '[About agenda line note=n4k2 section=waiting]\nline: "Fiyat kartının adı"\n\nFiyat kartı bitti mi?',
-      C: '[About agenda line note=n7p1 section=waiting]\nline: "Orbit dağıtımı"\n\nDağıtım ne durumda?',
+      B: '[About agenda line note=n1 section=waiting]\nline: "Fiyat kartının adı"\n\nFiyat kartı bitti mi?',
+      C: '[About agenda line note=n2 section=waiting]\nline: "Orbit dağıtımı"\n\nDağıtım ne durumda?',
     };
     const secEnds = turnEnds();
     await page.evaluate(() => {
@@ -459,14 +479,18 @@ async function main() {
     });
     await send(page, SEC.A);
     await until(page, async () => reports().some((r) => r.kind === 'busy3'), 15000);
-    const sendTyped = async (text) => {
-      await centreInput(page).fill(text);
+    const sendAbout = async (line, words) => {
+      await centreInput(page).fill('');
+      const row = page.locator('[data-testid="super-agenda-row"]').filter({ hasText: line }).first();
+      await row.hover().catch(() => {});
+      await row.locator('[data-testid="super-agenda-about"]').click();
+      await page.waitForTimeout(300);
+      await page.keyboard.type(words, { delay: 8 });
       await page.keyboard.press('Enter');
     };
-    await centreInput(page).click();
-    await sendTyped(SEC.B);
+    await sendAbout('Fiyat kartının adı', 'Fiyat kartı bitti mi?');
     await page.waitForTimeout(600);
-    await sendTyped(SEC.C);
+    await sendAbout('Orbit dağıtımı', 'Dağıtım ne durumda?');
     ok('the three new messages reached the super, the 2nd and 3rd steered with their About header', await until(page, async () => {
       const f = superFrames().filter((x) => Object.values(SEC).includes(x.blocks[0]));
       return f.length === 3 && f[1].folded && f[2].folded && f.every((x) => x.blocks.includes(`<owner-msg ref="${msgRef(x.blocks[0])}"/>`));

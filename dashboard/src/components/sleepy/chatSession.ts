@@ -332,6 +332,11 @@ export interface ConversationModel {
    *  textarea state is local (see ChatPane's composer note); it watches this epoch to know
    *  when to adopt `draft` instead of its own text. */
   draftEpoch: number;
+  /** Why `draftEpoch` last moved: `'rewind'` when the draft is a sent message read back (the
+   *  composer turns its headers into chips once, then {@link ChatSession.clearDraftEpochReason}),
+   *  anything else an external append (`sendText`: a file drop, a respawn's carried draft) whose
+   *  tokens are matched as they stand. Absent: external. */
+  draftEpochReason?: 'rewind' | 'external';
   capabilities: string[];
   model?: string;
   permissionMode?: string;
@@ -534,6 +539,9 @@ export interface ChatSession {
    *  external `sendText` (file drop, page-level skill insert) would append to a STALE
    *  model draft and the epoch adoption would clobber what the user had typed. */
   syncDraft: (text: string) => void;
+  /** The composer read a rewound draft back as chips: the next adoption is external again, so a
+   *  remount never converts it twice. Mirror only, no epoch bump. */
+  clearDraftEpochReason: () => void;
   /** Take down the fresh-session branch notice ({@link ConversationModel.branchNotice}).
    *  Dismissable because it reports a one-time event: once read, it is history. */
   dismissBranchNotice: () => void;
@@ -1271,6 +1279,7 @@ export function createChatSession(
     applyZoom,
     sendText,
     syncDraft,
+    clearDraftEpochReason,
     dismissBranchNotice,
     dismissHandoff,
     dismissAccountSwitch,
@@ -1398,8 +1407,12 @@ export function createChatSession(
     // (file drop, page-level skill chip) reaches the visible textarea, not just the model.
     // Safe because `syncDraft` keeps the model mirroring the textarea on every keystroke,
     // so append-then-adopt can never lose free-typed text.
-    conv = { ...conv, draft: conv.draft + data, draftEpoch: conv.draftEpoch + 1 };
+    conv = { ...conv, draft: conv.draft + data, draftEpoch: conv.draftEpoch + 1, draftEpochReason: 'external' };
     renderFlush.flush();
+  }
+
+  function clearDraftEpochReason(): void {
+    if (conv.draftEpochReason === 'rewind') conv = { ...conv, draftEpochReason: 'external' };
   }
 
   function syncDraft(text: string): void {
@@ -2905,7 +2918,7 @@ export function createChatSession(
       send(prefill);
       return;
     }
-    conv = { ...conv, pending: [], lastResult: undefined, lastError: undefined, lastErrorAt: undefined, draft: prefill, draftEpoch: conv.draftEpoch + 1 };
+    conv = { ...conv, pending: [], lastResult: undefined, lastError: undefined, lastErrorAt: undefined, draft: prefill, draftEpoch: conv.draftEpoch + 1, draftEpochReason: 'rewind' };
   }
 
   /**

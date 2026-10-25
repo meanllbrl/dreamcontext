@@ -15,7 +15,7 @@
  * React-free and DOM-free: imports only the window's mirror of the server types.
  */
 import {
-  ABOUT_AGENDA_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, REPLY_TO_RE, SUPER_EVENT_PREFIXES, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 
 // ─── Who is the Super Agent ────────────────────────────────────────────────────
@@ -613,6 +613,14 @@ export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid'
   return `${words.about}: ${who}`;
 }
 
+/** What an inline chip reads for an agenda row (owner 2026-10-24): the line's own words, or for
+ *  a question "<child>'s question" / "Super's question". No "About:": the chip's ● says it, and
+ *  the composer clips the name to its own width (composerRefs `refLabel`). */
+export function agendaRefName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text'>, words: AboutWords = ABOUT_WORDS_EN): string {
+  if (row.note) return aboutLine(row.text);
+  return row.sid ? words.question.replace('{name}', () => aboutLine(row.text)) : words.superQuestion;
+}
+
 /**
  * The strip above a sent bubble: a note reads its line as he saw it; a question reads whose it
  * is only while it is still open in the live record (the super's own: "Super's question"), and
@@ -721,12 +729,42 @@ function splitReplyAbout(text: string): { about: ReplyAbout | null; text: string
 /**
  * A sent message split into what it is about (an agenda line or the message it replies to) and
  * the owner's own words. Same rule as `splitAgendaAbout`: only at offset 0, malformed = null and
- * the text untouched.
+ * the text untouched. A message with two or more parts (`splitAboutParts`) is null here too, so
+ * no single strip is ever drawn over one of them.
  */
 export function splitAbout(text: string): { about: MessageAbout | null; text: string } {
   if (typeof text !== 'string') return { about: null, text: '' };
+  if (aboutHeads(text).length >= 2) return { about: null, text };
   const agenda = splitAgendaAbout(text);
   return agenda.about ? agenda : splitReplyAbout(text);
+}
+
+/** One part of a message with several references: what it is about and his words after it
+ *  ('' for a header stacked on the next, which shares the next one's words). */
+export interface MessagePart { about: MessageAbout; words: string }
+
+/**
+ * A sent message read as its parts (owner 2026-10-24: several references in one message), with
+ * the server's header rule (`aboutHeads`): `preamble` is his words before the first header (for
+ * the whole message), then each header with the words after it up to the next one. A message
+ * with one header or none comes back as `splitAbout` reads it, the preamble empty.
+ */
+export function splitAboutParts(text: string): { preamble: string; parts: MessagePart[] } {
+  if (typeof text !== 'string') return { preamble: '', parts: [] };
+  const heads = aboutHeads(text);
+  if (heads.length < 2) {
+    const one = splitAbout(text);
+    return one.about ? { preamble: '', parts: [{ about: one.about, words: one.text }] } : { preamble: text, parts: [] };
+  }
+  const parts: MessagePart[] = [];
+  heads.forEach((h, i) => {
+    const block = text.slice(h.at, h.end);
+    const about = splitAbout(block).about;
+    const next = i + 1 < heads.length ? heads[i + 1].at : text.length;
+    const words = text.slice(h.end, next).replace(/^\n+/, '').replace(/\n+$/, '');
+    if (about) parts.push({ about, words });
+  });
+  return { preamble: text.slice(0, heads[0].at).replace(/\n+$/, ''), parts };
 }
 
 // ─── Layout of the panes while handed over ─────────────────────────────────────

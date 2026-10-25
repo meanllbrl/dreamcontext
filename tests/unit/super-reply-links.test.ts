@@ -7,8 +7,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { msgRef } from '../../dashboard/src/lib/superTypes.js';
-import { isOwnerMessage, replyGroups, replyHeadsById, sectionHeads } from '../../dashboard/src/components/sleepy/chat/replyLinks.js';
+import { msgRef, partRefs } from '../../dashboard/src/lib/superTypes.js';
+import { isOwnerMessage, messagePart, replyGroups, replyHeadsById, sectionHeads } from '../../dashboard/src/components/sleepy/chat/replyLinks.js';
 import { splitReplyMark } from '../../dashboard/src/lib/replyMark.js';
 import type { ChatItem } from '../../dashboard/src/components/sleepy/chatSession.js';
 import { replyGroups0345 } from '../fixtures/super-reply-sections/replyGroups-0345.js';
@@ -390,8 +390,56 @@ describe('section heads', () => {
     expect(item).toContain('onClick={() => copyText(item.text)}');
     expect(readFileSync(join(ROOT, 'dashboard/src/components/sleepy/chat/AgendaAboutStrip.tsx'), 'utf-8')).toMatch(/data-reply-head=""\s+data-testid="chat-reply-head"/);
     const pane = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/ChatPane.tsx'), 'utf-8');
-    expect(pane).toMatch(/const handleReplyTarget = useCallback\(\(targetId: string\) => \{\s+replyJumpRef\.current\.jumpToReplyTarget\(targetId\);\s+\}, \[\]\);/);
+    expect(pane).toMatch(/const handleReplyTarget = useCallback\(\(targetId: string, part\?: number\) => \{\s+replyJumpRef\.current\.jumpToReplyTarget\(targetId, part\);\s+\}, \[\]\);/);
     expect(pane).toMatch(/replyHeads=\{replyHeads\?\.get\(item\.id\)\}/);
   });
 });
 
+
+/**
+ * Part refs (owner 2026-10-24, rev 12): a message with several references answers to one ref per
+ * part, so a section's head names ONE chip inside it.
+ */
+describe('part refs', () => {
+  const NOTE = (id: string, line: string) => `[About agenda line note=${id} section=waiting]\nline: ${JSON.stringify(line)}`;
+  const REPLY = (r: string, q: string) => `[Reply to message ref=${r} from=super]\nquote: ${JSON.stringify(q)}`;
+  const multi = () => owner(`Two things:\n\n${NOTE('n1', 'Windows tests')}\n\nyes, CLI only\n\n${NOTE('n2', 'Docs')}\n\n${REPLY('k3f9q0', 'the plan')}\n\ngo`);
+  const pmark = (it: ChatItem, ...parts: number[]) => parts.map((j) => `<!-- re:${partRefs((it as { text: string }).text)[j - 1]} -->\n`).join('');
+
+  it('a sectioned answer: each section resolves to the message with its part; stacked parts are one section', () => {
+    const m = multi();
+    const ans = marked(`${pmark(m, 1)}Adding the Windows tests.\n${pmark(m, 2, 3)}Docs done, and going with the plan.`);
+    const g = pick(replyGroups([m, ans]), ans.id)!;
+    expect(g.sections?.map((x) => [x.targets, x.parts])).toEqual([[[m.id], [1]], [[m.id], [2, 3]]]);
+    const items = new Map([[m.id, m], [ans.id, ans]]);
+    const heads = sectionHeads(g.sections!, items, () => 'whole message');
+    expect(heads.map((h) => [h.parts, h.partAbouts?.map((a) => a.kind), h.quotes])).toEqual([
+      [[1], ['note'], ['yes, CLI only']],
+      // A stacked part shares the words of the part it is stacked on.
+      [[2, 3], ['note', 'reply'], ['go']],
+    ]);
+  });
+
+  it('nearest preceding wins; an unknown part ref resolves to nothing; the message ref still works (rev 11)', () => {
+    const m1 = multi();
+    const m2 = multi();
+    const ans = marked(`${pmark(m2, 1)}one`);
+    expect(pick(replyGroups([m1, m2, ans]), ans.id)!.targets).toEqual([m2.id]);
+    const stranger = marked('<!-- re:zzzzzz -->\nnothing');
+    expect(pick(replyGroups([m1, stranger]), stranger.id)!.targets).toEqual([]);
+    const old = marked(`<!-- re:${msgRef(m1.text)} -->\nas before`);
+    const g = pick(replyGroups([m1, old]), old.id)!;
+    expect(g.targets).toEqual([m1.id]);
+    expect(g.parts).toBeUndefined();
+  });
+
+  it('a single-section answer whose mark is a part ref: the strip treatment, with that part', () => {
+    const m = multi();
+    const between = owner('another message');
+    const ans = marked(`${pmark(m, 2)}Docs are done.`);
+    const g = pick(replyGroups([m, between, ans]), ans.id)!;
+    expect(g).toMatchObject({ targets: [m.id], strip: true, parts: [2] });
+    expect(messagePart(m, 2)).toMatchObject({ about: { kind: 'note', id: 'n2' }, words: 'go' });
+    expect(messagePart(m, 9)).toBeNull();
+  });
+});

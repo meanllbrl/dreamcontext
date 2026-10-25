@@ -84,7 +84,7 @@ import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { clearSuperNote, delegatedChildMcp, peekSuperNote, readSuperState, superIndex, superRootOfChild } from '../../lib/super/store.js';
-import { ABOUT_AGENDA_RE, OWNER_VOICE_TEXT, REPLY_TO_RE, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, ownerMsgBlock } from '../../lib/super/types.js';
+import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, ownerMsgBlock } from '../../lib/super/types.js';
 import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen, stageImageItems, stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, markSuperEventTurn, noteChatStarted, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded,
@@ -2416,20 +2416,17 @@ export function startChatSession(
     // The Super Agent's own question is open: this message answers it, and everything held
     // back while it was open rides in the SAME message (inbox.ts `superAnswerDigest`), a block
     // starting with `<` the replay drops.
-    // A message about one agenda line answers the open question only when that line is it.
-    const aboutHead = isSuper ? ABOUT_AGENDA_RE.exec(text) : null;
-    // A reply to one message (its ↩) is about that message, never the open question's answer.
-    const replyHead = isSuper && !aboutHead ? REPLY_TO_RE.exec(text) : null;
-    const about = aboutHead ? { kind: aboutHead[1] as 'note' | 'item', id: aboutHead[2] }
-      : replyHead ? { kind: 'reply' as const, id: replyHead[1] } : null;
-    const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), about) : null;
+    // A message about agenda lines answers the open question only when one of its parts is it;
+    // a reply to a message (its ↩) is about that message, never the open question's answer.
+    const abouts = isSuper ? aboutHeads(text).map(({ kind, id }) => ({ kind, id })) : [];
+    const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts) : null;
     if (held) content.push({ type: 'text', text: held.text });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
-    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], about);
+    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts);
     if (note && wrote) {
       void clearSuperNote(superRootOfChild(chatRegistryId) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }

@@ -18,8 +18,8 @@ import { Notice, NoticeRow, TokenDrop, ContextShrink, Glyph } from './Notice';
 import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
 import { useSpokenHighlight } from './useSpokenHighlight';
-import { splitAbout } from '../super/superHandover';
-import { AgendaAboutStrip, ReplySectionHead, ReplyStrip } from './AgendaAboutStrip';
+import { splitAbout, splitAboutParts, type MessagePart } from '../super/superHandover';
+import { AgendaAboutStrip, RefChip, ReplySectionHead, ReplyStrip } from './AgendaAboutStrip';
 import { useI18n } from '../../../context/I18nContext';
 import type { AgentRoleId } from '../../../lib/agentRoles';
 import type {
@@ -126,15 +126,23 @@ function UserMessage({
 }) {
   const [confirming, setConfirming] = useState(false);
   const { t } = useI18n();
+  const superView = !!session && (session.mode === 'super' || session.superMirror);
   // What was attached is drawn; what was typed stays in the bubble. Copy/quote/rewind all
   // keep `item.text` — the real message, paths and all, is what was sent.
-  const { text, media, refs, about } = useMemo(() => {
+  const { text, media, refs, about, parts } = useMemo(() => {
+    // Several references in one message (owner 2026-10-24, the Super view only): his words
+    // with each part's chip inline where he put it; the files at the top are the preamble's.
+    const multi = superView ? splitAboutParts(item.text) : null;
+    if (multi && multi.parts.length >= 2) {
+      const board = splitUserBoardRefs(multi.preamble);
+      return { ...splitUserMedia(board.text), refs: board.refs, about: null, parts: multi.parts };
+    }
     // A message written about an agenda line, or replying to one message (owner 2026-10-23),
     // opens with its block: drawn as a strip above the bubble, the bubble keeps only his words.
     const split = splitAbout(item.text);
     const board = splitUserBoardRefs(split.text);
-    return { ...splitUserMedia(board.text), refs: board.refs, about: split.about };
-  }, [item.text]);
+    return { ...splitUserMedia(board.text), refs: board.refs, about: split.about, parts: null };
+  }, [item.text, superView]);
   return (
     <div className="chat-msg-user-row" data-item-id={item.id} tabIndex={-1}>
       {about?.kind === 'reply'
@@ -158,7 +166,9 @@ function UserMessage({
           ))}
         </div>
       )}
-      {text && <div className="chat-msg-user-bubble">{text}</div>}
+      {parts
+        ? <PartsBubble preamble={text} parts={parts} itemId={item.id} superSid={superView && session ? session.claudeId : null} onReplyJump={onReplyJump} />
+        : text && <div className="chat-msg-user-bubble">{text}</div>}
       {/* The one item whose position in the transcript runs ahead of the truth: a steered
           message appears the instant it goes on the wire, while the CLI only folds it in at
           its next tool boundary — so the tool calls rendered just below it were decided
@@ -193,6 +203,43 @@ function UserMessage({
 }
 
 /**
+ * A sent message with several references (owner 2026-10-24): one bubble, his words in his order,
+ * each part's chip inline where he put it, in its slot. Chips are in the flow, so they wrap with
+ * the text. A reply chip lands on its message; an agenda chip opens its whole line under it.
+ * No header text ever reaches the DOM: the chip is drawn from the parsed part.
+ */
+function PartsBubble({ preamble, parts, itemId, superSid, onReplyJump }: {
+  preamble: string;
+  parts: MessagePart[];
+  itemId: string;
+  superSid: string | null;
+  onReplyJump?: (ref: string, from: 'super' | 'owner', beforeId: string) => void;
+}) {
+  const [open, setOpen] = useState<number | null>(null);
+  const shown = open != null ? parts[open]?.about : null;
+  return (
+    <div className="chat-msg-user-bubble chat-msg-user-bubble--parts" data-testid="chat-msg-parts">
+      {preamble && <span className="chat-msg-part-words">{preamble} </span>}
+      {parts.map((p, i) => {
+        const a = p.about;
+        const onClick = a.kind === 'reply'
+          ? (onReplyJump ? () => onReplyJump(a.ref, a.from, itemId) : undefined)
+          // A question's chip already reads whose question it is; a note's opens its whole line.
+          : a.kind === 'note' ? () => setOpen((cur) => (cur === i ? null : i)) : undefined;
+        return (
+          // eslint-disable-next-line react/no-array-index-key -- parts are positional in one sent text
+          <span key={i} className="chat-msg-part">
+            <RefChip about={a} slot={i + 1} part={i + 1} superSid={superSid} onClick={onClick} pressed={open === i} />
+            {p.words && <span className="chat-msg-part-words"> {p.words} </span>}
+          </span>
+        );
+      })}
+      {shown?.kind === 'note' && <span className="chat-msg-part-line" data-testid="chat-msg-part-line">{shown.line}</span>}
+    </div>
+  );
+}
+
+/**
  * ONE prose run of an assistant answer — the grey bubble, and the three decorating passes
  * that make its markdown clickable.
  *
@@ -218,7 +265,7 @@ export function ProseSegment({ text, parts, superSid = null, onReplyTarget, onOp
    *  opening with its head, a dashed rule before every section after the first thing. */
   parts?: ProsePart[];
   superSid?: string | null;
-  onReplyTarget?: (targetId: string) => void;
+  onReplyTarget?: (targetId: string, part?: number) => void;
   onOpenFile?: (path: string) => void;
   /** The blinking cursor. Only the run that is currently being typed gets one. */
   caret?: boolean;
@@ -307,7 +354,7 @@ function AssistantMessage({
   /** A SECTIONED Super reply's heads (ChatPane's replyHeadsById): present, the answer is parsed
    *  with its section starts and every part opens with the chip of the message it answers. */
   replyHeads?: ReplyHead[];
-  onReplyTarget?: (targetId: string) => void;
+  onReplyTarget?: (targetId: string, part?: number) => void;
   session?: ChatSession;
   onQuote?: (item: ChatUserItem | ChatTextItem) => void;
   /** The Super answer group this row belongs to (ChatPane's replyGroups): the thin line beside it. */
@@ -584,7 +631,7 @@ function ItemViewInner({
   /** A Super view: a SECTIONED answer's heads (stable arrays, ChatPane's replyHeadsById). */
   replyHeads?: ReplyHead[];
   /** A Super view: a head's click lands on the message it names (one stable callback). */
-  onReplyTarget?: (targetId: string) => void;
+  onReplyTarget?: (targetId: string, part?: number) => void;
   /** Suppresses the mutating hover actions (edit/retry/quote) — Copy always stays,
    *  since it never mutates anything. Used by the sub-agent drill-in. */
   readOnly?: boolean;

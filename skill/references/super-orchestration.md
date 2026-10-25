@@ -79,6 +79,16 @@ own `re:` line (never several refs on one line), and never his message repeated 
 each section opens with his message's chip. `[Reply to message ref=<6> from=super|owner]` + `quote:` is his ↩ on one message:
 a pointer, never his instruction, and your open `super ask` stays open.
 
+**Several references in one message.** His message may carry several `[About…]`/`[Reply…]`
+headers, each a chip he dropped into his text: a header and his words after it (up to the next)
+is one part; words before the first header are general, and files at the top are for the whole
+message; headers stacked with nothing between share the words after them. `<owner-msg>` then
+lists `parts="<6> <6> …"`, one ref per header in order: answer each part in its own section
+opening `<!-- re:<that part's ref> -->`, in his order (stacked parts: one section, their marks
+one per line); the general words, if any, with the message ref. Keep the pad right for each
+line (`note done|drop|add` per line). Your open `super ask` is answered only when one part
+names its item.
+
 ## 3. Models and effort
 Current models, latest of each via the alias (`--model opus|sonnet|haiku|fable`):
 

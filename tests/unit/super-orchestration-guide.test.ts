@@ -84,8 +84,9 @@ describe('super-orchestration guide: shape', () => {
   // which answer is to which message (`<owner-msg ref>`, `<!-- re: -->`, the ↩ reply, ~360).
   // +380 (2026-10-24, measured +377): one section per message with its own `re:` line, and a
   // choice the owner must make lives in the `super ask` card, never only in the text.
-  it('is at most 17,730 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(17_730);
+  // +770 (2026-10-24, measured +768): several references in one message, one section per part.
+  it('is at most 18,500 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(18_500);
   });
 
   it('has the seven sections in order', () => {
