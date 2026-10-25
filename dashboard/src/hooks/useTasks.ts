@@ -222,7 +222,7 @@ export function useTasks() {
     queryFn: () => api.get<TasksResponse>('/tasks'),
     select: (data) => data.tasks,
     // A board with a job moving on its own (an agent working, a start due) keeps its chips current.
-    refetchInterval: (q) => ((q.state.data?.tasks ?? []).some((t) => LIVE_JOB_STATES.has(t.agent_job?.state ?? '')) ? 15_000 : false),
+    refetchInterval: (q) => ((q.state.data?.tasks ?? []).some((t) => LIVE_JOB_STATES.has(t.agent_job?.state ?? '')) ? pollMs(15_000) : false),
   });
 }
 
@@ -234,7 +234,7 @@ export function useTask(slug: string) {
     select: (data) => data.task,
     enabled: !!slug,
     // While its agent job moves on its own (scheduled, queued, running), the drawer follows it.
-    refetchInterval: (q) => (LIVE_JOB_STATES.has(q.state.data?.task.agent_job?.state ?? '') ? 10_000 : false),
+    refetchInterval: (q) => (LIVE_JOB_STATES.has(q.state.data?.task.agent_job?.state ?? '') ? pollMs(10_000) : false),
   });
 }
 

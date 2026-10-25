@@ -8,11 +8,12 @@ import { loadStatuses } from '../overrides.js';
 import { statusKind, PARENT_BY_KIND } from '../task-status.js';
 import { withTaskFileLock } from '../task-file-lock.js';
 import { updateFrontmatterFields } from '../frontmatter.js';
-import { localDir } from '../local-store.js';
+import { localDir, updateLocalJson } from '../local-store.js';
 import { lockHolderPid, reclaimDeadHolderLock } from '../file-lock.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { closeInboxRows, listInboxRows, raiseInboxRow, retargetInboxRows, type InboxRow } from '../owner-inbox.js';
+import { hasProjectMember, listGlobalAgentSlugs } from './scope.js';
 import { readAccountWait } from '../automations/account.js';
 import { clearRunSidecar, getRunTarget, lockPathFor, readRunSidecar } from '../automations/store.js';
 import { allPendingQuestions, writeQuestion } from '../automations/hitl.js';
@@ -289,6 +290,37 @@ interface Candidate {
  * Start every due task step this machine may start. Returns the run ids it handed to a host.
  * Never awaits a run; never throws for an operational reason.
  */
+/**
+ * A project member that holds a global agent's name (a synced one, or one made before the global
+ * agent was) is THE agent of that name here: tell the owner once, so nothing reads as the global
+ * agent that is not it (D1). Never throws.
+ */
+export function noteShadowedGlobalAgents(contextRoot: string, home?: string): void {
+  try {
+    const projectRoot = dirname(contextRoot);
+    const shadowed = listGlobalAgentSlugs().filter((slug) => hasProjectMember(contextRoot, slug));
+    // Said once per shadowing (a dismissed row stays dismissed); a name no longer shadowed is forgotten.
+    let fresh: string[] = [];
+    updateLocalJson<{ slugs: string[] }>(projectRoot, 'global-shadows.json', { slugs: [] }, (cur) => {
+      const seen = Array.isArray(cur.slugs) ? cur.slugs.filter((x) => typeof x === 'string') : [];
+      fresh = shadowed.filter((x) => !seen.includes(x));
+      return { slugs: shadowed };
+    }, home);
+    for (const slug of fresh) {
+      raiseInboxRow(projectRoot, {
+        kind: 'replaced-by-sync',
+        ref: slug,
+        agent: slug,
+        title: `In this project "${slug}" is a member of the project, not your global agent of that name: your global agent does not run here.`,
+        actions: ['dismiss'],
+        dedupeKey: `global-shadowed:${slug}`,
+      }, home);
+    }
+  } catch {
+    // the next drain says it
+  }
+}
+
 export function startDueTaskJobs(contextRoot: string, deps: TaskJobDeps = {}): string[] {
   const home = deps.home;
   const now = (deps.now ?? (() => new Date()))();
@@ -301,6 +333,7 @@ export function startDueTaskJobs(contextRoot: string, deps: TaskJobDeps = {}): s
     if (sleep.locked && !sleep.stale) return started;
     if (readAccountWait(home, now.getTime()) !== null) return started;
     scanOutsideAssignments(contextRoot, home);
+    noteShadowedGlobalAgents(contextRoot, home);
 
     const jobs = readTaskJobs(projectRoot, home);
     const open = allPendingQuestions(contextRoot);
@@ -340,6 +373,15 @@ export function startDueTaskJobs(contextRoot: string, deps: TaskJobDeps = {}): s
       if (busy.has(c.agent)) continue;
       const target = getRunTarget(contextRoot, c.agent, 'agent');
       if (!target) continue;
+      // Assigned to a global agent, and a project member of its name took the name since (D1):
+      // never run it as someone else. The owner decides (Continue once it is sorted, or take it).
+      if (metaFor(projectRoot, c.view.id, home)?.globalAgents?.includes(c.agent) && target.agentScope !== 'global') {
+        const why = `${c.agent} is now a member of this project, not your global agent it was given to`;
+        if (casTask(contextRoot, c.view.slug, { from: ['scheduled', 'queued'] }, { agent_state: 'blocked', agent_blocked: why, updated_at: today() })) {
+          raiseTaskRow(projectRoot, 'task-blocked', c.view, c.agent, `${c.view.name}: blocked, ${why}.`, ['continue', 'take-over', 'dismiss'], undefined, home, now);
+        }
+        continue;
+      }
       if (!placement(contextRoot, c.agent, target.owner ?? null, home, now).here) continue;
       if (open.some((q) => q.slug === c.agent && q.state === 'pending')) { busy.add(c.agent); continue; }
       if (!runLockFree(contextRoot, c.agent, deps)) { busy.add(c.agent); continue; }

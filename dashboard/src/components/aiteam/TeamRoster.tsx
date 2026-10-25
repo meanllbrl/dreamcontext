@@ -341,8 +341,11 @@ function Row({
           </span>
         )}
         {note && <span className="aiteam-rollup">{note}</span>}
-        {(row.status === 'needs' || row.status === 'paused' || row.status === 'approval' || row.elsewhere || row.readOnly) && (
+        {(row.status === 'needs' || row.status === 'paused' || row.status === 'approval' || row.elsewhere || row.readOnly || row.global) && (
           <span className="aiteam-row-tags">
+            {row.global && (
+              <span className="aiteam-tag aiteam-tag--accent" data-global-chip title={t('aiteam.tag.globalHint')}>{t('aiteam.tag.global')}</span>
+            )}
             {row.readOnly && (
               <span className="aiteam-tag aiteam-tag--muted" data-owner-chip><TeamIcon name="lock" size={10} />{t('aiteam.owner.of').replace('{owner}', row.ownerLabel ?? '')}</span>
             )}

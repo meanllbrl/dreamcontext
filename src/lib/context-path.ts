@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 const CONTEXT_DIR = '_dream_context';
 const MAX_WALK_UP = 5;
@@ -29,7 +29,8 @@ function registeredProjectRoots(): string[] {
     // `{ projects: { <projectRoot>: { approvals } } }` (automations/registry.ts); read here
     // directly, since this module sits below the registry and must not import it.
     const projects = raw.projects && typeof raw.projects === 'object' && !Array.isArray(raw.projects) ? Object.keys(raw.projects) : [];
-    return projects.map((p) => realOrNull(p)).filter((p): p is string => !!p);
+    // Absolute keys only: the `global` bucket of global agents (D1) is a name, never a folder.
+    return projects.filter((p) => isAbsolute(p)).map((p) => realOrNull(p)).filter((p): p is string => !!p);
   } catch {
     return [];
   }

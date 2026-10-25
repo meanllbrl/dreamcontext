@@ -92,7 +92,7 @@ const TRASH_KEY = [...LIST_KEY, 'trash'] as const;
  *  "To move canvas…" hint under it; the sides and bottom keep content off the edges. */
 const FIT_INSETS = { top: 112, right: 32, bottom: 32, left: 32 };
 
-export function useWhiteboardList() {
+export function useWhiteboardList(opts: { enabled?: boolean } = {}) {
   const api = useApi();
   return useQuery({
     queryKey: LIST_KEY,
@@ -100,6 +100,8 @@ export function useWhiteboardList() {
       const res = await api.get<WhiteboardSummary[] | { whiteboards: WhiteboardSummary[] }>(LIST_PATH);
       return Array.isArray(res) ? res : (res.whiteboards ?? []);
     },
+    // Off where there is no project to have boards (the launcher's global agent form).
+    enabled: opts.enabled ?? true,
   });
 }
 

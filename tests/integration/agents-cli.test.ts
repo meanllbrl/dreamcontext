@@ -231,16 +231,18 @@ describe('an approval question whose agent is gone', () => {
 });
 
 describe('tasks assign-agent', () => {
-  it('assigns, moves an open task, runs the agent and logs one result line', () => {
+  it('assigns, moves an open task and queues its job, moved by the owner (AI Team v2 C1: a detached host runs it)', () => {
     run(['agents', 'create', 'scout', '--title', 'Scout', '--prompt', 'p'], projectDir, home);
     const path = seedTask('fix-login');
     const out = run(['tasks', 'assign-agent', 'fix-login', 'scout', '--note', 'Start with the tests.'], projectDir, home);
-    // claude is unreachable here, so the run itself fails — after the assignment landed.
     expect(out.stdout).toContain('Assigned fix-login to Scout');
+    expect(out.stdout).toContain('It is queued and starts when Scout is free');
     const text = readFileSync(path, 'utf-8');
     expect(text).toMatch(/^agent: scout$/m);
     expect(text).toMatch(/^status: in_progress$/m);
-    expect(text.match(/- Run [^\n]*: \w[\w-]*\. Document: /g)).toHaveLength(1);
+    expect(text).toMatch(/^agent_state: queued$/m);
+    expect(text).toMatch(/^agent_step: work$/m);
+    expect(text).toMatch(/^### \d{4}-\d{2}-\d{2} - Status → in_progress \(by owner\)$/m);
   });
 
   it('refuses inside an agent run, writing nothing', () => {

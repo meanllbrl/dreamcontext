@@ -4,6 +4,7 @@ import { useI18n } from '../../context/I18nContext';
 import {
   useAgent,
   useCreateAgentIdentity,
+  useCreateGlobalAgent,
   useUpdateAgentIdentity,
   useUploadAgentIdentityPhoto,
   type AgentAutonomy,
@@ -117,7 +118,7 @@ export function identityErrorKey(err: unknown): 'agents.identity.truncated' | 'a
  * is the whole prompt, never a preview.
  */
 export function AgentIdentityDialog({
-  slug, whiteboard, onClose, onSaved, inline = false, initial, onDraftTitle, note, submitLabel,
+  slug, whiteboard, onClose, onSaved, inline = false, initial, onDraftTitle, note, submitLabel, scope,
 }: {
   /** The agent to edit, or null to create one. */
   slug: string | null;
@@ -136,15 +137,21 @@ export function AgentIdentityDialog({
   note?: string;
   /** Replaces the create button's words (AI Team: "Add to team"). */
   submitLabel?: string;
+  /** Create only: `global` makes this machine's global agent from the launcher (D1), with no
+   *  project behind the form, so no photo and no home board. */
+  scope?: 'global';
 }) {
   const { t } = useI18n();
   const editing = slug !== null;
   const detail = useAgent(slug, { fresh: true });
-  const boards = useWhiteboardList();
+  // A global agent has neither: both belong to one project (an edit learns it from the read).
+  const global = scope === 'global' || detail.data?.agent.scope === 'global';
+  const boards = useWhiteboardList({ enabled: scope !== 'global' });
   const create = useCreateAgentIdentity();
+  const createGlobal = useCreateGlobalAgent();
   const update = useUpdateAgentIdentity();
   const upload = useUploadAgentIdentityPhoto();
-  const busy = create.isPending || update.isPending || upload.isPending;
+  const busy = create.isPending || createGlobal.isPending || update.isPending || upload.isPending;
 
   const [form, setForm] = useState<IdentityForm>(() => (editing ? EMPTY_IDENTITY_FORM : { ...createForm(whiteboard), ...initial }));
   const draftTitle = useRef(onDraftTitle);
@@ -182,7 +189,7 @@ export function AgentIdentityDialog({
   const agentTitle = detail.data?.agent.title ?? '';
   const heading = editing
     ? t('agents.identity.editTitle').replace('{name}', agentTitle)
-    : t('agents.identity.createTitle');
+    : scope === 'global' ? t('agents.identity.createGlobalTitle') : t('agents.identity.createTitle');
 
   const set = <K extends keyof IdentityForm>(key: K, value: IdentityForm[K]) => {
     setForm((cur) => ({ ...cur, [key]: value }));
@@ -252,15 +259,22 @@ export function AgentIdentityDialog({
       update.mutate({ slug, patch }, { onSuccess: finish, onError: fail });
       return;
     }
-    create.mutate({
+    const draft = {
       title: form.title.trim(),
       prompt: form.prompt.trim(),
       model: form.model || null,
       effort: form.effort || null,
-      whiteboard: form.whiteboard || null,
       learning: form.learning,
       ...(form.soul.trim() ? { soul: form.soul.trim() } : {}),
-    }, { onSuccess: finish, onError: fail });
+    };
+    if (scope === 'global') {
+      createGlobal.mutate(draft, {
+        onSuccess: (saved) => onSaved(saved.slug, t('agents.identity.created').replace('{name}', saved.title)),
+        onError: fail,
+      });
+      return;
+    }
+    create.mutate({ ...draft, whiteboard: form.whiteboard || null }, { onSuccess: finish, onError: fail });
   };
 
   const boardList = boards.data ?? [];
@@ -276,7 +290,7 @@ export function AgentIdentityDialog({
 
         {editing && detail.isError && <p className="aid-error" role="alert">{t('agents.page.loadFailed')}</p>}
 
-        <div className="aid-photo">
+        {!global && <div className="aid-photo">
           {preview
             ? <span className="aid-photo-preview"><img src={preview} alt="" /></span>
             : (
@@ -301,7 +315,8 @@ export function AgentIdentityDialog({
               onChange={(e) => { pickFile(e.target.files?.[0]); e.target.value = ''; }}
             />
           </div>
-        </div>
+        </div>}
+        {scope === 'global' && <p className="aid-note" data-global-note>{t('agents.identity.globalNote')}</p>}
 
         <label className="aid-field">
           <span className="aid-label">{t('agents.identity.name')}</span>
@@ -402,14 +417,14 @@ export function AgentIdentityDialog({
               {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
             </select>
           </label>
-          <label className="aid-field">
+          {!global && <label className="aid-field">
             <span className="aid-label">{t('agents.identity.board')}</span>
             <select className="aid-select" value={form.whiteboard} onChange={(e) => set('whiteboard', e.target.value)} disabled={!ready}>
               <option value="">{t('agents.identity.noBoard')}</option>
               {boardList.filter((b) => !b.corrupt).map((b) => <option key={b.slug} value={b.slug}>{b.name}</option>)}
               {boardMissing && <option value={form.whiteboard}>{form.whiteboard}</option>}
             </select>
-          </label>
+          </label>}
         </div>
 
         <label className="aid-check">

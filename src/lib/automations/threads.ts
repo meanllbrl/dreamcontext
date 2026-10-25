@@ -9,7 +9,7 @@ import { automationsDir, getAutomation, isSafeAutomationSlug, listAutomations } 
 import { notifyViaBundle, NOTIFY_SOUND_OK } from './notifier.js';
 import { appLinkForContextRoot } from '../app-link.js';
 import { readMachineIdentity } from '../machine-id.js';
-import { safeWriteTarget } from '../vault-read.js';
+import { memberSidePath, safeMemberWrite } from '../agents/scope.js';
 import { recordThreadEntryHere } from '../agents/agent-sync.js';
 import {
   AutomationError,
@@ -80,7 +80,8 @@ export function threadsDir(contextRoot: string): string {
  *  and the same reason as `automationSessionsPath`. */
 export function threadSlugDir(contextRoot: string, slug: string): string {
   if (!isSafeAutomationSlug(slug)) throw new AutomationError(`Invalid automation slug "${slug}".`);
-  return join(threadsDir(contextRoot), slug);
+  // A global agent's thread stays on this machine, in its folder for this project (D1).
+  return memberSidePath(contextRoot, slug, join('threads', slug));
 }
 
 /** `YYYY-MM-DD` in LOCAL time — schedules are machine-local wall-clock, so a
@@ -549,7 +550,7 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
   }
 
   // A synced folder can hold a teammate's symlink: never write through one (B1, M2).
-  if (!safeWriteTarget(contextRoot, dayPath)) {
+  if (!safeMemberWrite(contextRoot, dayPath)) {
     throw new AutomationError(`Refusing to write ${slug}'s thread through a symlink.`);
   }
   mkdirSync(dir, { recursive: true });

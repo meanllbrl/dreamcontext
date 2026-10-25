@@ -86,6 +86,9 @@ export function AgentStage({
                 {readOnly ? t('aiteam.owner.of').replace('{owner}', agent.ownerLabel ?? agent.owner) : t('aiteam.owner.you')}
               </span>
             )}
+            {agent.scope === 'global' && (
+              <span className="aiteam-tag aiteam-tag--accent" data-global-chip title={t('aiteam.tag.globalHint')}>{t('aiteam.tag.global')}</span>
+            )}
           </span>
           {row.role && <span className="aiteam-convo-role">{row.role}</span>}
         </div>

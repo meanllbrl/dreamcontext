@@ -206,6 +206,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/launcher/detect': deny(OTHER_PROJECTS),
   'GET /api/launcher/defaults': deny(LAUNCHER),
   'GET /api/launcher/catalog': deny(LAUNCHER),
+  'GET /api/launcher/global-agents': deny(LAUNCHER),
+  'POST /api/launcher/global-agents': deny(LAUNCHER),
   'POST /api/launcher/register': deny(OTHER_PROJECTS),
   'POST /api/launcher/scaffold': deny(OTHER_PROJECTS),
   'GET /api/launcher/agent-settings': agnostic('read: the Agents page display preferences; side-effect free'),

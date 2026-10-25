@@ -152,6 +152,8 @@ import {
   handleAgentsList,
   handleAgentsShow,
   handleAgentsCreate,
+  handleLauncherGlobalAgents,
+  handleLauncherGlobalAgentsCreate,
   handleAgentsUpdate,
   handleAgentsDelete,
   handleAgentsApprove,
@@ -464,6 +466,9 @@ export function buildRouter(): Router {
   router.get('/api/launcher/defaults', handleLauncherDefaults);
   router.get('/api/launcher/catalog', handleLauncherCatalog);
   router.post('/api/launcher/register', handleLauncherRegister);
+  // This machine's global agents (D1): listed and created from the launcher, no project needed.
+  router.get('/api/launcher/global-agents', handleLauncherGlobalAgents);
+  router.post('/api/launcher/global-agents', handleLauncherGlobalAgentsCreate);
 
   // The dreamcontext Assistant (vault-agnostic; every route self-gates — see routes/assistant.ts).
   router.get('/api/assistant/status', handleAssistantStatus);

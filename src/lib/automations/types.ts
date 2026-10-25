@@ -487,6 +487,9 @@ export interface AutomationManifest {
   owner?: string;
   /** A routine's own owner, only when it differs from its agent's: a target answers to both. */
   jobOwner?: string;
+  /** `'global'` on a GLOBAL agent's call target (D1, `agents/scope.ts`): its approval lives in the
+   *  machine registry's `global` bucket, not the project's. Unhashed; absent for a project member. */
+  agentScope?: 'global';
   /** For an agent's call target only: every automation bound to the agent, as
    *  its current composed hash. `[]` for an automation. Rule (c) of
    *  `checkApproval` reads it, for an `'identity'` use only. */

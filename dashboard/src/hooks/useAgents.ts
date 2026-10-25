@@ -79,6 +79,9 @@ export interface AgentSummary {
   ownerLabel?: string | null;
   /** Someone else's agent: read-only here (no composer, no edit, no assign). */
   readOnly?: boolean;
+  /** `global`: this machine's agent, listed in every project and kept out of every brain (AI Team
+   *  v2 D1). Optional: an older server sends none, which reads as `project`. */
+  scope?: 'project' | 'global';
   /** The owner's other machine runs it (same login, several machines). */
   runsElsewhere?: { machine: string; name: string } | null;
   /** Arrived by sync and was not created on this machine. */
@@ -163,6 +166,43 @@ export function useAgent(slug: string | null, opts: { fresh?: boolean } = {}) {
     retry: 0,
     // `fresh`: an edit dialog writes back what it read, so it must never start from a copy.
     ...(opts.fresh ? { refetchOnMount: 'always' as const } : {}),
+  });
+}
+
+/** A global agent as the launcher lists it (AI Team v2 D1): no project, so no usage. */
+export interface GlobalAgentRow {
+  slug: string;
+  title: string;
+  roleLine: string;
+  description: string;
+  face?: AgentFace;
+  autonomy: AgentAutonomy;
+  model: string | null;
+  approvedToRun: boolean;
+}
+
+/** This machine's global agents, read without a project (the launcher). */
+export function useGlobalAgents(opts: { enabled?: boolean } = {}) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['global-agents'],
+    queryFn: () => api.get<{ agents: GlobalAgentRow[] }>('/launcher/global-agents').then((r) => r.agents),
+    retry: 0,
+    enabled: opts.enabled ?? true,
+  });
+}
+
+/** Create a global agent from the launcher, granted on this machine (no project needed). */
+export function useCreateGlobalAgent() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: (draft: AgentIdentityDraft) =>
+      api.post<{ agent: GlobalAgentRow }>('/launcher/global-agents', draft).then((r) => r.agent),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['global-agents'] });
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+    },
   });
 }
 

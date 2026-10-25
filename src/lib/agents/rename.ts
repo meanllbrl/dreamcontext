@@ -12,6 +12,7 @@ import { withTaskFileLock } from '../task-file-lock.js';
 import { brainPrefix, createdLocally, moveFileAcross, recordCreatedLocally, renameInAgentSyncRecords, renameOrForgetThreadLedger } from './agent-sync.js';
 import { currentLogin, ownedBy } from './owner.js';
 import { isSafeAutomationSlug, parseManifestFrontmatter } from './slot.js';
+import { isGlobalAgentHere } from './scope.js';
 import { AGENTS_DIR } from './types.js';
 
 /**
@@ -75,6 +76,8 @@ function lockHeld(contextRoot: string, slug: string): boolean {
 /** Rename this machine's `from` to `to`. Throws `AutomationError` when refused. */
 export function renameAgentLocal(contextRoot: string, from: string, to: string, opts: RenameOptions = {}): void {
   if (!isSafeAutomationSlug(from) || !isSafeAutomationSlug(to)) throw new AutomationError(`Cannot rename "${from}" to "${to}".`);
+  // A global agent is renamed by deleting and creating it again: its name keys every project's folder (D1).
+  if (isGlobalAgentHere(contextRoot, from)) throw new AutomationError(`"${from}" is a global agent: it keeps its name.`);
   const gitCwd = dirname(contextRoot);
   const inRepo = git.isGitRepo(gitCwd);
   if (inRepo && git.hasMergeHead(gitCwd)) throw new AutomationError(`A brain merge is still open; ${from} is renamed once it commits.`);

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 import {
@@ -16,6 +16,7 @@ import {
 } from './types.js';
 import { classifyAutomationSlot, contextRootOf } from '../agents/slot.js';
 import { assertOwned, currentLogin, foreignOwner } from '../agents/owner.js';
+import { GLOBAL_REGISTRY_KEY } from '../agents/scope.js';
 
 /**
  * Automations registry — the machine-local approval tripwire + project
@@ -223,9 +224,14 @@ function tryRealpath(p: string): string {
 /** The stored key for this project, or null when it has none yet. */
 function findProjectKey(registry: AutomationsRegistry, projectRoot: string): string | null {
   if (registry.projects[projectRoot]) return projectRoot;
+  // The global agents' bucket is a name, never a path to resolve (D1).
+  if (projectRoot === GLOBAL_REGISTRY_KEY) return null;
   const canonical = tryRealpath(projectRoot);
   if (canonical !== projectRoot && registry.projects[canonical]) return canonical;
   for (const stored of Object.keys(registry.projects)) {
+    // Only a stored absolute path is an alias: the `global` bucket (D1) is a name, and resolving
+    // it would read `<cwd>/global`, which a project folder (or a committed link) could be.
+    if (stored === GLOBAL_REGISTRY_KEY || !isAbsolute(stored)) continue;
     if (stored !== projectRoot && tryRealpath(stored) === canonical) return stored;
   }
   return null;
@@ -253,7 +259,7 @@ export function unregisterProject(projectRoot: string, home?: string): boolean {
 
 /** Every project root currently registered on this machine. */
 export function listRegisteredProjects(home?: string): string[] {
-  return Object.keys(readAutomationsRegistry(home).projects);
+  return Object.keys(readAutomationsRegistry(home).projects).filter((k) => k !== GLOBAL_REGISTRY_KEY);
 }
 
 // ─── Approval payload (the tripwire's whole correctness claim) ──────────────
@@ -629,7 +635,8 @@ export function checkApproval(
   const actual = manifestHash(m);
   const owner = foreignOwner(m, login);
   if (owner) return { approved: false, reason: 'not_owner', owner, expected: null, actual };
-  const project = projectEntry(readAutomationsRegistry(home), projectRoot);
+  // A global agent's grant lives in the machine's `global` bucket: one approval, every project (D1).
+  const project = projectEntry(readAutomationsRegistry(home), m.agentScope === 'global' ? GLOBAL_REGISTRY_KEY : projectRoot);
   if (m.runKind !== 'agent') return judgeEntry(project?.approvals[m.slug], actual);
 
   const direct = project?.agentApprovals?.[m.slug];
@@ -701,6 +708,12 @@ export function approveAutomation(projectRoot: string, m: AutomationManifest, no
   // Someone else's member is read-only here: approving it would be running it by another door.
   assertOwned(m, m.agentTitle || m.title || m.slug);
   const entry = approvalEntryFor(m, now);
+  if (m.agentScope === 'global') {
+    return mutateProject(GLOBAL_REGISTRY_KEY, home, (project) => {
+      project.agentApprovals = { ...(project.agentApprovals ?? {}), [m.slug]: entry };
+      return entry;
+    });
+  }
   return mutateProject(projectRoot, home, (project) => {
     if (m.runKind === 'agent') {
       project.agentApprovals = { ...(project.agentApprovals ?? {}), [m.slug]: entry };

@@ -177,6 +177,14 @@
   outline-offset: 2px;
 }
 
+.aid-chip--static {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  cursor: default;
+  color: var(--color-text-secondary);
+}
+
 .aid-chip:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -308,3 +316,55 @@
 .aid-autonomy-lines li.is-on { color: var(--color-text-secondary); }
 .aid-autonomy-lines b { font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); }
 .aid-autonomy-lines li.is-on b { color: var(--color-text); }
+
+/* ─── The launcher's global agents (D1): the list, and the form drawn inside the same modal ─── */
+
+[data-global-agents] .aid-inline { display: contents; }
+[data-global-agents] .aid-inline .aid-modal {
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  animation: none;
+}
+
+.aid-global-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.aid-global-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.aid-global-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.aid-global-text .aid-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aid-global-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}

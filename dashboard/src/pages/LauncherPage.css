@@ -49,6 +49,11 @@
 .launcher-actions {
   display: flex;
   align-items: center;
+  /* A narrow window wraps the controls instead of pushing the first ones past the left edge
+     (the bar is right-aligned, and nothing scrolls to the left). */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
   gap: var(--space-2);
   /* `cursor` inherits from the bar's `grab`, so the controls restate their own —
      otherwise the search field and every button label reads as "grab me". */
@@ -62,7 +67,8 @@
   color: var(--color-text);
   padding: var(--space-2) var(--space-3);
   font-size: var(--font-size-sm);
-  min-width: 200px;
+  min-width: 0;
+  flex: 1 1 calc(var(--space-12) * 3);
   cursor: text;
 }
 

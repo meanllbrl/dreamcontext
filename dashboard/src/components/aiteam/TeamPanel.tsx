@@ -62,7 +62,10 @@ export function TeamPanel({
 }) {
   const { t } = useI18n();
   // A teammate's agent (B1-4): every tab reads, nothing writes.
-  const readOnly = findAgent(useAgents().data, slug)?.readOnly === true;
+  const member = findAgent(useAgents().data, slug);
+  const readOnly = member?.readOnly === true;
+  // A global agent reports to the owner in every project: it has no place in one project's team (D1).
+  const global = member?.scope === 'global';
   const reports = team?.tree.nodes.get(slug)?.children.length ?? 0;
   const tabs: { id: PanelTab; label: string; count?: number }[] = [
     { id: 'profile', label: t('aiteam.panel.profile') },
@@ -96,7 +99,7 @@ export function TeamPanel({
       </div>
       {tab === 'profile' && (
         <AgentProfilePanel slug={slug} onClose={onClose} onEdit={onEdit} onDeleted={onDeleted} onToast={onToast}
-          placement={readOnly ? null : <PlaceInTeam slug={slug} onOpen={onSelectAgent} onToast={onToast} />} />
+          placement={readOnly || global ? null : <PlaceInTeam slug={slug} onOpen={onSelectAgent} onToast={onToast} />} />
       )}
       {tab === 'team' && team && (
         <TeamTab

@@ -10,6 +10,7 @@ import { scrubContent, type ScrubHit } from '../git-sync/scrub.js';
 import { listPeople } from '../people-store.js';
 import { closeInboxRows, listInboxRows, raiseInboxRow } from '../owner-inbox.js';
 import { currentLogin, machineOwner, MACHINE_OWNER_PREFIX, ownedBy, parseOwner, UNOWNED } from './owner.js';
+import { isGlobalAgentHere } from './scope.js';
 import { parseManifestFrontmatter } from './slot.js';
 import { AGENTS_DIR } from './types.js';
 import { readActive, writeActiveHere } from './active.js';
@@ -1170,7 +1171,8 @@ export function adoptPattern(contextRoot: string, slug: string, text: string, ho
  * an "adopt?" row, since the file's text came from elsewhere.
  */
 export function effectivePattern(contextRoot: string, slug: string, filePattern: string, home?: string): string {
-  if (!agentSyncSwitchOn(contextRoot)) return filePattern;
+  // A global agent never syncs: its pattern is its own memory, nothing to adopt (D1).
+  if (!agentSyncSwitchOn(contextRoot) || isGlobalAgentHere(contextRoot, slug)) return filePattern;
   const adopted = adoptedPattern(contextRoot, slug, home);
   if (adopted === filePattern) return filePattern;
   if (adopted === null && !filePattern.trim()) return filePattern;

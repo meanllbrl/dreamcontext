@@ -20,6 +20,7 @@ import { useReadiness } from '../hooks/useOnboarding';
 import { useI18n } from '../context/I18nContext';
 import { SpaceLauncher } from './space/SpaceLauncher';
 import { AssistantEntryCard } from '../components/assistant/AssistantEntryCard';
+import { GlobalAgentsDialog } from '../components/agents/GlobalAgentsDialog';
 import {
   initLauncherViewFromServer,
   readLauncherViewLocal,
@@ -57,6 +58,7 @@ export function LauncherPage() {
   const { t } = useI18n();
   /** The onboarding takeover and the step it opened at; null when the Launcher shows. */
   const [onboarding, setOnboarding] = useState<Exclude<OnboardingStage, 'handoff'> | null>(null);
+  const [globalAgents, setGlobalAgents] = useState(false);
   /** The takeover opened by itself (no projects yet), so it starts on the Welcome screen. */
   const [onboardingWelcome, setOnboardingWelcome] = useState(false);
   /** "Skip for now" on the automatic takeover: don't bring it straight back this launch. */
@@ -255,6 +257,14 @@ export function LauncherPage() {
           )}
           <button
             type="button"
+            className="launcher-btn"
+            onClick={() => setGlobalAgents(true)}
+            data-launcher-global-agents
+          >
+            {t('launcher.globalAgents')}
+          </button>
+          <button
+            type="button"
             className="launcher-btn launcher-btn-primary"
             onClick={() => openOnboarding()}
           >
@@ -391,6 +401,8 @@ export function LauncherPage() {
           </div>
         </>
       )}
+
+      {globalAgents && <GlobalAgentsDialog onClose={() => setGlobalAgents(false)} />}
 
       {onboarding !== null && (
         <Onboarding

@@ -83,6 +83,8 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'GET /api/launcher/detect',
   'GET /api/launcher/defaults',
   'GET /api/launcher/catalog',
+  'GET /api/launcher/global-agents',
+  'POST /api/launcher/global-agents',
   'POST /api/launcher/register',
   'POST /api/launcher/scaffold',
   'POST /api/launcher/agent-settings',

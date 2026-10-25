@@ -15,6 +15,7 @@ import { appendThreadEntry } from '../automations/threads.js';
 import { oneDataLine, TASK_NAME_MAX_CHARS } from '../automations/runner.js';
 import type { AutomationManifest, RunStatus } from '../automations/types.js';
 import { isSafeAutomationSlug } from './slot.js';
+import { isGlobalAgentHere } from './scope.js';
 import { ownerLabel } from './owner.js';
 import { armStart, recordAssignment } from './assignment-ledger.js';
 import { clampReviewCap, forgetTaskJob, REVIEW_CAP_DEFAULT, setResumeNote, writeMeta, type TaskWorkspace } from './task-jobs.js';
@@ -261,6 +262,7 @@ export function commitAssignment(
     taskId: prep.task.id, taskSlug: slug, doer: agent.slug, reviewer: job.reviewer?.slug ?? null,
     workspace: job.workspace, repo: job.repo, startAt: job.startAt, queuedAt: fireAt.toISOString(),
     reviewCap: job.reviewCap, base: null, noVerdict: 0,
+    globalAgents: [agent.slug, job.reviewer?.slug].filter((s): s is string => !!s && isGlobalAgentHere(contextRoot, s)),
   }, opts.home);
   if (prep.dataNote || prep.ownerNote) {
     // The note rides the first step's brief as data (the owner's dashboard note included: the

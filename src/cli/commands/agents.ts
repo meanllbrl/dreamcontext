@@ -8,6 +8,7 @@ import { success, error, header, warn } from '../../lib/format.js';
 import {
   agentUsage,
   createAgent,
+  createGlobalAgent,
   getAgent,
   listAgents,
   removeAgent,
@@ -149,6 +150,7 @@ export function registerAgentsCommand(program: Command): void {
         return {
           slug: a.slug,
           title: a.title,
+          scope: a.scope,
           approvedForChat: v?.chat ?? false,
           approvedToRun: v?.run ?? false,
           owner: a.owner,
@@ -173,7 +175,8 @@ export function registerAgentsCommand(program: Command): void {
           ? chalk.dim(`${ownerLabel(r.owner ?? '')}'s · read-only`)
           : r.approvedToRun ? chalk.green('may run') : r.approvedForChat ? chalk.yellow('chat only') : chalk.red('needs approval');
         const used = r.automations.length > 0 ? chalk.dim(` · runs ${r.automations.join(', ')}`) : '';
-        return `${chalk.bold(r.slug)}  ${r.title}  ${state}${used}`;
+        const scope = r.scope === 'global' ? chalk.cyan(' · global') : '';
+        return `${chalk.bold(r.slug)}  ${r.title}  ${state}${scope}${used}`;
       };
       if (!opts.tree) {
         for (const r of rows) console.log(`  ${line(r)}`);
@@ -253,7 +256,36 @@ export function registerAgentsCommand(program: Command): void {
     .option('--effort <level>', `Effort (${EFFORT_LEVELS.join(', ')})`)
     .option('--whiteboard <board>', 'Home board: the agent acts only on it')
     .option('--no-learning', 'Do not keep a pattern of lessons')
-    .action((slug: string, opts: SoulOptions & { title: string; prompt: string; model?: string; effort?: string; whiteboard?: string; learning: boolean }) => {
+    .option('--scope <scope>', 'project (this brain, default) or global (this machine: listed in every project, never in a brain)', 'project')
+    .action((slug: string, opts: SoulOptions & { title: string; prompt: string; model?: string; effort?: string; whiteboard?: string; learning: boolean; scope: string }) => {
+      if (opts.scope !== 'project' && opts.scope !== 'global') {
+        fail(new Error(`--scope is project or global, not "${opts.scope}".`));
+        return;
+      }
+      // Inside an agent run, nothing it creates is approved by it: the owner approves on the AI Team
+      // page (a self-approved global agent would run in every project of this machine).
+      const selfRun = insideAgentRun();
+      const approve = selfRun ? {} : { approve: { now: new Date() } };
+      const unapproved = selfRun ? ' It waits for the owner\'s approval on the AI Team page.' : '';
+      if (opts.scope === 'global') {
+        try {
+          const soul = resolveSoulOption(opts);
+          createGlobalAgent({
+            slug,
+            title: opts.title,
+            prompt: opts.prompt,
+            soul: soul ?? '',
+            model: opts.model ?? null,
+            effort: readEffort(opts.effort) ?? null,
+            whiteboard: opts.whiteboard ?? null,
+            learning: opts.learning,
+          }, approve);
+          success(`Created the global agent "${slug}" (~/.dreamcontext/agents/${slug}.md): every project lists it${selfRun ? '.' + unapproved : ', approved on this machine.'}`);
+        } catch (err) {
+          fail(err);
+        }
+        return;
+      }
       const root = ensureContextRoot();
       try {
         const soul = resolveSoulOption(opts);
@@ -267,8 +299,8 @@ export function registerAgentsCommand(program: Command): void {
           effort: readEffort(opts.effort) ?? null,
           whiteboard: opts.whiteboard ?? null,
           learning: opts.learning,
-        }, { approve: { now: new Date() } });
-        success(`Created the agent "${slug}" (agents/${slug}.md), approved on this machine.`);
+        }, approve);
+        success(`Created the agent "${slug}" (agents/${slug}.md)${selfRun ? '.' + unapproved : ', approved on this machine.'}`);
       } catch (err) {
         fail(err);
       }

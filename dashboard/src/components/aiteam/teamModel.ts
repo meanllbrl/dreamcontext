@@ -28,7 +28,7 @@ export type TeamAutomation = Pick<
 export type TeamAgent = Pick<
   AgentSummary,
   'slug' | 'title' | 'hasPhoto' | 'roleLine' | 'description' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'model' | 'effort'
-> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere'>>;
+> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope'>>;
 
 export type TeamStatus = 'working' | 'needs' | 'approval' | 'paused' | 'idle';
 
@@ -55,6 +55,8 @@ export interface TeamRow {
   ownerLabel: string | null;
   /** The owner's other machine runs it: that machine's name. */
   elsewhere: string | null;
+  /** This machine's global agent (D1): listed in every project, its chip says so. */
+  global: boolean;
 }
 
 /** Is this automation one of `agentSlug`'s routines? An older backend names no agent: the
@@ -158,6 +160,7 @@ export function buildRoster(
       readOnly,
       ownerLabel: agent.ownerLabel ?? agent.owner ?? null,
       elsewhere: agent.runsElsewhere?.name ?? null,
+      global: agent.scope === 'global',
     };
   });
 

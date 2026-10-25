@@ -56,6 +56,7 @@ export function isLegacyAutomation(data: Record<string, unknown>): boolean {
 export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: AutomationJob | null } {
   const isCall = m.mode === 'call';
   const agent: AgentManifest = {
+    scope: 'project',
     slug: m.slug,
     id: deriveAgentId(m.id, m.slug),
     title: m.title,
@@ -203,6 +204,9 @@ export function composeRun(
     flow: call.flow ?? null,
     job: '',
     ...identity,
+    // Unhashed: where the agent's own approval lives (D1). Its call target only: a routine bound to
+    // a global agent belongs to its project, and is approved in that project's bucket.
+    ...(agent.scope === 'global' ? { agentScope: 'global' as const } : {}),
     runKind: 'agent',
     bindings: [...bindings],
     legacyKey,

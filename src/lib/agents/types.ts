@@ -58,6 +58,9 @@ export const DEFAULT_CALL_SETTINGS: Readonly<AgentCallSettings> = Object.freeze(
   notify: true,
 });
 
+/** Where an agent lives: in this brain, or on this machine for every project (D1). */
+export type AgentScope = 'project' | 'global';
+
 export interface AgentManifest {
   slug: string;
   id: string;
@@ -104,6 +107,9 @@ export interface AgentManifest {
   /** True when this agent was synthesised from a legacy automation file on read
    *  (no `agents/<slug>.md` exists for it yet). */
   implicit: boolean;
+  /** `global`: an agent of this machine listed in every project (`~/.dreamcontext/agents/<slug>.md`,
+   *  D1, `scope.ts`); `project`: one of this brain. Unhashed. */
+  scope: AgentScope;
   path: string;
   body: string;
 }

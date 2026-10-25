@@ -5,6 +5,7 @@ import { readMachineIdentity } from '../machine-id.js';
 import { readVaultFileSafe, safeWriteTarget } from '../vault-read.js';
 import { currentLogin, ownedBy } from './owner.js';
 import { isSafeAutomationSlug } from './slot.js';
+import { isGlobalAgentHere } from './scope.js';
 import { AGENTS_DIR } from './types.js';
 
 /**
@@ -63,6 +64,8 @@ export type Placement =
 
 /** May THIS machine run `slug` right now? */
 export function placement(contextRoot: string, slug: string, owner: string | null, home?: string, now: Date = new Date()): Placement {
+  // A global agent lives on this machine only: no synced record can move it (D1).
+  if (isGlobalAgentHere(contextRoot, slug)) return { here: true };
   const rec = readActive(contextRoot, slug, owner, now);
   if (!rec) return { here: true };
   const me = readMachineIdentity(home).id;

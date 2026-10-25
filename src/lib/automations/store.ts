@@ -19,6 +19,7 @@ import { assertOwned, currentLogin, parseOwner } from '../agents/owner.js';
 import { agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from '../agents/agent-sync.js';
 import { composeRun, legacyPair } from '../agents/compose.js';
 import { nextFreeFace } from '../agents/faces.js';
+import { globalAgentExists, globalProjectDir, isGlobalAgentHere, memberSidePath } from '../agents/scope.js';
 import {
   agentCallTarget,
   agentPath,
@@ -105,16 +106,18 @@ export function outputRootDir(contextRoot: string): string {
 export function automationPath(contextRoot: string, slug: string): string {
   return join(automationsDir(contextRoot), `${slug}.md`);
 }
+/** A global agent's (D1) live in its own project folder on this machine (`agents/scope.ts`). */
 export function automationCachePath(contextRoot: string, slug: string): string {
-  return join(automationCacheDir(contextRoot), `${slug}.json`);
+  return memberSidePath(contextRoot, slug, join('cache', `${slug}.json`));
 }
-/** Per-slug run lock (owned/acquired by `file-lock.ts`, not this module). */
+/** Per-slug run lock (owned/acquired by `file-lock.ts`, not this module). Per project for a
+ *  global agent too: a run in one project never waits for one in another. */
 export function lockPathFor(contextRoot: string, slug: string): string {
-  return join(automationCacheDir(contextRoot), `.${slug}.lock`);
+  return memberSidePath(contextRoot, slug, join('cache', `.${slug}.lock`));
 }
 /** Machine-local in-flight-child record — never brain-synced. */
 export function sidecarPathFor(contextRoot: string, slug: string): string {
-  return join(automationCacheDir(contextRoot), `.${slug}.run.json`);
+  return memberSidePath(contextRoot, slug, join('cache', `.${slug}.run.json`));
 }
 
 /** `isSafeAutomationSlug` lives in `../agents/slot.ts` (the approval registry
@@ -481,6 +484,8 @@ export function outputDirFor(
   contextRoot: string,
   m: AutomationManifest,
 ): { dir: string; degradeReason: string | null } {
+  // A global agent's outputs stay on this machine, in its folder for this project (D1).
+  if (isGlobalAgentHere(contextRoot, m.slug)) return { dir: join(globalProjectDir(m.slug, dirname(contextRoot)), 'output', m.slug), degradeReason: null };
   try {
     return { dir: resolveOutputDir(contextRoot, m.outputDir, m.slug), degradeReason: null };
   } catch {
@@ -1102,8 +1107,8 @@ export function readAutomationCache(contextRoot: string, slug: string): Automati
 }
 
 export function writeAutomationCache(contextRoot: string, slug: string, c: AutomationCache): void {
-  mkdirSync(automationCacheDir(contextRoot), { recursive: true });
   const path = automationCachePath(contextRoot, slug);
+  mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(c, null, 2) + '\n', 'utf-8');
   renameSync(tmp, path); // atomic replace
@@ -1188,8 +1193,8 @@ export function recordRun(
 // ─── Run sidecar (machine-local, content-validated on read) ────────────────
 
 export function writeRunSidecar(contextRoot: string, slug: string, s: RunSidecar): void {
-  mkdirSync(automationCacheDir(contextRoot), { recursive: true });
   const path = sidecarPathFor(contextRoot, slug);
+  mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n', 'utf-8');
   renameSync(tmp, path); // atomic replace
@@ -1495,6 +1500,9 @@ export function createAutomation(
   const slug = i.slug.trim();
   const path = automationPath(contextRoot, slug);
   if (pathOccupied(path)) throw new AutomationError(`Automation already exists: ${slug}`);
+  // A global agent's name stays its own in every project: a member of that name would take its
+  // run lock, thread and queued task jobs here (D1).
+  if (globalAgentExists(slug)) throw new AutomationError(`"${slug}" is already the name of one of your global agents.`);
 
   // Stamped at create, unhashed: only its creator writes, runs or assigns it (`agents/owner.ts`).
   const owner = currentLogin();

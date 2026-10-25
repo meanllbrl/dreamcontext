@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { basename, dirname, join, resolve as resolvePath, sep as pathSep } from 'node:path';
 import { homedir } from 'node:os';
 import { safeWriteTarget } from '../vault-read.js';
+import { GLOBAL_REGISTRY_KEY, safeMemberWrite, underGlobalAgents } from '../agents/scope.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifier.js';
 import { recordNotification } from '../notification-log.js';
 import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
@@ -944,7 +945,7 @@ function localDateString(d: Date): string {
 /** Write a run's output, refusing a target reached through a symlink (M2: a synced folder can
  *  hold one a teammate committed, and following it would write outside the vault). */
 function writeOutputFile(contextRoot: string, path: string, text: string): void {
-  if (!safeWriteTarget(contextRoot, path)) throw new Error('refusing to write the output through a symlink');
+  if (!safeMemberWrite(contextRoot, path)) throw new Error('refusing to write the output through a symlink');
   writeFileSync(path, text, 'utf-8');
 }
 
@@ -2045,7 +2046,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   const isAgentTarget = manifest.runKind === 'agent';
   const priorApproval = approval.approved
     ? null
-    : getApproval(projectRoot, slug, home, isAgentTarget ? 'agent' : 'automation');
+    : getApproval(manifest.agentScope === 'global' ? GLOBAL_REGISTRY_KEY : projectRoot, slug, home, isAgentTarget ? 'agent' : 'automation');
   if (!approval.approved && (approval.reason === 'never-approved' || !priorApproval)) {
     return shortCircuit(
       'blocked',
@@ -2231,8 +2232,9 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       logFn(`warning: could not ensure automations gitignore entries: ${(err as Error).message}`);
     }
     // A synced folder can hold a symlink: never create (or later write) through one.
-    if (safeWriteTarget(contextRoot, outDir)) mkdirSync(outDir, { recursive: true });
-    if (safeWriteTarget(contextRoot, outputRootDir(contextRoot))) mkdirSync(outputRootDir(contextRoot), { recursive: true });
+    if (safeMemberWrite(contextRoot, outDir)) mkdirSync(outDir, { recursive: true });
+    // A global agent's outputs live on this machine (D1): nothing of it is made in the brain.
+    if (!underGlobalAgents(outDir) && safeWriteTarget(contextRoot, outputRootDir(contextRoot))) mkdirSync(outputRootDir(contextRoot), { recursive: true });
 
     // WHICH ACCOUNT. Picked once, here, so the approval question and the job run on the same
     // one: the preferred account unless auto-switch says it cannot serve, the same decision a
@@ -2331,7 +2333,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // default one does above — a target that resolves but was never created is
     // an ENOENT at the last moment, which reads as "the run failed" rather than
     // "the graph named somewhere that isn't there".
-    if (useFlowOutput && safeWriteTarget(contextRoot, flowOutput.dir)) mkdirSync(flowOutput.dir, { recursive: true });
+    if (useFlowOutput && safeMemberWrite(contextRoot, flowOutput.dir)) mkdirSync(flowOutput.dir, { recursive: true });
     const outputPath = outputPathFor(
       contextRoot,
       useFlowOutput ? { ...manifest, outputDir: flow.reportTarget } : manifest,

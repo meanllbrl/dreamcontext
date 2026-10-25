@@ -85,6 +85,9 @@ export interface TaskMeta {
   noVerdict: number;
   /** The owner pressed "Start now" on a start missed by more than 12 hours. */
   lateOk?: boolean;
+  /** Which of its agents were this machine's GLOBAL agents when it was assigned (D1). A project
+   *  member of the same name arriving later must never run the job in the global agent's place. */
+  globalAgents?: string[];
 }
 
 export interface TaskSessionEntry {

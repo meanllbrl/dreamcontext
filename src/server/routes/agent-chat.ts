@@ -36,6 +36,7 @@ import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
 import { recordStageHomeSession } from '../../lib/local-store.js';
 import { getRunTarget } from '../../lib/automations/store.js';
+import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
@@ -711,6 +712,10 @@ export function shouldRejectAutomationResume(
   const CACHE_FILE_SUFFIX = '.json';
   let cacheFileNames: string[] = [];
   try { cacheFileNames = readdirSync(automationCacheDir(contextRoot)); } catch { cacheFileNames = []; }
+  // A global agent's cache lives in its own folder for this project (D1): its runs count too.
+  for (const slug of listGlobalAgentSlugs()) {
+    if (isGlobalAgentHere(contextRoot, slug)) cacheFileNames.push(`${slug}${CACHE_FILE_SUFFIX}`);
+  }
 
   const claimedByAutomation = cacheFileNames.some((name) => {
     if (!name.endsWith(CACHE_FILE_SUFFIX)) return false;

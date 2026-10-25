@@ -5,12 +5,16 @@ import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { ownerLabel } from '../../lib/agents/owner.js';
 import { placement } from '../../lib/agents/active.js';
+import { GLOBAL_REGISTRY_KEY, hasProjectMember } from '../../lib/agents/scope.js';
+import { composeRun } from '../../lib/agents/compose.js';
 import { agentSyncSwitchOn, createdLocally, loginFromEmail } from '../../lib/agents/agent-sync.js';
 import { lastAuthorEmail as gitLastAuthorEmail } from '../../lib/git-sync/git.js';
 import {
   agentUsage,
   createAgent,
+  createGlobalAgent,
   getAgent,
+  listGlobalAgents,
   listAgents,
   listAgentTargets,
   removeAgent,
@@ -33,6 +37,7 @@ import { readStageHomeSession } from '../../lib/local-store.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import { agentActivity } from '../automation-job.js';
 import { isAgentRequest } from '../desktop.js';
+import { isPhoneSocket } from '../phone-origin.js';
 import { findLiveChat } from './agent-chat-live.js';
 import { roleLineOf, soulExcerpt } from '../../lib/agents/soul.js';
 import {
@@ -112,6 +117,8 @@ export interface AgentSummary {
   /** Someone else's agent: read-only here, never "needs approval" (B1-4). The approval fields
    *  above are then all false and say nothing about this machine. */
   readOnly: boolean;
+  /** `global`: this machine's agent, listed in every project and kept out of every brain (D1). */
+  scope: 'project' | 'global';
   /** Same login, several machines (B1-7): where it runs, when that is not this machine. */
   runsElsewhere: { machine: string; name: string } | null;
   /** It arrived by sync and was not created on this machine (the approval view marks it). */
@@ -164,6 +171,7 @@ export function summarizeAgent(
   home?: string,
 ): AgentSummary {
   const projectRoot = dirname(contextRoot);
+  const global = target.agentScope === 'global';
   const forChat = checkApproval(projectRoot, target, home, 'identity');
   const toRun = checkApproval(projectRoot, target, home, 'run');
   const readOnly = !toRun.approved && toRun.reason === 'not_owner';
@@ -192,10 +200,12 @@ export function summarizeAgent(
     owner,
     ownerLabel: owner ? ownerLabel(owner) : null,
     readOnly,
+    scope: global ? 'global' : 'project',
     runsElsewhere: where.here ? null : { machine: where.machine, name: where.name },
-    arrivedBySync: !!agent && !agent.implicit && agentSyncSwitchOn(contextRoot)
+    // A global agent never arrives by sync: it is this machine's (D1).
+    arrivedBySync: !global && !!agent && !agent.implicit && agentSyncSwitchOn(contextRoot)
       && !createdLocally(contextRoot, `agents/${target.slug}.md`, home),
-    syncedChangeBy: !toRun.approved && !readOnly && agentSyncSwitchOn(contextRoot) ? syncedChangeAuthor(contextRoot, target.slug) : null,
+    syncedChangeBy: !global && !toRun.approved && !readOnly && agentSyncSwitchOn(contextRoot) ? syncedChangeAuthor(contextRoot, target.slug) : null,
     implicit: agent?.implicit ?? false,
     hasCallSettings: agent ? hasCallSettings(agent) : false,
     usedBy: {
@@ -285,6 +295,21 @@ function sendSummary(res: ServerResponse, contextRoot: string, slug: string, sta
   sendJson(res, status, { agent: summarizeAgent(contextRoot, target, getAgent(contextRoot, slug)) });
 }
 
+/**
+ * A global agent is this machine's for every project (D1): nothing on the phone or the tunnel
+ * creates, edits, approves or deletes one, as the launcher's own routes are denied there. Sends
+ * 403 and returns true when refused.
+ */
+function refuseGlobalOnPhone(req: IncomingMessage, res: ServerResponse, global: boolean): boolean {
+  if (!global || !isPhoneSocket(req)) return false;
+  sendError(res, 403, 'phone_unavailable', 'Global agents are changed on the Mac itself.');
+  return true;
+}
+
+function isGlobalHere(contextRoot: string, slug: string): boolean {
+  return isSafeAutomationSlug(slug) && getAgent(contextRoot, slug)?.scope === 'global';
+}
+
 function sendWriteError(res: ServerResponse, err: unknown, code: string, message: string): void {
   // Someone else's agent: read-only here, 403 with the owner named (B1-4).
   if (sendIfNotOwner(res, err)) return;
@@ -352,6 +377,7 @@ export async function handleAgentsCreate(
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
     return;
   }
+  if (refuseGlobalOnPhone(req, res, body.scope === 'global')) return;
   try {
     const title = (str(body.title) ?? '').trim();
     if (!title) throw new AutomationError('Give the agent a name.');
@@ -363,7 +389,7 @@ export async function handleAgentsCreate(
     }
     const projectRoot = dirname(contextRoot);
     registerProject(projectRoot);
-    createAgent(contextRoot, {
+    const input = {
       slug,
       title,
       prompt,
@@ -372,10 +398,93 @@ export async function handleAgentsCreate(
       effort: readEffort(body.effort) ?? null,
       whiteboard: readWhiteboard(body.whiteboard) ?? null,
       ...(typeof body.learning === 'boolean' ? { learning: body.learning } : {}),
-    }, { approve: { now: new Date() } });
+    };
+    if (body.scope === 'global') {
+      // Listed in every project; here too, so no member of this project may already hold the name.
+      if (hasProjectMember(contextRoot, slug)) throw new AutomationError(`"${slug}" is already the name of an agent or an automation in this project.`);
+      createGlobalAgent(input, { approve: { now: new Date() } });
+    } else {
+      createAgent(contextRoot, input, { approve: { now: new Date() } });
+    }
     sendSummary(res, contextRoot, slug);
   } catch (err) {
     sendWriteError(res, err, 'create_failed', 'Failed to create the agent.');
+  }
+}
+
+/** A global agent as the launcher lists it: no project, so no usage and no project approval (D1). */
+export interface GlobalAgentRow {
+  slug: string;
+  title: string;
+  roleLine: string;
+  description: string;
+  face: AgentFace;
+  autonomy: string;
+  model: string | null;
+  approvedToRun: boolean;
+}
+
+function globalAgentRow(agent: AgentManifest): GlobalAgentRow {
+  const target = composeRun(agent, null, [], false);
+  return {
+    slug: agent.slug,
+    title: agent.title,
+    roleLine: roleLineOf(agent.prompt),
+    description: agent.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
+    face: faceOf(agent.slug, agent.face),
+    autonomy: agent.autonomy,
+    model: agent.model,
+    approvedToRun: checkApproval(GLOBAL_REGISTRY_KEY, target, undefined, 'run').approved,
+  };
+}
+
+/** GET /api/launcher/global-agents — this machine's global agents (vault-agnostic, D1). */
+export async function handleLauncherGlobalAgents(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  try {
+    sendJson(res, 200, { agents: listGlobalAgents().map(globalAgentRow) });
+  } catch (err) {
+    console.error('[agents] global list failed', err);
+    sendError(res, 500, 'list_failed', 'Failed to list the global agents.');
+  }
+}
+
+/** POST /api/launcher/global-agents {title, prompt, slug?, soul?, model?, effort?, learning?} —
+ *  create a global agent from the launcher, granted on this machine (vault-agnostic, D1). */
+export async function handleLauncherGlobalAgentsCreate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'bad_body', 'Expected a JSON body.');
+    return;
+  }
+  try {
+    const title = (str(body.title) ?? '').trim();
+    if (!title) throw new AutomationError('Give the agent a name.');
+    const prompt = (str(body.prompt) ?? '').trim();
+    if (!prompt) throw new AutomationError('Describe who the agent is — that description is its prompt.');
+    const slug = (str(body.slug) ?? '').trim() || slugifyTitle(title);
+    if (!isSafeAutomationSlug(slug)) throw new AutomationError(`"${title}" does not make a usable name — try plain letters and numbers.`);
+    const agent = createGlobalAgent({
+      slug,
+      title,
+      prompt,
+      soul: readSoul(body.soul) ?? '',
+      model: str(body.model) ?? null,
+      effort: readEffort(body.effort) ?? null,
+      ...(typeof body.learning === 'boolean' ? { learning: body.learning } : {}),
+    }, { approve: { now: new Date() } });
+    sendJson(res, 201, { agent: globalAgentRow(agent) });
+  } catch (err) {
+    sendWriteError(res, err, 'create_failed', 'Failed to create the global agent.');
   }
 }
 
@@ -391,6 +500,7 @@ export async function handleAgentsUpdate(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -452,6 +562,7 @@ export async function handleAgentsPlace(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -477,11 +588,12 @@ export async function handleAgentsPlace(
 /** POST /api/agents/:slug/delete — refused (409 `agent_in_use`) while an
  *  automation runs as it; otherwise removed under the registry's revoke rule. */
 export async function handleAgentsDelete(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   if (!isSafeAutomationSlug(params.slug) || !getAgent(contextRoot, params.slug)) {
     sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
     return;
@@ -505,11 +617,12 @@ export async function handleAgentsDelete(
 /** POST /api/agents/:slug/approve — grant the agent's CALL target as it stands
  *  right now, on this machine (the owner reviewed it on the AI Team page). */
 export async function handleAgentsApprove(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const target = agentTarget(contextRoot, params.slug);
   if (!target) {
     sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
@@ -548,6 +661,7 @@ export async function handleAgentsPhotoUpload(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const slug = params.slug;
   const agent = isSafeAutomationSlug(slug) ? getAgent(contextRoot, slug) : null;
   if (!agent) {
