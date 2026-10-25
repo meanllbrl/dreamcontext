@@ -847,9 +847,16 @@ async function main() {
     }, 20000), JSON.stringify((record().containers ?? []).map((c) => [c.kind, c.place, c.size])));
     const floatBefore = (record().containers ?? []).filter((c) => c.kind !== 'agenda' && c.place === 'float').length;
     await page.mouse.move(5, 5);
-    await page.waitForTimeout(IDLE + 4000);
+    // The stage load after the restart re-spawns every chat card's process, and a fresh spawn is
+    // busy ('starting') for the registry's STARTING_GRACE_MS (30 s, chat-registry.ts): the tidy
+    // holds a busy chat's card (live.ts), finished or not. So the finished child's card goes once
+    // that grace AND the short idle clock have passed, not at IDLE alone. The four working
+    // children stay floating (a live job is always a floating card).
+    const STARTING_GRACE_MS = 30_000;
+    const tidiedNow = () => (record().containers ?? []).filter((c) => c.kind !== 'agenda' && c.place === 'others').length;
+    await until(page, async () => tidiedNow() > 0, STARTING_GRACE_MS + IDLE + 8000);
     const afterTidy = record().containers ?? [];
-    const tidied = afterTidy.filter((c) => c.kind !== 'agenda' && c.place === 'others').length;
+    const tidied = tidiedNow();
     ok('the tidy ran (untouched cards went to Others)', tidied > 0, JSON.stringify({ floatBefore, after: afterTidy.map((c) => [c.kind, c.place]) }));
     ok('…and never moved the agenda (floating, on the stage)', afterTidy.some((c) => c.kind === 'agenda' && c.place === 'float' && !c.min) && (await agendaCard(page).getAttribute('data-where').catch(() => null)) === 'float');
     await stageSettled(page);
