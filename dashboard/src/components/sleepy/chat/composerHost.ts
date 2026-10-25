@@ -94,6 +94,9 @@ export interface ComposerHost {
   /** The next message written with exactly this text was SPOKEN (a push-to-talk take sent
    *  untouched): its frame carries `voice: true`, so the Super Agent answers aloud (K1). */
   armSpoken?(text: string): void;
+  /** A message written with exactly this text is the dictated take `ref`, sent unchanged: its
+   *  frame carries `voiceTake`, so the agent may retranscribe it (`dreamcontext voice retry`). */
+  armVoiceTake?(text: string, ref: string): void;
   /**
    * Subscribe to "is this turn speaking". Returns the unsubscribe.
    *

@@ -27,6 +27,8 @@ interface VoiceStatus {
   key: boolean;
   voice: string;
   sttLanguage: string;
+  /** "Languages I speak": normalized codes; empty = the language comes from context alone. */
+  sttLanguages?: string[];
   /** The local model this machine was found to have, or null. */
   localWhisper: string | null;
   pushToTalk: string;
@@ -70,6 +72,15 @@ const LANGUAGES = [
   { id: 'auto', label: 'Detect automatically' },
   { id: 'tr', label: 'Turkish' },
   { id: 'en', label: 'English' },
+] as const;
+
+/** The languages offered for "Languages I speak". A display list only: the server normalizes
+ *  every entry against whisper's own table and drops anything else. */
+const SPOKEN = [
+  { id: 'tr', label: 'Turkish' }, { id: 'en', label: 'English' }, { id: 'de', label: 'German' },
+  { id: 'fr', label: 'French' }, { id: 'es', label: 'Spanish' }, { id: 'it', label: 'Italian' },
+  { id: 'pt', label: 'Portuguese' }, { id: 'nl', label: 'Dutch' }, { id: 'ru', label: 'Russian' },
+  { id: 'ar', label: 'Arabic' },
 ] as const;
 
 /** The speeds offered. A short list rather than a slider: the useful range is narrow — the
@@ -299,8 +310,8 @@ export function VoiceSettings() {
 
       <SettingRow
         title="Speech language"
-        hint="Automatic detects it from the first take, then keeps that language for the session."
-        more={'Detection is a whole extra pass: measured here at ~1.75s for a take against ~0.88s once the language is known. So the first take detects and the rest of the session reuses what it found, and pinning a language skips even that first one. Pin it if you always speak the same language — the only thing it costs is that a sentence in the other language will be transcribed as though it were this one.'}
+        hint="Automatic reads it from context: your recent clear takes, the languages below, your device's language."
+        more={'A take whose transcript looks wrong (weak, in an unexpected language, in the wrong alphabet, or looping) is transcribed once more in the language the context names, and if neither attempt can be understood nothing is sent and you hear "Anlayamadım". A detected language is never pinned on its own any more: that is how one misheard take used to turn the next ones Icelandic. Pinning a language here is the escape hatch: every take is transcribed as that language.'}
         control={
           <select
             className="settings-text-input"
@@ -311,6 +322,33 @@ export function VoiceSettings() {
           >
             {LANGUAGES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
           </select>
+        }
+      />
+
+      <SettingRow
+        title="Languages I speak"
+        hint="Optional. A take in one of these is never mistaken for a stranger; exactly one also skips detection."
+        more={'Empty is fine: the language then comes from your recent clear takes and your device. A clearly spoken take in a language not listed is still accepted.'}
+        control={
+          <div className="voice-langs" role="group" aria-label="Languages I speak">
+            {SPOKEN.map((l) => {
+              const on = (status.sttLanguages ?? []).includes(l.id);
+              return (
+                <label key={l.id} className="voice-langs__item">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    disabled={saving}
+                    onChange={() => {
+                      const cur = status.sttLanguages ?? [];
+                      void save({ sttLanguages: on ? cur.filter((x) => x !== l.id) : [...cur, l.id] });
+                    }}
+                  />
+                  {l.label}
+                </label>
+              );
+            })}
+          </div>
         }
       />
 

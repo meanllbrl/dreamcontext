@@ -223,8 +223,10 @@ import { handleNotificationsGet, handleNotifyPost } from './routes/notifications
 import { handleAgentSecret } from './routes/agent-secret.js';
 import {
   handleVoiceStt, handleVoiceTts, handleVoiceWarm, handleVoiceStatus, handleVoiceConfigPut, handleVoiceFocus, handleVoiceLog,
+  handleVoiceRetranscribe,
   handleDictationStatus, handleDictationInstall,
 } from './routes/agent-voice.js';
+import { pruneTakes } from '../lib/voice/voiceLog.js';
 import { handleAgentDownload } from './routes/agent-download.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
@@ -661,6 +663,9 @@ export function buildRouter(): Router {
   router.post('/api/agent/voice/stt', handleVoiceStt);
   router.post('/api/agent/voice/tts', handleVoiceTts);
   router.post('/api/agent/voice/warm', handleVoiceWarm);
+  // A chat's agent retranscribes a take it received (`dreamcontext voice retry`). Vault-
+  // agnostic: the vault is the one the caller's window token names, never a `?vault=`.
+  router.post('/api/agent/voice/retranscribe', handleVoiceRetranscribe);
   // What the notch did with a reply (opened, peeked, folded): one line in voice.jsonl.
   // Vault-agnostic: it writes the machine's own log, no project's brain.
   router.post('/api/agent/voice/log', handleVoiceLog);
@@ -938,7 +943,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1411,6 +1416,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // the app onto the new version. Self-gates to DREAMCONTEXT_DESKTOP=1.
       startUpgradeReadyWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk);
       startOrphanSweep();
+      // Voice takes older than 24 h (or past 200 MB) go now, not at the next take.
+      pruneTakes();
       // Mac mode lives in the desktop server: the CLI finds it through this hint, and a state
       // left `on` by a crashed server is repaired now (orphan tunnel, sleep, LPM, devices).
       if (isDesktop() && process.platform === 'darwin') {

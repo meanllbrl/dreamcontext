@@ -17,6 +17,14 @@
  *      read-aloud switch; holding it records, letting go sends the take to POST
  *      /api/agent/voice/stt through the phone listener (200), whisper receives a WAV, the text is
  *      written into the composer and sent (the owner's bubble, then the chat's answer);
+ *   1b. the garble guard (task sesli-giris-bozuk…): the stand-in whisper switches mode per take —
+ *      `clean` (one pass, sent: c), `icelandic` (`auto` hears Icelandic at -0.7, a Turkish pin
+ *      hears Turkish: the retry is sent, a), `bad` (weak in every language: nothing is sent, the
+ *      "Anlayamadım" notice shows and the cue starts, b); the chat's stand-in agent runs
+ *      `dreamcontext voice retry <ref>` on the `<voice-take>` block it received and gets the
+ *      forced text, while a take bound to another chat answers 403 (d);
+ *   1c. the same notice in the REAL Super composer at 1440 and 390, mounted alone in the
+ *      composer-voice harness (scripts/verify/harness/composer-voice, `?stt=garbled`);
  *   2. dictation gone (the model removed): after a reload the mic is not drawn.
  *   Across the run: no console error and no 403 on any request the phone made.
  *
@@ -30,7 +38,7 @@ import net from 'node:net';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -43,6 +51,13 @@ const TAKE = join(SCRATCH, 'take.wav');
 const WHISPER_LOG = join(SCRATCH, 'whisper.log');
 const MODEL = join(SCRATCH, 'ggml-base.bin');
 const SAID = 'Telefondan sesli mesaj. Bu bir deneme.';
+/** What a Turkish pin hears in `icelandic` mode: its own sentence, so the retried take's
+ *  bubble and answer are told apart from the first one's. */
+const SAID_A = 'İkinci mesaj, yeniden denendi.';
+/** The stand-in whisper's mode for the NEXT take: clean | icelandic | bad. */
+const MODE_FILE = join(SCRATCH, 'whisper-mode');
+/** Where the chat stand-in leaves its window token and what `voice retry` answered. */
+const AGENT_DIR = join(SCRATCH, 'agent');
 
 /** `claude -p` stand-in: answers every user turn with ECHO <text>. */
 const CLAUDE = `#!${process.execPath}
@@ -64,10 +79,21 @@ process.stdin.on('data', (c) => {
     if (!line) continue;
     let o; try { o = JSON.parse(line); } catch { continue; }
     if (o.type !== 'user') continue;
-    const text = ((o.message && o.message.content) || []).filter((b) => b.type === 'text').map((b) => b.text)[0] || '';
+    const blocks = ((o.message && o.message.content) || []).filter((b) => b.type === 'text').map((b) => b.text);
+    const text = blocks[0] || '';
+    // The briefing's rule, acted out: a dictated message names its take; retry it once.
+    const take = blocks.map((b) => /^<voice-take ref="(vt_[0-9a-f]{32})"/.exec(b)).find(Boolean);
+    let retry = '';
+    if (take) {
+      fs.mkdirSync(${JSON.stringify(AGENT_DIR)}, { recursive: true });
+      fs.writeFileSync(path.join(${JSON.stringify(AGENT_DIR)}, 'token.json'), JSON.stringify({ url: process.env.DREAMCONTEXT_WINDOW_URL, token: process.env.DREAMCONTEXT_WINDOW_TOKEN, ref: take[1] }));
+      const r = require('node:child_process').spawnSync(process.execPath, [${JSON.stringify(CLI)}, 'voice', 'retry', take[1], '--language', 'tr'], { encoding: 'utf-8' });
+      fs.appendFileSync(path.join(${JSON.stringify(AGENT_DIR)}, 'retries.jsonl'), JSON.stringify({ ref: take[1], status: r.status, out: r.stdout, err: r.stderr }) + '\\n');
+      try { retry = ' | RETRY ' + JSON.parse(r.stdout).text; } catch { retry = ' | RETRY failed'; }
+    }
     if (!inited) { inited = true; out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] }); }
     row({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
-    const message = { role: 'assistant', content: [{ type: 'text', text: 'ECHO ' + text }] };
+    const message = { role: 'assistant', content: [{ type: 'text', text: 'ECHO ' + text + retry }] };
     row({ type: 'assistant', message }); out({ type: 'assistant', message });
     out({ type: 'result', subtype: 'success', is_error: false, result: 'ECHO', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
   }
@@ -87,9 +113,18 @@ http.createServer((req, res) => {
     req.on('end', () => {
       const body = Buffer.concat(chunks);
       const riff = body.indexOf('RIFF');
-      fs.appendFileSync(${JSON.stringify(WHISPER_LOG)}, JSON.stringify({ bytes: body.length, wav: riff >= 0 && body.toString('ascii', riff + 8, riff + 12) === 'WAVE' }) + '\\n');
+      const language = (/name="language"\\r\\n\\r\\n([^\\r]*)/.exec(body.toString('latin1')) || [])[1] || '';
+      let mode = 'clean';
+      try { mode = fs.readFileSync(${JSON.stringify(MODE_FILE)}, 'utf-8').trim() || 'clean'; } catch {}
+      fs.appendFileSync(${JSON.stringify(WHISPER_LOG)}, JSON.stringify({ bytes: body.length, wav: riff >= 0 && body.toString('ascii', riff + 8, riff + 12) === 'WAVE', mode, language }) + '\\n');
+      const seg = (lp) => [{ start: 0, end: 3, avg_logprob: lp, no_speech_prob: 0.02 }];
+      const turkish = { text: ' ${SAID} ', language: 'turkish', segments: seg(-0.08) };
+      const icelandic = { text: ' Nei þurfum það í skanki ', language: 'icelandic', segments: seg(-0.7) };
+      const answer = mode === 'clean' ? turkish
+        : mode === 'icelandic' ? (language === 'auto' ? icelandic : language === 'tr' ? { ...turkish, text: ' ${SAID_A} ' } : { text: ' ne olja ne mitja ', language: 'turkish', segments: seg(-0.8) })
+          : (language === 'auto' ? { ...icelandic, segments: seg(-0.8) } : { text: ' ne olja ne mitja ', language: 'turkish', segments: seg(-0.8) });
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ text: ' ${SAID} ', language: 'turkish' }));
+      res.end(JSON.stringify(answer));
     });
     return;
   }
@@ -124,9 +159,11 @@ const portFree = (port) => new Promise((resolve) => {
 
 let server = null;
 let browser = null;
+let harness = null;
 try {
   const { chromium, devices } = await import('@playwright/test');
-  if (!(await portFree(47_113))) throw new Error('port 47113 (whisper-server) is in use on this machine: stop the real one for this check');
+  // The stand-in gets a port of its own: the owner's real whisper may be serving :47113.
+  const whisperPort = await freePort();
   rmSync(SCRATCH, { recursive: true, force: true });
   for (const d of [join(HOME, '.dreamcontext'), join(HOME, '.local', 'bin'), PROJ, SHOTS]) mkdirSync(d, { recursive: true });
   spawnSync('git', ['init', '-q'], { cwd: PROJ });
@@ -137,6 +174,7 @@ try {
     chmodSync(p, 0o755);
   }
   writeFileSync(MODEL, Buffer.alloc(2_000_000));
+  writeFileSync(MODE_FILE, 'clean');
   const said = spawnSync('say', ['-o', TAKE, '--data-format=LEI16@16000', SAID]);
   if (said.status !== 0 || !existsSync(TAKE)) throw new Error('macOS `say` could not write the take');
   cli(['init', '-y', '--name', 'proj', '--description', 'A scratch project for the phone voice check']);
@@ -151,6 +189,7 @@ try {
       ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1',
       DREAMCONTEXT_MAC_VERIFY_POWER_LOG: join(SCRATCH, 'power.log'), DREAMCONTEXT_MAC_VERIFY_FAKE_TUNNEL: '1',
       DREAMCONTEXT_WHISPER_BIN: join(HOME, '.local', 'bin', 'whisper-server'), DREAMCONTEXT_WHISPER_MODEL: MODEL,
+      DREAMCONTEXT_WHISPER_PORT: String(whisperPort),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -168,7 +207,8 @@ try {
   browser = await chromium.launch({
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${TAKE}`],
   });
-  const ctx = await browser.newContext({ ...devices['iPhone 13'], viewport: { width: 390, height: 844 } });
+  // A Turkish phone: its UI language is one of the language-context signals.
+  const ctx = await browser.newContext({ ...devices['iPhone 13'], viewport: { width: 390, height: 844 }, locale: 'tr-TR' });
   await ctx.grantPermissions(['microphone'], { origin: phoneOrigin });
   await markAnnouncementsSeen(ctx, base);
   const phone = await ctx.newPage();
@@ -241,6 +281,65 @@ try {
   await phone.waitForTimeout(500);
   await phone.screenshot({ path: join(SHOTS, '390x844-sent.png') });
 
+  console.log('\n── 1b. the garble guard: (c) clean, (a) Icelandic then a retry, (b) both bad, (d) the agent retries');
+  report.check('(c) a clean take is one pass, quality clean', first?.body?.passes === 1 && first?.body?.quality === 'clean', JSON.stringify(first?.body));
+  /** One more hold-and-release on the mic; resolves with the new `/stt` answer. */
+  const takeOnce = async () => {
+    const before = stt.length;
+    await phone.mouse.move(1, 1);
+    await until(async () => (await vis('.chat-cmp-mic:not([disabled])').count()) === 1, 10000);
+    const b = await mic.boundingBox();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: b.x + b.width / 2, y: b.y + b.height / 2, id: 1 }] });
+    await until(async () => (await vis('.chat-cmp-mic.is-recording').count()) === 1, 5000);
+    await phone.waitForTimeout(2500);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await until(async () => stt.length > before, 20000);
+    return stt[stt.length - 1];
+  };
+  const echoes = async () => ((await pane()).match(/ECHO /g) ?? []).length;
+
+  writeFileSync(MODE_FILE, 'icelandic');
+  const echoA = await echoes();
+  const a = await takeOnce();
+  const langs = readFileSync(WHISPER_LOG, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)).slice(-2).map((l) => l.language);
+  report.check('(a) `auto` heard Icelandic, the retry pinned to the context language (tr) won: 2 passes, the Turkish text', a?.status === 200 && a.body?.passes === 2 && a.body?.text === SAID_A && a.body?.language === 'tr' && langs.join(',') === 'auto,tr', JSON.stringify({ body: a?.body, langs }));
+  report.check('(a) …and it was sent, and answered', await until(async () => (await pane()).includes(`ECHO ${SAID_A}`) && (await echoes()) > echoA, 20000), (await pane()).slice(-200));
+  await phone.screenshot({ path: join(SHOTS, '390x844-retried.png') });
+
+  console.log('   (d) the chat\'s agent retries the take it received');
+  const retries = () => (existsSync(join(AGENT_DIR, 'retries.jsonl')) ? readFileSync(join(AGENT_DIR, 'retries.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : []);
+  await until(async () => retries().length >= 2, 15000);
+  const last = retries().at(-1);
+  let lastOut = null; try { lastOut = JSON.parse(last?.out ?? ''); } catch { /* shown below */ }
+  report.check('(d) `dreamcontext voice retry <ref> --language tr` from the chat\'s own agent: exit 0, the forced Turkish text', last?.status === 0 && lastOut?.text === SAID_A && lastOut?.language === 'tr' && lastOut?.ref === last?.ref, JSON.stringify(last));
+  report.check('(d) …and the agent\'s answer carries it', (await pane()).includes(`RETRY ${SAID_A}`), (await pane()).slice(-200));
+  const agent = JSON.parse(readFileSync(join(AGENT_DIR, 'token.json'), 'utf-8'));
+  // A take bound to ANOTHER chat (its record copied with a foreign session): this chat's token is refused.
+  const takesDir = join(HOME, '.dreamcontext', 'logs', 'voice-takes');
+  const foreign = `vt_${'f'.repeat(32)}`;
+  const rec = JSON.parse(readFileSync(join(takesDir, `${agent.ref}.json`), 'utf-8'));
+  writeFileSync(join(takesDir, `${foreign}.json`), JSON.stringify({ ...rec, session: 'another-chat' }), { mode: 0o600 });
+  writeFileSync(join(takesDir, `${foreign}.wav`), readFileSync(join(takesDir, `${agent.ref}.wav`)), { mode: 0o600 });
+  const retx = (body, token) => fetch(`${agent.url}/api/agent/voice/retranscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { 'x-dreamcontext-window-token': token } : {}) }, body: JSON.stringify(body) }).then((r) => r.status);
+  report.check('(d) another chat\'s take with this chat\'s token: 403', (await retx({ ref: foreign }, agent.token)) === 403);
+  report.check('(d) no token: 401', (await retx({ ref: agent.ref })) === 401);
+  report.check('(d) the route is refused on the phone listener (route policy)', (await phone.evaluate(async (ref) => (await fetch('/api/agent/voice/retranscribe', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) })).status, agent.ref)) === 403);
+
+  writeFileSync(MODE_FILE, 'bad');
+  const echoB = await echoes();
+  const b = await takeOnce();
+  report.check('(b) both passes weak: `garbled`, no text, 2 passes', b?.status === 200 && b.body?.garbled === true && b.body?.text === undefined && b.body?.passes === 2, JSON.stringify({ ...b?.body, cue: b?.body?.cue ? `${b.body.cue.b64.length} b64 chars` : null }));
+  report.check('(b) …the cue rode along (rendered by the Mac\'s say)', typeof b?.body?.cue?.b64 === 'string' && b.body.cue.b64.length > 1000);
+  const notice = async () => (await phone.evaluate(() => [...document.querySelectorAll('.chat-cmp-voice-note')].map((e) => e.textContent).join('|'))).trim();
+  report.check('(b) the notice is shown', await until(async () => /Anlayamadım|Missed that/.test(await notice()), 5000), await notice());
+  report.check('(b) the cue player started', await until(async () => (await phone.evaluate(() => window.__dcCue?.starts ?? 0)) >= 1, 5000), JSON.stringify(await phone.evaluate(() => window.__dcCue ?? null)));
+  await phone.waitForTimeout(1500);
+  report.check('(b) nothing was sent: no new message, an empty composer', (await echoes()) === echoB && (await vis('.chat-cmp-input').first().inputValue().catch(() => '')) === '', `${await echoes()} vs ${echoB}`);
+  const heardLine = await phone.evaluate(() => document.querySelector('.chat-cmp-voice-heard')?.textContent ?? '');
+  report.check('(b) what was heard is shown dimmed beside it, as text', heardLine.length > 0, heardLine);
+  report.check('(b) no horizontal overflow at 390 with the notice', !(await phone.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)));
+  await phone.screenshot({ path: join(SHOTS, '390x844-garbled.png') });
+
   console.log('\n── 2. dictation gone: no mic');
   rmSync(MODEL, { force: true });
   await phone.reload({ waitUntil: 'domcontentloaded' });
@@ -253,12 +352,150 @@ try {
   report.check('the composer draws no mic', (await vis('.chat-cmp-mic').count()) === 0);
   await phone.screenshot({ path: join(SHOTS, '390x844-no-whisper.png') });
 
-  report.check('no console error on the phone', errors.length === 0, errors.slice(0, 5).join(' | '));
-  report.check('no 403 on any request the phone made', forbidden.length === 0, forbidden.slice(0, 8).join(' | '));
+  // The one 403 this run asks for on purpose (1b (d): the route policy refusing retranscribe).
+  const unexpected403 = forbidden.filter((f) => f !== 'POST /api/agent/voice/retranscribe');
+  // The browser logs the deliberate 403 as a failed resource; nothing else may.
+  const deliberate = forbidden.length - unexpected403.length;
+  const errs = errors.filter((e, i, all) => !(e.includes('status of 403') && all.slice(0, i + 1).filter((x) => x.includes('status of 403')).length <= deliberate));
+  report.check('no console error on the phone (but the deliberate 403)', errs.length === 0, errs.slice(0, 5).join(' | '));
+  report.check('no 403 on any request the phone made but the one asked for', unexpected403.length === 0, unexpected403.slice(0, 8).join(' | '));
+
+  console.log('\n── 1c. the Super composer\'s notice at 1440 and 390 (the real Composer in its harness)');
+  const DASH = join(REPO, 'dashboard');
+  const HARNESS = join(REPO, 'scripts', 'verify', 'harness', 'composer-voice');
+  const fromDash = (p) => import(pathToFileURL(join(DASH, 'node_modules', p)).href);
+  const { createServer } = await fromDash('vite/dist/node/index.js');
+  const react = (await fromDash('@vitejs/plugin-react/dist/index.js')).default;
+  harness = await createServer({
+    configFile: false, root: HARNESS, logLevel: 'error', plugins: [react()],
+    define: { __DC_VERSION__: JSON.stringify('0.0.0-harness') },
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: join(DASH, 'node_modules', 'react') },
+        { find: /^react\/(.*)$/, replacement: join(DASH, 'node_modules', 'react', '$1') },
+        { find: /^react-dom$/, replacement: join(DASH, 'node_modules', 'react-dom') },
+        { find: /^react-dom\/(.*)$/, replacement: join(DASH, 'node_modules', 'react-dom', '$1') },
+        { find: /^@tanstack\/react-query$/, replacement: join(DASH, 'node_modules', '@tanstack', 'react-query') },
+      ],
+      dedupe: ['react', 'react-dom'],
+    },
+    server: { port: 0, host: '127.0.0.1', fs: { allow: [REPO] } },
+    optimizeDeps: { entries: [join(HARNESS, 'index.html')] },
+  });
+  await harness.listen();
+  const hbase = harness.resolvedUrls.local[0];
+  for (const width of [1440, 390]) {
+    const dctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 900 }, permissions: ['microphone'] });
+    const page = await dctx.newPage();
+    const derr = [];
+    page.on('console', (m) => { if (m.type() === 'error') derr.push(m.text().slice(0, 200)); });
+    page.on('pageerror', (e) => derr.push(String(e).slice(0, 200)));
+    await page.goto(`${hbase}?mode=super&theme=dark&lang=tr&stt=garbled`);
+    await page.waitForSelector('.chat-cmp-mic', { timeout: 30_000 });
+    await page.waitForTimeout(400);
+    const press = (type) => page.locator('.chat-cmp-mic').dispatchEvent(type, { pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: type === 'pointerdown' ? 1 : 0 });
+    await press('pointerdown');
+    await page.waitForSelector('.chat-cmp-mic.is-recording', { timeout: 10_000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    await press('pointerup');
+    const shown = await until(async () => (await page.locator('.chat-cmp-voice-note').allTextContents()).join('|').includes('Anlayamadım'), 8000);
+    const cue = await until(async () => (await page.evaluate(() => window.__dcCue?.starts ?? 0)) >= 1, 5000);
+    const sent = await page.evaluate(() => (window.__armed ?? []).length + (window.__sent ?? []).length);
+    const cut = await page.evaluate(() => { const el = document.querySelector('.chat-cmp-voice-note'); return el ? el.scrollWidth > el.clientWidth + 1 : null; });
+    const box = await page.locator('.chat-cmp').boundingBox();
+    const file = join(SHOTS, `super-${width}-garbled.png`);
+    await page.screenshot({ path: file, clip: box ? { x: 0, y: Math.max(0, box.y - 8), width, height: box.height + 16 } : undefined });
+    report.check(`(${width}) the Super composer shows "Anlayamadım, tekrar eder misin?" in full`, shown && cut === false, JSON.stringify({ notes: await page.locator('.chat-cmp-voice-note').allTextContents(), cut }));
+    report.check(`(${width}) the cue player started; nothing was sent`, cue && sent === 0, JSON.stringify({ cue: await page.evaluate(() => window.__dcCue ?? null), sent }));
+    report.check(`(${width}) no console error`, derr.length === 0, derr.slice(0, 3).join(' | '));
+    await dctx.close();
+  }
+
+  // A desktop take started from the shell's hotkey has no gesture: in WKWebView the cue's context
+  // may never start, and resume() stays pending (Web Audio spec). Simulated: every AudioContext
+  // stays suspended and resume() never settles. The notice must show alone, logged.
+  {
+    const sctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['microphone'] });
+    await sctx.addInitScript(() => {
+      const Real = window.AudioContext;
+      window.AudioContext = class extends Real {
+        get state() { return 'suspended'; }
+        resume() { return new Promise(() => {}); }
+      };
+    });
+    const page = await sctx.newPage();
+    const logs = []; const serr = [];
+    page.on('console', (m) => { logs.push(m.text()); if (m.type() === 'error') serr.push(m.text().slice(0, 200)); });
+    page.on('pageerror', (e) => serr.push(String(e).slice(0, 200)));
+    await page.goto(`${hbase}?mode=super&theme=dark&lang=tr&stt=garbled`);
+    await page.waitForSelector('.chat-cmp-mic', { timeout: 30_000 });
+    await page.waitForTimeout(400);
+    const press = (type) => page.locator('.chat-cmp-mic').dispatchEvent(type, { pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: type === 'pointerdown' ? 1 : 0 });
+    await press('pointerdown');
+    await page.waitForTimeout(1500);
+    await press('pointerup');
+    const shown = await until(async () => (await page.locator('.chat-cmp-voice-note').allTextContents()).join('|').includes('Anlayamadım'), 8000);
+    const settled = await until(async () => (await page.evaluate(() => window.__dcCue?.last)) === 'suspended', 3000);
+    const stats = await page.evaluate(() => window.__dcCue ?? null);
+    report.check('(1440, context never starts) the notice shows alone: cue reported suspended, never started, logged', shown && settled && stats?.starts === 0 && logs.some((l) => l.includes('cue: suspended')), JSON.stringify({ shown, stats, logged: logs.filter((l) => l.includes('cue')) }));
+    report.check('(1440, context never starts) no console error', serr.length === 0, serr.slice(0, 3).join(' | '));
+    const box = await page.locator('.chat-cmp').boundingBox();
+    await page.screenshot({ path: join(SHOTS, 'super-1440-garbled-suspended.png'), clip: box ? { x: 0, y: Math.max(0, box.y - 8), width: 1440, height: box.height + 16 } : undefined });
+    await sctx.close();
+  }
+
+  console.log('\n── 1d. Settings → Voice → "Languages I speak" (desktop, 1440)');
+  {
+    const sctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await sctx.addInitScript(() => { Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true }); });
+    await markAnnouncementsSeen(sctx, base);
+    const page = await sctx.newPage();
+    const serr = [];
+    page.on('console', (m) => { if (m.type() === 'error') serr.push(m.text().slice(0, 200)); });
+    page.on('pageerror', (e) => serr.push(String(e).slice(0, 200)));
+    await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
+    for (let i = 0; i < 3 && await page.locator('.announcements-modal-close').count(); i += 1) {
+      await page.locator('.announcements-modal-close').first().click({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(400);
+    }
+    const settingsBtn = page.getByRole('button', { name: 'Settings', exact: true }).first();
+    if (!(await until(async () => (await settingsBtn.count()) > 0, 15000))) await page.screenshot({ path: join(SHOTS, 'settings-1440-debug.png') });
+    let step = 'settings button';
+    try {
+      await settingsBtn.click({ timeout: 20_000 });
+      step = 'settings nav';
+      await page.waitForSelector('.settings-nav', { timeout: 15000 });
+      step = 'Chat section (the agent settings, Voice last)';
+      await page.locator('.settings-nav-item', { hasText: /^Chat/ }).first().click({ timeout: 10_000 });
+      step = 'voice group summary';
+      const group = page.locator('details', { hasText: 'Voice — dreamcontext Assistant' }).last();
+      await group.locator('summary').first().click({ timeout: 10_000 });
+    } catch (err) {
+      await page.screenshot({ path: join(SHOTS, 'settings-1440-fail.png') });
+      throw new Error(`Settings step "${step}": ${String(err).slice(0, 160)}`);
+    }
+    const row = page.getByRole('group', { name: 'Languages I speak' });
+    const drawn = await until(async () => (await row.count()) === 1 && await row.isVisible(), 10000);
+    report.check('the "Languages I speak" row is drawn, its boxes off by default', drawn && (await row.locator('input:checked').count()) === 0);
+    // Controlled by the saved status, like every row in this card: it flips when the server answers.
+    await row.getByLabel('Turkish').click();
+    const saved = await until(async () => {
+      const st = await (await fetch(`${base}/api/agent/voice/status`)).json();
+      return Array.isArray(st.sttLanguages) && st.sttLanguages.join(',') === 'tr';
+    }, 8000);
+    const shownChecked = await until(async () => row.getByLabel('Turkish').isChecked(), 5000);
+    report.check('ticking Turkish saves it (status: sttLanguages = ["tr"]) and the box shows it', saved && shownChecked);
+    await row.scrollIntoViewIfNeeded();
+    const rbox = await row.boundingBox();
+    await page.screenshot({ path: join(SHOTS, 'settings-1440-languages.png'), clip: rbox ? { x: 0, y: Math.max(0, rbox.y - 140), width: 1440, height: rbox.height + 220 } : undefined });
+    report.check('no console error in Settings', serr.length === 0, serr.slice(0, 3).join(' | '));
+    await sctx.close();
+  }
 } catch (err) {
   report.check('the run completed', false, String(err?.stack ?? err).slice(0, 600));
 } finally {
   await browser?.close().catch(() => {});
+  await harness?.close().catch(() => {});
   server?.kill();
   // The whisper stand-in is the server's child; make sure no stray one keeps the port.
   spawnSync('pkill', ['-f', join(HOME, '.local', 'bin', 'whisper-server')]);

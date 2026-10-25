@@ -25,6 +25,7 @@ import { join, dirname } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { normalizeHotkey, effectiveMode, type PushToTalkMode } from './hotkey.js';
+import { normalizeLanguage } from './languageContext.js';
 
 /** What lives in `voice.json`. Every field is optional — an absent file is a valid state. */
 export interface VoiceConfig {
@@ -40,6 +41,11 @@ export interface VoiceConfig {
    * app, the fix is a pinned default here rather than a code change.
    */
   sttLanguage?: string;
+  /**
+   * "Languages I speak" (Settings): normalized codes, empty by default. One of the language
+   * context's signals (`languageContext.ts`); exactly one entry also pins pass 1 to it.
+   */
+  sttLanguages?: string[];
   /**
    * The push-to-talk chord, canonical form (see `hotkey.ts`). Configurable because the
    * shipped default is not neutral: ⌥Space is Spotlight's alternate on some machines and a
@@ -161,6 +167,11 @@ export function readVoiceConfig(home: string = homedir()): VoiceConfig {
     }
     if (typeof raw.voice === 'string' && raw.voice.trim()) out.voice = raw.voice.trim();
     if (typeof raw.sttLanguage === 'string') out.sttLanguage = raw.sttLanguage.trim();
+    // Every entry through the fixed table; an unknown one is dropped, not carried.
+    if (Array.isArray(raw.sttLanguages)) {
+      const langs = [...new Set(raw.sttLanguages.map(normalizeLanguage).filter((l): l is string => !!l))];
+      if (langs.length) out.sttLanguages = langs;
+    }
     // An unparseable chord is DROPPED, not carried: a hand-edited `voice.json` must degrade
     // to the default binding rather than to a mode whose only input never fires.
     if (typeof raw.pushToTalk === 'string') {
@@ -197,7 +208,7 @@ function writeAtomic0600(filePath: string, content: string): void {
  * cannot blank the key it never rendered.
  */
 export function writeVoiceConfig(
-  patch: Partial<Record<keyof VoiceConfig, string | number | boolean | null | undefined>>,
+  patch: Partial<Record<keyof VoiceConfig, string | string[] | number | boolean | null | undefined>>,
   home: string = homedir(),
 ): VoiceConfig {
   const current = readVoiceConfig(home);
@@ -205,7 +216,7 @@ export function writeVoiceConfig(
   for (const [k, v] of Object.entries(patch)) {
     const key = k as keyof VoiceConfig;
     if (v === undefined) continue;
-    if (v === null || v === '') { delete next[key]; continue; }
+    if (v === null || v === '' || (Array.isArray(v) && v.length === 0)) { delete next[key]; continue; }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (next as any)[key] = typeof v === 'string' ? v.trim() : v;
   }
@@ -234,6 +245,7 @@ export interface VoiceStatus {
   key: boolean;
   voice: string;
   sttLanguage: string;
+  sttLanguages: string[];
   pushToTalk: string;
   /** The mode as STORED. A latch key overrides it — see `pushToTalkMode` below. */
   pushToTalkMode: PushToTalkMode;
@@ -255,6 +267,7 @@ export function voiceStatus(home: string = homedir()): VoiceStatus {
     key: Boolean(voiceApiKey(home)),
     voice: cfg.voice || DEFAULT_VOICE,
     sttLanguage: cfg.sttLanguage || AUTO_LANGUAGE,
+    sttLanguages: cfg.sttLanguages ?? [],
     pushToTalk: cfg.pushToTalk || DEFAULT_PUSH_TO_TALK,
     // REPORTED EFFECTIVE, not as stored: Caps Lock can only toggle, and a Settings card that
     // showed "hold" for it would be describing a binding the composer will never honour.

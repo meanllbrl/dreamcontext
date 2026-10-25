@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { bindTake, voiceTakeBlock, type TakeRecord } from '../../lib/voice/voiceLog.js';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -2090,6 +2091,10 @@ export function startChatSession(
   let superEventTurnOpen = false;
   /** Owner texts sent spoken (`voice: true`) not yet written to the CLI. */
   const spokenTexts = new Set<string>();
+  /** Owner texts dictated and sent UNCHANGED (the frame's `voiceTake`), bound to this chat and
+   *  not yet written to the CLI: text → the stored take. Dies with this handler, so a message
+   *  resent after a performed account switch carries no take (a stated scope cut). */
+  const voiceTakes = new Map<string, TakeRecord>();
   /** A spoken owner message was written and its turn's `result` has not come yet. */
   let voiceArmed = false;
   /** The last owner text written (`lastSentText`) was spoken: a limit-refused resend keeps it. */
@@ -2444,6 +2449,14 @@ export function startChatSession(
     // only what streams between `voice_turn` and `voice_turn_end`; an event turn never arms it.
     const voice = isSuper && spokenTexts.delete(text);
     if (voice) content.push({ type: 'text', text: OWNER_VOICE_TEXT });
+    // A dictated message (task sesli-giris-bozuk…): its take's ref, language and quality, so
+    // the agent can `dreamcontext voice retry <ref>` a transcript that reads as nonsense.
+    const take = voiceTakes.get(text);
+    if (take) {
+      voiceTakes.delete(text);
+      const block = text.startsWith('/') ? null : voiceTakeBlock(take);
+      if (block) content.push({ type: 'text', text: block });
+    }
     // The Super Agent's own question is open: this message answers it, and everything held
     // back while it was open rides in the SAME message (inbox.ts `superAnswerDigest`), a block
     // starting with `<` the replay drops.
@@ -3775,7 +3788,7 @@ export function startChatSession(
     let msg: {
       type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
       message?: string; model?: string; effort?: string; targetUuid?: string; mode?: string;
-      taskId?: string; enabled?: boolean; visible?: boolean; voice?: boolean;
+      taskId?: string; enabled?: boolean; visible?: boolean; voice?: boolean; voiceTake?: unknown;
     };
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
@@ -3796,6 +3809,13 @@ export function startChatSession(
       // once and folded into whatever turn runs (plan r4 D4), as Enter does in every chat.
       // A spoken message (the frame's `voice`) stays spoken through the account-switch gate.
       if (isSuper && msg.voice === true) spokenTexts.add(msg.text);
+      // A dictated message sent unchanged names its take. Bound HERE, synchronously, before
+      // anything awaits: the shape, the take's existence, this chat's vault, unbound, under
+      // 10 minutes — anything else and the ref is dropped and the message goes as plain text.
+      if (msg.voiceTake !== undefined && contextRoot) {
+        const take = bindTake(msg.voiceTake, chatRegistryId, contextRoot, undefined, undefined, msg.text);
+        if (take) voiceTakes.set(msg.text, take);
+      }
       // Auto-switch evaluates BEFORE the turn goes to the CLI — the whole point is that the
       // message does not have to fail first. `maybeSwitchAccount` either sends the turn on
       // this account (the overwhelmingly common answer, and the answer whenever anything is

@@ -28,7 +28,7 @@ const session: ComposerHost = {
   getModel: () => ({ draft: '', draftEpoch: 0, history: [], items: [] }),
   syncDraft: () => {},
   setFocusTarget: () => {},
-  send: () => {},
+  send: (text) => { (window as unknown as { __sent?: string[] }).__sent = [...((window as unknown as { __sent?: string[] }).__sent ?? []), text]; },
   steer: () => false,
   enqueue: () => {},
   interrupt: () => {},

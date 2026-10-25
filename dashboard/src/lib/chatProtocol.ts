@@ -432,8 +432,10 @@ export function isUrgentChatEvent(ev: ChatEvent): boolean {
 // ─── Client → server control frames ───────────────────────────────────────────────
 
 export type ClientControl =
-  /** `voice`: the owner spoke this message (the Super Agent answers aloud, K1). */
-  | { type: 'user'; text: string; voice?: true }
+  /** `voice`: the owner spoke this message (the Super Agent answers aloud, K1). `voiceTake`:
+   *  the dictated take this message is, sent unchanged — the server binds it and tells the
+   *  agent, which may then retranscribe it (`dreamcontext voice retry`). */
+  | { type: 'user'; text: string; voice?: true; voiceTake?: string }
   | { type: 'answer'; requestId: string; behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }
   | { type: 'interrupt' }
   /** Live model switch — the server translates this into a `set_model` control_request

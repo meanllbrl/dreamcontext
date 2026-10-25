@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decodeNativeTake } from '../../dashboard/src/lib/voice/nativeMic.js';
 import { measureTake, judgeTake, frameSizeFor } from '../../dashboard/src/lib/voice/useVoiceCapture.js';
-import { parseTakeMeta, keepTake, logVoiceEvent, KEEP_TAKES } from '../../src/lib/voice/voiceLog.js';
+import { parseTakeMeta, keepTake, logVoiceEvent } from '../../src/lib/voice/voiceLog.js';
 
 /** The body `mic_take_end` returns: rate, opened ms, first-sample ms, wall ms, f32 samples. */
 function body(rate: number, opened: number, first: number, wall: number, samples: number[]): ArrayBuffer {
@@ -98,17 +98,13 @@ describe('the voice log', () => {
     expect(JSON.parse(lines[0]).at).toMatch(/^\d{4}-/);
   });
 
-  it(`keeps the audio of the last ${KEEP_TAKES} takes and no more`, () => {
+  it('keeps each take under its own random ref (the 24 h / 200 MB store is tested in voice-take-store)', () => {
     home = mkdtempSync(join(tmpdir(), 'dc-voicelog-'));
-    for (let i = 0; i < KEEP_TAKES + 3; i++) {
-      keepTake(Buffer.from([i]), { n: i }, home);
-      const until = Date.now() + 2; while (Date.now() < until) { /* distinct timestamps */ }
-    }
+    const a = keepTake(Buffer.from([1]), { n: 1, contextRoot: '/v', quality: 'clean' }, home);
+    const b = keepTake(Buffer.from([2]), { n: 2, contextRoot: '/v', quality: 'clean' }, home);
+    expect(a).toMatch(/^vt_[0-9a-f]{32}$/);
+    expect(b).not.toBe(a);
     const files = readdirSync(join(home, '.dreamcontext', 'logs', 'voice-takes'));
-    expect(files.filter((f) => f.endsWith('.wav'))).toHaveLength(KEEP_TAKES);
-    expect(files.filter((f) => f.endsWith('.json'))).toHaveLength(KEEP_TAKES);
-    const kept = files.filter((f) => f.endsWith('.json')).map((f) =>
-      JSON.parse(readFileSync(join(home, '.dreamcontext', 'logs', 'voice-takes', f), 'utf-8')).n as number);
-    expect(Math.min(...kept)).toBe(3);   // the oldest three went
-  });
+    expect(files.filter((f) => f.endsWith('.wav'))).toHaveLength(2);
+});
 });

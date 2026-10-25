@@ -11,19 +11,26 @@
  * take lasted (a page that drops frames shows up as the gap), what the engine answered, and
  * for speech, which chunks were spoken, rescued or dropped and why.
  *
- * Local only, under `~/.dreamcontext/logs/`, never uploaded. The audio is kept for the last
- * {@link KEEP_TAKES} takes so a bad transcript can be replayed through whisper by hand, the same
- * comparison that found the mid-word join bug; older ones are deleted as new ones arrive.
+ * Local only, under `~/.dreamcontext/logs/`, never uploaded. Each take's audio is kept for
+ * {@link TAKE_TTL_MS} (at most {@link TAKE_MAX_BYTES} in all) so a bad transcript can be replayed
+ * through whisper — by hand, as when the mid-word join bug was found, or by the chat's own agent
+ * (`dreamcontext voice retry`, which is why a take now has a ref and an owner).
  *
  * Every write is best-effort: a full disk or a permission problem must never cost a take.
  */
 
-import { appendFileSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync, chmodSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { normalizeLanguage, type ContextTake } from './languageContext.js';
 
-/** How many takes keep their audio. */
-export const KEEP_TAKES = 12;
+/** How long a take keeps its audio (owner, 2026-10-24: "24 saat"). */
+export const TAKE_TTL_MS = 24 * 60 * 60 * 1000;
+/** The take store's ceiling; the oldest go first past it. */
+export const TAKE_MAX_BYTES = 200 * 1024 * 1024;
 /** The log is rotated past this size (one `.1` generation). */
 const MAX_LOG_BYTES = 2 * 1024 * 1024;
 
@@ -62,26 +69,228 @@ export function parseTakeMeta(raw: string | string[] | undefined): Record<string
     const v = p[k];
     if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 1e9) out[k] = Math.round(v);
   }
+  // The conversation it was dictated into (selects the language context, never access) and
+  // the page's UI language (one more context signal).
+  if (typeof p.conv === 'string' && CONV_RE.test(p.conv)) out.conv = p.conv;
+  const ui = normalizeLanguage(p.ui);
+  if (ui) out.ui = ui;
   return out;
 }
 
-/** Keep this take's audio and transcript, and delete all but the newest {@link KEEP_TAKES}. */
-export function keepTake(wav: Buffer, record: Record<string, unknown>, home?: string): string | null {
+const CONV_RE = /^[\w-]{1,64}$/;
+
+// ─── The take store ──────────────────────────────────────────────────────────────────────
+//
+// A take is `<ref>.wav` + `<ref>.json`, the ref `vt_` + 128 random bits: no collisions, no
+// guessing. Its record carries ONLY what the server itself determined about it — the vault
+// it was dictated into (`contextRoot`), when, its language and quality — so the chat that
+// later binds it and the agent that asks to retranscribe it are checked against facts, never
+// against anything a page said. The directory is 0700 and the files 0600: it is the owner's
+// voice.
+
+export const TAKE_REF_RE = /^vt_[0-9a-f]{32}$/;
+export const TAKE_QUALITIES = ['clean', 'suspect', 'garbled'] as const;
+export type TakeQuality = typeof TAKE_QUALITIES[number];
+
+/** What a stored take says about itself, re-validated on every read. */
+export interface TakeRecord {
+  ref: string;
+  contextRoot: string;
+  createdAt: number;
+  language: string | null;
+  /** The context's primary when it was taken: the default language of a retranscribe. */
+  primary: string | null;
+  quality: TakeQuality;
+  passes: number;
+  conv?: string;
+  chars: number;
+  /** The chat (registry id) that sent it as a message; set once. */
+  session?: string;
+}
+
+export function takesDir(home?: string): string {
+  return join(voiceLogDir(home), 'voice-takes');
+}
+
+/** The store's directory, created and forced to 0700 (an existing 0755 one too). */
+function ensureTakesDir(home?: string): string {
+  const dir = takesDir(home);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  return dir;
+}
+
+/** Re-validate a stored record: a hand-edited or old-format file is no take. */
+function readRecord(dir: string, ref: string): TakeRecord | null {
   try {
-    const dir = join(voiceLogDir(home), 'voice-takes');
-    mkdirSync(dir, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    writeFileSync(join(dir, `${stamp}.wav`), wav);
-    writeFileSync(join(dir, `${stamp}.json`), JSON.stringify(record, null, 2));
-    const stamps = [...new Set(readdirSync(dir).map((f) => f.replace(/\.(wav|json)$/, '')))].sort();
-    for (const old of stamps.slice(0, Math.max(0, stamps.length - KEEP_TAKES))) {
-      rmSync(join(dir, `${old}.wav`), { force: true });
-      rmSync(join(dir, `${old}.json`), { force: true });
-    }
-    return stamp;
+    const raw = JSON.parse(readFileSync(join(dir, `${ref}.json`), 'utf-8')) as Record<string, unknown>;
+    if (typeof raw.contextRoot !== 'string' || !raw.contextRoot) return null;
+    if (typeof raw.createdAt !== 'number' || !Number.isFinite(raw.createdAt)) return null;
+    const quality = (TAKE_QUALITIES as readonly unknown[]).includes(raw.quality) ? raw.quality as TakeQuality : null;
+    if (!quality) return null;
+    return {
+      ref,
+      contextRoot: raw.contextRoot,
+      createdAt: raw.createdAt,
+      language: normalizeLanguage(raw.language),
+      primary: normalizeLanguage(raw.primary),
+      quality,
+      passes: typeof raw.passes === 'number' && raw.passes >= 1 && raw.passes <= 2 ? raw.passes : 1,
+      ...(typeof raw.conv === 'string' && CONV_RE.test(raw.conv) ? { conv: raw.conv } : {}),
+      chars: typeof raw.chars === 'number' && raw.chars >= 0 ? raw.chars : 0,
+      ...(typeof raw.session === 'string' && raw.session ? { session: raw.session } : {}),
+    };
   } catch {
     return null;
   }
+}
+
+/**
+ * Delete takes older than {@link TAKE_TTL_MS}, then the oldest while the store is over
+ * {@link TAKE_MAX_BYTES}. Age is the file's mtime, so an old-format take (a timestamp name, no
+ * ref) ages out the same way. Runs on every write and at server start; best-effort.
+ */
+export function pruneTakes(home?: string, now: number = Date.now(), maxBytes: number = TAKE_MAX_BYTES): void {
+  try {
+    const dir = takesDir(home);
+    const groups = new Map<string, { mtime: number; size: number }>();
+    for (const f of readdirSync(dir)) {
+      const base = f.replace(/\.(wav|json)$/, '');
+      let st;
+      try { st = statSync(join(dir, f)); } catch { continue; }
+      const g = groups.get(base) ?? { mtime: 0, size: 0 };
+      g.mtime = Math.max(g.mtime, st.mtimeMs);
+      g.size += st.size;
+      groups.set(base, g);
+    }
+    const drop = (base: string) => {
+      rmSync(join(dir, `${base}.wav`), { force: true });
+      rmSync(join(dir, `${base}.json`), { force: true });
+      groups.delete(base);
+    };
+    for (const [base, g] of [...groups]) if (now - g.mtime > TAKE_TTL_MS) drop(base);
+    const oldestFirst = [...groups].sort((a, b) => a[1].mtime - b[1].mtime);
+    let total = oldestFirst.reduce((n, [, g]) => n + g.size, 0);
+    for (const [base, g] of oldestFirst) {
+      if (total <= maxBytes) break;
+      drop(base);
+      total -= g.size;
+    }
+  } catch { /* no store yet */ }
+}
+
+/**
+ * Keep this take's audio and record; returns its ref, or null when it could not be written.
+ * `record` is logged as given; the trusted fields (`contextRoot`, `createdAt`, `language`,
+ * `quality`, `passes`, `conv`) are set by the caller from what the server determined.
+ */
+export function keepTake(
+  wav: Buffer,
+  record: Record<string, unknown> & { contextRoot: string; quality: TakeQuality },
+  home?: string,
+  now: number = Date.now(),
+): string | null {
+  try {
+    const dir = ensureTakesDir(home);
+    const ref = `vt_${randomBytes(16).toString('hex')}`;
+    const conv = typeof record.conv === 'string' && CONV_RE.test(record.conv) ? record.conv : undefined;
+    const stored = {
+      ...record,
+      conv,
+      language: normalizeLanguage(record.language),
+      primary: normalizeLanguage(record.primary),
+      createdAt: now,
+    };
+    writeFileSync(join(dir, `${ref}.wav`), wav, { mode: 0o600 });
+    writeFileSync(join(dir, `${ref}.json`), JSON.stringify(stored, null, 2), { mode: 0o600 });
+    pruneTakes(home, now);
+    return ref;
+  } catch {
+    return null;
+  }
+}
+
+/** A take by ref, with its audio path; null for a malformed ref (no path is joined), an
+ *  unknown or expired one. */
+export function findTake(ref: unknown, home?: string, now: number = Date.now()): (TakeRecord & { wavPath: string }) | null {
+  if (typeof ref !== 'string' || !TAKE_REF_RE.test(ref)) return null;
+  const dir = takesDir(home);
+  const rec = readRecord(dir, ref);
+  if (!rec || now - rec.createdAt > TAKE_TTL_MS) return null;
+  return { ...rec, wavPath: join(dir, `${ref}.wav`) };
+}
+
+/** How long after a take a message may still claim it. */
+export const BIND_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * Bind a take to the chat that sent it as a message — once, from the same vault, within
+ * {@link BIND_WINDOW_MS}. The check and the write are one synchronous step (no await), so two
+ * frames carrying one ref cannot both bind. Returns the record, or null (the ref is dropped).
+ */
+export function bindTake(
+  ref: unknown,
+  session: string,
+  contextRoot: string,
+  home?: string,
+  now: number = Date.now(),
+  sentText?: string,
+): TakeRecord | null {
+  const take = findTake(ref, home, now);
+  if (!take || !session || take.session || take.contextRoot !== contextRoot) return null;
+  if (now - take.createdAt > BIND_WINDOW_MS || take.quality === 'garbled') return null;
+  try {
+    const file = join(takesDir(home), `${take.ref}.json`);
+    const raw = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
+    // "Sent unchanged" is checked here too, not only by the page: the message must still hold
+    // the words that were heard (a quote or an attachment block may surround them).
+    if (sentText !== undefined && !(typeof raw.text === 'string' && raw.text.trim() && sentText.includes(raw.text.trim()))) return null;
+    writeFileSync(file, JSON.stringify({ ...raw, session }, null, 2), { mode: 0o600 });
+  } catch {
+    return null;
+  }
+  const { wavPath: _wav, ...rec } = take;
+  return { ...rec, session };
+}
+
+/**
+ * The block an agent sees beside a dictated owner message: `<voice-take ref lang quality/>`.
+ * Built ONLY from a bound, stored record, re-validated here, so no frame field and no
+ * transcript text can reach an attribute. Starts with `<`, so the transcript replay drops it
+ * and the owner's bubble shows his words alone.
+ */
+export function voiceTakeBlock(take: Pick<TakeRecord, 'ref' | 'language' | 'quality'>): string | null {
+  if (!TAKE_REF_RE.test(take.ref)) return null;
+  const lang = normalizeLanguage(take.language) ?? 'unknown';
+  const quality = take.quality === 'clean' || take.quality === 'suspect' ? take.quality : null;
+  if (!quality) return null;
+  return `<voice-take ref="${take.ref}" lang="${lang}" quality="${quality}"/>`;
+}
+
+/** Every take in the store, newest first (re-validated; unreadable ones skipped). */
+export function listTakes(home?: string, now: number = Date.now()): TakeRecord[] {
+  try {
+    const dir = takesDir(home);
+    return readdirSync(dir)
+      .filter((f) => f.endsWith('.json') && TAKE_REF_RE.test(f.slice(0, -5)))
+      .map((f) => readRecord(dir, f.slice(0, -5)))
+      .filter((r): r is TakeRecord => !!r && now - r.createdAt <= TAKE_TTL_MS)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  } catch {
+    return [];
+  }
+}
+
+/** The newest take bound to `session` in `contextRoot`, or null. */
+export function latestTakeOf(session: string, contextRoot: string, home?: string, now?: number): TakeRecord | null {
+  return listTakes(home, now).find((t) => t.session === session && t.contextRoot === contextRoot) ?? null;
+}
+
+/** The recent takes as language-context input (newest first). */
+export function contextTakes(home?: string, now?: number): ContextTake[] {
+  return listTakes(home, now).slice(0, 50).map((t) => ({
+    language: t.language, quality: t.quality, conv: t.conv, createdAt: t.createdAt, chars: t.chars,
+  }));
 }
 
 const SPEECH_OUTCOMES = new Set(['played', 'skipped', 'cut']);

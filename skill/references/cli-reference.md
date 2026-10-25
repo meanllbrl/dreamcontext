@@ -549,6 +549,16 @@ Autonomy (`ask \| auto \| bypass`, set in the wizard) decides whether `send` / `
 | `window send <tab> "<text>"` | Message another chat tab; a busy one gets it in its running turn (`steered`), one asking a question gets it after (`queued`). |
 | `window close <tab> [--force]` | Close a tab; a working or asking chat needs `--force`, only on the user's word. A chat cannot close itself. |
 
+
+## Voice retry — a chat retranscribes a dictated message
+
+A message the owner dictated reaches the agent with a server-written `<voice-take ref="vt_…" lang="tr" quality="clean|suspect"/>` block (the owner's bubble does not show it). The `/stt` route already retranscribes a suspect take once and sends nothing when both passes are garbled ("Anlayamadım"); this is the second layer.
+
+| Command | What it does |
+|---|---|
+| `voice retry [ref] [--language <code>]` | Transcribe that take AGAIN, once, from the same audio, forced to `--language` (a code like `tr`, `en`) or the take's context language. Omit `ref` for this chat's latest take. Prints `{ ref, text, language, quality, reasons }`. |
+
+Only from a dreamcontext chat (its window token), only that chat's own takes in its own vault, never over the hands-free phone. Refusals exit 1: `not_a_chat` (401), `not_your_take` (403), `unknown_take` (404, unknown or older than 24 h), `bad_language` (400), `retry_capped` (429: 2 per take, 6 per minute). Rule: try it once when the text reads as nonsense, an unexpected language or a loop; act on the new text only if it reads sensibly (quote it in one line before anything irreversible); otherwise ask the owner to say it again.
 ## Super Agent — the project's lead chat after a hand-over
 
 `dreamcontext super …` works ONLY from the project's **Super Agent** chat: the chat the owner's **Süper Ajana devret / Hand over to the Super Agent** button in the Chat header opens. The button shows only once the owner turns on **Settings → Chat → Super Agent** (the last row, `superAgent` in `~/.dreamcontext/agent-ui.json`, OFF by default; turning it off never hides the Take back of a hand-over already running). One per project (`state/.super-agent.json`, local-only). Hand-over adopts every open chat of the project as a read-only floating **card** around the super chat, which sits exactly in the centre and takes the larger share; every floating card is a small 1:1 tile on an orbit around it, and cards can be **grouped** into one tile (the owner drops a card on another; you run `super group`); the owner writes only to it; **Geri al / Take it back** restores the earlier panes with every child still running as a tab. The server lets a verb through only for a live window token that belongs to the vault's recorded super session in Super Agent mode; any other chat, a terminal or `claude -p` is refused (`not_the_super_agent` / `not_a_chat`). Desktop app only, never the phone. No picker offers the mode, and no `window`/`assistant` verb can open one.
