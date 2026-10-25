@@ -4,6 +4,55 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-10-26
+
+The first release since 0.32.0. It carries everything cut locally as 0.33.0 and 0.34.0-0.34.6 (none of those was ever published), plus the first Windows build. The desktop app, the npm package and the Windows installer ship together.
+
+### The Super Agent, Jarvis-style
+
+- **A Super Agent that runs the project's chats for you.** It can end and resume a child chat, send a message that steers a busy one, park idle chats under machine load (one click brings them back), and hand off into its own file. It opens on Opus + High, has a voice read-aloud switch, and gives no time estimates.
+- **A stage of cards.** Small 1:1 tiles on an orbit, grouped by drag-drop or `super group`. Pictures, HTML, PDF, video, whiteboards (including boards over 512 KB) and project web pages open as cards that zoom in place; a web card keeps its session through moves and restarts, with Reload, Clear cache and Inspect-to-composer. A running child always has a card; a finished child's card shows its transcript. Named presentation layouts: spotlight, compare, grid, filmstrip, review.
+- **An agenda that is always open.** A card and the Super Agent's own notepad (`super note`), a "While you were away" recap card, and a "Write about this" icon on every agenda line that attaches the item to your next message. One reply answering several messages draws one box with a chip naming the message each part answers.
+- **A dock on every screen.** The Super Agent floats on every page and carries the page it was opened from.
+- **It asks the way any agent asks.** Its question to you is a card in its chat with option buttons; picture questions present their pictures on the stage. A child's question or done event reaches the Super Agent, and from it you, exactly once. A child still running or waiting on you is never shown as done.
+- **It treats the machine kindly.** While macOS reports the machine running very hot, only one heavy step runs machine-wide and browser verify checks queue behind tests. Children keep their model and effort across an app restart.
+
+### AI Team
+
+- **Agents become teammates.** AI Team replaces the Agents and Automations pages: members sit in a tree with a Tree view and an Org chart, each with a live chat stage, autonomy and account-protection settings and an Approve step.
+- **Task assignment.** Assign a task to an agent from the composer or the task drawer; agents claim tasks, work on a detached host and deliver to a reviewer round. The board filters by agent and shows waiting rows.
+- **One agent per Mac, shared across every project and brain.** Agents travel with the brain sync; only the owner can change an agent, teammates see it read-only.
+
+### Hands-free
+
+- The phone mirrors the Super Agent's agenda (folded one-line events, readable question/answer receipts, reference chips), shows every picture the agent shows and can send gallery photos. A question card's picks survive drops and account switches, and the screen no longer jumps on reconnect.
+- A computer or landscape tablet on the tunnel gets the desktop Chat and the remote Super stage; a phone never holds a Super child.
+- Voice input catches a garbled take before sending it, retries once in the conversation's language, and says so instead of sending nonsense. Spoken replies are chunked at natural speech boundaries.
+
+### Tasks, sleep and recall
+
+- **The task UI is rebuilt:** board only, sub-tasks on cards, a sectioned detail drawer and task media. Sleep places new work as sub-tasks, and each task shows why it was opened.
+- **The 0.33.0 task system (card + journal) stays reverted** (PR #438). Journals written by it are folded back into their cards' Changelog by the 0.32.0 migration.
+- **Whiteboard explanations are drawn with the excalidraw kit** instead of stacked as notes.
+- **Recall names its reason** whenever it falls back to BM25, and runs the vault's cloud tier next to peer vaults.
+- A chat session resolves relative and absolute media paths from its own worktree.
+
+### Windows (new)
+
+- **A Windows desktop app.** An NSIS installer (`dreamcontext-beta_x64-setup.exe`) with the in-app updater (download and verify in the background, install on quit), built by the same release workflow as the Mac app.
+- **First install shows SmartScreen.** The installer is not Authenticode-signed yet: choose **More info, then Run anyway**. The update itself is signed with the updater key and verified before it installs.
+- Hands-free is Mac-only and is hidden everywhere it is offered on Windows. A restart with a parked update reopens the app, and artifact uploads survive a re-run. CI hardening: native glob paths, a concurrent Super-state write, a dashboard test's React import. Not yet run on real Windows hardware beyond CI.
+
+### Release and fixes
+
+- The updater waits while Mac mode is on, and a Finder-launched app honours the auto-update opt-out. Hands-free tunnel give-up ends Mac mode; Sign all out confirms.
+- A new session never opens on a signed-out Claude account.
+- Mermaid diagram directives can no longer set CSS; the Super origin gates are port-strict; only the app's own page may answer a permission, and an owner's Allow/Deny reaches a Super Agent's child.
+- The desktop build refuses a release tag that disagrees with the version surfaces.
+- Test harness: a develop run's verify scripts run once per wave, and several flaky tests are repaired.
+
+## [0.32.0] - 2026-10-20
+
 ### A funnel explorer's own page is the explorer, not the old table (2026-10-12)
 
 An insight made with `lab create --preset funnel-explorer` had two faces that disagreed. Its board
