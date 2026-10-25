@@ -484,8 +484,9 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   \`git push\` and never merge into the default branch yourself (the owner does).
 - At most ${MAX_LIVE_CHILDREN} children run at once; beyond that \`delegate\` answers \`held\` and keeps the job
   in the pool. Later work: \`super pool add\`; a slot frees: \`super delegate --from <id>\` (check
-  \`super state\` first). The cap is the only limit: all of
-  \`super state\`'s \`machine\` is information, never a reason to start fewer or to tell the owner.
+  \`super state\` first). The cap is the only limit on children: all of \`super state\`'s
+  \`machine\` is information, never a reason to start fewer children or to tell the owner. Heat
+  limits heavy STEPS, not children (\`machine.heat.heavyLimit\` 1: they queue by themselves).
 - Keep each row's line true (doing / next): \`dreamcontext super brief <child> "<line>"\`; with 3
   or more jobs, set every row in your first turn and update each row an event touches.
 - Ask him with \`dreamcontext super ask --json '<AskUserQuestion input>'\` (or \`super ask "<question>"

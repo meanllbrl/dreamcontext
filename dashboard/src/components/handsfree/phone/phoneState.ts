@@ -16,12 +16,16 @@ export interface PhoneState {
   battery: { percent: number | null; charging: boolean };
   sleepAllowed: boolean;
   thermal: MacThermal;
+  /** This run's Bag mode; an older server (no field) reads as off. */
+  bagMode: boolean;
+  /** When this run started (ISO), the key the Bag note is dismissed by; null when unknown. */
+  startedAt: string | null;
 }
 
 /** A `GET /api/handsfree/phone` body → the chip's state; null when it is not a Mac payload.
  *  Every field is type-checked: an older server (no `thermal`) reads as not slowing anything. */
 export function parsePhonePayload(body: unknown): PhoneState | null {
-  const b = body as { mode?: string; battery?: { percent?: unknown; charging?: unknown }; sleepAllowed?: unknown; thermal?: { state?: unknown; slowed?: unknown } } | null;
+  const b = body as { mode?: string; battery?: { percent?: unknown; charging?: unknown }; sleepAllowed?: unknown; thermal?: { state?: unknown; slowed?: unknown }; bagMode?: unknown; startedAt?: unknown } | null;
   if (b?.mode !== 'mac') return null;
   const percent = typeof b.battery?.percent === 'number' ? b.battery.percent : null;
   const ts = b.thermal?.state;
@@ -33,6 +37,8 @@ export function parsePhonePayload(body: unknown): PhoneState | null {
       state: typeof ts === 'string' && (MAC_THERMAL_STATES as readonly string[]).includes(ts) ? ts as MacThermal['state'] : null,
       slowed: typeof slowed === 'number' && Number.isInteger(slowed) && slowed > 0 ? slowed : 0,
     },
+    bagMode: b.bagMode === true,
+    startedAt: typeof b.startedAt === 'string' && b.startedAt.length <= 64 ? b.startedAt : null,
   };
 }
 

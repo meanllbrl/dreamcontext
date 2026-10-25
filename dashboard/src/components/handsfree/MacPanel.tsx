@@ -4,7 +4,7 @@ import { useI18n } from '../../context/I18nContext';
 import { useApi } from '../../context/VaultContext';
 import { CopyButton, fill, HandsfreeQr } from './HandsfreeParts';
 import { macAction, macDevices, refreshMacStatus, useMacStatus } from './macStore';
-import { MAC_BAG_MODE_DEFAULT, type MacDevice, type MacStatus } from './macContract';
+import { MAC_BAG_MODE_DEFAULT, isHotState, type MacDevice, type MacStatus } from './macContract';
 import { Toggle } from '../settings/SettingRow';
 import { HandsfreeMark } from '../brand/HandsfreeMark';
 import { LiveBadge } from './LiveBadge';
@@ -160,6 +160,7 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
             </span>
             <Toggle checked={bagChoice} disabled={!!busy} onChange={setBag} />
           </label>
+          {bagChoice && <p className="hf-mac-bag-note" data-testid="hf-mac-bag-note">{t('handsfree.mac.bagNote')}</p>}
           <div className="hf-actions hf-actions--end">
             <button type="button" className="hf-btn" disabled={!!busy} onClick={() => void newPassword()}>{t('handsfree.mac.newPassword')}</button>
             <button type="button" className="hf-btn hf-btn--primary" data-testid="hf-mac-start" disabled={!!busy || startVaults.length === 0} onClick={() => void start()}>
@@ -217,6 +218,9 @@ export function MacPanel({ vault, onClose }: { vault: string; onClose: () => voi
             <p className="hf-quiet" data-testid="hf-mac-bag" data-bag={status.bagMode ? 'on' : 'off'}>
               {status.bagMode ? t('handsfree.mac.bagOn') : t('handsfree.mac.bagOff')}
             </p>
+            {isHotState(status.thermal?.state) && (
+              <p className="hf-mac-heat" data-testid="hf-mac-heat">{t('handsfree.mac.heatLine')}</p>
+            )}
             {(status.thermal?.slowed ?? 0) > 0 && (
               <p className="hf-quiet" data-testid="hf-mac-thermal">{fill(t('handsfree.mac.thermalSlowed'), { n: String(status.thermal.slowed) })}</p>
             )}

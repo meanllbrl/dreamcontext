@@ -253,6 +253,27 @@ describe('ThermalGovernor (AC4)', () => {
     expect(changes).toHaveLength(2);   // nothing changed → no write
   });
 
+  it('onState sees every reading in both modes (the heat push)', async () => {
+    for (const clamp of [true, false]) {
+      const w = new World();
+      w.thermal = ['nominal', 'fair', 'serious'];
+      const seen: Array<string | null> = [];
+      const { g } = governor(w, { clamp, onState: (st) => seen.push(st) });
+      for (let i = 0; i < 3; i++) await g.tick();
+      expect(seen).toEqual(['nominal', 'fair', 'serious']);
+    }
+  });
+
+  it('an onState that throws never skips clamping', async () => {
+    const w = new World();
+    w.add({ pid: 10 });
+    w.thermal = ['serious'];
+    const { g } = governor(w, { onState: () => { throw new Error('push broke'); } });
+    await g.tick();
+    expect(taskpolicies(w)).toEqual(['-b -p 10']);
+    expect(g.snapshot()).toEqual({ state: 'serious', slowed: 1 });
+  });
+
   it('a pid that dies before -b (taskpolicy exit 70) is dropped, never clamped', async () => {
     const w = new World();
     w.add({ pid: 10 });

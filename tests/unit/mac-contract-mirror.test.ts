@@ -21,6 +21,16 @@ describe('mac contract mirror', () => {
     expect(server.MAC_THERMAL_RELEASE_TICKS).toBe(6);
   });
 
+  it('the very-hot states agree, and the phone payload carries bagMode + startedAt (an old one parses with defaults)', async () => {
+    expect(dash.HEAT_HOT).toEqual(server.HEAT_HOT);
+    expect(server.HEAT_HOT).toEqual(['serious', 'critical']);
+    const { parsePhonePayload } = await import('../../dashboard/src/components/handsfree/phone/phoneState.js');
+    const wire: server.MacPhonePayload = { mode: 'mac', battery: { percent: 80, charging: false }, sleepAllowed: false, thermal: { state: 'serious', slowed: 0 }, bagMode: true, startedAt: '2026-10-24T20:00:00.000Z' };
+    const asDash: dash.MacPhonePayload = wire;
+    expect(parsePhonePayload(asDash)).toMatchObject({ bagMode: true, startedAt: '2026-10-24T20:00:00.000Z', thermal: { state: 'serious' } });
+    expect(parsePhonePayload({ mode: 'mac', battery: { percent: 80, charging: true }, sleepAllowed: false, thermal: { state: 'fair', slowed: 1 } })).toMatchObject({ bagMode: false, startedAt: null });
+  });
+
   it('the Bag mode default agrees (never chosen = on)', () => {
     expect(dash.MAC_BAG_MODE_DEFAULT).toBe(server.MAC_BAG_MODE_DEFAULT);
     expect(server.MAC_BAG_MODE_DEFAULT).toBe(true);

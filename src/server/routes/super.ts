@@ -708,7 +708,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // `notes`: the lines the machine crossed, information only (owner, 2026-10-21): they never
       // hold a delegate and owe the owner no message.
       const light = await lightModeNow(facts, readMachineFacts);
-      const notes = machineNotes(machineRoom(facts, { lightMode: light.on }), light);
+      const notes = machineNotes(machineRoom(facts, { lightMode: light.on }), light, facts.heat);
       machine = { ...facts, claudeSessionsMeans: CLAUDE_SESSIONS_MEANS, notes, leftovers, leftoversMeasuredAt: left.measuredAt };
     }
     // Container titles can be child text (an adopted chat's tab title or last reply): fenced

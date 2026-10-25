@@ -90,7 +90,14 @@ export interface MacPhonePayload {
   battery: MacBattery;
   sleepAllowed: boolean;
   thermal: MacThermal;
+  /** This run's Bag mode (the phone's "in the bag" chip and its once-per-run note). */
+  bagMode: boolean;
+  /** When this run started (ISO): the phone's note is dismissed per run by it. */
+  startedAt: string | null;
 }
+
+/** The readings that mean "very hot" (lib/heat.ts): one heavy step machine-wide, the hot chip. */
+export const HEAT_HOT = ['serious', 'critical'] as const;
 
 /** GET /api/agent/live-chats — names, never paths. */
 export interface LiveChatWire {

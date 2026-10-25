@@ -19,7 +19,9 @@ const OBSERVED_CHECK = `- The observed check, when a criterion is about what the
   real app or a headless browser at a phone (390 px) and a desktop (1440 px) width, record the
   console errors and failed requests, take a screenshot of each, and READ the screenshots
   yourself. Log their paths and the console output, and tick those criteria here, with that
-  evidence, never earlier. Errors, overflow or a broken layout = red.`;
+  evidence, never earlier. Errors, overflow or a broken layout = red. A browser verify script
+  runs through the heavy lock too, in the background, never beside tests:
+  \`dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/<x>.mjs\`.`;
 
 /**
  * The end review is picked by the diff, not by the lead (owner, 2026-10-14). One generalist

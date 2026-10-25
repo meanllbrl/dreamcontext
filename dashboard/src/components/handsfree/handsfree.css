@@ -191,3 +191,52 @@
 .hf-hero-title { margin: 0; font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); color: var(--color-text); }
 .hf-card-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-1); }
 .hf-mac .hf-card.hf-mac-bag { flex-direction: row; align-items: center; }
+
+/* Heat (the heat task): a calm note under the Bag switch while it is on, the very-hot line in
+   the running panel, and the phone's once-per-run Bag note under its header. Tinted surface,
+   never a filled swatch; the warning ink only on the one line that IS a warning. */
+.hf-mac-bag-note,
+.hf-phone-bag-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-accent) 4%, var(--color-bg-secondary));
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+.hf-mac-heat { margin: 0; font-size: var(--font-size-xs); color: var(--color-warning-ink, var(--color-text-secondary)); }
+.hf-mac-heat::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-warning, currentColor);
+  vertical-align: middle;
+}
+.hf-phone-bag-note {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: var(--space-2) var(--space-3) 0;
+}
+.hf-phone-bag-note p { margin: 0; flex: 1; min-width: 0; }
+.hf-phone-bag-note button {
+  flex: none;
+  /* 44px: the touch floor every phone control keeps (MobileChat.css); the only way to close it. */
+  min-height: 44px;
+  min-width: 44px;
+  margin: calc(-1 * var(--space-2)) 0;
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+.hf-phone-bag-note button:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }

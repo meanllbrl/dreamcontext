@@ -7,19 +7,18 @@ import {
   HEAVY_LOCK_BUSY_EXIT,
   HEAVY_MACHINE_SLOTS,
   TASK_ID_RE,
-  acquireHeavy,
   classifyBuilderResult,
   findOrphanChecks,
   formatLoad,
   heavyLockPath,
   heavySlotDir,
-  heavySlotsHeld,
   heavySpawnPlan,
   listProcesses,
   machineLoad,
   repoToplevel,
   type OrphanCheck,
 } from '../../lib/builder-tools.js';
+import { HEAVY_HOT_WAIT_S, acquireHeavyReporting } from '../../lib/heavy-acquire.js';
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
 
@@ -54,6 +53,8 @@ export interface BuilderDeps {
   kill: (pid: number) => void;
   /** The machine-wide heavy slots' folder (tests pass a scratch one). */
   heavySlotDir?: () => string;
+  /** How many heavy steps the machine runs at once now (default: the heat limit, lib/heat.ts). */
+  heavyLimit?: () => Promise<number>;
 }
 
 const DEFAULT_DEPS: BuilderDeps = {
@@ -123,38 +124,24 @@ export function builderReviewPick(deps: BuilderDeps, file: string): number {
   }
 }
 
-function holderOf(lockPath: string, ps: () => string): string {
-  try {
-    const { pid } = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid?: number };
-    if (typeof pid !== 'number') return 'another check';
-    const row = ps().split('\n').find((l) => new RegExp(`^\\s*${pid}\\s`).test(l));
-    const command = row?.replace(/^\s*\d+\s+\d+\s+\S+\s+/, '').trim();
-    return `pid ${pid}${command ? ` (${command.slice(0, 120)})` : ''}`;
-  } catch {
-    return 'another check';
-  }
-}
-
 export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { maxWait?: string }): Promise<number> {
   const plan = heavySpawnPlan(argv);
   if (!plan) {
     deps.printErr('builder heavy: give the command after --, e.g. dreamcontext builder heavy -- npx tsc --noEmit');
     return 2;
   }
-  const waitS = opts.maxWait == null ? HEAVY_DEFAULT_WAIT_S : Number(opts.maxWait);
-  if (!Number.isFinite(waitS) || waitS < 0) {
+  const maxWaitS = opts.maxWait == null ? undefined : Number(opts.maxWait);
+  if (maxWaitS !== undefined && (!Number.isFinite(maxWaitS) || maxWaitS < 0)) {
     deps.printErr(`builder heavy: --max-wait must be seconds, got "${opts.maxWait}"`);
     return 2;
   }
-  const lockPath = heavyLockPath(deps.cwd());
-  const slotDir = deps.heavySlotDir?.() ?? heavySlotDir();
   const started = Date.now();
-  const held = await acquireHeavy(deps.cwd(), { waitMs: waitS * 1000, slotDir, repoLock: lockPath });
+  const { held, busy } = await acquireHeavyReporting({
+    cwd: deps.cwd(), lockPath: heavyLockPath(deps.cwd()), slotDir: deps.heavySlotDir?.() ?? heavySlotDir(),
+    maxWaitS, heavyLimit: deps.heavyLimit, ps: deps.ps,
+  });
   if (!held) {
-    const machineFull = heavySlotsHeld(slotDir) >= HEAVY_MACHINE_SLOTS;
-    deps.printErr(machineFull
-      ? `builder heavy: all ${HEAVY_MACHINE_SLOTS} heavy slots of this machine stayed busy for ${waitS}s (other repos' checks); NOTHING ran. Run the same command again.`
-      : `builder heavy: the heavy lock is held by ${holderOf(lockPath, deps.ps)} and stayed busy for ${waitS}s; NOTHING ran. Run the same command again.`);
+    deps.printErr(`builder heavy: ${busy}`);
     return HEAVY_LOCK_BUSY_EXIT;
   }
   const waited = Math.round((Date.now() - started) / 1000);
@@ -194,8 +181,8 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
   cmd
     .command('heavy')
     .argument('<command...>', 'The check to run, after --')
-    .option('--max-wait <seconds>', `How long to wait for the lock (default ${HEAVY_DEFAULT_WAIT_S})`)
-    .description(`Run a type-check, build or test run holding this repo's heavy lock and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together), one at a time per repo (exit: the command's, or ${HEAVY_LOCK_BUSY_EXIT} = busy, nothing ran)`)
+    .option('--max-wait <seconds>', `How long to wait for the lock (default ${HEAVY_DEFAULT_WAIT_S}, ${HEAVY_HOT_WAIT_S} while the Mac is very hot)`)
+    .description(`Run a type-check, build, test run or browser verify script holding this repo's heavy lock and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together; 1 while macOS says the Mac is very hot), one at a time per repo (exit: the command's, or ${HEAVY_LOCK_BUSY_EXIT} = busy, nothing ran)`)
     .action(async (command: string[], opts: { maxWait?: string }) => {
       process.exitCode = await builderHeavy(deps, command, opts);
     });

@@ -479,7 +479,9 @@ Wave execution rules (mirrors the dependency map exactly):
   `FAILED 2x` after a second fix → escalate.
 - **Heavy steps run once, at the final gate**, after the last wave and before Phase 5:
   the full unit suite, `build` / `build:cli`, the integration suite, `gen:*` scripts
-  (e.g. `gen:cli-manifest`), browser verification, and the **observed check** whenever a
+  (e.g. `gen:cli-manifest`), browser verification (a verify script runs through the heavy
+  lock, in the background: `dreamcontext builder heavy --max-wait 1200 -- node
+  scripts/verify/<x>.mjs`, never beside tests), and the **observed check** whenever a
   criterion is about what the owner sees: you open the result in the real app or a headless
   browser at a phone (390 px) and a desktop (1440 px) width, record console errors and failed
   requests, take a screenshot of each that you READ, and log the paths and the output.

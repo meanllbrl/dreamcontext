@@ -7,6 +7,8 @@ import {
 } from '../../src/lib/builder-tools.js';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
 import { builderHeavy, type BuilderDeps } from '../../src/cli/commands/builder.js';
+import { HEAT_RECHECK_MS } from '../../src/lib/builder-tools.js';
+import { HEAVY_HOT_WAIT_S, acquireHeavyReporting } from '../../src/lib/heavy-acquire.js';
 
 /**
  * Heavy steps, machine-wide N = 2 (orchestration plan r5 D12, AC13): `builder heavy` and
@@ -25,6 +27,7 @@ describe('machine heavy slots', () => {
   let err: string[];
   const deps = (cwd: string): BuilderDeps => ({
     cwd: () => cwd, print: () => {}, printErr: (l) => err.push(l), ps: () => '', kill: () => {}, heavySlotDir: () => slots,
+    heavyLimit: async () => 2,
   });
 
   beforeEach(() => {
@@ -107,5 +110,117 @@ describe('machine heavy slots', () => {
     held!.release();
     expect(existsSync(held!.slot)).toBe(false);
     expect(existsSync(lock)).toBe(false);
+  });
+});
+
+/**
+ * Heat (owner, 2026-10-24): while macOS says very hot the machine runs ONE heavy step, every repo
+ * together; a running step is never stopped; the limit is read again every 20 s while waiting.
+ * Each acquirer gets its OWN repo lock, so only the machine slots are under test.
+ */
+describe('machine heavy slots under heat', () => {
+  let root: string;
+  let slots: string;
+  let err: string[];
+  const lock = (n: string) => join(root, `repo-${n}.lock`);
+  const deps = (cwd: string, limit: () => Promise<number>): BuilderDeps => ({
+    cwd: () => cwd, print: () => {}, printErr: (l) => err.push(l), ps: () => '', kill: () => {}, heavySlotDir: () => slots, heavyLimit: limit,
+  });
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dc-heavy-heat-'));
+    slots = join(root, 'heavy');
+    err = [];
+  });
+  afterEach(() => {
+    for (const p of heavySlotPaths(slots)) releaseFileLock(p);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('under limit 1 a new step waits while slot-1 alone is held by a live pid (it never takes slot-0 beside it)', async () => {
+    const [, s1] = heavySlotPaths(slots);
+    mkdirSync(slots, { recursive: true });
+    expect(acquireFileLock(s1, Date.now(), 5_000)).toBe(true);
+    const held = await acquireHeavy(root, { waitMs: 300, pollMs: 50, slotDir: slots, repoLock: lock('a'), limit: async () => 1 });
+    expect(held).toBeNull();
+    expect(heavySlotsHeld(slots)).toBe(1);
+  });
+
+  it('under limit 1 two concurrent acquirers: exactly one holds', async () => {
+    const [a, b] = await Promise.all([
+      acquireHeavy(root, { waitMs: 300, pollMs: 50, slotDir: slots, repoLock: lock('a'), limit: async () => 1 }),
+      acquireHeavy(root, { waitMs: 300, pollMs: 50, slotDir: slots, repoLock: lock('b'), limit: async () => 1 }),
+    ]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    expect((a ?? b)!.slot).toBe(heavySlotPaths(slots)[0]);
+    (a ?? b)!.release();
+  });
+
+  it('the limit flips 1 -> 2 mid-wait: the waiter takes slot-1 at the next recheck (fake clock); the held slot is never revoked', async () => {
+    let clock = 1_000_000;
+    let limit = 1;
+    const reads: number[] = [];
+    const first = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('a'), limit: async () => 1 });
+    expect(first).not.toBeNull();
+    const waiting = acquireHeavy(root, {
+      waitMs: 10 * HEAT_RECHECK_MS, pollMs: 5, slotDir: slots, repoLock: lock('b'), now: () => clock,
+      limit: async () => limit, onLimit: (n) => reads.push(n),
+    });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(reads).toEqual([1]);
+    limit = 2;
+    clock += HEAT_RECHECK_MS - 1;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(reads).toEqual([1]); // not yet: under 20 s since the last read
+    clock += 1;
+    const second = await waiting;
+    expect(reads).toEqual([1, 2]);
+    expect(second!.slot).toBe(heavySlotPaths(slots)[1]);
+    expect(existsSync(first!.slot)).toBe(true);
+    second!.release();
+    first!.release();
+  });
+
+  it('a limit that throws, is NaN or 0 reads as 2', async () => {
+    for (const limit of [async () => { throw new Error('x'); }, async () => Number.NaN, async () => 0]) {
+      const seen: number[] = [];
+      const a = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('a'), limit, onLimit: (n) => seen.push(n) });
+      const b = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('b'), limit, onLimit: (n) => seen.push(n) });
+      expect(seen).toEqual([2, 2]);
+      expect(a && b).toBeTruthy();
+      a!.release(); b!.release();
+    }
+  });
+
+  it('exit 75 names the heat and the slot holder when the slot wait ran out under limit 1', async () => {
+    mkdirSync(slots, { recursive: true });
+    expect(acquireFileLock(heavySlotPaths(slots)[0], Date.now(), 5_000)).toBe(true);
+    const marker = join(root, 'ran.txt');
+    const code = await builderHeavy(deps(join(root, 'x'), async () => 1), [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)},'x')`], { maxWait: '0' });
+    expect(code).toBe(HEAVY_LOCK_BUSY_EXIT);
+    expect(existsSync(marker)).toBe(false);
+    expect(err.join('\n')).toMatch(/the Mac is very hot .*one heavy step at a time; slot held by pid \d+/);
+  });
+
+  it('a repo-lock timeout keeps the repo-lock text, never the heat text', async () => {
+    const r = await (async () => {
+      const lk = lock('busy');
+      expect(acquireFileLock(lk, Date.now(), 5_000)).toBe(true);
+      return acquireHeavyReporting({ cwd: root, lockPath: lk, slotDir: slots, maxWaitS: 0, heavyLimit: async () => 1, ps: () => '' });
+    })();
+    expect(r.held).toBeNull();
+    expect(r.busy).toMatch(/^the heavy lock is held by pid \d+/);
+    expect(r.busy).not.toMatch(/very hot/);
+    releaseFileLock(lock('busy'));
+  });
+
+  it('the hot default wait is 120 s (no --max-wait), the cool one stays 300 s', async () => {
+    expect(HEAVY_HOT_WAIT_S).toBe(120);
+    const hot = await acquireHeavyReporting({ cwd: root, lockPath: lock('h'), slotDir: slots, heavyLimit: async () => 1, ps: () => '' });
+    expect(hot.waitS).toBe(120);
+    hot.held!.release();
+    const cool = await acquireHeavyReporting({ cwd: root, lockPath: lock('c'), slotDir: slots, heavyLimit: async () => 2, ps: () => '' });
+    expect(cool.waitS).toBe(300);
+    cool.held!.release();
   });
 });

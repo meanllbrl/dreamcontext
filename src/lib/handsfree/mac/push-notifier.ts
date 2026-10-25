@@ -18,13 +18,18 @@ import type { SendOutcome, PushSubscriptionLike } from './push.js';
  * exception is the laptop's too: a child's PERMISSION prompt (only the owner may answer one),
  * opening the Super's chat. A project not handed over pushes as before.
  *
+ * Plus one Mac push: the first very-hot reading of a hands-free run (`pushMacHeat`).
+ *
  * Nothing else pushes. Only while Mac mode is on, only the chosen projects' chats, never
  * twice for one requestId or one turn, at most {@link PER_DEVICE_PER_MIN} a minute per device,
  * and never to a device whose phone shows that chat on screen right now (D2: the suppression is
  * HERE, because iOS revokes a subscription whose pushes show no notification).
  */
 
-export type PushKind = 'question' | 'permission' | 'turn';
+export type PushKind = 'question' | 'permission' | 'turn' | 'mac';
+
+/** The heat push's session id: no chat has it, so no phone that shows a chat suppresses it. */
+export const MAC_HEAT_SESSION = '\u0000mac-heat';
 
 export interface PushPayload {
   kind: PushKind;
@@ -141,24 +146,49 @@ export class PushNotifier {
     return this.deliver(q.key, q.sessionId, { kind: 'question', vault: q.vault, conversationId: q.sessionId, title: clip(q.title, 80), body: clip(q.body) });
   }
 
+  /**
+   * The Mac got very hot (macOS serious/critical) during this run: one push to the project page,
+   * never a path, command or chat text. Same filter as every push (signed-in device, rate limit,
+   * pruning); the key is spent only when a device was targeted, so a reading before any phone
+   * subscribed is retried at the next one.
+   */
+  pushMacHeat(h: { key: string; title: string; body: string }): { targeted: number; done: Promise<number> } {
+    const vault = this.d.exposed()[0];
+    if (!vault || this.sent.has(h.key)) return { targeted: 0, done: Promise.resolve(0) };
+    const payload: PushPayload = { kind: 'mac', vault, conversationId: null, title: clip(h.title, 80), body: clip(h.body), url: pushUrl(vault, null) };
+    const targets = this.targetsFor(MAC_HEAT_SESSION);
+    if (targets.length === 0) return { targeted: 0, done: Promise.resolve(0) };
+    this.remember(h.key);
+    return { targeted: targets.length, done: this.sendTo(targets, payload) };
+  }
+
   private deliver(key: string, sessionId: string, base: Omit<PushPayload, 'url'>): { targeted: number; done: Promise<number> } {
     if (this.sent.has(key)) return { targeted: 0, done: Promise.resolve(0) };
     this.remember(key);
     const payload: PushPayload = { ...base, url: pushUrl(base.vault, base.conversationId) };
+    const targets = this.targetsFor(sessionId);
+    return { targeted: targets.length, done: this.sendTo(targets, payload) };
+  }
+
+  /** The devices a push for this chat goes to: signed in (others pruned), not showing it, under the rate limit. */
+  private targetsFor(sessionId: string): Array<[string, PushSubscriptionLike]> {
     const store = this.d.store();
     const showing = this.d.showingDevice(sessionId);
-    const targets = store.entries().filter(([device]) => {
+    return store.entries().filter(([device]) => {
       if (!this.d.deviceValid(device)) { store.remove(device); return false; }
       return showing !== device && this.allow(device);
     });
+  }
+
+  private sendTo(targets: Array<[string, PushSubscriptionLike]>, payload: PushPayload): Promise<number> {
+    const store = this.d.store();
     let pushed = 0;
-    const done = Promise.all(targets.map(async ([device, sub]) => {
+    return Promise.all(targets.map(async ([device, sub]) => {
       const out = await this.d.send(sub, payload);
       if (!out.ok) logPushMiss(payload.kind, out, sub.endpoint, device);
       if (out.gone) store.remove(device);
       else if (out.ok) pushed++;
     })).then(() => pushed);
-    return { targeted: targets.length, done };
   }
 
   private remember(key: string): void {

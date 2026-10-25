@@ -149,31 +149,63 @@ export interface HeavyHold {
   release: () => void;
 }
 
+/** While waiting for a slot, the heat limit is read again at most this often. */
+export const HEAT_RECHECK_MS = 20_000;
+
 /**
- * Take this repo's heavy lock, THEN one of the machine's {@link HEAVY_MACHINE_SLOTS} slots,
- * all within `waitMs` together. Always in that order and released in reverse, so two callers
- * never hold each other's half (no deadlock). Slots are tried in a loop, each once per poll,
- * with pid liveness (that is what makes the short stale age safe). Null = nothing is held and
- * nothing may run (the caller's exit 75).
+ * Take this repo's heavy lock, THEN one of the machine's slots, all within `waitMs` together.
+ * Always in that order and released in reverse, so two callers never hold each other's half (no
+ * deadlock). Slots are tried in a loop, each once per poll, with pid liveness (that is what makes
+ * the short stale age safe). Null = nothing is held and nothing may run (the caller's exit 75).
+ *
+ * How many slots may be busy at once is `limit()` (default: the heat limit, `./heat.ts`: 1 while
+ * macOS says very hot, else {@link HEAVY_MACHINE_SLOTS}), read at entry and at most every
+ * {@link HEAT_RECHECK_MS} while waiting. A slot is taken only while fewer than L are held, and
+ * only among slots [0, L). A held slot is never revoked. Accepted race: a caller that read L=2 up
+ * to 20 s earlier can take slot-1 while another runs on slot-0 under L=1; the next read converges.
  */
 export async function acquireHeavy(cwd: string, opts: {
   waitMs: number; slotDir: string; pollMs?: number; now?: () => number; repoLock?: string;
+  limit?: () => Promise<number>;
+  /** Every limit read (after clamping), so the caller can name the heat when the wait runs out. */
+  onLimit?: (n: number) => void;
+  /** Called once the repo lock is taken (the wait that runs out after it was the slots'). */
+  onRepoLock?: () => void;
 }): Promise<HeavyHold | null> {
   const now = opts.now ?? Date.now;
   const pollMs = opts.pollMs ?? 1000;
   const deadline = now() + Math.max(0, opts.waitMs);
   const repoLock = opts.repoLock ?? heavyLockPath(cwd);
-  const held = await acquireFileLockWithin(repoLock, { waitMs: opts.waitMs, staleMs: HEAVY_LOCK_STALE_MS, pollMs, now, verifyPidLiveness: true });
+  const limitOf = opts.limit ?? (async () => (await import('./heat.js')).currentHeavyLimit());
+  const readLimit = async (): Promise<number> => {
+    let n: number;
+    try { n = clampHeavyLimit(await limitOf()); } catch { n = HEAVY_MACHINE_SLOTS; }
+    try { opts.onLimit?.(n); } catch { /* informational */ }
+    return n;
+  };
+  let limit = await readLimit();
+  let readAt = now();
+  const held = await acquireFileLockWithin(repoLock, { waitMs: Math.max(0, deadline - now()), staleMs: HEAVY_LOCK_STALE_MS, pollMs, now, verifyPidLiveness: true });
   if (!held) return null;
+  try { opts.onRepoLock?.(); } catch { /* informational */ }
   for (;;) {
-    for (const slot of heavySlotPaths(opts.slotDir)) {
-      if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) {
-        return { slot, release: () => { releaseFileLock(slot); releaseFileLock(repoLock); } };
+    if (now() - readAt >= HEAT_RECHECK_MS) { limit = await readLimit(); readAt = now(); }
+    if (heavySlotsHeld(opts.slotDir) < limit) {
+      for (const slot of heavySlotPaths(opts.slotDir).slice(0, limit)) {
+        if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) {
+          return { slot, release: () => { releaseFileLock(slot); releaseFileLock(repoLock); } };
+        }
       }
     }
     if (now() >= deadline) { releaseFileLock(repoLock); return null; }
     await new Promise((r) => { setTimeout(r, pollMs); });
   }
+}
+
+/** A limit the lock may use: an integer in [1, HEAVY_MACHINE_SLOTS]; junk reads as the default. */
+export function clampHeavyLimit(n: unknown): number {
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return HEAVY_MACHINE_SLOTS;
+  return Math.min(HEAVY_MACHINE_SLOTS, Math.max(1, Math.floor(n)));
 }
 
 function gitCommonDirOf(cwd: string): string | null {

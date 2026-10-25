@@ -86,6 +86,7 @@ import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, withBaseGeneration } from '../handsfree/rosterRehydrate';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
+import { PhoneBagNote } from '../handsfree/phone/PhoneBagNote';
 import { takePendingMacAdopt } from '../handsfree/macAdopt';
 import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire } from '../handsfree/macContract';
 import { isSuperMirrorId, rememberSuperMirrorIds } from './superMirrorIds';
@@ -5394,6 +5395,7 @@ export function AgentSurface() {
           )}
         </div>
         {phoneSuperChat && <PhoneAgenda digest={phoneDigest} onWriteAbout={writePhoneAboutRow} />}
+        {macPhone && isMobile && expanded && phoneView !== 'list' && <PhoneBagNote />}
         {body}
         {macPhone && expanded && phoneView === 'list' && (
           <PhoneChatList

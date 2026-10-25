@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { activityOf, getChat } from '../assistant/chat-registry.js';
 import { heavySlotDir, heavySlotsHeld } from '../builder-tools.js';
+import type { MacThermalState } from '../handsfree/mac/contract.js';
+import { heavyLimitFor, readBagMode, readHeatLevel } from '../heat.js';
 import { MAX_LIVE_CHILDREN, type SuperState } from './types.js';
 import { superWorktreeRoot } from './store.js';
 
@@ -40,7 +42,13 @@ export interface CapacityFacts {
   claudeSessions?: number | null;
   /** Machine heavy slots (`builder heavy` / `builder test`, every repo) held right now. */
   heavySteps?: number | null;
+  /** Heat (lib/heat.ts): macOS's thermal state, how many heavy steps the machine runs at once
+   *  at it (1 while very hot), and whether hands-free runs in Bag mode. Information only; null
+   *  when not read (no readers injected). Up to a minute behind the lock's own reading. */
+  heat?: MachineHeat | null;
 }
+
+export interface MachineHeat { thermal: MacThermalState | null; heavyLimit: number; bag: boolean }
 
 export interface CapacityDeps {
   platform: NodeJS.Platform;
@@ -57,6 +65,8 @@ export interface CapacityDeps {
   procMeminfo?: () => Promise<string>;
   psComm?: () => Promise<string>;
   heavySlots?: () => number;
+  thermal?: () => Promise<MacThermalState | null>;
+  bagMode?: () => boolean;
 }
 
 const run = promisify(execFile);
@@ -74,6 +84,8 @@ const defaultDeps = (): CapacityDeps => ({
   procMeminfo: () => fsp.readFile('/proc/meminfo', 'utf-8'),
   psComm: async () => (await run('ps', ['-axo', 'comm='], { timeout: 5_000, maxBuffer: 8 * 1024 * 1024 })).stdout,
   heavySlots: () => heavySlotsHeld(heavySlotDir()),
+  thermal: () => readHeatLevel(),
+  bagMode: () => readBagMode(),
 });
 
 export const CAPACITY_TTL_MS = 60_000;
@@ -191,6 +203,14 @@ async function measure(deps: CapacityDeps): Promise<CapacityFacts> {
   try { claudeSessions = deps.psComm ? countClaudeSessions(await deps.psComm()) : null; } catch { claudeSessions = null; }
   let heavySteps: number | null = null;
   try { heavySteps = deps.heavySlots ? deps.heavySlots() : null; } catch { heavySteps = null; }
+  let heat: MachineHeat | null = null;
+  if (deps.thermal || deps.bagMode) {
+    let thermal: MacThermalState | null = null;
+    try { thermal = deps.thermal ? await deps.thermal() : null; } catch { thermal = null; }
+    let bag = false;
+    try { bag = deps.bagMode ? deps.bagMode() === true : false; } catch { bag = false; }
+    heat = { thermal, heavyLimit: heavyLimitFor(thermal), bag };
+  }
   return {
     availMemGb: round1(availBytes / GB),
     diskFreeGb,
@@ -200,6 +220,7 @@ async function measure(deps: CapacityDeps): Promise<CapacityFacts> {
     swapTotalGb: swap ? round1(swap.totalGb) : null,
     claudeSessions,
     heavySteps,
+    heat,
   };
 }
 
@@ -384,7 +405,7 @@ export function lightModeNote(light: LightMode): string {
  * lines say what does NOT help (disk cleanup frees disk, never RAM or swap).
  */
 const DISK_NOT_MEMORY = 'removing worktrees or files frees disk, not memory';
-export function machineNotes(room: MachineRoom, light?: LightMode): string[] {
+export function machineNotes(room: MachineRoom, light?: LightMode, heat?: MachineHeat | null): string[] {
   const notes: string[] = [];
   for (const r of room.reasons) {
     if (r.limit === 'sessions') notes.push(`${r.value} Claude processes are running on this machine (about ${r.threshold} fit its RAM)`);
@@ -393,6 +414,10 @@ export function machineNotes(room: MachineRoom, light?: LightMode): string[] {
     else if (r.limit === 'availMem') notes.push(`${r.value} GB memory free (line ${r.threshold} GB); ${DISK_NOT_MEMORY}`);
     else if (r.limit === 'light') notes.push(light ? lightModeNote(light) : lightModeNote({ on: true, reason: null, setting: 'auto' }));
   }
+  if (heat?.heavyLimit === 1) {
+    notes.push(`the Mac is very hot (macOS thermal state ${heat.thermal ?? 'serious'}): heavy steps of different projects run one at a time machine-wide; builder heavy/test queue them by themselves; children are not limited, keep delegating`);
+  }
+  if (heat?.bag) notes.push('the Mac is in a bag (hands-free Bag mode): heavy processes slow down while it is warm');
   return notes;
 }
 

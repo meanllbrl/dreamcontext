@@ -43,7 +43,8 @@ import {
   type SessionMode,
   type SessionRecord,
 } from '../../lib/builder-spawn.js';
-import { HEAVY_DEFAULT_WAIT_S, HEAVY_LOCK_BUSY_EXIT, acquireHeavy, heavySlotDir, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
+import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
+import { acquireHeavyReporting } from '../../lib/heavy-acquire.js';
 import {
   ownerOf,
   parseTestReport,
@@ -124,9 +125,10 @@ function launchDetached(argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv
 }
 
 async function runCheckLocked(argv: string[], cwd: string, logFile: string): Promise<number | null> {
-  // The repo's heavy lock, then one of the machine's heavy slots (plan r5 D12).
-  const held = await acquireHeavy(cwd, { waitMs: HEAVY_DEFAULT_WAIT_S * 1000, slotDir: heavySlotDir() });
-  if (!held) return null;
+  // The repo's heavy lock, then one of the machine's heavy slots (plan r5 D12; one while the
+  // Mac is very hot, lib/heat.ts). Busy: the same message `builder heavy` prints.
+  const { held, busy } = await acquireHeavyReporting({ cwd, lockPath: heavyLockPath(cwd), slotDir: heavySlotDir(), ps: listProcesses });
+  if (!held) { process.stderr.write(`builder test: ${busy}\n`); return null; }
   const fd = openSync(logFile, 'w');
   try {
     return await new Promise<number | null>((done) => {
