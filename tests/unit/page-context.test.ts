@@ -86,7 +86,7 @@ describe('the page block', () => {
     const chat = read('src/server/routes/agent-chat.ts');
     expect(chat).toMatch(/const aboutHead = isSuper \? ABOUT_AGENDA_RE\.exec\(text\) : null;/);
     // The briefing names the block (rev 11).
-    expect(server.SUPER_BRIEF_REV).toBe(11);
+    expect(server.SUPER_BRIEF_REV).toBe(13);
     expect(read('src/server/chat-modes.ts')).toContain('A message ending \\`[On page <page> …]\\` was written from the dock');
   });
 });

@@ -136,10 +136,10 @@ function UserMessage({
   const { text, media, refs, about, parts, page } = useMemo(() => {
     // Several references in one message (owner 2026-10-24, the Super view only): his words
     // with each part's chip inline where he put it; the files at the top are the preamble's.
-    const multi = superView ? splitAboutParts(item.text) : null;
+    const multi = superView ? splitAboutParts(splitPageContext(item.text).text) : null;
     if (multi && multi.parts.length >= 2) {
       const board = splitUserBoardRefs(multi.preamble);
-      return { ...splitUserMedia(board.text), refs: board.refs, about: null, parts: multi.parts };
+      return { ...splitUserMedia(board.text), refs: board.refs, about: null, parts: multi.parts, page: splitPageContext(item.text).page };
     }
     // A message written about an agenda line, or replying to one message (owner 2026-10-23),
     // opens with its block: drawn as a strip above the bubble, the bubble keeps only his words.
@@ -147,7 +147,7 @@ function UserMessage({
     const paged = splitPageContext(item.text);
     const split = splitAbout(paged.text);
     const board = splitUserBoardRefs(split.text);
-    return { ...splitUserMedia(board.text), refs: board.refs, about: split.about, parts: null };
+    return { ...splitUserMedia(board.text), refs: board.refs, about: split.about, parts: null, page: paged.page };
   }, [item.text, superView]);
   return (
     <div className="chat-msg-user-row" data-item-id={item.id} tabIndex={-1}>

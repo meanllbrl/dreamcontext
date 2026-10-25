@@ -527,6 +527,7 @@ export function partRefs(text: string): string[] {
   if (n < 2) return [];
   const base = msgRef(text);
   return Array.from({ length: n }, (_, i) => msgRef(`${base}#${i + 1}`));
+}
 /**
  * The page the owner wrote from (super dock, owner 2026-10-25): a message sent from the dock
  * ends with this block as its WHOLE last paragraph (`\n\n` + the block, end of text), so the

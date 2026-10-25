@@ -43,7 +43,6 @@ describe('the briefing carries the jarvis sections and its revision', () => {
   });
 
   it('rev 11 (2026-10-24): model and effort per job, in the briefing and in the update', () => {
-    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(11);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       // The owner: xhigh for a truly important plan that must think through edge cases; else what fits.
       expect(t).toContain('`xhigh` only for a critical plan whose risk is edge cases');
@@ -55,7 +54,8 @@ describe('the briefing carries the jarvis sections and its revision', () => {
   });
 
   it('rev 12 (2026-10-24): several references in one message, a section per part', () => {
-    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(12);
+    // One revision for the whole 0.34.6 line: the briefing text of every branch merged into it.
+    expect(SUPER_BRIEF_REV).toBe(13);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('A message may carry SEVERAL `[About…]`/`[Reply…]` headers');
       expect(t).toContain('lists `parts="…"`, one ref per header in order');
