@@ -308,7 +308,9 @@ describe('the agenda row\'s Write about this icon', () => {
     expect(surface).toMatch(/const writeAbout = onWriteAbout && superSession && superSession\.status !== 'closed'/);
     expect(surface).toMatch(/if \(plan\.narrow && viewMode !== 'float'\) onLayout\(\{ view: \{ mode: 'float' \} \}\);/);
     const agent = readFileSync(new URL('dashboard/src/components/sleepy/AgentSurface.tsx', ROOT_URL), 'utf-8');
-    const body = agent.slice(agent.indexOf('const writeAboutRow'), agent.indexOf('const writeAboutRow') + 900);
+    // One writer for both surfaces (writeAboutInto); the stage's writes into its Super chat.
+    const body = agent.slice(agent.indexOf('const writeAboutInto'), agent.indexOf('const writeAboutInto') + 900);
+    expect(agent).toMatch(/const writeAboutRow = useCallback\(\(row: AgendaRow\) => writeAboutInto\(superChatRef\.current, row\)/);
     expect(body).toMatch(/const convId = cs\.scratchId \|\| cs\.claudeId;/);
     // Owner 2026-10-24: a ↩ ADDS a chip at the caret (several references in one message).
     expect(body).toMatch(/insertRef\(convId, \{ id: nextAttachmentId\(\), kind: 'about', name: agendaRefName\(row, words\), text \}\);/);

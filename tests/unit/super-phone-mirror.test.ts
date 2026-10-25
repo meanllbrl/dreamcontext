@@ -57,6 +57,21 @@ vi.mock('../../src/lib/claude-usage-probe.js', async (importOriginal) => {
   const probe = vi.fn(async () => ({ status: 'healthy-unmeasured', reason: 'test' }));
   return { ...real, probeAccountUsage: probe, probeAccountForDecision: probe };
 });
+/** A join's record read can be held (the stale-snapshot case): the next read waits on it. */
+const holdRead: { next: Promise<void> | null } = { next: null };
+vi.mock('../../src/lib/super/store.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/lib/super/store.js')>();
+  return {
+    ...real,
+    readSuperState: async (...args: Parameters<typeof real.readSuperState>) => {
+      const gate = holdRead.next;
+      holdRead.next = null;
+      const st = await real.readSuperState(...args);
+      if (gate) await gate;
+      return st;
+    },
+  };
+});
 vi.mock('../../src/server/handsfree-auth.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/server/handsfree-auth.js')>();
   return { ...real, macHandsfreeAuth: () => ({ store: { isValidDeviceHash: (h: string) => signedIn.has(h) } }) };
@@ -70,7 +85,7 @@ const { findLiveChat } = await import('../../src/server/routes/agent-chat-live.j
 const { _resetChatRegistry } = await import('../../src/lib/assistant/chat-registry.js');
 const { SUPER_STATE_REL, readSuperState, resetSuperIndex } = await import('../../src/lib/super/store.js');
 const { emptySuperState } = await import('../../src/lib/super/types.js');
-const { _resetSuperInbox, _superInboxFor, isSuperEventTurn, markSuperEventTurn } = await import('../../src/lib/super/inbox.js');
+const { _resetSuperInbox, _superInboxFor, isSuperEventTurn, markSuperEventTurn, pushSuperState } = await import('../../src/lib/super/inbox.js');
 const {
   MAX_MIRRORS, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REPLACED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorCarriesLine, mirrorOwnerText, phoneLiveChats, phoneSuperOpen,
 } = await import('../../src/lib/super/phone-mirror.js');
@@ -426,5 +441,88 @@ describe('a mirror\'s lifetime (review r1)', () => {
     const src = readFileSync(new URL('../../src/server/routes/super.ts', import.meta.url), 'utf-8');
     const disable = src.slice(src.indexOf('disable: async'), src.indexOf('layout: async'));
     expect(disable).toMatch(/findLiveChat\(state\.session\)\?\.closeMirrors\?\.\(\)/);
+  });
+});
+
+describe('the agenda digest on a phone mirror (task hands-free-telefonda-super-agent-sohbeti-ajandayi…, AC1-AC2)', () => {
+  const digests = (ws: FakeWs) => sent(ws).filter((f) => f.type === '_meta' && f.subtype === 'super_digest');
+  /** Join, then wait until the join's snapshot and the start's own push have landed (a slow
+   *  machine may order them either way; a repeat of the same digest is allowed and harmless). */
+  async function joined(): Promise<FakeWs> {
+    const phone = mirror();
+    await vi.waitFor(() => expect(digests(phone).length).toBeGreaterThan(0), { timeout: 10_000 });
+    let n = -1;
+    while (n !== digests(phone).length) { n = digests(phone).length; await new Promise((r) => setTimeout(r, 150)); }
+    return phone;
+  }
+  const st = (pad: Array<{ id: string; section: 'now' | 'waiting' | 'done'; text: string; at: number }>) =>
+    ({ ...emptySuperState(), session: SUPER, enabled: true, pad }) as never;
+
+  it('a joining phone gets the agenda once; the window never does', async () => {
+    await record({ enabled: true, pad: [{ id: 'n1', section: 'now', text: 'Fixing the paywall', at: 1 }] });
+    const { ws } = startSuper();
+    const phone = await joined();
+    expect(new Set(digests(phone).map((d) => d.key)).size).toBe(1);
+    expect(digests(phone)[0].pad).toEqual([{ id: 'n1', section: 'now', text: 'Fixing the paywall', at: 1 }]);
+    expect(digests(ws)).toHaveLength(0);
+  });
+
+  it('every changed push reaches the mirror, an unchanged one does not, and the window never', async () => {
+    await record({ enabled: true });
+    const { ws } = startSuper();
+    const phone = await joined();
+    const n = digests(phone).length;
+    pushSuperState(root, st([{ id: 'n1', section: 'now', text: 'one', at: 1 }]));
+    pushSuperState(root, st([{ id: 'n1', section: 'now', text: 'one', at: 1 }]));
+    expect(digests(phone)).toHaveLength(n + 1);
+    pushSuperState(root, st([{ id: 'n1', section: 'done', text: 'one', at: 2 }]));
+    expect(digests(phone)).toHaveLength(n + 2);
+    expect(digests(ws)).toHaveLength(0);
+  });
+
+  it('no mirror: nothing is computed or sent; a rejoin gets the full digest again', async () => {
+    await record({ enabled: true });
+    startSuper();
+    const pushed = st([{ id: 'n1', section: 'now', text: 'one', at: 1 }]);
+    const { superDigest: real } = await import('../../src/lib/super/phone-mirror.js');
+    expect(findLiveChat(SUPER)?.mirrorCount?.()).toBe(0);
+    pushSuperState(root, pushed); // must not throw, nobody to tell
+    const phone = await joined();
+    pushSuperState(root, pushed);
+    // The join snapshot does not mark the key sent: the next push repeats it (harmless).
+    expect(digests(phone).at(-1)!.key).toBe(real(pushed as never).key);
+    phone.emit('close');
+    expect(findLiveChat(SUPER)?.mirrorCount?.()).toBe(0);
+    const again = await joined();
+    expect(digests(again).length).toBeGreaterThan(0);
+  });
+
+  it('a push of ANOTHER project naming the same session reaches nobody', async () => {
+    await record({ enabled: true });
+    startSuper();
+    const phone = await joined();
+    const n = digests(phone).length;
+    const elsewhere = mkdtempSync(join(tmpdir(), 'super-mirror-other-'));
+    pushSuperState(join(elsewhere, '_dream_context'), st([{ id: 'n1', section: 'now', text: 'not yours', at: 1 }]));
+    expect(digests(phone)).toHaveLength(n);
+    rmSync(elsewhere, { recursive: true, force: true });
+  });
+
+  it('a join snapshot read before a newer push is not sent after it', async () => {
+    await record({ enabled: true, pad: [{ id: 'n1', section: 'now', text: 'old', at: 1 }] });
+    startSuper();
+    await new Promise((r) => setTimeout(r, 300)); // the start's own reads and pushes settle
+    // The join's read takes the OLD record and is held while a newer write is pushed.
+    let release = (): void => {};
+    holdRead.next = new Promise<void>((r) => { release = r; });
+    const phone = mirror();
+    const next = st([{ id: 'n1', section: 'done', text: 'new', at: 2 }]);
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(next));
+    pushSuperState(root, next);
+    release();
+    await new Promise((r) => setTimeout(r, 150));
+    const texts = digests(phone).map((d) => (d.pad as Array<{ text: string }>)[0].text);
+    // The held snapshot (old) is dropped: the newer push is all the phone got.
+    expect(texts).toEqual(['new']);
   });
 });

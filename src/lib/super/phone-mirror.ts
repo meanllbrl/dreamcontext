@@ -135,6 +135,12 @@ export class MirrorSet<D> {
 
   get size(): number { return this.mirrors.size; }
 
+  /** Is `ws` one of the mirrors right now? */
+  has(ws: MirrorSocket): boolean {
+    for (const m of this.mirrors) if (m.ws === ws) return true;
+    return false;
+  }
+
   /** Is there room for `device`? Its own earlier mirror counts as room: it is replaced. */
   room(device: D): boolean {
     const k = this.opts.key(device);
@@ -286,4 +292,89 @@ export function phoneLiveChats<R extends LiveRow>(chats: readonly R[], handedOve
       : { conversationId: session, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: false });
   }
   return { chats: chats.filter((c) => !c.vault || !handedOver.has(c.vault)), supers };
+}
+
+// ─── The agenda's digest (task hands-free-telefonda-super-agent-sohbeti-ajandayi…) ──────────
+
+/** The digest's fields, mirrored by `dashboard/src/lib/superTypes.ts` (super-types-mirror test). */
+export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'names', 'key'] as const;
+export const DIGEST_MAX_PAD = 40;
+export const DIGEST_MAX_PAD_TEXT = 160;
+export const DIGEST_MAX_WAITING = 40;
+export const DIGEST_MAX_OWNER_TEXT = 300;
+export const DIGEST_MAX_BATCHES = 50;
+export const DIGEST_MAX_NAMES = 40;
+export const DIGEST_MAX_NAME = 80;
+
+/** The slice of the super record a digest reads (`SuperState` satisfies it). */
+export interface SuperDigestSource {
+  pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number }>;
+  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string }>;
+  ownerBatches: readonly string[];
+  containers: ReadonlyArray<{ kind: string; ref: string; title?: string }>;
+  children: Readonly<Record<string, { brief: string; startedAt: number }>>;
+}
+
+/**
+ * What a phone mirror is told of the Super Agent's agenda: the desktop's `SuperAgenda` is drawn
+ * from it (`superNotepad`), the event turns fold with its `ownerBatches` and `names`. A
+ * whitelist, never the record: no prompt, worktree, branch, task, ask spec, options, request id
+ * or permission content. A name is the Mac's job card title (the chat card's `title`, else the
+ * child's brief), never the chat registry's title (the prompt's first 80 characters).
+ */
+export interface SuperDigest {
+  pad: Array<{ id: string; section: string; text: string; at: number }>;
+  /** What waits on the owner (`needsOwner`) and the questions queued behind an open one. `text`
+   *  is the item's `ownerText` (an `owner` item's is the child's card: untrusted plain text),
+   *  '' on a permission. */
+  waiting: Array<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }>;
+  ownerBatches: string[];
+  names: Record<string, string>;
+  /** Changes when (and only when) anything above changes. */
+  key: string;
+}
+
+function digestText(raw: unknown, max: number): string {
+  if (typeof raw !== 'string') return '';
+  const flat = raw.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim();
+  return Array.from(flat).slice(0, max).join('').trim();
+}
+
+/** A short, stable hash (FNV-1a): the digest's key, never a secret. */
+function fnv(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(36);
+}
+
+/** The digest of `state`. Pure. */
+export function superDigest(state: SuperDigestSource): SuperDigest {
+  const pad = (state.pad ?? []).slice(-DIGEST_MAX_PAD)
+    .map((p) => ({ id: digestText(p.id, 12), section: p.section, text: digestText(p.text, DIGEST_MAX_PAD_TEXT), at: p.at }))
+    .filter((p) => p.id && p.text);
+  const owes = (q: SuperDigestSource['queue'][number]) => q.state !== 'done'
+    && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.state === 'pending'));
+  const waiting = state.queue.filter(owes).slice(0, DIGEST_MAX_WAITING).map((q) => ({
+    id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId,
+    text: q.kind === 'permission' ? '' : digestText(q.ownerText, DIGEST_MAX_OWNER_TEXT),
+  }));
+  const ownerBatches = state.ownerBatches.filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);
+  // The children the phone may name: the ones it waits on first, then the newest.
+  const sids = [...new Set([
+    ...waiting.map((w) => w.sessionId).filter((sid) => state.children[sid]),
+    ...Object.entries(state.children).sort((a, b) => b[1].startedAt - a[1].startedAt).map(([sid]) => sid),
+  ])].slice(0, DIGEST_MAX_NAMES);
+  const names: Record<string, string> = {};
+  for (const sid of sids) {
+    const card = state.containers.find((c) => c.kind === 'chat' && c.ref === sid);
+    const name = digestText(card?.title || state.children[sid]?.brief, DIGEST_MAX_NAME);
+    if (name) names[sid] = name;
+  }
+  const body = { pad, waiting, ownerBatches, names };
+  return { ...body, key: fnv(JSON.stringify(body)) };
+}
+
+/** The `_meta` frame carrying `d` to a phone mirror. */
+export function superDigestFrame(d: SuperDigest): string {
+  return JSON.stringify({ type: '_meta', subtype: 'super_digest', pad: d.pad, waiting: d.waiting, ownerBatches: d.ownerBatches, names: d.names, key: d.key });
 }

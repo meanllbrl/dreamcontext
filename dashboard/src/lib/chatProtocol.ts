@@ -384,6 +384,9 @@ export type ChatEvent =
    *  has no stage): project-relative refs, at most six. `snapshot`: what the stage held as the
    *  phone joined, not a new open (lib/super/phone-mirror.ts `stageMediaFrame`). */
   | { kind: 'stage-media'; items: Array<{ ref: string; title?: string }>; snapshot: boolean }
+  /** The Super Agent's agenda, sent to a phone mirror only (lib/super/phone-mirror.ts
+   *  `superDigestFrame`): the frame as it came, read by superTypes.ts `readSuperDigest`. */
+  | { kind: 'super-digest'; body: Record<string, unknown> }
   /** The server's fresh-session branch guard reporting what it did to the working tree.
    *  `warn` for a refusal, `info` for a move it made. See `fromMeta`. */
   | { kind: 'branch-start'; tone: 'info' | 'warn'; message: string }
@@ -1223,6 +1226,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       : [];
     return items.length ? { kind: 'stage-media', items, snapshot: obj.snapshot === true } : ignored('_meta:stage_media');
   }
+  if (subtype === 'super_digest') return { kind: 'super-digest', body: obj };
   if (subtype === 'owner_echo') {
     const text = str(obj.text);
     return text && text.trim() ? { kind: 'owner-echo', text: text.trim() } : ignored('_meta:owner_echo');

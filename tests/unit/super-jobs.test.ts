@@ -140,7 +140,8 @@ describe('event turns fold into one line', () => {
     expect(pane).toMatch(/segmentToolRuns\(foldSuper\(liveSlice\.slice\(pieceFrom, n\.cut\)\)/);
     expect(pane).toMatch(/segmentToolRuns\(foldSuper\(liveSlice\.slice\(pieceFrom\)\)/);
     expect(pane).toMatch(/<SuperEventLine key=\{item\.id\} group=\{group\}/);
-    expect(pane).toMatch(/useSuperEventContext\(session\.mode === 'super' \? session\.claudeId : null\)/);
+    // The Super's own window and the phone's mirror of it (superView) fold alike.
+    expect(pane).toMatch(/useSuperEventContext\(superView \? session\.claudeId : null\)/);
   });
 });
 

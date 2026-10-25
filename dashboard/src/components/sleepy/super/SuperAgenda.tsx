@@ -1,5 +1,5 @@
 import { useI18n } from '../../../context/I18nContext';
-import type { SuperStateView } from '../../../lib/superTypes';
+import type { SuperState } from '../../../lib/superTypes';
 import { AGENDA_SECTIONS, superNotepad, type AgendaRow, type JobLook } from './superHandover';
 import './SuperAgenda.css';
 
@@ -22,7 +22,8 @@ import './SuperAgenda.css';
  * (`onWriteAbout`). A sibling of the row's own control, never inside it; the tile has none.
  */
 export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout }: {
-  state: SuperStateView;
+  /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these two read. */
+  state: Pick<SuperState, 'queue' | 'pad'>;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
   variant?: 'tile' | 'full';
   /** A medium (2x1) tile: the counts in one row. */

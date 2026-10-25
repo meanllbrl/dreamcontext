@@ -21,6 +21,7 @@ import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
 import { leanMcpParam, superEventText } from './super/superHandover';
 import { createChildAlarmGate } from './super/childAlarm';
+import { readSuperDigest, type SuperDigestWire } from '../../lib/superTypes';
 import { dropSettledSurveyDrafts } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
 
@@ -647,6 +648,12 @@ export interface ChatSession {
   setSuperHandler: (fn: SuperCommandHandler | null) => void;
   /** Follow the `super_state` / `super_event` pushes on this socket. Returns the unsubscribe. */
   onSuper: (fn: (signal: SuperSignal) => void) => () => void;
+  /** The Super Agent's agenda as the Mac last told this phone mirror (a `super_digest` frame);
+   *  null before the first one, and always on any session that is not a `superMirror`. */
+  readonly superDigest: SuperDigestWire | null;
+  /** Follow {@link superDigest}: fires at once with the current value, then on every new one.
+   *  Returns the unsubscribe. */
+  onSuperDigest: (fn: (digest: SuperDigestWire | null) => void) => () => void;
   /**
    * A child of a handed-over Super Agent (D16): its question raises NO alarm — no chime, no
    * banner, no Dock bounce, no attention badge — because the Super Agent's queue decides what
@@ -1308,6 +1315,8 @@ export function createChatSession(
     hasLiveWork,
     setSuperHandler,
     onSuper,
+    superDigest: null,
+    onSuperDigest,
     setSuperChild: (on: boolean | null) => {
       childAlarm.set(on);
       session.superChild = childAlarm.child;
@@ -2347,6 +2356,17 @@ export function createChatSession(
     // so six frames a second never re-render the transcript (chat/browserLiveStore.ts).
     if (ev.kind === 'browser-frame') { pushBrowserFrame(session.id, ev.frame); return; }
     if (ev.kind === 'browser-closed') { dropBrowserLive(session.id); return; }
+    // The agenda (phone mirror only: a desktop session reads the record itself and drops it).
+    if (ev.kind === 'super-digest') {
+      if (!superMirror) return;
+      const d = readSuperDigest(ev.body);
+      if (!d || d.key === superDigest?.key) return;
+      superDigest = d;
+      for (const fn of [...digestListeners]) {
+        try { fn(d); } catch (err) { console.warn('[chat] digest listener failed:', err); }
+      }
+      return;
+    }
     if (ev.kind === 'super-cue') { emitSuper({ kind: 'cue', verb: ev.verb, ids: ev.ids }); return; }
     if (ev.kind === 'voice-turn') {
       if (mode !== 'super') return;
@@ -2775,6 +2795,13 @@ export function createChatSession(
   let superHandler: SuperCommandHandler | null = null;
   let superEventSeq = 0;
   const superListeners = new Set<(signal: SuperSignal) => void>();
+  let superDigest: SuperDigestWire | null = null;
+  const digestListeners = new Set<(digest: SuperDigestWire | null) => void>();
+  function onSuperDigest(fn: (digest: SuperDigestWire | null) => void): () => void {
+    digestListeners.add(fn);
+    try { fn(superDigest); } catch (err) { console.warn('[chat] digest listener failed:', err); }
+    return () => { digestListeners.delete(fn); };
+  }
   function setSuperHandler(fn: SuperCommandHandler | null): void { superHandler = fn; }
   function onSuper(fn: (signal: SuperSignal) => void): () => void {
     superListeners.add(fn);
@@ -3129,6 +3156,7 @@ export function createChatSession(
 
   // `minimized` as an accessor: shown again (true -> false) fires the subscribers, so a pane
   // whose renders were held while hidden draws its current state in the same placement pass.
+  Object.defineProperty(session, 'superDigest', { enumerable: true, configurable: true, get: () => superDigest });
   let minimizedFlag = false;
   Object.defineProperty(session, 'minimized', {
     enumerable: true,

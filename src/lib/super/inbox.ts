@@ -278,9 +278,16 @@ export function superAttentionRows(): Array<{ root: string; vault: string; item:
 
 // ─── Writes + pushes ────────────────────────────────────────────────────────────
 
+/** Who tells a phone mirror the agenda (agent-chat.ts registers it: a lib module never imports
+ *  a server route). Handed every pushed state; it decides whether a mirror is there to tell. */
+let superDigestSink: ((contextRoot: string, state: SuperState) => void) | null = null;
+export function setSuperDigestSink(fn: ((contextRoot: string, state: SuperState) => void) | null): void { superDigestSink = fn; }
+
 /** Push the vault's state down its super chat's socket (when that chat is running). */
 export function pushSuperState(contextRoot: string, state: SuperState): boolean {
   if (!state.session) return false;
+  // Before the window's own push: a phone is told even while no window socket is there.
+  try { superDigestSink?.(contextRoot, state); } catch (err) { console.error('[super] digest push failed:', err); }
   const token = tokenOfSession(state.session);
   return token ? pushFrame(token, { subtype: SUPER_FRAME_STATE, state: superView(contextRoot, state) }) : false;
 }
